@@ -22,6 +22,53 @@ usage() {
   exit 2
 }
 
+# A ref whose commit stores the same file tree as this snapshot's HEAD does
+# not change integration files. That includes an extra bookmark commit with an
+# identical tree, and it excludes any ref whose tree differs.
+elide_same_tree_refs() {
+  local input="$1" map line section="" head="" head_tree="" sha rest type tree
+  map="$(mktemp "${TMPDIR:-/tmp}/sift-review-trees.XXXXXXXXXX")"
+  head="$(awk '$0 == "@git-head" { if (getline) print; exit }' "$input")"
+  {
+    [ -n "$head" ] && printf '%s\n' "$head"
+    awk '
+      $0 == "@git-refs" { refs = 1; next }
+      refs && substr($0, 1, 1) == "@" { refs = 0 }
+      refs { print $1 }
+    ' "$input"
+  } | git -C "$ROOT" cat-file --batch | awk '
+    /^[0-9a-f]{40} commit / { sha = $1; want = 1; next }
+    want && $1 == "tree" { print sha, $2; want = 0; next }
+    /^[0-9a-f]{40} / { want = 0 }
+  ' > "$map"
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$section" = head ]; then
+      section=""
+      printf '%s\n' "$line"
+      continue
+    fi
+    case "$line" in
+      @git-head) section=head; printf '%s\n' "$line"; continue ;;
+      @git-refs) section=refs; printf '%s\n' "$line"; continue ;;
+      @*) section=""; printf '%s\n' "$line"; continue ;;
+    esac
+    if [ "$section" = refs ] && [ -n "$head" ]; then
+      sha="${line%% *}"
+      rest="${line#* }"
+      type="${rest%%$'\t'*}"
+      if [ "$type" = commit ]; then
+        tree="$(awk -v sha="$sha" '$1 == sha { print $2; exit }' "$map")"
+        head_tree="$(awk -v sha="$head" '$1 == sha { print $2; exit }' "$map")"
+        if [ -n "$tree" ] && [ "$tree" = "$head_tree" ]; then
+          continue
+        fi
+      fi
+    fi
+    printf '%s\n' "$line"
+  done < "$input"
+  rm -f "$map"
+}
+
 snapshot_state() (
   set -euo pipefail
   cd "$ROOT"
@@ -142,7 +189,9 @@ compare_state() {
 
   snapshot_parts "$before" "$before_git" "$before_tracker" "$markers" "$expected" || exit 2
   snapshot_parts "$after" "$after_git" "$after_tracker" "$markers" "$expected" || exit 2
-  if ! cmp -s "$before_git" "$after_git"; then
+  elide_same_tree_refs "$before_git" > "$tmp/before.refs"
+  elide_same_tree_refs "$after_git" > "$tmp/after.refs"
+  if ! cmp -s "$tmp/before.refs" "$tmp/after.refs"; then
     echo 'review state violation: integration Git state changed' >&2
     bad=1
   fi
