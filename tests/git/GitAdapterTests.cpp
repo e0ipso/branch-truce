@@ -276,7 +276,13 @@ public:
                 const auto result = run(adapter, repo.request(operation, needsPath ? "tracked.txt" : ""));
                 CHECK(result.outcome == Outcome::Success && result.exitCode == 0);
                 CHECK(result.mutation == Mutation::NotAttempted && !result.outputIncomplete);
-                if (operation == Operation::DiscoverRepository) CHECK(result.standardOutput.contains(repo.root.path().toUtf8()));
+                if (operation == Operation::DiscoverRepository) {
+                    CHECK(result.standardOutput.contains(repo.root.path().toUtf8()));
+                    CHECK(result.repository.worktreeRoot == repo.root.path());
+                    CHECK(result.repository.gitDirectory == repo.path(".git"));
+                    CHECK(result.repository.operation == RepositoryOperation::None && !result.repository.supported);
+                    CHECK(!result.repository.diagnostic.isEmpty() && result.indexEntries.isEmpty());
+                }
                 if (operation == Operation::ListUnmerged) CHECK(result.standardOutput.isEmpty());
                 if (operation == Operation::InspectIndex) CHECK(result.standardOutput.endsWith(QByteArray("\ttracked.txt\0", 13)));
             }
@@ -310,6 +316,14 @@ public:
             CHECK(result.standardOutput == repo.git({"ls-files", "--unmerged", "-z"}));
             CHECK(result.standardOutput.count('\0') == names.size() * 3);
             CHECK(result.indexEntries.size() == names.size() * 3);
+            // Synthetic unmerged stages without an operation must stay visible,
+            // but cannot acquire merge/rebase source labels from their position.
+            const auto discovery = run(adapter, repo.request(Operation::DiscoverRepository));
+            CHECK(discovery.outcome == Outcome::Success && !discovery.repository.supported);
+            CHECK(discovery.repository.operation == RepositoryOperation::Unsupported);
+            CHECK(discovery.indexEntries.size() == result.indexEntries.size());
+            CHECK(discovery.repository.stage2.commitId.isEmpty() && discovery.repository.stage3.commitId.isEmpty());
+            CHECK(discovery.repository.diagnostic.contains("no verified merge or rebase"));
             for (const auto &name : names) {
                 unsigned int stages = 0;
                 for (const auto &entry : result.indexEntries) {
@@ -595,10 +609,11 @@ public:
                 repo.git({"config", "remote.origin.url", repo.root.path()});
                 repo.git({"config", "remote.origin.uploadpack", "touch .fetch-ran"});
                 GitAdapter adapter(gitExecutable);
-                for (const auto operation : {Operation::ListUnmerged, Operation::InspectIndex,
+                for (const auto operation : {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::InspectIndex,
                                              Operation::ReadObject, Operation::ReadAttributes, Operation::Status,
                                              Operation::MaterializeSource, Operation::CheckParentStaging, Operation::StageFile}) {
-                    const bool noPath = operation == Operation::ListUnmerged || operation == Operation::ReadObject || operation == Operation::Status;
+                    const bool noPath = operation == Operation::DiscoverRepository || operation == Operation::ListUnmerged
+                        || operation == Operation::ReadObject || operation == Operation::Status;
                     auto request = repo.request(operation, noPath ? "" : "tracked.txt");
                     if (operation == Operation::ReadObject || operation == Operation::MaterializeSource) request.objectId = blob;
                     const auto result = run(adapter, request);

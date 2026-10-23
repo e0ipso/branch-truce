@@ -1,4 +1,6 @@
 #include "GitAdapter.h"
+#include "GitParsing.h"
+#include "RepositoryDiscovery.h"
 
 #include <QDir>
 #include <QFile>
@@ -25,6 +27,9 @@
 
 namespace branch_truce::git {
 namespace {
+using detail::objectId;
+using detail::parseIndex;
+using detail::relativeFile;
 // Conservative process guards, pending the measured limits work.
 constexpr qsizetype outputLimit = 8 * 1024 * 1024;
 constexpr qsizetype inspectionLimit = 1024 * 1024;
@@ -37,50 +42,6 @@ QSet<QString> mutatingGitDirectories;
 bool exactPath(const QString &path)
 {
     return !path.contains(QChar::Null) && QFile::decodeName(QFile::encodeName(path)) == path;
-}
-bool relativeFile(const QByteArray &path)
-{
-    // Git consumes Linux paths. QDir also treats a leading ':' as an absolute
-    // Qt resource path, but ':' is an ordinary filename byte for Git.
-    if (path.isEmpty() || path.startsWith('/') || path.contains('\0')) {
-        return false;
-    }
-    for (const auto &part : path.split('/')) {
-        if (part.isEmpty() || part == "." || part == "..") {
-            return false;
-        }
-    }
-    return true;
-}
-bool objectId(const QByteArray &id)
-{
-    return (id.size() == 40 || id.size() == 64)
-        && std::all_of(id.cbegin(), id.cend(), [](char c) {
-            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-        });
-}
-std::optional<QList<IndexEntry>> parseIndex(const QByteArray &bytes)
-{
-    QList<IndexEntry> entries;
-    qsizetype offset = 0;
-    while (offset < bytes.size()) {
-        const auto end = bytes.indexOf('\0', offset);
-        if (end < 0) return std::nullopt;
-        const auto record = bytes.mid(offset, end - offset);
-        const auto tab = record.indexOf('\t');
-        if (tab < 0) return std::nullopt;
-        const auto fields = record.first(tab).split(' ');
-        const auto path = record.mid(tab + 1);
-        if (fields.size() != 3 || fields[0].size() != 6
-            || !std::all_of(fields[0].cbegin(), fields[0].cend(), [](char c) { return c >= '0' && c <= '7'; })
-            || !objectId(fields[1]) || fields[2].size() != 1 || fields[2][0] < '0' || fields[2][0] > '3'
-            || !relativeFile(path)) {
-            return std::nullopt;
-        }
-        entries.append({path, fields[0], fields[1], static_cast<unsigned int>(fields[2][0] - '0')});
-        offset = end + 1;
-    }
-    return entries;
 }
 bool regularFile(const QString &directory, const QByteArray &path)
 {
@@ -255,7 +216,7 @@ QString displayPath(const QByteArray &path)
 class GitAdapter::State {
 public:
     enum class Phase { Version, Configuration, PolicyRoot, ObjectDirectory, TrackedPaths, Attributes,
-                       GitDirectory, Hooks, Baseline, Operation, Inspection };
+                       GitDirectory, Hooks, Baseline, Operation, Discovery, Inspection };
     explicit State(GitAdapter *owner, const QString &selected) : q(owner)
     {
         if (QDir::isAbsolutePath(selected) && exactPath(selected)) {
@@ -331,7 +292,8 @@ public:
     bool objectPolicy() const
     {
         const auto operation = result.request.operation;
-        return operation == Operation::ReadObject || operation == Operation::ReadAttributes
+        return operation == Operation::DiscoverRepository
+            || operation == Operation::ReadObject || operation == Operation::ReadAttributes
             || operation == Operation::ListUnmerged || operation == Operation::InspectIndex
             || operation == Operation::Status || operation == Operation::MaterializeSource || stagingPolicy();
     }
@@ -359,6 +321,11 @@ public:
         deadline.stop();
         escalation.stop();
         releaseMutation();
+        if (result.request.operation == Operation::DiscoverRepository && result.outcome != Outcome::Success) {
+            result.repository.operation = RepositoryOperation::Unsupported;
+            result.repository.supported = false;
+            if (result.repository.diagnostic.isEmpty()) result.repository.diagnostic = result.diagnostic;
+        }
         const auto completed = result;
         active = false;
         Q_EMIT q->finished(completed);
@@ -565,7 +532,10 @@ public:
     }
     void afterPolicy()
     {
-        if (isMutation()) {
+        if (result.request.operation == Operation::DiscoverRepository) {
+            discovery = std::make_unique<detail::RepositoryDiscovery>(result, directory);
+            launch(Phase::Discovery, discovery->arguments());
+        } else if (isMutation()) {
             launch(Phase::GitDirectory, {"rev-parse", "--absolute-git-dir"});
         } else if (stagingPolicy()) {
             launch(Phase::Hooks, {"rev-parse", "--path-format=absolute", "--git-path", "hooks"});
@@ -650,6 +620,15 @@ public:
         result.standardOutput = phaseOutput;
         if (phase == Phase::Operation) {
             result.exitCode = normal ? code : -1;
+        }
+        if (phase == Phase::Discovery && normal && !stopping) {
+            result.exitCode = code;
+            if (discovery->consume(phaseOutput, code)) {
+                launch(Phase::Discovery, discovery->arguments());
+            } else {
+                complete();
+            }
+            return;
         }
         if (!stopping && (!normal || code != 0)) {
             if (result.outcome != Outcome::LaunchFailure) {
@@ -837,6 +816,7 @@ public:
             }
             break;
         case Phase::Inspection:
+        case Phase::Discovery:
             break;
         }
     }
@@ -874,6 +854,7 @@ public:
     QString mutationKey;
     struct stat identity {};
     Result result;
+    std::unique_ptr<detail::RepositoryDiscovery> discovery;
     QByteArray phaseOutput;
     QByteArray phaseInput;
     QHash<QByteArray, QByteArray> configuration;
@@ -905,6 +886,7 @@ bool GitAdapter::start(const Request &request)
         return false;
     }
     d->result = Result{};
+    d->discovery.reset();
     d->result.request = request;
     d->bytesRead = 0;
     d->stopping = false;

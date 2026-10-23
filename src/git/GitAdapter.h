@@ -34,6 +34,28 @@ struct IndexEntry {
     unsigned int stage = 0;
 };
 
+enum class RepositoryOperation { None, Merge, Rebase, Unsupported };
+struct SourceIdentity {
+    QByteArray commitId;
+    QString label;
+};
+struct RepositoryContext {
+    QString worktreeRoot;
+    QString gitDirectory; // Canonical per-worktree directory, including linked worktrees.
+    RepositoryOperation operation = RepositoryOperation::None;
+    // Operation/stage identity only. File types and conversion policy must still
+    // be checked before editing or publishing. Reinspect before any mutation.
+    bool supported = false;
+    QString diagnostic;
+    SourceIdentity stage2;
+    SourceIdentity stage3;
+    QByteArray baseCommitId; // Empty for an unavailable common earlier version.
+    // Validated rebase context; these names do not label either index side.
+    QByteArray headName;
+    QByteArray originalHead;
+    QByteArray onto;
+};
+
 struct Request {
     Operation operation = Operation::DiscoverRepository;
     QString directory;
@@ -50,7 +72,8 @@ struct Result {
     QByteArray standardError;
     QByteArray indexBefore;
     QByteArray indexAfter;
-    QList<IndexEntry> indexEntries; // Parsed ListUnmerged/InspectIndex output on success.
+    QList<IndexEntry> indexEntries; // Exact stages from DiscoverRepository/ListUnmerged/InspectIndex.
+    RepositoryContext repository; // Structured DiscoverRepository snapshot, even when unsupported.
     QString diagnostic;
     int exitCode = -1; // Requested operation only; -1 if no normal exit occurred.
     bool outputIncomplete = false;
