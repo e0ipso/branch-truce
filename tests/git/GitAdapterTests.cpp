@@ -99,7 +99,9 @@ public:
     // Scripted process outcomes exercise adapter boundaries. Literal path/index
     // correctness is covered separately against real Git in this temporary repo.
     QString fakeGit(const QByteArray &operation,
-                    const QByteArray &inspection = "printf '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\\ttracked.txt\\0'\n") const
+                    const QByteArray &inspection = "printf '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\\ttracked.txt\\0'\n",
+                    const QByteArray &configuration = {},
+                    const QByteArray &attributes = "printf 'tracked.txt\\0filter\\0unspecified\\0'\n") const
     {
         QByteArray script = R"SH(#!/bin/sh
 printf '%s\0' "$@" >> .adapter-argv
@@ -112,7 +114,11 @@ while [ "$#" -gt 0 ]; do
 done
 case "$1" in
     --version) printf 'git version fixture\n' ;;
-    config) exit 0 ;;
+    config)
+)SH";
+        script += configuration;
+        script += R"SH(
+        ;;
     rev-parse)
         case "$*" in
             *--git-path*objects*) printf '%s/.git/objects\n' "$PWD" ;;
@@ -120,7 +126,11 @@ case "$1" in
             *--show-toplevel*) printf '%s\n' "$PWD" ;;
             *) printf '%s/.git\n' "$PWD" ;;
         esac ;;
-    check-attr) printf 'tracked.txt\0filter\0unspecified\0' ;;
+    check-attr)
+)SH";
+        script += attributes;
+        script += R"SH(
+        ;;
     ls-files)
         case "$*" in *--cached*) printf 'tracked.txt\0'; exit 0 ;; esac
         if [ -e .after-add ]; then
@@ -547,13 +557,14 @@ public:
         });
         suite.run("helper and offline policy precedes affected reads and staging", [] {
             for (const auto &driver : {"Fixture", "set", "unset", "unspecified"}) {
-                for (const auto &kind : {"clean", "smudge", "process"}) {
+                for (const auto &kind : {"clean", "smudge", "process", "required"}) {
                     Repository repo;
                     const auto key = QByteArray("filter.") + driver + '.' + kind;
                     writeFile(repo.path(".gitattributes"), "tracked.txt filter=" + QByteArray(driver) + '\n');
                     const auto before = repo.git({"ls-files", "--stage", "-z"});
                     const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
-                    repo.git({"config", QString::fromLatin1(key), "touch .helper-ran; cat"});
+                    repo.git({"config", QString::fromLatin1(key),
+                              QByteArray(kind) == "required" ? "true" : "touch .helper-ran; cat"});
                     GitAdapter adapter(gitExecutable);
                     // Policy inspection and raw identity reads never invoke filters.
                     CHECK(run(adapter, repo.request(Operation::ReadAttributes, "tracked.txt")).outcome == Outcome::Success);
@@ -925,6 +936,37 @@ public:
             CHECK(result.standardOutput.startsWith("operation prefix"));
             CHECK(result.standardOutput.size() <= 8 * 1024 * 1024);
             CHECK(result.mutation == Mutation::ObservedChanged && result.indexAfter.contains(QByteArray(40, 'b')));
+        });
+        suite.run("status skips absent filters and streams large filter inspections", [] {
+            {
+                Repository repo;
+                const auto fake = repo.fakeGit(": > .status-ran\n", ":\n", {},
+                    ": > .attributes-ran\n/usr/bin/head -c 9000000 /dev/zero\n");
+                GitAdapter adapter(fake);
+                const auto result = run(adapter, repo.request(Operation::Status));
+                CHECK(result.outcome == Outcome::Success && result.standardOutput.isEmpty());
+                CHECK(!result.outputIncomplete && result.mutation == Mutation::NotAttempted);
+                CHECK(QFile::exists(repo.path(".status-ran")) && !QFile::exists(repo.path(".attributes-ran")));
+            }
+            for (int scenario = 0; scenario < 3; ++scenario) {
+                Repository repo;
+                // 8,800,000 bytes of complete records exercise arbitrary chunk
+                // boundaries and a policy listing larger than the payload cap.
+                QByteArray attributes = R"SH(
+/usr/bin/awk 'BEGIN { for (i = 0; i < 400000; ++i) printf "tracked.txt%ctext%cauto%c", 0, 0, 0 }'
+)SH";
+                if (scenario == 1) attributes += "printf 'tracked.txt\\0filter\\0unused\\0'\n";
+                if (scenario == 2) attributes += "printf 'tracked.txt\\0filter\\0unused'\n";
+                const auto fake = repo.fakeGit(": > .status-ran\n", ":\n",
+                    "printf 'filter.unused.clean\\ncat\\0'\n", attributes);
+                GitAdapter adapter(fake);
+                const auto result = run(adapter, repo.request(Operation::Status));
+                CHECK(result.outcome == (scenario == 0 ? Outcome::Success : Outcome::Rejected));
+                CHECK(!result.outputIncomplete && result.mutation == Mutation::NotAttempted);
+                CHECK(QFile::exists(repo.path(".status-ran")) == (scenario == 0));
+                if (scenario == 0) CHECK(result.standardOutput.isEmpty());
+                else CHECK(result.diagnostic.contains(scenario == 1 ? "custom filter 'unused'" : "invalid filter"));
+            }
         });
         suite.run("the operation deadline cancels the process without reporting success", [] {
             Repository repo;

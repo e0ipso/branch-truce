@@ -483,6 +483,12 @@ public:
             if (chunk.isEmpty()) {
                 break;
             }
+            if (!error && phase == Phase::Attributes && result.request.operation == Operation::Status) {
+                // Status policy can cover the entire index. Consume records as
+                // they arrive without charging them to the operation's output.
+                if (!stopping && !consumeStatusAttributes(chunk)) stop(Outcome::Rejected, result.diagnostic);
+                continue;
+            }
             const auto limit = phase == Phase::Inspection ? inspectionLimit : outputLimit;
             const auto keep = std::min(chunk.size(), std::max(qsizetype{0}, limit - bytesRead));
             if (error) {
@@ -534,6 +540,56 @@ public:
         }
         return true;
     }
+    bool hasFilterConfiguration() const
+    {
+        for (auto entry = result.conversionPolicy.configuration.cbegin();
+             entry != result.conversionPolicy.configuration.cend(); ++entry) {
+            if (entry.key().startsWith("filter.")) return true;
+        }
+        return false;
+    }
+    bool checkFilter(const QByteArray &path, const QByteArray &driver)
+    {
+        // set/unset can be literal driver values, so a matching helper is denied.
+        const auto prefix = "filter." + driver;
+        if (!configuration.value(prefix + ".clean").isEmpty()
+            || !configuration.value(prefix + ".smudge").isEmpty()
+            || !configuration.value(prefix + ".process").isEmpty()
+            || (configuration.contains(prefix + ".required") && !falseValue(configuration.value(prefix + ".required")))) {
+            result.diagnostic = QStringLiteral("Outside app: custom filter '%1' is unsupported for %2")
+                .arg(displayPath(driver), displayPath(path));
+            return false;
+        }
+        return true;
+    }
+    bool consumeStatusAttributes(const QByteArray &chunk)
+    {
+        phaseOutput += chunk;
+        qsizetype consumed = 0;
+        for (;;) {
+            const auto pathEnd = phaseOutput.indexOf('\0', consumed);
+            if (pathEnd < 0) break;
+            const auto nameEnd = phaseOutput.indexOf('\0', pathEnd + 1);
+            if (nameEnd < 0) break;
+            const auto valueEnd = phaseOutput.indexOf('\0', nameEnd + 1);
+            if (valueEnd < 0) break;
+            const auto path = phaseOutput.mid(consumed, pathEnd - consumed);
+            const auto name = phaseOutput.mid(pathEnd + 1, nameEnd - pathEnd - 1);
+            if (!relativeFile(path) || name.isEmpty()) {
+                result.diagnostic = QStringLiteral("Outside app: invalid filter attribute inspection");
+                return false;
+            }
+            if (name == "filter" && !checkFilter(path, phaseOutput.mid(nameEnd + 1, valueEnd - nameEnd - 1))) return false;
+            consumed = valueEnd + 1;
+        }
+        phaseOutput.remove(0, consumed);
+        // Bound an unfinished record, rather than the complete policy listing.
+        if (phaseOutput.size() > inspectionLimit) {
+            result.diagnostic = QStringLiteral("Outside app: oversized filter attribute record");
+            return false;
+        }
+        return true;
+    }
     bool captureAttributes()
     {
         const auto fields = phaseOutput.split('\0');
@@ -551,7 +607,12 @@ public:
     }
     bool checkFilters()
     {
-        if (result.request.operation != Operation::Status && !captureAttributes()) {
+        if (result.request.operation == Operation::Status) {
+            if (phaseOutput.isEmpty()) return true;
+            result.diagnostic = QStringLiteral("Outside app: invalid filter attribute inspection");
+            return false;
+        }
+        if (!captureAttributes()) {
             result.diagnostic = QStringLiteral("Outside app: invalid conversion attribute inspection");
             return false;
         }
@@ -561,24 +622,12 @@ public:
             return false;
         }
         for (qsizetype i = 0; i + 2 < fields.size(); i += 3) {
-            if (!relativeFile(fields[i])
-                || (result.request.operation != Operation::Status && fields[i] != result.request.path)) {
+            if (!relativeFile(fields[i]) || fields[i] != result.request.path) {
                 result.diagnostic = QStringLiteral("Outside app: filter attributes do not match the requested path");
                 return false;
             }
             if (fields[i + 1] != "filter") continue;
-            const auto &driver = fields[i + 2];
-            // --all omits unspecified attributes. set/unset can still be
-            // literal driver values, so a matching helper must be denied.
-            const auto prefix = "filter." + driver;
-            if (!configuration.value(prefix + ".clean").isEmpty()
-                || !configuration.value(prefix + ".smudge").isEmpty()
-                || !configuration.value(prefix + ".process").isEmpty()
-                || (configuration.contains(prefix + ".required") && !falseValue(configuration.value(prefix + ".required")))) {
-                result.diagnostic = QStringLiteral("Outside app: custom filter '%1' is unsupported for %2")
-                    .arg(displayPath(driver), displayPath(fields[i]));
-                return false;
-            }
+            if (!checkFilter(fields[i], fields[i + 2])) return false;
         }
         return true;
     }
@@ -760,7 +809,8 @@ public:
             } else {
                 originalObjectDirectory = *objects;
                 if (result.request.operation == Operation::Status) {
-                    launch(Phase::TrackedPaths, {"ls-files", "--cached", "-z"});
+                    if (hasFilterConfiguration()) launch(Phase::TrackedPaths, {"ls-files", "--cached", "-z"});
+                    else afterPolicy();
                 } else if (filterPolicy()) {
                     launch(Phase::Attributes, {"check-attr", "-z", "--all", "--", result.request.path});
                 } else {
@@ -776,6 +826,7 @@ public:
                 afterPolicy();
             } else {
                 const auto paths = phaseOutput;
+                // --all distinguishes an absent filter from filter=unspecified.
                 launch(Phase::Attributes, {"check-attr", "-z", "--all", "--stdin"}, false, paths);
             }
             break;
