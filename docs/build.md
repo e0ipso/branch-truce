@@ -65,9 +65,9 @@ These establish build wiring, not conflict-resolution behavior. The executable
 also accepts `--smoke-test` for the same startup check. GUI tests must retain a
 30-second timeout. Test output does not report an assertion count for startup.
 
-Build directories are disposable. An optional second absolute argument to
-`prepare-worktree.sh` places generated files outside the checkout. This is useful
-when no build-directory ignore rule has been committed.
+Build directories are disposable. The default root `build/` directory is ignored
+by Git. An optional second absolute argument to `prepare-worktree.sh` places
+generated files outside the checkout.
 
 ## Coordinator setup hook
 
@@ -85,8 +85,11 @@ After committing the scaffold, verify clean preparation with:
 
 This creates a disposable detached worktree of HEAD, builds and runs only the
 core/startup canaries in desktop, core and sanitizer configurations, checks QML,
-confirms the checkout stayed clean, and removes the fixture. Build output goes
-outside the fixture checkout. Failure logs must be retained by the caller.
+confirms the checkout stayed clean after each default preparation and after the
+checks, and removes the fixture. Build output uses the default `build/<mode>`
+directories inside the fixture checkout, including the setup hook's
+`./tools/prepare-worktree.sh desktop` command. Failure logs must be retained by
+the caller.
 
 The desktop preparation above is the per-worktree setup command to register with Sift. It configures;
 checks remain separate `cmake --build` and `ctest` commands above. Hook registration

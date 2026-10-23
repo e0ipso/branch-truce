@@ -20,11 +20,13 @@ trap cleanup EXIT
 git -C "$root" worktree add --detach "$checkout" HEAD
 test -z "$(git -C "$checkout" status --porcelain)"
 for mode in desktop core sanitize; do
-    "$checkout/tools/prepare-worktree.sh" "$mode" "$fixture/$mode"
-    cmake --build "$fixture/$mode" --parallel 2
-    ctest --test-dir "$fixture/$mode" --output-on-failure -V \
+    # Exercise the setup hook's default in-checkout build directory.
+    (cd -- "$checkout" && ./tools/prepare-worktree.sh "$mode")
+    test -z "$(git -C "$checkout" status --porcelain)"
+    cmake --build "$checkout/build/$mode" --parallel 2
+    ctest --test-dir "$checkout/build/$mode" --output-on-failure -V \
         -R '^(core.build-smoke|desktop.startup)$'
 done
-cmake --build "$fixture/desktop" --target branch_truce_ui_qmllint
+cmake --build "$checkout/build/desktop" --target branch_truce_ui_qmllint
 test -z "$(git -C "$checkout" status --porcelain)"
 echo 'Clean worktree remained clean after preparation, build and CTest.'
