@@ -18,6 +18,8 @@ kk_confidence: medium
 ---
 Show two read-only source versions around an editable result in the center. Label all three clearly and identify each source truthfully for the current merge or rebase. Use meaningful names and version descriptions when branch names are insufficient. Make uncertain identity visible; do not rely only on position or labels such as 'mine'.
 
+Preserve the repository file's existing content when opening a result, including manual edits and previously combined changes. Do not silently regenerate it from an earlier source. If a choice cannot be attached safely, explain the limitation and keep direct editing available for otherwise supported text.
+
 Let the user compare the result with either original source throughout review. Provide the common earlier version on demand when available, and explain when it is unavailable. Let the user show and hide it without losing the result or choices. Do not consume permanent reading space with it unless the user chooses to view it.
 
 Show corresponding passages with enough surrounding text to judge them. Distinguish additions, removals, modifications, and competing changes using more than color. Use word-level highlighting without suggesting a separate acceptance control for every highlighted word. Keep original context accessible when correspondence is uncertain.

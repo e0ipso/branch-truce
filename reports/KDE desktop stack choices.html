@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Provisional KDE architecture</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:transparent;color:var(--foreground,#242a31);font:14px/1.5 var(--font-sans,system-ui,sans-serif)}main{max-width:960px;margin:0 auto;padding:0}p{margin:0 0 12px}.muted,small{color:var(--muted-foreground,#626b77)}.layout{display:grid;grid-template-columns:1fr 1.05fr;gap:24px}.flow{display:grid;gap:0}.node{border:1px solid var(--border,#cbd1d9);border-radius:var(--radius,8px);background:var(--card,#fafbfc);padding:16px}.node strong{display:block}.arrow{text-align:center;color:var(--muted-foreground,#626b77);padding:3px}.gate{border-inline-start:3px solid var(--foreground,#242a31);padding-inline-start:10px;margin-top:12px}table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;padding:7px 8px;border-bottom:1px solid var(--border,#cbd1d9)}th{font-weight:600}td:first-child{width:41%;font-weight:500}details{margin-top:16px;border-top:1px solid var(--border,#cbd1d9);padding-top:10px}summary{cursor:pointer;font-weight:600}details p{margin:10px 0 0}a{color:inherit;text-decoration:underline;text-underline-offset:3px}nav{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px 16px;font-size:12px}@media(max-width:650px){main{padding:0}.layout{grid-template-columns:1fr;gap:16px}}
+</style>
+</head>
+<body>
+<main>
+<p class="muted">Provisional architecture · Kubuntu 26.04 LTS baseline · Qt 6.10.2 / KF 6.24 / Plasma 6.6</p>
+<div class="layout">
+<section aria-label="Provisional native UI to portable core architecture">
+<div class="flow">
+<div class="node"><strong>Native KDE UI · provisional</strong>Qt Quick + QML + Controls + Kirigami<br><small>Editor feasibility gate remains open</small></div>
+<div class="arrow" aria-label="connected through">↕</div>
+<div class="node"><strong>CXX-Qt adapter · provisional</strong>Qt models, GUI-thread updates, editor integration</div>
+<div class="arrow" aria-label="connected through">↕</div>
+<div class="node"><strong>Portable Rust core · provisional</strong>Sessions, correspondence, decisions, history, recovery<br><small>Narrow Git adapter → supervised installed Git</small></div>
+</div>
+<p class="gate">Fallback proposal: retain Rust; use C++ Widgets with KTextEditor or QPlainTextEdit if editor reuse wins. Shared UI code is not promised.</p>
+</section>
+<section aria-label="Toolkit and design roles">
+<table>
+<thead><tr><th scope="col">Layer</th><th scope="col">Role</th></tr></thead>
+<tbody>
+<tr><td>Qt</td><td>Application platform and native integration</td></tr>
+<tr><td>Qt Quick + QML</td><td>Visual scene, rendering and declarative UI</td></tr>
+<tr><td>Quick Controls</td><td>Buttons, menus and standard controls</td></tr>
+<tr><td>Kirigami</td><td>Higher-level KDE UI components</td></tr>
+<tr><td>KDE HIG</td><td>Interaction and design guidance</td></tr>
+<tr><td>Breeze</td><td>Visual styling and assets; icons separate</td></tr>
+</tbody>
+</table>
+</section>
+</div>
+<details><summary>Backend alternatives · provisional assessment</summary><p>Rust + CXX-Qt follows the user's preference, with explicit FFI ownership. C++ gives direct Qt/KF access. Python + PySide6 supports Qt, while desired KDE binding coverage needs verification.</p></details>
+<p class="muted" style="margin-top:14px">Prototype wrapped alignment and text-plus-decision undo. Separately prove mergetool exit, staging and backup ownership alongside all-files sessions. No implementation, performance or compatibility tests were run.</p>
+<nav aria-label="Primary sources"><a href="https://doc.qt.io/qt-6/topics-ui.html">Qt roles</a><a href="https://develop.kde.org/hig/kde_app_design/">KDE guidance</a><a href="https://kdab.github.io/cxx-qt/book/">CXX-Qt</a><a href="https://kubuntu.org/news/kubuntu-26-04-release-notes/">Kubuntu baseline</a><a href="https://git-scm.com/docs/git-mergetool">Git mergetool</a></nav>
+</main>
+</body>
+</html>

@@ -6,7 +6,7 @@ The user keeps an IDE for its conflict resolver and wants to stop paying for an 
 
 Confirmed direction:
 
-- Run as a standalone Linux app launched from the user's existing Git workflow.
+- Run as a standalone Linux app launched from the user's existing Git workflow, including use as the configured Git merge tool.
 - Work entirely offline, without an account, sign-in, subscription, or payment flow. The user opens directly into their conflict-resolution work.
 - Resolve text conflicts encountered while merging and rebasing in the first release. Other operations, including cherry-picking and applying stashed changes, remain unconfirmed scope.
 - Present all currently conflicted files together in one session, with a useful file list and visible progress.
@@ -15,10 +15,10 @@ Confirmed direction:
 - Use mouse controls with basic editing shortcuts in the first release. Full keyboard operation belongs to the second iteration.
 - Search within files, wrap long lines for reading, and reveal spaces or tabs in the first release.
 - Let the user inspect the common earlier version on demand, when available, without keeping an additional pane permanently visible.
-- Let the user save unfinished work without declaring the file resolved. A separate "Mark resolved" action saves the current reviewed result and marks the file resolved in the user's existing Git workflow, without requiring a separate Save first.
-- Resume unfinished work after closing the app or a crash, restoring edits that were not manually saved and the decisions still outstanding. Recovered unsaved edits remain visibly unsaved.
+- Let the user save unfinished work as a draft inside Branch Truce without changing the repository file or declaring it resolved. A separate "Mark resolved" action preserves the draft, writes the reviewed result to the repository file, and marks it resolved in the user's existing Git workflow, without requiring a separate Save first.
+- Resume completed, acknowledged edits and choices after closing the app or an application crash, including edits not manually saved. Recovered drafts not manually saved remain visibly unsaved; pending input is identified separately.
 - Let the user save reviewed results and return to their usual workflow to continue the operation and commit.
-- Handle text conflicts first. Unsupported renamed, deleted, and image cases must prominently say they require handling outside the app, both beside the file and in the session summary. They never count as resolved merely because the app cannot handle them.
+- Handle text conflicts first. Unsupported rename-specific, deletion, image, file-type, permission, and conversion cases must prominently say they require handling outside the app, both beside the file and in the session summary. They never count as resolved merely because the app cannot handle them. A text file is not unsupported merely because it was renamed earlier; resolving disputes about moves or destinations is outside the first release.
 
 Success means the user can replace the resolver they retain today and understand the result they take back to their usual workflow. They can complete supported work, account for unfinished or unsupported files, and resume an interrupted session. Completing every visible decision does not establish that the content is correct.
 
@@ -38,6 +38,8 @@ Let the user compare the result with either original source throughout review. A
 
 ### Make choices without losing intent
 
+Opening a file preserves its current content, including any work already done before launch. Do not silently replace existing manual edits or previously combined changes with an earlier version. If the app cannot safely connect a source choice to the current result, explain that limitation and keep direct editing available for otherwise supported text.
+
 Provide an accept arrow and an ignore X for each side's change, with understandable labels and mouse controls. Accepting the left contribution leaves the right contribution undecided; accepting right behaves symmetrically. A distinct "resolve using this side" action accepts that contribution and rejects the competing contribution for the selected region. Its effect must be clear before use.
 
 Ignore means deciding not to apply the selected contribution. It leaves the current result text unchanged, including manual edits, and removes only that contribution from the undecided choices. The competing contribution, if any, stays undecided. Ignore is available for an undecided contribution; it does not remove text already accepted. To change an accepted choice to Ignore, the user first undoes the acceptance. Undoing Ignore makes that contribution undecided again.
@@ -45,6 +47,8 @@ Ignore means deciding not to apply the selected contribution. It leaves the curr
 Allow both contributions and subsequent result editing. Show which contribution comes first and let the user choose the other order when order affects the combined text. Do not disguise omitted overlapping edits or duplicated text as a clean combined decision. The user can inspect and revise the outcome before saving.
 
 A region can contain several judgments. The user can choose individual lines from either source, choose a whole section, and edit the result directly. Line choices make it possible to retain selected lines from both contributions without first accepting the whole section. Show which lines or section a choice affects and leave other choices available. Additional word-level selection controls remain a candidate convenience. Choosing a source after manual editing must make any replacement of those edits understandable and reversible.
+
+If a choice overlaps manually edited text, preview the exact replacement and require confirmation before applying it. Cancelling leaves text and decisions unchanged. Taking both contributions has an explicit order; if later edits make that order ambiguous, show a new preview rather than guessing where to insert text. Undo and redo follow the order of actions; changing an earlier decision does not selectively remove text through later manual edits.
 
 Undo and redo should restore both the visible text and whether the affected choices remain undecided. Include manual edits, individual-line choices, single-region choices, bulk choices, and whole-file choices. Recommend retaining this ability through saving while the current session stays open. Restoring unfinished edits and decisions after leaving is required; retaining the complete undo history after reopening remains a candidate convenience.
 
@@ -92,13 +96,13 @@ The user saves and reviews two text files. A renamed file and an image conflict 
 
 Recommend plain, separate answers to the user's questions: What is still undecided? What has changed without being saved? What content is saved? Which latest results have I reviewed? What needs handling outside the app? These meanings can coexist for one file. A saved draft can still contain undecided work, and completed decisions can still need review.
 
-Save preserves progress without declaring the file resolved or reviewed. The user can save incomplete work, which remains visibly unfinished.
+Save preserves a draft inside Branch Truce without declaring it resolved or reviewed. The repository file stays unchanged. Clearly say "Draft saved in Branch Truce" so the user knows other tools still see the previous repository content. This behavior is the same when launched directly or through Git's merge-tool workflow. An unfinished draft must never be published as an apparently finished replacement merely because the user saved it.
 
-After reviewing the result, the user chooses "Mark resolved." This action saves the latest result and marks the file resolved in the existing Git workflow. A separate Save is not required, and merely changing the app's progress indicator is not enough. The action does not continue the wider operation or create a commit.
+After reviewing the result, the user chooses "Mark resolved." This is the explicit declaration that the displayed result has been reviewed; reading or saving alone does not set reviewed status, and there is no separate review-only action in the first release. Mark resolved saves the latest draft, writes the result to the repository file, and marks the file resolved in the existing Git workflow. A separate Save is not required, and merely changing the app's progress indicator is not enough. A reviewed result can remain unresolved if writing or resolving fails; show which step failed. The action does not continue the wider operation or create a commit.
 
 If source choices remain undecided, ask the user to confirm that the current result is their intentional, reviewed resolution before saving and marking the file resolved. Cancelling leaves the current text and choices unchanged. Confirming accepts the reviewed result as the resolution for the file; the user does not have to make additional source selections after resolving the text by hand.
 
-A later edit means the changed content needs review again and must not retain a misleading resolved status.
+A later edit means the changed content needs review again and must not retain a misleading resolved status. If an earlier result remains ready in Git, clearly distinguish it from the newer draft with "Earlier result staged; current draft not applied." This is outstanding work that blocks a successful finish. The user may explicitly leave after a warning, but the app must not imply that their latest edits will be committed. Do not silently change Git's earlier resolution merely because the user edits or undoes inside the app.
 
 Before handoff, show the current session's saved results, outstanding decisions, unsaved changes, review still needed, failures, and outside-app work. Offer a route to each outstanding file. Any ordinary finish action must warn about unfinished work. The user can deliberately leave to handle it elsewhere without a success claim.
 
@@ -106,13 +110,13 @@ The session covers the work launched into it. It makes no promise about conflict
 
 ## Failure and recovery expectations
 
-Restoring unfinished work after closing the app or a crash is required. On return, the user can continue with their edits, including those not manually saved, and the decisions still outstanding. Recovered edits that were not saved remain visibly unsaved; recovery does not claim that they were reviewed or resolved. Deliberately discarded work must not be presented as the current result.
+Restoring unfinished work after closing the app or an application crash is required. Every completed edit or choice acknowledged by the app must be recoverable, including edits not manually saved. An input or composition still shown as pending has not completed and may need repeating after a crash. Do not acknowledge completed editing while its recovery copy is missing or failing. This promise covers an application crash, not machine power loss or failed storage hardware. Recovered edits that were not manually saved remain visibly unsaved; recovery does not claim that they were reviewed or resolved. Deliberately discarded work must not be presented as the current result.
 
-The user must be able to distinguish unsaved, saved-but-unresolved, and resolved work. Merely opening or inspecting work must not change the user's content or make choices for them. Switching files or closing the app must not silently lose unsaved edits. Explain save, leave, and discard consequences, including which earlier saves will remain.
+The user must be able to distinguish unsaved, saved-but-unresolved, and resolved work. Merely opening or inspecting work must not change the user's content or make choices for them. Switching files or closing the app must not silently lose unsaved edits or pending input; wait for pending work or offer an explicit discard. Explain save, leave, and discard consequences, including which earlier saves will remain.
 
 If saving fails, say which file failed, keep its edited result available, leave its unsaved warning visible, and offer retry or a safe way to remain in the session. Saving one file successfully must not conceal another failure.
 
-If saving during "Mark resolved" fails, leave the file unresolved in the app and the existing Git workflow. If the result saves but marking the file resolved cannot finish, show that it is saved but still unresolved and offer retry. Show the file as resolved only after both saving and marking it resolved succeed.
+If saving the draft during "Mark resolved" fails, preserve the edited result and leave the repository unchanged. If writing the repository result fails, keep any successfully saved app draft and leave the file unresolved. If the repository result is written but marking it resolved cannot finish, show that it is written but still unresolved and offer retry. Show the current result as resolved only after writing and resolving both succeed. A saved app draft, a written repository result, and a resolved file are distinct outcomes.
 
 If a file cannot be read or the session cannot show expected work, explain the problem and keep it outstanding. A blank view is not evidence of an empty file, no conflicts, or completion. If recovery cannot restore expected work, explain what is missing and keep the affected file outstanding. Never produce a false claim of recovered, saved, reviewed, or resolved work.
 
@@ -128,7 +132,7 @@ Checks of confirmed requirements apply unconditionally, including the source arr
 
 4. **Broad choices are recoverable.** After a manual edit, the user previews a whole-file choice and sees that the edit would be replaced. Undo restores it. A separate bulk non-conflict choice affects only its stated scope and can also be undone.
 
-5. **Saving and resolving are separate choices.** The user can save a file with undecided changes and continue working; it remains visibly unresolved. With a reviewed result that still has unsaved edits, the user chooses "Mark resolved." The latest result is saved and the file is marked resolved in their existing Git workflow without a prior Save. Save alone does not mark it reviewed or resolved. Editing the result again makes the changed content need review again.
+5. **Saving and resolving are separate choices.** The user can save a draft with undecided changes and continue working; the repository file is unchanged and the draft remains visibly unresolved. The user chooses "Mark resolved" to declare review of the displayed result. The latest draft is saved, the repository file is written, and the file is resolved in Git without a prior Save. Save alone does not mark it reviewed or resolved. Editing again creates a newer draft, invalidates its review, and prominently distinguishes it from any earlier result still staged in Git.
 
 6. **Reading supports difficult text.** With repeated passages, a long line, and a whitespace-only difference, the user can identify the intended region, search within the sources and result with a known scope, wrap the long line, and reveal spaces or tabs. Changing these reading aids leaves the text and resolution decisions unchanged. Sources remain read-only.
 
@@ -136,17 +140,23 @@ Checks of confirmed requirements apply unconditionally, including the source arr
 
 8. **Mouse controls and editing shortcuts are usable.** The user can select a file, inspect sources, accept or ignore, review, and save using mouse controls. While editing the result, familiar shortcuts support copying, pasting, undo, and redo. Full keyboard operation is not a first-release acceptance requirement. Recommended focus and outstanding-work indicators remain understandable without their colors.
 
-9. **Failures stay outstanding.** A failed save leaves the edited result available and unsaved. If it fails during "Mark resolved," the file remains unresolved in both the app and the existing Git workflow. If saving succeeds but marking resolved fails, the file is shown as saved and unresolved. A file that cannot open keeps an explanation and outstanding warning rather than appearing complete.
+9. **Failures stay outstanding.** A failed draft save leaves the edited result available and unsaved. A failed repository write during "Mark resolved" keeps the saved app draft, if available, while the file remains unresolved. If the repository write succeeds but resolving fails, show "written, unresolved" rather than success. A file that cannot open keeps an explanation and outstanding warning rather than appearing complete.
 
-10. **Handoff describes only this session.** With one saved reviewed file, one saved unfinished draft, and one unsaved result, the summary distinguishes all three and warns before finishing. It directs the user to outstanding work and makes no claim about later conflicts or checks in their usual editor.
+10. **Handoff describes only this session.** With one reviewed result written and resolved in Git, one saved unfinished app draft, and one draft not manually saved, the summary distinguishes all three. A file with a newer draft than the result staged in Git is also outstanding and blocks a success claim. The user can explicitly leave after a warning. The summary makes no claim about later conflicts or checks in their usual editor.
 
-11. **Unfinished work resumes.** With unsaved edits and undecided changes in several files, closing and reopening the app restores the edits and outstanding decisions. The same holds after a crash. Recovered unsaved edits still need saving, and unfinished files remain unresolved.
+11. **Unfinished work resumes.** With completed edits and choices in several files, closing and reopening the app restores them, including edits not manually saved. Terminating the app after it acknowledges an edit or choice has the same outcome. Pending input may need repeating. Recovery failures are visible; recovered drafts not manually saved still need Save, and unfinished files remain unresolved.
 
 12. **Access requires no account or connection.** Without an internet connection or an account, the user can launch a session, compare sources, choose changes, edit, save, mark files resolved, and resume unfinished work. No sign-in, subscription, or payment flow interrupts these actions.
 
-13. **Ignore decides against a contribution without changing the result.** With a proposed line removal still undecided, choosing Ignore keeps the line in the result and marks that contribution decided. Other undecided choices remain. Existing manual edits stay unchanged. Undo restores the ignored contribution to undecided. If the removal was already accepted, the user first undoes that acceptance before choosing Ignore.
+13. **Ignore decides against a contribution without changing the result.** With a line still present in the current result and an undecided source proposal to remove it, choosing Ignore keeps that line and marks the contribution decided. Other undecided choices remain. Existing manual edits stay unchanged. Undo restores the ignored contribution to undecided. If the removal was already accepted, the user first undoes that acceptance before choosing Ignore.
 
 14. **Manual resolution can finish with source choices still undecided.** The user edits the intended result directly and chooses "Mark resolved" while some source choices remain undecided. The app asks them to confirm the current result is intentional. Cancelling keeps the text and choices unchanged. Confirming saves that result and marks the file resolved in their Git workflow without requiring further source selections.
+
+15. **Drafts survive merge-tool cancellation.** Launched as Git's merge tool, the user saves an unfinished draft and leaves without resolving. Git does not receive that draft as a finished result. Reopening Branch Truce restores the saved draft, regardless of the repository file's return to its pre-launch content.
+
+16. **Existing work and manual edits are preserved.** A file already edited before launch opens with that content intact. After further manual editing, a source choice that would replace those edits shows a preview. Cancelling changes nothing; confirming and undoing restores both text and decision states.
+
+17. **Unsupported operations and file disputes stay explicit.** A launch for an operation outside the supported merge/rebase scope explains the limitation and does not apply misleading source labels or enable resolution. Unsupported move/removal, file-type, permission, or conversion cases stay visible as outside-app work. Supported text preserves its declared format when written.
 
 ## Second iteration
 

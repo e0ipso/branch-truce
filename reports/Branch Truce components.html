@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Branch Truce components</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:transparent;color:var(--foreground,#20252c);font:14px/1.5 var(--font-sans,system-ui,sans-serif)}
+main{width:100%;margin:0;padding:0}p{margin:0}.intro,.note,.build{color:var(--muted-foreground,#627080);font-size:12px}
+.intro{margin-bottom:12px}.box{padding:16px;border:1px solid var(--border,#ccd3dc);border-radius:var(--radius,10px);background:var(--card,#f6f8fb)}
+h2{font-size:16px;font-weight:600;margin:0 0 5px}.stack{font-size:13px;font-weight:600;color:var(--accent-foreground,#3157a8);margin-bottom:5px}
+.desc{font-size:13px;color:var(--muted-foreground,#627080)}.wide{max-width:470px;margin:0 auto}
+.connector{display:flex;flex-direction:column;align-items:center;color:var(--muted-foreground,#627080);font-size:11px;padding:5px 0}
+.connector b{font-size:20px;font-weight:400;line-height:20px}.branches{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;position:relative;padding-top:16px;margin-top:12px}
+.branches:before{content:"";position:absolute;top:0;left:16.66%;right:16.66%;border-top:1px solid var(--border,#ccd3dc)}
+.branches:after{content:"";position:absolute;left:50%;top:-12px;height:12px;border-left:1px solid var(--border,#ccd3dc)}
+.branch{position:relative}.branch:before{content:"";position:absolute;top:-16px;left:50%;height:16px;border-left:1px solid var(--border,#ccd3dc)}
+.note{margin-top:12px}.build{border-top:1px solid var(--border,#ccd3dc);margin-top:16px;padding-top:10px}
+@media(max-width:540px){.branches{grid-template-columns:1fr;gap:12px;padding-top:0;margin-top:0}.branches:before,.branches:after,.branch:before{display:none}.branches:before{content:none}.wide{max-width:none}.branch{border-inline-start:3px solid var(--border,#ccd3dc)}}
+</style></head><body><main>
+<p class="intro">Initial component design · Stack locked</p>
+<section class="box wide" aria-label="KDE interface">
+<h2>KDE interface</h2><p class="stack">Qt 6 · QML · Kirigami</p>
+<p class="desc">File list, comparison panes, result editor, actions</p></section>
+<div class="connector" aria-label="Interface exchanges actions and state with the controller"><b>↕</b><span>Actions and display state</span></div>
+<section class="box wide" aria-label="Application controller">
+<h2>Application controller</h2><p class="stack">C++ · Qt</p>
+<p class="desc">Coordinates sessions, background work and progress</p></section>
+<div class="connector" aria-hidden="true"><span>Coordinates these components</span></div>
+<div class="branches" role="group" aria-label="Components coordinated by the application controller">
+<section class="box branch"><h2>Merge engine</h2><p class="stack">C++</p><p class="desc">Differences, choices and undo.<br>Independent of the UI.</p></section>
+<section class="box branch"><h2>Git adapter</h2><p class="stack">C++ · Qt QProcess</p><p class="desc">Reads conflicts and stages reviewed files through the installed Git CLI.</p></section>
+<section class="box branch"><h2>Save and recovery</h2><p class="stack">C++ · Qt file APIs</p><p class="desc">App-only drafts and recovery. Writes repository results through Mark resolved.</p></section>
+</div>
+<p class="note">Editor toolkit still to validate. Save keeps drafts in Branch Truce; Mark resolved publishes to the repository and Git workflow.</p>
+<p class="build">Build: CMake · Platform: Linux/KDE · Baseline: Kubuntu 26.04 LTS</p>
+</main></body></html>

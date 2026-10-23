@@ -19,7 +19,7 @@ kk_confidence: medium
 ---
 When saving fails, identify the file, keep its edited result available, leave its unsaved warning visible, and offer retry or a safe way to remain in the session. Do not let a successful save of one file conceal another file's failure.
 
-If saving during 'Mark resolved' fails, leave the file unresolved in both the app and the existing Git workflow. If saving succeeds but marking resolved fails, show the file as saved but still unresolved and offer retry. Show it as resolved only after both steps succeed.
+During Mark resolved, failure to save the app draft leaves the repository unchanged. If the repository write fails, retain any saved app draft and keep the file unresolved. If the repository write succeeds but Git resolution fails, show "written, unresolved" and offer retry. Claim current-result resolution only after repository writing and Git verification both succeed; an app draft checkpoint is a separate outcome.
 
 If a file cannot be read or the session cannot show expected work, explain the problem and keep it outstanding. Do not treat a blank view as evidence of an empty file, no conflicts, or completion. Never claim saved, reviewed, or resolved work when that outcome does not hold.
 

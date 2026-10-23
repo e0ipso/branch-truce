@@ -1,11 +1,20 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:ee2df33a3995a3f288df65f2034062a368f06316be817412dbdfb5bdf313d71a'
-node_count: 8
+nodes_hash: 'sha256:22fa32a18d9383f4afd4be923f9ba8e240fedbbce6fb254df93de2cdb849df05'
+node_count: 11
 ---
 # kenkeep Graph
 
-Total nodes: 8
+Total nodes: 11
+
+## map-branch-truce-desktop-implementation-baseline
+
+- **kind:** map
+- **title:** Branch Truce desktop implementation baseline
+- **path:** map-branch-truce-desktop-implementation-baseline.md
+- **tags:** architecture, desktop, platform, cpp
+- **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope
+- **derived_from:** TECH_SPEC.md
 
 ## map-branch-truce-first-release-scope
 
@@ -14,6 +23,14 @@ Total nodes: 8
 - **path:** map-branch-truce-first-release-scope.md
 - **tags:** product, scope, workflow
 - **derived_from:** PRD.md
+
+## practice-design-desktop-apps-around-screens-and-components
+
+- **kind:** practice
+- **title:** Design desktop apps around screens and components
+- **path:** practice-design-desktop-apps-around-screens-and-components.md
+- **tags:** architecture, desktop, techspec
+- **relates_to:** map-branch-truce-first-release-scope, practice-keep-techspecs-and-prds-independent
 
 ## practice-keep-failed-work-outstanding
 
@@ -37,6 +54,14 @@ Total nodes: 8
 - **path:** practice-keep-sources-identifiable-and-the-result-editable.md
 - **tags:** product, comparison, editing
 - **derived_from:** PRD.md
+
+## practice-keep-techspecs-and-prds-independent
+
+- **kind:** practice
+- **title:** Keep TechSpecs and PRDs independent
+- **path:** practice-keep-techspecs-and-prds-independent.md
+- **tags:** documentation, techspec, prd
+- **relates_to:** practice-keep-prd-focused-on-user-needs
 
 ## practice-keep-unsupported-and-unfinished-work-visible
 

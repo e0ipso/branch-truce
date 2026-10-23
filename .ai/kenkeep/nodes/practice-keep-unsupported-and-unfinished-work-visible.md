@@ -17,9 +17,9 @@ kk_relates_to: []
 kk_depends_on: []
 kk_confidence: medium
 ---
-Present all currently conflicted files together in one session with a useful file list and visible progress. Prominently identify unsupported renamed, deleted, and image conflicts as requiring handling outside the app, both beside the file and in the session summary. Never count them as resolved because the app cannot handle them. Keep their notices visible when supported text work is complete.
+Present all currently conflicted files together in one session with a useful file list and visible progress. Prominently identify unsupported rename-specific, deletion, image, file-type, permission and conversion cases as outside-app work. A file is not unsupported merely because it was renamed earlier; resolving disputes about moves or destinations remains outside the first release. Never count unsupported work as resolved. Keep its notices visible when supported text work is complete.
 
-Before handoff, show saved results, outstanding decisions, unsaved changes, review still needed, failures, and outside-app work. Offer a route to every outstanding file. Warn about unfinished work before any ordinary finish action, and let the user deliberately leave to handle it elsewhere without claiming success.
+Before handoff, distinguish saved app drafts, repository results, outstanding decisions, unsaved changes, review needed, failures and outside-app work. A newer draft than an earlier staged result blocks a successful finish and needs an explicit stale-staged warning. Offer a route to each outstanding file. The user may deliberately leave after a warning without a success claim.
 
 Keep navigation through undecided changes distinct from navigation through all differences. Let the user reach the next unfinished file and revisit saved or reviewed files. Preserve the session and the user's place when the file list closes and reopens. Do not treat completing every visible decision as proof that the content is correct.
 

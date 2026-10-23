@@ -2,8 +2,7 @@
 type: practice
 title: Separate Save from Mark resolved
 description: >-
-  Save preserves drafts; Mark resolved saves the reviewed result and resolves
-  the file in the existing Git workflow.
+  Save keeps app-only drafts; Mark resolved writes the reviewed result and resolves the file in Git.
 tags:
   - product
   - saving
@@ -17,11 +16,11 @@ kk_relates_to: []
 kk_depends_on: []
 kk_confidence: medium
 ---
-Let Save preserve incomplete work without declaring the file reviewed or resolved. Keep saved unfinished work visibly unfinished, and distinguish unsaved, saved-but-unresolved, and resolved work.
+Save checkpoints incomplete work inside Branch Truce only. It changes neither the repository file nor the Git index, including when launched as Git's merge tool. Say that the draft is saved in Branch Truce and the repository file is unchanged. Keep automatic recovery, explicit Save checkpoints, repository writes and Git resolution distinct.
 
-After review, let 'Mark resolved' save the latest result and mark the file resolved in the user's existing Git workflow without requiring a separate Save. Do not substitute a change to the app's progress indicator for resolving the file in that workflow.
+Mark resolved is the explicit review declaration. It saves the latest app draft, writes the reviewed result to the repository, and resolves it in Git without a prior Save. There is no separate review-only action. A failed write or Git resolution can leave reviewed work unresolved; show the actual outcome. Do not substitute an app progress indicator for verified Git resolution.
 
-If source choices remain undecided, ask the user to confirm that the current result is their intentional, reviewed resolution before saving and marking it resolved. Cancelling leaves text and choices unchanged. Confirming accepts the reviewed result without requiring additional source selections. Require review again after a later edit and remove any misleading resolved status.
+If source choices remain undecided, ask the user to confirm the current result is intentional before publishing it. Cancelling leaves text and choices unchanged. A later edit or undo invalidates review of the new draft. If an earlier result remains staged, show "Earlier result staged; current draft not applied" and block a successful finish until the new result is applied or deliberately discarded. Explicit leave after a warning remains possible. Never automatically recreate Git conflicts merely because the user edits.
 
 <!-- kk:citations:start -->
 # Citations
