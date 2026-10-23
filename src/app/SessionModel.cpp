@@ -1,0 +1,237 @@
+#include "SessionModel.h"
+#include <algorithm>
+#include <limits>
+
+namespace branch_truce {
+namespace {
+QString text(const std::string &value)
+{
+    return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size()));
+}
+
+QString revisionText(RevisionId revision)
+{
+    // Decimal strings retain all 64 bits across the QML/JavaScript boundary.
+    return QString::number(static_cast<qulonglong>(revision));
+}
+
+QVariantList decisionData(const Draft &draft)
+{
+    QVariantList result;
+    for (const auto &[id, decision] : draft.decisions) {
+        QString value;
+        switch (decision.value) {
+        case DecisionValue::Undecided: value = QStringLiteral("undecided"); break;
+        case DecisionValue::Accepted: value = QStringLiteral("accepted"); break;
+        case DecisionValue::Ignored: value = QStringLiteral("ignored"); break;
+        }
+        QVariantMap entry{{QStringLiteral("id"), text(id)}, {QStringLiteral("value"), value}};
+        if (decision.order) entry.insert(QStringLiteral("order"), revisionText(*decision.order));
+        result.push_back(entry);
+    }
+    return result;
+}
+
+QVariantMap revisionData(const Revision &revision)
+{
+    return {{QStringLiteral("revision"), revisionText(revision.id)},
+            {QStringLiteral("resultRevision"), revisionText(revision.result)},
+            {QStringLiteral("decisionRevision"), revisionText(revision.decisions)},
+            {QStringLiteral("text"), text(revision.draft.text)},
+            {QStringLiteral("decisions"), decisionData(revision.draft)},
+            {QStringLiteral("unresolvedMarkers"), QVariant::fromValue(
+                static_cast<qulonglong>(revision.draft.unresolvedMarkers))}};
+}
+
+QVariantMap outcomeData(const std::optional<OperationOutcome> &outcome)
+{
+    if (!outcome) return {};
+    QString status;
+    switch (outcome->outcome) {
+    case Outcome::Succeeded: status = QStringLiteral("succeeded"); break;
+    case Outcome::Failed: status = QStringLiteral("failed"); break;
+    case Outcome::Uncertain: status = QStringLiteral("uncertain"); break;
+    }
+    return {{QStringLiteral("revision"), revisionText(outcome->revision)},
+            {QStringLiteral("outcome"), status}, {QStringLiteral("detail"), text(outcome->detail)}};
+}
+
+QStringList blockerData(const FileFacts &facts)
+{
+    QStringList result;
+    for (const auto blocker : facts.blockers) result.push_back(QString::fromUtf8(blockerText(blocker)));
+    return result;
+}
+}
+
+SessionModel::SessionModel(QObject *parent) : QAbstractListModel(parent) {}
+
+int SessionModel::rowCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : totalFiles();
+}
+
+int SessionModel::totalFiles() const { return static_cast<int>(files_.size()); }
+
+QVariant SessionModel::data(const QModelIndex &index, int role) const
+{
+    if (!index.isValid() || index.model() != this || index.column() != 0
+        || index.row() < 0 || index.row() >= totalFiles()) return {};
+    const auto &file = files_[static_cast<std::size_t>(index.row())];
+    const auto facts = file.facts();
+    switch (role) {
+    case FileIdRole: return text(file.id());
+    case Qt::DisplayRole:
+    case PathRole: return text(file.path());
+    case PathBytesRole: return QByteArray(file.path().data(), static_cast<qsizetype>(file.path().size()));
+    case ResultTextRole: return text(file.current().draft.text);
+    case DecisionsRole: return decisionData(file.current().draft);
+    case CurrentRevisionRole: return revisionText(file.current().id);
+    case ResultRevisionRole: return revisionText(file.current().result);
+    case DecisionRevisionRole: return revisionText(file.current().decisions);
+    case CheckpointRole: return file.checkpoint() ? revisionData(*file.checkpoint()) : QVariantMap{};
+    case ReviewedRole: {
+        if (!file.reviewed()) return QVariantMap{};
+        auto result = revisionData(file.reviewed()->revision);
+        result.insert(QStringLiteral("confirmedUndecided"), file.reviewed()->confirmedUndecided);
+        return result;
+    }
+    case WrittenRole: return file.written() ? revisionData(*file.written()) : QVariantMap{};
+    case StagedRole: {
+        if (!file.staged()) return QVariantMap{};
+        auto result = revisionData(file.staged()->revision);
+        result.insert(QStringLiteral("objectId"), text(file.staged()->objectId));
+        result.insert(QStringLiteral("mode"), text(file.staged()->mode));
+        return result;
+    }
+    case CheckpointOutcomeRole: return outcomeData(file.checkpointOutcome());
+    case WriteOutcomeRole: return outcomeData(file.writeOutcome());
+    case StageOutcomeRole: return outcomeData(file.stageOutcome());
+    case SupportRole:
+        switch (file.support()) {
+        case Support::Supported: return QStringLiteral("supported");
+        case Support::OutsideApp: return QStringLiteral("outside-app");
+        case Support::Unreadable: return QStringLiteral("unreadable");
+        }
+        return {};
+    case SupportDetailRole: return text(file.supportDetail());
+    case UndecidedRole: return QVariant::fromValue(static_cast<qulonglong>(facts.undecided));
+    case UnsavedRole: return facts.unsaved;
+    case ReviewNeededRole: return facts.needsReview;
+    case EarlierStagedRole: return facts.earlierStaged;
+    case ResolvedRole: return facts.resolved;
+    case StatusRole: return QString::fromUtf8(statusText(facts.status));
+    case FinishBlockersRole: return blockerData(facts);
+    case CanUndoRole: return file.canUndo();
+    case CanRedoRole: return file.canRedo();
+    default: return {};
+    }
+}
+
+QHash<int, QByteArray> SessionModel::roleNames() const
+{
+    return {{FileIdRole, "fileId"}, {PathRole, "path"}, {PathBytesRole, "pathBytes"},
+            {ResultTextRole, "resultText"}, {DecisionsRole, "decisions"},
+            {CurrentRevisionRole, "currentRevision"}, {ResultRevisionRole, "resultRevision"},
+            {DecisionRevisionRole, "decisionRevision"}, {CheckpointRole, "manualCheckpoint"},
+            {ReviewedRole, "reviewed"}, {WrittenRole, "written"}, {StagedRole, "staged"},
+            {CheckpointOutcomeRole, "checkpointOutcome"}, {WriteOutcomeRole, "writeOutcome"},
+            {StageOutcomeRole, "stageOutcome"}, {SupportRole, "support"},
+            {SupportDetailRole, "supportDetail"}, {UndecidedRole, "undecidedCount"},
+            {UnsavedRole, "unsaved"}, {ReviewNeededRole, "reviewNeeded"},
+            {EarlierStagedRole, "earlierStaged"}, {ResolvedRole, "resolved"},
+            {StatusRole, "status"}, {FinishBlockersRole, "finishBlockers"},
+            {CanUndoRole, "canUndo"}, {CanRedoRole, "canRedo"}};
+}
+
+const FileSession *SessionModel::file(const std::string &id) const
+{
+    const auto found = std::find_if(files_.begin(), files_.end(),
+                                    [&](const auto &file) { return file.id() == id; });
+    return found == files_.end() ? nullptr : &*found;
+}
+
+bool SessionModel::appendFile(FileSession file)
+{
+    if (this->file(file.id()) || files_.size() >= static_cast<std::size_t>(std::numeric_limits<int>::max()))
+        return false;
+    const auto row = totalFiles();
+    beginInsertRows({}, row, row);
+    files_.push_back(std::move(file));
+    endInsertRows();
+    Q_EMIT summaryChanged();
+    return true;
+}
+
+int SessionModel::resolvedFiles() const
+{
+    return static_cast<int>(std::count_if(files_.begin(), files_.end(),
+                                          [](const auto &file) { return file.facts().resolved; }));
+}
+
+bool SessionModel::canFinish() const
+{
+    return !files_.empty() && resolvedFiles() == totalFiles();
+}
+
+QVariantList SessionModel::finishBlockers() const
+{
+    QVariantList result;
+    if (files_.empty()) {
+        result.push_back(QVariantMap{{QStringLiteral("fileId"), QString{}},
+            {QStringLiteral("blockers"), QStringList{QStringLiteral("No files loaded")}}});
+    }
+    for (const auto &file : files_) {
+        const auto facts = file.facts();
+        if (facts.blockers.empty()) continue;
+        result.push_back(QVariantMap{{QStringLiteral("fileId"), text(file.id())},
+            {QStringLiteral("path"), text(file.path())},
+            {QStringLiteral("blockers"), blockerData(facts)}});
+    }
+    return result;
+}
+
+Transition SessionModel::replaceDraft(const std::string &id, RevisionId expected, Draft draft)
+{
+    return update(id, [&](auto &file) { return file.replaceDraft(expected, std::move(draft)); });
+}
+Transition SessionModel::undo(const std::string &id, RevisionId expected)
+{
+    return update(id, [&](auto &file) { return file.undo(expected); });
+}
+Transition SessionModel::redo(const std::string &id, RevisionId expected)
+{
+    return update(id, [&](auto &file) { return file.redo(expected); });
+}
+Transition SessionModel::discardToCheckpoint(const std::string &id, RevisionId expected)
+{
+    return update(id, [&](auto &file) { return file.discardToCheckpoint(expected); });
+}
+Transition SessionModel::discardToStaged(const std::string &id, RevisionId expected)
+{
+    return update(id, [&](auto &file) { return file.discardToStaged(expected); });
+}
+Transition SessionModel::beginMarkResolved(const std::string &id, RevisionId expected, bool confirmUndecided)
+{
+    return update(id, [&](auto &file) { return file.beginMarkResolved(expected, confirmUndecided); });
+}
+Transition SessionModel::recordCheckpoint(const std::string &id, RevisionId revision, Outcome outcome, std::string detail)
+{
+    return update(id, [&](auto &file) { return file.recordCheckpoint(revision, outcome, std::move(detail)); });
+}
+Transition SessionModel::recordWrite(const std::string &id, RevisionId revision, Outcome outcome, std::string detail)
+{
+    return update(id, [&](auto &file) { return file.recordWrite(revision, outcome, std::move(detail)); });
+}
+Transition SessionModel::recordStage(const std::string &id, RevisionId revision, Outcome outcome,
+                                    std::string objectId, std::string mode, std::string detail)
+{
+    return update(id, [&](auto &file) {
+        return file.recordStage(revision, outcome, std::move(objectId), std::move(mode), std::move(detail));
+    });
+}
+Transition SessionModel::setSupport(const std::string &id, Support support, std::string detail)
+{
+    return update(id, [&](auto &file) { return file.setSupport(support, std::move(detail)); });
+}
+}

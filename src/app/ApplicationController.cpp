@@ -2,7 +2,7 @@
 #include "core/BuildInfo.h"
 
 namespace branch_truce {
-ApplicationController::ApplicationController(QObject *parent) : QObject(parent) {}
+ApplicationController::ApplicationController(QObject *parent) : QObject(parent), files_(this) {}
 QString ApplicationController::version() const
 {
     return QString::fromUtf8(branch_truce::version().data(),
