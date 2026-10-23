@@ -680,6 +680,54 @@ public:
                 CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
                 CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
             }
+            {
+                Repository repo;
+                repo.git({"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                          "commit", "--quiet", "-m", "base"});
+                QTemporaryDir shared;
+                CHECK(shared.isValid());
+                const auto clone = shared.path() + "/shared";
+                repo.git({"clone", "--shared", "--quiet", repo.root.path(), clone});
+                const auto alternates = clone + "/.git/objects/info/alternates";
+                const auto alternatePath = QFile::encodeName(repo.path(".git/objects")) + '\n';
+                auto request = repo.request(Operation::InspectIndex, "tracked.txt");
+                request.directory = clone;
+                GitAdapter adapter(gitExecutable);
+                CHECK(run(adapter, request).outcome == Outcome::Success);
+                writeFile(alternates, "# shared with base\n" + alternatePath);
+                CHECK(repo.git({"-C", clone, "cat-file", "-t", "HEAD"}) == "commit\n");
+                CHECK(repo.git({"-C", clone, "ls-files", "--stage", "-z"})
+                      == repo.git({"ls-files", "--stage", "-z"}));
+                const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+                for (const auto operation : {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::InspectIndex,
+                                             Operation::ReadObject, Operation::ReadAttributes, Operation::Status,
+                                             Operation::MaterializeSource, Operation::CanonicalizeText,
+                                             Operation::CheckParentStaging, Operation::StageFile}) {
+                    const bool noPath = operation == Operation::DiscoverRepository || operation == Operation::ListUnmerged
+                        || operation == Operation::ReadObject || operation == Operation::Status;
+                    request.operation = operation;
+                    request.path = noPath ? "" : "tracked.txt";
+                    request.objectId = operation == Operation::ReadObject || operation == Operation::MaterializeSource
+                        ? blob : QByteArray{};
+                    request.input = operation == Operation::CanonicalizeText ? "before\n" : "";
+                    const auto result = run(adapter, request);
+                    CHECK(result.outcome == Outcome::Success && result.exitCode == 0);
+                    if (operation == Operation::ReadObject || operation == Operation::MaterializeSource) {
+                        CHECK(result.standardOutput == "before\n");
+                    }
+                    if (operation == Operation::InspectIndex) {
+                        CHECK(result.indexEntries.size() == 1 && result.indexEntries.first().path == "tracked.txt");
+                    }
+                }
+                // Comments cannot hide a real alternate that cannot be inspected.
+                writeFile(alternates, "# shared with base\n" + alternatePath
+                          + QFile::encodeName(shared.path() + "/missing-objects") + '\n');
+                request = repo.request(Operation::InspectIndex, "tracked.txt");
+                request.directory = clone;
+                const auto denied = run(adapter, request);
+                CHECK(denied.outcome == Outcome::Rejected);
+                CHECK(denied.diagnostic.contains("object storage cannot be inspected offline"));
+            }
             for (int scenario = 0; scenario < 4; ++scenario) {
                 Repository repo;
                 Repository alternate;
@@ -690,7 +738,8 @@ public:
                 if (scenario == 2) writeFile(repo.path(".git/objects/pack/pack-fixture.promisor"), "");
                 if (scenario == 3) {
                     writeFile(alternate.path(".git/objects/pack/pack-fixture.promisor"), "");
-                    writeFile(repo.path(".git/objects/info/alternates"), alternate.path(".git/objects").toUtf8() + '\n');
+                    writeFile(repo.path(".git/objects/info/alternates"), "# shared with base\n"
+                              + alternate.path(".git/objects").toUtf8() + '\n');
                 }
                 repo.git({"config", "remote.origin.url", repo.root.path()});
                 repo.git({"config", "remote.origin.uploadpack", "touch .fetch-ran"});
@@ -705,6 +754,7 @@ public:
                     const auto result = run(adapter, request);
                     CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
                     CHECK(result.diagnostic.contains("Outside app"));
+                    if (scenario >= 2) CHECK(result.diagnostic.contains("promisor object packs"));
                 }
                 // A missing object must be rejected before Git can try lazy retrieval.
                 auto missing = repo.request(Operation::ReadObject);

@@ -128,7 +128,7 @@ bool localObjectStores(const QString &objects, QString &diagnostic)
             return false;
         }
         for (const auto &line : bytes.split('\n')) {
-            if (line.isEmpty()) continue;
+            if (line.isEmpty() || line.startsWith('#')) continue;
             const auto decoded = QFile::decodeName(line);
             // Fail closed on Git's quoted alternate syntax rather than inspect
             // a different directory. Ordinary relative/absolute alternates work.
