@@ -292,7 +292,7 @@ TaskId SessionCoordinator::submitGit(const std::string &fileId, RevisionId expec
     if (!d->owningThread() || d->replacing) return 0;
     const auto *file = d->model.file(fileId);
     const bool mutation = request.operation == git::Operation::StageFile;
-    if (!file || (mutation && request.path.toUtf8() != QByteArray::fromStdString(file->path()))) return 0;
+    if (!file || (mutation && request.path != QByteArray::fromStdString(file->path()))) return 0;
     request.directory = d->worktree;
     request.sessionGeneration = d->generation;
     request.inputRevision = expected;
