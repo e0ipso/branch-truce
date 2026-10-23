@@ -925,13 +925,13 @@ void GitAdapter::cancel()
     if (!d->active) {
         return;
     }
+    d->result.cancellationRequested = true;
     if (d->phase == State::Phase::Inspection && d->mutationStarted) {
-        // Preserve bounded reinspection even if cancellation arrives after exit.
-        d->result.outcome = Outcome::Cancelled;
-        d->result.diagnostic = QStringLiteral("Cancelled; reinspecting the index");
-    } else {
-        d->stop(Outcome::Cancelled, QStringLiteral("Git request cancelled"));
+        // Keep the completed operation's outcome and diagnostic while bounded
+        // reinspection determines the observed index mutation.
+        return;
     }
+    d->stop(Outcome::Cancelled, QStringLiteral("Git request cancelled"));
 }
 bool GitAdapter::busy() const { return d->active; }
 } // namespace branch_truce::git

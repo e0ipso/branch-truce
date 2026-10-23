@@ -661,21 +661,51 @@ public:
             CHECK(!adapter.busy() && completion.results.size() == 1);
         });
         suite.run("cancellation after mutation reinspects while preserving operation output", [] {
-            Repository repo;
-            const auto fake = repo.fakeGit(": > .after-add\nprintf 'before cancellation'\n: > .operation-started\nsleep 60\n");
-            GitAdapter adapter(fake);
-            Completion completion(adapter);
-            QTimer cancel;
-            QObject::connect(&cancel, &QTimer::timeout, &cancel, [&] {
-                if (QFile::exists(repo.path(".operation-started"))) {
-                    cancel.stop();
-                    adapter.cancel();
+            // Cancel either the running mutation or its post-exit reinspection.
+            for (const int exitCode : {-1, 0, 128}) {
+                Repository repo;
+                const bool finished = exitCode >= 0;
+                QByteArray operation = ": > .after-add\nprintf 'before cancellation'\n";
+                if (finished) {
+                    if (exitCode != 0) operation += "printf 'fatal: index.lock exists' >&2\n";
+                    operation += "exit " + QByteArray::number(exitCode) + '\n';
+                } else {
+                    operation += ": > .operation-started\nsleep 60\n";
                 }
-            });
-            cancel.start(5);
-            const auto result = completion.run(repo.request(Operation::StageFile, "tracked.txt"));
-            CHECK(result.outcome == Outcome::Cancelled && result.mutation == Mutation::ObservedChanged);
-            CHECK(result.standardOutput == "before cancellation" && !result.indexAfter.isEmpty());
+                QByteArray inspection;
+                if (finished) {
+                    inspection = ": > .inspection-started\nwhile [ ! -e .release-inspection ]; do sleep 0.01; done\n";
+                }
+                inspection += "printf '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\\ttracked.txt\\0'\n";
+                const auto fake = repo.fakeGit(operation, inspection);
+                GitAdapter adapter(fake);
+                Completion completion(adapter);
+                QTimer cancel;
+                QObject::connect(&cancel, &QTimer::timeout, &cancel, [&] {
+                    const auto marker = finished ? ".inspection-started" : ".operation-started";
+                    if (QFile::exists(repo.path(marker))) {
+                        cancel.stop();
+                        adapter.cancel();
+                        adapter.cancel();
+                        if (finished) writeFile(repo.path(".release-inspection"), "release\n");
+                    }
+                });
+                cancel.start(5);
+                const auto result = completion.run(repo.request(Operation::StageFile, "tracked.txt"));
+                const auto expected = !finished ? Outcome::Cancelled
+                    : exitCode == 0 ? Outcome::Success : Outcome::ExitFailure;
+                CHECK(result.outcome == expected && result.cancellationRequested);
+                CHECK(result.mutation == Mutation::ObservedChanged);
+                CHECK(result.standardOutput == "before cancellation" && !result.indexAfter.isEmpty());
+                if (finished) {
+                    CHECK(result.exitCode == exitCode);
+                    CHECK(result.diagnostic == (exitCode == 0 ? QString{} : QStringLiteral("Git exited with code 128")));
+                    CHECK(result.standardError == (exitCode == 0 ? QByteArray{} : QByteArray("fatal: index.lock exists")));
+                }
+                adapter.cancel();
+                const auto next = run(adapter, repo.request(Operation::InspectIndex, "tracked.txt"));
+                CHECK(next.outcome == Outcome::Success && !next.cancellationRequested);
+            }
         });
         suite.run("concurrent app mutations reject one owner and release ownership after completion", [] {
             Repository repo;

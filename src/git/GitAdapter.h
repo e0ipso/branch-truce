@@ -54,6 +54,8 @@ struct Result {
     QString diagnostic;
     int exitCode = -1; // Requested operation only; -1 if no normal exit occurred.
     bool outputIncomplete = false;
+    // A cancel request can arrive after the operation's outcome is known.
+    bool cancellationRequested = false;
 };
 
 // Use on the owning event-loop thread. The application selects the executable;
