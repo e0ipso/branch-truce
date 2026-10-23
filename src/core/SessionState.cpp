@@ -121,6 +121,8 @@ Transition FileSession::beginMarkResolved(RevisionId expected, bool confirmUndec
     if (undecidedCount(current().draft) != 0 && !confirmUndecided)
         return Transition::ConfirmationRequired;
     reviewed_ = Review{current(), confirmUndecided};
+    reviewCheckpointSucceeded_ = checkpoint_ && checkpoint_->id == expected
+        && succeeded(checkpointOutcome_, expected);
     return Transition::Applied;
 }
 
@@ -133,6 +135,8 @@ Transition FileSession::recordCheckpoint(RevisionId revision, Outcome outcome, s
         return Transition::StaleRevision;
     checkpointOutcome_ = OperationOutcome{revision, outcome, std::move(detail)};
     if (outcome == Outcome::Succeeded) checkpoint_ = found->second;
+    if (reviewed_ && reviewed_->revision.id == revision)
+        reviewCheckpointSucceeded_ = outcome == Outcome::Succeeded;
     return Transition::Applied;
 }
 
@@ -140,8 +144,7 @@ Transition FileSession::recordWrite(RevisionId revision, Outcome outcome, std::s
 {
     if (!reviewed_ || reviewed_->revision.id != revision
         || (revision < outcomeFloor_ && revision != current_)) return Transition::StaleRevision;
-    if (!checkpoint_ || checkpoint_->id != revision || !succeeded(checkpointOutcome_, revision))
-        return Transition::InvalidOutcome;
+    if (!reviewCheckpointSucceeded_) return Transition::InvalidOutcome;
     writeOutcome_ = OperationOutcome{revision, outcome, std::move(detail)};
     if (outcome == Outcome::Succeeded) written_ = reviewed_->revision;
     return Transition::Applied;
@@ -180,6 +183,7 @@ Transition FileSession::discardToStaged(RevisionId expected)
     checkpoint_ = staged_->revision;
     checkpointOutcome_ = OperationOutcome{current_, Outcome::Succeeded, {}};
     reviewed_ = Review{staged_->revision, staged_->confirmedUndecided};
+    reviewCheckpointSucceeded_ = true;
     appendHistory(current_);
     return Transition::Applied;
 }
@@ -239,7 +243,8 @@ FileFacts FileSession::facts() const
     else if (has(Blocker::StageFailed)) facts.status = FileStatus::StageFailed;
     else if (facts.earlierStaged) facts.status = FileStatus::EarlierStaged;
     else if (facts.resolved) facts.status = FileStatus::Resolved;
-    else if (written) facts.status = FileStatus::WrittenUnresolved;
+    else if (written_ && succeeded(writeOutcome_, written_->id))
+        facts.status = FileStatus::WrittenUnresolved;
     else if (checkpoint) facts.status = FileStatus::SavedDraft;
     else if (undecided != 0) facts.status = FileStatus::Undecided;
     return facts;

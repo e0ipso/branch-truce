@@ -135,6 +135,8 @@ private:
     std::size_t cursor_ = 0;
     std::optional<Revision> checkpoint_;
     std::optional<Review> reviewed_;
+    // The review's checkpoint outcome survives ordinary Saves of newer drafts.
+    bool reviewCheckpointSucceeded_ = false;
     std::optional<Revision> written_;
     std::optional<StagedResult> staged_;
     std::optional<OperationOutcome> checkpointOutcome_;
