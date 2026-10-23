@@ -49,6 +49,8 @@ ctest --test-dir build/core --output-on-failure
 ./tools/prepare-worktree.sh sanitize
 cmake --build build/sanitize --parallel 2
 ctest --test-dir build/sanitize --output-on-failure
+
+/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /bin/bash tools/check-shell-syntax.sh
 ```
 
 Preparation enables `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion`
@@ -68,6 +70,23 @@ also accepts `--smoke-test` for the same startup check. GUI tests must retain a
 Build directories are disposable. The default root `build/` directory is ignored
 by Git. An optional second absolute argument to `prepare-worktree.sh` places
 generated files outside the checkout.
+
+For evidence collection, `./tools/verification-context.sh source` prints the path
+of an environment file under `/tmp/branch-truce-verification.*`. Source that
+file in the calling shell before executing or validating a check. Capture again
+before each validation. Use `desktop`, `core` or `sanitize` instead of `source`
+after configuring that build to include its generated test membership and
+available binaries. Retain the adjacent manifests with the check receipts.
+CTest output logs are excluded from artifact identity.
+
+The stamps record tool contents and versions, installed package versions,
+selected environment variables with set/unset state, platform, committed HEAD
+and selected build artifacts. Package versions do not establish the contents
+of compiler headers, QML plugins or user configuration. These observations alone
+cannot justify a complete build/runtime dependency declaration. The normalized
+shell syntax command above has a separate stamp covering env, Bash and their
+linked libraries. That stamp is empty when exported loader overrides are present,
+so the evidence helper must treat its declaration as incomplete in that case.
 
 ## Coordinator setup hook
 
