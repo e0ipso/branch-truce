@@ -61,11 +61,16 @@ AddressSanitizer and UndefinedBehaviorSanitizer with frame pointers. The default
 sanitizer preparation tests the core without Qt; desktop sanitizers can be
 configured separately with both desktop and sanitizer options ON.
 
-CTest has a core build canary with one version assertion, plus a desktop startup
-canary that loads the embedded QML and Kirigami with offscreen software rendering.
-These establish build wiring, not conflict-resolution behavior. The executable
-also accepts `--smoke-test` for the same startup check. GUI tests must retain a
-30-second timeout. Test output does not report an assertion count for startup.
+CTest includes the core build canary, revisioned session tests and CLI guards.
+Desktop builds also test the Qt session model, the asynchronous Git adapter in
+temporary repositories, and the accepted editor fixture. The session, model
+and Git tests report case and assertion counts; the editor reports assertions.
+The Git test includes the real 30-second operation deadline and has a 45-second
+suite timeout. Its scripted executables live outside the temporary repositories.
+
+The desktop startup canary loads the embedded QML and Kirigami with offscreen
+software rendering. The executable also accepts `--smoke-test` for that check.
+GUI tests retain a 30-second timeout. Startup does not report an assertion count.
 
 Build directories are disposable. The default root `build/` directory is ignored
 by Git. An optional second absolute argument to `prepare-worktree.sh` places

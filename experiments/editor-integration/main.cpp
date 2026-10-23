@@ -499,6 +499,22 @@ int main(int argc, char **argv)
                                   partial.text, partial.left, partial.right), "explicit partial line command");
             check(adapter.move(-1) && adapter.state() == combined, "partial line fixture undo");
             check(adapter.move(1) && adapter.state() == partial, "partial line fixture redo");
+            // Failed history persistence must leave the redo transaction available.
+            check(adapter.move(-1) && adapter.state() == combined, "undo before failed redo");
+            const auto beforeRedoFailure = adapter.acknowledged;
+            recovery.failWrites = true;
+            check(!adapter.move(1) && adapter.state() == combined
+                  && adapter.acknowledged == beforeRedoFailure, "failed redo preserves text choices and revision");
+            check(recovery.restore() == combined, "failed redo preserves the durable snapshot");
+            recovery.failWrites = false;
+            check(adapter.move(1) && adapter.state() == partial, "redo remains available after persistence retry");
+            check(adapter.move(-1) && adapter.choose(partial), "new command after undo replaces the redo branch");
+            check(!adapter.move(1) && adapter.state() == partial, "discarded redo cannot replace a newer command");
+            const auto beforeInvalidRange = adapter.acknowledged;
+            check(!adapter.replace(beforeInvalidRange, 2, 1, QStringLiteral("wrong"), a.left, a.right),
+                  "reversed byte range rejected");
+            check(!adapter.choose(State{QString(QChar(0x2028))}) && adapter.state() == partial
+                  && adapter.acknowledged == beforeInvalidRange, "unsupported choice leaves history and text unchanged");
             // A deleted anchor is rejected by the fixture's exact revision/range guard.
             const auto anchorRevision = adapter.acknowledged;
             const auto anchorText = adapter.state().text;
@@ -557,6 +573,9 @@ int main(int argc, char **argv)
             recovery.failWrites = false;
             check(adapter.retry() && adapter.acknowledged == beforeFailure + 1, "retry acknowledges pending command exactly once");
             check(recovery.restore() == adapter.state() && bufferText(document) == pendingText, "recovery state equals retried buffer");
+            const auto afterRetry = adapter.acknowledged;
+            check(!adapter.retry() && adapter.acknowledged == afterRetry && !adapter.pending,
+                  "repeating a successful recovery retry cannot acknowledge input twice");
             Recovery unavailable(fixtures.filePath(QStringLiteral("missing/snapshot.json")));
             check(!unavailable.persist(a), "actual unavailable-path I/O fails");
             // Corruption is rejected rather than interpreted as an empty draft.

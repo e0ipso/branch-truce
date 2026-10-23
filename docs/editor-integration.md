@@ -38,8 +38,11 @@ QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
 /usr/lib/qt6/bin/qmllint "$PWD/experiments/editor-integration/Editor.qml"
 ```
 
-This is an executable acceptance experiment, not a new CTest or product test
-suite. It returns nonzero for failed assertions. The acceptance runner requires
+The root desktop build also registers this fixture as `editor.baseline` and
+`editor.regression` in CTest. Run both with
+`ctest --test-dir build/desktop -R '^editor\.' --output-on-failure -V`.
+The fixture remains independent of product targets and returns nonzero for
+failed assertions. The acceptance runner requires
 `offscreen` to avoid changing a desktop user's clipboard. Its private clipboard
 is cleared, its owner-only recovery directory is removed, and removal is checked.
 The build directory can be retained for review and removed afterwards.
@@ -47,9 +50,14 @@ The build directory can be retained for review and removed afterwards.
 ## Observed contracts
 
 On Tuxedo OS 24.04.4, GCC 13.3, Qt 6.10.2 and Kirigami 6.24.0, the baseline
-reports 8 assertions and the adapted experiment 149 assertions, both with zero
+reports 8 assertions and the adapted experiment 158 assertions, both with zero
 failures. QML lint produces no diagnostics, and the C++ build uses `-Wall
 -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror`.
+
+Permanent regressions also check failed redo persistence, retrying the same
+redo, replacing the redo branch with a new command, rejecting reversed ranges
+and unsupported choices without mutation, and acknowledging recovered input
+only once across repeated retries.
 
 ### Text and positions
 
