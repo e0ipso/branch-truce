@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QHash>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -14,7 +15,9 @@ enum class Operation {
     // Read-only preflight before releasing a mergetool parent to stage this path.
     // It cannot prevent helpers the independent parent ran before launching us,
     // or guarantee that the parent preserves this checked configuration.
-    CheckParentStaging
+    CheckParentStaging,
+    // Clean/checkout in a private object store. Does not write the repository.
+    CanonicalizeText
 };
 enum class Outcome {
     Success, Rejected, LaunchFailure, ExitFailure, ProcessFailure, Cancelled,
@@ -63,6 +66,12 @@ struct Request {
     QByteArray objectId; // Full hexadecimal ID for object operations.
     quint64 sessionGeneration = 0;
     quint64 inputRevision = 0;
+    QByteArray input = {}; // CanonicalizeText worktree bytes only, including an empty file.
+};
+struct ConversionPolicy {
+    QHash<QByteArray, QByteArray> attributes;
+    QHash<QByteArray, QByteArray> configuration;
+    bool operator==(const ConversionPolicy &) const = default;
 };
 struct Result {
     Request request;
@@ -79,6 +88,10 @@ struct Result {
     bool outputIncomplete = false;
     // A cancel request can arrive after the operation's outcome is known.
     bool cancellationRequested = false;
+    ConversionPolicy conversionPolicy;
+    QString worktreeRoot;
+    QByteArray canonicalBytes; // CanonicalizeText only. standardOutput is checkout form.
+    QByteArray canonicalObjectId;
 };
 
 // Use on the owning event-loop thread. The application selects the executable;

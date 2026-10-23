@@ -13,6 +13,7 @@
 #include <QSet>
 #include <QStringList>
 #include <QThread>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <algorithm>
 #include <cerrno>
@@ -193,6 +194,18 @@ QList<QByteArray> prefix()
             "-c", "core.untrackedCache=false", "-c", "submodule.recurse=false",
             "-c", "protocol.allow=never", "-c", "credential.helper="};
 }
+QString quotedAlternate(const QString &path)
+{
+    // Git parses C-quoted alternate paths, including colons and line breaks.
+    QByteArray quoted = "\"";
+    for (const auto value : QFile::encodeName(path)) {
+        const auto byte = static_cast<unsigned char>(value);
+        if (byte == '"' || byte == '\\' || byte == ':' || byte < 0x20 || byte >= 0x7f) {
+            quoted += '\\' + QByteArray::number(byte, 8).rightJustified(3, '0');
+        } else quoted += value;
+    }
+    return QString::fromLatin1(quoted + '"');
+}
 } // namespace
 
 QString displayPath(const QByteArray &path)
@@ -216,7 +229,8 @@ QString displayPath(const QByteArray &path)
 class GitAdapter::State {
 public:
     enum class Phase { Version, Configuration, PolicyRoot, ObjectDirectory, TrackedPaths, Attributes,
-                       GitDirectory, Hooks, Baseline, Operation, Discovery, Inspection };
+                       GitDirectory, Hooks, Baseline, Operation, Discovery, Inspection,
+                       CanonicalObject, CanonicalCheckout };
     explicit State(GitAdapter *owner, const QString &selected) : q(owner)
     {
         if (QDir::isAbsolutePath(selected) && exactPath(selected)) {
@@ -233,7 +247,7 @@ public:
             pid = process.processId();
             observeNativeLaunch();
             if (!nativeLaunchFailed && !phaseInput.isEmpty() && process.write(phaseInput) != phaseInput.size()) {
-                stop(Outcome::ProcessFailure, QStringLiteral("Could not send Git policy inspection input"));
+                stop(Outcome::ProcessFailure, QStringLiteral("Could not send Git operation input"));
             }
             process.closeWriteChannel();
             if (!nativeLaunchFailed && phase == Phase::Operation && isMutation()) {
@@ -295,12 +309,14 @@ public:
         return operation == Operation::DiscoverRepository
             || operation == Operation::ReadObject || operation == Operation::ReadAttributes
             || operation == Operation::ListUnmerged || operation == Operation::InspectIndex
-            || operation == Operation::Status || operation == Operation::MaterializeSource || stagingPolicy();
+            || operation == Operation::Status || operation == Operation::MaterializeSource
+            || operation == Operation::CanonicalizeText || stagingPolicy();
     }
     bool filterPolicy() const
     {
         return result.request.operation == Operation::Status
-            || result.request.operation == Operation::MaterializeSource || stagingPolicy();
+            || result.request.operation == Operation::MaterializeSource
+            || result.request.operation == Operation::CanonicalizeText || stagingPolicy();
     }
     void signalGroup(int signal)
     {
@@ -321,6 +337,13 @@ public:
         deadline.stop();
         escalation.stop();
         releaseMutation();
+        if (temporaryObjects) {
+            if (!temporaryObjects->remove()) {
+                if (result.outcome == Outcome::Success) result.outcome = Outcome::ProcessFailure;
+                result.diagnostic += QStringLiteral("; could not remove private conversion objects: ") + temporaryObjects->path();
+            }
+            temporaryObjects.reset();
+        }
         if (result.request.operation == Operation::DiscoverRepository && result.outcome != Outcome::Success) {
             result.repository.operation = RepositoryOperation::Unsupported;
             result.repository.supported = false;
@@ -380,7 +403,11 @@ public:
         nativeArguments = {QFile::encodeName(executable)};
         nativeArguments.append(configuration ? QList<QByteArray>{"--no-pager"} : prefix());
         nativeArguments.append(arguments);
-        const auto env = environment();
+        auto env = environment();
+        if (temporaryObjects && (next == Phase::Operation || next == Phase::CanonicalObject || next == Phase::CanonicalCheckout)) {
+            env.insert(QStringLiteral("GIT_OBJECT_DIRECTORY"), temporaryObjects->path());
+            env.insert(QStringLiteral("GIT_ALTERNATE_OBJECT_DIRECTORIES"), quotedAlternate(originalObjectDirectory));
+        }
         nativeEnvironment.clear();
         for (const auto &entry : env.toStringList()) nativeEnvironment.append(entry.toUtf8());
         nativeArgv.clear();
@@ -491,6 +518,12 @@ public:
         for (auto entry = configuration.cbegin(); entry != configuration.cend(); ++entry) {
             const auto &key = entry.key();
             const auto &value = entry.value();
+            if (key == "core.autocrlf" || key == "core.eol" || key == "core.safecrlf"
+                || key == "core.checkroundtripencoding" || key == "core.filemode" || key == "core.attributesfile"
+                || (key.startsWith("filter.") && (key.endsWith(".clean") || key.endsWith(".smudge")
+                    || key.endsWith(".process") || key.endsWith(".required")))) {
+                result.conversionPolicy.configuration.insert(key, value);
+            }
             if ((objectPolicy() && (key == "extensions.partialclone"
                              || (key.startsWith("remote.") && key.endsWith(".promisor") && !falseValue(value))))
                 || (stagingPolicy() && key == "core.fsmonitor" && !falseValue(value))) {
@@ -501,8 +534,27 @@ public:
         }
         return true;
     }
+    bool captureAttributes()
+    {
+        const auto fields = phaseOutput.split('\0');
+        if (fields.isEmpty() || !fields.back().isEmpty() || (fields.size() - 1) % 3 != 0) return false;
+        result.conversionPolicy.attributes.clear();
+        for (qsizetype i = 0; i + 2 < fields.size(); i += 3) {
+            if (fields[i] != result.request.path || fields[i + 1].isEmpty()) return false;
+            const auto &name = fields[i + 1];
+            if (name == "text" || name == "eol" || name == "ident" || name == "working-tree-encoding" || name == "filter") {
+                if (result.conversionPolicy.attributes.contains(name)) return false;
+                result.conversionPolicy.attributes.insert(name, fields[i + 2]);
+            }
+        }
+        return true;
+    }
     bool checkFilters()
     {
+        if (result.request.operation != Operation::Status && !captureAttributes()) {
+            result.diagnostic = QStringLiteral("Outside app: invalid conversion attribute inspection");
+            return false;
+        }
         const auto fields = phaseOutput.split('\0');
         if (fields.isEmpty() || !fields.back().isEmpty() || (fields.size() - 1) % 3 != 0) {
             result.diagnostic = QStringLiteral("Outside app: invalid filter attribute inspection");
@@ -539,6 +591,13 @@ public:
             launch(Phase::GitDirectory, {"rev-parse", "--absolute-git-dir"});
         } else if (stagingPolicy()) {
             launch(Phase::Hooks, {"rev-parse", "--path-format=absolute", "--git-path", "hooks"});
+        } else if (result.request.operation == Operation::CanonicalizeText) {
+            temporaryObjects = std::make_unique<QTemporaryDir>(QStringLiteral("/tmp/branch-truce-conversion-XXXXXX"));
+            if (!temporaryObjects->isValid()) {
+                reject(QStringLiteral("Could not create private conversion object storage"));
+                return;
+            }
+            launch(Phase::Operation, operationArguments(), false, result.request.input);
         } else {
             launch(Phase::Operation, operationArguments());
         }
@@ -571,6 +630,8 @@ public:
             return {"add", "--", r.path};
         case Operation::CheckParentStaging:
             return {"check-attr", "-z", "--all", "--", r.path};
+        case Operation::CanonicalizeText:
+            return {"hash-object", "-w", "--path=" + r.path, "--stdin"};
         }
         return {};
     }
@@ -682,6 +743,7 @@ public:
             // Request paths are repository-relative. Status also examines the
             // whole worktree even when Git is launched from a subdirectory.
             directory = *root;
+            result.worktreeRoot = *root;
             if (isMutation() && !regularFile(directory, result.request.path)) {
                 reject(QStringLiteral("Staging requires one regular file without symlink traversal"));
             } else {
@@ -695,12 +757,15 @@ public:
                 reject(QStringLiteral("Outside app: invalid object directory response"));
             } else if (!localObjectStores(*objects, result.diagnostic)) {
                 reject(result.diagnostic);
-            } else if (result.request.operation == Operation::Status) {
-                launch(Phase::TrackedPaths, {"ls-files", "--cached", "-z"});
-            } else if (filterPolicy()) {
-                launch(Phase::Attributes, {"check-attr", "-z", "--all", "--", result.request.path});
             } else {
-                afterPolicy();
+                originalObjectDirectory = *objects;
+                if (result.request.operation == Operation::Status) {
+                    launch(Phase::TrackedPaths, {"ls-files", "--cached", "-z"});
+                } else if (filterPolicy()) {
+                    launch(Phase::Attributes, {"check-attr", "-z", "--all", "--", result.request.path});
+                } else {
+                    afterPolicy();
+                }
             }
             break;
         }
@@ -800,6 +865,19 @@ public:
             break;
         case Phase::Operation:
             result.outcome = Outcome::Success;
+            if (result.request.operation == Operation::ReadAttributes && !captureAttributes()) {
+                reject(QStringLiteral("Outside app: invalid conversion attribute inspection"));
+                break;
+            }
+            if (result.request.operation == Operation::CanonicalizeText) {
+                if (!phaseOutput.endsWith('\n') || !objectId(phaseOutput.first(phaseOutput.size() - 1))) {
+                    reject(QStringLiteral("Invalid canonical object response"));
+                } else {
+                    result.canonicalObjectId = phaseOutput.first(phaseOutput.size() - 1);
+                    launch(Phase::CanonicalObject, {"cat-file", "blob", result.canonicalObjectId});
+                }
+                break;
+            }
             if (result.request.operation == Operation::ListUnmerged || result.request.operation == Operation::InspectIndex) {
                 const auto entries = parseIndex(phaseOutput);
                 if (!entries) {
@@ -814,6 +892,14 @@ public:
             } else {
                 complete();
             }
+            break;
+        case Phase::CanonicalObject:
+            result.canonicalBytes = phaseOutput;
+            launch(Phase::CanonicalCheckout, {"cat-file", "--filters", "--path=" + result.request.path, result.canonicalObjectId});
+            break;
+        case Phase::CanonicalCheckout:
+            result.outcome = Outcome::Success;
+            complete();
             break;
         case Phase::Inspection:
         case Phase::Discovery:
@@ -835,10 +921,11 @@ public:
             return;
         }
         const bool pathRequired = r.operation == Operation::InspectIndex || r.operation == Operation::ReadAttributes
-            || r.operation == Operation::MaterializeSource || stagingPolicy();
+            || r.operation == Operation::MaterializeSource || r.operation == Operation::CanonicalizeText || stagingPolicy();
         const bool objectRequired = r.operation == Operation::ReadObject || r.operation == Operation::MaterializeSource;
         if ((pathRequired && !relativeFile(r.path)) || (!pathRequired && !r.path.isEmpty())
-            || (objectRequired && !objectId(r.objectId)) || (!objectRequired && !r.objectId.isEmpty())) {
+            || (objectRequired && !objectId(r.objectId)) || (!objectRequired && !r.objectId.isEmpty())
+            || (r.operation != Operation::CanonicalizeText && !r.input.isEmpty()) || r.input.size() > outputLimit) {
             reject(QStringLiteral("Invalid operands for the named Git operation"));
             return;
         }
@@ -852,9 +939,11 @@ public:
     QString executable;
     QString directory;
     QString mutationKey;
+    QString originalObjectDirectory;
     struct stat identity {};
     Result result;
     std::unique_ptr<detail::RepositoryDiscovery> discovery;
+    std::unique_ptr<QTemporaryDir> temporaryObjects;
     QByteArray phaseOutput;
     QByteArray phaseInput;
     QHash<QByteArray, QByteArray> configuration;

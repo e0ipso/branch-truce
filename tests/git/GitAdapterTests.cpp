@@ -1,4 +1,5 @@
 #include "GitAdapter.h"
+#include "TextConversion.h"
 #include "TestHarness.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -186,6 +187,40 @@ Result run(GitAdapter &adapter, const Request &request)
     return completion.run(request);
 }
 
+TextConversionRequest textRequest(const Repository &repo, TextOperation operation, const QByteArray &object)
+{
+    TextConversionRequest request;
+    request.operation = operation;
+    request.directory = repo.root.path();
+    request.path = "tracked.txt";
+    request.objectId = object;
+    request.sessionGeneration = 71;
+    request.inputRevision = 93;
+    request.stages = {{request.path, "100644", object, 2}, {request.path, "100644", object, 3}};
+    return request;
+}
+
+TextConversionResult run(TextConversion &conversion, const TextConversionRequest &request)
+{
+    QEventLoop loop;
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+    std::vector<TextConversionResult> results;
+    QObject::connect(&conversion, &TextConversion::finished, &loop, [&](const TextConversionResult &result) {
+        results.push_back(result);
+        loop.quit();
+    });
+    CHECK(conversion.start(request));
+    CHECK(conversion.busy() && results.empty() && !conversion.start(request));
+    deadline.start(10000);
+    loop.exec();
+    CHECK(results.size() == 1 && !conversion.busy());
+    CHECK(results.front().request.sessionGeneration == request.sessionGeneration);
+    CHECK(results.front().request.inputRevision == request.inputRevision);
+    return results.front();
+}
+
 class EnvironmentValue {
 public:
     EnvironmentValue(QByteArray name, const QByteArray &value)
@@ -294,6 +329,29 @@ public:
                 CHECK(result.outcome == Outcome::Success && result.standardOutput == "before\n");
                 CHECK(result.mutation == Mutation::NotAttempted);
             }
+            TextConversion conversion(gitExecutable);
+            const auto source = run(conversion, textRequest(repo, TextOperation::ReadSource, object));
+            CHECK(source.outcome == Outcome::Success && source.text);
+            CHECK(source.text->canonicalBytes == "before\n" && source.text->document.utf8 == "before\n");
+            CHECK(source.text->canonicalObjectId == object && source.text->mode == "100644");
+            auto prepare = textRequest(repo, TextOperation::PrepareResult, object);
+            prepare.launchResultFormat = source.text->document.format;
+            prepare.editedUtf8 = "conversion result\n";
+            const auto prepared = run(conversion, prepare);
+            CHECK(prepared.outcome == Outcome::Success && prepared.text);
+            CHECK(prepared.text->document.originalBytes == prepare.editedUtf8);
+            CHECK(prepared.text->canonicalBytes == prepare.editedUtf8);
+            // Preparing text must not insert even an unreachable object in the repository.
+            repo.git({"cat-file", "-e", QString::fromLatin1(prepared.text->canonicalObjectId)}, {}, 1);
+            CHECK(repo.git({"show", ":tracked.txt"}) == "before\n");
+            writeFile(repo.path("tracked.txt"), prepared.text->document.originalBytes);
+            CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
+            auto verify = textRequest(repo, TextOperation::VerifyPublished, {});
+            verify.expected = prepared.text;
+            CHECK(run(conversion, verify).outcome == Outcome::Success);
+            repo.git({"update-index", "--chmod=+x", "--", "tracked.txt"});
+            const auto wrongMode = run(conversion, verify);
+            CHECK(wrongMode.outcome == Outcome::Rejected && wrongMode.diagnostic.contains("executable mode"));
         });
         suite.run("unmerged index entries stay NUL-delimited", [] {
             Repository repo;
@@ -526,14 +584,31 @@ public:
                 auto source = repo.request(Operation::MaterializeSource, "tracked.txt");
                 source.objectId = blob;
                 CHECK(run(adapter, source).standardOutput == "before\r\n");
+                TextConversion conversion(gitExecutable);
+                const auto decoded = run(conversion, textRequest(repo, TextOperation::ReadSource, blob));
+                CHECK(decoded.outcome == Outcome::Success && decoded.text);
+                CHECK(decoded.text->document.utf8 == "before\n" && decoded.text->document.originalBytes == "before\r\n");
+                CHECK(decoded.text->policy.attributes.value("eol") == "crlf");
+                CHECK(decoded.text->policy.configuration.value("filter.unused.clean") == "touch .helper-ran; cat");
+                auto prepare = textRequest(repo, TextOperation::PrepareResult, blob);
+                prepare.editedUtf8 = "after\n";
+                const auto prepared = run(conversion, prepare);
+                CHECK(prepared.outcome == Outcome::Success && prepared.text);
+                CHECK(prepared.text->document.originalBytes == "after\r\n" && prepared.text->canonicalBytes == "after\n");
                 CHECK(run(adapter, repo.request(Operation::Status)).outcome == Outcome::Success);
                 CHECK(run(adapter, repo.request(Operation::CheckParentStaging, "tracked.txt")).outcome == Outcome::Success);
                 writeFile(repo.path("tracked.txt"), "after\r\n");
                 CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
                 CHECK(repo.git({"show", ":tracked.txt"}) == "after\n");
+                auto verify = textRequest(repo, TextOperation::VerifyPublished, {});
+                verify.expected = prepared.text;
+                CHECK(run(conversion, verify).outcome == Outcome::Success);
                 // The same adapter must recheck attributes/configuration on every request.
                 writeFile(repo.path(".gitattributes"), "/tracked.txt filter=unused\n");
                 CHECK(run(adapter, source).outcome == Outcome::Rejected);
+                const auto denied = run(conversion, textRequest(repo, TextOperation::ReadSource, blob));
+                CHECK(denied.outcome == Outcome::Rejected && denied.diagnostic.contains("filter"));
+                CHECK(run(conversion, prepare).outcome == Outcome::Rejected);
                 CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Rejected);
                 CHECK(QDir(repo.root.path()).mkdir("subdirectory"));
                 for (const auto operation : {Operation::Status, Operation::MaterializeSource, Operation::StageFile}) {

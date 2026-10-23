@@ -2,8 +2,9 @@
 
 The build separates `branch_truce_core`, `branch_truce_controller`,
 `branch_truce_git`, `branch_truce_storage`, `branch_truce_ui` and the
-`branch-truce` executable. Git and storage currently reserve compilation
-boundaries; they perform no operations. The window is a startup scaffold.
+`branch-truce` executable. Git provides constrained asynchronous inspection and
+conversion; storage provides lossless text codecs. See the
+[supported conversion envelope](text-conversion.md). The window is a startup scaffold.
 The core uses C++20 and the standard library without Qt or platform I/O.
 
 ## Machine provisioning
