@@ -10,7 +10,11 @@ namespace branch_truce::git {
 
 enum class Operation {
     DiscoverRepository, ListUnmerged, Status, InspectIndex, ReadObject,
-    ReadConfiguration, ReadAttributes, MaterializeSource, StageFile
+    ReadConfiguration, ReadAttributes, MaterializeSource, StageFile,
+    // Read-only preflight before releasing a mergetool parent to stage this path.
+    // It cannot prevent helpers the independent parent ran before launching us,
+    // or guarantee that the parent preserves this checked configuration.
+    CheckParentStaging
 };
 enum class Outcome {
     Success, Rejected, LaunchFailure, ExitFailure, ProcessFailure, Cancelled,

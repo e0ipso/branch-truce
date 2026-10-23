@@ -105,7 +105,7 @@ printf '%s\0' "$@" >> .adapter-argv
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --no-pager|--literal-pathspecs) shift ;;
-        -c) shift 2 ;;
+        -c|-C) shift 2 ;;
         *) break ;;
     esac
 done
@@ -114,10 +114,14 @@ case "$1" in
     config) exit 0 ;;
     rev-parse)
         case "$*" in
-            *--git-path*) printf '%s/.git/hooks\n' "$PWD" ;;
+            *--git-path*objects*) printf '%s/.git/objects\n' "$PWD" ;;
+            *--git-path*hooks*) printf '%s/.git/hooks\n' "$PWD" ;;
+            *--show-toplevel*) printf '%s\n' "$PWD" ;;
             *) printf '%s/.git\n' "$PWD" ;;
         esac ;;
+    check-attr) printf 'tracked.txt\0filter\0unspecified\0' ;;
     ls-files)
+        case "$*" in *--cached*) printf 'tracked.txt\0'; exit 0 ;; esac
         if [ -e .after-add ]; then
 )SH";
         script += inspection;
@@ -410,35 +414,154 @@ public:
             CHECK(other.git({"ls-files", "--stage", "-z"}) == otherBefore);
             CHECK(!QFile::exists(other.path("redirected-index")));
         });
-        suite.run("external helpers and executable hooks are rejected before mutation", [] {
-            for (const auto &key : {"filter.fixture.clean", "filter.fixture.smudge", "filter.fixture.process",
-                                    "core.fsmonitor", "remote.origin.promisor"}) {
+        suite.run("helper and offline policy precedes affected reads and staging", [] {
+            for (const auto &driver : {"Fixture", "set", "unset", "unspecified"}) {
+                for (const auto &kind : {"clean", "smudge", "process"}) {
+                    Repository repo;
+                    const auto key = QByteArray("filter.") + driver + '.' + kind;
+                    writeFile(repo.path(".gitattributes"), "tracked.txt filter=" + QByteArray(driver) + '\n');
+                    const auto before = repo.git({"ls-files", "--stage", "-z"});
+                    const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+                    repo.git({"config", QString::fromLatin1(key), "touch .helper-ran; cat"});
+                    GitAdapter adapter(gitExecutable);
+                    // Policy inspection and raw identity reads never invoke filters.
+                    CHECK(run(adapter, repo.request(Operation::ReadAttributes, "tracked.txt")).outcome == Outcome::Success);
+                    auto raw = repo.request(Operation::ReadObject);
+                    raw.objectId = blob;
+                    CHECK(run(adapter, raw).standardOutput == "before\n");
+                    for (const auto operation : {Operation::Status, Operation::MaterializeSource,
+                                                 Operation::CheckParentStaging, Operation::StageFile}) {
+                        auto request = repo.request(operation, operation == Operation::Status ? "" : "tracked.txt");
+                        if (operation == Operation::MaterializeSource) request.objectId = blob;
+                        const auto result = run(adapter, request);
+                        CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
+                        CHECK(result.diagnostic.contains("Outside app") && result.diagnostic.contains("filter"));
+                    }
+                    CHECK(!QFile::exists(repo.path(".helper-ran")));
+                    repo.git({"config", "--unset", QString::fromLatin1(key)});
+                    CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                }
+            }
+            {
                 Repository repo;
-                writeFile(repo.path(".gitattributes"), "* filter=fixture\n");
-                const auto before = repo.git({"ls-files", "--stage", "-z"});
-                const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
-                repo.git({"config", key, key == QByteArray("remote.origin.promisor") ? "true" : "touch .helper-ran"});
                 GitAdapter adapter(gitExecutable);
-                const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
-                CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
-                CHECK(result.diagnostic.contains("Unsupported"));
-                if (QByteArray(key).startsWith("filter.") || QByteArray(key).endsWith(".promisor")) {
-                    auto source = repo.request(Operation::MaterializeSource, "tracked.txt");
-                    source.objectId = blob;
-                    const auto materialized = run(adapter, source);
-                    CHECK(materialized.outcome == Outcome::Rejected && materialized.standardOutput.contains(key));
-                    CHECK(materialized.mutation == Mutation::NotAttempted);
+                const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+                repo.git({"config", "filter.unused.clean", "touch .helper-ran; cat"});
+                repo.git({"config", "filter.unused.smudge", "touch .helper-ran; cat"});
+                repo.git({"config", "filter.unspecified.smudge", "touch .helper-ran; cat"});
+                writeFile(repo.path(".gitattributes"), "other.txt filter=unused\ntracked.txt text eol=crlf\n");
+                auto source = repo.request(Operation::MaterializeSource, "tracked.txt");
+                source.objectId = blob;
+                CHECK(run(adapter, source).standardOutput == "before\r\n");
+                CHECK(run(adapter, repo.request(Operation::Status)).outcome == Outcome::Success);
+                CHECK(run(adapter, repo.request(Operation::CheckParentStaging, "tracked.txt")).outcome == Outcome::Success);
+                writeFile(repo.path("tracked.txt"), "after\r\n");
+                CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
+                CHECK(repo.git({"show", ":tracked.txt"}) == "after\n");
+                // The same adapter must recheck attributes/configuration on every request.
+                writeFile(repo.path(".gitattributes"), "/tracked.txt filter=unused\n");
+                CHECK(run(adapter, source).outcome == Outcome::Rejected);
+                CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Rejected);
+                CHECK(QDir(repo.root.path()).mkdir("subdirectory"));
+                for (const auto operation : {Operation::Status, Operation::MaterializeSource, Operation::StageFile}) {
+                    auto request = repo.request(operation, operation == Operation::Status ? "" : "tracked.txt");
+                    request.directory = repo.path("subdirectory");
+                    if (operation == Operation::MaterializeSource) request.objectId = blob;
+                    CHECK(run(adapter, request).outcome == Outcome::Rejected);
+                }
+                writeFile(repo.path(".gitattributes"), "/other.txt filter=unused\n");
+                for (const auto operation : {Operation::Status, Operation::MaterializeSource, Operation::StageFile}) {
+                    auto request = repo.request(operation, operation == Operation::Status ? "" : "tracked.txt");
+                    request.directory = repo.path("subdirectory");
+                    if (operation == Operation::MaterializeSource) request.objectId = blob;
+                    CHECK(run(adapter, request).outcome == Outcome::Success);
                 }
                 CHECK(!QFile::exists(repo.path(".helper-ran")));
-                repo.git({"config", "--unset", key});
-                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
             }
-            Repository repo;
-            writeFile(repo.path(".git/hooks/pre-commit"), "#!/bin/sh\ntouch .hook-ran\n", true);
-            GitAdapter adapter(gitExecutable);
-            const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
-            CHECK(result.outcome == Outcome::Rejected && result.diagnostic.contains("hooks"));
-            CHECK(result.mutation == Mutation::NotAttempted && !QFile::exists(repo.path(".hook-ran")));
+            for (const auto &hooksPath : {".git/hooks", "custom hooks"}) {
+                Repository repo;
+                CHECK(QDir(repo.root.path()).mkpath(hooksPath));
+                repo.git({"config", "core.hooksPath", hooksPath});
+                const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
+                GitAdapter adapter(gitExecutable);
+                writeFile(repo.path(QString(hooksPath) + "/pre-commit"), "#!/bin/sh\ntouch .hook-ran\n", true);
+                CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
+                const auto hook = repo.path(QString(hooksPath) + "/post-index-change");
+                writeFile(hook, "#!/bin/sh\ntouch .hook-ran\n", true);
+                for (const auto operation : {Operation::CheckParentStaging, Operation::StageFile}) {
+                    const auto result = run(adapter, repo.request(operation, "tracked.txt"));
+                    CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
+                    CHECK(result.diagnostic.contains("post-index-change"));
+                }
+                auto source = repo.request(Operation::MaterializeSource, "tracked.txt");
+                source.objectId = blob;
+                CHECK(run(adapter, source).outcome == Outcome::Success);
+                CHECK(run(adapter, repo.request(Operation::Status)).outcome == Outcome::Success);
+                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                CHECK(!QFile::exists(repo.path(".hook-ran")));
+                CHECK(QFile::setPermissions(hook, QFileDevice::ReadOwner | QFileDevice::WriteOwner));
+                CHECK(run(adapter, repo.request(Operation::CheckParentStaging, "tracked.txt")).outcome == Outcome::Success);
+                repo.git({"config", "core.hooksPath", "/dev/null"});
+                CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
+            }
+            {
+                Repository repo;
+                GitAdapter adapter(gitExecutable);
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
+                repo.git({"config", "core.fsmonitor", "touch .monitor-ran"});
+                CHECK(run(adapter, repo.request(Operation::Status)).outcome == Outcome::Success);
+                for (const auto operation : {Operation::CheckParentStaging, Operation::StageFile}) {
+                    const auto result = run(adapter, repo.request(operation, "tracked.txt"));
+                    CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
+                    CHECK(result.diagnostic.contains("core.fsmonitor"));
+                }
+                CHECK(!QFile::exists(repo.path(".monitor-ran")));
+                repo.git({"config", "core.fsmonitor", "false"});
+                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
+            }
+            for (int scenario = 0; scenario < 4; ++scenario) {
+                Repository repo;
+                Repository alternate;
+                const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
+                if (scenario == 0) repo.git({"config", "extensions.partialClone", "origin"});
+                if (scenario == 1) repo.git({"config", "remote.origin.promisor", "true"});
+                if (scenario == 2) writeFile(repo.path(".git/objects/pack/pack-fixture.promisor"), "");
+                if (scenario == 3) {
+                    writeFile(alternate.path(".git/objects/pack/pack-fixture.promisor"), "");
+                    writeFile(repo.path(".git/objects/info/alternates"), alternate.path(".git/objects").toUtf8() + '\n');
+                }
+                repo.git({"config", "remote.origin.url", repo.root.path()});
+                repo.git({"config", "remote.origin.uploadpack", "touch .fetch-ran"});
+                GitAdapter adapter(gitExecutable);
+                for (const auto operation : {Operation::ListUnmerged, Operation::InspectIndex,
+                                             Operation::ReadObject, Operation::ReadAttributes, Operation::Status,
+                                             Operation::MaterializeSource, Operation::CheckParentStaging, Operation::StageFile}) {
+                    const bool noPath = operation == Operation::ListUnmerged || operation == Operation::ReadObject || operation == Operation::Status;
+                    auto request = repo.request(operation, noPath ? "" : "tracked.txt");
+                    if (operation == Operation::ReadObject || operation == Operation::MaterializeSource) request.objectId = blob;
+                    const auto result = run(adapter, request);
+                    CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
+                    CHECK(result.diagnostic.contains("Outside app"));
+                }
+                // A missing object must be rejected before Git can try lazy retrieval.
+                auto missing = repo.request(Operation::ReadObject);
+                missing.objectId = QByteArray(40, '1');
+                CHECK(run(adapter, missing).outcome == Outcome::Rejected);
+                CHECK(!QFile::exists(repo.path(".fetch-ran")));
+                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                if (scenario == 0) repo.git({"config", "--unset", "extensions.partialClone"});
+                if (scenario == 1) repo.git({"config", "--add", "remote.origin.promisor", "false"});
+                if (scenario == 2) CHECK(QFile::remove(repo.path(".git/objects/pack/pack-fixture.promisor")));
+                if (scenario == 3) CHECK(QFile::remove(alternate.path(".git/objects/pack/pack-fixture.promisor")));
+                auto local = repo.request(Operation::ReadObject);
+                local.objectId = blob;
+                CHECK(run(adapter, local).outcome == Outcome::Success);
+                CHECK(run(adapter, missing).outcome == Outcome::ExitFailure);
+                CHECK(!QFile::exists(repo.path(".fetch-ran")));
+            }
         });
         suite.run("failed preflight and failed launch retain diagnostics", [] {
             Repository repo;

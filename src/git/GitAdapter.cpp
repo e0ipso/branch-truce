@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QMutex>
 #include <QMutexLocker>
 #include <QProcess>
@@ -109,6 +110,75 @@ bool falseValue(const QByteArray &value)
     const auto lower = value.toLower();
     return lower == "false" || lower == "no" || lower == "off" || lower == "0";
 }
+std::optional<QString> responsePath(const QByteArray &output)
+{
+    if (!output.endsWith('\n')) return std::nullopt;
+    const auto bytes = output.first(output.size() - 1);
+    const auto path = QFile::decodeName(bytes);
+    if (bytes.isEmpty() || bytes.contains('\0') || QFile::encodeName(path) != bytes
+        || !QDir::isAbsolutePath(path)) return std::nullopt;
+    return path;
+}
+bool localObjectStores(const QString &objects, QString &diagnostic)
+{
+    // Git 2.43 has no reliable no-lazy-fetch switch. Inspect the common object
+    // store and its alternates without asking Git to open any object first.
+    QStringList pending{objects};
+    QSet<QString> seen;
+    qsizetype alternateBytes = 0;
+    while (!pending.isEmpty()) {
+        const auto path = QFileInfo(pending.takeLast()).canonicalFilePath();
+        if (path.isEmpty() || !QFileInfo(path).isDir()
+            || ::access(QFile::encodeName(path).constData(), R_OK | X_OK) != 0) {
+            diagnostic = QStringLiteral("Outside app: object storage cannot be inspected offline");
+            return false;
+        }
+        if (seen.contains(path)) continue;
+        seen.insert(path);
+        if (seen.size() > 256) {
+            diagnostic = QStringLiteral("Outside app: too many alternate object stores to inspect");
+            return false;
+        }
+        const auto packPath = path + QStringLiteral("/pack");
+        const QFileInfo packInfo(packPath);
+        if (packInfo.exists() || packInfo.isSymLink()) {
+            if (!packInfo.isDir() || ::access(QFile::encodeName(packPath).constData(), R_OK | X_OK) != 0) {
+                diagnostic = QStringLiteral("Outside app: object packs cannot be inspected offline");
+                return false;
+            }
+            if (!QDir(packPath).entryList({QStringLiteral("*.promisor")},
+                                         QDir::Files | QDir::Hidden | QDir::System).isEmpty()) {
+                diagnostic = QStringLiteral("Outside app: promisor object packs require unsupported lazy fetching");
+                return false;
+            }
+        }
+        QFile alternates(path + QStringLiteral("/info/alternates"));
+        const QFileInfo alternateInfo(alternates.fileName());
+        if (!alternateInfo.exists() && !alternateInfo.isSymLink()) continue;
+        if (!alternates.open(QIODevice::ReadOnly)) {
+            diagnostic = QStringLiteral("Outside app: alternate object stores cannot be inspected");
+            return false;
+        }
+        const auto bytes = alternates.read(inspectionLimit + 1);
+        alternateBytes += bytes.size();
+        if (alternates.error() != QFileDevice::NoError || alternateBytes > inspectionLimit) {
+            diagnostic = QStringLiteral("Outside app: alternate object store list is unreadable or oversized");
+            return false;
+        }
+        for (const auto &line : bytes.split('\n')) {
+            if (line.isEmpty()) continue;
+            const auto decoded = QFile::decodeName(line);
+            // Fail closed on Git's quoted alternate syntax rather than inspect
+            // a different directory. Ordinary relative/absolute alternates work.
+            if (line.startsWith('"') || line.contains('\0') || QFile::encodeName(decoded) != line) {
+                diagnostic = QStringLiteral("Outside app: alternate object path cannot be inspected losslessly");
+                return false;
+            }
+            pending.append(QDir::isAbsolutePath(decoded) ? decoded : path + QLatin1Char('/') + decoded);
+        }
+    }
+    return true;
+}
 bool sameExecutable(const struct stat &a, const struct stat &b)
 {
     return a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_mode == b.st_mode
@@ -184,7 +254,8 @@ QString displayPath(const QByteArray &path)
 
 class GitAdapter::State {
 public:
-    enum class Phase { Version, Configuration, GitDirectory, Hooks, Baseline, Operation, Inspection };
+    enum class Phase { Version, Configuration, PolicyRoot, ObjectDirectory, TrackedPaths, Attributes,
+                       GitDirectory, Hooks, Baseline, Operation, Inspection };
     explicit State(GitAdapter *owner, const QString &selected) : q(owner)
     {
         if (QDir::isAbsolutePath(selected) && exactPath(selected)) {
@@ -200,6 +271,9 @@ public:
         QObject::connect(&process, &QProcess::started, q, [this] {
             pid = process.processId();
             observeNativeLaunch();
+            if (!nativeLaunchFailed && !phaseInput.isEmpty() && process.write(phaseInput) != phaseInput.size()) {
+                stop(Outcome::ProcessFailure, QStringLiteral("Could not send Git policy inspection input"));
+            }
             process.closeWriteChannel();
             if (!nativeLaunchFailed && phase == Phase::Operation && isMutation()) {
                 mutationStarted = true;
@@ -253,6 +327,19 @@ public:
         releaseMutation();
     }
     bool isMutation() const { return result.request.operation == Operation::StageFile; }
+    bool stagingPolicy() const { return isMutation() || result.request.operation == Operation::CheckParentStaging; }
+    bool objectPolicy() const
+    {
+        const auto operation = result.request.operation;
+        return operation == Operation::ReadObject || operation == Operation::ReadAttributes
+            || operation == Operation::ListUnmerged || operation == Operation::InspectIndex
+            || operation == Operation::Status || operation == Operation::MaterializeSource || stagingPolicy();
+    }
+    bool filterPolicy() const
+    {
+        return result.request.operation == Operation::Status
+            || result.request.operation == Operation::MaterializeSource || stagingPolicy();
+    }
     void signalGroup(int signal)
     {
         if (pid > 0) {
@@ -306,10 +393,12 @@ public:
             stopping = true;
         }
     }
-    void launch(Phase next, const QList<QByteArray> &arguments, bool configuration = false)
+    void launch(Phase next, const QList<QByteArray> &arguments, bool configuration = false,
+                const QByteArray &input = {})
     {
         phase = next;
         phaseOutput.clear();
+        phaseInput = input;
         struct stat current {};
         if (!secureExecutable(executable, current) || !sameExecutable(identity, current)) {
             if (next == Phase::Inspection) {
@@ -420,27 +509,69 @@ public:
     }
     bool checkConfiguration()
     {
-        const auto operation = result.request.operation;
-        const bool helpers = operation == Operation::Status || operation == Operation::MaterializeSource || isMutation();
-        const bool objects = helpers || operation == Operation::ReadObject;
+        configuration.clear();
         for (const auto &entry : phaseOutput.split('\0')) {
             if (entry.isEmpty()) {
                 continue;
             }
             const auto split = entry.indexOf('\n');
-            const auto key = entry.left(split).toLower();
+            // Git normalizes section/key case, but driver/remote subsections
+            // are case-sensitive. The last value is the effective setting.
+            const auto key = entry.left(split);
             const auto value = split < 0 ? QByteArray{} : entry.mid(split + 1);
-            if ((objects && (key == "extensions.partialclone"
+            configuration.insert(key, value);
+        }
+        for (auto entry = configuration.cbegin(); entry != configuration.cend(); ++entry) {
+            const auto &key = entry.key();
+            const auto &value = entry.value();
+            if ((objectPolicy() && (key == "extensions.partialclone"
                              || (key.startsWith("remote.") && key.endsWith(".promisor") && !falseValue(value))))
-                || (helpers && key.startsWith("filter.") && !value.isEmpty()
-                    && (key.endsWith(".clean") || key.endsWith(".smudge") || key.endsWith(".process")))
-                || (isMutation() && key == "core.fsmonitor" && !falseValue(value))) {
-                result.diagnostic = QStringLiteral("Unsupported partial repository or external helper setting: ")
+                || (stagingPolicy() && key == "core.fsmonitor" && !falseValue(value))) {
+                result.diagnostic = QStringLiteral("Outside app: unsupported partial repository or filesystem monitor setting: ")
                     + QString::fromUtf8(key);
                 return false;
             }
         }
         return true;
+    }
+    bool checkFilters()
+    {
+        const auto fields = phaseOutput.split('\0');
+        if (fields.isEmpty() || !fields.back().isEmpty() || (fields.size() - 1) % 3 != 0) {
+            result.diagnostic = QStringLiteral("Outside app: invalid filter attribute inspection");
+            return false;
+        }
+        for (qsizetype i = 0; i + 2 < fields.size(); i += 3) {
+            if (!relativeFile(fields[i])
+                || (result.request.operation != Operation::Status && fields[i] != result.request.path)) {
+                result.diagnostic = QStringLiteral("Outside app: filter attributes do not match the requested path");
+                return false;
+            }
+            if (fields[i + 1] != "filter") continue;
+            const auto &driver = fields[i + 2];
+            // --all omits unspecified attributes. set/unset can still be
+            // literal driver values, so a matching helper must be denied.
+            const auto prefix = "filter." + driver;
+            if (!configuration.value(prefix + ".clean").isEmpty()
+                || !configuration.value(prefix + ".smudge").isEmpty()
+                || !configuration.value(prefix + ".process").isEmpty()
+                || (configuration.contains(prefix + ".required") && !falseValue(configuration.value(prefix + ".required")))) {
+                result.diagnostic = QStringLiteral("Outside app: custom filter '%1' is unsupported for %2")
+                    .arg(displayPath(driver), displayPath(fields[i]));
+                return false;
+            }
+        }
+        return true;
+    }
+    void afterPolicy()
+    {
+        if (isMutation()) {
+            launch(Phase::GitDirectory, {"rev-parse", "--absolute-git-dir"});
+        } else if (stagingPolicy()) {
+            launch(Phase::Hooks, {"rev-parse", "--path-format=absolute", "--git-path", "hooks"});
+        } else {
+            launch(Phase::Operation, operationArguments());
+        }
     }
     QList<QByteArray> indexArguments() const
     {
@@ -468,6 +599,8 @@ public:
             return {"cat-file", "--filters", "--path=" + r.path, r.objectId};
         case Operation::StageFile:
             return {"add", "--", r.path};
+        case Operation::CheckParentStaging:
+            return {"check-attr", "-z", "--all", "--", r.path};
         }
         return {};
     }
@@ -550,11 +683,61 @@ public:
                 result.exitCode = 0;
                 result.outcome = Outcome::Success;
                 complete();
-            } else if (isMutation()) {
-                launch(Phase::GitDirectory, {"rev-parse", "--absolute-git-dir"});
+            } else if (objectPolicy()) {
+                launch(Phase::PolicyRoot, {"rev-parse", "--path-format=absolute", "--show-toplevel"});
             } else {
-                launch(Phase::Operation, operationArguments());
+                afterPolicy();
             }
+            break;
+        case Phase::PolicyRoot: {
+            const auto root = responsePath(phaseOutput);
+            if (!root || !QFileInfo(*root).isDir()) {
+                reject(QStringLiteral("Outside app: invalid worktree root response"));
+                break;
+            }
+            const auto prefix = *root == QLatin1String("/") ? *root : *root + QLatin1Char('/');
+            if (executable.startsWith(prefix)) {
+                reject(QStringLiteral("The trusted Git executable must be outside the repository"));
+                break;
+            }
+            // Request paths are repository-relative. Status also examines the
+            // whole worktree even when Git is launched from a subdirectory.
+            directory = *root;
+            if (isMutation() && !regularFile(directory, result.request.path)) {
+                reject(QStringLiteral("Staging requires one regular file without symlink traversal"));
+            } else {
+                launch(Phase::ObjectDirectory, {"rev-parse", "--path-format=absolute", "--git-path", "objects"});
+            }
+            break;
+        }
+        case Phase::ObjectDirectory: {
+            const auto objects = responsePath(phaseOutput);
+            if (!objects) {
+                reject(QStringLiteral("Outside app: invalid object directory response"));
+            } else if (!localObjectStores(*objects, result.diagnostic)) {
+                reject(result.diagnostic);
+            } else if (result.request.operation == Operation::Status) {
+                launch(Phase::TrackedPaths, {"ls-files", "--cached", "-z"});
+            } else if (filterPolicy()) {
+                launch(Phase::Attributes, {"check-attr", "-z", "--all", "--", result.request.path});
+            } else {
+                afterPolicy();
+            }
+            break;
+        }
+        case Phase::TrackedPaths:
+            if (!phaseOutput.isEmpty() && !phaseOutput.endsWith('\0')) {
+                reject(QStringLiteral("Outside app: invalid tracked path inspection"));
+            } else if (phaseOutput.isEmpty()) {
+                afterPolicy();
+            } else {
+                const auto paths = phaseOutput;
+                launch(Phase::Attributes, {"check-attr", "-z", "--all", "--stdin"}, false, paths);
+            }
+            break;
+        case Phase::Attributes:
+            if (!checkFilters()) reject(result.diagnostic);
+            else afterPolicy();
             break;
         case Phase::GitDirectory: {
             // Remove Git's delimiter, preserving newlines in the directory name.
@@ -591,33 +774,41 @@ public:
         }
         case Phase::Hooks: {
             if (!phaseOutput.endsWith('\n')) {
-                reject(QStringLiteral("Invalid hooks directory response"));
+                reject(QStringLiteral("Outside app: invalid hooks directory response"));
                 break;
             }
             phaseOutput.chop(1);
             const auto decoded = QFile::decodeName(phaseOutput);
             if (QFile::encodeName(decoded) != phaseOutput) {
-                reject(QStringLiteral("Hooks directory cannot round-trip through Qt's directory API"));
+                reject(QStringLiteral("Outside app: hooks directory cannot round-trip through Qt's directory API"));
                 break;
             }
             const QFileInfo info(decoded);
             const QDir hooks(info.isAbsolute() ? info.filePath() : directory + QLatin1Char('/') + info.filePath());
             if (hooks.exists()) {
                 if (!QFileInfo(hooks.path()).isReadable()) {
-                    reject(QStringLiteral("Hooks directory cannot be inspected"));
+                    reject(QStringLiteral("Outside app: hooks directory cannot be inspected"));
                     break;
                 }
-                for (const auto &entry : hooks.entryInfoList(QDir::Files | QDir::Hidden | QDir::System)) {
-                    if (entry.isExecutable() && !entry.fileName().endsWith(QLatin1String(".sample"))) {
-                        reject(QStringLiteral("Executable repository hooks are unsupported"));
-                        return;
-                    }
+                // git add and its mergetool parent run post-index-change, not
+                // commit/checkout hooks. Inspect the effective core.hooksPath.
+                const QFileInfo hook(hooks.filePath(QStringLiteral("post-index-change")));
+                if (hook.isExecutable()) {
+                    reject(QStringLiteral("Outside app: executable post-index-change hook is unsupported"));
+                    return;
                 }
-            } else if (info.exists() || info.isSymLink()) {
-                reject(QStringLiteral("Hooks path is not an inspectable directory"));
+            } else if ((info.exists() || info.isSymLink()) && info.canonicalFilePath() != QLatin1String("/dev/null")) {
+                reject(QStringLiteral("Outside app: hooks path is not an inspectable directory"));
                 break;
             }
-            launch(Phase::Baseline, indexArguments());
+            if (isMutation()) {
+                launch(Phase::Baseline, indexArguments());
+            } else {
+                result.standardOutput.clear();
+                result.outcome = Outcome::Success;
+                result.exitCode = 0;
+                complete();
+            }
             break;
         }
         case Phase::Baseline:
@@ -664,15 +855,11 @@ public:
             return;
         }
         const bool pathRequired = r.operation == Operation::InspectIndex || r.operation == Operation::ReadAttributes
-            || r.operation == Operation::MaterializeSource || isMutation();
+            || r.operation == Operation::MaterializeSource || stagingPolicy();
         const bool objectRequired = r.operation == Operation::ReadObject || r.operation == Operation::MaterializeSource;
         if ((pathRequired && !relativeFile(r.path)) || (!pathRequired && !r.path.isEmpty())
             || (objectRequired && !objectId(r.objectId)) || (!objectRequired && !r.objectId.isEmpty())) {
             reject(QStringLiteral("Invalid operands for the named Git operation"));
-            return;
-        }
-        if (isMutation() && !regularFile(directory, r.path)) {
-            reject(QStringLiteral("Staging requires one regular file without symlink traversal"));
             return;
         }
         deadline.start(deadlineMs);
@@ -688,6 +875,8 @@ public:
     struct stat identity {};
     Result result;
     QByteArray phaseOutput;
+    QByteArray phaseInput;
+    QHash<QByteArray, QByteArray> configuration;
     QList<QByteArray> nativeArguments;
     QList<QByteArray> nativeEnvironment;
     std::vector<char *> nativeArgv;
