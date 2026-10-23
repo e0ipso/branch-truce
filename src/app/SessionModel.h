@@ -52,6 +52,8 @@ Q_SIGNALS:
     void summaryChanged();
 
 private:
+    friend class SessionCoordinator;
+    void replaceFiles(std::vector<FileSession> files);
     template<typename Command>
     Transition update(const std::string &id, Command command)
     {

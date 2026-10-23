@@ -2,8 +2,9 @@
 
 `core/SessionState.h` is C++20 value state with no Qt, filesystem or Git
 dependency. `app/SessionModel.h` adapts it to a Qt list model exposed as
-`applicationController.files`. Loading files and performing actual storage,
-editing commands and Git operations belong to later adapters. This change
+`applicationController.files`. `applicationController.coordinator` owns session
+replacement and background execution. Repository loading, storage and editor
+integration still need their adapters. This change
 does not make the startup window a working conflict resolver.
 
 ## Revisions and history
@@ -53,8 +54,9 @@ by storage and Git adapters, always for the captured transaction ID:
 It blocks finish until an adapter inspects the outcome. Successful snapshots
 and the most recent operation outcomes are separate: a failed newer write or
 stage must not erase the earlier successful snapshot or claim the current
-result is resolved. Adapters must serialize operations for a file, including
-retries of one revision; callbacks do not have per-operation request tokens.
+result is resolved. Adapters submit mutations through `SessionCoordinator`,
+including retries of one revision. Model callbacks alone do not have
+per-operation request tokens.
 Callbacks for superseded review declarations or deliberately discarded drafts
 are rejected. Revision IDs are local to one file session, not repository IDs.
 
@@ -88,6 +90,47 @@ roles. Revisions and combination order use decimal strings to preserve 64-bit
 identity in JavaScript. `pathBytes` retains the original bytes; `path` is the
 UTF-8 display form. Each applied transition emits `dataChanged` for its row and
 `summaryChanged` for aggregates, preserving persistent row indexes.
+
+## Session execution
+
+`SessionCoordinator::replaceSession` takes a discovered worktree root, verified
+operation identity and loaded file values. It resets the model and advances a
+session generation, even when reopening the same operation. Invalid roots,
+empty operation identities and duplicate file IDs leave the current session
+intact. Worktree roots are canonicalized so symlink aliases share a queue.
+
+`submit` runs expensive computation or serialization on Qt's thread pool.
+Workers receive copied paths, revisions and task identities; they must not
+capture model pointers or GUI objects. Completion callbacks run on the model's
+owning thread. Admission and completion both check session generation,
+worktree, operation and the file's transaction, result and decision revisions.
+Cancellation, replaced sessions and stale revisions skip the callback entirely.
+`taskFinished` reports all outcomes for diagnostics, with their disposition and
+original identity. It does not authorize changes to the current model.
+
+`submitMutation` queues app-owned mutations in request order per worktree.
+Its worker calls `TaskControl::beginMutation` immediately before the first side
+effect and stops when that returns false. Cancellation before admission retains
+`NotAttempted`. After admission, a separate inspection runs even if cancelled
+or the worker throws. The queue stays occupied through inspection. Observed
+changes, observed unchanged state and uncertainty are distinct, and none imply
+a rollback. An inspection exception or missing observation retains uncertainty.
+`mutationOutcomes` keeps the original task's evidence across session replacement.
+An uncertain outcome remains outstanding and needs further adapter inspection.
+
+`submitGit` keeps Git on asynchronous QProcess signals. Stage requests use the
+same mutation queue through the adapter's final index inspection. The controller
+selects the Git executable; the coordinator supplies the directory and revision
+tags, and requires staging to address the captured file path. Adapter index
+observations do not prove the state of the worktree or attribute changes to one
+writer. Git's locks and mutation-time baseline checks remain required.
+
+Different worktrees can proceed independently. This queue coordinates one
+application controller, not other processes. Workers cooperate with cancellation;
+the coordinator never waits on them on the GUI thread. Destruction cancels
+controls and disconnects delivery. In-flight mutations may still finish, so a
+normal close must settle them and retain outcomes before destroying the controller.
+The startup window still has no repository-loading or publication action.
 
 `canFinish` requires at least one loaded file and current verified resolution
 of every file. `finishBlockers` includes each file ID and display path for

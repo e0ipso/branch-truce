@@ -66,6 +66,14 @@ QStringList blockerData(const FileFacts &facts)
 
 SessionModel::SessionModel(QObject *parent) : QAbstractListModel(parent) {}
 
+void SessionModel::replaceFiles(std::vector<FileSession> files)
+{
+    beginResetModel();
+    files_ = std::move(files);
+    endResetModel();
+    Q_EMIT summaryChanged();
+}
+
 int SessionModel::rowCount(const QModelIndex &parent) const
 {
     return parent.isValid() ? 0 : totalFiles();
