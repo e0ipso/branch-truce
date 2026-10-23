@@ -1,0 +1,2 @@
+add_library(branch_truce_storage STATIC RecoveryStore.cpp)
+target_link_libraries(branch_truce_storage PRIVATE Qt6::Core branch_truce_build_options)

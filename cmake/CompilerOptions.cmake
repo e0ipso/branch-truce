@@ -1,0 +1,15 @@
+add_library(branch_truce_build_options INTERFACE)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(branch_truce_build_options INTERFACE
+        -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion)
+    if(BRANCH_TRUCE_WARNINGS_AS_ERRORS)
+        target_compile_options(branch_truce_build_options INTERFACE -Werror)
+    endif()
+    if(BRANCH_TRUCE_SANITIZERS)
+        target_compile_options(branch_truce_build_options INTERFACE
+            -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(branch_truce_build_options INTERFACE -fsanitize=address,undefined)
+    endif()
+elseif(BRANCH_TRUCE_SANITIZERS OR BRANCH_TRUCE_WARNINGS_AS_ERRORS)
+    message(FATAL_ERROR "Warning-error and sanitizer configurations require GCC or Clang")
+endif()
