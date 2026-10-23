@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QList>
 #include <QObject>
 #include <QString>
 #include <memory>
@@ -19,10 +20,20 @@ enum class Outcome {
 // to this process rather than a concurrent writer, and do not describe the worktree.
 enum class Mutation { NotAttempted, ObservedUnchanged, ObservedChanged, Uncertain };
 
+// A label only. Never convert this text back into a path for an operation.
+[[nodiscard]] QString displayPath(const QByteArray &path);
+
+struct IndexEntry {
+    QByteArray path; // Repository-relative Linux filename bytes, without a NUL.
+    QByteArray mode;
+    QByteArray objectId;
+    unsigned int stage = 0;
+};
+
 struct Request {
     Operation operation = Operation::DiscoverRepository;
     QString directory;
-    QString path; // Exact relative path, never a pathspec or an argument list.
+    QByteArray path; // Exact relative filename bytes, never display text or a pathspec.
     QByteArray objectId; // Full hexadecimal ID for object operations.
     quint64 sessionGeneration = 0;
     quint64 inputRevision = 0;
@@ -35,6 +46,7 @@ struct Result {
     QByteArray standardError;
     QByteArray indexBefore;
     QByteArray indexAfter;
+    QList<IndexEntry> indexEntries; // Parsed ListUnmerged/InspectIndex output on success.
     QString diagnostic;
     int exitCode = -1; // Requested operation only; -1 if no normal exit occurred.
     bool outputIncomplete = false;

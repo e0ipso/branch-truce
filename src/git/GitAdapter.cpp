@@ -12,10 +12,15 @@
 #include <QThread>
 #include <QTimer>
 #include <algorithm>
+#include <cerrno>
 #include <csignal>
+#include <cstring>
+#include <fcntl.h>
+#include <optional>
 #include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 namespace branch_truce::git {
 namespace {
@@ -32,15 +37,15 @@ bool exactPath(const QString &path)
 {
     return !path.contains(QChar::Null) && QFile::decodeName(QFile::encodeName(path)) == path;
 }
-bool relativeFile(const QString &path)
+bool relativeFile(const QByteArray &path)
 {
     // Git consumes Linux paths. QDir also treats a leading ':' as an absolute
     // Qt resource path, but ':' is an ordinary filename byte for Git.
-    if (path.isEmpty() || path.startsWith(QLatin1Char('/')) || !exactPath(path)) {
+    if (path.isEmpty() || path.startsWith('/') || path.contains('\0')) {
         return false;
     }
-    for (const auto &part : path.split(QLatin1Char('/'))) {
-        if (part.isEmpty() || part == QLatin1String(".") || part == QLatin1String("..")) {
+    for (const auto &part : path.split('/')) {
+        if (part.isEmpty() || part == "." || part == "..") {
             return false;
         }
     }
@@ -52,6 +57,52 @@ bool objectId(const QByteArray &id)
         && std::all_of(id.cbegin(), id.cend(), [](char c) {
             return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
         });
+}
+std::optional<QList<IndexEntry>> parseIndex(const QByteArray &bytes)
+{
+    QList<IndexEntry> entries;
+    qsizetype offset = 0;
+    while (offset < bytes.size()) {
+        const auto end = bytes.indexOf('\0', offset);
+        if (end < 0) return std::nullopt;
+        const auto record = bytes.mid(offset, end - offset);
+        const auto tab = record.indexOf('\t');
+        if (tab < 0) return std::nullopt;
+        const auto fields = record.first(tab).split(' ');
+        const auto path = record.mid(tab + 1);
+        if (fields.size() != 3 || fields[0].size() != 6
+            || !std::all_of(fields[0].cbegin(), fields[0].cend(), [](char c) { return c >= '0' && c <= '7'; })
+            || !objectId(fields[1]) || fields[2].size() != 1 || fields[2][0] < '0' || fields[2][0] > '3'
+            || !relativeFile(path)) {
+            return std::nullopt;
+        }
+        entries.append({path, fields[0], fields[1], static_cast<unsigned int>(fields[2][0] - '0')});
+        offset = end + 1;
+    }
+    return entries;
+}
+bool regularFile(const QString &directory, const QByteArray &path)
+{
+    // QFile's QString boundary cannot address arbitrary Linux filename bytes.
+    // Inspect each raw component so a display conversion cannot select a decoy.
+    QByteArray current = QFile::encodeName(directory);
+    const auto parts = path.split('/');
+    for (qsizetype i = 0; i < parts.size(); ++i) {
+        current += '/' + parts[i];
+        struct stat info {};
+        if (::lstat(current.constData(), &info) != 0
+            || (i + 1 == parts.size() ? !S_ISREG(info.st_mode) : !S_ISDIR(info.st_mode))) {
+            return false;
+        }
+    }
+    return true;
+}
+[[noreturn]] void failNativeLaunch(int fd, int error)
+{
+    // The parent distinguishes exec failure from a program that exits 127.
+    // Only async-signal-safe calls are allowed after QProcess forks.
+    while (::write(fd, &error, sizeof(error)) < 0 && errno == EINTR) {}
+    ::_exit(127);
 }
 bool falseValue(const QByteArray &value)
 {
@@ -105,16 +156,31 @@ QProcessEnvironment environment()
     env.insert(QStringLiteral("GIT_NO_REPLACE_OBJECTS"), QStringLiteral("1"));
     return env;
 }
-QStringList prefix()
+QList<QByteArray> prefix()
 {
-    return {QStringLiteral("--no-pager"), QStringLiteral("--literal-pathspecs"),
-            QStringLiteral("-c"), QStringLiteral("core.fsmonitor=false"),
-            QStringLiteral("-c"), QStringLiteral("core.untrackedCache=false"),
-            QStringLiteral("-c"), QStringLiteral("submodule.recurse=false"),
-            QStringLiteral("-c"), QStringLiteral("protocol.allow=never"),
-            QStringLiteral("-c"), QStringLiteral("credential.helper=")};
+    return {"--no-pager", "--literal-pathspecs", "-c", "core.fsmonitor=false",
+            "-c", "core.untrackedCache=false", "-c", "submodule.recurse=false",
+            "-c", "protocol.allow=never", "-c", "credential.helper="};
 }
 } // namespace
+
+QString displayPath(const QByteArray &path)
+{
+    const auto decoded = QString::fromUtf8(path);
+    const bool utf8 = decoded.toUtf8() == path;
+    QByteArray label;
+    for (const char value : path) {
+        const auto byte = static_cast<unsigned char>(value);
+        if (byte == '\\') label += "\\\\";
+        else if (byte == '\n') label += "\\n";
+        else if (byte == '\r') label += "\\r";
+        else if (byte == '\t') label += "\\t";
+        else if (byte < 0x20 || byte == 0x7f || (!utf8 && byte >= 0x80)) {
+            label += "\\x" + QByteArray(1, value).toHex();
+        } else label += value;
+    }
+    return QString::fromUtf8(label);
+}
 
 class GitAdapter::State {
 public:
@@ -129,17 +195,13 @@ public:
         deadline.setParent(q);
         escalation.setParent(q);
         process.setProcessChannelMode(QProcess::SeparateChannels);
-        process.setChildProcessModifier([] {
-            if (::setsid() == -1) {
-                ::_exit(127);
-            }
-        });
         deadline.setSingleShot(true);
         escalation.setSingleShot(true);
         QObject::connect(&process, &QProcess::started, q, [this] {
             pid = process.processId();
+            observeNativeLaunch();
             process.closeWriteChannel();
-            if (phase == Phase::Operation && isMutation()) {
+            if (!nativeLaunchFailed && phase == Phase::Operation && isMutation()) {
                 mutationStarted = true;
                 result.mutation = Mutation::Uncertain;
             }
@@ -187,6 +249,7 @@ public:
         QObject::disconnect(&process, nullptr, q, nullptr);
         signalGroup(SIGKILL);
         process.kill();
+        closeLaunchPipe();
         releaseMutation();
     }
     bool isMutation() const { return result.request.operation == Operation::StageFile; }
@@ -219,7 +282,31 @@ public:
         result.diagnostic = message;
         complete();
     }
-    void launch(Phase next, const QStringList &arguments, bool configuration = false)
+    void closeLaunchPipe()
+    {
+        for (auto &fd : launchPipe) {
+            if (fd >= 0) ::close(fd);
+            fd = -1;
+        }
+    }
+    void observeNativeLaunch()
+    {
+        ::close(launchPipe[1]);
+        launchPipe[1] = -1;
+        int error = 0;
+        ssize_t count;
+        do { count = ::read(launchPipe[0], &error, sizeof(error)); } while (count < 0 && errno == EINTR);
+        closeLaunchPipe();
+        if (count == static_cast<ssize_t>(sizeof(error))) {
+            nativeLaunchFailed = true;
+            if (!stopping) {
+                result.outcome = Outcome::LaunchFailure;
+                result.diagnostic = QStringLiteral("Could not start Git: ") + QString::fromLocal8Bit(std::strerror(error));
+            }
+            stopping = true;
+        }
+    }
+    void launch(Phase next, const QList<QByteArray> &arguments, bool configuration = false)
     {
         phase = next;
         phaseOutput.clear();
@@ -234,12 +321,47 @@ public:
             return;
         }
         // Inspect effective configuration before overriding helpers for reads.
-        auto argv = configuration ? QStringList{QStringLiteral("--no-pager")} : prefix();
-        argv.append(arguments);
+        nativeArguments = {QFile::encodeName(executable)};
+        nativeArguments.append(configuration ? QList<QByteArray>{"--no-pager"} : prefix());
+        nativeArguments.append(arguments);
+        const auto env = environment();
+        nativeEnvironment.clear();
+        for (const auto &entry : env.toStringList()) nativeEnvironment.append(entry.toUtf8());
+        nativeArgv.clear();
+        nativeEnvp.clear();
+        for (auto &argument : nativeArguments) nativeArgv.push_back(argument.data());
+        for (auto &entry : nativeEnvironment) nativeEnvp.push_back(entry.data());
+        nativeArgv.push_back(nullptr);
+        nativeEnvp.push_back(nullptr);
+        nativeDirectory = QFile::encodeName(directory);
+        nativeLaunchFailed = false;
+        closeLaunchPipe();
+        if (::pipe2(launchPipe, O_CLOEXEC | O_NONBLOCK) != 0) {
+            result.outcome = Outcome::LaunchFailure;
+            result.diagnostic = QStringLiteral("Could not create the Git launch error pipe");
+            afterProcess(false, -1);
+            return;
+        }
+        // QString arguments cannot round-trip non-UTF-8 filenames. Prepare all
+        // byte arrays/pointers in the parent, then exec the fixed argv directly.
+        // QProcess still owns channels, child lifetime, signals and deadlines.
+        // The CLOEXEC error pipe also works on the Qt 6.6 development floor.
+        const auto program = nativeArgv.front();
+        const auto argv = nativeArgv.data();
+        const auto envp = nativeEnvp.data();
+        const auto cwd = nativeDirectory.constData();
+        const int readFd = launchPipe[0];
+        const int errorFd = launchPipe[1];
+        process.setChildProcessModifier([program, argv, envp, cwd, readFd, errorFd] {
+            ::close(readFd);
+            if (::setsid() == -1 || ::chdir(cwd) != 0) failNativeLaunch(errorFd, errno);
+            ::execve(program, argv, envp);
+            failNativeLaunch(errorFd, errno);
+        });
         process.setProgram(executable);
-        process.setArguments(argv);
+        process.setArguments({});
         process.setWorkingDirectory(directory);
-        process.setProcessEnvironment(environment());
+        process.setProcessEnvironment(env);
         process.start();
     }
     void stop(Outcome outcome, const QString &message)
@@ -320,36 +442,32 @@ public:
         }
         return true;
     }
-    QStringList indexArguments() const
+    QList<QByteArray> indexArguments() const
     {
-        return {QStringLiteral("ls-files"), QStringLiteral("--stage"), QStringLiteral("-z"),
-                QStringLiteral("--"), result.request.path};
+        return {"ls-files", "--stage", "-z", "--", result.request.path};
     }
-    QStringList operationArguments() const
+    QList<QByteArray> operationArguments() const
     {
         const auto &r = result.request;
         switch (r.operation) {
         case Operation::DiscoverRepository:
-            return {QStringLiteral("rev-parse"), QStringLiteral("--path-format=absolute"),
-                    QStringLiteral("--show-toplevel"), QStringLiteral("--absolute-git-dir")};
+            return {"rev-parse", "--path-format=absolute", "--show-toplevel", "--absolute-git-dir"};
         case Operation::ListUnmerged:
-            return {QStringLiteral("ls-files"), QStringLiteral("--unmerged"), QStringLiteral("-z")};
+            return {"ls-files", "--unmerged", "-z"};
         case Operation::Status:
-            return {QStringLiteral("status"), QStringLiteral("--porcelain=v2"), QStringLiteral("-z"),
-                    QStringLiteral("--untracked-files=no"), QStringLiteral("--ignore-submodules=all")};
+            return {"status", "--porcelain=v2", "-z", "--untracked-files=no", "--ignore-submodules=all"};
         case Operation::InspectIndex:
             return indexArguments();
         case Operation::ReadObject:
-            return {QStringLiteral("cat-file"), QStringLiteral("blob"), QString::fromLatin1(r.objectId)};
+            return {"cat-file", "blob", r.objectId};
         case Operation::ReadConfiguration:
-            return {QStringLiteral("config"), QStringLiteral("--null"), QStringLiteral("--list"), QStringLiteral("--includes")};
+            return {"config", "--null", "--list", "--includes"};
         case Operation::ReadAttributes:
-            return {QStringLiteral("check-attr"), QStringLiteral("-z"), QStringLiteral("--all"), QStringLiteral("--"), r.path};
+            return {"check-attr", "-z", "--all", "--", r.path};
         case Operation::MaterializeSource:
-            return {QStringLiteral("cat-file"), QStringLiteral("--filters"),
-                    QStringLiteral("--path=") + r.path, QString::fromLatin1(r.objectId)};
+            return {"cat-file", "--filters", "--path=" + r.path, r.objectId};
         case Operation::StageFile:
-            return {QStringLiteral("add"), QStringLiteral("--"), r.path};
+            return {"add", "--", r.path};
         }
         return {};
     }
@@ -362,32 +480,23 @@ public:
     }
     bool validIndex(const QByteArray &bytes, bool resolved) const
     {
-        if (!bytes.isEmpty() && !bytes.endsWith('\0')) {
-            return false;
-        }
-        int entries = 0;
-        for (const auto &entry : bytes.split('\0')) {
-            if (entry.isEmpty()) {
-                continue;
-            }
-            ++entries;
-            const auto tab = entry.indexOf('\t');
-            const auto fields = entry.left(tab).split(' ');
-            if (tab < 0 || fields.size() != 3 || !objectId(fields[1])
-                || (fields[0] != "100644" && fields[0] != "100755")
-                || fields[2].size() != 1 || fields[2][0] < '0' || fields[2][0] > '3'
-                || (resolved && fields[2] != "0")
-                || entry.mid(tab + 1) != QFile::encodeName(result.request.path)) {
+        const auto entries = parseIndex(bytes);
+        if (!entries) return false;
+        for (const auto &entry : *entries) {
+            if ((entry.mode != "100644" && entry.mode != "100755")
+                || (resolved && entry.stage != 0) || entry.path != result.request.path) {
                 return false;
             }
         }
-        return !resolved || entries == 1;
+        return !resolved || entries->size() == 1;
     }
     void afterProcess(bool normal, int code)
     {
         if (!active) {
             return;
         }
+        closeLaunchPipe();
+        if (nativeLaunchFailed) normal = false;
         if (phase == Phase::Inspection) {
             result.indexAfter = phaseOutput;
             if (!stopping && normal && code == 0 && validIndex(phaseOutput, false)) {
@@ -430,8 +539,7 @@ public:
             if (!phaseOutput.startsWith("git version ")) {
                 reject(QStringLiteral("Selected executable did not identify itself as Git"));
             } else {
-                launch(Phase::Configuration, {QStringLiteral("config"), QStringLiteral("--null"),
-                       QStringLiteral("--list"), QStringLiteral("--includes")}, true);
+                launch(Phase::Configuration, {"config", "--null", "--list", "--includes"}, true);
             }
             break;
         case Phase::Configuration:
@@ -443,7 +551,7 @@ public:
                 result.outcome = Outcome::Success;
                 complete();
             } else if (isMutation()) {
-                launch(Phase::GitDirectory, {QStringLiteral("rev-parse"), QStringLiteral("--absolute-git-dir")});
+                launch(Phase::GitDirectory, {"rev-parse", "--absolute-git-dir"});
             } else {
                 launch(Phase::Operation, operationArguments());
             }
@@ -455,7 +563,12 @@ public:
                 break;
             }
             phaseOutput.chop(1);
-            const auto key = QFileInfo(QFile::decodeName(phaseOutput)).canonicalFilePath();
+            const auto decoded = QFile::decodeName(phaseOutput);
+            if (QFile::encodeName(decoded) != phaseOutput) {
+                reject(QStringLiteral("Git directory cannot round-trip through Qt's directory API"));
+                break;
+            }
+            const auto key = QFileInfo(decoded).canonicalFilePath();
             if (key.isEmpty()) {
                 reject(QStringLiteral("Git directory is unavailable"));
                 break;
@@ -472,8 +585,7 @@ public:
             if (mutationKey.isEmpty()) {
                 reject(result.diagnostic);
             } else {
-                launch(Phase::Hooks, {QStringLiteral("rev-parse"), QStringLiteral("--path-format=absolute"),
-                       QStringLiteral("--git-path"), QStringLiteral("hooks")});
+                launch(Phase::Hooks, {"rev-parse", "--path-format=absolute", "--git-path", "hooks"});
             }
             break;
         }
@@ -483,7 +595,12 @@ public:
                 break;
             }
             phaseOutput.chop(1);
-            const QFileInfo info(QFile::decodeName(phaseOutput));
+            const auto decoded = QFile::decodeName(phaseOutput);
+            if (QFile::encodeName(decoded) != phaseOutput) {
+                reject(QStringLiteral("Hooks directory cannot round-trip through Qt's directory API"));
+                break;
+            }
+            const QFileInfo info(decoded);
             const QDir hooks(info.isAbsolute() ? info.filePath() : directory + QLatin1Char('/') + info.filePath());
             if (hooks.exists()) {
                 if (!QFileInfo(hooks.path()).isReadable()) {
@@ -513,6 +630,15 @@ public:
             break;
         case Phase::Operation:
             result.outcome = Outcome::Success;
+            if (result.request.operation == Operation::ListUnmerged || result.request.operation == Operation::InspectIndex) {
+                const auto entries = parseIndex(phaseOutput);
+                if (!entries) {
+                    result.outcome = Outcome::InspectionFailure;
+                    result.diagnostic = QStringLiteral("Invalid NUL-delimited index records");
+                } else {
+                    result.indexEntries = *entries;
+                }
+            }
             if (mutationStarted) {
                 inspectMutation();
             } else {
@@ -545,15 +671,12 @@ public:
             reject(QStringLiteral("Invalid operands for the named Git operation"));
             return;
         }
-        if (isMutation()) {
-            const QFileInfo file(directory + QLatin1Char('/') + r.path);
-            if (!file.isFile() || file.isSymLink() || file.canonicalFilePath() != file.absoluteFilePath()) {
-                reject(QStringLiteral("Staging requires one regular file without symlink traversal"));
-                return;
-            }
+        if (isMutation() && !regularFile(directory, r.path)) {
+            reject(QStringLiteral("Staging requires one regular file without symlink traversal"));
+            return;
         }
         deadline.start(deadlineMs);
-        launch(Phase::Version, {QStringLiteral("--version")});
+        launch(Phase::Version, {"--version"});
     }
     GitAdapter *q;
     QProcess process;
@@ -565,6 +688,12 @@ public:
     struct stat identity {};
     Result result;
     QByteArray phaseOutput;
+    QList<QByteArray> nativeArguments;
+    QList<QByteArray> nativeEnvironment;
+    std::vector<char *> nativeArgv;
+    std::vector<char *> nativeEnvp;
+    QByteArray nativeDirectory;
+    int launchPipe[2]{-1, -1};
     Phase phase = Phase::Version;
     qsizetype bytesRead = 0;
     qint64 pid = 0;
@@ -572,6 +701,7 @@ public:
     bool active = false;
     bool stopping = false;
     bool mutationStarted = false;
+    bool nativeLaunchFailed = false;
 };
 GitAdapter::GitAdapter(const QString &executable, QObject *parent)
     : QObject(parent), d(std::make_unique<State>(this, executable))

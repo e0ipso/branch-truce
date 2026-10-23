@@ -9,12 +9,22 @@
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <fcntl.h>
+#include <unistd.h>
 #include <vector>
 
 using namespace branch_truce::git;
 
 namespace {
 constexpr auto gitExecutable = "/usr/bin/git";
+
+QList<QByteArray> oddPaths()
+{
+    return {":leading.txt", ":(glob)*", ":!tracked.txt", "[ab].txt", "--all", "-",
+            " space name\twith\nnewline ", "quote\"and\\backslash", QByteArray::fromHex("636166c3a92e747874"),
+            QByteArray("odd-") + char(0xff) + ".txt", QByteArray("odd-") + char(0xfe) + ".txt",
+            QByteArray("nested/odd-") + char(0xff) + ".txt"};
+}
 
 void writeFile(const QString &path, const QByteArray &bytes, bool executable = false)
 {
@@ -33,6 +43,21 @@ public:
         git({"init", "--quiet", "--initial-branch=main"});
         writeFile(path("tracked.txt"), "before\n");
         git({"add", "--", "tracked.txt"});
+    }
+    ~Repository()
+    {
+        // QTemporaryDir's QString traversal cannot remove non-UTF-8 names.
+        for (const auto &file : rawFiles) ::unlink(file.constData());
+    }
+    void writePath(const QByteArray &relative, const QByteArray &bytes)
+    {
+        const auto file = QFile::encodeName(root.path()) + '/' + relative;
+        const int fd = ::open(file.constData(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+        CHECK(fd >= 0);
+        rawFiles.append(file);
+        const auto count = ::write(fd, bytes.constData(), static_cast<std::size_t>(bytes.size()));
+        const int closed = ::close(fd);
+        CHECK(count == bytes.size() && closed == 0);
     }
     QString path(const QString &relative) const { return root.path() + '/' + relative; }
     QByteArray git(const QStringList &arguments, const QByteArray &input = {}) const
@@ -60,7 +85,7 @@ public:
         }
         return process.readAllStandardOutput();
     }
-    Request request(Operation operation, const QString &file = {}) const
+    Request request(Operation operation, const QByteArray &file = {}) const
     {
         return {operation, root.path(), file, {}, 71, 93};
     }
@@ -108,6 +133,7 @@ case "$1" in
     }
     QTemporaryDir root{QStringLiteral("/tmp/truce-git-repository-XXXXXX")};
     QTemporaryDir executables{QStringLiteral("/tmp/truce-git-executable-XXXXXX")};
+    QList<QByteArray> rawFiles;
 };
 
 class Completion {
@@ -202,39 +228,97 @@ public:
         });
         suite.run("unmerged index entries stay NUL-delimited", [] {
             Repository repo;
+            CHECK(QDir(repo.root.path()).mkdir("nested"));
             const auto base = repo.git({"hash-object", "-w", "--stdin"}, "base\n").trimmed();
             const auto ours = repo.git({"hash-object", "-w", "--stdin"}, "ours\n").trimmed();
             const auto theirs = repo.git({"hash-object", "-w", "--stdin"}, "theirs\n").trimmed();
-            const QByteArray entries = "0 0000000000000000000000000000000000000000\ttracked.txt\n100644 " + base
-                + " 1\ttracked.txt\n100644 " + ours + " 2\ttracked.txt\n100644 " + theirs + " 3\ttracked.txt\n";
-            repo.git({"update-index", "--index-info"}, entries);
+            auto names = oddPaths();
+            names.prepend("tracked.txt");
+            QByteArray entries = "0 0000000000000000000000000000000000000000\ttracked.txt" + QByteArray(1, '\0');
+            for (const auto &name : names) {
+                entries += "100644 " + base + " 1\t" + name + QByteArray(1, '\0');
+                entries += "100644 " + ours + " 2\t" + name + QByteArray(1, '\0');
+                entries += "100644 " + theirs + " 3\t" + name + QByteArray(1, '\0');
+            }
+            repo.git({"update-index", "-z", "--index-info"}, entries);
             GitAdapter adapter(gitExecutable);
             const auto result = run(adapter, repo.request(Operation::ListUnmerged));
             CHECK(result.outcome == Outcome::Success);
             CHECK(result.standardOutput == repo.git({"ls-files", "--unmerged", "-z"}));
-            CHECK(result.standardOutput.count('\0') == 3);
-            writeFile(repo.path("tracked.txt"), "resolved\n");
-            const auto staged = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
-            CHECK(staged.outcome == Outcome::Success && staged.mutation == Mutation::ObservedChanged);
-            CHECK(staged.indexBefore.count('\0') == 3 && staged.indexAfter.count('\0') == 1);
+            CHECK(result.standardOutput.count('\0') == names.size() * 3);
+            CHECK(result.indexEntries.size() == names.size() * 3);
+            for (const auto &name : names) {
+                unsigned int stages = 0;
+                for (const auto &entry : result.indexEntries) {
+                    if (entry.path != name) continue;
+                    CHECK(entry.mode == "100644" && entry.stage >= 1 && entry.stage <= 3);
+                    CHECK(entry.objectId == (entry.stage == 1 ? base : entry.stage == 2 ? ours : theirs));
+                    stages |= 1u << entry.stage;
+                    // Select the enumerated byte path after asking for its label.
+                    const auto identity = entry.path;
+                    CHECK(!displayPath(entry.path).isEmpty() && entry.path == identity);
+                    auto request = repo.request(Operation::MaterializeSource, entry.path);
+                    request.objectId = entry.objectId;
+                    const auto source = run(adapter, request);
+                    CHECK(source.outcome == Outcome::Success);
+                    CHECK(source.standardOutput == (entry.stage == 1 ? "base\n" : entry.stage == 2 ? "ours\n" : "theirs\n"));
+                }
+                CHECK(stages == 14);
+                repo.writePath(name, "resolved\n");
+                const auto staged = run(adapter, repo.request(Operation::StageFile, name));
+                CHECK(staged.outcome == Outcome::Success && staged.mutation == Mutation::ObservedChanged);
+                CHECK(staged.indexBefore.count('\0') == 3 && staged.indexAfter.count('\0') == 1);
+                CHECK(staged.indexAfter.endsWith('\t' + name + QByteArray(1, '\0')));
+            }
             CHECK(repo.git({"ls-files", "--unmerged", "-z"}).isEmpty());
         });
-        suite.run("staging treats colon, glob, option and whitespace names literally", [] {
+        suite.run("enumerated and staged paths retain special and non-UTF-8 bytes", [] {
             Repository repo;
+            CHECK(QDir(repo.root.path()).mkdir("nested"));
             GitAdapter adapter(gitExecutable);
-            const QStringList names{":leading.txt", ":(glob)*", "[ab].txt", "--all", "space name\twith\nnewline"};
+            const auto names = oddPaths();
             writeFile(repo.path("a.txt"), "must remain untracked\n");
             writeFile(repo.path("b.txt"), "must remain untracked\n");
+            QByteArray rules = "* truce-path\n";
+            for (const auto &name : names) {
+                if (QString::fromUtf8(name).toUtf8() != name) rules += name + " text eol=crlf\n";
+            }
+            writeFile(repo.path(".gitattributes"), rules);
             const auto untouched = repo.git({"ls-files", "--stage", "-z", "--", "tracked.txt"});
             for (const auto &name : names) {
-                writeFile(repo.path(name), "literal content\n");
+                repo.writePath(name, "literal content\n");
+                const auto decoy = QString::fromUtf8(name).toUtf8();
+                if (decoy != name) repo.writePath(decoy, "display decoy must remain untracked\n");
+                const auto identity = name;
+                CHECK(!displayPath(name).isEmpty() && name == identity);
                 const auto result = run(adapter, repo.request(Operation::StageFile, name));
                 CHECK(result.outcome == Outcome::Success && result.exitCode == 0);
                 CHECK(result.mutation == Mutation::ObservedChanged && result.indexBefore.isEmpty());
-                CHECK(result.indexAfter == repo.git({"ls-files", "--stage", "-z", "--", name}));
-                CHECK(result.indexAfter.endsWith(QByteArray("\t") + name.toUtf8() + QByteArray(1, '\0')));
-                CHECK(repo.git({"show", ":" + name}) == "literal content\n");
+                const auto inspected = run(adapter, repo.request(Operation::InspectIndex, name));
+                CHECK(inspected.outcome == Outcome::Success && inspected.standardOutput == result.indexAfter);
+                CHECK(inspected.indexEntries.size() == 1 && inspected.indexEntries.front().path == name);
+                const auto &entry = inspected.indexEntries.front();
+                CHECK(entry.stage == 0 && entry.mode == "100644");
+                CHECK(result.indexAfter.endsWith('\t' + name + QByteArray(1, '\0')));
+                CHECK(repo.git({"cat-file", "blob", QString::fromLatin1(entry.objectId)}) == "literal content\n");
+                const auto attributes = run(adapter, repo.request(Operation::ReadAttributes, name));
+                CHECK(attributes.outcome == Outcome::Success);
+                CHECK(attributes.standardOutput.contains(name + QByteArray("\0truce-path\0set\0", 16)));
+                auto request = repo.request(Operation::MaterializeSource, name);
+                request.objectId = entry.objectId;
+                const auto source = run(adapter, request);
+                CHECK(source.outcome == Outcome::Success);
+                CHECK(source.standardOutput == (decoy == name ? "literal content\n" : "literal content\r\n"));
+                const auto status = run(adapter, repo.request(Operation::Status));
+                CHECK(status.outcome == Outcome::Success && status.standardOutput.contains(name + QByteArray(1, '\0')));
+                const auto all = repo.git({"ls-files", "--stage", "-z"});
+                CHECK(all.contains(result.indexAfter));
+                if (decoy != name) CHECK(!all.contains('\t' + decoy + QByteArray(1, '\0')));
             }
+            CHECK(displayPath(QByteArray("odd-") + char(0xff) + ".txt") == "odd-\\xff.txt");
+            CHECK(displayPath("odd-\\xff.txt") == "odd-\\\\xff.txt");
+            CHECK(displayPath("a\tb\nc") == "a\\tb\\nc");
+            CHECK(displayPath(QByteArray::fromHex("636166c3a92e747874")) == QString::fromUtf8("caf\xc3\xa9.txt"));
             CHECK(repo.git({"ls-files", "--stage", "-z", "--", "a.txt", "b.txt"}).isEmpty());
             CHECK(repo.git({"ls-files", "--stage", "-z", "--", "tracked.txt"}) == untouched);
             const auto unchanged = run(adapter, repo.request(Operation::StageFile, ":leading.txt"));
@@ -244,8 +328,8 @@ public:
             Repository repo;
             GitAdapter adapter(gitExecutable);
             const auto before = repo.git({"ls-files", "--stage", "-z"});
-            const QStringList paths{"", "/absolute", "../escape", "dir/../file", "./tracked.txt", "dir//file", "dir/",
-                                    QString::fromLatin1("a\0b", 3), QString(QChar(0xd800))};
+            const QList<QByteArray> paths{"", "/absolute", "../escape", "dir/../file", "./tracked.txt", "dir//file", "dir/",
+                                          QByteArray("a\0b", 3)};
             for (const auto &path : paths) {
                 const auto result = run(adapter, repo.request(Operation::StageFile, path));
                 CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
@@ -279,6 +363,15 @@ public:
                 const auto result = run(adapter, repo.request(Operation::StageFile, path));
                 CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
             }
+            const QByteArray raw = QByteArray("link-") + char(0xff);
+            const auto link = QFile::encodeName(repo.root.path()) + '/' + raw;
+            CHECK(::symlink(QFile::encodeName(repo.path("tracked.txt")).constData(), link.constData()) == 0);
+            repo.rawFiles.append(link);
+            repo.writePath(QString::fromUtf8(raw).toUtf8(), "display decoy\n");
+            const auto before = repo.git({"ls-files", "--stage", "-z"});
+            const auto result = run(adapter, repo.request(Operation::StageFile, raw));
+            CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
+            CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
         });
         suite.run("executable trust is checked before launch and again after selection", [] {
             Repository repo;
