@@ -1,7 +1,7 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:22fa32a18d9383f4afd4be923f9ba8e240fedbbce6fb254df93de2cdb849df05'
-node_count: 11
+nodes_hash: 'sha256:aa8dc8cfa15294b31a44a16cf7df48c9a86a2dcb512f5ca2aac64e253b2ef5a3'
+node_count: 12
 ---
 # kenkeep
 
@@ -12,9 +12,10 @@ _None._
 
 ## Conventions (how we build)
 - Open [**Design desktop apps around screens and components**](nodes/practice-design-desktop-apps-around-screens-and-components.md) to learn about: Define screens and components, then build loosely coupled implementations using each desktop environment's idiomatic UI kit. #architecture #desktop #techspec
+- Open [**Keep failed work outstanding**](nodes/practice-keep-failed-work-outstanding.md) to learn about: Keep failed saves and resolutions visible, retain edited results, and claim resolution only after both steps succeed. #product #failures #saving #resolution
 - Open [**Keep PRD.md focused on user needs**](nodes/practice-keep-prd-focused-on-user-needs.md) to learn about: PRD.md describes user needs, interactions, and capabilities without technical or implementation details. #product #prd #documentation
 - Open [**Keep TechSpecs and PRDs independent**](nodes/practice-keep-techspecs-and-prds-independent.md) to learn about: TechSpecs explain how to build; PRDs explain what to build and why. Keep both separate and independently understandable. #documentation #techspec #prd
-- Open [**Keep failed work outstanding**](nodes/practice-keep-failed-work-outstanding.md) to learn about: Keep failed saves and resolutions visible, retain edited results, and claim resolution only after both steps succeed. #product #failures #saving #resolution
+- Open [**Fence session work and serialize worktree mutations**](nodes/practice-fence-session-work-and-serialize-worktree-mutations.md) to learn about: Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation. #architecture #concurrency #cancellation #git #desktop
 - Open [**Keep sources identifiable and the result editable**](nodes/practice-keep-sources-identifiable-and-the-result-editable.md) to learn about: Require truthful source identities, an editable center result, earlier context, and reading aids that preserve text. #product #comparison #editing
 - Open [**Keep unsupported and unfinished work visible**](nodes/practice-keep-unsupported-and-unfinished-work-visible.md) to learn about: Show all current files, prominent outside-app warnings, and an honest handoff that directs users to outstanding work. #product #scope #progress #handoff
 - Open [**Make conflict choices explicit and reversible**](nodes/practice-make-conflict-choices-explicit-and-reversible.md) to learn about: Keep accept, ignore, combine, and broader choices distinct, inspectable, and reversible with their decision states. #product #choices #editing #undo

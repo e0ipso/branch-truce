@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:22fa32a18d9383f4afd4be923f9ba8e240fedbbce6fb254df93de2cdb849df05'
-node_count: 11
+nodes_hash: 'sha256:aa8dc8cfa15294b31a44a16cf7df48c9a86a2dcb512f5ca2aac64e253b2ef5a3'
+node_count: 12
 ---
 # kenkeep Graph
 
-Total nodes: 11
+Total nodes: 12
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -31,6 +31,14 @@ Total nodes: 11
 - **path:** practice-design-desktop-apps-around-screens-and-components.md
 - **tags:** architecture, desktop, techspec
 - **relates_to:** map-branch-truce-first-release-scope, practice-keep-techspecs-and-prds-independent
+
+## practice-fence-session-work-and-serialize-worktree-mutations
+
+- **kind:** practice
+- **title:** Fence session work and serialize worktree mutations
+- **path:** practice-fence-session-work-and-serialize-worktree-mutations.md
+- **tags:** architecture, concurrency, cancellation, git, desktop
+- **relates_to:** map-branch-truce-desktop-implementation-baseline, practice-keep-failed-work-outstanding
 
 ## practice-keep-failed-work-outstanding
 
