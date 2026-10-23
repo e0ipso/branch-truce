@@ -60,7 +60,7 @@ public:
         CHECK(count == bytes.size() && closed == 0);
     }
     QString path(const QString &relative) const { return root.path() + '/' + relative; }
-    QByteArray git(const QStringList &arguments, const QByteArray &input = {}) const
+    QByteArray git(const QStringList &arguments, const QByteArray &input = {}, int expectedExit = 0) const
     {
         QProcess process;
         QProcessEnvironment env;
@@ -80,7 +80,7 @@ public:
         CHECK(process.write(input) == input.size());
         process.closeWriteChannel();
         CHECK(process.waitForFinished(5000));
-        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != expectedExit) {
             throw std::runtime_error("fixture git: " + process.readAllStandardError().toStdString());
         }
         return process.readAllStandardOutput();
@@ -201,6 +201,65 @@ private:
     QByteArray previous_;
     bool set_;
 };
+
+void registerMergetool(Repository &repo, const QString &scenario)
+{
+    const auto base = repo.git({"hash-object", "-w", "--stdin"}, "base\n").trimmed();
+    const auto ours = repo.git({"hash-object", "-w", "--stdin"}, "ours\n").trimmed();
+    const auto theirs = repo.git({"hash-object", "-w", "--stdin"}, "theirs\n").trimmed();
+    const auto nul = QByteArray(1, '\0');
+    repo.git({"update-index", "-z", "--index-info"},
+        "0 " + QByteArray(40, '0') + "\ttracked.txt" + nul
+        + "100644 " + base + " 1\ttracked.txt" + nul
+        + "100644 " + ours + " 2\ttracked.txt" + nul
+        + "100644 " + theirs + " 3\ttracked.txt" + nul);
+    writeFile(repo.path("tracked.txt"), "<<<<<<< ours\nours\n=======\ntheirs\n>>>>>>> theirs\n");
+    auto executable = QCoreApplication::applicationFilePath();
+    executable.replace('\'', "'\\''");
+    const auto command = '\'' + executable + "' --mergetool-fixture " + scenario + " \"$MERGED\"";
+    repo.git({"config", "mergetool.truce-coverage.cmd", command});
+    repo.git({"config", "mergetool.truce-coverage.trustExitCode", "true"});
+    repo.git({"config", "mergetool.keepBackup", "false"});
+}
+
+// This is a fixture launcher for the real Git parent protocol. It exercises
+// the adapter's release preflight; it does not implement the GUI launcher.
+int mergetoolFixture(const QString &scenario, const QString &merged)
+{
+    const auto configure = [](const QString &key, const QString &value) {
+        QProcess process;
+        process.start(gitExecutable, {"config", key, value});
+        CHECK(process.waitForStarted(5000) && process.waitForFinished(5000));
+        CHECK(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0);
+    };
+    // Install hazards after the parent materializes its temporary sources.
+    // The app cannot prevent helpers a separately invoked parent ran earlier.
+    if (scenario == "filter") {
+        writeFile(".gitattributes", "/tracked.txt filter=handoff\n");
+        configure("filter.handoff.clean", "touch .handoff-helper-ran; cat");
+    } else if (scenario == "hook" || scenario == "custom-hook") {
+        const auto hooks = scenario == "hook" ? QString(".git/hooks") : QString("custom hooks");
+        CHECK(QDir().mkpath(hooks));
+        configure("core.hooksPath", hooks);
+        writeFile(hooks + "/post-index-change", "#!/bin/sh\ntouch .handoff-helper-ran\n", true);
+    } else if (scenario == "monitor") {
+        configure("core.fsmonitor", "touch .handoff-helper-ran");
+    } else if (scenario == "promisor") {
+        configure("remote.origin.promisor", "true");
+    }
+    GitAdapter adapter(gitExecutable);
+    const auto preflight = run(adapter, {Operation::CheckParentStaging, QDir::currentPath(),
+                                       QFile::encodeName(merged), {}, 71, 93});
+    writeFile(".handoff-preflight", preflight.diagnostic.toUtf8());
+    CHECK(preflight.mutation == Mutation::NotAttempted);
+    if (preflight.outcome != Outcome::Success) {
+        writeFile(".handoff-rejected", "blocked\n");
+        return 1;
+    }
+    writeFile(".handoff-released", "preflight passed\n");
+    writeFile(merged, scenario == "crlf" ? "resolved\r\n" : "resolved\n");
+    return 0;
+}
 }
 
 class GitAdapterTests {
@@ -563,6 +622,41 @@ public:
                 CHECK(!QFile::exists(repo.path(".fetch-ran")));
             }
         });
+        suite.run("a registered mergetool parent stages only after a successful release preflight", [] {
+            for (const auto &scenario : {"plain", "crlf"}) {
+                Repository repo;
+                if (QByteArray(scenario) == "crlf") writeFile(repo.path(".gitattributes"), "/tracked.txt text eol=crlf\n");
+                registerMergetool(repo, scenario);
+                CHECK(repo.git({"ls-files", "--unmerged", "-z"}).count('\0') == 3);
+                repo.git({"mergetool", "--no-prompt", "--tool=truce-coverage", "--", "tracked.txt"});
+                CHECK(QFile::exists(repo.path(".handoff-released")) && !QFile::exists(repo.path(".handoff-rejected")));
+                CHECK(repo.git({"ls-files", "--unmerged", "-z"}).isEmpty());
+                CHECK(repo.git({"show", ":tracked.txt"}) == "resolved\n");
+                GitAdapter adapter(gitExecutable);
+                const auto acknowledged = run(adapter, repo.request(Operation::InspectIndex, "tracked.txt"));
+                CHECK(acknowledged.outcome == Outcome::Success && acknowledged.indexEntries.size() == 1);
+                CHECK(acknowledged.indexEntries.first().stage == 0);
+                CHECK(acknowledged.indexEntries.first().objectId == repo.git({"hash-object", "--stdin"}, "resolved\n").trimmed());
+            }
+        });
+        suite.run("a registered mergetool parent retains conflicts when helper or offline preflight rejects release", [] {
+            for (const auto &scenario : {"filter", "hook", "custom-hook", "monitor", "promisor"}) {
+                Repository repo;
+                registerMergetool(repo, scenario);
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
+                repo.git({"mergetool", "--no-prompt", "--tool=truce-coverage", "--", "tracked.txt"}, {}, 1);
+                CHECK(QFile::exists(repo.path(".handoff-rejected")) && !QFile::exists(repo.path(".handoff-released")));
+                CHECK(!QFile::exists(repo.path(".handoff-helper-ran")));
+                QFile diagnostic(repo.path(".handoff-preflight"));
+                CHECK(diagnostic.open(QIODevice::ReadOnly) && diagnostic.readAll().contains("Outside app"));
+                // Disable the monitor before the fixture itself reads the index.
+                if (QByteArray(scenario) == "monitor") repo.git({"config", "--unset", "core.fsmonitor"});
+                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                CHECK(repo.git({"ls-files", "--unmerged", "-z"}).count('\0') == 3);
+                QFile merged(repo.path("tracked.txt"));
+                CHECK(merged.open(QIODevice::ReadOnly) && merged.readAll().startsWith("<<<<<<< ours\n"));
+            }
+        });
         suite.run("failed preflight and failed launch retain diagnostics", [] {
             Repository repo;
             const auto preflight = repo.executable("#!/bin/sh\nprintf 'preflight stdout'\nprintf 'preflight stderr' >&2\nexit 17\n");
@@ -761,5 +855,14 @@ public:
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+    const auto arguments = app.arguments();
+    if (arguments.size() == 4 && arguments[1] == "--mergetool-fixture") {
+        try {
+            return mergetoolFixture(arguments[2], arguments[3]);
+        } catch (const std::exception &error) {
+            std::cerr << "mergetool fixture: " << error.what() << '\n';
+            return 2;
+        }
+    }
     return GitAdapterTests{}.runTests();
 }

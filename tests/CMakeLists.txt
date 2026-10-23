@@ -15,6 +15,12 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_libraries(branch_truce_model_tests PRIVATE branch_truce_controller branch_truce_build_options)
     add_test(NAME app.session-model COMMAND branch_truce_model_tests)
 
+    add_executable(branch_truce_coordinator_tests app/SessionCoordinatorTests.cpp)
+    target_include_directories(branch_truce_coordinator_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_coordinator_tests PRIVATE branch_truce_controller branch_truce_build_options)
+    add_test(NAME app.session-coordinator COMMAND branch_truce_coordinator_tests)
+    set_tests_properties(app.session-coordinator PROPERTIES TIMEOUT 30)
+
     add_executable(branch_truce_git_tests git/GitAdapterTests.cpp)
     target_include_directories(branch_truce_git_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_git_tests PRIVATE branch_truce_git branch_truce_build_options)
