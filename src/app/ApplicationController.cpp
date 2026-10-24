@@ -6,10 +6,15 @@
 #include <QStandardPaths>
 #include <QUuid>
 #include <QQuickTextDocument>
+#include <QQuickItem>
 #include <QTextDocument>
 #include <QKeyEvent>
 #include <QKeySequence>
+#include <QMouseEvent>
+#include <QCoreApplication>
+#include <QScopedValueRollback>
 #include <algorithm>
+#include <limits>
 
 namespace branch_truce {
 namespace {
@@ -569,36 +574,70 @@ void ApplicationController::attachResultEditor(QObject *editor)
     resultDocument_ = quick ? quick->textDocument() : nullptr;
     if (!resultDocument_) return;
     resultDocument_->setUndoRedoEnabled(false);
-    editorConnection_ = connect(resultDocument_, &QTextDocument::contentsChange, this,
-        [this](int position, int removed, int added) {
-            if (syncingEditor_ || !resultDocument_) return;
-            const auto next = documentText(*resultDocument_);
-            if (next == editorText_) return;
-            const auto old = editorText_;
-            editorText_ = next;
-            // QTextDocument includes its terminal paragraph character in some
-            // IME notifications. That sentinel is outside the result buffer.
-            if (position + removed == old.size() + 1 && position + added == next.size() + 1) {
-                --removed;
-                --added;
-            }
-            const auto *file = files_.file(selectedFileId_.toStdString());
-            if (!file || old != text(file->current().draft.text) || position < 0 || removed < 0 || added < 0 || position + removed > old.size()
-                || position + added > next.size() || old.left(position) != next.left(position)
-                || old.mid(position + removed) != next.mid(position + added)) {
-                commandResult(Transition::InvalidAnchor);
-                syncResultEditor();
-                return;
-            }
-            (void)editResult(selectedFileId_, QString::number(file->current().id), position, position + removed,
-                next.mid(position, added));
-            syncResultEditor();
-        });
+    editorConnection_ = connect(resultDocument_, &QTextDocument::contentsChange,
+        this, &ApplicationController::captureResultEdit);
     syncResultEditor();
+}
+
+void ApplicationController::captureResultEdit()
+{
+    if (syncingEditor_ || processingEditorEvent_ || !resultDocument_) return;
+    const auto next = documentText(*resultDocument_);
+    if (next == editorText_) return;
+    const auto *file = files_.file(selectedFileId_.toStdString());
+    const auto old = editorText_;
+    if (!file || old != text(file->current().draft.text)
+        || std::max(old.size(), next.size()) > std::numeric_limits<int>::max()) {
+        commandResult(Transition::InvalidAnchor);
+        syncResultEditor();
+        return;
+    }
+    // Observe the complete native event, including a selection replacement or
+    // an IME commit with several document notifications, as one domain command.
+    qsizetype begin = 0;
+    while (begin < old.size() && begin < next.size() && old.at(begin) == next.at(begin)) ++begin;
+    if (begin > 0 && begin < old.size() && old.at(begin).isLowSurrogate()) --begin;
+    auto oldEnd = old.size();
+    auto newEnd = next.size();
+    while (oldEnd > begin && newEnd > begin && old.at(oldEnd - 1) == next.at(newEnd - 1)) {
+        --oldEnd;
+        --newEnd;
+    }
+    if (oldEnd < old.size() && old.at(oldEnd).isLowSurrogate()) {
+        ++oldEnd;
+        ++newEnd;
+    }
+    editorText_ = next;
+    (void)editResult(selectedFileId_, QString::number(file->current().id), static_cast<int>(begin),
+        static_cast<int>(oldEnd), next.mid(begin, newEnd - begin));
+    syncResultEditor();
+}
+
+bool ApplicationController::resultClipboard(const QString &action)
+{
+    if (!resultEditor_ || processingEditorEvent_) return false;
+    const char *method = nullptr;
+    if (action == QLatin1String("copy")) method = "copy";
+    else if (action == QLatin1String("selectAll")) method = "selectAll";
+    else if (action == QLatin1String("cut")) method = "cut";
+    else if (action == QLatin1String("paste")) method = "paste";
+    else return false;
+    if ((action == QLatin1String("cut") || action == QLatin1String("paste"))
+        && (resultEditor_->property("readOnly").toBool() || resultEditor_->property("inputMethodComposing").toBool()))
+        return false;
+    if (auto *item = qobject_cast<QQuickItem *>(resultEditor_.data())) item->forceActiveFocus(Qt::ShortcutFocusReason);
+    bool invoked = false;
+    {
+        QScopedValueRollback guard(processingEditorEvent_, true);
+        invoked = QMetaObject::invokeMethod(resultEditor_, method, Qt::DirectConnection);
+    }
+    captureResultEdit();
+    return invoked && !files_.hasPendingRecovery();
 }
 
 bool ApplicationController::eventFilter(QObject *watched, QEvent *event)
 {
+    if (syncingEditor_ || processingEditorEvent_) return QObject::eventFilter(watched, event);
     if (watched == resultEditor_ && (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)) {
         auto *key = static_cast<QKeyEvent *>(event);
         const bool backwards = key->matches(QKeySequence::Undo);
@@ -615,6 +654,17 @@ bool ApplicationController::eventFilter(QObject *watched, QEvent *event)
             }
             return true;
         }
+    }
+    const bool middlePaste = (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease)
+        && static_cast<QMouseEvent *>(event)->button() == Qt::MiddleButton;
+    if (watched == resultEditor_ && (event->type() == QEvent::KeyPress || event->type() == QEvent::InputMethod
+        || event->type() == QEvent::Drop || middlePaste)) {
+        {
+            QScopedValueRollback guard(processingEditorEvent_, true);
+            QCoreApplication::sendEvent(watched, event);
+        }
+        captureResultEdit();
+        return true;
     }
     return QObject::eventFilter(watched, event);
 }

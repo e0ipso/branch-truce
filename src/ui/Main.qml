@@ -234,12 +234,12 @@ Kirigami.ApplicationWindow {
     }
     Shortcut {
         sequences: [StandardKey.Undo]
-        enabled: !!window.selectedFile.canUndo && !!window.selectedFile.canEdit && !resultEditor.inputMethodComposing
+        enabled: !!window.selectedFile.canUndo && !!window.selectedFile.canEdit && !comparison.inputMethodComposing
         onActivated: window.controller.undo(window.controller.selectedFileId, window.selectedFile.currentRevision)
     }
     Shortcut {
         sequences: [StandardKey.Redo]
-        enabled: !!window.selectedFile.canRedo && !!window.selectedFile.canEdit && !resultEditor.inputMethodComposing
+        enabled: !!window.selectedFile.canRedo && !!window.selectedFile.canEdit && !comparison.inputMethodComposing
         onActivated: window.controller.redo(window.controller.selectedFileId, window.selectedFile.currentRevision)
     }
     Dialog {
@@ -363,8 +363,10 @@ Kirigami.ApplicationWindow {
             }
         }
     }
-    width: 1000
-    height: 700
+    width: 1200
+    height: 850
+    minimumWidth: 1000
+    minimumHeight: 760
     visible: true
     title: qsTr("Branch Truce")
     pageStack.initialPage: Kirigami.Page {
@@ -408,7 +410,7 @@ Kirigami.ApplicationWindow {
                 visible: !window.controller.opening && window.controller.files.totalFiles > 0
                 ListView {
                     id: fileList
-                    Layout.preferredWidth: 260
+                    Layout.preferredWidth: 220
                     Layout.fillHeight: true
                     clip: true
                     model: window.controller.files
@@ -486,31 +488,50 @@ Kirigami.ApplicationWindow {
                         Button {
                             objectName: "undoCommand"
                             text: qsTr("Undo")
-                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canUndo && !resultEditor.inputMethodComposing
+                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canUndo && !comparison.inputMethodComposing
                             onClicked: window.controller.undo(window.controller.selectedFileId, window.selectedFile.currentRevision)
                         }
                         Button {
                             objectName: "redoCommand"
                             text: qsTr("Redo")
-                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canRedo && !resultEditor.inputMethodComposing
+                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canRedo && !comparison.inputMethodComposing
                             onClicked: window.controller.redo(window.controller.selectedFileId, window.selectedFile.currentRevision)
                         }
+                        Button {
+                            objectName: "copyResult"
+                            text: qsTr("Copy")
+                            onClicked: window.controller.resultClipboard("copy")
+                        }
+                        Button {
+                            objectName: "pasteResult"
+                            text: qsTr("Paste")
+                            enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
+                            onClicked: window.controller.resultClipboard("paste")
+                        }
+                        Button {
+                            id: sourceChoices
+                            objectName: "showSourceChoices"
+                            text: checked ? qsTr("Hide source choices") : qsTr("Show source choices")
+                            checkable: true
+                        }
                         Label {
-                            text: resultEditor.inputMethodComposing ? qsTr("Composing input · not acknowledged") : qsTr("Text and choices share undo/redo")
+                            Layout.fillWidth: true
+                            text: comparison.inputMethodComposing ? qsTr("Composing input · not acknowledged") : qsTr("Shared undo/redo")
+                            elide: Text.ElideRight
                         }
                     }
                     Label {
                         objectName: "nonConflictingScope"
                         Layout.fillWidth: true
-                        visible: window.supportedSelection
+                        visible: window.supportedSelection && sourceChoices.checked
                         text: qsTr("Non-conflicting changes in %1. Preview the eligible changes before applying.")
                             .arg(window.selectedFile.path || "")
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
                     }
                     RowLayout {
-                        visible: window.supportedSelection
-                        enabled: !!window.selectedFile.canEdit && !resultEditor.inputMethodComposing
+                        visible: window.supportedSelection && sourceChoices.checked
+                        enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
                         Button {
                             objectName: "nonConflictingLeft"
                             text: qsTr("Preview non-conflicting Left")
@@ -528,8 +549,8 @@ Kirigami.ApplicationWindow {
                         }
                     }
                     RowLayout {
-                        visible: window.supportedSelection
-                        enabled: !!window.selectedFile.canEdit && !resultEditor.inputMethodComposing
+                        visible: window.supportedSelection && sourceChoices.checked
+                        enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
                         Button {
                             objectName: "wholeFileLeft"
                             text: qsTr("Preview whole file from Left")
@@ -541,49 +562,18 @@ Kirigami.ApplicationWindow {
                             onClicked: window.chooseWholeFile("right")
                         }
                     }
-                    RowLayout {
+                    ComparisonView {
+                        id: comparison
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        Layout.minimumHeight: 200
                         visible: window.supportedSelection
-                        SnapshotPane {
-                            paneName: "stage2"
-                            paneTitle: window.selectedFile.stage2
-                                ? window.selectedFile.stage2.label + "\n" + window.selectedFile.stage2.objectId : ""
-                            paneText: window.selectedFile.stage2 ? window.selectedFile.stage2.text : ""
-                        }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            Label {
-                                objectName: "resultLabel"
-                                text: qsTr("Editable result")
-                            }
-                            ScrollView {
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                TextArea {
-                                    id: resultEditor
-                                    objectName: "resultText"
-                                    readOnly: true
-                                    selectByMouse: true
-                                    textFormat: TextEdit.PlainText
-                                    font.family: "monospace"
-                                    wrapMode: TextEdit.NoWrap
-                                    Accessible.name: qsTr("Editable result")
-                                    Component.onCompleted: window.controller.attachResultEditor(resultEditor)
-                                }
-                            }
-                        }
-                        SnapshotPane {
-                            paneName: "stage3"
-                            paneTitle: window.selectedFile.stage3
-                                ? window.selectedFile.stage3.label + "\n" + window.selectedFile.stage3.objectId : ""
-                            paneText: window.selectedFile.stage3 ? window.selectedFile.stage3.text : ""
-                        }
+                        controller: window.controller
+                        file: window.selectedFile
                     }
                     ListView {
                         objectName: "scopedChoices"
-                        visible: window.supportedSelection
+                        visible: window.supportedSelection && sourceChoices.checked
                         Layout.fillWidth: true
                         Layout.preferredHeight: Math.min(contentHeight, 180)
                         clip: true
@@ -608,7 +598,7 @@ Kirigami.ApplicationWindow {
                                 elide: Text.ElideRight
                             }
                             RowLayout {
-                                enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.available && !resultEditor.inputMethodComposing
+                                enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.available && !comparison.inputMethodComposing
                                 Button {
                                     text: qsTr("Accept →")
                                     Accessible.name: qsTr("Accept %1").arg(choiceRow.modelData.label)
@@ -626,7 +616,7 @@ Kirigami.ApplicationWindow {
                                 }
                             }
                             RowLayout {
-                                enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.combinationAvailable && !resultEditor.inputMethodComposing
+                                enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.combinationAvailable && !comparison.inputMethodComposing
                                 Button {
                                     text: qsTr("Preview Left then Right")
                                     Accessible.name: qsTr("Preview both for %1, Left then Right").arg(choiceRow.modelData.label)
@@ -650,24 +640,11 @@ Kirigami.ApplicationWindow {
                     }
                     Label {
                         Layout.fillWidth: true
-                        visible: !!window.selectedFile.choiceNotice
+                        visible: sourceChoices.checked && !!window.selectedFile.choiceNotice
                         text: window.selectedFile.choiceNotice || ""
                         wrapMode: Text.Wrap
                     }
-                    CheckBox {
-                        id: showEarlier
-                        objectName: "showEarlier"
-                        visible: window.supportedSelection
-                        enabled: !!window.selectedFile.earlier && !!window.selectedFile.earlier.available
-                        text: enabled ? qsTr("Show common earlier version") : qsTr("Common earlier version unavailable")
-                    }
-                    SnapshotPane {
-                        visible: window.supportedSelection && showEarlier.enabled && showEarlier.checked
-                        paneName: "earlier"
-                        paneTitle: window.selectedFile.earlier
-                            ? window.selectedFile.earlier.label + "\n" + window.selectedFile.earlier.objectId : ""
-                        paneText: (window.selectedFile.earlier && window.selectedFile.earlier.text) || ""
-                    }
+
                 }
             }
             Label {

@@ -2,9 +2,33 @@
 
 TRUCE-0002 selects **Qt Quick Controls TextArea in plain-text mode**, with a C++
 QQuickTextDocument adapter, as the foundation for the merge editor. This keeps the
-locked C++20, Qt Quick and Kirigami stack. It does not select a finished merge
-editor or authorize product integration. The standalone experiment imports
+locked C++20, Qt Quick and Kirigami stack. The standalone experiment imports
 Kirigami, uses its theme, and links no product targets.
+
+## Product comparison
+
+TRUCE-0020 integrates that foundation in `src/ui/ComparisonView.qml`. Resizable
+left-source, editable-result and right-source panes retain their reading space
+when the source-choice controls are hidden. Headers identify the side and display
+the captured verified merge or rebase label. Captured blob identities have full
+commit/blob details in their tooltip and accessibility description. Sources come
+from immutable session captures, while the result comes from the current draft,
+initialized with the launch-time working file. Showing earlier-version context,
+resizing panes and revealing choices preserve the result and selection. An absent
+earlier source is explained; a present empty earlier source remains available.
+
+The result supports pointer selection, native copy/paste shortcuts, toolbar
+copy/paste and a context menu. Undo and redo use the shared text-and-decision
+history. The adapter observes completed native key, IME and clipboard operations
+as commands, keeping intermediate document notifications out of the journal.
+Recovery must commit before the model acknowledges each command. A failed commit
+keeps the pending input visible and blocks further edits until recovery is retried.
+Source comparisons and view changes do not replace that pending draft.
+
+Permanent comparison regressions are deferred to the wave gate. Focused authoring
+checks use disposable Qt scenes and merge/rebase repositories. Product QML changes
+also require the full integrated e2e gate. The standalone experiment below remains
+useful for component behavior and does not replace product checks.
 
 ## Candidates and decision
 
@@ -162,9 +186,9 @@ Qt event API, not a physical keyboard, IBus/Fcitx candidate window or real input
 context. Kubuntu 26.04 and Tuxedo OS Wayland sessions still need physical composed
 input, clipboard/selection, pointer selection, scrolling, bidi hit testing,
 scaling, Breeze/dark theme and accessibility checks. No installed components were
-changed. No shared product render markup changed, so this experiment introduces
-no full product e2e obligation; the integrated gate still owns the existing suite
-and platform obligations.
+changed. The standalone experiment changed no shared product render markup. The
+subsequent product comparison requires the full integrated e2e gate and retains
+the platform obligations.
 
 ## Primary API references
 

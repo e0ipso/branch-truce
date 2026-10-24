@@ -25,7 +25,7 @@ The application has no Rust bridge, Python runtime, embedded browser, or mandato
 
 The development host reports Tuxedo OS 24.04.4 on the Ubuntu noble base, glibc 2.39, GCC 13.3 and Git 2.43.0. These observations establish a second required build/test target; Kubuntu 26.04 remains the selected KDE/API baseline. Produce separate artifacts for the two OS bases. Build the Tuxedo artifact against noble and its vendor Qt/KDE packages; build the Kubuntu artifact against Kubuntu 26.04. Neither artifact is assumed portable to the other base. Match actual runtime dependencies and verify installation on both systems before claiming compatibility.
 
-The editor implementation, diff algorithm/library and package format remain open. Qt Quick/Kirigami is the selected application UI; replacing it with a Widgets application would require revising this stack decision. A Qt Widgets dependency for desktop styling or application bootstrap does not by itself select a Widgets interface.
+The editor uses Qt Quick Controls TextArea in plain-text mode with a C++ QQuickTextDocument adapter. The diff algorithm/library and package format remain open. Qt Quick/Kirigami is the selected application UI; replacing it with a Widgets application would require revising this stack decision. A Qt Widgets dependency for desktop styling or application bootstrap does not by itself select a Widgets interface.
 
 ## Architecture and dependency boundaries
 
@@ -79,7 +79,7 @@ Expose an editor adapter for loading read-only sources, applying result edits, m
 
 Prototype unequal insertions, wrapped lines, repeated passages, word-level highlighting, line/region controls, Unicode and IME editing. Prove that undo restores both result text and contribution decisions, including Ignore without text changes. Test accepting the second side after editing the first, partial line choices from both sides, edits that delete an anchor, and the recovery-before-acknowledgment boundary described below.
 
-The concrete text component is not selected. QML TextEdit/TextArea are editing foundations, not a complete merge editor. [KTextEditor exposes QWidget views](https://api.kde.org/ktexteditor-view.html) and cannot be assumed to drop into a Quick scene. Syntax highlighting is also distinct from merge correspondence. Resolve the component and integration approach within the selected UI stack, or explicitly reopen the stack decision if evidence requires it.
+Qt Quick Controls TextArea in plain-text mode is the selected text component, following the [editor experiment](docs/editor-integration.md). The product comparison uses immutable read-only sources around the editable result. Its C++ QQuickTextDocument adapter translates native input into revision-bound editing commands and uses application history and recovery instead of native undo. TextArea remains an editing foundation; alignment, highlighting, navigation and search require separate implementation. [KTextEditor exposes QWidget views](https://api.kde.org/ktexteditor-view.html) and cannot be assumed to drop into a Quick scene.
 
 ## Domain model and editing
 
@@ -232,7 +232,7 @@ Use compiler warnings and sanitizer builds to check C++ ownership and undefined 
 
 | Decision | Evidence needed |
 | --- | --- |
-| Editor component within the selected Quick/Kirigami UI | Prototype alignment, wrapping, line choices, input handling and unified undo |
+| Remaining editor capabilities on the selected TextArea foundation | Validate alignment, wrapping, navigation, search and input on target desktops |
 | Diff/correspondence implementation | Difficult-text fixtures, correctness review and representative performance measurements |
 | Mergetool transport and lifecycle | Implement and test the specified app-only drafts, parent-owned launched-path staging, multi-file waiting and verified acknowledgments |
 | Text formats, path support and limits | Lossless round-trip fixtures, Qt boundary tests and measured resource budgets |

@@ -65,6 +65,7 @@ public:
     Q_INVOKABLE bool undo(const QString &fileId, const QString &revision);
     Q_INVOKABLE bool redo(const QString &fileId, const QString &revision);
     Q_INVOKABLE void attachResultEditor(QObject *editor);
+    Q_INVOKABLE bool resultClipboard(const QString &action);
     // Select by the exact byte-derived file ID, never by a display path.
     Q_INVOKABLE bool selectFile(const QString &fileId);
     Q_INVOKABLE QString displayPath(const QString &fileId) const;
@@ -84,6 +85,7 @@ private:
     void loadWorkingFiles(QList<git::Conflict> conflicts);
     void setState(QString state, QString detail);
     bool commandResult(Transition result);
+    void captureResultEdit();
     void syncResultEditor();
     SessionModel files_;
     SessionCoordinator coordinator_;
@@ -103,5 +105,6 @@ private:
     QMetaObject::Connection editorConnection_;
     QString editorText_;
     bool syncingEditor_ = false;
+    bool processingEditorEvent_ = false;
 };
 }
