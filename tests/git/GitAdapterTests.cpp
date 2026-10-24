@@ -11,9 +11,11 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -216,11 +218,17 @@ QByteArray numberedText(const QByteArray &tenth)
 
 struct ConflictHistory { QByteArray base; QByteArray main; QByteArray side; };
 
-ConflictHistory conflictHistory(Repository &repo, bool renamed = false)
+struct ConflictContents {
+    QByteArray base = "base\n";
+    QByteArray main = "main\n";
+    QByteArray side = "side\n";
+};
+
+ConflictHistory conflictHistory(Repository &repo, bool renamed = false, const ConflictContents &contents = {})
 {
     repo.git({"config", "user.name", "Branch Truce Tests"});
     repo.git({"config", "user.email", "tests@example.invalid"});
-    writeFile(repo.path("tracked.txt"), "base\n");
+    writeFile(repo.path("tracked.txt"), contents.base);
     if (renamed) {
         writeFile(repo.path("a.txt"), numberedText("10"));
         repo.git({"add", "--", "a.txt"});
@@ -228,11 +236,11 @@ ConflictHistory conflictHistory(Repository &repo, bool renamed = false)
     ConflictHistory history;
     history.base = commitFixture(repo, "base");
     repo.git({"checkout", "--quiet", "-b", "side"});
-    writeFile(repo.path("tracked.txt"), "side\n");
+    writeFile(repo.path("tracked.txt"), contents.side);
     if (renamed) writeFile(repo.path("a.txt"), numberedText("side"));
     history.side = commitFixture(repo, "side");
     repo.git({"checkout", "--quiet", "main"});
-    writeFile(repo.path("tracked.txt"), "main\n");
+    writeFile(repo.path("tracked.txt"), contents.main);
     if (renamed) {
         repo.git({"mv", "--", "a.txt", "b.txt"});
         writeFile(repo.path("b.txt"), numberedText("main"));
@@ -418,6 +426,149 @@ int mergetoolFixture(const QString &scenario, const QString &merged)
 
 class GitAdapterTests {
 public:
+    int runClassificationTests()
+    {
+        test_support::Suite suite("ConflictClassifierTests");
+        for (const auto &[scenario, expected] : std::vector<std::pair<QByteArray, ConflictSupport>>{
+                 {"regular", ConflictSupport::SupportedText}, {"executable", ConflictSupport::SupportedText},
+                 {"missing-ours", ConflictSupport::MissingSide}, {"missing-theirs", ConflictSupport::MissingSide},
+                 {"mode-disagreement", ConflictSupport::ModeConflict}, {"symlink-source", ConflictSupport::UnsupportedType},
+                 {"submodule-source", ConflictSupport::UnsupportedType}, {"binary-source", ConflictSupport::UnsupportedText},
+                 {"invalid-utf8-source", ConflictSupport::UnsupportedText}, {"mixed-newlines-source", ConflictSupport::UnsupportedText},
+                 {"invalid-result", ConflictSupport::UnsupportedText}, {"missing-result", ConflictSupport::TopologyConflict},
+                 {"directory-result", ConflictSupport::TopologyConflict}, {"fifo-result", ConflictSupport::TopologyConflict},
+                 {"symlink-result", ConflictSupport::TopologyConflict}, {"excluded-attributes", ConflictSupport::UnsupportedConversion},
+                 {"filter", ConflictSupport::UnsupportedConversion}, {"unverified-source", ConflictSupport::UnverifiedSource}}) {
+            suite.run("complete-conflict classification matrix: " + scenario.toStdString(), [=] {
+                Repository repo;
+                ConflictContents contents;
+                if (scenario == "binary-source") contents.side = QByteArray("binary\0side\n", 12);
+                if (scenario == "invalid-utf8-source") contents.side = QByteArray("side-") + char(0xff) + '\n';
+                if (scenario == "mixed-newlines-source") contents.side = "side\r\nsecond\n";
+                if (scenario == "executable") CHECK(::chmod(QFile::encodeName(repo.path("tracked.txt")).constData(), 0755) == 0);
+                const auto history = conflictHistory(repo, false, contents);
+                repo.git({"merge", "--no-edit", "side"}, {}, 1);
+                const QByteArray manual = "preserved manual UTF-8 \xc3\xa9\n";
+                writeFile(repo.path("tracked.txt"), manual);
+
+                GitAdapter adapter(gitExecutable);
+                auto entries = run(adapter, repo.request(Operation::ListUnmerged)).indexEntries;
+                for (auto &entry : entries) {
+                    if (entry.stage == 3 && scenario == "mode-disagreement") entry.mode = "100755";
+                    if (entry.stage == 3 && scenario == "symlink-source") entry.mode = "120000";
+                    if (entry.stage == 3 && scenario == "submodule-source") { entry.mode = "160000"; entry.objectId = history.side; }
+                    if (entry.stage == 3 && scenario == "unverified-source")
+                        entry.objectId = repo.git({"hash-object", "-w", "--stdin"}, "not in either source\n").trimmed();
+                }
+                QByteArray index = "0 " + QByteArray(40, '0') + "\ttracked.txt" + QByteArray(1, '\0');
+                for (const auto &entry : entries) {
+                    if ((scenario == "missing-ours" && entry.stage == 2) || (scenario == "missing-theirs" && entry.stage == 3)) continue;
+                    index += entry.mode + ' ' + entry.objectId + ' ' + QByteArray::number(entry.stage) + "\ttracked.txt" + QByteArray(1, '\0');
+                }
+                repo.git({"update-index", "-z", "--index-info"}, index);
+                if (scenario == "invalid-result") writeFile(repo.path("tracked.txt"), QByteArray(1, char(0xff)));
+                if (scenario == "missing-result" || scenario == "directory-result" || scenario == "fifo-result" || scenario == "symlink-result") {
+                    CHECK(QFile::remove(repo.path("tracked.txt")));
+                    if (scenario == "directory-result") CHECK(QDir(repo.root.path()).mkdir("tracked.txt"));
+                    if (scenario == "fifo-result") CHECK(::mkfifo(QFile::encodeName(repo.path("tracked.txt")).constData(), 0600) == 0);
+                    if (scenario == "symlink-result") {
+                        writeFile(repo.path("outside.txt"), "do not follow\n");
+                        CHECK(::symlink("outside.txt", QFile::encodeName(repo.path("tracked.txt")).constData()) == 0);
+                    }
+                }
+                if (scenario == "excluded-attributes") writeFile(repo.path(".gitattributes"), "tracked.txt -text eol=crlf\n");
+                if (scenario == "filter") {
+                    writeFile(repo.path(".gitattributes"), "tracked.txt filter=external\n");
+                    repo.git({"config", "filter.external.clean", "touch .filter-ran; cat"});
+                }
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
+                const auto objects = repo.git({"count-objects", "-v"});
+                ConflictClassifier classifier(gitExecutable);
+                const auto result = run(classifier, {repo.root.path(), 71, 93});
+                CHECK(result.outcome == Outcome::Success && result.repository.supported && result.conflicts.size() == 1);
+                const auto &conflict = result.conflicts.front();
+                CHECK(conflict.path == "tracked.txt" && conflict.support == expected);
+                CHECK(conflict.editable() == (expected == ConflictSupport::SupportedText));
+                if (conflict.editable()) {
+                    CHECK(conflict.reason.isEmpty() && conflict.sources.size() == 3 && conflict.result);
+                    CHECK(conflict.result->utf8 == manual && conflict.result->originalBytes == manual);
+                    CHECK(conflict.mode == (scenario == "executable" ? "100755" : "100644"));
+                } else {
+                    CHECK(!conflict.reason.isEmpty() && conflict.sources.isEmpty() && !conflict.result);
+                }
+                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                CHECK(repo.git({"count-objects", "-v"}) == objects);
+                CHECK(repo.git({"rev-parse", "HEAD"}).trimmed() == history.main);
+                CHECK(!QFile::exists(repo.path(".filter-ran")));
+                if (scenario == "symlink-result") {
+                    QFile outside(repo.path("outside.txt"));
+                    CHECK(outside.open(QIODevice::ReadOnly) && outside.readAll() == "do not follow\n");
+                }
+            });
+        }
+        suite.run("add/add conflicts remain editable without inventing an earlier source", [] {
+            Repository repo;
+            repo.git({"config", "user.name", "Branch Truce Tests"});
+            repo.git({"config", "user.email", "tests@example.invalid"});
+            repo.git({"rm", "--force", "--quiet", "--", "tracked.txt"});
+            repo.git({"commit", "--allow-empty", "--quiet", "-m", "base"});
+            repo.git({"checkout", "--quiet", "-b", "side"});
+            writeFile(repo.path("tracked.txt"), "side addition\n");
+            repo.git({"add", "--", "tracked.txt"});
+            commitFixture(repo, "side addition");
+            repo.git({"checkout", "--quiet", "main"});
+            writeFile(repo.path("tracked.txt"), "main addition\n");
+            repo.git({"add", "--", "tracked.txt"});
+            commitFixture(repo, "main addition");
+            repo.git({"merge", "--no-edit", "side"}, {}, 1);
+            const auto before = repo.git({"ls-files", "--stage", "-z"});
+            ConflictClassifier classifier(gitExecutable);
+            const auto result = run(classifier, {repo.root.path(), 71, 93});
+            CHECK(result.outcome == Outcome::Success && result.conflicts.size() == 1);
+            const auto &conflict = result.conflicts.front();
+            CHECK(conflict.editable() && conflict.stages.size() == 2 && conflict.sources.size() == 2 && conflict.result);
+            CHECK(conflict.stages[0].stage == 2 && conflict.stages[1].stage == 3);
+            CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+        });
+        suite.run("mixed classification preserves every literal filename byte and per-path exclusion", [] {
+            Repository repo;
+            repo.git({"config", "user.name", "Branch Truce Tests"});
+            repo.git({"config", "user.email", "tests@example.invalid"});
+            CHECK(QDir(repo.root.path()).mkdir("nested"));
+            auto names = oddPaths();
+            names.prepend("tracked.txt");
+            for (const auto &name : names) repo.writePath(name, "base\n");
+            repo.git({"add", "--", "."});
+            commitFixture(repo, "literal base");
+            repo.git({"checkout", "--quiet", "-b", "side"});
+            for (const auto &name : names) repo.writePath(name, name == names.last() ? QByteArray(1, char(0xff)) : QByteArray("side\n"));
+            commitFixture(repo, "literal side");
+            repo.git({"checkout", "--quiet", "main"});
+            for (const auto &name : names) repo.writePath(name, "main\n");
+            commitFixture(repo, "literal main");
+            repo.git({"merge", "--no-edit", "side"}, {}, 1);
+            for (const auto &name : names) repo.writePath(name, "manual UTF-8 \xc3\xa9\n");
+            const auto before = repo.git({"ls-files", "--stage", "-z"});
+            ConflictClassifier classifier(gitExecutable);
+            const auto result = run(classifier, {repo.root.path(), 71, 93});
+            CHECK(result.outcome == Outcome::Success && result.conflicts.size() == names.size());
+            QSet<QByteArray> seen;
+            for (const auto &conflict : result.conflicts) {
+                CHECK(names.contains(conflict.path) && !seen.contains(conflict.path));
+                seen.insert(conflict.path);
+                CHECK(conflict.stages.size() == 3);
+                if (conflict.path == names.last()) {
+                    CHECK(conflict.support == ConflictSupport::UnsupportedText && !conflict.editable());
+                    CHECK(!conflict.reason.isEmpty() && conflict.sources.isEmpty() && !conflict.result);
+                } else {
+                    CHECK(conflict.editable() && conflict.reason.isEmpty() && conflict.result && conflict.sources.size() == 3);
+                    CHECK(conflict.result->originalBytes == "manual UTF-8 \xc3\xa9\n");
+                }
+            }
+            CHECK(seen.size() == names.size() && repo.git({"ls-files", "--stage", "-z"}) == before);
+        });
+        return suite.report();
+    }
     int runTests()
     {
         test_support::Suite suite("GitAdapterTests");
@@ -1647,5 +1798,7 @@ int main(int argc, char **argv)
             return 2;
         }
     }
+    if (arguments.size() == 2 && arguments[1] == "--classification-only")
+        return GitAdapterTests{}.runClassificationTests();
     return GitAdapterTests{}.runTests();
 }
