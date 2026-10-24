@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:aa8dc8cfa15294b31a44a16cf7df48c9a86a2dcb512f5ca2aac64e253b2ef5a3'
-node_count: 12
+nodes_hash: 'sha256:6a4e3d25664a911ea88b5be6ed119498bcc5e1ef3675d719653adc2ff730d27e'
+node_count: 13
 ---
 # kenkeep Graph
 
-Total nodes: 12
+Total nodes: 13
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -23,6 +23,14 @@ Total nodes: 12
 - **path:** map-branch-truce-first-release-scope.md
 - **tags:** product, scope, workflow
 - **derived_from:** PRD.md
+
+## map-repository-discovery-and-verified-source-identities
+
+- **kind:** map
+- **title:** Repository discovery and verified source identities
+- **path:** map-repository-discovery-and-verified-source-identities.md
+- **tags:** git, discovery, source-identity, scope
+- **relates_to:** practice-keep-sources-identifiable-and-the-result-editable, practice-keep-unsupported-and-unfinished-work-visible, map-branch-truce-first-release-scope
 
 ## practice-design-desktop-apps-around-screens-and-components
 

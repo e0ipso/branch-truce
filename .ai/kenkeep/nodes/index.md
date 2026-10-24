@@ -14,10 +14,10 @@ _None._
 - Open [**Design desktop apps around screens and components**](practice-design-desktop-apps-around-screens-and-components.md) to learn about: Define screens and components, then build loosely coupled implementations using each desktop environment's idiomatic UI kit. #architecture #desktop #techspec
 - Open [**Keep failed work outstanding**](practice-keep-failed-work-outstanding.md) to learn about: Keep failed saves and resolutions visible, retain edited results, and claim resolution only after both steps succeed. #product #failures #saving #resolution
 - Open [**Keep PRD.md focused on user needs**](practice-keep-prd-focused-on-user-needs.md) to learn about: PRD.md describes user needs, interactions, and capabilities without technical or implementation details. #product #prd #documentation
-- Open [**Keep TechSpecs and PRDs independent**](practice-keep-techspecs-and-prds-independent.md) to learn about: TechSpecs explain how to build; PRDs explain what to build and why. Keep both separate and independently understandable. #documentation #techspec #prd
-- Open [**Fence session work and serialize worktree mutations**](practice-fence-session-work-and-serialize-worktree-mutations.md) to learn about: Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation. #architecture #concurrency #cancellation #git #desktop
 - Open [**Keep sources identifiable and the result editable**](practice-keep-sources-identifiable-and-the-result-editable.md) to learn about: Require truthful source identities, an editable center result, earlier context, and reading aids that preserve text. #product #comparison #editing
+- Open [**Keep TechSpecs and PRDs independent**](practice-keep-techspecs-and-prds-independent.md) to learn about: TechSpecs explain how to build; PRDs explain what to build and why. Keep both separate and independently understandable. #documentation #techspec #prd
 - Open [**Keep unsupported and unfinished work visible**](practice-keep-unsupported-and-unfinished-work-visible.md) to learn about: Show all current files, prominent outside-app warnings, and an honest handoff that directs users to outstanding work. #product #scope #progress #handoff
+- Open [**Fence session work and serialize worktree mutations**](practice-fence-session-work-and-serialize-worktree-mutations.md) to learn about: Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation. #architecture #concurrency #cancellation #git #desktop
 - Open [**Make conflict choices explicit and reversible**](practice-make-conflict-choices-explicit-and-reversible.md) to learn about: Keep accept, ignore, combine, and broader choices distinct, inspectable, and reversible with their decision states. #product #choices #editing #undo
 - Open [**Recover unfinished work without changing its status**](practice-recover-unfinished-work-without-changing-its-status.md) to learn about: Restore unsaved edits and outstanding decisions after closing or a crash while preserving honest work status. #product #recovery #editing #progress
 - Open [**Separate Save from Mark resolved**](practice-separate-save-from-mark-resolved.md) to learn about: Save keeps app-only drafts; Mark resolved writes the reviewed result and resolves the file in Git. #product #saving #resolution #review
@@ -25,6 +25,7 @@ _None._
 ## Components (what exists)
 - Open [**Branch Truce first-release scope**](map-branch-truce-first-release-scope.md) to learn about: PRD.md defines a standalone, offline Linux app for text conflicts during merges and rebases. #product #scope #workflow
 - Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation. #architecture #desktop #platform #cpp
+- Open [**Repository discovery and verified source identities**](map-repository-discovery-and-verified-source-identities.md) to learn about: Verify merge/rebase source identities and keep renamed text conflicts supported while isolating path provenance failures. #git #discovery #source-identity #scope
 
 ## By topic
 
@@ -44,9 +45,16 @@ _None._
 - Open [**Keep sources identifiable and the result editable**](practice-keep-sources-identifiable-and-the-result-editable.md) — Require truthful source identities, an editable center result, earlier context, and reading aids that preserve text.
 - Open [**Make conflict choices explicit and reversible**](practice-make-conflict-choices-explicit-and-reversible.md) — Keep accept, ignore, combine, and broader choices distinct, inspectable, and reversible with their decision states.
 - Open [**Recover unfinished work without changing its status**](practice-recover-unfinished-work-without-changing-its-status.md) — Restore unsaved edits and outstanding decisions after closing or a crash while preserving honest work status.
+### #scope
+- Open [**Branch Truce first-release scope**](map-branch-truce-first-release-scope.md) — PRD.md defines a standalone, offline Linux app for text conflicts during merges and rebases.
+- Open [**Keep unsupported and unfinished work visible**](practice-keep-unsupported-and-unfinished-work-visible.md) — Show all current files, prominent outside-app warnings, and an honest handoff that directs users to outstanding work.
+- Open [**Repository discovery and verified source identities**](map-repository-discovery-and-verified-source-identities.md) — Verify merge/rebase source identities and keep renamed text conflicts supported while isolating path provenance failures.
 ### #documentation
 - Open [**Keep PRD.md focused on user needs**](practice-keep-prd-focused-on-user-needs.md) — PRD.md describes user needs, interactions, and capabilities without technical or implementation details.
 - Open [**Keep TechSpecs and PRDs independent**](practice-keep-techspecs-and-prds-independent.md) — TechSpecs explain how to build; PRDs explain what to build and why. Keep both separate and independently understandable.
+### #git
+- Open [**Fence session work and serialize worktree mutations**](practice-fence-session-work-and-serialize-worktree-mutations.md) — Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation.
+- Open [**Repository discovery and verified source identities**](map-repository-discovery-and-verified-source-identities.md) — Verify merge/rebase source identities and keep renamed text conflicts supported while isolating path provenance failures.
 ### #prd
 - Open [**Keep PRD.md focused on user needs**](practice-keep-prd-focused-on-user-needs.md) — PRD.md describes user needs, interactions, and capabilities without technical or implementation details.
 - Open [**Keep TechSpecs and PRDs independent**](practice-keep-techspecs-and-prds-independent.md) — TechSpecs explain how to build; PRDs explain what to build and why. Keep both separate and independently understandable.
@@ -59,9 +67,6 @@ _None._
 ### #saving
 - Open [**Keep failed work outstanding**](practice-keep-failed-work-outstanding.md) — Keep failed saves and resolutions visible, retain edited results, and claim resolution only after both steps succeed.
 - Open [**Separate Save from Mark resolved**](practice-separate-save-from-mark-resolved.md) — Save keeps app-only drafts; Mark resolved writes the reviewed result and resolves the file in Git.
-### #scope
-- Open [**Branch Truce first-release scope**](map-branch-truce-first-release-scope.md) — PRD.md defines a standalone, offline Linux app for text conflicts during merges and rebases.
-- Open [**Keep unsupported and unfinished work visible**](practice-keep-unsupported-and-unfinished-work-visible.md) — Show all current files, prominent outside-app warnings, and an honest handoff that directs users to outstanding work.
 ### #techspec
 - Open [**Design desktop apps around screens and components**](practice-design-desktop-apps-around-screens-and-components.md) — Define screens and components, then build loosely coupled implementations using each desktop environment's idiomatic UI kit.
 - Open [**Keep TechSpecs and PRDs independent**](practice-keep-techspecs-and-prds-independent.md) — TechSpecs explain how to build; PRDs explain what to build and why. Keep both separate and independently understandable.
@@ -75,10 +80,10 @@ _None._
 - Open [**Fence session work and serialize worktree mutations**](practice-fence-session-work-and-serialize-worktree-mutations.md) — Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation.
 ### #cpp
 - Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) — Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation.
+### #discovery
+- Open [**Repository discovery and verified source identities**](map-repository-discovery-and-verified-source-identities.md) — Verify merge/rebase source identities and keep renamed text conflicts supported while isolating path provenance failures.
 ### #failures
 - Open [**Keep failed work outstanding**](practice-keep-failed-work-outstanding.md) — Keep failed saves and resolutions visible, retain edited results, and claim resolution only after both steps succeed.
-### #git
-- Open [**Fence session work and serialize worktree mutations**](practice-fence-session-work-and-serialize-worktree-mutations.md) — Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation.
 ### #handoff
 - Open [**Keep unsupported and unfinished work visible**](practice-keep-unsupported-and-unfinished-work-visible.md) — Show all current files, prominent outside-app warnings, and an honest handoff that directs users to outstanding work.
 ### #platform
@@ -87,6 +92,8 @@ _None._
 - Open [**Recover unfinished work without changing its status**](practice-recover-unfinished-work-without-changing-its-status.md) — Restore unsaved edits and outstanding decisions after closing or a crash while preserving honest work status.
 ### #review
 - Open [**Separate Save from Mark resolved**](practice-separate-save-from-mark-resolved.md) — Save keeps app-only drafts; Mark resolved writes the reviewed result and resolves the file in Git.
+### #source-identity
+- Open [**Repository discovery and verified source identities**](map-repository-discovery-and-verified-source-identities.md) — Verify merge/rebase source identities and keep renamed text conflicts supported while isolating path provenance failures.
 ### #undo
 - Open [**Make conflict choices explicit and reversible**](practice-make-conflict-choices-explicit-and-reversible.md) — Keep accept, ignore, combine, and broader choices distinct, inspectable, and reversible with their decision states.
 ### #workflow
