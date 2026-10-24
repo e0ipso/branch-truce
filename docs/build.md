@@ -68,10 +68,11 @@ AddressSanitizer and UndefinedBehaviorSanitizer with frame pointers. The default
 sanitizer preparation tests the core without Qt; desktop sanitizers can be
 configured separately with both desktop and sanitizer options ON.
 
-CTest includes the core build canary, revisioned session tests and CLI guards.
-Desktop builds also test the Qt session model, the asynchronous Git adapter in
-temporary repositories, and the accepted editor fixture. The session, model
-and Git tests report case and assertion counts; the editor reports assertions.
+CTest includes the core build canary, revisioned session tests, correspondence
+command fixtures and CLI guards. Desktop builds also test the Qt session model,
+the asynchronous Git adapter in temporary repositories, and the accepted editor
+fixture. The session, correspondence, model and Git tests report case and
+assertion counts; the editor reports assertions.
 The Git test includes the real 30-second operation deadline and has a 90-second
 suite timeout. Its scripted executables live outside the temporary repositories.
 

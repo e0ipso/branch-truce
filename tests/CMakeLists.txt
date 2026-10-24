@@ -7,6 +7,10 @@ target_link_libraries(branch_truce_session_tests PRIVATE branch_truce_core branc
 # Reject matrix-sized allocations only while the correspondence resource fixture runs.
 target_link_options(branch_truce_session_tests PRIVATE "LINKER:--wrap=_Znwm")
 add_test(NAME core.session-state COMMAND branch_truce_session_tests)
+add_executable(branch_truce_correspondence_fixtures core/CorrespondenceCommandFixtures.cpp)
+target_include_directories(branch_truce_correspondence_fixtures PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(branch_truce_correspondence_fixtures PRIVATE branch_truce_core branch_truce_build_options)
+add_test(NAME core.correspondence-fixtures COMMAND branch_truce_correspondence_fixtures)
 find_program(BASH_EXECUTABLE bash REQUIRED)
 add_test(NAME lifecycle.cli-guards
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/SetupGuards.sh")
