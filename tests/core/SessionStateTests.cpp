@@ -97,6 +97,249 @@ public:
     {
         test_support::Suite suite("SessionStateTests");
         for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
+            for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst}) {
+                suite.run("TRUCE-0017 confirmed ordered scopes preserve unrelated text and decisions "
+                    + std::to_string(static_cast<int>(scope)) + "/" + std::to_string(static_cast<int>(action)), [=] {
+                    auto file = test_support::combinationFile(scope);
+                    const auto target = test_support::choiceTarget(file, SourceSide::Stage2, scope);
+                    CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                    const auto before = file.current();
+                    const auto preview = previewChoice(file, before.id, target.source.contributionId, action);
+                    const bool leftFirst = action == ChoiceAction::CombineLeftFirst;
+                    const auto left = scope == ChoiceScope::Line ? "left first\n" : "left first\nleft second\n";
+                    const auto right = scope == ChoiceScope::Line ? "right first\n" : "right first\nright second\n";
+                    const auto expected = leftFirst ? std::string(left) + right : std::string(right) + left;
+                    CHECK(preview.state == Transition::ConfirmationRequired && preview.replacement == expected);
+                    CHECK(preview.sourceOrder.size() == 2 && preview.affectedRange);
+                    CHECK(preview.sourceOrder[0].side == (leftFirst ? SourceSide::Stage2 : SourceSide::Stage3));
+                    CHECK(preview.sourceOrder[1].side != preview.sourceOrder[0].side);
+                    CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired);
+                    CHECK(file.current().id == before.id && file.current().draft == before.draft);
+                    CHECK(applyChoice(file, preview, true) == Transition::Applied);
+                    auto text = before.draft.text;
+                    text.replace(preview.affectedRange->begin,
+                        preview.affectedRange->end - preview.affectedRange->begin, expected);
+                    const auto chosen = file.current().draft;
+                    CHECK(chosen.text == text && chosen.text.starts_with("manual prefix\nheader\n"));
+                    CHECK(chosen.text.ends_with("bridge\nleft later\ntail\n"));
+                    for (const auto &[id, value] : chosen.decisions) {
+                        const auto expectedDecision = preview.command.decisions.find(id);
+                        CHECK(value == (expectedDecision == preview.command.decisions.end()
+                            ? before.draft.decisions.at(id) : expectedDecision->second));
+                    }
+                    for (std::size_t order = 0; order < preview.sourceOrder.size(); ++order) {
+                        const auto &source = preview.sourceOrder[order];
+                        for (const auto &choice : file.choices()) {
+                            if (choice.source == source)
+                                for (const auto &id : choice.decisions)
+                                    CHECK(chosen.decisions.at(id) == Decision{DecisionValue::Accepted, order + 1});
+                        }
+                    }
+                    CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before.draft);
+                    CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+                });
+            }
+        }
+        suite.run("TRUCE-0017 partial combinations can be reordered repeatedly without duplicating another section", [] {
+            auto file = test_support::choiceFile();
+            const auto target = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section, 1);
+            for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst,
+                     ChoiceAction::CombineLeftFirst}) {
+                const auto preview = previewChoice(file, file.current().id, target.source.contributionId, action);
+                CHECK(preview.state == Transition::ConfirmationRequired);
+                CHECK(applyChoice(file, preview, true) == Transition::Applied);
+                const auto suffix = action == ChoiceAction::CombineLeftFirst
+                    ? "left later\nright later\ntail\n" : "right later\nleft later\ntail\n";
+                CHECK(file.current().draft.text == std::string("header\nleft first\nleft second\nbridge\n") + suffix);
+            }
+        });
+        suite.run("TRUCE-0017 overlapping manual work is displayed and cancel stale or altered previews preserve it", [] {
+            auto file = test_support::combinationFile(ChoiceScope::Line);
+            const auto target = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Line);
+            CHECK(file.editResult(1, {{7, 18}, "manual first\n"}) == Transition::Applied);
+            const auto before = file.current();
+            const auto preview = previewChoice(file, before.id, target.source.contributionId, ChoiceAction::CombineRightFirst);
+            CHECK(preview.state == Transition::ConfirmationRequired && preview.replacesManual);
+            CHECK(preview.before == "manual first\n" && preview.replacement == "right first\nleft first\n");
+            CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired);
+            auto altered = preview;
+            altered.replacement += "undisplayed\n";
+            CHECK(applyChoice(file, altered, true) == Transition::InvalidAnchor);
+            CHECK(file.current().id == before.id && file.current().draft == before.draft);
+            CHECK(file.editResult(before.id, {{0, 0}, "newer edit\n"}) == Transition::Applied);
+            const auto newer = file.current();
+            CHECK(applyChoice(file, preview, true) == Transition::StaleRevision);
+            CHECK(file.current().id == newer.id && file.current().draft == newer.draft);
+            const auto fresh = previewChoice(file, newer.id, target.source.contributionId, ChoiceAction::CombineRightFirst);
+            CHECK(applyChoice(file, fresh, true) == Transition::Applied);
+            CHECK(file.current().draft.text == "newer edit\nheader\nright first\nleft first\nbridge\nleft later\ntail\n");
+            CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == newer.draft);
+        });
+        for (const auto scope : {NonConflictingScope::Left, NonConflictingScope::Right, NonConflictingScope::Both}) {
+            suite.run("TRUCE-0018 file batches apply only eligible contributions after confirmation "
+                + std::to_string(static_cast<int>(scope)), [=] {
+                auto file = test_support::batchFile();
+                CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                const auto before = file.current();
+                const auto preview = previewNonConflicting(file, before.id, scope);
+                CHECK(preview.state == Transition::ConfirmationRequired && preview.scope == scope && preview.path == file.path());
+                CHECK(preview.detail.find("in this file") != std::string::npos);
+                CHECK(preview.changes.size() == (scope == NonConflictingScope::Both ? 2 : 1));
+                CHECK(applyNonConflicting(file, preview) == Transition::ConfirmationRequired);
+                CHECK(file.current().id == before.id && file.current().draft == before.draft);
+                CHECK(applyNonConflicting(file, preview, true) == Transition::Applied);
+                const auto chosen = file.current().draft;
+                const auto left = scope == NonConflictingScope::Right ? "base left\n" : "left only\n";
+                const auto right = scope == NonConflictingScope::Left ? "base right\n" : "right only\n";
+                CHECK(chosen.text == std::string("manual prefix\nheader\n") + left + "bridge one\n" + right
+                    + "bridge two\nbase conflict\ntail\n");
+                CHECK(!preview.command.decisions.empty());
+                for (const auto &[id, value] : chosen.decisions)
+                    CHECK(value == (preview.command.decisions.contains(id)
+                        ? Decision{DecisionValue::Accepted, {}} : before.draft.decisions.at(id)));
+                const auto competing = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section, 2);
+                for (const auto &id : competing.decisions) CHECK(chosen.decisions.at(id).value == DecisionValue::Undecided);
+                CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before.draft);
+                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+                CHECK(previewNonConflicting(file, file.current().id, scope).state == Transition::NoChange);
+            });
+        }
+        suite.run("TRUCE-0018 manual overlap and existing decisions are excluded while unrelated edits survive", [] {
+            auto file = test_support::batchFile();
+            const auto position = file.current().draft.text.find("base right\n");
+            CHECK(file.editResult(1, {{position, position + 11}, "manual right\n"}) == Transition::Applied);
+            const auto preview = previewNonConflicting(file, file.current().id);
+            CHECK(preview.state == Transition::ConfirmationRequired && preview.changes.size() == 1 && preview.skipped > 0);
+            CHECK(preview.changes.front().replacement == "left only\n");
+            CHECK(applyNonConflicting(file, preview, true) == Transition::Applied);
+            CHECK(file.current().draft.text == "header\nleft only\nbridge one\nmanual right\nbridge two\nbase conflict\ntail\n");
+            const auto chosen = file.current().draft;
+            CHECK(previewNonConflicting(file, file.current().id).state == Transition::NoChange);
+            CHECK(file.current().draft == chosen);
+        });
+        suite.run("TRUCE-0018 a previously ignored eligible contribution stays ignored while the other side is batched", [] {
+            auto file = test_support::batchFile();
+            const auto target = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section);
+            const auto ignore = previewChoice(file, 1, target.source.contributionId, ChoiceAction::Ignore);
+            CHECK(applyChoice(file, ignore) == Transition::Applied);
+            const auto before = file.current().draft;
+            const auto preview = previewNonConflicting(file, file.current().id);
+            CHECK(preview.state == Transition::ConfirmationRequired && preview.changes.size() == 1 && preview.skipped > 0);
+            CHECK(preview.changes.front().replacement == "right only\n");
+            CHECK(applyNonConflicting(file, preview, true) == Transition::Applied);
+            CHECK(file.current().draft.text == "header\nbase left\nbridge one\nright only\nbridge two\nbase conflict\ntail\n");
+            for (const auto &id : target.decisions) {
+                CHECK(before.decisions.at(id).value == DecisionValue::Ignored);
+                CHECK(file.current().draft.decisions.at(id) == before.decisions.at(id));
+            }
+        });
+        suite.run("TRUCE-0018 absent earlier context stale and altered batches never apply", [] {
+            auto missing = test_support::choiceFile();
+            const auto blocked = previewNonConflicting(missing, 1);
+            CHECK(blocked.state == Transition::Blocked && blocked.detail.find("earlier version is unavailable") != std::string::npos);
+            CHECK(applyNonConflicting(missing, blocked, true) == Transition::Blocked && missing.current().id == 1);
+            auto file = test_support::batchFile();
+            const auto preview = previewNonConflicting(file, 1);
+            auto altered = preview;
+            altered.changes.front().replacement = "not displayed";
+            CHECK(applyNonConflicting(file, altered, true) == Transition::InvalidAnchor && file.current().id == 1);
+            CHECK(file.editResult(1, {{0, 0}, "manual\n"}) == Transition::Applied);
+            const auto current = file.current();
+            CHECK(applyNonConflicting(file, preview, true) == Transition::StaleRevision);
+            CHECK(file.current().id == current.id && file.current().draft == current.draft);
+        });
+        suite.run("TRUCE-0018 insertions touching a competing changed range stay outstanding", [] {
+            auto captured = *test_support::choiceFile("head\ninserted\nbase\ntail\n", "head\nchanged\ntail\n").snapshots();
+            const std::string earlier = "head\nbase\ntail\n";
+            captured.earlier = SourceSnapshot{"base", "100644", earlier, test_support::choiceText(earlier), "base", "Earlier"};
+            captured.launchResult.text = test_support::choiceText(earlier);
+            FileSession file("choices", captured.path, {earlier, {}, 0}, Support::Supported, {}, captured, true);
+            CHECK(file.nonConflictingTargets().empty());
+            const auto before = file.current().draft;
+            const auto preview = previewNonConflicting(file, 1);
+            CHECK(preview.state == Transition::NoChange && preview.changes.empty());
+            CHECK(applyNonConflicting(file, preview, true) == Transition::NoChange);
+            CHECK(file.current().id == 1 && file.current().draft == before);
+            for (const auto &[id, value] : before.decisions) { (void)id; CHECK(value.value == DecisionValue::Undecided); }
+        });
+        suite.run("TRUCE-0018 ambiguous repeated result passages stay outstanding", [] {
+            const auto source = test_support::batchFile();
+            const auto earlier = source.snapshots()->earlier->worktree.utf8;
+            auto captured = *source.snapshots();
+            captured.launchResult.text = test_support::choiceText(earlier + earlier);
+            FileSession file("choices", source.path(), {earlier + earlier, {}, 0},
+                Support::Supported, {}, captured, true);
+            const auto before = file.current().draft;
+            const auto preview = previewNonConflicting(file, 1);
+            CHECK(preview.state == Transition::NoChange && preview.changes.empty() && preview.skipped > 0);
+            CHECK(applyNonConflicting(file, preview, true) == Transition::NoChange);
+            CHECK(file.current().id == 1 && file.current().draft == before);
+        });
+        for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
+            suite.run("TRUCE-0019 whole-file previews describe and replace exactly the selected source "
+                + std::to_string(static_cast<int>(side)), [=] {
+                auto file = test_support::choiceFile();
+                CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                const auto before = file.current();
+                const auto preview = previewWholeFile(file, before.id, side);
+                const auto &source = side == SourceSide::Stage2 ? file.snapshots()->stage2 : file.snapshots()->stage3;
+                CHECK(preview.state == Transition::ConfirmationRequired && preview.before == before.draft.text);
+                CHECK(preview.replacement == source->worktree.utf8 && preview.fileId == file.id());
+                CHECK(preview.origin.sourceObjectId == source->objectId && !preview.contributions.empty() && !preview.differences.empty());
+                CHECK(preview.detail.find("manual edits") != std::string::npos && preview.retainedDecisions == 0);
+                CHECK(std::any_of(preview.differences.begin(), preview.differences.end(), [](const auto &difference) {
+                    return difference.result.begin == 0 && difference.result.end >= std::string("manual prefix\n").size();
+                }));
+                CHECK(applyWholeFile(file, preview) == Transition::ConfirmationRequired);
+                CHECK(file.current().id == before.id && file.current().draft == before.draft);
+                CHECK(applyWholeFile(file, preview, true) == Transition::Applied);
+                const auto chosen = file.current().draft;
+                CHECK(chosen.text == preview.replacement && preview.contributions.size() == chosen.decisions.size());
+                for (const auto &contribution : preview.contributions) {
+                    CHECK(contribution.before == before.draft.decisions.at(contribution.source.contributionId));
+                    CHECK(chosen.decisions.at(contribution.source.contributionId) == contribution.after);
+                    CHECK(contribution.after == Decision{contribution.source.side == side
+                        ? DecisionValue::Accepted : DecisionValue::Ignored, {}});
+                }
+                CHECK(!file.reviewed() && !file.written() && !file.staged());
+                CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before.draft);
+                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+            });
+        }
+        suite.run("TRUCE-0019 altered or stale whole-file confirmation cannot change the draft", [] {
+            auto file = test_support::choiceFile();
+            const auto before = file.current();
+            const auto preview = previewWholeFile(file, before.id, SourceSide::Stage3);
+            for (const int field : {0, 1, 2, 3}) {
+                auto altered = preview;
+                if (field == 0) altered.replacement += "hidden text\n";
+                if (field == 1) altered.before = "different displayed result";
+                if (field == 2) altered.contributions.front().after = {DecisionValue::Undecided, {}};
+                if (field == 3) altered.command.edits.front().replacement = "hidden command";
+                CHECK(applyWholeFile(file, altered, true) == Transition::InvalidAnchor);
+                CHECK(file.current().id == before.id && file.current().draft == before.draft);
+            }
+            CHECK(file.editResult(before.id, {{0, 0}, "new manual edit\n"}) == Transition::Applied);
+            const auto newer = file.current();
+            CHECK(applyWholeFile(file, preview, true) == Transition::StaleRevision);
+            CHECK(file.current().id == newer.id && file.current().draft == newer.draft);
+        });
+        suite.run("TRUCE-0019 whole-file replacement retains recovered decisions without source scopes", [] {
+            const auto source = test_support::choiceFile();
+            const Draft legacy{"legacy manual result\n", {{"legacy-left", {DecisionValue::Accepted, 3}},
+                {"legacy-right", {DecisionValue::Ignored, {}}}}, 0};
+            auto captured = *source.snapshots();
+            captured.launchResult.text = test_support::choiceText(legacy.text);
+            FileSession file(source.id(), source.path(), legacy, Support::Supported, {}, captured);
+            const auto preview = previewWholeFile(file, 1, SourceSide::Stage3);
+            CHECK(preview.state == Transition::ConfirmationRequired && preview.retainedDecisions == legacy.decisions.size());
+            CHECK(preview.contributions.empty() && preview.command.decisions.empty());
+            CHECK(applyWholeFile(file, preview, true) == Transition::Applied);
+            CHECK(file.current().draft.text == source.snapshots()->stage3->worktree.utf8);
+            CHECK(file.current().draft.decisions == legacy.decisions);
+            CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == legacy);
+        });
+        for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
             suite.run("TRUCE-0016 scoped Accept preserves unrelated edits and restores atomic history "
                 + std::to_string(static_cast<int>(scope)), [=] {
                 auto file = test_support::choiceFile();

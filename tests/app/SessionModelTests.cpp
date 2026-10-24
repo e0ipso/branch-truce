@@ -121,6 +121,48 @@ FileSession replayedFile(const QString &directory)
     CHECK(replay.succeeded && replay.error.isEmpty() && replay.files.size() == 1);
     return replay.files.front();
 }
+void checkRecoveredHistory(SessionModel &model, const Draft &before, const Draft &chosen)
+{
+    const auto captures = *model.file("choices")->snapshots();
+    const auto check = [&](const Draft &expected) {
+        const auto replay = replayedFile(model.recoveryDirectory());
+        CHECK(replay.current().draft == expected && replay.current().id == model.file("choices")->current().id);
+        CHECK(*replay.snapshots() == captures && replay.checkpoint() && replay.checkpoint()->draft == before);
+        CHECK(!replay.reviewed() && !replay.written() && !replay.staged() && !replay.facts().resolved);
+        CHECK(!model.hasPendingRecovery());
+    };
+    check(chosen);
+    CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+    check(before);
+    CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
+    check(chosen);
+    auto reopened = replayedFile(model.recoveryDirectory());
+    CHECK(reopened.undo(reopened.current().id) == Transition::Applied && reopened.current().draft == before);
+    CHECK(reopened.redo(reopened.current().id) == Transition::Applied && reopened.current().draft == chosen);
+}
+
+QString recordIntent(SessionModel &model, const std::string &id, const QString &kind)
+{
+    const auto mutation = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    CHECK(storage::RecoveryStore(model.recoveryDirectory()).commit(
+        mutationRecoveryTransaction(*model.file(id), kind, mutation)).succeeded);
+    return mutation;
+}
+
+void preparePublication(SessionModel &model, const std::string &id, bool staging)
+{
+    const auto revision = model.file(id)->current().id;
+    CHECK(model.beginMarkResolved(id, revision, true) == Transition::Applied);
+    CHECK(model.recordCheckpoint(id, revision, Outcome::Succeeded) == Transition::Applied);
+    if (staging) CHECK(model.recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
+}
+
+void completePublication(SessionModel &model, const std::string &id, bool staging)
+{
+    const auto revision = model.file(id)->current().id;
+    CHECK((staging ? model.recordStage(id, revision, Outcome::Succeeded, "verified-object", "100644")
+        : model.recordWrite(id, revision, Outcome::Succeeded)) == Transition::Applied);
+}
 }
 
 class SessionModelTests {
@@ -128,6 +170,188 @@ public:
     int run()
     {
         test_support::Suite suite("SessionModelTests");
+        for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
+            for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst}) {
+                suite.run("TRUCE-0017 ordered combination undo and redo recover as complete transactions "
+                    + std::to_string(static_cast<int>(scope)) + "/" + std::to_string(static_cast<int>(action)), [=] {
+                    QTemporaryDir directory;
+                    CHECK(directory.isValid());
+                    SessionModel model(directory.path() + "/recovery");
+                    CHECK(model.appendFile(test_support::combinationFile(scope)));
+                    CHECK(model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                    CHECK(model.recordCheckpoint("choices", 2, Outcome::Succeeded) == Transition::Applied);
+                    const auto before = model.file("choices")->current().draft;
+                    const auto target = test_support::choiceTarget(*model.file("choices"), SourceSide::Stage2, scope);
+                    const auto preview = previewChoice(*model.file("choices"), 2, target.source.contributionId, action);
+                    const auto count = storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size();
+                    CHECK(model.applyChoice("choices", preview) == Transition::ConfirmationRequired);
+                    CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count);
+                    CHECK(model.applyChoice("choices", preview, true) == Transition::Applied);
+                    CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count + 1);
+                    const auto chosen = model.file("choices")->current().draft;
+                    CHECK(chosen != before && chosen.text.find(preview.replacement) != std::string::npos);
+                    checkRecoveredHistory(model, before, chosen);
+                });
+            }
+        }
+        for (const auto scope : {NonConflictingScope::Left, NonConflictingScope::Right, NonConflictingScope::Both}) {
+            suite.run("TRUCE-0018 file batch undo and redo recover together with protected manual work "
+                + std::to_string(static_cast<int>(scope)), [=] {
+                QTemporaryDir directory;
+                CHECK(directory.isValid());
+                SessionModel model(directory.path() + "/recovery");
+                CHECK(model.appendFile(test_support::batchFile()));
+                CHECK(model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                CHECK(model.recordCheckpoint("choices", 2, Outcome::Succeeded) == Transition::Applied);
+                const auto before = model.file("choices")->current().draft;
+                const auto preview = previewNonConflicting(*model.file("choices"), 2, scope);
+                const auto count = storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size();
+                CHECK(model.applyNonConflicting("choices", preview) == Transition::ConfirmationRequired);
+                CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count);
+                CHECK(model.applyNonConflicting("choices", preview, true) == Transition::Applied);
+                CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count + 1);
+                const auto chosen = model.file("choices")->current().draft;
+                CHECK(chosen.text.starts_with("manual prefix\n") && chosen != before);
+                checkRecoveredHistory(model, before, chosen);
+            });
+        }
+        for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
+            suite.run("TRUCE-0019 whole-file replacement undo and redo recover text and decisions "
+                + std::to_string(static_cast<int>(side)), [=] {
+                QTemporaryDir directory;
+                CHECK(directory.isValid());
+                SessionModel model(directory.path() + "/recovery");
+                CHECK(model.appendFile(test_support::choiceFile()));
+                CHECK(model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                CHECK(model.recordCheckpoint("choices", 2, Outcome::Succeeded) == Transition::Applied);
+                const auto before = model.file("choices")->current().draft;
+                const auto preview = previewWholeFile(*model.file("choices"), 2, side);
+                const auto count = storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size();
+                CHECK(model.applyWholeFile("choices", preview) == Transition::ConfirmationRequired);
+                CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count);
+                CHECK(model.applyWholeFile("choices", preview, true) == Transition::Applied);
+                CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == count + 1);
+                const auto chosen = model.file("choices")->current().draft;
+                CHECK(chosen.text == preview.replacement && chosen != before);
+                checkRecoveredHistory(model, before, chosen);
+            });
+        }
+        for (const int operation : {0, 1, 2}) {
+            suite.run("wave 9 failed compound command retains one atomic recovery candidate " + std::to_string(operation), [=] {
+                QTemporaryDir directory;
+                CHECK(directory.isValid());
+                SessionModel model(directory.path() + "/recovery");
+                CHECK(model.appendFile(operation == 1 ? test_support::batchFile() : test_support::choiceFile()));
+                const auto before = model.file("choices")->current().draft;
+                const auto target = test_support::choiceTarget(*model.file("choices"), SourceSide::Stage2, ChoiceScope::Section);
+                const auto combination = previewChoice(*model.file("choices"), 1, target.source.contributionId, ChoiceAction::CombineRightFirst);
+                const auto batch = previewNonConflicting(*model.file("choices"), 1);
+                const auto whole = previewWholeFile(*model.file("choices"), 1, SourceSide::Stage3);
+                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                const auto result = operation == 0 ? model.applyChoice("choices", combination, true)
+                    : operation == 1 ? model.applyNonConflicting("choices", batch, true)
+                    : model.applyWholeFile("choices", whole, true);
+                CHECK(result == Transition::Blocked && recovery_faults::failures == 1);
+                CHECK(model.file("choices")->current().id == 1 && model.file("choices")->current().draft == before);
+                CHECK(model.pendingDraft("choices") && *model.pendingDraft("choices") != before);
+                const auto chosen = *model.pendingDraft("choices");
+                CHECK(model.undo("choices", 1) == Transition::Blocked);
+                CHECK(model.retryRecovery("choices") == Transition::Applied);
+                CHECK(model.file("choices")->current().draft == chosen && !model.hasPendingRecovery());
+                CHECK(replayedFile(model.recoveryDirectory()).current().draft == chosen);
+                const auto read = storage::RecoveryStore(model.recoveryDirectory()).read();
+                CHECK(read.succeeded && read.transactions.size() == 2);
+                CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+                CHECK(replayedFile(model.recoveryDirectory()).current().draft == before);
+            });
+        }
+        for (const bool staging : {false, true}) {
+            const auto kind = staging ? QStringLiteral("staging") : QStringLiteral("publication");
+            suite.run("TRUCE-0056 successive successful outcomes retain every earlier completion " + kind.toStdString(), [=] {
+                QTemporaryDir directory;
+                CHECK(directory.isValid());
+                SessionModel model(directory.path() + "/recovery");
+                CHECK(model.appendFile(recoverableFile()));
+                QStringList identities;
+                std::vector<RevisionId> revisions;
+                for (const auto &text : {std::string("first published\n"), std::string("second published\n")}) {
+                    const auto current = model.file("recoverable")->current();
+                    auto next = current.draft;
+                    next.text = text;
+                    CHECK(model.replaceDraft("recoverable", current.id, next) == Transition::Applied);
+                    preparePublication(model, "recoverable", staging);
+                    revisions.push_back(model.file("recoverable")->current().id);
+                    identities.push_back(recordIntent(model, "recoverable", kind));
+                    completePublication(model, "recoverable", staging);
+                }
+                const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+                CHECK(replay.succeeded && replay.mutations.size() == 2 && revisions[0] != revisions[1]);
+                for (std::size_t i = 0; i < replay.mutations.size(); ++i) {
+                    CHECK(replay.mutations[i].completed && replay.mutations[i].id == identities[static_cast<qsizetype>(i)]);
+                    CHECK(replay.mutations[i].kind == kind && replay.mutations[i].target.current().id == revisions[i]);
+                }
+                CHECK(replay.files.front().current().draft.text == "second published\n");
+            });
+            suite.run("TRUCE-0056 earlier same-revision success cannot complete a later intent " + kind.toStdString(), [=] {
+                QTemporaryDir directory;
+                CHECK(directory.isValid());
+                SessionModel model(directory.path() + "/recovery");
+                CHECK(model.appendFile(recoverableFile()));
+                preparePublication(model, "recoverable", staging);
+                const auto first = recordIntent(model, "recoverable", kind);
+                completePublication(model, "recoverable", staging);
+                const auto interrupted = recordIntent(model, "recoverable", kind);
+                const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+                CHECK(replay.succeeded && replay.mutations.size() == 2);
+                CHECK(replay.mutations[0].id == first && replay.mutations[0].completed);
+                CHECK(replay.mutations[1].id == interrupted && !replay.mutations[1].completed);
+                CHECK(replay.mutations[0].target.current().id == replay.mutations[1].target.current().id);
+            });
+            suite.run("TRUCE-0056 a later revision outcome leaves an unmatched earlier interruption uncertain " + kind.toStdString(), [=] {
+                QTemporaryDir directory;
+                CHECK(directory.isValid());
+                SessionModel model(directory.path() + "/recovery");
+                CHECK(model.appendFile(recoverableFile()));
+                preparePublication(model, "recoverable", staging);
+                const auto interrupted = recordIntent(model, "recoverable", kind);
+                auto edited = model.file("recoverable")->current().draft;
+                edited.text = "newer successful revision\n";
+                CHECK(model.replaceDraft("recoverable", 1, edited) == Transition::Applied);
+                preparePublication(model, "recoverable", staging);
+                const auto completed = recordIntent(model, "recoverable", kind);
+                completePublication(model, "recoverable", staging);
+                const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+                CHECK(replay.succeeded && replay.mutations.size() == 2);
+                CHECK(replay.mutations[0].id == interrupted && !replay.mutations[0].completed);
+                CHECK(replay.mutations[1].id == completed && replay.mutations[1].completed);
+            });
+        }
+        suite.run("TRUCE-0056 outcomes match the file and kind and failed staging does not complete an intent", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(recoverableFile()));
+            auto captures = *recoverableFile().snapshots();
+            captures.path = "other.txt";
+            CHECK(model.appendFile(FileSession("other", captures.path, draft(captures.launchResult.text.utf8),
+                Support::Supported, {}, captures)));
+            preparePublication(model, "recoverable", false);
+            preparePublication(model, "other", false);
+            recordIntent(model, "recoverable", "publication");
+            recordIntent(model, "recoverable", "staging");
+            recordIntent(model, "other", "publication");
+            completePublication(model, "recoverable", false);
+            CHECK(model.recordStage("recoverable", 1, Outcome::Failed, {}, {}, "stage failed") == Transition::Applied);
+            auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            CHECK(replay.succeeded && replay.mutations.size() == 3);
+            CHECK(replay.mutations[0].completed && !replay.mutations[1].completed && !replay.mutations[2].completed);
+            completePublication(model, "recoverable", true);
+            replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            CHECK(replay.succeeded && replay.mutations[1].completed && !replay.mutations[2].completed);
+            completePublication(model, "other", false);
+            replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            CHECK(replay.succeeded && replay.mutations[2].completed);
+        });
         for (const auto action : {ChoiceAction::Accept, ChoiceAction::Ignore, ChoiceAction::ResolveUsingSide}) {
             suite.run("TRUCE-0016 command undo and redo each replay complete text and decisions "
                 + std::to_string(static_cast<int>(action)), [=] {

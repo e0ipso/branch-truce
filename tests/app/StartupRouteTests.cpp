@@ -346,6 +346,147 @@ public:
     int run(const QString &application)
     {
         test_support::Suite suite("StartupRouteTests");
+        for (const bool staging : {false, true}) {
+            suite.run("TRUCE-0056 repeated successful publications reopen without an interrupted earlier revision "
+                + std::to_string(staging), [=] {
+                Repository repo;
+                repo.conflict("merge");
+                ScopedEnvironment environment(repo.environment);
+                QString location;
+                Draft latest;
+                {
+                    ApplicationController controller;
+                    openController(controller, repo);
+                    auto *model = controller.files();
+                    const auto id = openedFile(controller).id();
+                    location = model->recoveryDirectory();
+                    for (const auto &bytes : {QByteArray("first published revision\n"), QByteArray("second published revision\n")}) {
+                        const auto current = model->file(id)->current();
+                        latest = current.draft;
+                        latest.text = bytes.toStdString();
+                        CHECK(model->replaceDraft(id, current.id, latest) == Transition::Applied);
+                        const auto &file = *model->file(id);
+                        const auto revision = file.current().id;
+                        CHECK(model->beginMarkResolved(id, revision, true) == Transition::Applied);
+                        CHECK(model->recordCheckpoint(id, revision, Outcome::Succeeded) == Transition::Applied);
+                        CHECK(storage::RecoveryStore(location).commit(mutationRecoveryTransaction(file, "publication",
+                            QUuid::createUuid().toString())).succeeded);
+                        writeFile(repo.path("tracked.txt"), bytes);
+                        CHECK(model->recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
+                        if (staging) {
+                            CHECK(storage::RecoveryStore(location).commit(mutationRecoveryTransaction(file, "staging",
+                                QUuid::createUuid().toString())).succeeded);
+                            repo.git({"add", "--", "tracked.txt"});
+                            const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+                            CHECK(model->recordStage(id, revision, Outcome::Succeeded, object.toStdString(), "100644") == Transition::Applied);
+                        }
+                    }
+                }
+                const auto repositoryBefore = repo.snapshot();
+                for (int reopening = 0; reopening < 2; ++reopening) {
+                    ApplicationController controller;
+                    openController(controller, repo);
+                    const auto &restored = openedFile(controller);
+                    CHECK(controller.files()->recoveryDirectory() == location && restored.current().draft == latest);
+                    CHECK(!controller.files()->hasRecoveryFailure(restored.id()));
+                    CHECK(fileRole(controller, restored, SessionModel::RecoveryErrorRole).toString().isEmpty());
+                    CHECK(restored.written() && restored.written()->id == restored.current().id);
+                    CHECK(restored.facts().resolved == staging);
+                    CHECK(repo.snapshot() == repositoryBefore);
+                    const auto replay = replayRecovery(storage::RecoveryStore(location));
+                    CHECK(replay.succeeded && replay.mutations.size() == (staging ? 4 : 2));
+                    for (const auto &mutation : replay.mutations) CHECK(mutation.completed);
+                }
+            });
+        }
+        for (const bool laterRevision : {false, true}) {
+            suite.run("TRUCE-0056 an unmatched publication after an earlier success stays uncertain on reopen "
+                + std::to_string(laterRevision), [=] {
+                Repository repo;
+                repo.conflict("merge");
+                ScopedEnvironment environment(repo.environment);
+                QString location;
+                {
+                    ApplicationController controller;
+                    openController(controller, repo);
+                    auto *model = controller.files();
+                    const auto id = openedFile(controller).id();
+                    auto draft = model->file(id)->current().draft;
+                    draft.text = "first successfully written result\n";
+                    CHECK(model->replaceDraft(id, 1, draft) == Transition::Applied);
+                    CHECK(model->beginMarkResolved(id, 2, true) == Transition::Applied);
+                    CHECK(model->recordCheckpoint(id, 2, Outcome::Succeeded) == Transition::Applied);
+                    location = model->recoveryDirectory();
+                    CHECK(storage::RecoveryStore(location).commit(mutationRecoveryTransaction(*model->file(id), "publication",
+                        QUuid::createUuid().toString())).succeeded);
+                    writeFile(repo.path("tracked.txt"), QByteArray::fromStdString(draft.text));
+                    CHECK(model->recordWrite(id, 2, Outcome::Succeeded) == Transition::Applied);
+                    if (laterRevision) {
+                        draft.text = "later interrupted result\n";
+                        CHECK(model->replaceDraft(id, 2, draft) == Transition::Applied);
+                        CHECK(model->beginMarkResolved(id, 3, true) == Transition::Applied);
+                        CHECK(model->recordCheckpoint(id, 3, Outcome::Succeeded) == Transition::Applied);
+                    }
+                    CHECK(storage::RecoveryStore(location).commit(mutationRecoveryTransaction(*model->file(id), "publication",
+                        QUuid::createUuid().toString())).succeeded);
+                }
+                const auto before = repo.snapshot();
+                ApplicationController controller;
+                openController(controller, repo);
+                const auto &restored = openedFile(controller);
+                const auto diagnostic = fileRole(controller, restored, SessionModel::RecoveryErrorRole).toString();
+                CHECK(controller.files()->hasRecoveryFailure(restored.id()));
+                CHECK(diagnostic.contains("Interrupted publication") && diagnostic.contains("uncertain"));
+                CHECK(!restored.facts().resolved && repo.snapshot() == before);
+                const auto replay = replayRecovery(storage::RecoveryStore(location));
+                CHECK(replay.succeeded && replay.mutations.size() == 2);
+                CHECK(replay.mutations[0].completed && !replay.mutations[1].completed);
+            });
+        }
+        suite.run("TRUCE-0056 exact staged evidence durably recovers a missing staging completion only once", [] {
+            Repository repo;
+            repo.conflict("merge");
+            ScopedEnvironment environment(repo.environment);
+            QString location;
+            QByteArray object;
+            RevisionId revision = 0;
+            {
+                ApplicationController controller;
+                openController(controller, repo);
+                auto *model = controller.files();
+                const auto id = openedFile(controller).id();
+                auto draft = model->file(id)->current().draft;
+                draft.text = "reviewed staged result\n";
+                CHECK(model->replaceDraft(id, 1, draft) == Transition::Applied);
+                revision = model->file(id)->current().id;
+                CHECK(model->beginMarkResolved(id, revision, true) == Transition::Applied);
+                CHECK(model->recordCheckpoint(id, revision, Outcome::Succeeded) == Transition::Applied);
+                writeFile(repo.path("tracked.txt"), QByteArray::fromStdString(draft.text));
+                CHECK(model->recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
+                location = model->recoveryDirectory();
+                CHECK(storage::RecoveryStore(location).commit(mutationRecoveryTransaction(*model->file(id), "staging",
+                    QUuid::createUuid().toString())).succeeded);
+                repo.git({"add", "--", "tracked.txt"});
+                object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+            }
+            const auto before = repo.snapshot();
+            const auto records = storage::RecoveryStore(location).read().transactions.size();
+            for (int reopening = 0; reopening < 2; ++reopening) {
+                ApplicationController controller;
+                openController(controller, repo);
+                const auto &restored = openedFile(controller);
+                CHECK(!controller.files()->hasRecoveryFailure(restored.id()) && restored.facts().resolved);
+                CHECK(restored.staged() && restored.staged()->revision.id == revision);
+                CHECK(restored.staged()->objectId == object.toStdString() && restored.staged()->mode == "100644");
+                CHECK(restored.stageOutcome()->detail.find("verified against disk and index") != std::string::npos);
+                CHECK(repo.snapshot() == before);
+                const auto read = storage::RecoveryStore(location).read();
+                CHECK(read.succeeded && read.transactions.size() == records + 1);
+                CHECK(read.transactions.back().value("action") == "stage-outcome");
+                const auto replay = replayRecovery(storage::RecoveryStore(location));
+                CHECK(replay.succeeded && replay.mutations.size() == 1 && replay.mutations.front().completed);
+            }
+        });
         suite.run("TRUCE-0014 restart restores acknowledged unsaved work independently of Save review and resolution", [] {
             Repository repo;
             repo.conflict("merge");

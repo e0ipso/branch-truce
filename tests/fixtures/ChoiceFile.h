@@ -4,6 +4,13 @@
 #include <stdexcept>
 
 namespace test_support {
+inline branch_truce::TextSnapshot choiceText(const std::string &value)
+{
+    using namespace branch_truce;
+    return {value, value,
+        {SnapshotFormat::Encoding::Utf8, false, SnapshotFormat::Newline::Lf, value.ends_with('\n')}};
+}
+
 inline branch_truce::FileSession choiceFile(
     std::string left = "header\nleft first\nleft second\nbridge\nleft later\ntail\n",
     std::string right = "header\nright first\nright second\nbridge\nright later\ntail\n",
@@ -18,16 +25,12 @@ inline branch_truce::FileSession choiceFile(
     captured.provenance.gitDirectory = "/disposable-worktree/.git";
     captured.provenance.stage2CommitId = "left-commit";
     captured.provenance.stage3CommitId = "right-commit";
-    const auto snapshot = [](const std::string &value) {
-        return TextSnapshot{value, value,
-            {SnapshotFormat::Encoding::Utf8, false, SnapshotFormat::Newline::Lf, value.ends_with('\n')}};
-    };
     captured.stage2 = SourceSnapshot{"left-object", "100644", left,
-        snapshot(left), "left-commit", "Current checkout"};
+        choiceText(left), "left-commit", "Current checkout"};
     captured.stage3 = SourceSnapshot{"right-object", "100644", right,
-        snapshot(right), "right-commit", "Merged commit"};
+        choiceText(right), "right-commit", "Merged commit"};
     const auto text = result.value_or(left);
-    captured.launchResult.text = snapshot(text);
+    captured.launchResult.text = choiceText(text);
     const auto path = captured.path;
     return FileSession("choices", path, {text, {}, 0},
         Support::Supported, {}, std::move(captured), true);
@@ -43,5 +46,26 @@ inline const branch_truce::ChoiceTarget &choiceTarget(const branch_truce::FileSe
         }
     }
     throw std::runtime_error("fixture has no requested choice scope");
+}
+
+inline branch_truce::FileSession batchFile()
+{
+    using namespace branch_truce;
+    const std::string earlier = "header\nbase left\nbridge one\nbase right\nbridge two\nbase conflict\ntail\n";
+    auto sources = *choiceFile(
+        "header\nleft only\nbridge one\nbase right\nbridge two\nleft conflict\ntail\n",
+        "header\nbase left\nbridge one\nright only\nbridge two\nright conflict\ntail\n").snapshots();
+    sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
+        choiceText(earlier), "earlier-commit", "Common earlier version"};
+    sources.launchResult.text = choiceText(earlier);
+    return FileSession("choices", sources.path, {earlier, {}, 0},
+        Support::Supported, {}, sources, true);
+}
+
+inline branch_truce::FileSession combinationFile(branch_truce::ChoiceScope scope)
+{
+    return scope == branch_truce::ChoiceScope::Section ? choiceFile() : choiceFile(
+        "header\nleft first\nbridge\nleft later\ntail\n",
+        "header\nright first\nbridge\nright later\ntail\n");
 }
 }
