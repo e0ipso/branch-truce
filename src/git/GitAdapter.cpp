@@ -230,7 +230,7 @@ class GitAdapter::State {
 public:
     enum class Phase { Version, Configuration, PolicyRoot, ObjectDirectory, TrackedPaths, Attributes,
                        GitDirectory, Hooks, Baseline, Operation, Discovery, Inspection,
-                       CanonicalObject, CanonicalCheckout };
+                       CanonicalSize, CanonicalObject, CanonicalCheckout };
     explicit State(GitAdapter *owner, const QString &selected) : q(owner)
     {
         if (QDir::isAbsolutePath(selected) && exactPath(selected)) {
@@ -407,7 +407,8 @@ public:
         nativeArguments.append(configuration ? QList<QByteArray>{"--no-pager"} : prefix());
         nativeArguments.append(arguments);
         auto env = environment();
-        if (temporaryObjects && (next == Phase::Operation || next == Phase::CanonicalObject || next == Phase::CanonicalCheckout)) {
+        if (temporaryObjects && (next == Phase::Operation || next == Phase::CanonicalSize
+                                 || next == Phase::CanonicalObject || next == Phase::CanonicalCheckout)) {
             env.insert(QStringLiteral("GIT_OBJECT_DIRECTORY"), temporaryObjects->path());
             env.insert(QStringLiteral("GIT_ALTERNATE_OBJECT_DIRECTORIES"), quotedAlternate(originalObjectDirectory));
         }
@@ -928,7 +929,7 @@ public:
                     reject(QStringLiteral("Invalid canonical object response"));
                 } else {
                     result.canonicalObjectId = phaseOutput.first(phaseOutput.size() - 1);
-                    launch(Phase::CanonicalObject, {"cat-file", "blob", result.canonicalObjectId});
+                    launch(Phase::CanonicalSize, {"cat-file", "-s", result.canonicalObjectId});
                 }
                 break;
             }
@@ -947,6 +948,18 @@ public:
                 complete();
             }
             break;
+        case Phase::CanonicalSize: {
+            bool valid = false;
+            const auto size = phaseOutput.toULongLong(&valid);
+            if (!valid || QByteArray::number(size) + '\n' != phaseOutput) {
+                reject(QStringLiteral("Invalid canonical object size response"));
+            } else if (size > static_cast<qulonglong>(outputLimit)) {
+                reject(QStringLiteral("Canonical text size %1 bytes after clean conversion exceeds the 8 MiB output limit").arg(size));
+            } else {
+                launch(Phase::CanonicalObject, {"cat-file", "blob", result.canonicalObjectId});
+            }
+            break;
+        }
         case Phase::CanonicalObject:
             result.canonicalBytes = phaseOutput;
             launch(Phase::CanonicalCheckout, {"cat-file", "--filters", "--path=" + result.request.path, result.canonicalObjectId});

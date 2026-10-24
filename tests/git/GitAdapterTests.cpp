@@ -1894,6 +1894,34 @@ public:
             CHECK(result.standardOutput == "deadline prefix" && result.diagnostic.contains("deadline"));
             CHECK(clock.elapsed() >= 25000 && clock.elapsed() < 35000);
         });
+        suite.run("expanding canonical text is size-validated before reading", [] {
+            Repository repo;
+            writeFile(repo.path(".gitattributes"), "tracked.txt working-tree-encoding=UTF-16LE\n");
+            const auto objects = repo.git({"count-objects", "-v"});
+            const auto index = repo.git({"ls-files", "--stage", "-z"});
+            const auto inputBlock = QByteArray::fromHex("2d4e").repeated(39) + QByteArray::fromHex("0a00");
+            const auto canonicalBlock = QByteArray::fromHex("e4b8ad").repeated(39) + '\n';
+            GitAdapter adapter(gitExecutable);
+            for (const auto inputSize : {2000000, 6000000}) {
+                auto request = repo.request(Operation::CanonicalizeText, "tracked.txt");
+                request.input = inputBlock.repeated(inputSize / inputBlock.size());
+                CHECK(request.input.size() == inputSize);
+                const auto result = run(adapter, request);
+                CHECK(!result.outputIncomplete && result.mutation == Mutation::NotAttempted);
+                if (inputSize == 2000000) {
+                    const auto expected = canonicalBlock.repeated(inputSize / inputBlock.size());
+                    CHECK(result.outcome == Outcome::Success);
+                    CHECK(result.standardOutput == request.input && result.canonicalBytes == expected);
+                    CHECK(result.canonicalObjectId == repo.git({"hash-object", "--no-filters", "--stdin"}, expected).trimmed());
+                } else {
+                    CHECK(result.outcome == Outcome::Rejected && result.canonicalBytes.isEmpty());
+                    CHECK(result.diagnostic.contains("8850000 bytes") && result.diagnostic.contains("8 MiB output limit"));
+                }
+                CHECK(repo.git({"count-objects", "-v"}) == objects);
+                CHECK(repo.git({"ls-files", "--stage", "-z"}) == index);
+            }
+            checkConversionCleanup(repo);
+        });
         suite.run("canonical reads retain the full output budget after preflight", [] {
             Repository repo;
             writeFile(repo.path(".gitattributes"), "tracked.txt text eol=lf\n");
