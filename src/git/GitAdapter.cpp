@@ -386,6 +386,9 @@ public:
     void launch(Phase next, const QList<QByteArray> &arguments, bool configuration = false,
                 const QByteArray &input = {})
     {
+        // Bound each canonical representation independently of preflight and
+        // the other read, while keeping stdout and stderr in the same budget.
+        if (next == Phase::CanonicalObject || next == Phase::CanonicalCheckout) bytesRead = 0;
         phase = next;
         phaseOutput.clear();
         phaseInput = input;

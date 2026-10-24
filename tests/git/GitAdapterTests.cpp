@@ -1615,6 +1615,22 @@ public:
             CHECK(result.standardOutput == "deadline prefix" && result.diagnostic.contains("deadline"));
             CHECK(clock.elapsed() >= 25000 && clock.elapsed() < 35000);
         });
+        suite.run("canonical reads retain the full output budget after preflight", [] {
+            Repository repo;
+            writeFile(repo.path(".gitattributes"), "tracked.txt text eol=lf\n");
+            const auto objects = repo.git({"count-objects", "-v"});
+            auto request = repo.request(Operation::CanonicalizeText, "tracked.txt");
+            request.input = QByteArray(8 * 1024 * 1024, 'a');
+            for (qsizetype i = 79; i < request.input.size(); i += 80) request.input[i] = '\n';
+            const auto expected = repo.git({"hash-object", "--no-filters", "--stdin"}, request.input).trimmed();
+            GitAdapter adapter(gitExecutable);
+            const auto result = run(adapter, request);
+            CHECK(result.outcome == Outcome::Success && !result.outputIncomplete);
+            CHECK(result.standardOutput == request.input && result.canonicalBytes == request.input);
+            CHECK(result.canonicalObjectId == expected && result.mutation == Mutation::NotAttempted);
+            CHECK(repo.git({"count-objects", "-v"}) == objects);
+            checkConversionCleanup(repo);
+        });
         return suite.report();
     }
 };

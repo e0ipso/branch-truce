@@ -59,7 +59,9 @@ clean it, read the canonical blob and check it out again. These operations use
 an app-owned temporary object store with the repository's validated local object
 store as an alternate. No worktree, index or repository object is written by
 preparation. Private objects are removed before completion, including on failure
-or cancellation. Existing adapter time, input and aggregate output limits apply.
+or cancellation. Existing adapter time and input limits apply. Canonical blob and
+checkout reads each have a separate 8 MiB output budget shared by stdout and
+stderr. Earlier preflight output does not reduce either read's allowance.
 
 The prepared snapshot binds the worktree root, exact byte path, displayed text,
 serialized bytes, canonical bytes/object ID, policy and agreed executable mode.
