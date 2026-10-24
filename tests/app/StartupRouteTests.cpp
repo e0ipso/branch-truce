@@ -876,7 +876,9 @@ public:
         suite.run("TRUCE-0052 a large admitted file correspondence failure does not abort loading the small files", [] {
             Repository repo;
             QByteArray large;
-            for (int line = 0; line < 5000; ++line) large += "large line " + QByteArray::number(line) + '\n';
+            // The prefix line plus this body stays at the 4000-line envelope.
+            // Past that, the result is unreadable before CorrespondenceMap is constructed.
+            for (int line = 0; line < 3999; ++line) large += "large line " + QByteArray::number(line) + '\n';
             repo.conflict("merge", {{"large.txt", {"base\n" + large, "main\n" + large, "side\n" + large}}});
             writeFile(repo.path("large.txt"), "preserved large manual result\n" + large);
             const auto before = repo.snapshot();
