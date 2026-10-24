@@ -6,6 +6,7 @@
 
 namespace branch_truce::git {
 enum class TextOperation { ReadSource, PrepareResult, VerifyPublished };
+enum class TextConversionFailure { None, UnsupportedText, UnsupportedConversion };
 struct ConvertedText {
     QString worktreeRoot;
     QByteArray path;
@@ -32,6 +33,7 @@ struct TextConversionRequest {
 struct TextConversionResult {
     TextConversionRequest request;
     Outcome outcome = Outcome::Rejected;
+    TextConversionFailure failure = TextConversionFailure::None;
     QString diagnostic;
     std::optional<ConvertedText> text;
 };

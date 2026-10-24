@@ -1,5 +1,6 @@
 #include "GitAdapter.h"
 #include "TextConversion.h"
+#include "ConflictClassifier.h"
 #include "TestHarness.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -309,6 +310,27 @@ TextConversionResult run(TextConversion &conversion, const TextConversionRequest
     return results.front();
 }
 
+ConflictClassificationResult run(ConflictClassifier &classifier, const ConflictClassificationRequest &request)
+{
+    QEventLoop loop;
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+    std::vector<ConflictClassificationResult> results;
+    QObject::connect(&classifier, &ConflictClassifier::finished, &loop, [&](const auto &result) {
+        results.push_back(result);
+        loop.quit();
+    });
+    CHECK(classifier.start(request));
+    CHECK(classifier.busy() && results.empty() && !classifier.start(request));
+    deadline.start(10000);
+    loop.exec();
+    CHECK(results.size() == 1 && !classifier.busy());
+    CHECK(results.front().request.sessionGeneration == request.sessionGeneration);
+    CHECK(results.front().request.inputRevision == request.inputRevision);
+    return results.front();
+}
+
 class EnvironmentValue {
 public:
     EnvironmentValue(QByteArray name, const QByteArray &value)
@@ -412,6 +434,14 @@ public:
                 CHECK(result.repository.worktreeRoot == directory && result.indexEntries.size() == 3);
                 const auto gitDirectory = QString::fromUtf8(repo.git({"-C", directory, "rev-parse", "--absolute-git-dir"}).trimmed());
                 CHECK(result.repository.gitDirectory == QFileInfo(gitDirectory).canonicalFilePath());
+                writeFile(directory + "/tracked.txt", "launch-time manual result\n");
+                ConflictClassifier classifier(gitExecutable);
+                const auto classified = run(classifier, {request.directory, 71, 93});
+                CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == 1);
+                const auto &conflict = classified.conflicts.front();
+                CHECK(conflict.editable() && conflict.reason.isEmpty() && conflict.path == "tracked.txt");
+                CHECK(conflict.mode == "100644" && conflict.stages.size() == 3 && conflict.sources.size() == 3);
+                CHECK(conflict.result && conflict.result->originalBytes == "launch-time manual result\n");
                 CHECK(repo.git({"-C", directory, "ls-files", "--unmerged", "-z"}) == before);
                 if (linked) {
                     CHECK(result.repository.gitDirectory != repo.path(".git"));
@@ -434,6 +464,10 @@ public:
                 checkOperationIdentity(result, history, RepositoryOperation::Rebase);
                 CHECK(result.indexEntries.size() == 3 && repo.git({"ls-files", "--unmerged", "-z"}) == before);
                 CHECK(result.repository.gitDirectory == repo.path(".git"));
+                ConflictClassifier classifier(gitExecutable);
+                const auto classified = run(classifier, {repo.root.path(), 71, 93});
+                CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == 1);
+                CHECK(classified.conflicts.front().editable() && classified.conflicts.front().sources.size() == 3);
             }
         });
         suite.run("unsupported and inconsistent operation metadata cannot acquire source labels", [] {
@@ -544,6 +578,10 @@ public:
             const auto discovered = run(adapter, repo.request(Operation::DiscoverRepository));
             checkOperationIdentity(discovered, history, RepositoryOperation::Merge);
             CHECK(discovered.indexEntries.size() == 6);
+            ConflictClassifier classifier(gitExecutable);
+            const auto classified = run(classifier, {repo.root.path(), 71, 93});
+            CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == 2);
+            for (const auto &conflict : classified.conflicts) CHECK(conflict.editable() && conflict.sources.size() == 3);
             CHECK(repo.git({"ls-tree", QString::fromLatin1(history.base), "--", "b.txt"}).isEmpty());
             CHECK(repo.git({"ls-tree", QString::fromLatin1(history.side), "--", "b.txt"}).isEmpty());
             for (const auto &entry : discovered.indexEntries) {
@@ -573,6 +611,14 @@ public:
                     CHECK(result.repository.unsupportedPaths.size() == 1 && result.repository.unsupportedPaths.contains(path));
                     CHECK(result.repository.unsupportedPaths.value(path).contains("stage 3 provenance"));
                     CHECK(result.repository.stage2.commitId == history.main && result.repository.stage3.commitId == history.side);
+                    const auto classifiedInvalid = run(classifier, {repo.root.path(), 71, 93});
+                    CHECK(classifiedInvalid.outcome == Outcome::Success && classifiedInvalid.conflicts.size() == 2);
+                    for (const auto &conflict : classifiedInvalid.conflicts) {
+                        if (conflict.path == path) {
+                            CHECK(!conflict.editable() && !conflict.reason.isEmpty() && !conflict.result && conflict.sources.isEmpty());
+                            CHECK(conflict.support == (wrongMode ? ConflictSupport::ModeConflict : ConflictSupport::UnverifiedSource));
+                        } else CHECK(conflict.editable());
+                    }
                     CHECK(repo.git({"ls-files", "--unmerged", "-z"}) == index);
                 }
             }
@@ -664,6 +710,7 @@ public:
                 TextConversion conversion(gitExecutable);
                 const auto rejected = run(conversion, textRequest(repo, TextOperation::ReadSource, object));
                 CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
+                CHECK(rejected.failure == TextConversionFailure::UnsupportedText);
                 CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
             }
             for (const auto attributes : {"-text eol=crlf", "text=custom", "ident=custom", "text eol=native",
@@ -883,6 +930,13 @@ public:
             CHECK(discovery.indexEntries.size() == result.indexEntries.size());
             CHECK(discovery.repository.stage2.commitId.isEmpty() && discovery.repository.stage3.commitId.isEmpty());
             CHECK(discovery.repository.diagnostic.contains("no verified merge or rebase"));
+            ConflictClassifier classifier(gitExecutable);
+            const auto classified = run(classifier, {repo.root.path(), 71, 93});
+            CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == names.size());
+            for (const auto &conflict : classified.conflicts) {
+                CHECK(names.contains(conflict.path) && conflict.stages.size() == 3 && !conflict.editable());
+                CHECK(conflict.support == ConflictSupport::UnsupportedOperation && !conflict.reason.isEmpty());
+            }
             for (const auto &name : names) {
                 unsigned int stages = 0;
                 for (const auto &entry : result.indexEntries) {

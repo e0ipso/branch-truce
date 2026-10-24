@@ -69,7 +69,11 @@ public:
         const auto completed = result;
         Q_EMIT q->finished(completed);
     }
-    void reject(const QString &diagnostic) { complete(Outcome::Rejected, diagnostic); }
+    void reject(const QString &diagnostic, TextConversionFailure failure = TextConversionFailure::UnsupportedConversion)
+    {
+        result.failure = failure;
+        complete(Outcome::Rejected, diagnostic);
+    }
     void run(Step next, Operation operation, const QByteArray &object = {}, const QByteArray &input = {})
     {
         step = next;
@@ -156,7 +160,7 @@ public:
             text.policy = observed.conversionPolicy;
             if (!supportedPolicy(text.policy, diagnostic)) { reject(diagnostic); return; }
             const auto decoded = storage::decodeText(observed.standardOutput, text.policy.attributes.value("working-tree-encoding"));
-            if (!decoded.document) { reject(decoded.diagnostic); return; }
+            if (!decoded.document) { reject(decoded.diagnostic, TextConversionFailure::UnsupportedText); return; }
             text.document = *decoded.document;
             run(Step::RawSource, Operation::ReadObject, request.objectId);
             break;
