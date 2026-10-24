@@ -198,7 +198,7 @@ Mutation-time stale-state checks prevent overwriting unexpected work. They do no
 
 ## Recovery persistence
 
-Use an app-owned per-session store under a standard Qt application-data location, independent of the repository and mergetool temporary files. Initial storage design is versioned metadata plus source/result payloads using Qt file APIs; the exact layout and encoding are draft details.
+Use an app-owned per-session store under a standard Qt application-data location, independent of the repository and mergetool temporary files. The [version 1 recovery journal](docs/recovery-journal.md) defines the implemented metadata, payload encoding, integrity checks and acknowledgment boundary using Qt file APIs.
 
 Persist source/launch snapshots before accepting edits. An editing transaction is an atomic domain command: a committed text insertion/deletion, committed IME input, source choice, undo or redo. Append a versioned, integrity-checked recovery transaction and make its referenced payloads available before acknowledging the command as completed in the UI. Native editor mutations cannot bypass this boundary. Acknowledge each completed transaction; history grouping for convenient undo does not delay recovery. IME pre-edit and queued, visibly pending input are not yet completed commands.
 

@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QPersistentModelIndex>
 #include <QSet>
+#include <QTemporaryDir>
 #include <limits>
 
 using namespace branch_truce;
@@ -68,7 +69,7 @@ public:
             CHECK(decisions[1].toMap().value("value").toString() == "ignored");
             CHECK(!decisions[1].toMap().contains("order"));
             const auto names = model.roleNames();
-            CHECK(names.size() == SessionModel::CanRedoRole - SessionModel::FileIdRole + 1);
+            CHECK(names.size() == SessionModel::RecoveryErrorRole - SessionModel::FileIdRole + 1);
             QSet<QByteArray> unique;
             for (auto it = names.cbegin(); it != names.cend(); ++it) {
                 CHECK(!it.value().isEmpty() && !unique.contains(it.value()));
@@ -221,5 +222,8 @@ public:
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+    QTemporaryDir data;
+    if (!data.isValid()) return 2;
+    qputenv("XDG_DATA_HOME", data.path().toUtf8());
     return SessionModelTests{}.run();
 }

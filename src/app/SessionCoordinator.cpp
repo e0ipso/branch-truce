@@ -252,7 +252,7 @@ SessionCoordinator::~SessionCoordinator()
 
 bool SessionCoordinator::replaceSession(const QString &worktree, const QString &operation, std::vector<FileSession> files)
 {
-    if (!d->owningThread() || d->replacing || operation.isEmpty()
+    if (!d->owningThread() || d->replacing || d->model.hasPendingRecovery() || operation.isEmpty()
         || d->generation == std::numeric_limits<quint64>::max()
         || files.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) return false;
     const QFileInfo root(worktree);

@@ -529,6 +529,9 @@ public:
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+    QTemporaryDir data;
+    if (!data.isValid()) return 2;
+    qputenv("XDG_DATA_HOME", data.path().toUtf8());
     std::cout.setf(std::ios::unitbuf);
     QThreadPool::globalInstance()->setMaxThreadCount(4);
     return SessionCoordinatorTests{}.run();
