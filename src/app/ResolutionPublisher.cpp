@@ -672,6 +672,19 @@ void ResolutionPublisher::noteStale(const TaskCompletion &completion)
     const bool wrote = completion.result.mutation == MutationObservation::ObservedChanged
         && attempt_->step == Step::Publish && completion.result.status == TaskStatus::Succeeded;
     if (wrote) {
+        // Exchange already replaced the launch inode. Adopt the live destination
+        // only while it still holds the bytes this publish wrote. Different bytes
+        // keep the previous baseline, so a later resolution fails closed.
+        auto live = storage::captureDestination(repository_.worktreeRoot, attempt_->path);
+        if (live.destination && live.destination->bytes() == attempt_->serialized) {
+            auto baseline = baselines_.find(attempt_->fileId);
+            if (baseline == baselines_.end())
+                baselines_.emplace(attempt_->fileId, Baseline{std::move(live.destination), QString{}});
+            else {
+                baseline->second.destination = std::move(live.destination);
+                baseline->second.diagnostic.clear();
+            }
+        }
         const auto recorded = files_.recordWrite(attempt_->fileId, attempt_->revision, Outcome::Succeeded);
         clearAttempt();
         Q_EMIT changed(recorded == Transition::Applied

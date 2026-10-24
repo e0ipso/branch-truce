@@ -67,7 +67,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_resolution_tests app/ResolutionPublisherTests.cpp)
     target_include_directories(branch_truce_resolution_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_resolution_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    target_link_options(branch_truce_resolution_tests PRIVATE "LINKER:--wrap=fsync")
+    target_link_options(branch_truce_resolution_tests PRIVATE "LINKER:--wrap=fsync" "LINKER:--wrap=renameat2")
     add_test(NAME app.resolution COMMAND branch_truce_resolution_tests)
     set_tests_properties(app.resolution PROPERTIES TIMEOUT 90)
 

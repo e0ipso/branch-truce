@@ -13,10 +13,42 @@
 #include <QSet>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <atomic>
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
 #include <functional>
 #include <memory>
+#include <poll.h>
+#include <sys/socket.h>
 
 using namespace branch_truce;
+
+namespace publish_stall {
+std::atomic<bool> arm{false};
+std::atomic<int> readyWrite{-1};
+std::atomic<int> releaseRead{-1};
+}
+
+extern "C" int __real_renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, unsigned int flags);
+extern "C" int __wrap_renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, unsigned int flags)
+{
+    const int result = __real_renameat2(olddirfd, oldpath, newdirfd, newpath, flags);
+    if (result != 0 || (flags & RENAME_EXCHANGE) == 0 || !publish_stall::arm.exchange(false)) return result;
+    const int ready = publish_stall::readyWrite.load();
+    if (ready >= 0) {
+        const char token = 1;
+        ssize_t sent = 0;
+        do { sent = ::send(ready, &token, 1, MSG_NOSIGNAL); } while (sent < 0 && errno == EINTR);
+    }
+    const int release = publish_stall::releaseRead.load();
+    if (release >= 0) {
+        char ack = 0;
+        ssize_t received = 0;
+        do { received = ::recv(release, &ack, 1, 0); } while (received < 0 && errno == EINTR);
+    }
+    return result;
+}
 
 namespace {
 void writeFile(const QString &path, const QByteArray &bytes)
@@ -211,6 +243,70 @@ struct Session {
     }
     QString revision() { return revisionOf(openedFile(controller)); }
 };
+
+class PublishStall {
+public:
+    PublishStall()
+    {
+        CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, ready) == 0);
+        CHECK(::socketpair(AF_UNIX, SOCK_STREAM, 0, release) == 0);
+        publish_stall::readyWrite.store(ready[1]);
+        publish_stall::releaseRead.store(release[0]);
+        publish_stall::arm.store(true);
+    }
+    ~PublishStall()
+    {
+        publish_stall::arm.store(false);
+        if (release[1] >= 0) {
+            ::shutdown(release[1], SHUT_WR);
+            ::close(release[1]);
+            release[1] = -1;
+        }
+        publish_stall::readyWrite.store(-1);
+        publish_stall::releaseRead.store(-1);
+        for (const int fd : {ready[0], ready[1], release[0]})
+            if (fd >= 0) ::close(fd);
+    }
+    PublishStall(const PublishStall &) = delete;
+    PublishStall &operator=(const PublishStall &) = delete;
+    bool waitForExchange()
+    {
+        QElapsedTimer timer;
+        timer.start();
+        while (timer.elapsed() < 20000) {
+            pollfd input {};
+            input.fd = ready[0];
+            input.events = POLLIN;
+            if (::poll(&input, 1, 0) > 0 && (input.revents & POLLIN) != 0) return true;
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+        }
+        return false;
+    }
+    void releaseWorker()
+    {
+        const char ack = 1;
+        ssize_t sent = 0;
+        do { sent = ::send(release[1], &ack, 1, MSG_NOSIGNAL); } while (sent < 0 && errno == EINTR);
+        CHECK(sent == 1);
+    }
+private:
+    int ready[2] = {-1, -1};
+    int release[2] = {-1, -1};
+};
+
+void publishWhileDraftChanges(ApplicationController &controller, const QString &id, const std::string &nextText)
+{
+    PublishStall stall;
+    const auto launched = revisionOf(openedFile(controller));
+    CHECK(controller.markResolved(id, launched, true));
+    CHECK(stall.waitForExchange());
+    auto draft = openedFile(controller).current().draft;
+    draft.text = nextText;
+    CHECK(controller.files()->replaceDraft(id.toStdString(), openedFile(controller).current().id, draft) == Transition::Applied);
+    CHECK(revisionOf(openedFile(controller)) != launched);
+    stall.releaseWorker();
+    waitFor(controller, [&] { return !controller.resolutionBusy(); });
+}
 
 struct RestartedWrite {
     Repository repo;
@@ -415,6 +511,48 @@ int main(int argc, char **argv)
         CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
         CHECK(unmerged(restarted.repo).contains("tracked.txt") && unmerged(restarted.repo).contains("excluded.txt"));
         CHECK(restarted.repo.git({"rev-parse", ":notes.txt"}).trimmed() == restarted.repo.notesObject);
+    });
+    suite.run("TRUCE-0062 a stale publish still allows a later Mark resolved when the disk matches", [] {
+        Session session;
+        const auto next = std::string("later resolved revision\n");
+        publishWhileDraftChanges(session.controller, session.id, next);
+        const auto &written = openedFile(session.controller);
+        CHECK(written.writeOutcome() && written.writeOutcome()->outcome == Outcome::Succeeded);
+        CHECK(written.writeOutcome()->revision != written.current().id);
+        CHECK(written.current().draft.text == next);
+        CHECK(!written.facts().resolved);
+        CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
+        CHECK(session.controller.commandMessage().contains(QStringLiteral("draft changed")));
+        CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
+        CHECK(session.controller.markResolved(session.id, revisionOf(written), true));
+        waitFor(session.controller, [&] { return openedFile(session.controller).facts().resolved; });
+        const auto &resolved = openedFile(session.controller);
+        CHECK(resolved.facts().status == FileStatus::Resolved);
+        CHECK(readFile(session.repo.path("tracked.txt")) == QByteArray::fromStdString(next));
+        CHECK(session.repo.git({"show", ":tracked.txt"}) == QByteArray::fromStdString(next));
+        CHECK(!session.controller.commandMessage().contains(QStringLiteral("identity changed")));
+        CHECK(session.controller.markResolved(session.id, revisionOf(resolved), true));
+        CHECK(session.controller.commandMessage().contains(QStringLiteral("Written and resolved")));
+        CHECK(!unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
+        CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
+    });
+    suite.run("TRUCE-0062 a destination that differs from the published bytes fails closed", [] {
+        Session session;
+        const auto next = std::string("later resolved revision\n");
+        publishWhileDraftChanges(session.controller, session.id, next);
+        const auto tampered = QByteArray("tampered after publish\n");
+        writeFile(session.repo.path("tracked.txt"), tampered);
+        CHECK(session.controller.markResolved(session.id, revisionOf(openedFile(session.controller)), true));
+        waitFor(session.controller, [&] {
+            const auto &file = openedFile(session.controller);
+            return !session.controller.resolutionBusy() && file.writeOutcome()
+                && file.writeOutcome()->outcome == Outcome::Failed && file.writeOutcome()->revision == file.current().id;
+        });
+        CHECK(!openedFile(session.controller).facts().resolved);
+        CHECK(readFile(session.repo.path("tracked.txt")) == tampered);
+        CHECK(session.controller.commandMessage().contains(QStringLiteral("changed")));
+        CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
+        CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
     });
     return suite.report();
 }
