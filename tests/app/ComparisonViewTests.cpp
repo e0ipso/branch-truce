@@ -17,6 +17,7 @@
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
@@ -889,6 +890,55 @@ public:
             CHECK(!fixture.file().facts().resolved && !fixture.file().staged());
             CHECK(fixture.item("selectedStatus")->property("text").toString().contains(QStringLiteral("Repository write failed")));
             CHECK(!fixture.item("parentStagingState")->isVisible());
+        });
+        suite.run("TRUCE-0029 a rejected insertion at the file limit leaves the editor usable", [] {
+            const auto atLimit = [] {
+                std::string text;
+                text.reserve(4000 * 2);
+                for (int i = 0; i < 4000; ++i) text += "x\n";
+                return text;
+            }();
+            Fixture fixture(test_support::choiceFile("x\n", "x\n", atLimit));
+            auto *editor = fixture.item("resultText");
+            const auto before = fixture.file().current();
+            const auto rejection = QStringLiteral(
+                "File of 4001 lines exceeds the supported 4000 line limit. "
+                "The existing edit was kept and this change was not acknowledged.");
+            CHECK(!editor->property("readOnly").toBool() && editor->isEnabled());
+            CHECK(fixture.text().toStdString() == atLimit);
+            CHECK(fixture.controller.commandMessage().isEmpty());
+            fixture.select(0, 0);
+            CHECK(editor->property("selectionStart").toInt() == 0
+                && editor->property("selectionEnd").toInt() == 0);
+            QGuiApplication::clipboard()->setText(QStringLiteral("\n"));
+            CHECK(!fixture.controller.resultClipboard("paste"));
+            CHECK(fixture.file().current().id == before.id && fixture.text().toStdString() == atLimit);
+            CHECK(!editor->property("readOnly").toBool());
+            CHECK(fixture.controller.commandMessage() == rejection);
+            settle([&] {
+                return fixture.item("commandMessage")->isVisible()
+                    && fixture.item("commandMessage")->property("text").toString() == rejection;
+            });
+            fixture.checkRecovered(before.draft);
+            bool timerFired = false;
+            QTimer::singleShot(0, editor, [&] { timerFired = true; });
+            fixture.key(Qt::Key_Return);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            CHECK(timerFired);
+            CHECK(fixture.file().current().id == before.id && fixture.text().toStdString() == atLimit);
+            CHECK(!editor->property("readOnly").toBool() && editor->isEnabled());
+            CHECK(fixture.controller.commandMessage() == rejection);
+            fixture.select(0, 1);
+            fixture.key(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+            const auto edited = fixture.file().current();
+            CHECK(edited.id == before.id + 1);
+            CHECK(edited.draft.text.size() == atLimit.size() && edited.draft.text.starts_with('y'));
+            CHECK(fixture.text().toStdString() == edited.draft.text);
+            CHECK(!editor->property("readOnly").toBool() && editor->isEnabled());
+            CHECK(fixture.controller.commandMessage().isEmpty());
+            settle([&] { return !fixture.item("commandMessage")->isVisible(); });
+            fixture.checkRecovered(edited.draft);
+            QGuiApplication::clipboard()->clear();
         });
         return suite.report();
     }
