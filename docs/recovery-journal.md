@@ -68,11 +68,14 @@ For every applied model command:
    `Transition::Applied`. This is the acknowledgment boundary.
 
 No editor mutation is acknowledged through this model before step 3 succeeds.
-Committed IME input uses the same whole-draft command. Composition/pre-edit
+Exact manual edits, scoped choices and mapped editing commands serialize their
+complete resulting draft as `replace-draft` records. Replay therefore rebuilds
+the same action order before applying durable undo and redo records.
+Committed IME input uses that same acknowledgment boundary. Composition/pre-edit
 stays in the editor as visibly pending input until it becomes a command.
-Undo grouping cannot defer persistence. The current desktop result view is
-read-only; a future editable adapter must use this boundary rather than writing
-directly into the domain state.
+Undo grouping cannot defer persistence. The desktop editor routes document
+changes through this boundary, and its native undo stack is disabled so editing
+and scoped choices share application history.
 
 On failure the acknowledged revision stays unchanged. `pendingInput`,
 `pendingText`, `pendingDecisions`, `recoveryState` and `recoveryError` expose the

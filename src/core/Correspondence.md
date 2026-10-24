@@ -57,9 +57,10 @@ reappears. Fresh source-to-result passages remain available for navigation.
 Mapping values belong to revision snapshots. Undo, redo and checkpoint discard
 restore text, decisions and mapping together while assigning the normal fresh
 transaction revision. Previously issued previews remain stale. Source captures
-stay immutable. These APIs perform no persistence, Qt or filesystem work;
-command composition, recovery serialization and editor integration are separate
-owners.
+stay immutable. These APIs perform no persistence, Qt or filesystem work.
+[`EditingCommands`](EditingCommands.md) builds scoped choices on these mappings.
+SessionModel owns recovery acknowledgment, and the Qt controller translates
+exact editor changes without introducing a second undo history.
 
 Disposable C++ fixtures compare the linear-space implementation with independent
 enumeration of every best alignment for binary-line sequences up to six lines

@@ -4,6 +4,9 @@
 #include "git/ConflictClassifier.h"
 #include <QObject>
 #include <QString>
+#include <QPointer>
+
+class QTextDocument;
 
 namespace branch_truce {
 class ApplicationController final : public QObject {
@@ -23,6 +26,8 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QVariantMap selectedFile READ selectedFile NOTIFY selectedFileChanged)
     Q_PROPERTY(int outsideAppFiles READ outsideAppFiles NOTIFY inventoryChanged)
     Q_PROPERTY(int loadErrorFiles READ loadErrorFiles NOTIFY inventoryChanged)
+    Q_PROPERTY(QVariantMap commandPreview READ commandPreview NOTIFY commandChanged)
+    Q_PROPERTY(QString commandMessage READ commandMessage NOTIFY commandChanged)
 public:
     explicit ApplicationController(QObject *parent = nullptr);
     [[nodiscard]] QString version() const;
@@ -40,6 +45,18 @@ public:
     [[nodiscard]] QVariantMap selectedFile() const;
     [[nodiscard]] int outsideAppFiles() const;
     [[nodiscard]] int loadErrorFiles() const;
+    [[nodiscard]] QVariantMap commandPreview() const;
+    [[nodiscard]] QString commandMessage() const { return commandMessage_; }
+    Q_INVOKABLE bool previewChoice(const QString &fileId, const QString &revision,
+                                  const QString &target, const QString &action);
+    Q_INVOKABLE bool applyChoice(bool confirmReplacement = false);
+    Q_INVOKABLE void cancelChoice();
+    // Editor offsets are UTF-16 units and must identify scalar boundaries.
+    Q_INVOKABLE bool editResult(const QString &fileId, const QString &revision,
+                               int begin, int end, const QString &replacement);
+    Q_INVOKABLE bool undo(const QString &fileId, const QString &revision);
+    Q_INVOKABLE bool redo(const QString &fileId, const QString &revision);
+    Q_INVOKABLE void attachResultEditor(QObject *editor);
     // Select by the exact byte-derived file ID, never by a display path.
     Q_INVOKABLE bool selectFile(const QString &fileId);
     Q_INVOKABLE QString displayPath(const QString &fileId) const;
@@ -51,11 +68,15 @@ Q_SIGNALS:
     void launchChanged();
     void selectedFileChanged();
     void inventoryChanged();
+    void commandChanged();
 
 private:
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void classified(const git::ConflictClassificationResult &result);
     void loadWorkingFiles(QList<git::Conflict> conflicts);
     void setState(QString state, QString detail);
+    bool commandResult(Transition result);
+    void syncResultEditor();
     SessionModel files_;
     SessionCoordinator coordinator_;
     git::ConflictClassifier classifier_;
@@ -64,5 +85,13 @@ private:
     QString operation_;
     QString detail_;
     QString selectedFileId_;
+    std::optional<ChoicePreview> preview_;
+    QString previewFileId_;
+    QString commandMessage_;
+    QPointer<QObject> resultEditor_;
+    QPointer<QTextDocument> resultDocument_;
+    QMetaObject::Connection editorConnection_;
+    QString editorText_;
+    bool syncingEditor_ = false;
 };
 }

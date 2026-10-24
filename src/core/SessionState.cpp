@@ -1,4 +1,5 @@
 #include "SessionState.h"
+#include "EditingCommands.h"
 
 #include <algorithm>
 #include <limits>
@@ -18,11 +19,23 @@ std::size_t undecidedCount(const Draft &draft)
         draft.decisions.begin(), draft.decisions.end(),
         [](const auto &entry) { return entry.second.value == DecisionValue::Undecided; }));
 }
+
+std::size_t markerCount(const std::string &text)
+{
+    std::size_t count = 0;
+    for (std::size_t begin = 0; begin < text.size();) {
+        if (text.compare(begin, 7, "<<<<<<<") == 0) ++count;
+        const auto newline = text.find('\n', begin);
+        if (newline == std::string::npos) break;
+        begin = newline + 1;
+    }
+    return count;
+}
 }
 
 FileSession::FileSession(std::string id, std::string path, Draft initial,
                          Support support, std::string supportDetail,
-                         std::optional<FileSnapshots> snapshots)
+                         std::optional<FileSnapshots> snapshots, bool initializeChoices)
     : id_(std::move(id)), path_(std::move(path)), support_(support),
       supportDetail_(std::move(supportDetail))
 {
@@ -39,12 +52,34 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
     if (snapshots_) {
         try {
             correspondence = std::make_shared<const CorrespondenceMap>(1, *snapshots_, initial.text);
+            choices_ = std::make_shared<const std::vector<ChoiceTarget>>(choiceTargets(*snapshots_));
+            auto bound = std::make_shared<CorrespondenceMap>(*correspondence);
+            for (const auto &target : *choices_) {
+                if (!bound->bind(target.source)) throw std::invalid_argument("Invalid choice scope");
+                // Empty deletions have a section control and one decision,
+                // without pretending that deleting several lines is a line pick.
+                if (target.source.range.begin == target.source.range.end)
+                    for (const auto &id : target.decisions) {
+                        auto source = target.source;
+                        source.contributionId = id;
+                        if (!bound->bind(std::move(source))) throw std::invalid_argument("Invalid deletion scope");
+                    }
+                if (initializeChoices)
+                    for (const auto &id : target.decisions) initial.decisions.try_emplace(id);
+            }
+            correspondence = std::move(bound);
         } catch (const std::exception &error) {
             support_ = Support::Unreadable;
             supportDetail_ = "Load error: could not build correspondence for " + path_ + ": " + error.what();
         }
     }
     revisions_.emplace(1, Revision{1, 1, 1, std::move(initial), std::move(correspondence)});
+}
+
+const std::vector<ChoiceTarget> &FileSession::choices() const noexcept
+{
+    static const std::vector<ChoiceTarget> empty;
+    return choices_ ? *choices_ : empty;
 }
 
 RevisionId FileSession::advance(const Draft &draft,
@@ -121,10 +156,57 @@ Transition FileSession::editResult(RevisionId expected, ResultEdit edit)
         return Transition::InvalidAnchor;
     auto draft = current().draft;
     draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
+    draft.unresolvedMarkers = markerCount(draft.text);
     if (draft == current().draft) return Transition::NoChange;
     auto mapping = correspondence()
         ? std::make_shared<const CorrespondenceMap>(correspondence()->edited(next_, edit)) : nullptr;
     appendHistory(advance(draft, std::move(mapping)));
+    return Transition::Applied;
+}
+
+Transition FileSession::applyCommand(const EditingCommand &command, bool confirmReplacement)
+{
+    if (command.expected != current_) return Transition::StaleRevision;
+    if (support_ != Support::Supported) return Transition::Blocked;
+    const auto *mapping = correspondence();
+    if (!mapping || command.targets.empty()) return Transition::InvalidAnchor;
+    for (const auto &target : command.targets) {
+        if (target.revision != current_) return Transition::StaleRevision;
+        const auto *bound = mapping->anchor(target.source.contributionId);
+        if (!bound || *bound != target) return Transition::InvalidAnchor;
+        if (target.state == AnchorState::Ambiguous) return Transition::AmbiguousTarget;
+        if (target.state != AnchorState::Mapped || !target.result) return Transition::InvalidAnchor;
+    }
+    auto edits = command.edits;
+    std::sort(edits.begin(), edits.end(), [](const auto &a, const auto &b) { return a.range.begin > b.range.begin; });
+    for (std::size_t i = 0; i < edits.size(); ++i) {
+        const auto &edit = edits[i];
+        if (!validByteRange(current().draft.text, edit.range) || !validUtf8(edit.replacement)) return Transition::InvalidAnchor;
+        if (i && (edit.range.end > edits[i - 1].range.begin || edit.range.begin == edits[i - 1].range.begin))
+            return Transition::AmbiguousTarget;
+        const auto target = std::find_if(command.targets.begin(), command.targets.end(),
+            [&](const auto &anchor) { return anchor.result == edit.range; });
+        if (target == command.targets.end()) return Transition::InvalidAnchor;
+        if (!confirmReplacement && std::any_of(command.targets.begin(), command.targets.end(), [&](const auto &anchor) {
+            return anchor.result == edit.range && anchor.manualOverlap;
+        })) return Transition::ConfirmationRequired;
+    }
+    auto draft = current().draft;
+    for (const auto &[id, value] : command.decisions) {
+        if (!mapping->anchor(id)) return Transition::InvalidAnchor;
+        draft.decisions[id] = value;
+    }
+    auto updated = std::make_shared<CorrespondenceMap>(*mapping);
+    for (const auto &edit : edits) {
+        draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
+        const auto target = std::find_if(command.targets.begin(), command.targets.end(),
+            [&](const auto &anchor) { return anchor.result == edit.range; });
+        *updated = updated->edited(next_, edit, false, target->source.contributionId);
+    }
+    // Match the launch-time marker convention after every text command.
+    if (!edits.empty()) draft.unresolvedMarkers = markerCount(draft.text);
+    if (draft == current().draft) return Transition::NoChange;
+    appendHistory(advance(draft, std::make_shared<const CorrespondenceMap>(updated->atRevision(next_))));
     return Transition::Applied;
 }
 

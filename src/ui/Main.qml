@@ -10,6 +10,58 @@ Kirigami.ApplicationWindow {
     required property var controller
     readonly property var selectedFile: controller.selectedFile
     readonly property bool supportedSelection: selectedFile.support === "supported"
+    function choose(target: string, action: string): void {
+        if (!controller.previewChoice(controller.selectedFileId, selectedFile.currentRevision, target, action))
+            return;
+        if (controller.commandPreview.confirmationRequired)
+            replacementDialog.open();
+        else
+            controller.applyChoice(false);
+    }
+    Shortcut {
+        sequences: [StandardKey.Undo]
+        enabled: !!window.selectedFile.canUndo && !!window.selectedFile.canEdit && !resultEditor.inputMethodComposing
+        onActivated: window.controller.undo(window.controller.selectedFileId, window.selectedFile.currentRevision)
+    }
+    Shortcut {
+        sequences: [StandardKey.Redo]
+        enabled: !!window.selectedFile.canRedo && !!window.selectedFile.canEdit && !resultEditor.inputMethodComposing
+        onActivated: window.controller.redo(window.controller.selectedFileId, window.selectedFile.currentRevision)
+    }
+    Dialog {
+        id: replacementDialog
+        objectName: "replacementDialog"
+        title: qsTr("Replace manual work in this scope?")
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(window.width - 40, 700)
+        height: Math.min(window.height - 40, 500)
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: window.controller.applyChoice(true)
+        onRejected: window.controller.cancelChoice()
+        ColumnLayout {
+            anchors.fill: parent
+            Label {
+                Layout.fillWidth: true
+                text: window.controller.commandPreview.detail || ""
+                wrapMode: Text.Wrap
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                SnapshotPane {
+                    paneName: "replacementBefore"
+                    paneTitle: qsTr("Current text in this scope")
+                    paneText: window.controller.commandPreview.before || ""
+                }
+                SnapshotPane {
+                    paneName: "replacementAfter"
+                    paneTitle: qsTr("Replacement from the selected source")
+                    paneText: window.controller.commandPreview.replacement || ""
+                }
+            }
+        }
+    }
     component ConflictRow: ItemDelegate {
         id: row
         required property int index
@@ -175,6 +227,14 @@ Kirigami.ApplicationWindow {
                         type: Kirigami.MessageType.Error
                         text: window.selectedFile.recoveryError || ""
                     }
+                    Label {
+                        objectName: "commandMessage"
+                        Layout.fillWidth: true
+                        visible: window.controller.commandMessage.length > 0
+                        text: window.controller.commandMessage
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
                     Button {
                         objectName: "retryRecovery"
                         visible: !!window.selectedFile.pendingInput
@@ -188,6 +248,24 @@ Kirigami.ApplicationWindow {
                         paneText: window.selectedFile.pendingText || ""
                     }
                     RowLayout {
+                        visible: window.supportedSelection
+                        Button {
+                            objectName: "undoCommand"
+                            text: qsTr("Undo")
+                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canUndo && !resultEditor.inputMethodComposing
+                            onClicked: window.controller.undo(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                        }
+                        Button {
+                            objectName: "redoCommand"
+                            text: qsTr("Redo")
+                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canRedo && !resultEditor.inputMethodComposing
+                            onClicked: window.controller.redo(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                        }
+                        Label {
+                            text: resultEditor.inputMethodComposing ? qsTr("Composing input · not acknowledged") : qsTr("Text and choices share undo/redo")
+                        }
+                    }
+                    RowLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         visible: window.supportedSelection
@@ -197,10 +275,28 @@ Kirigami.ApplicationWindow {
                                 ? window.selectedFile.stage2.label + "\n" + window.selectedFile.stage2.objectId : ""
                             paneText: window.selectedFile.stage2 ? window.selectedFile.stage2.text : ""
                         }
-                        SnapshotPane {
-                            paneName: "result"
-                            paneTitle: qsTr("Result · preview")
-                            paneText: window.selectedFile.resultText || ""
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Label {
+                                objectName: "resultLabel"
+                                text: qsTr("Editable result")
+                            }
+                            ScrollView {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                TextArea {
+                                    id: resultEditor
+                                    objectName: "resultText"
+                                    readOnly: true
+                                    selectByMouse: true
+                                    textFormat: TextEdit.PlainText
+                                    font.family: "monospace"
+                                    wrapMode: TextEdit.NoWrap
+                                    Accessible.name: qsTr("Editable result")
+                                    Component.onCompleted: window.controller.attachResultEditor(resultEditor)
+                                }
+                            }
                         }
                         SnapshotPane {
                             paneName: "stage3"
@@ -208,6 +304,66 @@ Kirigami.ApplicationWindow {
                                 ? window.selectedFile.stage3.label + "\n" + window.selectedFile.stage3.objectId : ""
                             paneText: window.selectedFile.stage3 ? window.selectedFile.stage3.text : ""
                         }
+                    }
+                    ListView {
+                        objectName: "scopedChoices"
+                        visible: window.supportedSelection
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(contentHeight, 180)
+                        clip: true
+                        model: window.selectedFile.choices || []
+                        delegate: ColumnLayout {
+                            id: choiceRow
+                            required property var modelData
+                            width: ListView.view.width
+                            Label {
+                                Layout.fillWidth: true
+                                text: choiceRow.modelData.label + " · " + choiceRow.modelData.state
+                                textFormat: Text.PlainText
+                                wrapMode: Text.Wrap
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: choiceRow.modelData.sourceText || qsTr("Empty source scope · deletion")
+                                textFormat: Text.PlainText
+                                font.family: "monospace"
+                                wrapMode: Text.WrapAnywhere
+                                maximumLineCount: 3
+                                elide: Text.ElideRight
+                            }
+                            RowLayout {
+                                enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.available && !resultEditor.inputMethodComposing
+                                Button {
+                                    text: qsTr("Accept →")
+                                    Accessible.name: qsTr("Accept %1").arg(choiceRow.modelData.label)
+                                    onClicked: window.choose(choiceRow.modelData.id, "accept")
+                                }
+                                Button {
+                                    text: qsTr("× Ignore")
+                                    Accessible.name: qsTr("Ignore %1").arg(choiceRow.modelData.label)
+                                    onClicked: window.choose(choiceRow.modelData.id, "ignore")
+                                }
+                                Button {
+                                    text: qsTr("Resolve using this side")
+                                    Accessible.name: qsTr("Resolve %1 using this side and ignore its competitor").arg(choiceRow.modelData.label)
+                                    onClicked: window.choose(choiceRow.modelData.id, "resolve")
+                                }
+                            }
+                            Label {
+                                visible: !choiceRow.modelData.available
+                                Layout.fillWidth: true
+                                text: choiceRow.modelData.detail
+                                textFormat: Text.PlainText
+                                wrapMode: Text.Wrap
+                            }
+                        }
+                        ScrollBar.vertical: ScrollBar {}
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        visible: !!window.selectedFile.choiceNotice
+                        text: window.selectedFile.choiceNotice || ""
+                        wrapMode: Text.Wrap
                     }
                     CheckBox {
                         id: showEarlier
@@ -221,7 +377,7 @@ Kirigami.ApplicationWindow {
                         paneName: "earlier"
                         paneTitle: window.selectedFile.earlier
                             ? window.selectedFile.earlier.label + "\n" + window.selectedFile.earlier.objectId : ""
-                        paneText: window.selectedFile.earlier ? window.selectedFile.earlier.text : ""
+                        paneText: (window.selectedFile.earlier && window.selectedFile.earlier.text) || ""
                     }
                 }
             }

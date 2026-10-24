@@ -356,6 +356,22 @@ Transition SessionModel::undo(const std::string &id, RevisionId expected)
 {
     return update(id, QStringLiteral("undo"), [&](auto &file) { return file.undo(expected); });
 }
+Transition SessionModel::editResult(const std::string &id, RevisionId expected, ResultEdit edit)
+{
+    return update(id, QStringLiteral("replace-draft"), [&](auto &file) { return file.editResult(expected, std::move(edit)); });
+}
+Transition SessionModel::applyCommand(const std::string &id, const EditingCommand &command, bool confirmReplacement)
+{
+    return update(id, QStringLiteral("replace-draft"), [&](auto &file) { return file.applyCommand(command, confirmReplacement); });
+}
+Transition SessionModel::applyChoice(const std::string &id, const ChoicePreview &preview, bool confirmReplacement)
+{
+    // Recovery replays the complete text-and-decision transaction as a draft
+    // replacement. Undo/redo then retain exactly the same action order.
+    return update(id, QStringLiteral("replace-draft"), [&](auto &file) {
+        return branch_truce::applyChoice(file, preview, confirmReplacement);
+    });
+}
 Transition SessionModel::redo(const std::string &id, RevisionId expected)
 {
     return update(id, QStringLiteral("redo"), [&](auto &file) { return file.redo(expected); });

@@ -5,6 +5,10 @@
 #include "core/BuildInfo.h"
 #include <QStandardPaths>
 #include <QUuid>
+#include <QQuickTextDocument>
+#include <QTextDocument>
+#include <QKeyEvent>
+#include <QKeySequence>
 #include <algorithm>
 
 namespace branch_truce {
@@ -21,6 +25,25 @@ QVariantMap sourceData(const std::optional<SourceSnapshot> &source)
             {QStringLiteral("label"), text(source->label)}, {QStringLiteral("objectId"), text(source->objectId)},
             {QStringLiteral("commitId"), source->commitId ? text(*source->commitId) : QString{}},
             {QStringLiteral("mode"), text(source->mode)}};
+}
+
+std::optional<RevisionId> revisionId(const QString &value)
+{
+    bool ok = false;
+    const auto id = value.toULongLong(&ok);
+    return ok && id != 0 && QString::number(id) == value ? std::optional<RevisionId>{id} : std::nullopt;
+}
+
+bool scalarBoundary(const QString &value, int offset)
+{
+    return offset >= 0 && offset <= value.size()
+        && !(offset > 0 && offset < value.size() && value.at(offset).isLowSurrogate()
+             && value.at(offset - 1).isHighSurrogate());
+}
+
+QString documentText(const QTextDocument &document)
+{
+    return document.toRawText().replace(QChar(0x2029), QLatin1Char('\n'));
 }
 
 Support supportFor(const git::Conflict &file)
@@ -112,6 +135,7 @@ ApplicationController::ApplicationController(QObject *parent)
         Q_EMIT inventoryChanged();
         Q_EMIT selectedFileChanged();
     });
+    connect(this, &ApplicationController::selectedFileChanged, this, &ApplicationController::syncResultEditor);
 }
 QString ApplicationController::version() const
 {
@@ -172,7 +196,8 @@ QVariantMap ApplicationController::selectedFile() const
         for (const auto role : {SessionModel::StatusRole, SessionModel::UnsavedRole, SessionModel::ReviewNeededRole,
              SessionModel::ResolvedRole, SessionModel::UndecidedRole, SessionModel::PendingInputRole,
              SessionModel::PendingTextRole, SessionModel::RecoveryStateRole, SessionModel::RecoveryErrorRole,
-             SessionModel::FinishBlockersRole})
+             SessionModel::FinishBlockersRole, SessionModel::CurrentRevisionRole, SessionModel::CanUndoRole,
+             SessionModel::CanRedoRole})
             result.insert(QString::fromLatin1(files_.roleNames().value(role)), files_.data(index, role));
         break;
     }
@@ -183,6 +208,60 @@ QVariantMap ApplicationController::selectedFile() const
         result.insert(QStringLiteral("initialResult"), QVariantMap{
             {QStringLiteral("text"), text(snapshots->launchResult.text.utf8)}});
     }
+    result.insert(QStringLiteral("canEdit"), file->support() == Support::Supported
+        && !files_.hasPendingRecovery() && !files_.hasRecoveryFailures());
+    QVariantList choices;
+    std::map<SourceSide, std::vector<std::size_t>> lineStarts;
+    if (file->snapshots()) {
+        for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
+            const auto &source = side == SourceSide::Stage2 ? file->snapshots()->stage2 : file->snapshots()->stage3;
+            if (!source) continue;
+            auto &starts = lineStarts[side];
+            starts.push_back(0);
+            for (std::size_t i = 0; i < source->worktree.utf8.size(); ++i)
+                if (source->worktree.utf8[i] == '\n') starts.push_back(i + 1);
+        }
+    }
+    for (const auto &target : file->choices()) {
+        // Older recovery records retain their exact decision vocabulary and
+        // status. Do not invent new undecided judgments while restoring them.
+        if (std::any_of(target.decisions.begin(), target.decisions.end(), [&](const auto &id) {
+            return !file->current().draft.decisions.contains(id);
+        })) continue;
+        const auto &source = target.source.side == SourceSide::Stage2 ? file->snapshots()->stage2 : file->snapshots()->stage3;
+        const auto &sourceText = source->worktree.utf8;
+        const auto &starts = lineStarts.at(target.source.side);
+        const auto lineNumber = [&](std::size_t offset) {
+            return std::distance(starts.begin(), std::upper_bound(starts.begin(), starts.end(), offset));
+        };
+        const auto line = lineNumber(target.source.range.begin);
+        const auto last = lineNumber(target.source.range.end > target.source.range.begin
+            ? target.source.range.end - 1 : target.source.range.end);
+        QStringList states;
+        bool undecided = true;
+        for (const auto &id : target.decisions) {
+            const auto found = file->current().draft.decisions.find(id);
+            const auto state = found == file->current().draft.decisions.end() ? DecisionValue::Undecided : found->second.value;
+            undecided = undecided && state == DecisionValue::Undecided;
+            states.push_back(state == DecisionValue::Accepted ? tr("accepted")
+                : state == DecisionValue::Ignored ? tr("ignored") : tr("undecided"));
+        }
+        states.removeDuplicates();
+        const auto *anchor = file->correspondence() ? file->correspondence()->anchor(target.source.contributionId) : nullptr;
+        const bool mapped = anchor && anchor->state == AnchorState::Mapped && anchor->result;
+        const bool available = undecided && mapped;
+        choices.push_back(QVariantMap{{QStringLiteral("id"), text(target.source.contributionId)},
+            {QStringLiteral("label"), (target.source.side == SourceSide::Stage2 ? tr("Left") : tr("Right"))
+                + (target.scope == ChoiceScope::Section ? tr(" section, lines %1–%2").arg(line).arg(last) : tr(" line %1").arg(line))},
+            {QStringLiteral("state"), states.join(QStringLiteral(", "))},
+            {QStringLiteral("sourceText"), text(sourceText.substr(target.source.range.begin, target.source.range.end - target.source.range.begin))},
+            {QStringLiteral("available"), available},
+            {QStringLiteral("detail"), !undecided ? tr("Undo intervening actions to change a decided scope.")
+                : !mapped ? tr("This scope cannot be mapped safely. Edit the result directly.") : QString{}}});
+    }
+    result.insert(QStringLiteral("choices"), choices);
+    result.insert(QStringLiteral("choiceNotice"), choices.empty() && !file->choices().empty()
+        ? tr("Scoped choices are unavailable for this earlier draft. Direct editing remains available.") : QString{});
     return result;
 }
 
@@ -190,9 +269,191 @@ bool ApplicationController::selectFile(const QString &fileId)
 {
     if (!files_.file(fileId.toStdString())) return false;
     if (selectedFileId_ == fileId) return true;
+    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return false;
+    cancelChoice();
     selectedFileId_ = fileId;
     Q_EMIT selectedFileChanged();
     return true;
+}
+
+QVariantMap ApplicationController::commandPreview() const
+{
+    if (!preview_) return {};
+    return {{QStringLiteral("before"), text(preview_->before)},
+        {QStringLiteral("replacement"), text(preview_->replacement)},
+        {QStringLiteral("detail"), text(preview_->detail)},
+        {QStringLiteral("confirmationRequired"), preview_->state == Transition::ConfirmationRequired}};
+}
+
+bool ApplicationController::commandResult(Transition result)
+{
+    switch (result) {
+    case Transition::Applied: commandMessage_.clear(); break;
+    case Transition::NoChange: commandMessage_ = tr("No change."); break;
+    case Transition::StaleRevision: commandMessage_ = tr("The result changed. Select the scope again."); break;
+    case Transition::ConfirmationRequired: commandMessage_ = tr("Inspect and confirm the exact replacement first."); break;
+    case Transition::AmbiguousTarget: commandMessage_ = tr("The target is ambiguous. Edit the result directly."); break;
+    case Transition::InvalidAnchor: commandMessage_ = tr("The target is no longer valid. Select the scope again."); break;
+    default: commandMessage_ = tr("Command not completed. Check pending recovery and the selected scope."); break;
+    }
+    Q_EMIT commandChanged();
+    return result == Transition::Applied || result == Transition::NoChange;
+}
+
+bool ApplicationController::previewChoice(const QString &fileId, const QString &revision,
+                                         const QString &target, const QString &action)
+{
+    cancelChoice();
+    const auto *file = files_.file(fileId.toStdString());
+    const auto expected = revisionId(revision);
+    if (!file || !expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
+    if (files_.hasPendingRecovery() || files_.hasRecoveryFailures()
+        || (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool())) return commandResult(Transition::Blocked);
+    ChoiceAction kind;
+    if (action == QLatin1String("accept")) kind = ChoiceAction::Accept;
+    else if (action == QLatin1String("ignore")) kind = ChoiceAction::Ignore;
+    else if (action == QLatin1String("resolve")) kind = ChoiceAction::ResolveUsingSide;
+    else return commandResult(Transition::InvalidAnchor);
+    auto preview = branch_truce::previewChoice(*file, *expected, target.toStdString(), kind);
+    commandMessage_ = text(preview.detail);
+    if (preview.state != Transition::Applied && preview.state != Transition::ConfirmationRequired) {
+        Q_EMIT commandChanged();
+        return false;
+    }
+    preview_ = std::move(preview);
+    previewFileId_ = fileId;
+    Q_EMIT commandChanged();
+    return true;
+}
+
+bool ApplicationController::applyChoice(bool confirmReplacement)
+{
+    if (!preview_ || previewFileId_ != selectedFileId_) return commandResult(Transition::StaleRevision);
+    const auto preview = *preview_;
+    const auto id = previewFileId_;
+    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return commandResult(Transition::Blocked);
+    const auto result = files_.applyChoice(id.toStdString(), preview, confirmReplacement);
+    if (result != Transition::ConfirmationRequired) { preview_.reset(); previewFileId_.clear(); }
+    return commandResult(result);
+}
+
+void ApplicationController::cancelChoice()
+{
+    preview_.reset();
+    previewFileId_.clear();
+    commandMessage_.clear();
+    Q_EMIT commandChanged();
+}
+
+bool ApplicationController::editResult(const QString &fileId, const QString &revision,
+                                      int begin, int end, const QString &replacement)
+{
+    const auto *file = files_.file(fileId.toStdString());
+    const auto expected = revisionId(revision);
+    if (!file || !expected || fileId != selectedFileId_ || file->current().id != *expected)
+        return commandResult(Transition::StaleRevision);
+    const auto old = text(file->current().draft.text);
+    if (begin > end || !scalarBoundary(old, begin) || !scalarBoundary(old, end)
+        || QString::fromUtf8(replacement.toUtf8()) != replacement) return commandResult(Transition::InvalidAnchor);
+    return commandResult(files_.editResult(fileId.toStdString(), *expected,
+        {{static_cast<std::size_t>(old.left(begin).toUtf8().size()), static_cast<std::size_t>(old.left(end).toUtf8().size())},
+         replacement.toUtf8().toStdString()}));
+}
+
+bool ApplicationController::undo(const QString &fileId, const QString &revision)
+{
+    const auto expected = revisionId(revision);
+    if (!expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
+    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return commandResult(Transition::Blocked);
+    return commandResult(files_.undo(fileId.toStdString(), *expected));
+}
+
+bool ApplicationController::redo(const QString &fileId, const QString &revision)
+{
+    const auto expected = revisionId(revision);
+    if (!expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
+    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return commandResult(Transition::Blocked);
+    return commandResult(files_.redo(fileId.toStdString(), *expected));
+}
+
+void ApplicationController::attachResultEditor(QObject *editor)
+{
+    disconnect(editorConnection_);
+    if (resultEditor_) resultEditor_->removeEventFilter(this);
+    resultEditor_ = editor;
+    if (editor) editor->installEventFilter(this);
+    auto *quick = editor ? editor->property("textDocument").value<QQuickTextDocument *>() : nullptr;
+    resultDocument_ = quick ? quick->textDocument() : nullptr;
+    if (!resultDocument_) return;
+    resultDocument_->setUndoRedoEnabled(false);
+    editorConnection_ = connect(resultDocument_, &QTextDocument::contentsChange, this,
+        [this](int position, int removed, int added) {
+            if (syncingEditor_ || !resultDocument_) return;
+            const auto next = documentText(*resultDocument_);
+            if (next == editorText_) return;
+            const auto old = editorText_;
+            editorText_ = next;
+            // QTextDocument includes its terminal paragraph character in some
+            // IME notifications. That sentinel is outside the result buffer.
+            if (position + removed == old.size() + 1 && position + added == next.size() + 1) {
+                --removed;
+                --added;
+            }
+            const auto *file = files_.file(selectedFileId_.toStdString());
+            if (!file || old != text(file->current().draft.text) || position < 0 || removed < 0 || added < 0 || position + removed > old.size()
+                || position + added > next.size() || old.left(position) != next.left(position)
+                || old.mid(position + removed) != next.mid(position + added)) {
+                commandResult(Transition::InvalidAnchor);
+                syncResultEditor();
+                return;
+            }
+            (void)editResult(selectedFileId_, QString::number(file->current().id), position, position + removed,
+                next.mid(position, added));
+            syncResultEditor();
+        });
+    syncResultEditor();
+}
+
+bool ApplicationController::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == resultEditor_ && (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)) {
+        auto *key = static_cast<QKeyEvent *>(event);
+        const bool backwards = key->matches(QKeySequence::Undo);
+        const bool forwards = key->matches(QKeySequence::Redo);
+        if (backwards || forwards) {
+            event->accept();
+            if (event->type() == QEvent::KeyPress) {
+                const auto *file = files_.file(selectedFileId_.toStdString());
+                if (file) {
+                    const auto revision = QString::number(file->current().id);
+                    if (backwards) (void)undo(selectedFileId_, revision);
+                    else (void)redo(selectedFileId_, revision);
+                }
+            }
+            return true;
+        }
+    }
+    return QObject::eventFilter(watched, event);
+}
+
+void ApplicationController::syncResultEditor()
+{
+    if (!resultDocument_ || !resultEditor_ || syncingEditor_) return;
+    const auto *file = files_.file(selectedFileId_.toStdString());
+    const auto *pending = file ? files_.pendingDraft(file->id()) : nullptr;
+    const auto desired = file ? text(pending ? pending->text : file->current().draft.text) : QString{};
+    syncingEditor_ = true;
+    if (documentText(*resultDocument_) != desired) resultDocument_->setPlainText(desired);
+    editorText_ = desired;
+    const bool lossless = documentText(*resultDocument_) == desired && !desired.contains(QChar(0x2028))
+        && !desired.contains(QChar(0x2029)) && !desired.contains(QLatin1Char('\r'));
+    resultEditor_->setProperty("readOnly", !file || file->support() != Support::Supported || !lossless
+        || files_.hasPendingRecovery() || files_.hasRecoveryFailures());
+    if (!lossless && file && file->support() == Support::Supported) {
+        commandMessage_ = tr("This text cannot be edited losslessly by the current editor. Its captured result is retained.");
+        Q_EMIT commandChanged();
+    }
+    syncingEditor_ = false;
 }
 
 int ApplicationController::outsideAppFiles() const
@@ -310,7 +571,7 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
                     detail = QStringLiteral("Load error: conflict inspection did not provide complete source and result snapshots; reopen the session.");
                 }
                 loaded->emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), std::move(draft),
-                                     support, detail.toStdString(), std::move(snapshots));
+                                     support, detail.toStdString(), std::move(snapshots), true);
             }
             *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, executable);
             return TaskResult{};

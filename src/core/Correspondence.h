@@ -77,6 +77,7 @@ struct ResultAnchor {
 struct ResultEdit {
     ByteRange range;
     std::string replacement;
+    bool operator==(const ResultEdit &) const = default;
 };
 
 [[nodiscard]] bool validUtf8(std::string_view text) noexcept;

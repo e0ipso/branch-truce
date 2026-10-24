@@ -32,6 +32,17 @@ struct Revision {
     std::shared_ptr<const CorrespondenceMap> correspondence = {};
 };
 
+// One atomic history entry. Future composition and bulk planners can submit
+// mapped edits and explicit ordered decisions through the same boundary.
+struct EditingCommand {
+    RevisionId expected = 0;
+    std::vector<ResultAnchor> targets;
+    std::vector<ResultEdit> edits;
+    std::map<std::string, Decision> decisions;
+    bool operator==(const EditingCommand &) const = default;
+};
+struct ChoiceTarget;
+
 enum class Outcome { Succeeded, Failed, Uncertain };
 struct OperationOutcome {
     RevisionId revision;
@@ -83,7 +94,8 @@ class FileSession {
 public:
     FileSession(std::string id, std::string path, Draft initial,
                 Support support = Support::Supported, std::string supportDetail = {},
-                std::optional<FileSnapshots> snapshots = std::nullopt);
+                std::optional<FileSnapshots> snapshots = std::nullopt,
+                bool initializeChoices = false);
 
     [[nodiscard]] const std::string &id() const noexcept { return id_; }
     [[nodiscard]] const std::string &path() const noexcept { return path_; }
@@ -96,6 +108,7 @@ public:
     [[nodiscard]] const CorrespondenceMap *correspondence() const noexcept {
         return current().correspondence.get();
     }
+    [[nodiscard]] const std::vector<ChoiceTarget> &choices() const noexcept;
     [[nodiscard]] const std::optional<Revision> &checkpoint() const noexcept { return checkpoint_; }
     [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return reviewed_; }
     [[nodiscard]] const std::optional<Revision> &written() const noexcept { return written_; }
@@ -114,6 +127,7 @@ public:
     // Inspect the returned current anchor's state before offering a choice.
     Transition bindSourceAnchor(RevisionId expected, SourceAnchor source);
     Transition editResult(RevisionId expected, ResultEdit edit);
+    Transition applyCommand(const EditingCommand &command, bool confirmReplacement = false);
     // A preview uses this exact anchor and revision. Passing confirmation after
     // either changes cannot authorize a different replacement.
     Transition replaceMapped(RevisionId expected, const ResultAnchor &anchor,
@@ -146,6 +160,7 @@ private:
     Support support_;
     std::string supportDetail_;
     std::shared_ptr<const FileSnapshots> snapshots_;
+    std::shared_ptr<const std::vector<ChoiceTarget>> choices_;
     std::map<RevisionId, Revision> revisions_;
     RevisionId current_ = 1;
     RevisionId next_ = 2;

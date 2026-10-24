@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/SessionState.h"
+#include "core/EditingCommands.h"
 #include "storage/RecoveryStore.h"
 #include <QAbstractListModel>
 #include <QStringList>
@@ -53,6 +54,9 @@ public:
 
     bool appendFile(FileSession file);
     Transition replaceDraft(const std::string &id, RevisionId expected, Draft draft);
+    Transition editResult(const std::string &id, RevisionId expected, ResultEdit edit);
+    Transition applyCommand(const std::string &id, const EditingCommand &command, bool confirmReplacement = false);
+    Transition applyChoice(const std::string &id, const ChoicePreview &preview, bool confirmReplacement = false);
     Transition undo(const std::string &id, RevisionId expected);
     Transition redo(const std::string &id, RevisionId expected);
     Transition discardToCheckpoint(const std::string &id, RevisionId expected);
