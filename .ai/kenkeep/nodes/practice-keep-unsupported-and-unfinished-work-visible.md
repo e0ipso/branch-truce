@@ -13,6 +13,9 @@ kk_schema_version: 3
 kk_id: practice-keep-unsupported-and-unfinished-work-visible
 kk_derived_from:
   - PRD.md
+  - src/app/SessionModel.cpp
+  - src/app/ApplicationController.cpp
+  - src/ui/Main.qml
 kk_relates_to: []
 kk_depends_on: []
 kk_confidence: medium
@@ -23,10 +26,15 @@ Present all currently conflicted files together in one session with a useful fil
 
 Before handoff, distinguish saved app drafts, repository results, outstanding decisions, unsaved changes, review needed, failures and outside-app work. A newer draft than an earlier staged result blocks a successful finish and needs an explicit stale-staged warning. Offer a route to each outstanding file. The user may deliberately leave after a warning without a success claim.
 
-Keep navigation through undecided changes distinct from navigation through all differences. Let the user reach the next unfinished file and revisit saved or reviewed files. Preserve the session and the user's place when the file list closes and reopens. Do not treat completing every visible decision as proof that the content is correct.
+[SessionModel](../../../src/app/SessionModel.cpp) builds progress from the current, saved, reviewed, and staged revisions. Saved and reviewed count only when they belong to the current revision. A newer draft after an earlier resolved revision stays unresolved. The status then reads "Earlier result staged; current draft not applied", and the earlier staged revision remains recorded.
+
+Difference navigation and undecided navigation stay inside the selected file. An undecided choice with no result range keeps its source byte range. [ApplicationController](../../../src/app/ApplicationController.cpp) leaves the result caret where it is for that unmapped choice. Unfinished navigation can move onto an outside-app file and leaves that file outstanding. Saved or reviewed files can still be revisited. Hiding the file list in [Main.qml](../../../src/ui/Main.qml) keeps the selection, the result cursor, and the unsaved text. Completing every visible decision does not prove the content is correct.
 
 <!-- kk:citations:start -->
 # Citations
 
 [1] [PRD.md](../../../PRD.md)
+[2] [src/app/SessionModel.cpp](../../../src/app/SessionModel.cpp)
+[3] [src/app/ApplicationController.cpp](../../../src/app/ApplicationController.cpp)
+[4] [src/ui/Main.qml](../../../src/ui/Main.qml)
 <!-- kk:citations:end -->

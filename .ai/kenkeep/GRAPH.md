@@ -1,6 +1,6 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:6d627099dcbb4c4bfd7d1ea00922dde2292ecee6a7f968451b38f706b6a8fbd8'
+nodes_hash: 'sha256:25aa84081011ecb7cd349cd0f13d49042bc5964332139ab04feb8700f21b7271'
 node_count: 19
 ---
 # kenkeep Graph
@@ -14,7 +14,7 @@ Total nodes: 19
 - **path:** map-branch-truce-desktop-implementation-baseline.md
 - **tags:** architecture, desktop, platform, cpp
 - **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope
-- **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ApplicationController.cpp, docs/editor-integration.md, docs/build.md
+- **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ApplicationController.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md
 
 ## map-branch-truce-first-release-scope
 
@@ -39,7 +39,7 @@ Total nodes: 19
 - **path:** map-recovery-journal-and-acknowledgment-boundary.md
 - **tags:** recovery, storage, editing, failures
 - **relates_to:** practice-recover-unfinished-work-without-changing-its-status, practice-keep-session-captures-immutable-across-revisions, practice-keep-failed-work-outstanding
-- **derived_from:** docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/SessionModel.h
+- **derived_from:** docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md
 
 ## map-repository-discovery-and-verified-source-identities
 
@@ -87,7 +87,7 @@ Total nodes: 19
 - **title:** Keep failed work outstanding
 - **path:** practice-keep-failed-work-outstanding.md
 - **tags:** product, failures, saving, resolution
-- **derived_from:** PRD.md
+- **derived_from:** PRD.md, src/app/SessionModel.cpp, src/app/ApplicationController.cpp
 
 ## practice-keep-prd-focused-on-user-needs
 
@@ -126,7 +126,7 @@ Total nodes: 19
 - **title:** Keep unsupported and unfinished work visible
 - **path:** practice-keep-unsupported-and-unfinished-work-visible.md
 - **tags:** product, scope, progress, handoff
-- **derived_from:** PRD.md
+- **derived_from:** PRD.md, src/app/SessionModel.cpp, src/app/ApplicationController.cpp, src/ui/Main.qml
 
 ## practice-make-conflict-choices-explicit-and-reversible
 
