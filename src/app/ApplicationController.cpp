@@ -564,6 +564,67 @@ bool ApplicationController::redo(const QString &fileId, const QString &revision)
     return commandResult(files_.redo(fileId.toStdString(), *expected));
 }
 
+bool ApplicationController::commandReady(const QString &fileId, const QString &revision, RevisionId *expected) const
+{
+    const auto *file = files_.file(fileId.toStdString());
+    const auto id = revisionId(revision);
+    if (!file || !id || fileId != selectedFileId_ || file->current().id != *id) return false;
+    if (expected) *expected = *id;
+    return file->support() == Support::Supported && !files_.hasPendingRecovery()
+        && !files_.hasRecoveryFailure(file->id())
+        && !(resultEditor_ && resultEditor_->property("inputMethodComposing").toBool());
+}
+
+bool ApplicationController::saveDraft(const QString &fileId, const QString &revision)
+{
+    RevisionId expected = 0;
+    const auto *file = files_.file(fileId.toStdString());
+    if (!file || !revisionId(revision) || fileId != selectedFileId_ || file->current().id != *revisionId(revision))
+        return commandResult(Transition::StaleRevision);
+    if (!commandReady(fileId, revision, &expected)) return commandResult(Transition::Blocked);
+    const auto saved = file->checkpoint() && file->checkpoint()->id == expected
+        && file->checkpoint()->result == file->current().result
+        && file->checkpoint()->decisions == file->current().decisions
+        && file->checkpointOutcome() && file->checkpointOutcome()->outcome == Outcome::Succeeded
+        && file->checkpointOutcome()->revision == expected;
+    if (saved) return commandResult(Transition::NoChange);
+    // The recovery commit inside this call is the app checkpoint. It does not
+    // write the worktree or stage a path; publication stays on Mark resolved.
+    const auto result = files_.recordCheckpoint(fileId.toStdString(), expected, Outcome::Succeeded);
+    if (result == Transition::Blocked && files_.hasPendingRecovery()) {
+        commandMessage_ = tr("Draft save failed. The edited result is still available.");
+        Q_EMIT commandChanged();
+        return false;
+    }
+    if (result != Transition::Applied) return commandResult(result);
+    commandMessage_ = tr("Draft saved in Branch Truce; repository file unchanged.");
+    Q_EMIT commandChanged();
+    return true;
+}
+
+bool ApplicationController::discardUnsaved(const QString &fileId, const QString &revision)
+{
+    RevisionId expected = 0;
+    const auto *file = files_.file(fileId.toStdString());
+    if (!file || !revisionId(revision) || fileId != selectedFileId_ || file->current().id != *revisionId(revision))
+        return commandResult(Transition::StaleRevision);
+    if (!commandReady(fileId, revision, &expected)) return commandResult(Transition::Blocked);
+    // Applied means the restored text and decisions are already in the journal.
+    const auto result = files_.discardToCheckpoint(fileId.toStdString(), expected);
+    if (result == Transition::Blocked && files_.hasPendingRecovery()) {
+        commandMessage_ = tr("Discard was not completed. The edited result is unchanged.");
+        Q_EMIT commandChanged();
+        return false;
+    }
+    if (result != Transition::Applied) return commandResult(result);
+    const auto *current = files_.file(fileId.toStdString());
+    commandMessage_ = current && !current->facts().unsaved
+        ? tr("Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.")
+        : tr("Discarded unsaved changes and restored the initial result. It is still unsaved, and the repository file is unchanged.");
+    Q_EMIT commandChanged();
+    return true;
+}
+
 void ApplicationController::attachResultEditor(QObject *editor)
 {
     disconnect(editorConnection_);

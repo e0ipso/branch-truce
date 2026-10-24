@@ -64,6 +64,10 @@ public:
                                int begin, int end, const QString &replacement);
     Q_INVOKABLE bool undo(const QString &fileId, const QString &revision);
     Q_INVOKABLE bool redo(const QString &fileId, const QString &revision);
+    // Save checkpoints the current text and decisions in the app store only.
+    Q_INVOKABLE bool saveDraft(const QString &fileId, const QString &revision);
+    // Discard restores the manual checkpoint, or the initial result, only after that decision is durable.
+    Q_INVOKABLE bool discardUnsaved(const QString &fileId, const QString &revision);
     Q_INVOKABLE void attachResultEditor(QObject *editor);
     Q_INVOKABLE bool resultClipboard(const QString &action);
     // Select by the exact byte-derived file ID, never by a display path.
@@ -80,6 +84,7 @@ Q_SIGNALS:
     void commandChanged();
 
 private:
+    bool commandReady(const QString &fileId, const QString &revision, RevisionId *expected) const;
     bool eventFilter(QObject *watched, QEvent *event) override;
     void classified(const git::ConflictClassificationResult &result);
     void loadWorkingFiles(QList<git::Conflict> conflicts);

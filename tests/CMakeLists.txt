@@ -38,10 +38,12 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_options(branch_truce_model_tests PRIVATE "LINKER:--wrap=fsync")
     add_test(NAME app.session-model COMMAND branch_truce_model_tests)
 
+    find_package(Qt6 6.6 REQUIRED COMPONENTS Test)
     add_executable(branch_truce_comparison_tests app/ComparisonViewTests.cpp)
     target_include_directories(branch_truce_comparison_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_comparison_tests PRIVATE branch_truce_controller branch_truce_uiplugin
-        Qt6::Widgets Qt6::QuickControls2 branch_truce_build_options)
+        Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
+    target_link_options(branch_truce_comparison_tests PRIVATE "LINKER:--wrap=fsync")
     add_test(NAME app.comparison-view COMMAND branch_truce_comparison_tests)
     set_tests_properties(app.comparison-view PROPERTIES TIMEOUT 30
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")

@@ -256,12 +256,17 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case ReviewNeededRole: return facts.needsReview;
     case EarlierStagedRole: return facts.earlierStaged;
     case ResolvedRole: return !pendingInput && !recoveryFailed && facts.resolved;
-    case StatusRole: return recoveryFailed ? tr("Recovery requires attention; work remains outstanding")
-        : pendingInput ? tr("Recovery failed; pending input retained")
-                                        : QString::fromUtf8(statusText(facts.status));
+    case StatusRole:
+        if (recoveryFailed) return tr("Recovery requires attention; work remains outstanding");
+        if (pendingInput && pending->second.action == QLatin1String("manual-save"))
+            return QString::fromUtf8(statusText(FileStatus::CheckpointFailed));
+        if (pendingInput) return tr("Recovery failed; pending input retained");
+        return QString::fromUtf8(statusText(facts.status));
     case FinishBlockersRole: {
         auto blockers = blockerData(facts);
-        if (pendingInput) blockers.push_back(tr("Pending input needs recovery retry"));
+        if (pendingInput) blockers.push_back(pending->second.action == QLatin1String("manual-save")
+            ? tr("Draft save failed; the edited result is still available")
+            : tr("Pending input needs recovery retry"));
         if (recoveryFailed) blockers.push_back(failure->second);
         return blockers;
     }
@@ -270,8 +275,12 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case PendingInputRole: return pendingInput;
     case PendingTextRole: return pendingInput ? text(pending->second.candidate.current().draft.text) : QString{};
     case PendingDecisionsRole: return pendingInput ? decisionData(pending->second.candidate.current().draft) : QVariantList{};
-    case RecoveryStateRole: return recoveryFailed ? QStringLiteral("blocked") : pendingInput ? QStringLiteral("failed")
-        : restored_.contains(file.id()) ? QStringLiteral("restored") : QStringLiteral("durable");
+    case RecoveryStateRole:
+        if (recoveryFailed) return QStringLiteral("blocked");
+        if (pendingInput && pending->second.action == QLatin1String("manual-save"))
+            return QStringLiteral("save-failed");
+        if (pendingInput) return QStringLiteral("failed");
+        return restored_.contains(file.id()) ? QStringLiteral("restored") : QStringLiteral("durable");
     case RecoveryErrorRole: return recoveryFailed ? failure->second : pendingInput ? pending->second.error : QString{};
     default: return {};
     }
@@ -339,7 +348,9 @@ QVariantList SessionModel::finishBlockers() const
         const auto facts = file.facts();
         if (facts.blockers.empty() && !pending_.contains(file.id()) && !recoveryFailures_.contains(file.id())) continue;
         auto blockers = blockerData(facts);
-        if (pending_.contains(file.id())) blockers.push_back(tr("Pending input needs recovery retry"));
+        if (pending_.contains(file.id())) blockers.push_back(pending_.at(file.id()).action == QLatin1String("manual-save")
+            ? tr("Draft save failed; the edited result is still available")
+            : tr("Pending input needs recovery retry"));
         if (recoveryFailures_.contains(file.id())) blockers.push_back(recoveryFailures_.at(file.id()));
         result.push_back(QVariantMap{{QStringLiteral("fileId"), text(file.id())},
             {QStringLiteral("path"), text(file.path())},

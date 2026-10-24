@@ -1208,6 +1208,63 @@ public:
             CHECK(!state.value("detail").toString().isEmpty() && state.value("operation").toString().isEmpty());
             CHECK(state.value("stage2").toString().isEmpty() && state.value("stage3").toString().isEmpty());
         });
+        suite.run("TRUCE-0015 Save and discard leave the repository untouched and restart keeps the baseline", [] {
+            Repository repo;
+            repo.conflict("merge");
+            ScopedEnvironment environment(repo.environment);
+            const auto before = repo.snapshot();
+            QString location;
+            Draft baseline;
+            Draft discarded;
+            {
+                ApplicationController controller;
+                openController(controller, repo);
+                const auto id = QString::fromStdString(openedFile(controller).id());
+                CHECK(controller.selectFile(id));
+                auto saved = openedFile(controller).current().draft;
+                saved.text += "saved app draft\n";
+                saved.decisions["kept"] = {DecisionValue::Accepted, 4};
+                CHECK(controller.files()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id, saved)
+                      == Transition::Applied);
+                CHECK(openedFile(controller).facts().unsaved && !openedFile(controller).checkpoint());
+                CHECK(controller.saveDraft(id, QString::number(openedFile(controller).current().id)));
+                baseline = openedFile(controller).current().draft;
+                CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == baseline);
+                CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).written()
+                      && !openedFile(controller).staged() && !openedFile(controller).reviewed());
+                CHECK(controller.commandMessage() == "Draft saved in Branch Truce; repository file unchanged.");
+                CHECK(controller.selectedFile().value("status").toString()
+                      == "Draft saved in Branch Truce; repository file unchanged");
+                CHECK(repo.snapshot() == before);
+                auto edited = baseline;
+                edited.text += "discarded edit\n";
+                edited.decisions["kept"] = {DecisionValue::Ignored, {}};
+                CHECK(controller.files()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id, edited)
+                      == Transition::Applied);
+                discarded = openedFile(controller).current().draft;
+                CHECK(openedFile(controller).facts().unsaved && openedFile(controller).checkpoint()->draft == baseline);
+                CHECK(controller.discardUnsaved(id, QString::number(openedFile(controller).current().id)));
+                CHECK(openedFile(controller).current().draft == baseline);
+                CHECK(openedFile(controller).current().draft != discarded);
+                CHECK(openedFile(controller).current().draft.decisions.at("kept").value == DecisionValue::Accepted);
+                CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).written()
+                      && !openedFile(controller).staged());
+                CHECK(controller.commandMessage()
+                      == "Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.");
+                CHECK(repo.snapshot() == before);
+                location = controller.files()->recoveryDirectory();
+                const auto read = storage::RecoveryStore(location).read();
+                CHECK(read.succeeded && read.transactions.back().value("action") == "discard-to-checkpoint");
+            }
+            ApplicationController controller;
+            openController(controller, repo);
+            const auto &restored = openedFile(controller);
+            CHECK(controller.files()->recoveryDirectory() == location);
+            CHECK(restored.current().draft == baseline && restored.current().draft != discarded);
+            CHECK(restored.checkpoint() && restored.checkpoint()->draft == baseline);
+            CHECK(!restored.facts().unsaved && !restored.written() && !restored.staged());
+            CHECK(repo.snapshot() == before);
+        });
         suite.run("invalid selections expose an error without an empty supported session", [&] {
             Repository repo;
             for (const auto &selection : {repo.executables.path(), repo.path("missing")}) {

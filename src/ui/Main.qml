@@ -473,18 +473,36 @@ Kirigami.ApplicationWindow {
                     }
                     Button {
                         objectName: "retryRecovery"
-                        visible: !!window.selectedFile.pendingInput
+                        visible: !!window.selectedFile.pendingInput && window.selectedFile.recoveryState !== "save-failed"
                         text: qsTr("Retry keeping pending input")
                         onClicked: window.controller.files.retryPendingRecovery(window.controller.selectedFileId)
                     }
+                    Button {
+                        objectName: "retrySave"
+                        visible: window.selectedFile.recoveryState === "save-failed"
+                        text: qsTr("Retry Save")
+                        onClicked: window.controller.files.retryPendingRecovery(window.controller.selectedFileId)
+                    }
                     SnapshotPane {
-                        visible: !!window.selectedFile.pendingInput
+                        visible: !!window.selectedFile.pendingInput && window.selectedFile.recoveryState !== "save-failed"
                         paneName: "pendingInput"
                         paneTitle: qsTr("Pending input · not acknowledged")
                         paneText: window.selectedFile.pendingText || ""
                     }
                     RowLayout {
                         visible: window.supportedSelection
+                        Button {
+                            objectName: "saveDraft"
+                            text: qsTr("Save")
+                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.unsaved && !comparison.inputMethodComposing
+                            onClicked: window.controller.saveDraft(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                        }
+                        Button {
+                            objectName: "discardUnsaved"
+                            text: qsTr("Discard")
+                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.unsaved && !comparison.inputMethodComposing
+                            onClicked: window.controller.discardUnsaved(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                        }
                         Button {
                             objectName: "undoCommand"
                             text: qsTr("Undo")

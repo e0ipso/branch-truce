@@ -2,7 +2,9 @@
 #include "app/RecoveryRestore.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
+#include "fixtures/RecoveryFaults.h"
 #include <QApplication>
+#include <algorithm>
 #include <QClipboard>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -14,6 +16,7 @@
 #include <QQuickTextDocument>
 #include <QQuickWindow>
 #include <QTemporaryDir>
+#include <QTest>
 #include <QTextDocument>
 #include <QtQml/qqml.h>
 
@@ -69,6 +72,14 @@ public:
         editor->forceActiveFocus();
         QKeyEvent event(QEvent::KeyPress, code, modifiers, text);
         QCoreApplication::sendEvent(editor, &event);
+    }
+    void click(const char *name)
+    {
+        auto *target = item(name);
+        CHECK(target->isVisible() && target->isEnabled() && target->width() > 0 && target->height() > 0);
+        const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     }
     void checkRecovered(const Draft &expected)
     {
@@ -293,6 +304,69 @@ public:
                 fixture.checkRecovered(newer.draft);
             });
         }
+        suite.run("TRUCE-0015 Save and discard controls keep the app baseline and retry a failed Save", [] {
+            Fixture fixture;
+            auto saved = fixture.file().current().draft;
+            saved.text += "saved app draft\n";
+            saved.decisions["kept"] = {DecisionValue::Accepted, 4};
+            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, saved) == Transition::Applied);
+            settle([&] { return fixture.controller.selectedFile().value("unsaved").toBool(); });
+            fixture.click("saveDraft");
+            CHECK(fixture.controller.commandMessage() == "Draft saved in Branch Truce; repository file unchanged.");
+            CHECK(fixture.item("selectedStatus")->property("text").toString()
+                  .contains("Draft saved in Branch Truce; repository file unchanged"));
+            CHECK(fixture.item("selectedStatus")->property("text").toString().contains("Manual Save checkpoint retained"));
+            CHECK(fixture.file().checkpoint() && fixture.file().checkpoint()->draft == saved);
+            CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
+            const auto savedStore = storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()).read();
+            CHECK(savedStore.succeeded);
+            CHECK(std::any_of(savedStore.transactions.cbegin(), savedStore.transactions.cend(), [](const auto &state) {
+                return state.value("action") == "manual-save" && state.value("written").isNull() && state.value("staged").isNull();
+            }));
+            auto discarded = saved;
+            discarded.text += "discarded edit\n";
+            discarded.decisions["kept"] = {DecisionValue::Ignored, {}};
+            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, discarded) == Transition::Applied);
+            settle([&] { return fixture.controller.selectedFile().value("unsaved").toBool(); });
+            CHECK(fixture.file().checkpoint()->draft == saved);
+            fixture.click("discardUnsaved");
+            CHECK(fixture.file().current().draft == saved && fixture.file().current().draft != discarded);
+            CHECK(fixture.file().current().draft.decisions.at("kept").value == DecisionValue::Accepted);
+            CHECK(fixture.text().toStdString() == saved.text);
+            CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
+            const auto discardedStore = storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()).read();
+            CHECK(discardedStore.succeeded && discardedStore.transactions.back().value("action") == "discard-to-checkpoint");
+            const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()));
+            CHECK(replay.succeeded && replay.files.front().current().draft == saved);
+            CHECK(replay.files.front().current().draft != discarded && !replay.files.front().written()
+                  && !replay.files.front().staged());
+
+            CHECK(fixture.controller.editResult("choices", QString::number(fixture.file().current().id),
+                static_cast<int>(QString::fromStdString(saved.text).size()),
+                static_cast<int>(QString::fromStdString(saved.text).size()), "retry me\n"));
+            const auto edited = fixture.file().current().draft;
+            {
+                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                fixture.click("saveDraft");
+            }
+            settle([&] { return fixture.controller.selectedFile().value("recoveryState").toString() == "save-failed"; });
+            CHECK(fixture.file().current().draft == edited && fixture.file().facts().unsaved);
+            CHECK(fixture.file().checkpoint()->draft == saved);
+            CHECK(fixture.text().toStdString() == edited.text);
+            CHECK(fixture.item("selectedStatus")->property("text").toString().contains("Draft save failed"));
+            CHECK(fixture.item("selectedStatus")->property("text").toString().contains("Unsaved draft"));
+            CHECK(fixture.controller.commandMessage() == "Draft save failed. The edited result is still available.");
+            CHECK(fixture.item("retrySave")->isVisible());
+            CHECK(!fixture.item("saveDraft")->isEnabled() && !fixture.item("discardUnsaved")->isEnabled());
+            CHECK(!fixture.file().written() && !fixture.file().staged());
+            fixture.click("retrySave");
+            settle([&] { return !fixture.controller.selectedFile().value("unsaved").toBool(); });
+            CHECK(fixture.file().checkpoint() && fixture.file().checkpoint()->draft == edited);
+            CHECK(!fixture.file().facts().unsaved && !fixture.item("retrySave")->isVisible());
+            CHECK(fixture.controller.selectedFile().value("status").toString()
+                  == "Draft saved in Branch Truce; repository file unchanged");
+            CHECK(!fixture.file().written() && !fixture.file().staged());
+        });
         return suite.report();
     }
 };
