@@ -807,6 +807,55 @@ public:
             CHECK(stillOutside && stillOutside->support() == Support::OutsideApp);
             CHECK(stillOutside->supportDetail() == "image content" && stillOutside->current().draft.text.empty());
         });
+        suite.run("TRUCE-0060 a failed Discard shows the restored result and retry finishes it", [] {
+            Fixture fixture;
+            auto saved = fixture.file().current().draft;
+            saved.text += "saved app draft\n";
+            saved.decisions["kept"] = {DecisionValue::Accepted, 4};
+            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, saved) == Transition::Applied);
+            settle([&] { return fixture.controller.selectedFile().value("unsaved").toBool(); });
+            fixture.click("saveDraft");
+            auto discarded = saved;
+            discarded.text += "discarded edit\n";
+            discarded.decisions["kept"] = {DecisionValue::Ignored, {}};
+            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, discarded) == Transition::Applied);
+            settle([&] { return fixture.controller.selectedFile().value("unsaved").toBool(); });
+            {
+                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                fixture.click("discardUnsaved");
+                CHECK(recovery_faults::failures == 1);
+            }
+            settle([&] { return fixture.controller.files()->hasPendingRecovery(); });
+            const auto message = fixture.controller.commandMessage();
+            CHECK(message == "Discard was not completed. The restored result is shown until retry finishes it.");
+            CHECK(!message.contains(QStringLiteral("edited result is unchanged")));
+            CHECK(fixture.text().toStdString() == saved.text);
+            CHECK(fixture.controller.selectedFile().value("pendingText").toString().toStdString() == saved.text);
+            CHECK(fixture.item("pendingInputText")->property("text").toString().toStdString() == saved.text);
+            CHECK(fixture.file().current().draft == discarded);
+            CHECK(fixture.controller.selectedFile().value("resultText").toString().toStdString() == discarded.text);
+            CHECK(fixture.item("retryRecovery")->isVisible() && fixture.item("retryRecovery")->isEnabled());
+            CHECK(!fixture.item("discardUnsaved")->isEnabled() && !fixture.item("markResolved")->isEnabled());
+            storage::RecoveryStore store(fixture.controller.files()->recoveryDirectory());
+            const auto pending = store.read();
+            CHECK(pending.succeeded && pending.transactions.back().value("action") == "discard-to-checkpoint");
+            const auto records = pending.transactions.size();
+            const auto request = pending.transactions.back().value("transactionId");
+            fixture.click("retryRecovery");
+            settle([&] { return !fixture.controller.files()->hasPendingRecovery(); });
+            CHECK(fixture.file().current().draft == saved && fixture.file().current().draft != discarded);
+            CHECK(fixture.text().toStdString() == saved.text);
+            CHECK(fixture.controller.commandMessage()
+                  == "Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.");
+            CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
+            const auto committed = store.read();
+            CHECK(committed.succeeded && committed.transactions.size() == records);
+            CHECK(committed.transactions.back().value("transactionId") == request);
+            CHECK(committed.transactions.back().value("action") == "discard-to-checkpoint");
+            const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()));
+            CHECK(replay.succeeded && replay.files.front().current().draft == saved);
+            CHECK(!replay.files.front().written() && !replay.files.front().staged());
+        });
         suite.run("TRUCE-0026 Mark resolved confirms, rejects a stale revision and keeps a failed write visible", [] {
             Fixture fixture;
             const auto text = fixture.text();

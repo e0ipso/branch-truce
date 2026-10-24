@@ -120,6 +120,7 @@ Q_SIGNALS:
 
 private:
     bool commandReady(const QString &fileId, const QString &revision, RevisionId *expected) const;
+    [[nodiscard]] QString discardedMessage(const FileSession *current) const;
     bool eventFilter(QObject *watched, QEvent *event) override;
     void classified(const git::ConflictClassificationResult &result);
     void loadWorkingFiles(QList<git::Conflict> conflicts);
@@ -147,6 +148,7 @@ private:
     std::optional<WholeFilePreview> wholeFilePreview_;
     QString previewFileId_;
     QString commandMessage_;
+    bool discardPending_ = false;
     QPointer<QObject> resultEditor_;
     QPointer<QTextDocument> resultDocument_;
     QMetaObject::Connection editorConnection_;

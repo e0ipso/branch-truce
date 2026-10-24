@@ -251,6 +251,13 @@ ApplicationController::ApplicationController(QObject *parent)
             selectedFileId_ = files_.totalFiles() > 0
                 ? files_.data(files_.index(0), SessionModel::FileIdRole).toString() : QString{};
         }
+        // Retry publishes the pending discard. The failure sentence must not
+        // remain once that restored result is acknowledged.
+        if (discardPending_ && !files_.hasPendingRecovery()) {
+            discardPending_ = false;
+            commandMessage_ = discardedMessage(files_.file(selectedFileId_.toStdString()));
+            Q_EMIT commandChanged();
+        }
         Q_EMIT inventoryChanged();
         Q_EMIT selectedFileChanged();
     });
@@ -766,6 +773,13 @@ std::optional<ResolutionPublisher::Offer> ApplicationController::parentStagingOf
     return publisher_.parentStagingOffer(fileId.toStdString());
 }
 
+QString ApplicationController::discardedMessage(const FileSession *current) const
+{
+    return current && !current->facts().unsaved
+        ? tr("Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.")
+        : tr("Discarded unsaved changes and restored the initial result. It is still unsaved, and the repository file is unchanged.");
+}
+
 bool ApplicationController::discardUnsaved(const QString &fileId, const QString &revision)
 {
     RevisionId expected = 0;
@@ -776,15 +790,16 @@ bool ApplicationController::discardUnsaved(const QString &fileId, const QString 
     // Applied means the restored text and decisions are already in the journal.
     const auto result = files_.discardToCheckpoint(fileId.toStdString(), expected);
     if (result == Transition::Blocked && files_.hasPendingRecovery()) {
-        commandMessage_ = tr("Discard was not completed. The edited result is unchanged.");
+        // The editor shows the pending restored result. The acknowledged edit
+        // stays in place until this same discard commits.
+        discardPending_ = true;
+        commandMessage_ = tr("Discard was not completed. The restored result is shown until retry finishes it.");
         Q_EMIT commandChanged();
         return false;
     }
+    discardPending_ = false;
     if (result != Transition::Applied) return commandResult(result);
-    const auto *current = files_.file(fileId.toStdString());
-    commandMessage_ = current && !current->facts().unsaved
-        ? tr("Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.")
-        : tr("Discarded unsaved changes and restored the initial result. It is still unsaved, and the repository file is unchanged.");
+    commandMessage_ = discardedMessage(files_.file(fileId.toStdString()));
     Q_EMIT commandChanged();
     return true;
 }
