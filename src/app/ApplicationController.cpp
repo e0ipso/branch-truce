@@ -8,6 +8,7 @@
 #include <QQuickTextDocument>
 #include <QQuickItem>
 #include <QTextDocument>
+#include <QTextOption>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMouseEvent>
@@ -740,6 +741,29 @@ void ApplicationController::attachResultEditor(QObject *editor)
     syncResultEditor();
 }
 
+void ApplicationController::setVisibleWhitespace(QObject *editor, bool visible)
+{
+    showWhitespace_ = visible;
+    auto *quick = editor ? editor->property("textDocument").value<QQuickTextDocument *>() : nullptr;
+    auto *document = quick ? quick->textDocument() : nullptr;
+    applyVisibleWhitespace(document);
+    if (resultDocument_ && resultDocument_ != document)
+        applyVisibleWhitespace(resultDocument_);
+}
+
+void ApplicationController::applyVisibleWhitespace(QTextDocument *document)
+{
+    if (!document) return;
+    auto options = document->defaultTextOption();
+    auto flags = options.flags();
+    flags.setFlag(QTextOption::ShowTabsAndSpaces, showWhitespace_);
+    if (flags == options.flags()) return;
+    options.setFlags(flags);
+    // A display-option change can notify the document. Keep it out of edit capture.
+    QScopedValueRollback guard(syncingEditor_, true);
+    document->setDefaultTextOption(options);
+}
+
 void ApplicationController::captureResultEdit()
 {
     if (syncingEditor_ || processingEditorEvent_ || !resultDocument_) return;
@@ -839,6 +863,7 @@ void ApplicationController::syncResultEditor()
     syncingEditor_ = true;
     if (documentText(*resultDocument_) != desired) resultDocument_->setPlainText(desired);
     editorText_ = desired;
+    applyVisibleWhitespace(resultDocument_);
     const bool lossless = documentText(*resultDocument_) == desired && !desired.contains(QChar(0x2028))
         && !desired.contains(QChar(0x2029)) && !desired.contains(QLatin1Char('\r'));
     resultEditor_->setProperty("readOnly", !file || file->support() != Support::Supported || !lossless

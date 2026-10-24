@@ -74,6 +74,8 @@ public:
     // Discard restores the manual checkpoint, or the initial result, only after that decision is durable.
     Q_INVOKABLE bool discardUnsaved(const QString &fileId, const QString &revision);
     Q_INVOKABLE void attachResultEditor(QObject *editor);
+    // Space and tab markers are paint options. They never enter the draft, history or progress.
+    Q_INVOKABLE void setVisibleWhitespace(QObject *editor, bool visible);
     Q_INVOKABLE bool resultClipboard(const QString &action);
     // Select by the exact byte-derived file ID, never by a display path.
     Q_INVOKABLE bool selectFile(const QString &fileId);
@@ -107,6 +109,7 @@ private:
     bool commandResult(Transition result);
     void captureResultEdit();
     void syncResultEditor();
+    void applyVisibleWhitespace(QTextDocument *document);
     void noteEditorLocation();
     void restoreEditorLocation();
     void clearNavigation();
@@ -131,6 +134,7 @@ private:
     QString editorText_;
     bool syncingEditor_ = false;
     bool processingEditorEvent_ = false;
+    bool showWhitespace_ = false;
     bool fileListVisible_ = true;
     bool selectingFromNavigation_ = false;
     QVariantMap navigationTarget_;
