@@ -11,6 +11,31 @@ Draft draft(std::string text = "result\n")
     return {std::move(text), {{"left", {DecisionValue::Accepted, 1}},
                              {"right", {DecisionValue::Ignored, {}}}}, 0};
 }
+FileSnapshots capturedSources()
+{
+    FileSnapshots captured;
+    captured.path = ":literal\tfile.txt";
+    captured.provenance = {"session", "/worktree", "/git/worktrees/session",
+        SnapshotProvenance::Operation::Rebase, std::string(64, '2'), std::string(64, '3'),
+        std::string(64, '1'), "refs/heads/topic", "original-head", "onto"};
+    captured.conversion.attributes = {{"text", "set"}, {"eol", "crlf"}};
+    captured.conversion.configuration = {{"core.autocrlf", "false"}, {"core.eol", "crlf"}};
+    captured.resultMode = "100755";
+    captured.earlier = SourceSnapshot{"base-blob", "100644", "base\n",
+        {"base\n", "base\r\n", {SnapshotFormat::Encoding::Utf8, false, SnapshotFormat::Newline::CrLf, true}},
+        "base-commit", "Common earlier version"};
+    captured.stage2 = SourceSnapshot{"left-blob", "100755", "main\n",
+        {"main\n", "\xef\xbb\xbfmain\r\n", {SnapshotFormat::Encoding::Utf8, true, SnapshotFormat::Newline::CrLf, true}},
+        "left-commit", "Current rebased state"};
+    captured.stage3 = SourceSnapshot{"right-blob", "100755", "side\n",
+        {"side\n", std::string("\0s\0i\0d\0e\0\r\0\n", 12),
+            {SnapshotFormat::Encoding::Utf16BigEndian, false, SnapshotFormat::Newline::CrLf, true}},
+        "right-commit", "Commit being replayed"};
+    captured.launchResult = {{"manual\nkept", "\xef\xbb\xbfmanual\r\nkept",
+        {SnapshotFormat::Encoding::Utf8, true, SnapshotFormat::Newline::CrLf, false}},
+        {11, 22, 0100755, 15, 33, 44, 55, 66}};
+    return captured;
+}
 bool has(const FileSession &file, Blocker blocker)
 {
     const auto blockers = file.facts().blockers;
@@ -33,6 +58,89 @@ public:
     int run()
     {
         test_support::Suite suite("SessionStateTests");
+        suite.run("source captures survive edits history checkpoints and staged discards", [] {
+            auto input = capturedSources();
+            const auto expected = input;
+            FileSession file("id", input.path, draft(input.launchResult.text.utf8),
+                             Support::Supported, {}, input);
+            const auto *capture = file.snapshots();
+            const auto unchanged = [&] {
+                CHECK(capture != nullptr && file.snapshots() == capture);
+                CHECK(*file.snapshots() == expected);
+            };
+            unchanged();
+            input.stage2->rawBytes = "changed caller-owned source";
+            input.provenance.sessionId = "another session";
+            input.launchResult.text.bytes.clear();
+            unchanged();
+            CHECK(file.current().draft.text == "manual\nkept");
+            CHECK(file.replaceDraft(file.current().id, draft("edited\n")) == Transition::Applied);
+            CHECK(file.recordCheckpoint(file.current().id, Outcome::Succeeded) == Transition::Applied);
+            unchanged();
+            auto later = draft("later\n");
+            later.decisions["right"] = {DecisionValue::Accepted, 2};
+            CHECK(file.replaceDraft(file.current().id, later) == Transition::Applied);
+            unchanged();
+            CHECK(file.undo(file.current().id) == Transition::Applied);
+            CHECK(file.current().draft == draft("edited\n"));
+            unchanged();
+            CHECK(file.redo(file.current().id) == Transition::Applied);
+            CHECK(file.current().draft == later);
+            unchanged();
+            CHECK(file.undo(file.current().id) == Transition::Applied);
+            CHECK(file.replaceDraft(file.current().id, draft("new history branch\n")) == Transition::Applied);
+            CHECK(!file.canRedo());
+            unchanged();
+            CHECK(file.discardToCheckpoint(file.current().id) == Transition::Applied);
+            CHECK(file.current().draft == draft("edited\n"));
+            unchanged();
+            resolve(file);
+            CHECK(file.replaceDraft(file.current().id, draft("after staging\n")) == Transition::Applied);
+            CHECK(file.discardToStaged(file.current().id) == Transition::Applied);
+            CHECK(file.current().draft == draft("edited\n"));
+            unchanged();
+            const auto copy = file;
+            auto moved = std::move(file);
+            CHECK(copy.snapshots() == capture && moved.snapshots() == capture);
+            CHECK(*copy.snapshots() == expected && *moved.snapshots() == expected);
+        });
+        suite.run("an unavailable earlier source remains distinct from a captured empty source", [] {
+            for (const bool missing : {false, true}) {
+                auto captured = capturedSources();
+                if (missing) captured.earlier.reset();
+                else {
+                    captured.earlier->rawBytes.clear();
+                    captured.earlier->worktree = {};
+                }
+                const auto expected = captured;
+                FileSession file("id", captured.path, draft(captured.launchResult.text.utf8),
+                                 Support::Supported, {}, captured);
+                CHECK(file.snapshots() && file.snapshots()->earlier.has_value() == !missing);
+                if (!missing) {
+                    CHECK(file.snapshots()->earlier->rawBytes.empty());
+                    CHECK(file.snapshots()->earlier->worktree.utf8.empty());
+                    CHECK(file.snapshots()->earlier->worktree.bytes.empty());
+                }
+                CHECK(file.replaceDraft(file.current().id, draft("edited")) == Transition::Applied);
+                CHECK(file.undo(file.current().id) == Transition::Applied);
+                CHECK(file.redo(file.current().id) == Transition::Applied);
+                CHECK(*file.snapshots() == expected);
+            }
+            FileSession uncaptured("id", "outside", {}, Support::OutsideApp, "Missing source");
+            CHECK(uncaptured.snapshots() == nullptr);
+        });
+        suite.run("source captures reject a different path or launch result", [] {
+            const auto captured = capturedSources();
+            for (const bool wrongPath : {false, true}) {
+                bool rejected = false;
+                try {
+                    FileSession invalid("id", wrongPath ? "another path" : captured.path,
+                        draft(wrongPath ? captured.launchResult.text.utf8 : "regenerated source"),
+                        Support::Supported, {}, captured);
+                } catch (const std::invalid_argument &) { rejected = true; }
+                CHECK(rejected);
+            }
+        });
         suite.run("identity and initial blockers", [] {
             for (const bool emptyId : {false, true}) {
                 bool rejected = false;

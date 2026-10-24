@@ -31,7 +31,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
 
     add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp)
     target_include_directories(branch_truce_startup_route_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_startup_route_tests PRIVATE Qt6::Core branch_truce_build_options)
+    target_link_libraries(branch_truce_startup_route_tests PRIVATE branch_truce_controller branch_truce_build_options)
     add_dependencies(branch_truce_startup_route_tests branch-truce)
     add_test(NAME app.startup-routes COMMAND branch_truce_startup_route_tests $<TARGET_FILE:branch-truce>)
     set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 45)
