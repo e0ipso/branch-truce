@@ -1,6 +1,7 @@
 #pragma once
 #include "SessionModel.h"
 #include "SessionCoordinator.h"
+#include "git/ConflictClassifier.h"
 #include <QObject>
 #include <QString>
 
@@ -39,25 +40,13 @@ Q_SIGNALS:
     void launchChanged();
 
 private:
-    struct OpeningFile {
-        QByteArray path;
-        QList<git::IndexEntry> stages;
-        QList<QByteArray> sources;
-        QByteArray encoding;
-        Support support = Support::Supported;
-        QString detail;
-    };
-    void discovered(const git::Result &result);
-    void materializeNext();
-    void loadWorkingFiles();
+    void classified(const git::ConflictClassificationResult &result);
+    void loadWorkingFiles(QList<git::Conflict> conflicts);
     void setState(QString state, QString detail);
     SessionModel files_;
     SessionCoordinator coordinator_;
-    git::GitAdapter discovery_;
+    git::ConflictClassifier classifier_;
     git::RepositoryContext repository_;
-    std::vector<OpeningFile> openingFiles_;
-    std::size_t nextFile_ = 0;
-    qsizetype nextStage_ = 0;
     QString state_ = QStringLiteral("idle");
     QString operation_;
     QString detail_;
