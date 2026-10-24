@@ -2,6 +2,7 @@
 #include "app/RecoveryRestore.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
+#include "fixtures/RecoveryFaults.h"
 #include "fixtures/RecoveryJournal.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -1262,6 +1263,88 @@ public:
             CHECK(controller.files()->recoveryDirectory() == location);
             CHECK(restored.current().draft == baseline && restored.current().draft != discarded);
             CHECK(restored.checkpoint() && restored.checkpoint()->draft == baseline);
+            CHECK(!restored.facts().unsaved && !restored.written() && !restored.staged());
+            CHECK(repo.snapshot() == before);
+        });
+        suite.run("TRUCE-0015 a failed Save retries one transaction and restart keeps it off the repository", [] {
+            Repository repo;
+            repo.conflict("merge");
+            ScopedEnvironment environment(repo.environment);
+            const auto before = repo.snapshot();
+            QString location;
+            Draft baseline;
+            Draft edited;
+            QString request;
+            qsizetype records = 0;
+            {
+                ApplicationController controller;
+                openController(controller, repo);
+                const auto id = QString::fromStdString(openedFile(controller).id());
+                CHECK(controller.selectFile(id));
+                auto saved = openedFile(controller).current().draft;
+                saved.text += "saved app draft\n";
+                saved.decisions["kept"] = {DecisionValue::Accepted, 4};
+                CHECK(controller.files()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id, saved)
+                      == Transition::Applied);
+                CHECK(controller.saveDraft(id, QString::number(openedFile(controller).current().id)));
+                baseline = openedFile(controller).current().draft;
+                CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == baseline);
+                CHECK(repo.snapshot() == before);
+                auto next = baseline;
+                next.text += "retry me\n";
+                next.decisions["kept"] = {DecisionValue::Ignored, {}};
+                CHECK(controller.files()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id, next)
+                      == Transition::Applied);
+                edited = openedFile(controller).current().draft;
+                const auto revision = QString::number(openedFile(controller).current().id);
+                {
+                    recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                    CHECK(!controller.saveDraft(id, revision));
+                    CHECK(recovery_faults::failures == 1);
+                }
+                CHECK(controller.commandMessage() == "Draft save failed. The edited result is still available.");
+                CHECK(openedFile(controller).current().draft == edited);
+                CHECK(openedFile(controller).current().draft.decisions.at("kept").value == DecisionValue::Ignored);
+                CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == baseline);
+                CHECK(openedFile(controller).facts().unsaved && !openedFile(controller).written()
+                      && !openedFile(controller).staged());
+                CHECK(controller.selectedFile().value("status").toString() == "Draft save failed");
+                CHECK(controller.selectedFile().value("recoveryState").toString() == "save-failed");
+                CHECK(!controller.selectedFile().value("canEdit").toBool());
+                CHECK(!controller.undo(id, revision) && !controller.discardUnsaved(id, revision));
+                CHECK(openedFile(controller).current().draft == edited);
+                CHECK(repo.snapshot() == before);
+                const auto pending = storage::RecoveryStore(controller.files()->recoveryDirectory()).read();
+                CHECK(pending.succeeded && pending.transactions.back().value("action") == "manual-save");
+                records = pending.transactions.size();
+                request = pending.transactions.back().value("transactionId").toString();
+                CHECK(pending.transactions.back().value("written").isNull()
+                      && pending.transactions.back().value("staged").isNull());
+                CHECK(controller.files()->retryPendingRecovery(id));
+                CHECK(!controller.files()->hasPendingRecovery());
+                CHECK(openedFile(controller).current().draft == edited);
+                CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == edited);
+                CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).written()
+                      && !openedFile(controller).staged());
+                CHECK(controller.selectedFile().value("status").toString()
+                      == "Draft saved in Branch Truce; repository file unchanged");
+                CHECK(controller.selectedFile().value("canEdit").toBool());
+                const auto committed = storage::RecoveryStore(controller.files()->recoveryDirectory()).read();
+                CHECK(committed.succeeded && committed.transactions.size() == records);
+                CHECK(committed.transactions.back().value("transactionId").toString() == request);
+                CHECK(committed.transactions.back().value("action") == "manual-save");
+                CHECK(committed.transactions.back().value("written").isNull()
+                      && committed.transactions.back().value("staged").isNull());
+                CHECK(repo.snapshot() == before);
+                location = controller.files()->recoveryDirectory();
+            }
+            ApplicationController controller;
+            openController(controller, repo);
+            const auto &restored = openedFile(controller);
+            CHECK(controller.files()->recoveryDirectory() == location);
+            CHECK(restored.current().draft == edited && restored.current().draft != baseline);
+            CHECK(restored.current().draft.decisions.at("kept").value == DecisionValue::Ignored);
+            CHECK(restored.checkpoint() && restored.checkpoint()->draft == edited);
             CHECK(!restored.facts().unsaved && !restored.written() && !restored.staged());
             CHECK(repo.snapshot() == before);
         });

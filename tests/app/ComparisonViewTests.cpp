@@ -514,6 +514,7 @@ public:
             CHECK(fixture.controller.commandMessage() == "Draft save failed. The edited result is still available.");
             CHECK(fixture.item("retrySave")->isVisible());
             CHECK(!fixture.item("saveDraft")->isEnabled() && !fixture.item("discardUnsaved")->isEnabled());
+            CHECK(fixture.item("undoCommand")->isVisible() && !fixture.item("undoCommand")->isEnabled());
             CHECK(!fixture.file().written() && !fixture.file().staged());
             fixture.click("retrySave");
             settle([&] { return !fixture.controller.selectedFile().value("unsaved").toBool(); });
