@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:2e4573be564ca4e23eed8fb5297de36be165c2c7a1c27d95e188c645e17e839f'
-node_count: 17
+nodes_hash: 'sha256:203995e320ef5c40c9a0ad94d5156eaf84ee7faa5dc88376b8ab4ac4ebf87d79'
+node_count: 19
 ---
 # kenkeep Graph
 
-Total nodes: 17
+Total nodes: 19
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -32,6 +32,14 @@ Total nodes: 17
 - **tags:** git, classification, conversion, startup, scope
 - **relates_to:** map-repository-discovery-and-verified-source-identities, practice-keep-unsupported-and-unfinished-work-visible, practice-keep-sources-identifiable-and-the-result-editable, practice-bound-each-converted-representation-independently
 
+## map-recovery-journal-and-acknowledgment-boundary
+
+- **kind:** map
+- **title:** Recovery journal and acknowledgment boundary
+- **path:** map-recovery-journal-and-acknowledgment-boundary.md
+- **tags:** recovery, storage, editing, failures
+- **relates_to:** practice-recover-unfinished-work-without-changing-its-status, practice-keep-session-captures-immutable-across-revisions, practice-keep-failed-work-outstanding
+
 ## map-repository-discovery-and-verified-source-identities
 
 - **kind:** map
@@ -39,6 +47,14 @@ Total nodes: 17
 - **path:** map-repository-discovery-and-verified-source-identities.md
 - **tags:** git, discovery, source-identity, scope
 - **relates_to:** practice-keep-sources-identifiable-and-the-result-editable, practice-keep-unsupported-and-unfinished-work-visible, map-branch-truce-first-release-scope
+
+## map-revision-bound-passage-correspondence
+
+- **kind:** map
+- **title:** Revision-bound passage correspondence
+- **path:** map-revision-bound-passage-correspondence.md
+- **tags:** comparison, editing, revisions, failures
+- **relates_to:** practice-keep-session-captures-immutable-across-revisions, practice-make-conflict-choices-explicit-and-reversible, practice-keep-failed-work-outstanding
 
 ## practice-bound-each-converted-representation-independently
 
