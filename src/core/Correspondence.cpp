@@ -1,7 +1,7 @@
 #include "Correspondence.h"
 
 #include <algorithm>
-#include <limits>
+#include <span>
 #include <stdexcept>
 #include <utility>
 
@@ -34,18 +34,67 @@ std::vector<Line> lines(std::string_view text,
     return result;
 }
 
-constexpr auto absent = std::numeric_limits<std::size_t>::max();
-struct Candidates {
-    std::size_t first = absent;
-    bool multiple = false;
-    bool omitted = false;
-    void add(std::size_t position)
-    {
-        if (first == absent) first = position;
-        else if (first != position) multiple = true;
-    }
-    bool forced() const { return first != absent && !multiple && !omitted; }
+struct LineMatch {
+    std::size_t source;
+    std::size_t result;
+    bool operator==(const LineMatch &) const = default;
 };
+
+std::vector<std::size_t> lcsLengths(std::span<const Line> source,
+                                    std::span<const Line> result, bool reverse)
+{
+    std::vector<std::size_t> row(result.size() + 1);
+    for (std::size_t i = 0; i < source.size(); ++i) {
+        const auto token = source[reverse ? source.size() - 1 - i : i].token;
+        std::size_t diagonal = 0;
+        for (std::size_t j = 0; j < result.size(); ++j) {
+            const auto previous = row[j + 1];
+            row[j + 1] = token == result[reverse ? result.size() - 1 - j : j].token
+                ? diagonal + 1 : std::max(row[j], previous);
+            diagonal = previous;
+        }
+    }
+    return row;
+}
+
+// Hirschberg's divide and conquer keeps only two length rows. Choosing the
+// first/last optimal crossing at every split traces the two boundary paths of
+// the optimal-alignment graph, including skips at equal lines. A match shared
+// by both boundaries is shared by every optimal alignment.
+void boundaryAlignment(std::span<const Line> source, std::span<const Line> result,
+                       std::size_t sourceOffset, std::size_t resultOffset,
+                       bool last, std::vector<LineMatch> &matches)
+{
+    if (source.empty() || result.empty()) return;
+    if (source.size() == 1) {
+        for (std::size_t offset = 0; offset < result.size(); ++offset) {
+            const auto j = last ? result.size() - 1 - offset : offset;
+            if (source.front().token == result[j].token) {
+                matches.push_back({sourceOffset, resultOffset + j});
+                return;
+            }
+        }
+        return;
+    }
+    const auto middle = source.size() / 2;
+    std::size_t split = 0;
+    {
+        const auto forward = lcsLengths(source.first(middle), result, false);
+        const auto backward = lcsLengths(source.subspan(middle), result, true);
+        std::size_t best = 0;
+        for (std::size_t j = 0; j <= result.size(); ++j) {
+            const auto length = forward[j] + backward[result.size() - j];
+            if (length > best || (last && length == best)) {
+                best = length;
+                split = j;
+            }
+        }
+    } // Release the rows before descending, keeping workspace linear.
+    boundaryAlignment(source.first(middle), result.first(split), sourceOffset,
+                      resultOffset, last, matches);
+    boundaryAlignment(source.subspan(middle), result.subspan(split), sourceOffset + middle,
+                      resultOffset + split, last, matches);
+}
 
 struct Projection {
     AnchorState state = AnchorState::Ambiguous;
@@ -183,46 +232,10 @@ std::vector<Passage> ExactLineCorrespondence::compare(std::string_view source, s
     std::map<std::string_view, std::size_t, std::less<>> tokens;
     const auto a = lines(source, tokens);
     const auto b = lines(result, tokens);
-    const auto rows = a.size() + 1;
-    const auto columns = b.size() + 1;
-    std::vector<std::size_t> lengths;
-    if (rows > lengths.max_size() / columns)
-        throw std::length_error("Correspondence matrix cannot be represented");
-    lengths.resize(rows * columns);
-    const auto at = [&](std::size_t i, std::size_t j) -> std::size_t & { return lengths[i * columns + j]; };
-    for (auto i = a.size(); i-- > 0;) {
-        for (auto j = b.size(); j-- > 0;) {
-            at(i, j) = a[i].token == b[j].token ? 1 + at(i + 1, j + 1)
-                : std::max(at(i + 1, j), at(i, j + 1));
-        }
-    }
-    std::vector<Candidates> sourceCandidates(a.size());
-    std::vector<Candidates> resultCandidates(b.size());
-    std::vector<unsigned char> reachable(columns), next(columns);
-    reachable[0] = 1;
-    // Walk the optimal-path DAG, including equally good skips at equal lines.
-    // Choosing a single tie-break path would silently attach repeated text.
-    for (std::size_t i = 0; i <= a.size(); ++i) {
-        for (std::size_t j = 0; j <= b.size(); ++j) {
-            if (!reachable[j]) continue;
-            if (i < a.size() && j < b.size() && a[i].token == b[j].token
-                && at(i, j) == 1 + at(i + 1, j + 1)) {
-                next[j + 1] = 1;
-                sourceCandidates[i].add(j);
-                resultCandidates[j].add(i);
-            }
-            if (i < a.size() && at(i, j) == at(i + 1, j)) {
-                next[j] = 1;
-                sourceCandidates[i].omitted = true;
-            }
-            if (j < b.size() && at(i, j) == at(i, j + 1)) {
-                reachable[j + 1] = 1;
-                resultCandidates[j].omitted = true;
-            }
-        }
-        reachable.swap(next);
-        std::fill(next.begin(), next.end(), 0);
-    }
+    std::vector<LineMatch> first;
+    std::vector<LineMatch> last;
+    boundaryAlignment(a, b, 0, 0, false, first);
+    boundaryAlignment(a, b, 0, 0, true, last);
     std::vector<Passage> passages;
     const auto emit = [&](Passage passage) {
         if (!passages.empty() && passage.kind == PassageKind::Equal
@@ -237,29 +250,25 @@ std::vector<Passage> ExactLineCorrespondence::compare(std::string_view source, s
     const auto resultOffset = [&](std::size_t j) { return j == b.size() ? result.size() : b[j].begin; };
     std::size_t sourceStart = 0;
     std::size_t resultStart = 0;
-    const auto gap = [&](std::size_t sourceEnd, std::size_t resultEnd) {
+    const auto gap = [&](std::size_t sourceEnd, std::size_t resultEnd, bool ambiguous) {
         if (sourceStart == sourceEnd && resultStart == resultEnd) return;
-        bool ambiguous = false;
-        for (auto i = sourceStart; i < sourceEnd; ++i)
-            ambiguous = ambiguous || sourceCandidates[i].first != absent;
-        for (auto j = resultStart; j < resultEnd; ++j)
-            ambiguous = ambiguous || resultCandidates[j].first != absent;
         const auto kind = ambiguous ? PassageKind::Ambiguous
             : sourceStart == sourceEnd ? PassageKind::ResultOnly
             : resultStart == resultEnd ? PassageKind::SourceOnly : PassageKind::Changed;
         emit({{sourceOffset(sourceStart), sourceOffset(sourceEnd)},
               {resultOffset(resultStart), resultOffset(resultEnd)}, kind});
     };
-    for (std::size_t i = 0; i < a.size(); ++i) {
-        const auto &candidate = sourceCandidates[i];
-        if (!candidate.forced() || !resultCandidates[candidate.first].forced()) continue;
-        const auto j = candidate.first;
-        gap(i, j);
+    std::size_t nextMatch = 0;
+    for (std::size_t k = 0; k < first.size(); ++k) {
+        if (first[k] != last[k]) continue;
+        const auto [i, j] = first[k];
+        gap(i, j, nextMatch != k);
         emit({{a[i].begin, a[i].end}, {b[j].begin, b[j].end}, PassageKind::Equal});
         sourceStart = i + 1;
         resultStart = j + 1;
+        nextMatch = k + 1;
     }
-    gap(a.size(), b.size());
+    gap(a.size(), b.size(), nextMatch != first.size());
     return passages;
 }
 

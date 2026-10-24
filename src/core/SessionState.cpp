@@ -35,8 +35,15 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
         }
         snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
     }
-    auto correspondence = snapshots_
-        ? std::make_shared<const CorrespondenceMap>(1, *snapshots_, initial.text) : nullptr;
+    std::shared_ptr<const CorrespondenceMap> correspondence;
+    if (snapshots_) {
+        try {
+            correspondence = std::make_shared<const CorrespondenceMap>(1, *snapshots_, initial.text);
+        } catch (const std::exception &error) {
+            support_ = Support::Unreadable;
+            supportDetail_ = "Load error: could not build correspondence for " + path_ + ": " + error.what();
+        }
+    }
     revisions_.emplace(1, Revision{1, 1, 1, std::move(initial), std::move(correspondence)});
 }
 

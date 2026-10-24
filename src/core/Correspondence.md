@@ -2,11 +2,13 @@
 
 `CorrespondenceAlgorithm` separates comparison from session bookkeeping. The
 default `ExactLineCorrespondence` uses exact UTF-8 lines, including their newline
-bytes, without whitespace folding. It computes the longest common subsequence
-lengths, then walks every optimal alignment through the dynamic-programming
-graph. A line is equal only when every optimal alignment matches it to the same
-result line. Other possible matches make the enclosing gap ambiguous. Gaps
-without possible matches describe changed, source-only or result-only text.
+bytes, without whitespace folding. Hirschberg's divide-and-conquer alignment
+uses length rows to find the first and last optimal crossing at each split.
+These trace the two boundary paths of the optimal-alignment graph, including
+equally good skips at equal lines. A line is equal only when both paths match
+it to the same result line, so every optimal alignment agrees. Other matches
+make the enclosing gap ambiguous. Gaps without possible matches describe
+changed, source-only or result-only text.
 The ordered passages partition both buffers and retain the original source
 ranges for navigation, including uncertain regions and unavailable-versus-empty
 sources.
@@ -19,14 +21,16 @@ manual editing rather than a substring search. The policy can reject useful
 choices, but it does not invent certainty. Identical buffers take a direct path,
 so repeated text with identical positions remains individually addressable.
 
-The algorithm uses O(source lines * result lines) time and matrix memory for
-different buffers, plus line and passage records. Lines are interned before the
-matrix calculation, so long-line bytes are compared during interning rather
-than at each matrix cell. Allocation or representation failure throws before a
-new session revision is published. There is no selected file-size, latency or
-memory limit. Generated-fixture observations help evaluate the implementation;
-measurements on representative user files and alternative algorithms remain a
-wave-gate obligation.
+The algorithm uses O(source lines * result lines) time and O(source lines +
+result lines) memory for different buffers, including line, match and passage
+records. Each split releases its length rows before recursing. Lines are
+interned, so long-line bytes are compared during interning rather than at each
+length calculation. Initial correspondence failure marks only that file session
+unreadable with a path-specific diagnostic, retaining its captured sources and
+launch result. Other files can finish loading. Allocation or representation
+failure during later edits still throws before a new session revision is
+published. There is no selected file-size or latency limit. Measurements on
+representative user files remain a wave-gate obligation.
 
 `SourceAnchor` carries the caller's stable contribution ID, immutable source
 side/range and insertion affinity. `ResultAnchor` adds captured session, path and
@@ -57,22 +61,22 @@ stay immutable. These APIs perform no persistence, Qt or filesystem work;
 command composition, recovery serialization and editor integration are separate
 owners.
 
-The ticket's local evidence uses disposable C++ fixtures, including an independent
-enumeration of all best alignments for binary-line sequences up to four lines,
-and checks for repeated/changed/inserted/deleted passages, stale and foreign
-anchors, UTF-8 boundaries, manual-edit preservation, history and affinity.
-Permanent regression additions are deferred to the wave gate by the worker
-contract.
+Disposable C++ fixtures compare the linear-space implementation with independent
+enumeration of every best alignment for binary-line sequences up to six lines
+and ternary sequences up to four lines, including UTF-8 and missing final
+newlines. The C++20 `-O1` AddressSanitizer/UndefinedBehaviorSanitizer run checked
+34,614 source/result pairs and passed 34,630 assertions, including repeated-line
+ambiguity, stale anchors, manual-edit preservation and history. A one-shot
+allocation failure during initial correspondence passed 14 assertions: the
+failed file stayed unreadable with its diagnostic and captures, while a second
+file retained its sources, result and correspondence.
 
-The local C++20 `-O1` AddressSanitizer/UndefinedBehaviorSanitizer fixture run
-passed 22 cases and 12,381 assertions. Its independent oracle covered 961 source
-and result pairs; another 172 edit-position cases checked preservation of an
-unaffected anchor's text. Generated unique-line files with one inserted line
-took 611, 26,217 and 97,974 microseconds for 100, 1,000 and 2,000 source lines
-respectively. Source sizes were 790, 8,890 and 18,890 bytes. A changed 256 KiB
-single line remained one changed passage. Maximum resident memory for the
-entire sanitized fixture process was 140,008 KiB, including sanitizer overhead
-and its other cases. These are observations from one local run, not supported
-budgets or measurements of representative user files. The repeated-line oracle
-supports retaining only forced matches instead of committing an arbitrary LCS
-tie-break; the measured growth keeps the quadratic cost an explicit tradeoff.
+A generated 20,000-line conflict with a 1,057,790-byte result completed
+construction and a whole-buffer draft edit under a 2,000,000 KiB address-space
+cap. The `-O2` fixture process peaked at 44,184 KiB resident memory; construction
+took 12,225 ms and the edit took 15,498 ms. A real desktop load of a separate
+20,000-line conflict beside a small manually edited file completed under a
+3,000,000 KiB cap, with 13 acceptance and cleanup assertions. These are local
+observations, not supported latency budgets or representative user-file
+measurements. Quadratic time remains a tradeoff. Permanent regression additions
+are deferred to the wave gate by the worker contract.
