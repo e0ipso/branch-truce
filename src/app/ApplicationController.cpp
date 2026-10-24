@@ -124,6 +124,97 @@ std::optional<FileSnapshots> captureFile(const git::Conflict &file,
     if (!captured.stage2 || !captured.stage3) return std::nullopt;
     return captured;
 }
+
+struct ScopeTarget {
+    std::size_t byteBegin = 0;
+    std::size_t byteEnd = 0;
+    bool resultRange = false;
+    std::string contributionId;
+    SourceSide side = SourceSide::Stage2;
+};
+
+int utf16Offset(const std::string &utf8, std::size_t bytes)
+{
+    if (bytes > utf8.size()) return -1;
+    const auto prefix = QString::fromUtf8(utf8.data(), static_cast<qsizetype>(bytes));
+    if (prefix.size() > std::numeric_limits<int>::max()) return -1;
+    return static_cast<int>(prefix.size());
+}
+
+bool undecidedChoice(const FileSession &file, const ChoiceTarget &target)
+{
+    if (target.decisions.empty()) return false;
+    for (const auto &id : target.decisions) {
+        const auto found = file.current().draft.decisions.find(id);
+        if (found == file.current().draft.decisions.end() || found->second.value != DecisionValue::Undecided)
+            return false;
+    }
+    return true;
+}
+
+bool sectionHasLine(const FileSession &file, const ChoiceTarget &section)
+{
+    return std::any_of(file.choices().begin(), file.choices().end(), [&](const auto &target) {
+        return target.scope == ChoiceScope::Line && target.section == section.section
+            && target.source.side == section.source.side;
+    });
+}
+
+std::vector<ScopeTarget> differenceTargets(const FileSession &file)
+{
+    const auto *mapping = file.correspondence();
+    if (!mapping) return {};
+    std::vector<ScopeTarget> targets;
+    const auto &result = file.current().draft.text;
+    for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
+        const auto *passages = mapping->passages(side);
+        if (!passages) continue;
+        for (const auto &passage : *passages) {
+            if (passage.kind == PassageKind::Equal) continue;
+            if (passage.result.end < passage.result.begin || passage.result.end > result.size()) continue;
+            if (utf16Offset(result, passage.result.begin) < 0 || utf16Offset(result, passage.result.end) < 0) continue;
+            targets.push_back({passage.result.begin, passage.result.end, true, {}, side});
+        }
+    }
+    std::sort(targets.begin(), targets.end(), [](const auto &left, const auto &right) {
+        if (left.byteBegin != right.byteBegin) return left.byteBegin < right.byteBegin;
+        return left.byteEnd < right.byteEnd;
+    });
+    targets.erase(std::unique(targets.begin(), targets.end(), [](const auto &left, const auto &right) {
+        return left.byteBegin == right.byteBegin && left.byteEnd == right.byteEnd;
+    }), targets.end());
+    return targets;
+}
+
+std::vector<ScopeTarget> undecidedTargets(const FileSession &file)
+{
+    const auto *mapping = file.correspondence();
+    if (!mapping) return {};
+    std::vector<ScopeTarget> targets;
+    const auto &result = file.current().draft.text;
+    for (const auto &target : file.choices()) {
+        if (!undecidedChoice(file, target)) continue;
+        if (target.scope == ChoiceScope::Section && sectionHasLine(file, target)) continue;
+        const auto *anchor = mapping->anchor(target.source.contributionId);
+        const bool mapped = anchor && anchor->state == AnchorState::Mapped && anchor->result
+            && anchor->result->end >= anchor->result->begin && anchor->result->end <= result.size()
+            && utf16Offset(result, anchor->result->begin) >= 0 && utf16Offset(result, anchor->result->end) >= 0;
+        if (mapped) {
+            targets.push_back({anchor->result->begin, anchor->result->end, true,
+                target.source.contributionId, target.source.side});
+        } else {
+            targets.push_back({target.source.range.begin, target.source.range.end, false,
+                target.source.contributionId, target.source.side});
+        }
+    }
+    std::sort(targets.begin(), targets.end(), [](const auto &left, const auto &right) {
+        if (left.resultRange != right.resultRange) return left.resultRange && !right.resultRange;
+        if (left.byteBegin != right.byteBegin) return left.byteBegin < right.byteBegin;
+        if (left.byteEnd != right.byteEnd) return left.byteEnd < right.byteEnd;
+        return left.contributionId < right.contributionId;
+    });
+    return targets;
+}
 }
 
 ApplicationController::ApplicationController(QObject *parent)
@@ -202,7 +293,7 @@ QVariantMap ApplicationController::selectedFile() const
              SessionModel::ResolvedRole, SessionModel::UndecidedRole, SessionModel::PendingInputRole,
              SessionModel::PendingTextRole, SessionModel::RecoveryStateRole, SessionModel::RecoveryErrorRole,
              SessionModel::FinishBlockersRole, SessionModel::CurrentRevisionRole, SessionModel::CanUndoRole,
-             SessionModel::CanRedoRole})
+             SessionModel::CanRedoRole, SessionModel::ProgressRole})
             result.insert(QString::fromLatin1(files_.roleNames().value(role)), files_.data(index, role));
         break;
     }
@@ -278,8 +369,17 @@ bool ApplicationController::selectFile(const QString &fileId)
     if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return false;
     cancelChoice();
     selectedFileId_ = fileId;
+    if (!selectingFromNavigation_) clearNavigation();
     Q_EMIT selectedFileChanged();
     return true;
+}
+
+int ApplicationController::selectedRow() const
+{
+    for (int row = 0; row < files_.totalFiles(); ++row)
+        if (files_.data(files_.index(row), SessionModel::FileIdRole).toString() == selectedFileId_)
+            return row;
+    return -1;
 }
 
 QVariantMap ApplicationController::commandPreview() const
@@ -748,6 +848,326 @@ void ApplicationController::syncResultEditor()
         Q_EMIT commandChanged();
     }
     syncingEditor_ = false;
+}
+
+void ApplicationController::clearNavigation()
+{
+    navMode_.clear();
+    navFileId_.clear();
+    navRevision_ = 0;
+    navIndex_ = -1;
+    navCursor_ = -1;
+    navSelectionStart_ = -1;
+    navSelectionEnd_ = -1;
+    navByteBegin_ = 0;
+    navByteEnd_ = 0;
+    navContribution_.clear();
+    navResultRange_ = false;
+    if (navigationTarget_.isEmpty()) return;
+    navigationTarget_.clear();
+    Q_EMIT navigationChanged();
+}
+
+void ApplicationController::noteEditorLocation()
+{
+    heldLocation_ = {};
+    if (!resultEditor_) return;
+    heldLocation_.valid = true;
+    heldLocation_.fileId = selectedFileId_;
+    heldLocation_.text = editorText_;
+    heldLocation_.cursor = resultEditor_->property("cursorPosition").toInt();
+    heldLocation_.selectionStart = resultEditor_->property("selectionStart").toInt();
+    heldLocation_.selectionEnd = resultEditor_->property("selectionEnd").toInt();
+    if (auto *item = qobject_cast<QQuickItem *>(resultEditor_.data())) {
+        if (auto *viewport = item->parentItem()) {
+            const auto x = viewport->property("contentX");
+            const auto y = viewport->property("contentY");
+            heldLocation_.hasViewport = x.isValid() && y.isValid();
+            if (heldLocation_.hasViewport) {
+                heldLocation_.contentX = x.toReal();
+                heldLocation_.contentY = y.toReal();
+            }
+        }
+    }
+}
+
+void ApplicationController::restoreEditorLocation()
+{
+    if (!heldLocation_.valid || !resultEditor_ || heldLocation_.fileId != selectedFileId_) return;
+    if (editorText_ != heldLocation_.text) return;
+    const auto *file = files_.file(selectedFileId_.toStdString());
+    const auto *pending = file ? files_.pendingDraft(file->id()) : nullptr;
+    const auto current = file ? text(pending ? pending->text : file->current().draft.text) : QString{};
+    if (current != heldLocation_.text) return;
+    // select() places the cursor at the second offset and keeps that range.
+    const int anchor = heldLocation_.cursor == heldLocation_.selectionStart
+        ? heldLocation_.selectionEnd : heldLocation_.selectionStart;
+    (void)QMetaObject::invokeMethod(resultEditor_, "select", Qt::DirectConnection,
+        Q_ARG(int, anchor), Q_ARG(int, heldLocation_.cursor));
+    if (!heldLocation_.hasViewport) return;
+    if (auto *item = qobject_cast<QQuickItem *>(resultEditor_.data())) {
+        if (auto *viewport = item->parentItem()) {
+            viewport->setProperty("contentX", heldLocation_.contentX);
+            viewport->setProperty("contentY", heldLocation_.contentY);
+        }
+    }
+}
+
+bool ApplicationController::toggleFileList()
+{
+    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return false;
+    const auto fileId = selectedFileId_;
+    const auto *file = files_.file(fileId.toStdString());
+    const auto *pending = file ? files_.pendingDraft(file->id()) : nullptr;
+    const auto before = file ? text(pending ? pending->text : file->current().draft.text) : QString{};
+    const auto revision = file ? file->current().id : RevisionId{};
+    noteEditorLocation();
+    fileListVisible_ = !fileListVisible_;
+    Q_EMIT fileListChanged();
+    const auto *after = files_.file(fileId.toStdString());
+    const auto *afterPending = after ? files_.pendingDraft(after->id()) : nullptr;
+    const auto afterText = after ? text(afterPending ? afterPending->text : after->current().draft.text) : QString{};
+    const bool preserved = selectedFileId_ == fileId && before == afterText
+        && (!after || after->current().id == revision);
+    restoreEditorLocation();
+    return preserved;
+}
+
+bool ApplicationController::navigate(const QString &mode, int direction)
+{
+    if (direction != -1 && direction != 1) return false;
+    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return false;
+    if (mode == QLatin1String("difference") || mode == QLatin1String("undecided"))
+        return navigateWithinFile(mode, direction);
+    if (mode == QLatin1String("unfinished") || mode == QLatin1String("saved-or-reviewed"))
+        return navigateAcrossFiles(mode, direction);
+    return false;
+}
+
+bool ApplicationController::navigateWithinFile(const QString &mode, int direction)
+{
+    const auto *file = files_.file(selectedFileId_.toStdString());
+    const auto fail = [&](const QString &label) {
+        navigationTarget_ = {{QStringLiteral("mode"), mode},
+            {QStringLiteral("fileId"), selectedFileId_},
+            {QStringLiteral("count"), 0},
+            {QStringLiteral("label"), label}};
+        navMode_.clear();
+        navIndex_ = -1;
+        Q_EMIT navigationChanged();
+        return false;
+    };
+    if (!file || file->support() != Support::Supported)
+        return fail(tr("This file has no editor differences."));
+    const auto targets = mode == QLatin1String("difference") ? differenceTargets(*file) : undecidedTargets(*file);
+    if (targets.empty()) {
+        return fail(mode == QLatin1String("difference")
+            ? tr("No differences in this file.") : tr("No undecided work in this file."));
+    }
+    const auto &result = file->current().draft.text;
+    const int count = static_cast<int>(targets.size());
+    const int cursor = resultEditor_ ? resultEditor_->property("cursorPosition").toInt() : 0;
+    const int selectionStart = resultEditor_ ? resultEditor_->property("selectionStart").toInt() : 0;
+    const int selectionEnd = resultEditor_ ? resultEditor_->property("selectionEnd").toInt() : 0;
+    const bool continuing = navMode_ == mode && navFileId_ == selectedFileId_
+        && navRevision_ == file->current().id && navIndex_ >= 0 && navIndex_ < count
+        && targets[static_cast<std::size_t>(navIndex_)].byteBegin == navByteBegin_
+        && targets[static_cast<std::size_t>(navIndex_)].byteEnd == navByteEnd_
+        && targets[static_cast<std::size_t>(navIndex_)].contributionId == navContribution_
+        && targets[static_cast<std::size_t>(navIndex_)].resultRange == navResultRange_
+        && (!resultEditor_ || (cursor == navCursor_ && selectionStart == navSelectionStart_
+            && selectionEnd == navSelectionEnd_));
+    const auto utfBegin = [&](const ScopeTarget &target) {
+        return target.resultRange ? utf16Offset(result, target.byteBegin) : -1;
+    };
+    const auto utfEnd = [&](const ScopeTarget &target) {
+        return target.resultRange ? utf16Offset(result, target.byteEnd) : -1;
+    };
+    const auto selected = [&](int candidate) {
+        const int begin = utfBegin(targets[static_cast<std::size_t>(candidate)]);
+        const int end = utfEnd(targets[static_cast<std::size_t>(candidate)]);
+        return begin >= 0 && end >= 0 && selectionStart == begin && selectionEnd == end;
+    };
+    int index = -1;
+    if (continuing) {
+        index = (navIndex_ + direction + count) % count;
+    } else if (direction > 0) {
+        int selectedIndex = -1;
+        int firstAtOrAfter = -1;
+        int firstMapped = -1;
+        for (int candidate = 0; candidate < count; ++candidate) {
+            const int begin = utfBegin(targets[static_cast<std::size_t>(candidate)]);
+            if (begin < 0) continue;
+            if (firstMapped < 0) firstMapped = candidate;
+            if (selected(candidate)) selectedIndex = candidate;
+            if (firstAtOrAfter < 0 && begin >= cursor) firstAtOrAfter = candidate;
+        }
+        if (selectedIndex >= 0) {
+            for (int candidate = selectedIndex + 1; candidate < count; ++candidate) {
+                if (utfBegin(targets[static_cast<std::size_t>(candidate)]) >= 0) { index = candidate; break; }
+            }
+            if (index < 0) index = firstMapped >= 0 ? firstMapped : 0;
+        } else if (firstAtOrAfter >= 0) index = firstAtOrAfter;
+        else if (firstMapped >= 0) index = firstMapped;
+        else index = 0;
+    } else {
+        int selectedIndex = -1;
+        int lastBefore = -1;
+        int lastMapped = -1;
+        for (int candidate = 0; candidate < count; ++candidate) {
+            const int begin = utfBegin(targets[static_cast<std::size_t>(candidate)]);
+            if (begin < 0) continue;
+            lastMapped = candidate;
+            if (selected(candidate)) selectedIndex = candidate;
+            if (begin < cursor) lastBefore = candidate;
+        }
+        if (selectedIndex >= 0) {
+            for (int candidate = selectedIndex - 1; candidate >= 0; --candidate) {
+                if (utfBegin(targets[static_cast<std::size_t>(candidate)]) >= 0) { index = candidate; break; }
+            }
+            if (index < 0) index = lastMapped >= 0 ? lastMapped : count - 1;
+        } else if (lastBefore >= 0) index = lastBefore;
+        else if (lastMapped >= 0) index = lastMapped;
+        else index = count - 1;
+    }
+    const auto &target = targets[static_cast<std::size_t>(index)];
+    const int begin = target.resultRange ? utf16Offset(result, target.byteBegin) : -1;
+    const int end = target.resultRange ? utf16Offset(result, target.byteEnd) : -1;
+    if (target.resultRange && resultEditor_) {
+        if (begin < 0 || end < 0
+            || !QMetaObject::invokeMethod(resultEditor_, "select", Qt::DirectConnection,
+                Q_ARG(int, begin), Q_ARG(int, end)))
+            return fail(tr("The difference could not be selected."));
+    }
+    navMode_ = mode;
+    navFileId_ = selectedFileId_;
+    navRevision_ = file->current().id;
+    navIndex_ = index;
+    navByteBegin_ = target.byteBegin;
+    navByteEnd_ = target.byteEnd;
+    navContribution_ = target.contributionId;
+    navResultRange_ = target.resultRange;
+    if (resultEditor_) {
+        navCursor_ = resultEditor_->property("cursorPosition").toInt();
+        navSelectionStart_ = resultEditor_->property("selectionStart").toInt();
+        navSelectionEnd_ = resultEditor_->property("selectionEnd").toInt();
+    } else {
+        navCursor_ = -1;
+        navSelectionStart_ = -1;
+        navSelectionEnd_ = -1;
+    }
+    const auto side = target.side == SourceSide::Stage2 ? tr("Left") : tr("Right");
+    QString label;
+    if (mode == QLatin1String("difference")) {
+        label = tr("Difference %1 of %2 · result bytes %3-%4")
+            .arg(index + 1).arg(count)
+            .arg(static_cast<qulonglong>(target.byteBegin))
+            .arg(static_cast<qulonglong>(target.byteEnd));
+    } else if (target.resultRange) {
+        label = tr("Undecided %1 of %2 · %3 · result bytes %4-%5")
+            .arg(index + 1).arg(count).arg(side)
+            .arg(static_cast<qulonglong>(target.byteBegin))
+            .arg(static_cast<qulonglong>(target.byteEnd));
+    } else {
+        label = tr("Undecided %1 of %2 · %3 · source bytes %4-%5, not mapped in the result")
+            .arg(index + 1).arg(count).arg(side)
+            .arg(static_cast<qulonglong>(target.byteBegin))
+            .arg(static_cast<qulonglong>(target.byteEnd));
+    }
+    navigationTarget_ = {{QStringLiteral("mode"), mode},
+        {QStringLiteral("fileId"), selectedFileId_},
+        {QStringLiteral("scope"), target.resultRange ? QStringLiteral("result") : QStringLiteral("unmapped-source")},
+        {QStringLiteral("byteBegin"), QVariant::fromValue(static_cast<qulonglong>(target.byteBegin))},
+        {QStringLiteral("byteEnd"), QVariant::fromValue(static_cast<qulonglong>(target.byteEnd))},
+        {QStringLiteral("utf16Begin"), begin},
+        {QStringLiteral("utf16End"), end},
+        {QStringLiteral("contributionId"), text(target.contributionId)},
+        {QStringLiteral("index"), index},
+        {QStringLiteral("count"), count},
+        {QStringLiteral("label"), label}};
+    Q_EMIT navigationChanged();
+    return true;
+}
+
+bool ApplicationController::navigateAcrossFiles(const QString &mode, int direction)
+{
+    struct Stop {
+        int row = 0;
+        QString id;
+        QString path;
+        QString support;
+        bool saved = false;
+        bool reviewed = false;
+        bool resolved = false;
+        bool earlierResolved = false;
+        bool outside = false;
+    };
+    std::vector<Stop> stops;
+    const bool unfinished = mode == QLatin1String("unfinished");
+    for (int row = 0; row < files_.totalFiles(); ++row) {
+        const auto id = files_.data(files_.index(row), SessionModel::FileIdRole).toString();
+        const auto *file = files_.file(id.toStdString());
+        if (!file) continue;
+        const bool pending = files_.pendingDraft(file->id()) != nullptr;
+        const bool failed = files_.hasRecoveryFailure(file->id());
+        const auto facts = file->facts();
+        const bool saved = !pending && !facts.unsaved;
+        const bool reviewed = file->reviewed() && file->reviewed()->revision.id == file->current().id;
+        const bool resolved = !pending && !failed && facts.resolved;
+        const bool outside = file->support() != Support::Supported;
+        if (unfinished) {
+            if (!pending && !failed && facts.resolved && !outside) continue;
+        } else if (!saved && !reviewed) continue;
+        QString support = QStringLiteral("supported");
+        if (file->support() == Support::OutsideApp) support = QStringLiteral("outside-app");
+        else if (file->support() == Support::Unreadable) support = QStringLiteral("unreadable");
+        stops.push_back({row, id, displayPath(id), support, saved, reviewed, resolved, facts.earlierStaged, outside});
+    }
+    if (stops.empty()) {
+        navigationTarget_ = {{QStringLiteral("mode"), mode},
+            {QStringLiteral("count"), 0},
+            {QStringLiteral("label"), unfinished ? tr("No unfinished files.") : tr("No saved or reviewed files.")}};
+        Q_EMIT navigationChanged();
+        return false;
+    }
+    const int current = selectedRow();
+    int chosen = direction > 0 ? 0 : static_cast<int>(stops.size()) - 1;
+    if (direction > 0) {
+        for (int candidate = 0; candidate < static_cast<int>(stops.size()); ++candidate) {
+            if (stops[static_cast<std::size_t>(candidate)].row > current) { chosen = candidate; break; }
+        }
+    } else {
+        for (int candidate = static_cast<int>(stops.size()) - 1; candidate >= 0; --candidate) {
+            if (stops[static_cast<std::size_t>(candidate)].row < current) { chosen = candidate; break; }
+        }
+    }
+    const auto &stop = stops[static_cast<std::size_t>(chosen)];
+    if (stop.id != selectedFileId_) {
+        QScopedValueRollback<bool> guard(selectingFromNavigation_, true);
+        if (!selectFile(stop.id)) return false;
+    }
+    const auto scope = stop.outside ? QStringLiteral("outside-editor") : QStringLiteral("file");
+    const QString label = unfinished && stop.outside
+        ? tr("Unfinished file · outside the editor · %1").arg(stop.path)
+        : unfinished ? tr("Unfinished file · %1").arg(stop.path)
+                     : tr("Saved or reviewed file · %1").arg(stop.path);
+    navigationTarget_ = {{QStringLiteral("mode"), mode},
+        {QStringLiteral("fileId"), stop.id},
+        {QStringLiteral("scope"), scope},
+        {QStringLiteral("support"), stop.support},
+        {QStringLiteral("path"), stop.path},
+        {QStringLiteral("saved"), stop.saved},
+        {QStringLiteral("reviewed"), stop.reviewed},
+        {QStringLiteral("resolved"), stop.resolved},
+        {QStringLiteral("earlierResolved"), stop.earlierResolved},
+        {QStringLiteral("index"), chosen},
+        {QStringLiteral("count"), static_cast<int>(stops.size())},
+        {QStringLiteral("label"), label}};
+    navMode_ = mode;
+    navFileId_ = stop.id;
+    navIndex_ = chosen;
+    Q_EMIT navigationChanged();
+    return true;
 }
 
 int ApplicationController::outsideAppFiles() const

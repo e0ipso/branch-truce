@@ -69,6 +69,25 @@ QStringList blockerData(const FileFacts &facts)
     for (const auto blocker : facts.blockers) result.push_back(QString::fromUtf8(blockerText(blocker)));
     return result;
 }
+
+// Dimensions come from the current revision and the saved, reviewed and staged
+// revisions. They stay separate so one resolved flag cannot hide the others.
+QVariantMap progressData(const FileSession &file, bool pendingInput, bool recoveryFailed)
+{
+    const auto facts = file.facts();
+    const bool reviewed = file.reviewed() && file.reviewed()->revision.id == file.current().id;
+    const bool saved = !pendingInput && !facts.unsaved;
+    const bool resolved = !pendingInput && !recoveryFailed && facts.resolved;
+    return {{QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(facts.undecided))},
+        {QStringLiteral("saved"), saved},
+        {QStringLiteral("reviewed"), reviewed},
+        {QStringLiteral("resolved"), resolved},
+        {QStringLiteral("earlierResolved"), facts.earlierStaged},
+        {QStringLiteral("currentRevision"), revisionText(file.current().id)},
+        {QStringLiteral("savedRevision"), saved && file.checkpoint() ? revisionText(file.checkpoint()->id) : QString{}},
+        {QStringLiteral("reviewedRevision"), reviewed ? revisionText(file.reviewed()->revision.id) : QString{}},
+        {QStringLiteral("stagedRevision"), file.staged() ? revisionText(file.staged()->revision.id) : QString{}}};
+}
 }
 
 SessionModel::SessionModel(QObject *parent)
@@ -282,6 +301,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
         if (pendingInput) return QStringLiteral("failed");
         return restored_.contains(file.id()) ? QStringLiteral("restored") : QStringLiteral("durable");
     case RecoveryErrorRole: return recoveryFailed ? failure->second : pendingInput ? pending->second.error : QString{};
+    case ProgressRole: return progressData(file, pendingInput, recoveryFailed);
     default: return {};
     }
 }
@@ -302,7 +322,7 @@ QHash<int, QByteArray> SessionModel::roleNames() const
             {CanUndoRole, "canUndo"}, {CanRedoRole, "canRedo"},
             {PendingInputRole, "pendingInput"}, {PendingTextRole, "pendingText"},
             {PendingDecisionsRole, "pendingDecisions"}, {RecoveryStateRole, "recoveryState"},
-            {RecoveryErrorRole, "recoveryError"}};
+            {RecoveryErrorRole, "recoveryError"}, {ProgressRole, "progress"}};
 }
 
 const FileSession *SessionModel::file(const std::string &id) const

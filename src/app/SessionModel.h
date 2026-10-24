@@ -31,7 +31,8 @@ public:
         CheckpointOutcomeRole, WriteOutcomeRole, StageOutcomeRole,
         SupportRole, SupportDetailRole, UndecidedRole, UnsavedRole, ReviewNeededRole,
         EarlierStagedRole, ResolvedRole, StatusRole, FinishBlockersRole, CanUndoRole, CanRedoRole,
-        PendingInputRole, PendingTextRole, PendingDecisionsRole, RecoveryStateRole, RecoveryErrorRole
+        PendingInputRole, PendingTextRole, PendingDecisionsRole, RecoveryStateRole, RecoveryErrorRole,
+        ProgressRole
     };
     Q_ENUM(Role)
 

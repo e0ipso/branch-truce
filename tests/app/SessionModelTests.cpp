@@ -604,7 +604,9 @@ public:
             CHECK(decisions[1].toMap().value("value").toString() == "ignored");
             CHECK(!decisions[1].toMap().contains("order"));
             const auto names = model.roleNames();
-            CHECK(names.size() == SessionModel::RecoveryErrorRole - SessionModel::FileIdRole + 1);
+            // Progress is an additional revision-derived role after the recovery roles.
+            CHECK(names.size() == SessionModel::ProgressRole - SessionModel::FileIdRole + 1);
+            CHECK(names.value(SessionModel::ProgressRole) == "progress");
             QSet<QByteArray> unique;
             for (auto it = names.cbegin(); it != names.cend(); ++it) {
                 CHECK(!it.value().isEmpty() && !unique.contains(it.value()));

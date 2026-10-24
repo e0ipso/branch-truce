@@ -26,6 +26,19 @@ Kirigami.ApplicationWindow {
         if (controller.previewWholeFile(controller.selectedFileId, selectedFile.currentRevision, side))
             wholeFileDialog.open();
     }
+    function progressSummary(progress): string {
+        if (!progress)
+            return ""
+        const parts = [
+            qsTr("Undecided: %1").arg(progress.undecided),
+            progress.saved ? qsTr("Saved") : qsTr("Not saved"),
+            progress.reviewed ? qsTr("Reviewed") : qsTr("Not reviewed"),
+            progress.resolved ? qsTr("Resolved") : qsTr("Not resolved")
+        ]
+        if (progress.earlierResolved)
+            parts.push(qsTr("Earlier result staged; current draft not applied"))
+        return parts.join(" · ")
+    }
     Dialog {
         id: wholeFileDialog
         objectName: "wholeFileDialog"
@@ -304,8 +317,7 @@ Kirigami.ApplicationWindow {
         required property string supportDetail
         required property string status
         required property bool unsaved
-        required property bool reviewNeeded
-        required property bool resolved
+        required property var progress
         width: ListView.view.width
         text: window.controller.displayPath(fileId) + (support === "supported" ? ""
             : support === "unreadable" ? qsTr(" · load error · outside app") : qsTr(" · outside app"))
@@ -327,8 +339,7 @@ Kirigami.ApplicationWindow {
             Label {
                 Layout.fillWidth: true
                 text: row.status + "\n" + (row.unsaved ? qsTr("Unsaved draft") : qsTr("Manual Save checkpoint retained"))
-                    + (row.reviewNeeded ? qsTr(" · needs review") : "")
-                    + (row.resolved ? "" : qsTr(" · unresolved"))
+                    + "\n" + window.progressSummary(row.progress)
                 textFormat: Text.PlainText
                 wrapMode: Text.WrapAnywhere
             }
@@ -404,17 +415,91 @@ Kirigami.ApplicationWindow {
                 text: qsTr("%1 outside app · %2 load errors. These files remain outstanding. Select a file for its reason and handle it outside Branch Truce.")
                     .arg(window.controller.outsideAppFiles).arg(window.controller.loadErrorFiles)
             }
+            Flow {
+                Layout.fillWidth: true
+                spacing: Kirigami.Units.smallSpacing
+                visible: !window.controller.opening && window.controller.files.totalFiles > 0
+                Button {
+                    objectName: "toggleFileList"
+                    text: window.controller.fileListVisible ? qsTr("Hide file list") : qsTr("Show file list")
+                    onClicked: window.controller.toggleFileList()
+                }
+                Button {
+                    objectName: "previousDifference"
+                    text: qsTr("Previous difference")
+                    onClicked: window.controller.navigate("difference", -1)
+                }
+                Button {
+                    objectName: "nextDifference"
+                    text: qsTr("Next difference")
+                    onClicked: window.controller.navigate("difference", 1)
+                }
+                Button {
+                    objectName: "previousUndecided"
+                    text: qsTr("Previous undecided")
+                    onClicked: window.controller.navigate("undecided", -1)
+                }
+                Button {
+                    objectName: "nextUndecided"
+                    text: qsTr("Next undecided")
+                    onClicked: window.controller.navigate("undecided", 1)
+                }
+                Button {
+                    objectName: "previousUnfinished"
+                    text: qsTr("Previous unfinished file")
+                    onClicked: window.controller.navigate("unfinished", -1)
+                }
+                Button {
+                    objectName: "nextUnfinished"
+                    text: qsTr("Next unfinished file")
+                    onClicked: window.controller.navigate("unfinished", 1)
+                }
+                Button {
+                    objectName: "previousSavedOrReviewed"
+                    text: qsTr("Previous saved or reviewed")
+                    onClicked: window.controller.navigate("saved-or-reviewed", -1)
+                }
+                Button {
+                    objectName: "nextSavedOrReviewed"
+                    text: qsTr("Next saved or reviewed")
+                    onClicked: window.controller.navigate("saved-or-reviewed", 1)
+                }
+            }
+            Label {
+                objectName: "navigationTarget"
+                Layout.fillWidth: true
+                visible: !window.controller.opening && (window.controller.navigationTarget.label || "").length > 0
+                text: window.controller.navigationTarget.label || ""
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+            }
             RowLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 visible: !window.controller.opening && window.controller.files.totalFiles > 0
                 ListView {
                     id: fileList
+                    objectName: "fileList"
+                    visible: window.controller.fileListVisible
                     Layout.preferredWidth: 220
                     Layout.fillHeight: true
                     clip: true
                     model: window.controller.files
                     currentIndex: 0
+                    function revealSelection(): void {
+                        const row = window.controller.selectedRow()
+                        if (row < 0 || row >= count)
+                            return
+                        currentIndex = row
+                        positionViewAtIndex(row, ListView.Contain)
+                    }
+                    Component.onCompleted: revealSelection()
+                    Connections {
+                        target: window.controller
+                        function onSelectedFileChanged(): void {
+                            fileList.revealSelection()
+                        }
+                    }
                     delegate: ConflictRow {
                         id: fileDelegate
                         onClicked: {
@@ -451,8 +536,7 @@ Kirigami.ApplicationWindow {
                         visible: window.controller.selectedFileId.length > 0
                         text: (window.selectedFile.status || "") + "\n"
                             + (window.selectedFile.unsaved ? qsTr("Unsaved draft") : qsTr("Manual Save checkpoint retained"))
-                            + (window.selectedFile.reviewNeeded ? qsTr(" · needs review") : "")
-                            + (window.selectedFile.resolved ? "" : qsTr(" · unresolved"))
+                            + "\n" + window.progressSummary(window.selectedFile.progress)
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
                     }

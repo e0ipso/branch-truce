@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QString>
 #include <QPointer>
+#include <string>
 
 class QTextDocument;
 
@@ -30,6 +31,8 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QString commandMessage READ commandMessage NOTIFY commandChanged)
     Q_PROPERTY(QVariantMap nonConflictingPreview READ nonConflictingPreview NOTIFY commandChanged)
     Q_PROPERTY(QVariantMap wholeFilePreview READ wholeFilePreview NOTIFY commandChanged)
+    Q_PROPERTY(bool fileListVisible READ fileListVisible NOTIFY fileListChanged)
+    Q_PROPERTY(QVariantMap navigationTarget READ navigationTarget NOTIFY navigationChanged)
 public:
     explicit ApplicationController(QObject *parent = nullptr);
     [[nodiscard]] QString version() const;
@@ -53,6 +56,8 @@ public:
     Q_INVOKABLE bool previewNonConflicting(const QString &fileId, const QString &revision, const QString &scope);
     Q_INVOKABLE bool applyNonConflicting();
     [[nodiscard]] QVariantMap wholeFilePreview() const;
+    [[nodiscard]] bool fileListVisible() const { return fileListVisible_; }
+    [[nodiscard]] QVariantMap navigationTarget() const { return navigationTarget_; }
     Q_INVOKABLE bool previewWholeFile(const QString &fileId, const QString &revision, const QString &side);
     Q_INVOKABLE bool applyWholeFile();
     Q_INVOKABLE bool previewChoice(const QString &fileId, const QString &revision,
@@ -72,7 +77,15 @@ public:
     Q_INVOKABLE bool resultClipboard(const QString &action);
     // Select by the exact byte-derived file ID, never by a display path.
     Q_INVOKABLE bool selectFile(const QString &fileId);
+    Q_INVOKABLE int selectedRow() const;
     Q_INVOKABLE QString displayPath(const QString &fileId) const;
+    // Hide or show the file list without changing the selected file, editor
+    // location or unsaved result.
+    Q_INVOKABLE bool toggleFileList();
+    // mode is difference, undecided, unfinished or saved-or-reviewed.
+    // direction is -1 or 1. Difference and undecided stay inside the selected
+    // file; the file modes walk the session inventory.
+    Q_INVOKABLE bool navigate(const QString &mode, int direction);
     // One launched repository session per controller. Paths are launch directories,
     // never inferred from a filename or a Git environment override.
     bool openRepository(const QString &directory);
@@ -82,6 +95,8 @@ Q_SIGNALS:
     void selectedFileChanged();
     void inventoryChanged();
     void commandChanged();
+    void fileListChanged();
+    void navigationChanged();
 
 private:
     bool commandReady(const QString &fileId, const QString &revision, RevisionId *expected) const;
@@ -92,6 +107,11 @@ private:
     bool commandResult(Transition result);
     void captureResultEdit();
     void syncResultEditor();
+    void noteEditorLocation();
+    void restoreEditorLocation();
+    void clearNavigation();
+    bool navigateWithinFile(const QString &mode, int direction);
+    bool navigateAcrossFiles(const QString &mode, int direction);
     SessionModel files_;
     SessionCoordinator coordinator_;
     git::ConflictClassifier classifier_;
@@ -111,5 +131,31 @@ private:
     QString editorText_;
     bool syncingEditor_ = false;
     bool processingEditorEvent_ = false;
+    bool fileListVisible_ = true;
+    bool selectingFromNavigation_ = false;
+    QVariantMap navigationTarget_;
+    QString navMode_;
+    QString navFileId_;
+    RevisionId navRevision_ = 0;
+    int navIndex_ = -1;
+    int navCursor_ = -1;
+    int navSelectionStart_ = -1;
+    int navSelectionEnd_ = -1;
+    std::size_t navByteBegin_ = 0;
+    std::size_t navByteEnd_ = 0;
+    std::string navContribution_;
+    bool navResultRange_ = false;
+    struct EditorLocation {
+        bool valid = false;
+        QString fileId;
+        QString text;
+        int cursor = 0;
+        int selectionStart = 0;
+        int selectionEnd = 0;
+        qreal contentX = 0;
+        qreal contentY = 0;
+        bool hasViewport = false;
+    };
+    EditorLocation heldLocation_;
 };
 }
