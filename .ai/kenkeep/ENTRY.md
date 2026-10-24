@@ -1,6 +1,6 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:25aa84081011ecb7cd349cd0f13d49042bc5964332139ab04feb8700f21b7271'
+nodes_hash: 'sha256:3da58d8e3f52692ddb1e5abfd7e5e20163c7abfde3ac6f1653b8f78696a71b03'
 node_count: 19
 ---
 # kenkeep
@@ -16,7 +16,7 @@ _None._
 - Open [**Fence session work and serialize worktree mutations**](nodes/practice-fence-session-work-and-serialize-worktree-mutations.md) to learn about: Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation. #architecture #concurrency #cancellation #git #desktop
 - Open [**Keep session captures immutable across revisions**](nodes/practice-keep-session-captures-immutable-across-revisions.md) to learn about: Retain source bytes, conversion policy, provenance and the launch result separately from editable revision history. #session #snapshots #editing #source-identity
 - Open [**Keep unsupported and unfinished work visible**](nodes/practice-keep-unsupported-and-unfinished-work-visible.md) to learn about: Show all current files, prominent outside-app warnings, and an honest handoff that directs users to outstanding work. #product #scope #progress #handoff
-- Open [**Bound each converted representation independently**](nodes/practice-bound-each-converted-representation-independently.md) to learn about: Reject cleaned canonical objects over 8 MiB before reading; give canonical blob and checkout reads separate 8 MiB budgets. #git #conversion #limits #failures
+- Open [**Bound each converted representation independently**](nodes/practice-bound-each-converted-representation-independently.md) to learn about: Reject cleaned canonical objects over 4194304 bytes before reading; give each Git phase its own 4194304-byte budget. #git #conversion #limits #failures
 - Open [**Design desktop apps around screens and components**](nodes/practice-design-desktop-apps-around-screens-and-components.md) to learn about: Define screens and components, then build loosely coupled implementations using each desktop environment's idiomatic UI kit. #architecture #desktop #techspec
 - Open [**Keep PRD.md focused on user needs**](nodes/practice-keep-prd-focused-on-user-needs.md) to learn about: PRD.md describes user needs, interactions, and capabilities without technical or implementation details. #product #prd #documentation
 - Open [**Keep TechSpecs and PRDs independent**](nodes/practice-keep-techspecs-and-prds-independent.md) to learn about: TechSpecs explain how to build; PRDs explain what to build and why. Keep both separate and independently understandable. #documentation #techspec #prd

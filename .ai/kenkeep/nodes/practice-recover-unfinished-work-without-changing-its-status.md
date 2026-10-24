@@ -15,6 +15,7 @@ kk_derived_from:
   - PRD.md
   - docs/recovery-journal.md
   - src/app/RecoveryRestore.cpp
+  - src/app/ResolutionPublisher.cpp
 kk_relates_to: []
 kk_depends_on: []
 kk_confidence: medium
@@ -27,10 +28,13 @@ Prevent switching files or closing the app from silently losing unsaved edits. E
 
 If recovery cannot restore expected work, explain what is missing and keep the affected file outstanding. Reject corrupt, unsupported-schema or mismatched-session records with a diagnostic and no false restoration. Unadopted-store diagnostics leave current conflict files editable; an adopted recovery failure gates only its affected file, while session completion remains blocked. Keep pending input from a failed recovery commit distinct from a restored file's recovery failure. Pending commits still gate commands across the shared store until retry succeeds. Interrupted publication or staging remains uncertain until current disk and index evidence establishes completion; matching result bytes alone are insufficient. See the [recovery boundaries](../../../docs/recovery-journal.md). Never claim recovery of work that is missing.
 
+After restart, a retry whose live bytes still match the written revision keeps that write and can resolve. A different destination fails closed. After a stale publish, [ResolutionPublisher](../../../src/app/ResolutionPublisher.cpp) adopts the live destination only while its bytes still equal the published revision. Any other bytes keep the previous baseline and fail closed. A matching stale publish may advance the destination baseline even though the draft revision moved. A failed discard leaves the editor on the restored checkpoint until retry acknowledges that same transaction.
+
 <!-- kk:citations:start -->
 # Citations
 
 [1] [PRD.md](../../../PRD.md)
 [2] [docs/recovery-journal.md](../../../docs/recovery-journal.md)
 [3] [src/app/RecoveryRestore.cpp](../../../src/app/RecoveryRestore.cpp)
+[4] [src/app/ResolutionPublisher.cpp](../../../src/app/ResolutionPublisher.cpp)
 <!-- kk:citations:end -->

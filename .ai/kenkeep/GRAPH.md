@@ -1,6 +1,6 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:25aa84081011ecb7cd349cd0f13d49042bc5964332139ab04feb8700f21b7271'
+nodes_hash: 'sha256:3da58d8e3f52692ddb1e5abfd7e5e20163c7abfde3ac6f1653b8f78696a71b03'
 node_count: 19
 ---
 # kenkeep Graph
@@ -14,7 +14,7 @@ Total nodes: 19
 - **path:** map-branch-truce-desktop-implementation-baseline.md
 - **tags:** architecture, desktop, platform, cpp
 - **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope
-- **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ApplicationController.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md
+- **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ApplicationController.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md, src/core/ResourceLimits.h, docs/resource-limits.md
 
 ## map-branch-truce-first-release-scope
 
@@ -39,7 +39,7 @@ Total nodes: 19
 - **path:** map-recovery-journal-and-acknowledgment-boundary.md
 - **tags:** recovery, storage, editing, failures
 - **relates_to:** practice-recover-unfinished-work-without-changing-its-status, practice-keep-session-captures-immutable-across-revisions, practice-keep-failed-work-outstanding
-- **derived_from:** docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md
+- **derived_from:** docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md, src/storage/RecoveryStore.cpp, src/app/ApplicationController.cpp
 
 ## map-repository-discovery-and-verified-source-identities
 
@@ -150,7 +150,7 @@ Total nodes: 19
 - **title:** Recover unfinished work without changing its status
 - **path:** practice-recover-unfinished-work-without-changing-its-status.md
 - **tags:** product, recovery, editing, progress
-- **derived_from:** PRD.md, docs/recovery-journal.md, src/app/RecoveryRestore.cpp
+- **derived_from:** PRD.md, docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/ResolutionPublisher.cpp
 
 ## practice-separate-save-from-mark-resolved
 
@@ -158,4 +158,4 @@ Total nodes: 19
 - **title:** Separate Save from Mark resolved
 - **path:** practice-separate-save-from-mark-resolved.md
 - **tags:** product, saving, resolution, review
-- **derived_from:** PRD.md
+- **derived_from:** PRD.md, src/app/ResolutionPublisher.cpp

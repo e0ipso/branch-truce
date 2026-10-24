@@ -25,7 +25,7 @@ During Mark resolved, failure to save the app draft leaves the repository unchan
 
 If a file cannot be read or the session cannot show expected work, explain the problem and keep it outstanding. Do not treat a blank view as evidence of an empty file, no conflicts, or completion. Never claim saved, reviewed, or resolved work when that outcome does not hold.
 
-A failed Save and a failed Discard each keep one recovery transaction and block other commands until retry commits that same transaction. Retry Save records the app checkpoint. It does not write or stage the repository file, and a later restart keeps that retried checkpoint. Save still checkpoints an app-owned draft and does not stage the repository.
+A failed Save and a failed Discard each keep one recovery transaction and block other commands until retry commits that same transaction. Retry Save records the app checkpoint. It does not write or stage the repository file, and a later restart keeps that retried checkpoint. Save still checkpoints an app-owned draft and does not stage the repository. A failed or uncertain review, write, or stage stays visible and keeps the draft. A failed Discard says "Discard was not completed. The restored result is shown until retry finishes it."
 
 <!-- kk:citations:start -->
 # Citations
