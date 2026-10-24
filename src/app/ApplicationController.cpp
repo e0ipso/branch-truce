@@ -976,7 +976,11 @@ bool ApplicationController::eventFilter(QObject *watched, QEvent *event)
         auto *key = static_cast<QKeyEvent *>(event);
         const bool newline = key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter;
         const auto modifiers = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
-        if (modifiers == Qt::NoModifier && (newline || !key->text().isEmpty())) {
+        // Backspace and Delete carry a control character in text() but remove
+        // text. Predicting that character as an insertion rejects a deletion
+        // when the line or buffer is already exactly at its limit.
+        const bool deletion = key->key() == Qt::Key_Backspace || key->key() == Qt::Key_Delete;
+        if (modifiers == Qt::NoModifier && !deletion && (newline || !key->text().isEmpty())) {
             const int start = resultEditor_->property("selectionStart").toInt();
             const int end = resultEditor_->property("selectionEnd").toInt();
             const int from = std::clamp(std::min(start, end), 0, static_cast<int>(editorText_.size()));
