@@ -14,6 +14,7 @@
 #include <QSet>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QVersionNumber>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -249,15 +250,17 @@ ConflictHistory conflictHistory(Repository &repo, bool renamed = false, const Co
     return history;
 }
 
-void checkOperationIdentity(const Result &result, const ConflictHistory &history, RepositoryOperation operation)
+void checkOperationIdentity(const Result &result, const ConflictHistory &history, RepositoryOperation operation,
+                            const QByteArray &currentHead = {}, const QByteArray &earlier = {})
 {
+    const auto expectedHead = currentHead.isEmpty() ? history.main : currentHead;
     CHECK(result.outcome == Outcome::Success && result.exitCode == 0);
     CHECK(result.mutation == Mutation::NotAttempted && !result.outputIncomplete);
     CHECK(result.repository.supported && result.repository.operation == operation);
     CHECK(result.repository.unsupportedPaths.isEmpty() && result.repository.diagnostic.isEmpty());
-    CHECK(result.repository.stage2.commitId == history.main && result.repository.stage3.commitId == history.side);
-    CHECK(result.repository.baseCommitId == history.base);
-    CHECK(result.repository.stage2.label.contains(QString::fromLatin1(history.main)));
+    CHECK(result.repository.stage2.commitId == expectedHead && result.repository.stage3.commitId == history.side);
+    CHECK(result.repository.baseCommitId == (earlier.isEmpty() ? history.base : earlier));
+    CHECK(result.repository.stage2.label.contains(QString::fromLatin1(expectedHead)));
     CHECK(result.repository.stage3.label.contains(QString::fromLatin1(history.side)));
     if (operation == RepositoryOperation::Rebase) {
         CHECK(result.repository.stage2.label.startsWith("Current rebased state:"));
@@ -283,6 +286,16 @@ void checkUnsupportedDiscovery(Repository &repo, const QString &reason, Outcome 
     CHECK(result.indexEntries.size() == before.count('\0') && !result.indexEntries.isEmpty());
     CHECK(result.mutation == Mutation::NotAttempted);
     CHECK(repo.git({"ls-files", "--unmerged", "-z"}) == before);
+}
+
+QByteArray indexWithoutPath(const QByteArray &index, const QByteArray &path)
+{
+    QByteArray otherEntries;
+    for (const auto &record : index.split('\0')) {
+        if (!record.isEmpty() && record.mid(record.indexOf('\t') + 1) != path)
+            otherEntries += record + '\0';
+    }
+    return otherEntries;
 }
 
 TextConversionRequest textRequest(const Repository &repo, TextOperation operation, const QByteArray &object)
@@ -434,6 +447,7 @@ public:
                  {"missing-ours", ConflictSupport::MissingSide}, {"missing-theirs", ConflictSupport::MissingSide},
                  {"mode-disagreement", ConflictSupport::ModeConflict}, {"symlink-source", ConflictSupport::UnsupportedType},
                  {"submodule-source", ConflictSupport::UnsupportedType}, {"binary-source", ConflictSupport::UnsupportedText},
+                 {"symlink-base", ConflictSupport::UnsupportedType}, {"submodule-base", ConflictSupport::UnsupportedType},
                  {"invalid-utf8-source", ConflictSupport::UnsupportedText}, {"mixed-newlines-source", ConflictSupport::UnsupportedText},
                  {"invalid-result", ConflictSupport::UnsupportedText}, {"missing-result", ConflictSupport::TopologyConflict},
                  {"directory-result", ConflictSupport::TopologyConflict}, {"fifo-result", ConflictSupport::TopologyConflict},
@@ -455,8 +469,12 @@ public:
                 auto entries = run(adapter, repo.request(Operation::ListUnmerged)).indexEntries;
                 for (auto &entry : entries) {
                     if (entry.stage == 3 && scenario == "mode-disagreement") entry.mode = "100755";
-                    if (entry.stage == 3 && scenario == "symlink-source") entry.mode = "120000";
-                    if (entry.stage == 3 && scenario == "submodule-source") { entry.mode = "160000"; entry.objectId = history.side; }
+                    if ((entry.stage == 3 && scenario == "symlink-source") || (entry.stage == 1 && scenario == "symlink-base"))
+                        entry.mode = "120000";
+                    if ((entry.stage == 3 && scenario == "submodule-source") || (entry.stage == 1 && scenario == "submodule-base")) {
+                        entry.mode = "160000";
+                        entry.objectId = history.side;
+                    }
                     if (entry.stage == 3 && scenario == "unverified-source")
                         entry.objectId = repo.git({"hash-object", "-w", "--stdin"}, "not in either source\n").trimmed();
                 }
@@ -567,11 +585,99 @@ public:
             }
             CHECK(seen.size() == names.size() && repo.git({"ls-files", "--stage", "-z"}) == before);
         });
+        suite.run("both rebase backends verify replayed history in regular and linked worktrees", [] {
+            for (const auto backend : {"--merge", "--apply"}) {
+                for (const bool linked : {false, true}) {
+                    std::cout << "REBASE FIXTURE " << backend << " linked=" << linked << '\n';
+                    Repository repo;
+                    auto history = conflictHistory(repo);
+                    repo.git({"checkout", "--quiet", "side"});
+                    // Replay a clean commit before reaching the conflicting commit.
+                    // Stage 2 must identify the new HEAD, rather than the onto commit.
+                    repo.git({"reset", "--hard", QString::fromLatin1(history.base)});
+                    writeFile(repo.path("already-replayed.txt"), "earlier side change\n");
+                    repo.git({"add", "--", "already-replayed.txt"});
+                    const auto earlier = commitFixture(repo, "earlier side change");
+                    repo.git({"cherry-pick", QString::fromLatin1(history.side)});
+                    history.side = repo.git({"rev-parse", "HEAD"}).trimmed();
+                    repo.git({"checkout", "--quiet", "main"});
+                    const auto originalIndex = repo.git({"ls-files", "--stage", "-z"});
+                    QTemporaryDir linkedParent;
+                    CHECK(linkedParent.isValid());
+                    const auto directory = linked ? linkedParent.path() + "/checkout" : repo.root.path();
+                    if (linked) repo.git({"worktree", "add", "--quiet", directory, "side"});
+                    else repo.git({"checkout", "--quiet", "side"});
+                    repo.git({"-C", directory, "rebase", backend, "main"}, {}, 1);
+                    const auto currentHead = repo.git({"-C", directory, "rev-parse", "HEAD"}).trimmed();
+                    CHECK(currentHead != history.main && currentHead != history.side);
+                    CHECK(repo.git({"-C", directory, "rev-parse", "HEAD^"}).trimmed() == history.main);
+                    CHECK(repo.git({"-C", directory, "show", "HEAD:already-replayed.txt"}) == "earlier side change\n");
+                    CHECK(QDir().mkpath(directory + "/nested"));
+                    auto request = repo.request(Operation::DiscoverRepository);
+                    request.directory = directory + "/nested";
+                    GitAdapter adapter(gitExecutable);
+                    const auto before = repo.git({"-C", directory, "ls-files", "--stage", "-z"});
+                    const auto result = run(adapter, request);
+                    checkOperationIdentity(result, history, RepositoryOperation::Rebase, currentHead, earlier);
+                    CHECK(result.indexEntries.size() == 3 && result.repository.worktreeRoot == directory);
+                    const auto gitDirectory = QString::fromUtf8(repo.git({"-C", directory, "rev-parse", "--absolute-git-dir"}).trimmed());
+                    CHECK(result.repository.gitDirectory == QFileInfo(gitDirectory).canonicalFilePath());
+                    for (const auto &entry : result.indexEntries) {
+                        const auto sourceCommit = entry.stage == 1 ? earlier : entry.stage == 2 ? currentHead : history.side;
+                        CHECK(entry.path == "tracked.txt" && entry.mode == "100644");
+                        CHECK(entry.objectId == repo.git({"rev-parse", QString::fromLatin1(sourceCommit) + ":tracked.txt"}).trimmed());
+                    }
+                    ConflictClassifier classifier(gitExecutable);
+                    const auto classified = run(classifier, {request.directory, 71, 93});
+                    CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == 1);
+                    CHECK(classified.conflicts.front().editable() && classified.conflicts.front().sources.size() == 3);
+                    CHECK(repo.git({"-C", directory, "ls-files", "--stage", "-z"}) == before);
+                    if (linked) {
+                        CHECK(result.repository.gitDirectory != repo.path(".git"));
+                        const auto original = run(adapter, repo.request(Operation::DiscoverRepository));
+                        CHECK(original.outcome == Outcome::Success && original.repository.operation == RepositoryOperation::None);
+                        CHECK(original.indexEntries.isEmpty() && repo.git({"ls-files", "--stage", "-z"}) == originalIndex);
+                        CHECK(linkedParent.remove() && !QFileInfo::exists(directory));
+                    }
+                    checkConversionCleanup(repo);
+                }
+            }
+        });
+        suite.run("real cherry-pick revert and mailbox conflicts remain outside merge and rebase support", [] {
+            for (const auto operation : {"cherry-pick", "revert", "am"}) {
+                Repository repo;
+                const auto history = conflictHistory(repo);
+                const auto mailbox = QByteArray(operation) == "am";
+                if (mailbox) {
+                    const auto patch = repo.git({"format-patch", "--stdout", "-1", QString::fromLatin1(history.side)});
+                    repo.git({"am", "--3way"}, patch, 128);
+                } else repo.git({operation, "--no-edit", QString::fromLatin1(history.side)}, {}, 1);
+                checkUnsupportedDiscovery(repo, mailbox ? "apply-mailbox" : "cherry-pick, revert and sequencer", Outcome::Success);
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
+                ConflictClassifier classifier(gitExecutable);
+                const auto result = run(classifier, {repo.root.path(), 71, 93});
+                CHECK(result.outcome == Outcome::Success && result.conflicts.size() == 1);
+                const auto &conflict = result.conflicts.front();
+                CHECK(conflict.path == "tracked.txt" && conflict.support == ConflictSupport::UnsupportedOperation);
+                CHECK(!conflict.editable() && !conflict.reason.isEmpty() && !conflict.result && conflict.sources.isEmpty());
+                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                CHECK(repo.git({"rev-parse", "HEAD"}).trimmed() == history.main);
+                checkConversionCleanup(repo);
+            }
+        });
         return suite.report();
     }
     int runTests()
     {
         test_support::Suite suite("GitAdapterTests");
+        suite.run("real Git fixtures report their version and enforce the 2.43 floor", [] {
+            Repository repo;
+            const auto version = repo.git({"--version"}).trimmed();
+            std::cout << "GIT FIXTURE " << gitExecutable << ' ' << version.toStdString() << '\n';
+            CHECK(version.startsWith("git version "));
+            CHECK(QVersionNumber::fromString(QString::fromLatin1(version.mid(12))) >= QVersionNumber(2, 43));
+            checkConversionCleanup(repo);
+        });
         suite.run("merge discovery uses per-worktree metadata and verified stage identities", [] {
             for (const bool linked : {false, true}) {
                 Repository repo;
@@ -609,25 +715,6 @@ public:
                     CHECK(original.outcome == Outcome::Success && original.repository.operation == RepositoryOperation::None);
                     CHECK(!original.repository.supported && original.indexEntries.isEmpty());
                 }
-            }
-        });
-        suite.run("both rebase backends label the current state and replayed commit truthfully", [] {
-            for (const auto backend : {"--merge", "--apply"}) {
-                Repository repo;
-                const auto history = conflictHistory(repo);
-                repo.git({"checkout", "--quiet", "side"});
-                repo.git({"-c", "user.name=Branch Truce Tests", "-c", "user.email=tests@example.invalid",
-                          "rebase", backend, "main"}, {}, 1);
-                GitAdapter adapter(gitExecutable);
-                const auto before = repo.git({"ls-files", "--unmerged", "-z"});
-                const auto result = run(adapter, repo.request(Operation::DiscoverRepository));
-                checkOperationIdentity(result, history, RepositoryOperation::Rebase);
-                CHECK(result.indexEntries.size() == 3 && repo.git({"ls-files", "--unmerged", "-z"}) == before);
-                CHECK(result.repository.gitDirectory == repo.path(".git"));
-                ConflictClassifier classifier(gitExecutable);
-                const auto classified = run(classifier, {repo.root.path(), 71, 93});
-                CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == 1);
-                CHECK(classified.conflicts.front().editable() && classified.conflicts.front().sources.size() == 3);
             }
         });
         suite.run("unsupported and inconsistent operation metadata cannot acquire source labels", [] {
@@ -1092,7 +1179,7 @@ public:
             const auto wrongMode = run(conversion, verify);
             CHECK(wrongMode.outcome == Outcome::Rejected && wrongMode.diagnostic.contains("executable mode"));
         });
-        suite.run("unmerged index entries stay NUL-delimited", [] {
+        suite.run("literal conflict staging preserves every unrelated staged entry", [] {
             Repository repo;
             CHECK(QDir(repo.root.path()).mkdir("nested"));
             const auto base = repo.git({"hash-object", "-w", "--stdin"}, "base\n").trimmed();
@@ -1107,6 +1194,13 @@ public:
                 entries += "100644 " + theirs + " 3\t" + name + QByteArray(1, '\0');
             }
             repo.git({"update-index", "-z", "--index-info"}, entries);
+            const QByteArray unrelated = "unrelated staged\tfile.txt";
+            repo.writePath(unrelated, "staged content\n");
+            repo.git({"add", "--", QString::fromUtf8(unrelated)});
+            repo.git({"update-index", "--chmod=+x", "--", QString::fromUtf8(unrelated)});
+            const auto unrelatedIndex = repo.git({"ls-files", "--stage", "-z", "--", QString::fromUtf8(unrelated)});
+            CHECK(unrelatedIndex.startsWith("100755 "));
+            repo.writePath(unrelated, "unstaged content must remain unstaged\n");
             GitAdapter adapter(gitExecutable);
             const auto result = run(adapter, repo.request(Operation::ListUnmerged));
             CHECK(result.outcome == Outcome::Success);
@@ -1146,12 +1240,22 @@ public:
                 }
                 CHECK(stages == 14);
                 repo.writePath(name, "resolved\n");
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
                 const auto staged = run(adapter, repo.request(Operation::StageFile, name));
                 CHECK(staged.outcome == Outcome::Success && staged.mutation == Mutation::ObservedChanged);
                 CHECK(staged.indexBefore.count('\0') == 3 && staged.indexAfter.count('\0') == 1);
                 CHECK(staged.indexAfter.endsWith('\t' + name + QByteArray(1, '\0')));
+                const auto after = repo.git({"ls-files", "--stage", "-z"});
+                CHECK(indexWithoutPath(before, name) == indexWithoutPath(after, name));
+                CHECK(repo.git({"ls-files", "--stage", "-z", "--", QString::fromUtf8(unrelated)}) == unrelatedIndex);
             }
             CHECK(repo.git({"ls-files", "--unmerged", "-z"}).isEmpty());
+            CHECK(repo.git({"show", ":" + QString::fromUtf8(unrelated)}) == "staged content\n");
+            QFile untouched(repo.path(QString::fromUtf8(unrelated)));
+            CHECK(untouched.open(QIODevice::ReadOnly) && untouched.readAll() == "unstaged content must remain unstaged\n");
+            untouched.close();
+            for (const auto &file : repo.rawFiles) ::unlink(file.constData());
+            checkConversionCleanup(repo);
         });
         suite.run("enumerated and staged paths retain special and non-UTF-8 bytes", [] {
             Repository repo;
@@ -1307,13 +1411,21 @@ public:
                     auto raw = repo.request(Operation::ReadObject);
                     raw.objectId = blob;
                     CHECK(run(adapter, raw).standardOutput == "before\n");
-                    for (const auto operation : {Operation::Status, Operation::MaterializeSource,
+                    for (const auto operation : {Operation::Status, Operation::MaterializeSource, Operation::CanonicalizeText,
                                                  Operation::CheckParentStaging, Operation::StageFile}) {
                         auto request = repo.request(operation, operation == Operation::Status ? "" : "tracked.txt");
                         if (operation == Operation::MaterializeSource) request.objectId = blob;
+                        if (operation == Operation::CanonicalizeText) request.input = "reviewed\n";
                         const auto result = run(adapter, request);
                         CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
                         CHECK(result.diagnostic.contains("Outside app") && result.diagnostic.contains("filter"));
+                    }
+                    TextConversion conversion(gitExecutable);
+                    for (const auto operation : {TextOperation::ReadSource, TextOperation::PrepareResult}) {
+                        auto request = textRequest(repo, operation, blob);
+                        request.editedUtf8 = "reviewed\n";
+                        const auto result = run(conversion, request);
+                        CHECK(result.outcome == Outcome::Rejected && !result.text && result.diagnostic.contains("filter"));
                     }
                     CHECK(!QFile::exists(repo.path(".helper-ran")));
                     repo.git({"config", "--unset", QString::fromLatin1(key)});
@@ -1403,9 +1515,19 @@ public:
             {
                 Repository repo;
                 GitAdapter adapter(gitExecutable);
+                const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
                 const auto before = repo.git({"ls-files", "--stage", "-z"});
                 repo.git({"config", "core.fsmonitor", "touch .monitor-ran"});
-                CHECK(run(adapter, repo.request(Operation::Status)).outcome == Outcome::Success);
+                for (const auto operation : {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::InspectIndex,
+                                             Operation::ReadObject, Operation::ReadAttributes, Operation::Status,
+                                             Operation::MaterializeSource, Operation::CanonicalizeText}) {
+                    const bool noPath = operation == Operation::DiscoverRepository || operation == Operation::ListUnmerged
+                        || operation == Operation::ReadObject || operation == Operation::Status;
+                    auto request = repo.request(operation, noPath ? "" : "tracked.txt");
+                    if (operation == Operation::ReadObject || operation == Operation::MaterializeSource) request.objectId = blob;
+                    if (operation == Operation::CanonicalizeText) request.input = "before\n";
+                    CHECK(run(adapter, request).outcome == Outcome::Success);
+                }
                 for (const auto operation : {Operation::CheckParentStaging, Operation::StageFile}) {
                     const auto result = run(adapter, repo.request(operation, "tracked.txt"));
                     CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
@@ -1482,11 +1604,13 @@ public:
                 GitAdapter adapter(gitExecutable);
                 for (const auto operation : {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::InspectIndex,
                                              Operation::ReadObject, Operation::ReadAttributes, Operation::Status,
-                                             Operation::MaterializeSource, Operation::CheckParentStaging, Operation::StageFile}) {
+                                             Operation::MaterializeSource, Operation::CanonicalizeText,
+                                             Operation::CheckParentStaging, Operation::StageFile}) {
                     const bool noPath = operation == Operation::DiscoverRepository || operation == Operation::ListUnmerged
                         || operation == Operation::ReadObject || operation == Operation::Status;
                     auto request = repo.request(operation, noPath ? "" : "tracked.txt");
                     if (operation == Operation::ReadObject || operation == Operation::MaterializeSource) request.objectId = blob;
+                    if (operation == Operation::CanonicalizeText) request.input = "reviewed\n";
                     const auto result = run(adapter, request);
                     CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
                     CHECK(result.diagnostic.contains("Outside app"));
@@ -1496,6 +1620,9 @@ public:
                 auto missing = repo.request(Operation::ReadObject);
                 missing.objectId = QByteArray(40, '1');
                 CHECK(run(adapter, missing).outcome == Outcome::Rejected);
+                auto materializeMissing = repo.request(Operation::MaterializeSource, "tracked.txt");
+                materializeMissing.objectId = missing.objectId;
+                CHECK(run(adapter, materializeMissing).outcome == Outcome::Rejected);
                 CHECK(!QFile::exists(repo.path(".fetch-ran")));
                 CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
                 if (scenario == 0) repo.git({"config", "--unset", "extensions.partialClone"});
@@ -1507,6 +1634,7 @@ public:
                 CHECK(run(adapter, local).outcome == Outcome::Success);
                 CHECK(run(adapter, missing).outcome == Outcome::ExitFailure);
                 CHECK(!QFile::exists(repo.path(".fetch-ran")));
+                checkConversionCleanup(repo);
             }
         });
         suite.run("a registered mergetool parent stages only after a successful release preflight", [] {
