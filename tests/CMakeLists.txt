@@ -48,8 +48,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_test(NAME git.adapter COMMAND branch_truce_git_tests)
     add_test(NAME git.conflict-classification COMMAND branch_truce_git_tests --classification-only)
     set_tests_properties(git.conflict-classification PROPERTIES TIMEOUT 30)
-    # Includes the adapter's real 30-second operation deadline.
-    set_tests_properties(git.adapter PROPERTIES TIMEOUT 45)
+    # Allow the real 30-second operation deadline plus the Git fixture matrix.
+    set_tests_properties(git.adapter PROPERTIES TIMEOUT 90)
 
     # Keep the accepted standalone editor fixture in the permanent regression suite.
     set(editor_fixture "${PROJECT_SOURCE_DIR}/experiments/editor-integration")

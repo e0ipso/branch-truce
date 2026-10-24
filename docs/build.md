@@ -68,7 +68,7 @@ CTest includes the core build canary, revisioned session tests and CLI guards.
 Desktop builds also test the Qt session model, the asynchronous Git adapter in
 temporary repositories, and the accepted editor fixture. The session, model
 and Git tests report case and assertion counts; the editor reports assertions.
-The Git test includes the real 30-second operation deadline and has a 45-second
+The Git test includes the real 30-second operation deadline and has a 90-second
 suite timeout. Its scripted executables live outside the temporary repositories.
 
 The desktop startup canary loads the embedded QML and Kirigami with offscreen
