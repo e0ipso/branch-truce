@@ -4,11 +4,13 @@
 #include <optional>
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QLocalSocket>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTextStream>
+#include <QThread>
 #include <QTimer>
 #include <QUuid>
 
@@ -49,6 +51,33 @@ bool connectSession(QLocalSocket *socket, const QString &name, int attempts)
         socket->abort();
         socket->connectToServer(name);
         if (socket->waitForConnected(200)) return true;
+    }
+    return false;
+}
+
+// waitForConnected returns at once when no server exists, so counted retries
+// finish in milliseconds. After the GUI starts, spend that 75x200ms budget
+// as wall-clock time.
+constexpr qint64 kPostSpawnListenDeadlineMs = 75 * 200;
+constexpr qint64 kListenRetrySliceMs = 200;
+
+bool connectUntilDeadline(QLocalSocket *socket, const QString &name, qint64 deadlineMs)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < deadlineMs) {
+        socket->abort();
+        socket->connectToServer(name);
+        const qint64 remaining = deadlineMs - timer.elapsed();
+        if (remaining <= 0) break;
+        const qint64 slice = remaining < kListenRetrySliceMs ? remaining : kListenRetrySliceMs;
+        const qint64 started = timer.elapsed();
+        if (socket->waitForConnected(static_cast<int>(slice))) return true;
+        const qint64 spent = timer.elapsed() - started;
+        if (spent >= slice) continue;
+        const qint64 left = deadlineMs - timer.elapsed();
+        const qint64 pause = (slice - spent) < left ? (slice - spent) : left;
+        if (pause > 0) QThread::msleep(static_cast<unsigned long>(pause));
     }
     return false;
 }
@@ -110,7 +139,7 @@ int runMergetoolLauncher(int argc, char **argv)
     bool connected = connectSession(&socket, server, 5);
     if (!connected && !noSpawn) {
         QProcess::startDetached(QCoreApplication::applicationFilePath(), {discovered->repository.worktreeRoot});
-        connected = connectSession(&socket, server, 75);
+        connected = connectUntilDeadline(&socket, server, kPostSpawnListenDeadlineMs);
     }
     if (!connected) return fail(QStringLiteral("No Branch Truce session is listening for this repository."));
 
