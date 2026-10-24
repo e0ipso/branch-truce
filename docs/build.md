@@ -4,7 +4,9 @@ The build separates `branch_truce_core`, `branch_truce_controller`,
 `branch_truce_git`, `branch_truce_storage`, `branch_truce_ui` and the
 `branch-truce` executable. Git provides constrained asynchronous inspection and
 conversion; storage provides lossless text codecs. See the
-[supported conversion envelope](text-conversion.md). The window is a startup scaffold.
+[supported conversion envelope](text-conversion.md). The window opens the launched
+repository's current conflict session with a file list and a read-only working-file
+preview. Editing and resolution controls remain separate implementation work.
 The core uses C++20 and the standard library without Qt or platform I/O.
 
 ## Machine provisioning
@@ -70,8 +72,22 @@ The Git test includes the real 30-second operation deadline and has a 45-second
 suite timeout. Its scripted executables live outside the temporary repositories.
 
 The desktop startup canary loads the embedded QML and Kirigami with offscreen
-software rendering. The executable also accepts `--smoke-test` for that check.
+software rendering, then waits for repository discovery and file loading. The
+executable accepts `--smoke-test` to print a `BRANCH_TRUCE_SESSION=` JSON record and
+exit after startup settles, including an unsupported or invalid selection. Its
+exit code checks window loading; the record describes session opening separately.
 GUI tests retain a 30-second timeout. Startup does not report an assertion count.
+
+Launch directly into a repository's current merge or rebase with
+`build/desktop/src/app/branch-truce /path/to/repository`. A subdirectory selects
+its containing worktree; omitting the directory uses the current directory.
+Discovery verifies the operation and source identities locally. Unsupported
+operations and files remain visible with an explanation, and unreadable files
+never appear as empty supported results. Startup does not change the worktree or
+index. The session uses no account or network and covers the conflicts present at
+launch. Continue and commit in the usual Git workflow. This repository-session
+entry point does not yet implement the mergetool parent handoff described in the
+technical specification.
 
 Build directories are disposable. The default root `build/` directory is ignored
 by Git. An optional second absolute argument to `prepare-worktree.sh` places
