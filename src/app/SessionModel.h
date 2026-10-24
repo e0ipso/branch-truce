@@ -58,6 +58,7 @@ public:
     Transition editResult(const std::string &id, RevisionId expected, ResultEdit edit);
     Transition applyCommand(const std::string &id, const EditingCommand &command, bool confirmReplacement = false);
     Transition applyChoice(const std::string &id, const ChoicePreview &preview, bool confirmReplacement = false);
+    Transition applyNonConflicting(const std::string &id, const NonConflictingPreview &preview, bool confirm = false);
     Transition undo(const std::string &id, RevisionId expected);
     Transition redo(const std::string &id, RevisionId expected);
     Transition discardToCheckpoint(const std::string &id, RevisionId expected);

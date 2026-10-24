@@ -18,6 +18,78 @@ Kirigami.ApplicationWindow {
         else
             controller.applyChoice(false);
     }
+    function chooseNonConflicting(scope: string): void {
+        if (controller.previewNonConflicting(controller.selectedFileId, selectedFile.currentRevision, scope))
+            nonConflictingDialog.open();
+    }
+    Dialog {
+        id: nonConflictingDialog
+        objectName: "nonConflictingDialog"
+        title: qsTr("Apply non-conflicting changes · %1").arg(window.controller.nonConflictingPreview.scope || "")
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(window.width - 40, 750)
+        height: Math.min(window.height - 40, 600)
+        standardButtons: Dialog.Apply | Dialog.Cancel
+        onApplied: {
+            window.controller.applyNonConflicting();
+            close();
+        }
+        onRejected: window.controller.cancelChoice()
+        ColumnLayout {
+            anchors.fill: parent
+            Label {
+                Layout.fillWidth: true
+                text: window.controller.nonConflictingPreview.path || ""
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                font.bold: true
+            }
+            Label {
+                Layout.fillWidth: true
+                text: window.controller.nonConflictingPreview.summary || ""
+                wrapMode: Text.Wrap
+            }
+            Label {
+                Layout.fillWidth: true
+                text: window.controller.nonConflictingPreview.detail || ""
+                wrapMode: Text.Wrap
+            }
+            ListView {
+                objectName: "nonConflictingChanges"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: window.controller.nonConflictingPreview.changes || []
+                delegate: ColumnLayout {
+                    id: batchChange
+                    required property var modelData
+                    width: ListView.view.width
+                    Label {
+                        Layout.fillWidth: true
+                        text: batchChange.modelData.scope
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 150
+                        SnapshotPane {
+                            paneName: "batchBefore"
+                            paneTitle: qsTr("Current text in this scope")
+                            paneText: batchChange.modelData.before
+                        }
+                        SnapshotPane {
+                            paneName: "batchAfter"
+                            paneTitle: qsTr("Proposed text")
+                            paneText: batchChange.modelData.replacement
+                        }
+                    }
+                }
+                ScrollBar.vertical: ScrollBar {}
+            }
+        }
+    }
     Shortcut {
         sequences: [StandardKey.Undo]
         enabled: !!window.selectedFile.canUndo && !!window.selectedFile.canEdit && !resultEditor.inputMethodComposing
@@ -283,6 +355,34 @@ Kirigami.ApplicationWindow {
                         }
                         Label {
                             text: resultEditor.inputMethodComposing ? qsTr("Composing input · not acknowledged") : qsTr("Text and choices share undo/redo")
+                        }
+                    }
+                    Label {
+                        objectName: "nonConflictingScope"
+                        Layout.fillWidth: true
+                        visible: window.supportedSelection
+                        text: qsTr("Non-conflicting changes in %1. Preview the eligible changes before applying.")
+                            .arg(window.selectedFile.path || "")
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                    RowLayout {
+                        visible: window.supportedSelection
+                        enabled: !!window.selectedFile.canEdit && !resultEditor.inputMethodComposing
+                        Button {
+                            objectName: "nonConflictingLeft"
+                            text: qsTr("Preview non-conflicting Left")
+                            onClicked: window.chooseNonConflicting("left")
+                        }
+                        Button {
+                            objectName: "nonConflictingRight"
+                            text: qsTr("Preview non-conflicting Right")
+                            onClicked: window.chooseNonConflicting("right")
+                        }
+                        Button {
+                            objectName: "nonConflictingBoth"
+                            text: qsTr("Preview non-conflicting Both")
+                            onClicked: window.chooseNonConflicting("both")
                         }
                     }
                     RowLayout {

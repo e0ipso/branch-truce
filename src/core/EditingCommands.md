@@ -32,8 +32,33 @@ changes neither text nor decisions.
 `EditingCommand` is the shared value interface for mapped edits and explicit
 decision updates. `FileSession::applyCommand` validates all current registered
 targets, UTF-8 boundaries and nonoverlapping edits before publishing one history
-entry. It supports later planners that need several ranges or ordered decisions.
-Bulk and whole-file workflows are separate work.
+entry. It supports planners that need several ranges or ordered decisions.
+Whole-file replacement is a separate workflow.
+
+`previewNonConflicting` offers Left, Right and Both batches for the selected
+file. It compares each captured side against the available common earlier
+version. Changed ranges that overlap the other side's changes or ambiguous
+alignment stay outstanding. Insertions touching another changed range also
+stay outstanding, since their order can matter. Identical changes are eligible
+from either side and appear once in a combined batch. Without an earlier
+snapshot, the batch is unavailable.
+
+Each eligible contribution has registered source and earlier-version anchors
+that follow edits and history. A batch replaces only mapped, unchanged earlier
+text, or accepts an exactly mapped contribution already present in the result.
+Existing decisions, overlapping manual edits, unsafe mappings and overlapping
+accepted contributions are skipped. A combined batch also rejects independent
+changes whose result ranges collide. Edits outside or between its ranges remain
+intact. Only selected source decisions become accepted; competing decisions keep
+their exact state. Older drafts keep their existing decision vocabulary.
+
+The batch preview names the file, side scope, eligible and skipped counts, source
+line ranges, and exact current/proposed text for each change. Applying requires
+explicit confirmation and regenerates the entire preview at its issued revision.
+Cancellation, stale previews and altered previews leave text and decisions alone.
+The complete batch is one `EditingCommand` and one recovery transaction, so undo
+and redo restore its text and decisions in the shared action order. Failed
+recovery retains the whole batch candidate for retry before acknowledgment.
 
 `CombineLeftFirst` and `CombineRightFirst` preview both immutable source scopes
 in their stated order. A line pairs with exactly one mapped competing line in

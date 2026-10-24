@@ -67,6 +67,12 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
                 if (initializeChoices)
                     for (const auto &id : target.decisions) initial.decisions.try_emplace(id);
             }
+            nonConflictingTargets_ = std::make_shared<const std::vector<NonConflictingTarget>>(
+                branch_truce::nonConflictingTargets(*snapshots_, *choices_));
+            for (const auto &target : *nonConflictingTargets_) {
+                if (!bound->bind(target.earlier) || !bound->bind(target.source))
+                    throw std::invalid_argument("Invalid non-conflicting scope");
+            }
             correspondence = std::move(bound);
         } catch (const std::exception &error) {
             support_ = Support::Unreadable;
@@ -80,6 +86,12 @@ const std::vector<ChoiceTarget> &FileSession::choices() const noexcept
 {
     static const std::vector<ChoiceTarget> empty;
     return choices_ ? *choices_ : empty;
+}
+
+const std::vector<NonConflictingTarget> &FileSession::nonConflictingTargets() const noexcept
+{
+    static const std::vector<NonConflictingTarget> empty;
+    return nonConflictingTargets_ ? *nonConflictingTargets_ : empty;
 }
 
 RevisionId FileSession::advance(const Draft &draft,

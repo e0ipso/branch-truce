@@ -359,9 +359,80 @@ bool ApplicationController::applyChoice(bool confirmReplacement)
     return commandResult(result);
 }
 
+QVariantMap ApplicationController::nonConflictingPreview() const
+{
+    if (!nonConflictingPreview_) return {};
+    const auto &preview = *nonConflictingPreview_;
+    const auto *file = files_.file(previewFileId_.toStdString());
+    if (!file || !file->snapshots()) return {};
+    QVariantList changes;
+    for (const auto &change : preview.changes) {
+        QStringList scopes;
+        for (const auto &source : change.sources) {
+            const auto &captured = source.side == SourceSide::Stage2 ? file->snapshots()->stage2 : file->snapshots()->stage3;
+            const auto &value = captured->worktree.utf8;
+            const auto line = [&](std::size_t offset) {
+                return 1 + std::count(value.begin(), value.begin() + static_cast<std::ptrdiff_t>(offset), '\n');
+            };
+            const auto side = source.side == SourceSide::Stage2 ? tr("Left") : tr("Right");
+            scopes.push_back(source.range.begin == source.range.end
+                ? tr("%1 deletion at line %2 · %3").arg(side).arg(line(source.range.begin)).arg(text(captured->label))
+                : tr("%1 lines %2–%3 · %4").arg(side).arg(line(source.range.begin)).arg(line(source.range.end - 1))
+                    .arg(text(captured->label)));
+        }
+        changes.push_back(QVariantMap{{QStringLiteral("scope"), scopes.join(QLatin1Char('\n'))},
+            {QStringLiteral("before"), text(change.before)}, {QStringLiteral("replacement"), text(change.replacement)}});
+    }
+    return {{QStringLiteral("path"), displayPath(previewFileId_)},
+        {QStringLiteral("scope"), preview.scope == NonConflictingScope::Left ? tr("Left")
+            : preview.scope == NonConflictingScope::Right ? tr("Right") : tr("Left and Right")},
+        {QStringLiteral("detail"), text(preview.detail)}, {QStringLiteral("changes"), changes},
+        {QStringLiteral("summary"), tr("%1 eligible changes · %2 other non-conflicting changes skipped")
+            .arg(preview.changes.size()).arg(preview.skipped)}};
+}
+
+bool ApplicationController::previewNonConflicting(const QString &fileId, const QString &revision, const QString &scope)
+{
+    cancelChoice();
+    const auto *file = files_.file(fileId.toStdString());
+    const auto expected = revisionId(revision);
+    if (!file || !expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
+    if (files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id())
+        || (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool())) return commandResult(Transition::Blocked);
+    NonConflictingScope kind;
+    if (scope == QLatin1String("left")) kind = NonConflictingScope::Left;
+    else if (scope == QLatin1String("right")) kind = NonConflictingScope::Right;
+    else if (scope == QLatin1String("both")) kind = NonConflictingScope::Both;
+    else return commandResult(Transition::InvalidAnchor);
+    auto preview = branch_truce::previewNonConflicting(*file, *expected, kind);
+    commandMessage_ = preview.state == Transition::NoChange ? tr("No eligible non-conflicting changes. ") : QString{};
+    commandMessage_ += text(preview.detail);
+    if (preview.state != Transition::ConfirmationRequired) {
+        Q_EMIT commandChanged();
+        return false;
+    }
+    nonConflictingPreview_ = std::move(preview);
+    previewFileId_ = fileId;
+    Q_EMIT commandChanged();
+    return true;
+}
+
+bool ApplicationController::applyNonConflicting()
+{
+    if (!nonConflictingPreview_ || previewFileId_ != selectedFileId_) return commandResult(Transition::StaleRevision);
+    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return commandResult(Transition::Blocked);
+    const auto preview = *nonConflictingPreview_;
+    const auto id = previewFileId_;
+    const auto result = files_.applyNonConflicting(id.toStdString(), preview, true);
+    nonConflictingPreview_.reset();
+    previewFileId_.clear();
+    return commandResult(result);
+}
+
 void ApplicationController::cancelChoice()
 {
     preview_.reset();
+    nonConflictingPreview_.reset();
     previewFileId_.clear();
     commandMessage_.clear();
     Q_EMIT commandChanged();

@@ -288,4 +288,167 @@ Transition applyChoice(FileSession &file, const ChoicePreview &preview, bool con
     if (current.state == Transition::ConfirmationRequired && !confirmReplacement) return Transition::ConfirmationRequired;
     return file.applyCommand(current.command, confirmReplacement);
 }
+
+std::vector<NonConflictingTarget> nonConflictingTargets(
+    const FileSnapshots &snapshots, const std::vector<ChoiceTarget> &choices)
+{
+    if (!snapshots.earlier || !snapshots.stage2 || !snapshots.stage3) return {};
+    const auto &earlier = snapshots.earlier->worktree.utf8;
+    const auto &left = snapshots.stage2->worktree.utf8;
+    const auto &right = snapshots.stage3->worktree.utf8;
+    const auto a = ExactLineCorrespondence{}.compare(earlier, left);
+    const auto b = ExactLineCorrespondence{}.compare(earlier, right);
+    std::set<std::string> decisions;
+    for (const auto &choice : choices)
+        decisions.insert(choice.decisions.begin(), choice.decisions.end());
+    // Insertions at a changed range's boundary can depend on its ordering.
+    // Keep them outstanding rather than guessing a composition.
+    const auto competes = [](ByteRange first, ByteRange second) {
+        if (first.begin == first.end) return second.begin <= first.begin && first.begin <= second.end;
+        if (second.begin == second.end) return first.begin <= second.begin && second.begin <= first.end;
+        return overlaps(first, second);
+    };
+    std::vector<NonConflictingTarget> result;
+    const auto add = [&](SourceSide side, const auto &own, const auto &other,
+                         const std::string &text, const std::string &otherText) {
+        for (const auto &passage : own) {
+            if (passage.kind == PassageKind::Equal || passage.kind == PassageKind::Ambiguous) continue;
+            const auto replacement = std::string_view(text).substr(passage.result.begin,
+                passage.result.end - passage.result.begin);
+            const bool competing = std::any_of(other.begin(), other.end(), [&](const auto &candidate) {
+                if (candidate.kind == PassageKind::Equal || !competes(passage.source, candidate.source)) return false;
+                // Identical changes are safe in either scope and are deduplicated in a combined batch.
+                return candidate.kind == PassageKind::Ambiguous || passage.source != candidate.source
+                    || replacement != std::string_view(otherText).substr(candidate.result.begin,
+                        candidate.result.end - candidate.result.begin);
+            });
+            if (competing) continue;
+            const auto id = "non-conflicting/" + rangeId(side, passage.result);
+            NonConflictingTarget target{{id + "/earlier", SourceSide::Earlier, passage.source},
+                                       {id, side, passage.result}, {}};
+            for (const auto &line : lines(side, text, passage.result))
+                if (decisions.contains(line.contributionId)) target.decisions.push_back(line.contributionId);
+            result.push_back(std::move(target));
+        }
+    };
+    add(SourceSide::Stage2, a, b, left, right);
+    add(SourceSide::Stage3, b, a, right, left);
+    return result;
+}
+
+NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId expected, NonConflictingScope scope)
+{
+    NonConflictingPreview preview;
+    preview.revision = expected;
+    preview.scope = scope;
+    preview.path = file.path();
+    preview.command.expected = expected;
+    if (expected != file.current().id) {
+        preview.state = Transition::StaleRevision;
+        preview.detail = "The result changed. Preview the batch again.";
+        return preview;
+    }
+    if (file.support() != Support::Supported || !file.correspondence()) {
+        preview.detail = "This file cannot apply non-conflicting changes.";
+        return preview;
+    }
+    if (!file.snapshots()->earlier) {
+        preview.detail = "The common earlier version is unavailable. Non-conflicting changes cannot be identified safely.";
+        return preview;
+    }
+    struct Candidate {
+        NonConflictingChange change;
+        ResultAnchor anchor;
+        ByteRange earlier;
+        std::vector<std::string> decisions;
+        bool unavailable = false;
+    };
+    std::vector<Candidate> candidates;
+    const auto *mapping = file.correspondence();
+    const auto &draft = file.current().draft;
+    for (const auto &target : file.nonConflictingTargets()) {
+        if ((scope == NonConflictingScope::Left && target.source.side != SourceSide::Stage2)
+            || (scope == NonConflictingScope::Right && target.source.side != SourceSide::Stage3)) continue;
+        const auto skip = [&] { ++preview.skipped; };
+        if (std::any_of(target.decisions.begin(), target.decisions.end(), [&](const auto &id) {
+            const auto found = draft.decisions.find(id);
+            return found == draft.decisions.end() || found->second.value != DecisionValue::Undecided;
+        })) { skip(); continue; }
+        const auto *anchor = mapping->anchor(target.earlier.contributionId);
+        if (!anchor || anchor->state != AnchorState::Mapped || !anchor->result) { skip(); continue; }
+        const auto &source = target.source.side == SourceSide::Stage2 ? file.snapshots()->stage2 : file.snapshots()->stage3;
+        const auto replacement = source->worktree.utf8.substr(target.source.range.begin,
+            target.source.range.end - target.source.range.begin);
+        // An insertion already present in the result lies beside its empty
+        // earlier anchor. Its own registered source range identifies it exactly.
+        if (target.earlier.range.begin == target.earlier.range.end) {
+            const auto *present = mapping->anchor(target.source.contributionId);
+            if (present && present->state == AnchorState::Mapped && present->result
+                && (anchor->result->begin == present->result->begin || anchor->result->begin == present->result->end)
+                && draft.text.substr(present->result->begin, present->result->end - present->result->begin) == replacement)
+                anchor = present;
+        }
+        const auto range = *anchor->result;
+        const auto before = draft.text.substr(range.begin, range.end - range.begin);
+        const auto base = file.snapshots()->earlier->worktree.utf8.substr(target.earlier.range.begin,
+            target.earlier.range.end - target.earlier.range.begin);
+        if (before != replacement && (anchor->manualOverlap || before != base)) { skip(); continue; }
+        // Never overwrite another accepted contribution, even if it happens
+        // to contain the earlier bytes. Other decisions are preserved verbatim.
+        const bool acceptedOverlap = std::any_of(draft.decisions.begin(), draft.decisions.end(), [&](const auto &entry) {
+            if (entry.second.value != DecisionValue::Accepted
+                || std::find(target.decisions.begin(), target.decisions.end(), entry.first) != target.decisions.end()) return false;
+            const auto *accepted = mapping->anchor(entry.first);
+            return !accepted || accepted->state != AnchorState::Mapped || !accepted->result
+                || overlaps(range, *accepted->result);
+        });
+        if (acceptedOverlap) { skip(); continue; }
+        if (before == replacement && target.decisions.empty()) continue;
+        candidates.push_back({{{target.source}, range, before, replacement}, *anchor, target.earlier.range, target.decisions});
+    }
+    // Independent source ranges can collapse onto the same result passage.
+    // Reject both unless they describe exactly the same contribution.
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        for (std::size_t j = i + 1; j < candidates.size(); ++j) {
+            const auto &a = candidates[i].change;
+            const auto &b = candidates[j].change;
+            const bool collides = overlaps(a.result, b.result)
+                || (a.before != a.replacement && b.before != b.replacement && a.result.begin == b.result.begin);
+            if (collides && (a.result != b.result || a.replacement != b.replacement
+                || candidates[i].earlier != candidates[j].earlier)) {
+                candidates[i].unavailable = true;
+                candidates[j].unavailable = true;
+            }
+        }
+    }
+    for (auto &candidate : candidates) {
+        if (candidate.unavailable) { ++preview.skipped; continue; }
+        const auto duplicate = std::find_if(preview.changes.begin(), preview.changes.end(), [&](const auto &change) {
+            return change.result == candidate.change.result && change.replacement == candidate.change.replacement;
+        });
+        if (duplicate != preview.changes.end()) {
+            duplicate->sources.push_back(candidate.change.sources.front());
+        } else {
+            if (candidate.change.before != candidate.change.replacement)
+                preview.command.edits.push_back({candidate.change.result, candidate.change.replacement});
+            preview.changes.push_back(std::move(candidate.change));
+            preview.command.targets.push_back(std::move(candidate.anchor));
+        }
+        for (const auto &id : candidate.decisions) preview.command.decisions[id] = {DecisionValue::Accepted, {}};
+    }
+    preview.state = preview.changes.empty() ? Transition::NoChange : Transition::ConfirmationRequired;
+    preview.detail = "Only the displayed non-conflicting changes in this file will be applied. "
+        "Competing choices, existing decisions, manual edits and uncertain passages are left alone.";
+    return preview;
+}
+
+Transition applyNonConflicting(FileSession &file, const NonConflictingPreview &preview, bool confirm)
+{
+    if (preview.revision != file.current().id) return Transition::StaleRevision;
+    const auto current = previewNonConflicting(file, preview.revision, preview.scope);
+    if (current != preview) return Transition::InvalidAnchor;
+    if (current.state != Transition::ConfirmationRequired) return current.state;
+    if (!confirm) return Transition::ConfirmationRequired;
+    return file.applyCommand(current.command);
+}
 }

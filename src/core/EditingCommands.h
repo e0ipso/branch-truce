@@ -42,4 +42,41 @@ struct ChoicePreview {
                                          const std::string &target, ChoiceAction action);
 Transition applyChoice(FileSession &file, const ChoicePreview &preview, bool confirmReplacement = false);
 
+enum class NonConflictingScope { Left, Right, Both };
+
+struct NonConflictingTarget {
+    SourceAnchor earlier;
+    SourceAnchor source;
+    std::vector<std::string> decisions;
+};
+
+// Only exact, non-competing changes relative to an available earlier capture.
+// Decision IDs belong to the existing scoped-choice vocabulary.
+[[nodiscard]] std::vector<NonConflictingTarget> nonConflictingTargets(
+    const FileSnapshots &snapshots, const std::vector<ChoiceTarget> &choices);
+
+struct NonConflictingChange {
+    std::vector<SourceAnchor> sources;
+    ByteRange result;
+    std::string before;
+    std::string replacement;
+    bool operator==(const NonConflictingChange &) const = default;
+};
+
+struct NonConflictingPreview {
+    Transition state = Transition::Blocked;
+    RevisionId revision = 0;
+    NonConflictingScope scope = NonConflictingScope::Both;
+    std::string path;
+    std::string detail;
+    std::size_t skipped = 0;
+    std::vector<NonConflictingChange> changes;
+    EditingCommand command;
+    bool operator==(const NonConflictingPreview &) const = default;
+};
+
+[[nodiscard]] NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId expected,
+    NonConflictingScope scope = NonConflictingScope::Both);
+Transition applyNonConflicting(FileSession &file, const NonConflictingPreview &preview, bool confirm = false);
+
 }

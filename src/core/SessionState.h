@@ -42,6 +42,7 @@ struct EditingCommand {
     bool operator==(const EditingCommand &) const = default;
 };
 struct ChoiceTarget;
+struct NonConflictingTarget;
 
 enum class Outcome { Succeeded, Failed, Uncertain };
 struct OperationOutcome {
@@ -109,6 +110,7 @@ public:
         return current().correspondence.get();
     }
     [[nodiscard]] const std::vector<ChoiceTarget> &choices() const noexcept;
+    [[nodiscard]] const std::vector<NonConflictingTarget> &nonConflictingTargets() const noexcept;
     [[nodiscard]] const std::optional<Revision> &checkpoint() const noexcept { return checkpoint_; }
     [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return reviewed_; }
     [[nodiscard]] const std::optional<Revision> &written() const noexcept { return written_; }
@@ -161,6 +163,7 @@ private:
     std::string supportDetail_;
     std::shared_ptr<const FileSnapshots> snapshots_;
     std::shared_ptr<const std::vector<ChoiceTarget>> choices_;
+    std::shared_ptr<const std::vector<NonConflictingTarget>> nonConflictingTargets_;
     std::map<RevisionId, Revision> revisions_;
     RevisionId current_ = 1;
     RevisionId next_ = 2;

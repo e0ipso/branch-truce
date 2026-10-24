@@ -376,6 +376,12 @@ Transition SessionModel::redo(const std::string &id, RevisionId expected)
 {
     return update(id, QStringLiteral("redo"), [&](auto &file) { return file.redo(expected); });
 }
+Transition SessionModel::applyNonConflicting(const std::string &id, const NonConflictingPreview &preview, bool confirm)
+{
+    return update(id, QStringLiteral("replace-draft"), [&](auto &file) {
+        return branch_truce::applyNonConflicting(file, preview, confirm);
+    });
+}
 Transition SessionModel::discardToCheckpoint(const std::string &id, RevisionId expected)
 {
     return update(id, QStringLiteral("discard-to-checkpoint"), [&](auto &file) { return file.discardToCheckpoint(expected); });
