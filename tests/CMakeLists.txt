@@ -46,7 +46,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=${correspondence_constructor}")
     add_dependencies(branch_truce_startup_route_tests branch-truce)
     add_test(NAME app.startup-routes COMMAND branch_truce_startup_route_tests $<TARGET_FILE:branch-truce>)
-    set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 45)
+    # Real merge fixtures include restart and recovery fault matrices.
+    set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 90)
 
     add_executable(branch_truce_coordinator_tests app/SessionCoordinatorTests.cpp)
     target_include_directories(branch_truce_coordinator_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

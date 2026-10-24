@@ -1,5 +1,8 @@
 #include "app/SessionModel.h"
+#include "app/RecoveryRestore.h"
 #include "TestHarness.h"
+#include "fixtures/ChoiceFile.h"
+#include "fixtures/RecoveryJournal.h"
 #include "fixtures/RecoveryFaults.h"
 #include <QCoreApplication>
 #include <QJsonArray>
@@ -7,12 +10,15 @@
 #include <QPersistentModelIndex>
 #include <QSet>
 #include <QTemporaryDir>
+#include <QUuid>
 #include <limits>
 #include <cstdlib>
 
 using namespace branch_truce;
 
 namespace {
+constexpr auto recoverySessionId = "42c4588c-5cc2-4fba-964f-3e98a066e671";
+
 Draft draft(std::string text = "result\n")
 {
     return {std::move(text), {{"left", {DecisionValue::Accepted, 1}}}, 0};
@@ -33,7 +39,8 @@ FileSession recoverableFile()
 {
     FileSnapshots captured;
     captured.path = std::string(":literal\t") + static_cast<char>(0xff);
-    captured.provenance.sessionId = "recovery-session";
+    captured.resultMode = "100644";
+    captured.provenance.sessionId = recoverySessionId;
     captured.provenance.worktreeRoot = "/disposable-worktree";
     captured.provenance.gitDirectory = "/disposable-worktree/.git";
     captured.provenance.stage2CommitId = "left-commit";
@@ -43,7 +50,8 @@ FileSession recoverableFile()
         {"left\n", "left\r\n", {SnapshotFormat::Encoding::Utf8, false, SnapshotFormat::Newline::CrLf, true}},
         "left-commit", "Current checkout"};
     captured.stage3 = SourceSnapshot{"right-object", "100644", "right\n",
-        {"right\n", "right\n", {}}, "right-commit", "Merged commit"};
+        {"right\n", "right\n", {SnapshotFormat::Encoding::Utf8, false, SnapshotFormat::Newline::Lf, true}},
+        "right-commit", "Merged commit"};
     captured.launchResult.text = {"manual launch\n", "\xef\xbb\xbfmanual launch\r\n",
         {SnapshotFormat::Encoding::Utf8, true, SnapshotFormat::Newline::CrLf, true}};
     captured.launchResult.identity = {11, 22, 0100644, 18, 33, 44, 55, 66};
@@ -106,6 +114,13 @@ int acknowledgeAndCrash(const QString &directory)
     CHECK(::write(STDOUT_FILENO, "ACK 4\n", 6) == 6);
     std::_Exit(0);
 }
+FileSession replayedFile(const QString &directory)
+{
+    const auto replay = replayRecovery(storage::RecoveryStore(directory));
+    if (!replay.succeeded) throw std::runtime_error("recovery replay: " + replay.error.toStdString());
+    CHECK(replay.succeeded && replay.error.isEmpty() && replay.files.size() == 1);
+    return replay.files.front();
+}
 }
 
 class SessionModelTests {
@@ -113,6 +128,131 @@ public:
     int run()
     {
         test_support::Suite suite("SessionModelTests");
+        for (const auto action : {ChoiceAction::Accept, ChoiceAction::Ignore, ChoiceAction::ResolveUsingSide}) {
+            suite.run("TRUCE-0016 command undo and redo each replay complete text and decisions "
+                + std::to_string(static_cast<int>(action)), [=] {
+                QTemporaryDir directory;
+                CHECK(directory.isValid());
+                SessionModel model(directory.path() + "/recovery");
+                CHECK(model.appendFile(test_support::choiceFile()));
+                CHECK(model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                CHECK(model.recordCheckpoint("choices", 2, Outcome::Succeeded) == Transition::Applied);
+                const auto before = model.file("choices")->current().draft;
+                const auto target = test_support::choiceTarget(*model.file("choices"), SourceSide::Stage3, ChoiceScope::Section);
+                const auto preview = previewChoice(*model.file("choices"), 2, target.source.contributionId, action);
+                CHECK(model.applyChoice("choices", preview, true) == Transition::Applied);
+                const auto chosen = model.file("choices")->current().draft;
+                const auto check = [&](const Draft &expected) {
+                    const auto replay = replayedFile(model.recoveryDirectory());
+                    CHECK(replay.current().draft == expected);
+                    CHECK(replay.current().id == model.file("choices")->current().id);
+                    CHECK(replay.checkpoint() && replay.checkpoint()->draft == before);
+                    CHECK(!replay.reviewed() && !replay.written() && !replay.staged() && !replay.facts().resolved);
+                };
+                CHECK(chosen != before);
+                check(chosen);
+                CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+                check(before);
+                CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
+                check(chosen);
+                auto reopened = replayedFile(model.recoveryDirectory());
+                CHECK(reopened.undo(reopened.current().id) == Transition::Applied && reopened.current().draft == before);
+                CHECK(reopened.redo(reopened.current().id) == Transition::Applied && reopened.current().draft == chosen);
+            });
+        }
+        suite.run("TRUCE-0016 a failed choice retains its atomic candidate until durable retry", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(test_support::choiceFile()));
+            const auto before = model.file("choices")->current().draft;
+            const auto target = test_support::choiceTarget(*model.file("choices"), SourceSide::Stage3, ChoiceScope::Section);
+            const auto preview = previewChoice(*model.file("choices"), 1, target.source.contributionId, ChoiceAction::ResolveUsingSide);
+            recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+            CHECK(model.applyChoice("choices", preview, true) == Transition::Blocked);
+            CHECK(recovery_faults::failures == 1 && model.file("choices")->current().draft == before);
+            CHECK(model.pendingDraft("choices") && model.pendingDraft("choices")->decisions != before.decisions);
+            const auto pending = *model.pendingDraft("choices");
+            CHECK(role(model, SessionModel::PendingInputRole).toBool());
+            CHECK(role(model, SessionModel::RecoveryStateRole).toString() == "failed");
+            CHECK(!model.hasRecoveryFailure("choices") && !role(model, SessionModel::CanUndoRole).toBool());
+            CHECK(model.undo("choices", 1) == Transition::Blocked);
+            CHECK(model.retryRecovery("choices") == Transition::Applied);
+            CHECK(!model.hasPendingRecovery() && model.file("choices")->current().draft == pending);
+            CHECK(replayedFile(model.recoveryDirectory()).current().draft == pending);
+            const auto records = storage::RecoveryStore(model.recoveryDirectory()).read();
+            CHECK(records.succeeded && records.transactions.size() == 2);
+        });
+        for (const int checkpoint : {0, 1, 2}) {
+            suite.run("TRUCE-0014 durable discard replays instead of the abandoned draft "
+                + std::to_string(checkpoint), [=] {
+                QTemporaryDir directory;
+                CHECK(directory.isValid());
+                const auto location = directory.path() + "/recovery";
+                Draft retained;
+                {
+                    SessionModel model(location);
+                    CHECK(model.appendFile(recoverableFile()));
+                    if (checkpoint != 0) {
+                        CHECK(model.replaceDraft("recoverable", 1, savedDraft()) == Transition::Applied);
+                        if (checkpoint == 2) resolve(model, "recoverable");
+                        else CHECK(model.recordCheckpoint("recoverable", 2, Outcome::Succeeded) == Transition::Applied);
+                    }
+                    retained = model.file("recoverable")->current().draft;
+                    CHECK(model.replaceDraft("recoverable", model.file("recoverable")->current().id, unsavedDraft()) == Transition::Applied);
+                    const auto revision = model.file("recoverable")->current().id;
+                    CHECK((checkpoint == 2 ? model.discardToStaged("recoverable", revision)
+                        : model.discardToCheckpoint("recoverable", revision)) == Transition::Applied);
+                    CHECK(model.file("recoverable")->current().draft == retained && !model.hasPendingRecovery());
+                }
+                const auto restored = replayedFile(location);
+                CHECK(restored.current().draft == retained && restored.current().draft != unsavedDraft());
+                CHECK(restored.checkpoint().has_value() == (checkpoint != 0));
+                CHECK(restored.facts().resolved == (checkpoint == 2));
+                CHECK(replayedFile(location).current().draft == retained);
+            });
+        }
+        for (const int corruption : {0, 1, 2}) {
+            suite.run("TRUCE-0014 invalid schema session or file identity rejects the entire replay "
+                + std::to_string(corruption), [=] {
+                QTemporaryDir directory;
+                CHECK(directory.isValid());
+                storage::RecoveryStore store(directory.path() + "/recovery");
+                auto file = recoverableFile();
+                CHECK(store.commit(recoveryTransaction(file, "open", QUuid::createUuid().toString())).succeeded);
+                const auto valid = replayRecovery(store);
+                CHECK(valid.succeeded && valid.files.size() == 1);
+                CHECK(file.replaceDraft(1, unsavedDraft()) == Transition::Applied);
+                auto invalid = recoveryTransaction(file, "replace-draft", QUuid::createUuid().toString());
+                QString expected;
+                if (corruption == 0) {
+                    expected = "schema";
+                } else if (corruption == 1) {
+                    auto snapshots = invalid.state.value("snapshots").toObject();
+                    auto provenance = snapshots.value("provenance").toObject();
+                    const QByteArray wrong = "another-session";
+                    const auto hash = storage::RecoveryStore::digest(wrong);
+                    invalid.payloads.insert(hash, wrong);
+                    provenance.insert("sessionId", QString::fromLatin1(hash));
+                    snapshots.insert("provenance", provenance);
+                    invalid.state.insert("snapshots", snapshots);
+                    expected = "identity";
+                } else {
+                    const QByteArray wrong = "another-file";
+                    const auto hash = storage::RecoveryStore::digest(wrong);
+                    invalid.payloads.insert(hash, wrong);
+                    invalid.state.insert("fileId", QString::fromLatin1(hash));
+                    expected = "matching open file";
+                }
+                CHECK(store.commit(invalid).succeeded);
+                if (corruption == 0)
+                    test_support::rewriteLastRecoveryState(store.directory(), [](QJsonObject &state) { state.insert("schema", 99); });
+                CHECK(store.read().succeeded == (corruption != 0));
+                const auto replay = replayRecovery(store);
+                CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
+                CHECK(replay.error.contains(expected));
+            });
+        }
         suite.run("TRUCE-0013 an immediate process exit after acknowledgment preserves edits decisions captures and Save separately", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
@@ -123,6 +263,12 @@ public:
             CHECK(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0);
             CHECK(process.readAllStandardOutput() == "ACK 4\n");
             const storage::RecoveryStore reopened(location);
+            const auto restored = replayedFile(location);
+            CHECK(restored.current().id == 4 && restored.current().draft == finalDecision());
+            CHECK(restored.checkpoint() && restored.checkpoint()->draft == savedDraft());
+            CHECK(restored.facts().unsaved && !restored.facts().resolved);
+            CHECK(!restored.reviewed() && !restored.written() && !restored.staged());
+            CHECK(restored.current().draft.decisions.size() == 3);
             const auto recovered = reopened.read();
             CHECK(recovered.succeeded && !recovered.incompleteTail && recovered.transactions.size() == 5);
             const auto last = recovered.transactions.back();
@@ -151,7 +297,7 @@ public:
             CHECK(launch.value("text").toObject().value("format").toObject().value("bom").toBool());
             CHECK(launch.value("identity").toObject().value("inode") == "22");
             const auto provenance = snapshots.value("provenance").toObject();
-            CHECK(payload(reopened, provenance.value("sessionId")) == "recovery-session");
+            CHECK(payload(reopened, provenance.value("sessionId")) == recoverySessionId);
             CHECK(payload(reopened, provenance.value("worktreeRoot")) == "/disposable-worktree");
             CHECK(payload(reopened, provenance.value("gitDirectory")) == "/disposable-worktree/.git");
             const auto attributes = snapshots.value("conversion").toObject().value("attributes").toArray();

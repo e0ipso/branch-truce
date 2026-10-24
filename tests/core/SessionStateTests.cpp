@@ -1,5 +1,6 @@
 #include "core/SessionState.h"
 #include "TestHarness.h"
+#include "fixtures/ChoiceFile.h"
 #include <algorithm>
 #include <array>
 #include <new>
@@ -95,6 +96,113 @@ public:
     int run()
     {
         test_support::Suite suite("SessionStateTests");
+        for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
+            suite.run("TRUCE-0016 scoped Accept preserves unrelated edits and restores atomic history "
+                + std::to_string(static_cast<int>(scope)), [=] {
+                auto file = test_support::choiceFile();
+                const auto target = test_support::choiceTarget(file, SourceSide::Stage2, scope);
+                const auto original = file.current().draft.text;
+                CHECK(file.editResult(file.current().id, {{7, 18}, "manual first\n"}) == Transition::Applied);
+                const auto second = file.current().draft.text.find("left second\n");
+                CHECK(second != std::string::npos);
+                CHECK(file.editResult(file.current().id, {{second, second + 12}, "manual second\n"}) == Transition::Applied);
+                CHECK(file.editResult(file.current().id, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                const auto end = file.current().draft.text.size();
+                CHECK(file.editResult(file.current().id, {{end, end}, "manual suffix\n"}) == Transition::Applied);
+                const auto before = file.current().draft;
+                const auto preview = previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::Accept);
+                CHECK(preview.state == Transition::ConfirmationRequired);
+                CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired);
+                CHECK(file.current().draft == before);
+                CHECK(applyChoice(file, preview, true) == Transition::Applied);
+                const auto accepted = file.current().draft;
+                CHECK(accepted.text == "manual prefix\n" + (scope == ChoiceScope::Section ? original
+                    : "header\nleft first\nmanual second\nbridge\nleft later\ntail\n") + "manual suffix\n");
+                for (const auto &[id, decision] : accepted.decisions) {
+                    const bool selected = std::find(target.decisions.begin(), target.decisions.end(), id) != target.decisions.end();
+                    CHECK(decision.value == (selected ? DecisionValue::Accepted : DecisionValue::Undecided));
+                }
+                CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
+                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == accepted);
+                CHECK(applyChoice(file, preview, true) == Transition::StaleRevision);
+                CHECK(file.current().draft == accepted);
+            });
+        }
+        for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
+            suite.run("TRUCE-0016 Ignore preserves manual text and competing decisions through undo and redo "
+                + std::to_string(static_cast<int>(scope)), [=] {
+                auto file = test_support::choiceFile();
+                CHECK(file.editResult(1, {{7, 18}, "manual target\n"}) == Transition::Applied);
+                const auto before = file.current().draft;
+                const auto target = test_support::choiceTarget(file, SourceSide::Stage2, scope);
+                const auto preview = previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::Ignore);
+                CHECK(preview.state == Transition::Applied);
+                CHECK(applyChoice(file, preview) == Transition::Applied);
+                const auto ignored = file.current().draft;
+                CHECK(ignored.text == before.text);
+                for (const auto &[id, decision] : ignored.decisions) {
+                    const bool selected = std::find(target.decisions.begin(), target.decisions.end(), id) != target.decisions.end();
+                    CHECK(decision.value == (selected ? DecisionValue::Ignored : DecisionValue::Undecided));
+                }
+                CHECK(previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::Accept).state == Transition::Blocked);
+                CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
+                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == ignored);
+            });
+        }
+        suite.run("TRUCE-0016 resolve using one side decides only its section and its competitors", [] {
+            auto file = test_support::choiceFile();
+            CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+            const auto before = file.current().draft;
+            const auto target = test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Section);
+            const auto preview = previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::ResolveUsingSide);
+            CHECK(preview.state == Transition::Applied || preview.state == Transition::ConfirmationRequired);
+            CHECK(applyChoice(file, preview, true) == Transition::Applied);
+            const auto resolved = file.current().draft;
+            CHECK(resolved.text == "manual prefix\nheader\nright first\nright second\nbridge\nleft later\ntail\n");
+            for (const auto &[id, decision] : resolved.decisions) {
+                const bool own = std::find(target.decisions.begin(), target.decisions.end(), id) != target.decisions.end();
+                const bool competitor = std::find(target.competitors.begin(), target.competitors.end(), id) != target.competitors.end();
+                CHECK(decision.value == (own ? DecisionValue::Accepted : competitor ? DecisionValue::Ignored : DecisionValue::Undecided));
+            }
+            CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
+            CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == resolved);
+        });
+        suite.run("TRUCE-0016 stale and ambiguous scoped choices leave text decisions and history unchanged", [] {
+            auto file = test_support::choiceFile();
+            const auto target = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Line);
+            const auto preview = previewChoice(file, 1, target.source.contributionId, ChoiceAction::Accept);
+            CHECK(file.editResult(1, {{0, 0}, "new manual edit\n"}) == Transition::Applied);
+            const auto before = file.current();
+            CHECK(applyChoice(file, preview, true) == Transition::StaleRevision);
+            CHECK(file.current().id == before.id && file.current().draft == before.draft && !file.canRedo());
+            auto ambiguous = test_support::choiceFile("head\nrepeat\nrepeat\ntail\n",
+                "head\nchanged\nrepeat\ntail\n", "head\nrepeat\ntail\n");
+            const auto repeated = test_support::choiceTarget(ambiguous, SourceSide::Stage2, ChoiceScope::Line);
+            const auto rejected = previewChoice(ambiguous, 1, repeated.source.contributionId, ChoiceAction::Accept);
+            CHECK(rejected.state == Transition::AmbiguousTarget);
+            const auto unchanged = ambiguous.current().draft;
+            CHECK(applyChoice(ambiguous, rejected, true) == Transition::AmbiguousTarget);
+            CHECK(ambiguous.current().id == 1 && ambiguous.current().draft == unchanged && !ambiguous.canUndo());
+        });
+        suite.run("TRUCE-0016 resolve using one line leaves the other section and manual edits unchanged", [] {
+            auto file = test_support::choiceFile("header\nleft\nbridge\nleft later\ntail\n",
+                "header\nright\nbridge\nright later\ntail\n");
+            CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+            const auto before = file.current().draft;
+            const auto target = test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Line);
+            const auto competitor = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Line);
+            const auto preview = previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::ResolveUsingSide);
+            CHECK(preview.state == Transition::Applied || preview.state == Transition::ConfirmationRequired);
+            CHECK(applyChoice(file, preview, true) == Transition::Applied);
+            const auto chosen = file.current().draft;
+            CHECK(chosen.text == "manual prefix\nheader\nright\nbridge\nleft later\ntail\n");
+            CHECK(chosen.decisions.at(target.decisions.front()).value == DecisionValue::Accepted);
+            CHECK(chosen.decisions.at(competitor.decisions.front()).value == DecisionValue::Ignored);
+            const auto later = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Line, 1);
+            CHECK(chosen.decisions.at(later.decisions.front()).value == DecisionValue::Undecided);
+            CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
+            CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+        });
         suite.run("TRUCE-0012 correspondence is deterministic and partitions repeated inserted deleted and changed text", [] {
             const std::array cases{
                 std::pair{"repeat\nrepeat\n", "repeat\nrepeat\n"},
