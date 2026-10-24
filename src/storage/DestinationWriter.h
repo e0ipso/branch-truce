@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/FileSnapshot.h"
 #include <QByteArray>
 #include <QString>
 #include <functional>
@@ -24,6 +25,7 @@ public:
     [[nodiscard]] const QString &worktreeRoot() const;
     [[nodiscard]] const QByteArray &path() const;
     [[nodiscard]] const QByteArray &bytes() const;
+    [[nodiscard]] SnapshotFileIdentity identity() const;
 private:
     explicit DestinationSnapshot(std::shared_ptr<const State> state);
     std::shared_ptr<const State> d;

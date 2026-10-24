@@ -1,5 +1,6 @@
 add_library(branch_truce_controller STATIC ApplicationController.cpp ApplicationController.h
-    SessionModel.cpp SessionModel.h SessionRecovery.cpp SessionRecovery.h SessionCoordinator.cpp SessionCoordinator.h)
+    SessionModel.cpp SessionModel.h SessionRecovery.cpp SessionRecovery.h RecoveryRestore.cpp RecoveryRestore.h
+    SessionCoordinator.cpp SessionCoordinator.h)
 target_include_directories(branch_truce_controller PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(branch_truce_controller PUBLIC Qt6::Core branch_truce_core branch_truce_git
     PRIVATE branch_truce_storage branch_truce_build_options)

@@ -2,7 +2,8 @@
 
 `SessionModel` keeps automatic recovery under
 `QStandardPaths::AppLocalDataLocation/recovery/v1/<session-uuid>/`. Each model
-owns a new store. Tests and adapters can supply an absolute store directory.
+starts with a new store. Startup adopts a validated inactive store for the same
+operation when exactly one matches. Tests and adapters can supply an absolute store directory.
 The store is independent of the repository, Git index and mergetool files.
 
 ## Layout and integrity
@@ -96,9 +97,40 @@ acknowledgment so earlier retained records cannot become the latest draft.
 returns verified bytes. It does not automatically apply them. A restore caller
 must validate the complete state schema and the live worktree, operation, disk
 and index identities before using recovered work or allowing publication.
-Recovery inventory and restoration UI are separate work. Reopened undo stacks
-are not required; complete current text and decisions and the last manual Save
-baseline are retained independently.
+Startup inventories inactive stores under the versioned recovery root. A
+session lock prevents another window from adopting an active store. Corrupt,
+unsupported or ambiguous records produce diagnostics, never a prefix restore.
+Operation identity includes the canonical worktree and Git directory, source
+commits, base and rebase context. All captured files must share one session
+identity. Unrelated worktrees are not adopted.
+
+The restore adapter replays the existing domain transitions and compares every
+complete state with its canonical encoding. This validates the state schema,
+enums, payload references, revisions and outcome relationships. Records are
+applied in journal order, including durable discard transactions. It preserves
+the launch capture and the manual Save baseline independently of the current
+draft. Restoration does not create a Save checkpoint or a review declaration.
+
+Before adoption, read-only inspection checks the current destination, source
+stages or recorded staged object, modes and conversion policy. Validated drafts
+whose live disk/index evidence has changed remain visible with recovery errors
+and cannot acknowledge edits or claim completion. Pending input from a failed
+commit remains distinct from these restored recovery failures. The interface
+shows unsaved, review-needed and unresolved status and retains pending text
+separately from the acknowledged result.
+
+The coordinator commits a mutation intent before admitting publication or
+staging, and records its inspection observation before releasing the queue.
+These records retain the original target even after cancellation or session
+replacement. Mutation observations never replace a later draft or discard.
+An interrupted mutation is inspected against disk/index evidence without
+retrying or rolling back. Matching result bytes alone cannot establish writer
+cleanup or Git resolution; missing completion evidence remains uncertain and
+outstanding. Interrupted staging can be recorded as succeeded when the exact
+canonical object and mode, conversion policy, written result and recorded
+review all match. That recovered observation is committed before the model
+exposes resolution. Previously recorded successful outcomes must still match live
+disk and index evidence. Reopened undo stacks are not a product guarantee.
 
 The guarantee covers application termination after acknowledgment, including
 unsaved edits and decisions. Termination before acknowledgment may recover a

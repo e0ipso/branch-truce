@@ -86,6 +86,7 @@ public:
     // failed open commits. Captured files replace their pending placeholders;
     // pending edits and unrelated session replacements remain protected.
     bool completeSessionLoad(const TaskStamp &stamp, std::vector<FileSession> files);
+    bool completeRecoveryLoad(const TaskStamp &stamp, std::vector<FileSession> observed, RecoveryRestore restore);
     [[nodiscard]] quint64 generation() const;
     [[nodiscard]] int pendingTasks() const;
     // Zero rejects invalid/stale requests. Accepted requests finish once,
@@ -111,7 +112,7 @@ Q_SIGNALS:
 
 private:
     bool replaceSession(const QString &worktree, const QString &operation,
-                        std::vector<FileSession> files, bool completingLoad);
+                        std::vector<FileSession> files, bool completingLoad, RecoveryRestore *restore = nullptr);
     class State;
     std::unique_ptr<State> d;
 };

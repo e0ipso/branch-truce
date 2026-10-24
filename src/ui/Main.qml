@@ -16,6 +16,10 @@ Kirigami.ApplicationWindow {
         required property string fileId
         required property string support
         required property string supportDetail
+        required property string status
+        required property bool unsaved
+        required property bool reviewNeeded
+        required property bool resolved
         width: ListView.view.width
         text: window.controller.displayPath(fileId) + (support === "supported" ? ""
             : support === "unreadable" ? qsTr(" · load error · outside app") : qsTr(" · outside app"))
@@ -31,6 +35,14 @@ Kirigami.ApplicationWindow {
                 Layout.fillWidth: true
                 visible: row.support !== "supported"
                 text: row.supportDetail
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+            }
+            Label {
+                Layout.fillWidth: true
+                text: row.status + "\n" + (row.unsaved ? qsTr("Unsaved draft") : qsTr("Manual Save checkpoint retained"))
+                    + (row.reviewNeeded ? qsTr(" · needs review") : "")
+                    + (row.resolved ? "" : qsTr(" · unresolved"))
                 textFormat: Text.PlainText
                 wrapMode: Text.WrapAnywhere
             }
@@ -144,6 +156,36 @@ Kirigami.ApplicationWindow {
                             + (window.selectedFile.supportDetail || "")
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
+                    }
+                    Label {
+                        objectName: "selectedStatus"
+                        Layout.fillWidth: true
+                        visible: window.controller.selectedFileId.length > 0
+                        text: (window.selectedFile.status || "") + "\n"
+                            + (window.selectedFile.unsaved ? qsTr("Unsaved draft") : qsTr("Manual Save checkpoint retained"))
+                            + (window.selectedFile.reviewNeeded ? qsTr(" · needs review") : "")
+                            + (window.selectedFile.resolved ? "" : qsTr(" · unresolved"))
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                    Kirigami.InlineMessage {
+                        objectName: "recoveryProblem"
+                        Layout.fillWidth: true
+                        visible: !!window.selectedFile.recoveryError
+                        type: Kirigami.MessageType.Error
+                        text: window.selectedFile.recoveryError || ""
+                    }
+                    Button {
+                        objectName: "retryRecovery"
+                        visible: !!window.selectedFile.pendingInput
+                        text: qsTr("Retry keeping pending input")
+                        onClicked: window.controller.files.retryPendingRecovery(window.controller.selectedFileId)
+                    }
+                    SnapshotPane {
+                        visible: !!window.selectedFile.pendingInput
+                        paneName: "pendingInput"
+                        paneTitle: qsTr("Pending input · not acknowledged")
+                        paneText: window.selectedFile.pendingText || ""
                     }
                     RowLayout {
                         Layout.fillWidth: true

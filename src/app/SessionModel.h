@@ -6,8 +6,13 @@
 #include <QStringList>
 #include <QVariantMap>
 #include <utility>
+#include <memory>
+#include <set>
+
+class QLockFile;
 
 namespace branch_truce {
+struct RecoveryRestore;
 
 class SessionModel final : public QAbstractListModel {
     Q_OBJECT
@@ -16,6 +21,7 @@ class SessionModel final : public QAbstractListModel {
     Q_PROPERTY(bool canFinish READ canFinish NOTIFY summaryChanged)
     Q_PROPERTY(QVariantList finishBlockers READ finishBlockers NOTIFY summaryChanged)
     Q_PROPERTY(bool hasPendingRecovery READ hasPendingRecovery NOTIFY summaryChanged)
+    Q_PROPERTY(bool hasRecoveryFailures READ hasRecoveryFailures NOTIFY summaryChanged)
 public:
     enum Role {
         FileIdRole = Qt::UserRole + 1, PathRole, PathBytesRole, ResultTextRole, DecisionsRole,
@@ -40,6 +46,7 @@ public:
     [[nodiscard]] const FileSession *file(const std::string &id) const;
     [[nodiscard]] const Draft *pendingDraft(const std::string &id) const;
     [[nodiscard]] bool hasPendingRecovery() const { return !pending_.empty(); }
+    [[nodiscard]] bool hasRecoveryFailures() const { return !recoveryFailures_.empty(); }
     [[nodiscard]] const QString &recoveryDirectory() const { return recovery_.directory(); }
     Transition retryRecovery(const std::string &id);
     Q_INVOKABLE bool retryPendingRecovery(const QString &id);
@@ -63,7 +70,10 @@ Q_SIGNALS:
 private:
     friend class SessionCoordinator;
     [[nodiscard]] bool canCompleteLoad(const std::vector<FileSession> &files) const;
-    void replaceFiles(std::vector<FileSession> files);
+    void replaceFiles(std::vector<FileSession> files, RecoveryRestore *restore = nullptr);
+    [[nodiscard]] bool canRestoreLoad() const;
+    QString ensureRecoveryLease();
+    void recordRecoveryFailure(const std::string &id, const QString &error);
     bool commitCandidate(std::size_t row, FileSession candidate, const QString &action);
     void notifyRow(std::size_t row);
     template<typename Command>
@@ -71,7 +81,7 @@ private:
     {
         for (std::size_t row = 0; row < files_.size(); ++row) {
             if (files_[row].id() != id) continue;
-            if (hasPendingRecovery()) return Transition::Blocked;
+            if (hasPendingRecovery() || hasRecoveryFailures()) return Transition::Blocked;
             auto candidate = files_[row];
             const auto result = command(candidate);
             if (result == Transition::Applied) {
@@ -92,6 +102,9 @@ private:
     std::vector<FileSession> files_;
     storage::RecoveryStore recovery_;
     std::map<std::string, PendingRecovery> pending_;
+    std::map<std::string, QString> recoveryFailures_;
+    std::set<std::string> restored_;
+    std::shared_ptr<QLockFile> recoveryLease_;
 };
 
 }

@@ -1,4 +1,7 @@
 #include "ApplicationController.h"
+#include "RecoveryRestore.h"
+#include <QDir>
+#include <QFileInfo>
 #include "core/BuildInfo.h"
 #include <QStandardPaths>
 #include <QUuid>
@@ -163,6 +166,16 @@ QVariantMap ApplicationController::selectedFile() const
         {QStringLiteral("pathBytes"), QByteArray(file->path().data(), static_cast<qsizetype>(file->path().size()))},
         {QStringLiteral("support"), support}, {QStringLiteral("supportDetail"), text(file->supportDetail())},
         {QStringLiteral("resultText"), text(file->current().draft.text)}};
+    for (int row = 0; row < files_.totalFiles(); ++row) {
+        const auto index = files_.index(row);
+        if (files_.data(index, SessionModel::FileIdRole).toString() != selectedFileId_) continue;
+        for (const auto role : {SessionModel::StatusRole, SessionModel::UnsavedRole, SessionModel::ReviewNeededRole,
+             SessionModel::ResolvedRole, SessionModel::UndecidedRole, SessionModel::PendingInputRole,
+             SessionModel::PendingTextRole, SessionModel::RecoveryStateRole, SessionModel::RecoveryErrorRole,
+             SessionModel::FinishBlockersRole})
+            result.insert(QString::fromLatin1(files_.roleNames().value(role)), files_.data(index, role));
+        break;
+    }
     if (const auto &snapshots = file->snapshots(); snapshots && file->support() == Support::Supported) {
         result.insert(QStringLiteral("stage2"), sourceData(snapshots->stage2));
         result.insert(QStringLiteral("stage3"), sourceData(snapshots->stage3));
@@ -229,6 +242,12 @@ void ApplicationController::classified(const git::ConflictClassificationResult &
     }
     if (result.outcome != git::Outcome::Success) operation_.clear();
 
+    // Even an ended/unsupported operation can have expected recovery work.
+    // Inspect its inventory so identity rejection is explicit, without applying it.
+    if (result.outcome == git::Outcome::Success && !repository_.supported && !repository_.worktreeRoot.isEmpty()) {
+        loadWorkingFiles(result.conflicts);
+        return;
+    }
     if (result.outcome != git::Outcome::Success || !repository_.supported) {
         std::vector<FileSession> files;
         for (const auto &file : result.conflicts) {
@@ -245,10 +264,6 @@ void ApplicationController::classified(const git::ConflictClassificationResult &
         }
         return;
     }
-    if (result.conflicts.empty()) {
-        setState(QStringLiteral("no-session"), tr("This operation has no current unmerged files. Return to your Git workflow."));
-        return;
-    }
     loadWorkingFiles(result.conflicts);
 }
 
@@ -259,6 +274,8 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
         pending.emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), Draft{},
                              Support::Unreadable, "Opening the classified conflict");
     }
+    if (pending.empty()) pending.emplace_back("recovery-inventory", "recovery-inventory", Draft{},
+        Support::Unreadable, "Inspecting app-owned recovery records");
     const auto identity = operation_ + QLatin1Char(':') + QString::fromLatin1(repository_.stage2.commitId)
         + QLatin1Char(':') + QString::fromLatin1(repository_.stage3.commitId);
     const auto root = repository_.worktreeRoot;
@@ -267,10 +284,15 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
         return;
     }
     auto loaded = std::make_shared<std::vector<FileSession>>();
-    const auto anchor = conflicts.front().path.toHex().toStdString();
+    auto recovery = std::make_shared<RecoveryRestore>();
+    const auto anchor = conflicts.empty() ? std::string("recovery-inventory") : conflicts.front().path.toHex().toStdString();
+    const auto recoveryDirectory = files_.recoveryDirectory();
+    const auto recoveryInventory = QFileInfo(recoveryDirectory).absolutePath();
+    const auto executable = QStandardPaths::findExecutable(QStringLiteral("git"));
     const auto sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
     const auto task = coordinator_.submit(anchor, 1,
-        [files = std::move(conflicts), repository = repository_, sessionId, loaded](const TaskInput &, const TaskControl &control) {
+        [files = std::move(conflicts), repository = repository_, sessionId, loaded, recovery,
+         recoveryDirectory, recoveryInventory, executable](const TaskInput &, const TaskControl &control) {
             for (const auto &file : files) {
                 if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
                 Draft draft;
@@ -290,14 +312,31 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
                 loaded->emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), std::move(draft),
                                      support, detail.toStdString(), std::move(snapshots));
             }
+            *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, executable);
             return TaskResult{};
-        }, [this, loaded](const TaskCompletion &completion) {
+        }, [this, loaded, recovery](const TaskCompletion &completion) {
+            const auto diagnostics = recovery->diagnostics.join(QLatin1Char('\n'));
+            const bool recovered = recovery->found;
             if (completion.result.status != TaskStatus::Succeeded
-                || !coordinator_.completeSessionLoad(completion.stamp, std::move(*loaded))) {
+                || !coordinator_.completeRecoveryLoad(completion.stamp, std::move(*loaded), std::move(*recovery))) {
                 setState(QStringLiteral("error"), tr("Could not load the current conflict files."));
                 return;
             }
-            setState(QStringLiteral("ready"), tr("Current conflict files are open. Files marked outside app remain outstanding."));
+            if (!repository_.supported && repository_.operation != git::RepositoryOperation::None) {
+                auto detail = repository_.diagnostic;
+                if (!diagnostics.isEmpty()) detail += QLatin1Char('\n') + diagnostics;
+                setState(QStringLiteral("unsupported"), detail);
+                return;
+            }
+            if (files_.totalFiles() == 0) {
+                setState(diagnostics.isEmpty() ? QStringLiteral("no-session") : QStringLiteral("error"),
+                    diagnostics.isEmpty() ? tr("This operation has no current unmerged files. Return to your Git workflow.") : diagnostics);
+                return;
+            }
+            auto detail = recovered ? tr("Recovered app drafts and decisions. Manual Save, review and Git resolution keep their recorded status.")
+                : tr("Current conflict files are open. Files marked outside app remain outstanding.");
+            if (!diagnostics.isEmpty()) detail += QLatin1Char('\n') + diagnostics;
+            setState(QStringLiteral("ready"), detail);
         });
     if (task == 0) setState(QStringLiteral("error"), tr("Could not schedule conflict loading."));
 }

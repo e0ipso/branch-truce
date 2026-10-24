@@ -1,4 +1,5 @@
 #include "SessionCoordinator.h"
+#include "RecoveryRestore.h"
 #include <QDir>
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -7,6 +8,7 @@
 #include <QThread>
 #include <QThreadPool>
 #include <QTimer>
+#include <QUuid>
 #include <algorithm>
 #include <atomic>
 #include <deque>
@@ -52,6 +54,9 @@ public:
         bool running = false;
         std::optional<git::Request> gitRequest;
         git::GitAdapter *adapter = nullptr;
+        QString recoveryDirectory;
+        QString mutationId;
+        std::optional<FileSession> mutationTarget;
     };
 
     State(SessionCoordinator &owner, SessionModel &model, QString executable)
@@ -90,7 +95,7 @@ public:
         auto job = std::make_shared<Job>(Job{
             {{id, generation, worktree, operation, fileId, expected, revision.result, revision.decisions},
              file->path(), revision}, TaskControl(mutation), std::move(work), std::move(inspect),
-            std::move(completion), mutation, false, std::move(request), nullptr});
+            std::move(completion), mutation, false, std::move(request), nullptr, {}, {}, {}});
         jobs.emplace(id, job);
         if (mutation) queues[worktree].push_back(id);
         schedule();
@@ -126,6 +131,28 @@ public:
                 continue;
             }
             if (job->mutation && queues.at(job->input.stamp.worktree).front() != id) continue;
+            if (job->mutation) {
+                const auto *file = model.file(job->input.stamp.fileId);
+                const auto leaseError = model.ensureRecoveryLease();
+                if (!file || model.hasPendingRecovery() || model.hasRecoveryFailures() || !leaseError.isEmpty()) {
+                    finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {},
+                        QStringLiteral("Mutation blocked by unavailable recovery storage: ") + leaseError, {}});
+                    if (!alive) return;
+                    continue;
+                }
+                const auto mutationId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+                const auto kind = job->gitRequest ? QStringLiteral("staging") : QStringLiteral("publication");
+                const auto committed = model.recovery_.commit(mutationRecoveryTransaction(*file, kind, mutationId));
+                if (!committed.succeeded) {
+                    model.recordRecoveryFailure(file->id(), committed.error);
+                    finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, committed.error, {}});
+                    if (!alive) return;
+                    continue;
+                }
+                job->recoveryDirectory = model.recoveryDirectory();
+                job->mutationId = mutationId;
+                job->mutationTarget = *file;
+            }
             job->running = true;
             if (job->gitRequest) startGit(job);
             else startWorker(job);
@@ -210,6 +237,25 @@ public:
     void finish(const std::shared_ptr<Job> &job, TaskResult result)
     {
         if (job->control.cancellationRequested()) result.status = TaskStatus::Cancelled;
+        if (job->mutationTarget) {
+            QString observation;
+            switch (result.mutation) {
+            case MutationObservation::NotAttempted: observation = QStringLiteral("not-attempted"); break;
+            case MutationObservation::ObservedUnchanged: observation = QStringLiteral("unchanged"); break;
+            case MutationObservation::ObservedChanged: observation = QStringLiteral("changed"); break;
+            case MutationObservation::Uncertain: observation = QStringLiteral("uncertain"); break;
+            }
+            storage::RecoveryStore store(job->recoveryDirectory);
+            const auto committed = store.commit(mutationRecoveryTransaction(*job->mutationTarget,
+                job->gitRequest ? QStringLiteral("staging") : QStringLiteral("publication"), job->mutationId, observation));
+            if (!committed.succeeded) {
+                result.status = TaskStatus::Failed;
+                if (result.mutation != MutationObservation::NotAttempted) result.mutation = MutationObservation::Uncertain;
+                result.diagnostic += QStringLiteral("; recovery could not retain the mutation outcome: ") + committed.error;
+                if (job->input.stamp.worktree == worktree && job->recoveryDirectory == model.recoveryDirectory())
+                    model.recordRecoveryFailure(job->input.stamp.fileId, result.diagnostic);
+            }
+        }
         const auto id = job->input.stamp.id;
         if (jobs.erase(id) == 0) return;
         if (job->mutation) {
@@ -267,8 +313,22 @@ bool SessionCoordinator::completeSessionLoad(const TaskStamp &stamp, std::vector
     return replaceSession(d->worktree, d->operation, std::move(files), true);
 }
 
+bool SessionCoordinator::completeRecoveryLoad(const TaskStamp &stamp, std::vector<FileSession> observed, RecoveryRestore restore)
+{
+    if (!d->owningThread() || d->replacing || d->disposition(stamp) != TaskDisposition::Current
+        || !d->model.canRestoreLoad()) return false;
+    const bool recovered = restore.found;
+    auto files = recovered ? std::move(restore.files) : std::move(observed);
+    if (!replaceSession(d->worktree, d->operation, std::move(files), true, recovered ? &restore : nullptr)) return false;
+    if (!recovered && !restore.diagnostics.isEmpty()) {
+        for (const auto &file : d->model.files_)
+            d->model.recordRecoveryFailure(file.id(), restore.diagnostics.join(QLatin1Char('\n')));
+    }
+    return true;
+}
+
 bool SessionCoordinator::replaceSession(const QString &worktree, const QString &operation,
-                                        std::vector<FileSession> files, bool completingLoad)
+                                        std::vector<FileSession> files, bool completingLoad, RecoveryRestore *restore)
 {
     if (!d->owningThread() || d->replacing || (!completingLoad && d->model.hasPendingRecovery()) || operation.isEmpty()
         || d->generation == std::numeric_limits<quint64>::max()
@@ -285,7 +345,7 @@ bool SessionCoordinator::replaceSession(const QString &worktree, const QString &
     d->worktree = QDir::cleanPath(canonical);
     d->operation = operation;
     cancelAll();
-    d->model.replaceFiles(std::move(files));
+    d->model.replaceFiles(std::move(files), restore);
     d->replacing = false;
     Q_EMIT sessionChanged();
     return true;

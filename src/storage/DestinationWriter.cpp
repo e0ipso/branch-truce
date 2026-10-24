@@ -179,6 +179,14 @@ DestinationSnapshot::DestinationSnapshot(std::shared_ptr<const State> state) : d
 const QString &DestinationSnapshot::worktreeRoot() const { return d->root; }
 const QByteArray &DestinationSnapshot::path() const { return d->path; }
 const QByteArray &DestinationSnapshot::bytes() const { return d->contents; }
+SnapshotFileIdentity DestinationSnapshot::identity() const
+{
+    const auto &info = d->identity;
+    return {static_cast<std::uint64_t>(info.st_dev), static_cast<std::uint64_t>(info.st_ino),
+        static_cast<std::uint32_t>(info.st_mode), static_cast<std::int64_t>(info.st_size),
+        static_cast<std::int64_t>(info.st_mtim.tv_sec), static_cast<std::int64_t>(info.st_mtim.tv_nsec),
+        static_cast<std::int64_t>(info.st_ctim.tv_sec), static_cast<std::int64_t>(info.st_ctim.tv_nsec)};
+}
 
 DestinationCapture captureDestination(const QString &root, const QByteArray &path)
 {

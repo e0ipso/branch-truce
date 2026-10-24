@@ -1,9 +1,13 @@
 #include "SessionModel.h"
 #include "SessionRecovery.h"
+#include "RecoveryRestore.h"
+#include <QDir>
+#include <QFileInfo>
 #include <QStandardPaths>
 #include <QUuid>
 #include <algorithm>
 #include <limits>
+#include <unistd.h>
 
 namespace branch_truce {
 namespace {
@@ -74,10 +78,34 @@ SessionModel::SessionModel(QObject *parent)
 SessionModel::SessionModel(QString recoveryDirectory, QObject *parent)
     : QAbstractListModel(parent), recovery_(std::move(recoveryDirectory)) {}
 
+QString SessionModel::ensureRecoveryLease()
+{
+    if (recoveryLease_) return {};
+    const auto &directory = recovery_.directory();
+    const QFileInfo before(directory);
+    const auto permissions = QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
+    if (!QDir::isAbsolutePath(directory) || before.isSymLink()
+        || (before.exists() && (!before.isDir() || before.ownerId() != ::geteuid()))
+        || !QDir().mkpath(directory, permissions)) return tr("Recovery storage is unavailable or unsafe.");
+    auto lease = std::make_shared<QLockFile>(directory + QStringLiteral("/session.lock"));
+    if (!lease->tryLock(0)) return tr("Recovery session is already open or unavailable; close its other window before retrying.");
+    recoveryLease_ = std::move(lease);
+    return {};
+}
+
+void SessionModel::recordRecoveryFailure(const std::string &id, const QString &error)
+{
+    recoveryFailures_.insert_or_assign(id, error);
+    for (std::size_t row = 0; row < files_.size(); ++row)
+        if (files_[row].id() == id) { notifyRow(row); return; }
+}
+
 bool SessionModel::commitCandidate(std::size_t row, FileSession candidate, const QString &action)
 {
     const auto transactionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const auto result = recovery_.commit(recoveryTransaction(candidate, action, transactionId));
+    const auto leaseError = ensureRecoveryLease();
+    const auto result = leaseError.isEmpty() ? recovery_.commit(recoveryTransaction(candidate, action, transactionId))
+        : storage::RecoveryCommit{false, leaseError};
     if (result.succeeded) {
         files_[row] = std::move(candidate);
         return true;
@@ -106,8 +134,9 @@ Transition SessionModel::retryRecovery(const std::string &id)
     if (pending == pending_.end()) return file(id) ? Transition::NoChange : Transition::StaleRevision;
     for (std::size_t row = 0; row < files_.size(); ++row) {
         if (files_[row].id() != id) continue;
-        const auto result = recovery_.commit(recoveryTransaction(pending->second.candidate,
-            pending->second.action, pending->second.transactionId));
+        const auto leaseError = ensureRecoveryLease();
+        const auto result = leaseError.isEmpty() ? recovery_.commit(recoveryTransaction(pending->second.candidate,
+            pending->second.action, pending->second.transactionId)) : storage::RecoveryCommit{false, leaseError};
         if (!result.succeeded) {
             pending->second.error = result.error;
             notifyRow(row);
@@ -142,15 +171,29 @@ bool SessionModel::canCompleteLoad(const std::vector<FileSession> &files) const
     });
 }
 
-void SessionModel::replaceFiles(std::vector<FileSession> files)
+bool SessionModel::canRestoreLoad() const
+{
+    return canCompleteLoad(files_);
+}
+
+void SessionModel::replaceFiles(std::vector<FileSession> files, RecoveryRestore *restore)
 {
     beginResetModel();
     // The coordinator permits pending entries only for the placeholders of
     // this load. Retry must commit the captured files, never old placeholders.
     pending_.clear();
+    recoveryFailures_.clear();
+    restored_.clear();
     files_ = std::move(files);
-    for (std::size_t row = 0; row < files_.size(); ++row)
-        (void)commitCandidate(row, files_[row], QStringLiteral("open"));
+    if (restore) {
+        recoveryLease_ = std::move(restore->lease);
+        recovery_ = storage::RecoveryStore(restore->directory);
+        recoveryFailures_ = std::move(restore->failures);
+    }
+    for (std::size_t row = 0; row < files_.size(); ++row) {
+        if (restore && !restore->newFiles.contains(files_[row].id())) restored_.insert(files_[row].id());
+        else (void)commitCandidate(row, files_[row], QStringLiteral("open"));
+    }
     endResetModel();
     Q_EMIT summaryChanged();
 }
@@ -170,6 +213,8 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     const auto facts = file.facts();
     const auto pending = pending_.find(file.id());
     const bool pendingInput = pending != pending_.end();
+    const auto failure = recoveryFailures_.find(file.id());
+    const bool recoveryFailed = failure != recoveryFailures_.end();
     switch (role) {
     case FileIdRole: return text(file.id());
     case Qt::DisplayRole:
@@ -210,21 +255,24 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case UnsavedRole: return pendingInput || facts.unsaved;
     case ReviewNeededRole: return facts.needsReview;
     case EarlierStagedRole: return facts.earlierStaged;
-    case ResolvedRole: return !pendingInput && facts.resolved;
-    case StatusRole: return pendingInput ? tr("Recovery failed; pending input retained")
+    case ResolvedRole: return !pendingInput && !recoveryFailed && facts.resolved;
+    case StatusRole: return recoveryFailed ? tr("Recovery requires attention; work remains outstanding")
+        : pendingInput ? tr("Recovery failed; pending input retained")
                                         : QString::fromUtf8(statusText(facts.status));
     case FinishBlockersRole: {
         auto blockers = blockerData(facts);
         if (pendingInput) blockers.push_back(tr("Pending input needs recovery retry"));
+        if (recoveryFailed) blockers.push_back(failure->second);
         return blockers;
     }
-    case CanUndoRole: return !pendingInput && file.canUndo();
-    case CanRedoRole: return !pendingInput && file.canRedo();
+    case CanUndoRole: return !pendingInput && !recoveryFailed && file.canUndo();
+    case CanRedoRole: return !pendingInput && !recoveryFailed && file.canRedo();
     case PendingInputRole: return pendingInput;
     case PendingTextRole: return pendingInput ? text(pending->second.candidate.current().draft.text) : QString{};
     case PendingDecisionsRole: return pendingInput ? decisionData(pending->second.candidate.current().draft) : QVariantList{};
-    case RecoveryStateRole: return pendingInput ? QStringLiteral("failed") : QStringLiteral("durable");
-    case RecoveryErrorRole: return pendingInput ? pending->second.error : QString{};
+    case RecoveryStateRole: return recoveryFailed ? QStringLiteral("blocked") : pendingInput ? QStringLiteral("failed")
+        : restored_.contains(file.id()) ? QStringLiteral("restored") : QStringLiteral("durable");
+    case RecoveryErrorRole: return recoveryFailed ? failure->second : pendingInput ? pending->second.error : QString{};
     default: return {};
     }
 }
@@ -271,12 +319,13 @@ bool SessionModel::appendFile(FileSession file)
 int SessionModel::resolvedFiles() const
 {
     return static_cast<int>(std::count_if(files_.begin(), files_.end(),
-                                          [this](const auto &file) { return !pending_.contains(file.id()) && file.facts().resolved; }));
+                                          [this](const auto &file) { return !pending_.contains(file.id())
+                                              && !recoveryFailures_.contains(file.id()) && file.facts().resolved; }));
 }
 
 bool SessionModel::canFinish() const
 {
-    return !hasPendingRecovery() && !files_.empty() && resolvedFiles() == totalFiles();
+    return !hasPendingRecovery() && !hasRecoveryFailures() && !files_.empty() && resolvedFiles() == totalFiles();
 }
 
 QVariantList SessionModel::finishBlockers() const
@@ -288,9 +337,10 @@ QVariantList SessionModel::finishBlockers() const
     }
     for (const auto &file : files_) {
         const auto facts = file.facts();
-        if (facts.blockers.empty() && !pending_.contains(file.id())) continue;
+        if (facts.blockers.empty() && !pending_.contains(file.id()) && !recoveryFailures_.contains(file.id())) continue;
         auto blockers = blockerData(facts);
         if (pending_.contains(file.id())) blockers.push_back(tr("Pending input needs recovery retry"));
+        if (recoveryFailures_.contains(file.id())) blockers.push_back(recoveryFailures_.at(file.id()));
         result.push_back(QVariantMap{{QStringLiteral("fileId"), text(file.id())},
             {QStringLiteral("path"), text(file.path())},
             {QStringLiteral("blockers"), blockers}});

@@ -397,6 +397,12 @@ public:
             const auto before = repo.snapshot();
             ScopedEnvironment environment(repo.environment);
             for (const bool failRecovery : {false, true}) {
+                // Each case must lack an earlier usable recovery store. A valid
+                // store from the healthy case would bypass the intended fault.
+                QTemporaryDir recoveryData;
+                auto isolatedEnvironment = repo.environment;
+                isolatedEnvironment.insert("XDG_DATA_HOME", recoveryData.path());
+                ScopedEnvironment isolated(isolatedEnvironment);
                 ApplicationController controller;
                 auto *model = controller.files();
                 const auto location = model->recoveryDirectory();
