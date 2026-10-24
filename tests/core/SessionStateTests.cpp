@@ -2,6 +2,27 @@
 #include "TestHarness.h"
 #include <algorithm>
 #include <array>
+#include <new>
+
+namespace allocation_fixture {
+inline bool bounded = false;
+inline std::size_t largest = 0;
+constexpr std::size_t ceiling = 1024 * 1024;
+struct Bound {
+    Bound() { largest = 0; bounded = true; }
+    ~Bound() { bounded = false; }
+};
+}
+
+extern "C" void *__real__Znwm(std::size_t size);
+extern "C" void *__wrap__Znwm(std::size_t size)
+{
+    if (allocation_fixture::bounded) {
+        allocation_fixture::largest = std::max(allocation_fixture::largest, size);
+        if (size > allocation_fixture::ceiling) throw std::bad_alloc();
+    }
+    return __real__Znwm(size);
+}
 
 using namespace branch_truce;
 
@@ -36,6 +57,22 @@ FileSnapshots capturedSources()
         {11, 22, 0100755, 15, 33, 44, 55, 66}};
     return captured;
 }
+FileSession mappedFile(std::string source, std::string result)
+{
+    FileSnapshots captured;
+    captured.path = "mapped.txt";
+    captured.provenance.sessionId = "anchor-session";
+    captured.stage2 = SourceSnapshot{"source-object", "100644", source,
+        {source, source, {}}, "source-commit", "Source"};
+    captured.launchResult.text = {result, result, {}};
+    return FileSession("mapped", captured.path, {result, {{"choice", {}}}, 0},
+        Support::Supported, {}, captured);
+}
+ResultAnchor anchor(const FileSession &file, const std::string &id = "choice")
+{
+    CHECK(file.correspondence() && file.correspondence()->anchor(id));
+    return *file.correspondence()->anchor(id);
+}
 bool has(const FileSession &file, Blocker blocker)
 {
     const auto blockers = file.facts().blockers;
@@ -58,6 +95,187 @@ public:
     int run()
     {
         test_support::Suite suite("SessionStateTests");
+        suite.run("TRUCE-0012 correspondence is deterministic and partitions repeated inserted deleted and changed text", [] {
+            const std::array cases{
+                std::pair{"repeat\nrepeat\n", "repeat\nrepeat\n"},
+                std::pair{"head\nold\nend\n", "head\nnew\nend\n"},
+                std::pair{"head\nend\n", "head\ninserted\nend\n"},
+                std::pair{"head\ndeleted\nend\n", "head\nend\n"},
+                std::pair{"head\nrepeat\nrepeat\nend\n", "head\nrepeat\nend\n"}
+            };
+            const std::array expected{PassageKind::Equal, PassageKind::Changed,
+                PassageKind::ResultOnly, PassageKind::SourceOnly, PassageKind::Ambiguous};
+            ExactLineCorrespondence algorithm;
+            for (std::size_t i = 0; i < cases.size(); ++i) {
+                const std::string_view source = cases[i].first;
+                const std::string_view result = cases[i].second;
+                const auto passages = algorithm.compare(source, result);
+                CHECK(!passages.empty());
+                bool sawKind = false;
+                std::size_t sourceEnd = 0;
+                std::size_t resultEnd = 0;
+                for (const auto &passage : passages) {
+                    CHECK(passage.source.begin == sourceEnd && passage.result.begin == resultEnd);
+                    CHECK(validByteRange(source, passage.source) && validByteRange(result, passage.result));
+                    if (passage.kind == PassageKind::Equal)
+                        CHECK(source.substr(passage.source.begin, passage.source.end - passage.source.begin)
+                            == result.substr(passage.result.begin, passage.result.end - passage.result.begin));
+                    sawKind = sawKind || passage.kind == expected[i];
+                    sourceEnd = passage.source.end;
+                    resultEnd = passage.result.end;
+                }
+                CHECK(sourceEnd == source.size() && resultEnd == result.size() && sawKind);
+                for (int repeat = 0; repeat < 4; ++repeat) CHECK(algorithm.compare(source, result) == passages);
+            }
+        });
+        suite.run("TRUCE-0012 ambiguous repeated and reordered passages reject choices atomically", [] {
+            for (const auto &texts : {std::pair{"head\nrepeat\nrepeat\nend\n", "head\nrepeat\nend\n"},
+                                     std::pair{"head\none\ntwo\nend\n", "head\ntwo\none\nend\n"}}) {
+                auto file = mappedFile(texts.first, texts.second);
+                CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 12}}) == Transition::Applied);
+                const auto issued = anchor(file);
+                CHECK(issued.state == AnchorState::Ambiguous && !issued.result);
+                const auto before = file.current();
+                CHECK(file.replaceMapped(1, issued, "unsafe replacement\n", Decision{DecisionValue::Accepted, 1}, true)
+                    == Transition::AmbiguousTarget);
+                CHECK(file.current().id == before.id && file.current().draft == before.draft && !file.canUndo());
+            }
+        });
+        suite.run("TRUCE-0012 equal repeated passages keep the selected occurrence", [] {
+            auto file = mappedFile("repeat\nmiddle\nrepeat\n", "manual prefix\nrepeat\nmiddle\nrepeat\n");
+            CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {14, 21}}) == Transition::Applied);
+            const auto issued = anchor(file);
+            CHECK(issued.state == AnchorState::Mapped && issued.result == ByteRange{28, 35});
+            CHECK(file.replaceMapped(1, issued, "selected\n", Decision{DecisionValue::Accepted, 1}) == Transition::Applied);
+            CHECK(file.current().draft.text == "manual prefix\nrepeat\nmiddle\nselected\n");
+            CHECK(file.current().draft.decisions.at("choice") == Decision{DecisionValue::Accepted, 1});
+        });
+        suite.run("TRUCE-0012 UTF-8 boundaries and forged anchor identities cannot mutate a transaction", [] {
+            const std::string text = "start\n\xc3\xa9\xf0\x9f\x98\x80\nend\n";
+            auto file = mappedFile(text, text);
+            CHECK(file.bindSourceAnchor(1, {"inside-codepoint", SourceSide::Stage2, {7, 13}}) == Transition::InvalidAnchor);
+            CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {6, 13}}) == Transition::Applied);
+            const auto issued = anchor(file);
+            const auto before = file.current().draft;
+            CHECK(file.replaceMapped(0, issued, "stale command", Decision{DecisionValue::Accepted, 1}, true)
+                == Transition::StaleRevision);
+            CHECK(file.editResult(1, {{7, 8}, "x"}) == Transition::InvalidAnchor);
+            CHECK(file.replaceMapped(1, issued, "\x80", Decision{DecisionValue::Accepted, 1}) == Transition::InvalidAnchor);
+            for (int field = 0; field < 5; ++field) {
+                auto forged = issued;
+                if (field == 0) forged.origin.sessionId = "other session";
+                if (field == 1) forged.origin.path = "another.txt";
+                if (field == 2) forged.origin.sourceObjectId = "other object";
+                if (field == 3) forged.source.range.begin = 0;
+                if (field == 4) forged.result = ByteRange{0, 5};
+                CHECK(file.replaceMapped(1, forged, "wrong", Decision{DecisionValue::Accepted, 1}) == Transition::InvalidAnchor);
+                CHECK(file.current().id == 1 && file.current().draft == before && !file.canUndo());
+            }
+            CHECK(file.replaceMapped(1, issued, "valid\n", Decision{DecisionValue::Accepted, 1}) == Transition::Applied);
+            CHECK(file.current().draft.text == "start\nvalid\nend\n");
+        });
+        suite.run("TRUCE-0012 source-only anchors use the deletion site and preserve inserted result passages", [] {
+            auto file = mappedFile("head\nremoved\ntail\n", "manual prefix\nhead\ntail\nmanual suffix\n");
+            CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 13}}) == Transition::Applied);
+            const auto deleted = anchor(file);
+            CHECK(deleted.state == AnchorState::Mapped && deleted.result == ByteRange{19, 19});
+            CHECK(!deleted.manualOverlap);
+            CHECK(file.replaceMapped(1, deleted, "restored\n", Decision{DecisionValue::Accepted, 1})
+                == Transition::Applied);
+            CHECK(file.current().draft.text == "manual prefix\nhead\nrestored\ntail\nmanual suffix\n");
+        });
+        suite.run("TRUCE-0012 anchors transform around manual insertions and deletions without losing unrelated edits", [] {
+            auto file = mappedFile("head\nleft\nright\nend\n", "head\nleft\nright\nend\n");
+            CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 10}}) == Transition::Applied);
+            const auto stale = anchor(file);
+            const std::string prefix = "manual \xc3\xa9\n";
+            const std::string suffix = "unrelated manual tail\n";
+            CHECK(file.editResult(1, {{0, 0}, prefix}) == Transition::Applied);
+            CHECK(file.editResult(file.current().id, {{prefix.size(), prefix.size() + 5}, {}}) == Transition::Applied);
+            const auto end = file.current().draft.text.size();
+            CHECK(file.editResult(file.current().id, {{end, end}, suffix}) == Transition::Applied);
+            const auto current = anchor(file);
+            CHECK(current.result == ByteRange{prefix.size(), prefix.size() + 5} && !current.manualOverlap);
+            const auto before = file.current().draft;
+            CHECK(file.replaceMapped(file.current().id, stale, "stale", Decision{DecisionValue::Accepted, 1}, true)
+                == Transition::StaleRevision);
+            CHECK(file.current().draft == before);
+            CHECK(file.replaceMapped(file.current().id, current, "accepted\n", Decision{DecisionValue::Accepted, 1})
+                == Transition::Applied);
+            CHECK(file.current().draft.text == prefix + "accepted\nright\nend\n" + suffix);
+        });
+        suite.run("TRUCE-0012 changed manual passages require confirmation bound to the current preview", [] {
+            auto file = mappedFile("head\nsource\nend\n", "head\nmanual\nend\n");
+            CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 12}}) == Transition::Applied);
+            const auto preview = anchor(file);
+            CHECK(preview.manualOverlap && preview.result == ByteRange{5, 12});
+            const auto before = file.current().draft;
+            CHECK(file.replaceMapped(1, preview, "accepted\n", Decision{DecisionValue::Accepted, 1})
+                == Transition::ConfirmationRequired);
+            CHECK(file.current().draft == before && !file.canUndo());
+            CHECK(file.editResult(1, {{6, 7}, "X"}) == Transition::Applied);
+            CHECK(file.replaceMapped(file.current().id, preview, "accepted\n", Decision{DecisionValue::Accepted, 1}, true)
+                == Transition::StaleRevision);
+            CHECK(file.current().draft.decisions == before.decisions);
+            CHECK(file.replaceMapped(file.current().id, anchor(file), "accepted\n", Decision{DecisionValue::Accepted, 1}, true)
+                == Transition::Applied);
+            CHECK(file.current().draft.text == "head\naccepted\nend\n");
+        });
+        suite.run("TRUCE-0012 deleted anchors and ambiguous whole-buffer edits never reattach to another repeat", [] {
+            auto file = mappedFile("head\nrepeat\nrepeat\nend\n", "head\nrepeat\nrepeat\nend\n");
+            CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {12, 19}}) == Transition::Applied);
+            CHECK(file.editResult(1, {{12, 19}, {}}) == Transition::Applied);
+            CHECK(anchor(file).state == AnchorState::Invalidated && !anchor(file).result);
+            auto before = file.current().draft;
+            CHECK(file.replaceMapped(file.current().id, anchor(file), "wrong\n", Decision{DecisionValue::Accepted, 1}, true)
+                == Transition::InvalidAnchor);
+            CHECK(file.current().draft == before);
+            CHECK(file.undo(file.current().id) == Transition::Applied);
+            CHECK(anchor(file).state == AnchorState::Mapped);
+            before = file.current().draft;
+            before.text = "head\nrepeat\nend\n";
+            CHECK(file.replaceDraft(file.current().id, before) == Transition::Applied);
+            CHECK(anchor(file).state == AnchorState::Ambiguous && !anchor(file).result);
+            CHECK(file.replaceMapped(file.current().id, anchor(file), "wrong\n", Decision{DecisionValue::Accepted, 1}, true)
+                == Transition::AmbiguousTarget);
+            CHECK(file.current().draft == before);
+        });
+        suite.run("TRUCE-0012 insertion anchors respect affinity and history restores text decisions and mappings", [] {
+            auto file = mappedFile("head\ntail\n", "head\ntail\n");
+            CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 5}, InsertionAffinity::Before}) == Transition::Applied);
+            CHECK(file.bindSourceAnchor(1, {"after", SourceSide::Stage2, {5, 5}, InsertionAffinity::After}) == Transition::Applied);
+            const auto original = anchor(file);
+            CHECK(file.editResult(1, {{5, 5}, "manual\n"}) == Transition::Applied);
+            const auto edited = file.current().draft;
+            CHECK(anchor(file).result == ByteRange{5, 5});
+            CHECK(anchor(file, "after").result == ByteRange{12, 12});
+            CHECK(file.replaceMapped(file.current().id, anchor(file), "choice\n", Decision{DecisionValue::Accepted, 1})
+                == Transition::Applied);
+            const auto chosen = file.current().draft;
+            CHECK(chosen.text == "head\nchoice\nmanual\ntail\n");
+            const auto chosenRange = anchor(file).result;
+            CHECK(file.undo(file.current().id) == Transition::Applied);
+            CHECK(file.current().draft == edited && anchor(file).result == ByteRange{5, 5});
+            CHECK(anchor(file).revision == file.current().id);
+            CHECK(file.redo(file.current().id) == Transition::Applied);
+            CHECK(file.current().draft == chosen && anchor(file).result == chosenRange);
+            CHECK(anchor(file).revision == file.current().id);
+            CHECK(file.replaceMapped(file.current().id, original, "stale", {}, true) == Transition::StaleRevision);
+        });
+        suite.run("TRUCE-0052 correspondence succeeds when matrix-sized allocations are refused", [] {
+            std::string source;
+            for (int line = 0; line < 3500; ++line) source += "unique line " + std::to_string(line) + '\n';
+            const auto result = "manual prefix\n" + source + "manual suffix\n";
+            // A fixture fault budget, not a supported-file or operating limit.
+            // Even a one-byte 3500 x 3502 matrix exceeds this allocation budget.
+            allocation_fixture::Bound budget;
+            const auto passages = ExactLineCorrespondence{}.compare(source, result);
+            CHECK(passages == std::vector<Passage>{
+                {{0, 0}, {0, 14}, PassageKind::ResultOnly},
+                {{0, source.size()}, {14, 14 + source.size()}, PassageKind::Equal},
+                {{source.size(), source.size()}, {14 + source.size(), result.size()}, PassageKind::ResultOnly}});
+            CHECK(allocation_fixture::largest > 0 && allocation_fixture::largest < allocation_fixture::ceiling);
+        });
         suite.run("source captures survive edits history checkpoints and staged discards", [] {
             auto input = capturedSources();
             const auto expected = input;

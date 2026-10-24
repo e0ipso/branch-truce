@@ -12,12 +12,40 @@
 #include <QMap>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <array>
+#include <atomic>
 #include <sys/stat.h>
 
 using namespace branch_truce;
+
+namespace correspondence_faults {
+inline std::atomic_bool failLarge = false;
+inline std::atomic_int failures = 0;
+struct Failure {
+    Failure() { failures = 0; failLarge = true; }
+    ~Failure() { failLarge = false; }
+};
+}
+
+// Itanium constructor ABI used by the project's Linux GCC/Clang toolchains.
+#define MAP_CONSTRUCTOR "_ZN12branch_truce17CorrespondenceMapC1EmRKNS_13FileSnapshotsENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrIKNS_23CorrespondenceAlgorithmEE"
+extern "C" void realMap(CorrespondenceMap *, RevisionId, const FileSnapshots &, std::string,
+    std::shared_ptr<const CorrespondenceAlgorithm>) asm("__real_" MAP_CONSTRUCTOR);
+extern "C" void wrapMap(CorrespondenceMap *, RevisionId, const FileSnapshots &, std::string,
+    std::shared_ptr<const CorrespondenceAlgorithm>) asm("__wrap_" MAP_CONSTRUCTOR);
+extern "C" void wrapMap(CorrespondenceMap *self, RevisionId revision, const FileSnapshots &sources,
+    std::string result, std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
+{
+    if (correspondence_faults::failLarge && sources.path == "large.txt") {
+        ++correspondence_faults::failures;
+        throw std::runtime_error("injected large-file correspondence resource failure");
+    }
+    realMap(self, revision, sources, std::move(result), std::move(algorithm));
+}
+#undef MAP_CONSTRUCTOR
 
 namespace {
 void writeFile(const QString &path, const QByteArray &bytes)
@@ -82,16 +110,26 @@ public:
             throw std::runtime_error("fixture git: " + process.readAllStandardError().toStdString());
         return process.readAllStandardOutput();
     }
-    void conflict(const QString &operation)
+    void conflict(const QString &operation, const QMap<QString, std::array<QByteArray, 3>> &additional = {})
     {
+        if (!additional.isEmpty()) {
+            for (auto entry = additional.cbegin(); entry != additional.cend(); ++entry)
+                writeFile(path(entry.key()), entry.value()[0]);
+            git(QStringList{"add", "--"} + additional.keys());
+            git({"commit", "--quiet", "-m", "additional base conflicts"});
+        }
         git({"checkout", "--quiet", "-b", "side"});
         for (const auto name : {"tracked.txt", "excluded.txt"}) writeFile(path(name), "side\n");
-        git({"add", "--", "tracked.txt", "excluded.txt"});
+        for (auto entry = additional.cbegin(); entry != additional.cend(); ++entry)
+            writeFile(path(entry.key()), entry.value()[2]);
+        git(QStringList{"add", "--", "tracked.txt", "excluded.txt"} + additional.keys());
         git({"commit", "--quiet", "-m", "side"});
         side = git({"rev-parse", "HEAD"}).trimmed();
         git({"checkout", "--quiet", "main"});
         for (const auto name : {"tracked.txt", "excluded.txt"}) writeFile(path(name), "main\n");
-        git({"add", "--", "tracked.txt", "excluded.txt"});
+        for (auto entry = additional.cbegin(); entry != additional.cend(); ++entry)
+            writeFile(path(entry.key()), entry.value()[1]);
+        git(QStringList{"add", "--", "tracked.txt", "excluded.txt"} + additional.keys());
         git({"commit", "--quiet", "-m", "main"});
         main = git({"rev-parse", "HEAD"}).trimmed();
         if (operation.startsWith("rebase")) {
@@ -247,6 +285,171 @@ public:
     int run(const QString &application)
     {
         test_support::Suite suite("StartupRouteTests");
+        suite.run("TRUCE-0023 mixed inventory retains every exact path sources initial results and persistent outstanding reasons", [] {
+            Repository repo;
+            const QMap<QString, std::array<QByteArray, 3>> additional{
+                {":literal\tfile.txt", {"tab base\n", "tab main\n", "tab side\n"}},
+                {":literal\\tfile.txt", {"slash base\n", "slash main\n", "slash side\n"}},
+                {"binary.dat", {QByteArray("base\0binary", 11), QByteArray("main\0binary", 11), QByteArray("side\0binary", 11)}},
+                {"missing.txt", {"missing base\n", "missing main\n", "missing side\n"}}
+            };
+            repo.conflict("merge", additional);
+            for (const auto &path : {QString(":literal\tfile.txt"), QString(":literal\\tfile.txt")})
+                writeFile(repo.path(path), "preserved manual result for " + path.toUtf8() + '\n');
+            CHECK(QFile::remove(repo.path("missing.txt")));
+            const auto unmerged = repo.git({"diff", "--name-only", "--diff-filter=U", "-z"}).split('\0');
+            QSet<QByteArray> expectedPaths;
+            for (const auto &path : unmerged) if (!path.isEmpty()) expectedPaths.insert(path);
+            CHECK(expectedPaths.size() == 6);
+            const auto before = repo.snapshot();
+            ScopedEnvironment environment(repo.environment);
+            ApplicationController controller;
+            openController(controller, repo);
+            auto *model = controller.files();
+            CHECK(model->totalFiles() == 6 && controller.outsideAppFiles() == 1 && controller.loadErrorFiles() == 1);
+            QSet<QByteArray> actualPaths;
+            for (int row = 0; row < model->totalFiles(); ++row) {
+                const auto index = model->index(row);
+                const auto path = model->data(index, SessionModel::PathBytesRole).toByteArray();
+                const auto id = model->data(index, SessionModel::FileIdRole).toString();
+                actualPaths.insert(path);
+                CHECK(id.toLatin1() == path.toHex() && controller.selectFile(id));
+                const auto selected = controller.selectedFile();
+                CHECK(selected.value("pathBytes").toByteArray() == path && selected.value("fileId").toString() == id);
+                if (path == "binary.dat" || path == "missing.txt") {
+                    const auto expected = path == "binary.dat" ? "outside-app" : "unreadable";
+                    CHECK(selected.value("support").toString() == QLatin1String(expected));
+                    CHECK(!selected.value("supportDetail").toString().isEmpty());
+                    CHECK(!selected.contains("stage2") && !selected.contains("initialResult"));
+                    CHECK(model->replaceDraft(id.toStdString(), 1, {"unsafe edit", {}, 0}) == Transition::Blocked);
+                    continue;
+                }
+                CHECK(selected.value("support").toString() == "supported");
+                const auto versions = additional.value(QString::fromUtf8(path), {"base\n", "main\n", "side\n"});
+                CHECK(selected.value("earlier").toMap().value("text").toString().toUtf8() == versions[0]);
+                CHECK(selected.value("stage2").toMap().value("text").toString().toUtf8() == versions[1]);
+                CHECK(selected.value("stage3").toMap().value("text").toString().toUtf8() == versions[2]);
+                const auto initial = readFile(repo.path(QString::fromUtf8(path)));
+                CHECK(selected.value("initialResult").toMap().value("text").toString().toUtf8() == initial);
+                CHECK(selected.value("resultText").toString().toUtf8() == initial);
+                CHECK(!controller.selectFile(QString::fromUtf8(path)) && controller.selectedFileId() == id);
+            }
+            CHECK(actualPaths == expectedPaths);
+            const auto selectedId = controller.selectedFileId();
+            CHECK(!controller.selectFile("not-an-exact-file-id") && controller.selectedFileId() == selectedId);
+            // Adapter success callbacks complete supported rows without touching Git in this fixture.
+            for (int row = 0; row < model->totalFiles(); ++row) {
+                const auto id = model->data(model->index(row), SessionModel::FileIdRole).toString().toStdString();
+                if (model->file(id)->support() != Support::Supported) continue;
+                CHECK(model->replaceDraft(id, 1, {"reviewed supported result\n", {}, 0}) == Transition::Applied);
+                const auto revision = model->file(id)->current().id;
+                CHECK(model->beginMarkResolved(id, revision) == Transition::Applied);
+                CHECK(model->recordCheckpoint(id, revision, Outcome::Succeeded) == Transition::Applied);
+                CHECK(model->recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
+                CHECK(model->recordStage(id, revision, Outcome::Succeeded, "fixture-verified-object", "100644") == Transition::Applied);
+            }
+            CHECK(model->resolvedFiles() == 4 && !model->canFinish() && model->finishBlockers().size() == 2);
+            CHECK(controller.outsideAppFiles() == 1 && controller.loadErrorFiles() == 1);
+            CHECK(controller.detail().contains("outside app remain outstanding"));
+            for (const auto path : {"binary.dat", "missing.txt"}) {
+                const auto &outstanding = openedFile(controller, path);
+                CHECK(!outstanding.supportDetail().empty() && !outstanding.facts().resolved);
+                CHECK(controller.selectFile(QString::fromStdString(outstanding.id())));
+                CHECK(!controller.selectedFile().value("supportDetail").toString().isEmpty());
+            }
+            CHECK(repo.snapshot() == before);
+        });
+        suite.run("TRUCE-0052 a large admitted file correspondence failure does not abort loading the small files", [] {
+            Repository repo;
+            QByteArray large;
+            for (int line = 0; line < 5000; ++line) large += "large line " + QByteArray::number(line) + '\n';
+            repo.conflict("merge", {{"large.txt", {"base\n" + large, "main\n" + large, "side\n" + large}}});
+            writeFile(repo.path("large.txt"), "preserved large manual result\n" + large);
+            const auto before = repo.snapshot();
+            const auto smallOther = readFile(repo.path("excluded.txt"));
+            ScopedEnvironment environment(repo.environment);
+            correspondence_faults::Failure fault;
+            ApplicationController controller;
+            openController(controller, repo);
+            CHECK(correspondence_faults::failures == 1);
+            CHECK(controller.files()->totalFiles() == 3 && controller.loadErrorFiles() == 1);
+            const auto &failed = openedFile(controller, "large.txt");
+            CHECK(failed.support() == Support::Unreadable && failed.snapshots() && !failed.correspondence());
+            CHECK(failed.supportDetail().find("large.txt") != std::string::npos);
+            CHECK(failed.supportDetail().find("injected large-file correspondence resource failure") != std::string::npos);
+            CHECK(failed.current().draft.text == ("preserved large manual result\n" + large).toStdString());
+            CHECK(failed.snapshots()->stage2->worktree.utf8 == ("main\n" + large).toStdString());
+            CHECK(failed.snapshots()->stage3->worktree.utf8 == ("side\n" + large).toStdString());
+            for (const auto path : {"tracked.txt", "excluded.txt"}) {
+                const auto &small = openedFile(controller, path);
+                CHECK(small.support() == Support::Supported && small.correspondence() && small.snapshots());
+                CHECK(small.snapshots()->stage2->worktree.utf8 == "main\n" && small.snapshots()->stage3->worktree.utf8 == "side\n");
+                CHECK(small.current().draft.text == (QByteArray(path) == "tracked.txt" ? repo.manual : smallOther).toStdString());
+                CHECK(controller.selectFile(QString::fromStdString(small.id())));
+                CHECK(controller.selectedFile().value("stage2").toMap().value("text").toString() == "main\n");
+            }
+            CHECK(!controller.files()->hasPendingRecovery() && !controller.files()->canFinish());
+            CHECK(repo.snapshot() == before);
+        });
+        suite.run("TRUCE-0053 failed placeholder recovery keeps captured files visible blocks editing and retries the captured state", [] {
+            Repository repo;
+            repo.conflict("merge");
+            const auto before = repo.snapshot();
+            ScopedEnvironment environment(repo.environment);
+            for (const bool failRecovery : {false, true}) {
+                ApplicationController controller;
+                auto *model = controller.files();
+                const auto location = model->recoveryDirectory();
+                if (failRecovery) {
+                    CHECK(QDir().mkpath(QFileInfo(location).path()));
+                    writeFile(location, "block recovery storage with a regular file");
+                }
+                openController(controller, repo);
+                CHECK(model->totalFiles() == 2 && model->hasPendingRecovery() == failRecovery);
+                CHECK(controller.loadErrorFiles() == 0 && controller.outsideAppFiles() == 0);
+                for (int row = 0; row < model->totalFiles(); ++row) {
+                    CHECK(model->data(model->index(row), SessionModel::PendingInputRole).toBool() == failRecovery);
+                    CHECK(model->data(model->index(row), SessionModel::RecoveryErrorRole).toString().isEmpty() == !failRecovery);
+                }
+                for (const auto path : {"tracked.txt", "excluded.txt"}) {
+                    const auto &loaded = openedFile(controller, path);
+                    CHECK(loaded.support() == Support::Supported && loaded.snapshots() && loaded.correspondence());
+                    CHECK(loaded.supportDetail().empty());
+                    CHECK(loaded.current().draft.text == readFile(repo.path(path)).toStdString());
+                    CHECK(loaded.snapshots()->stage2->worktree.utf8 == "main\n" && loaded.snapshots()->stage3->worktree.utf8 == "side\n");
+                    CHECK(controller.selectFile(QString::fromStdString(loaded.id())));
+                    CHECK(controller.selectedFile().value("stage2").toMap().value("text").toString() == "main\n");
+                    CHECK(controller.selectedFile().value("resultText").toString().toStdString() == loaded.current().draft.text);
+                    if (failRecovery) {
+                        CHECK(model->pendingDraft(loaded.id()) && *model->pendingDraft(loaded.id()) == loaded.current().draft);
+                        CHECK(model->retryRecovery(loaded.id()) == Transition::Blocked);
+                        CHECK(model->replaceDraft(loaded.id(), 1, {"must wait for recovery", {}, 0}) == Transition::Blocked);
+                    }
+                }
+                if (failRecovery) {
+                    CHECK(QFile::remove(location));
+                    for (const auto path : {"tracked.txt", "excluded.txt"}) {
+                        const auto id = openedFile(controller, path).id();
+                        CHECK(model->retryRecovery(id) == Transition::Applied);
+                    }
+                }
+                CHECK(!model->hasPendingRecovery());
+                storage::RecoveryStore store(location);
+                const auto recovered = store.read();
+                CHECK(recovered.succeeded && recovered.transactions.size() == (failRecovery ? 2 : 4));
+                // Successful placeholders may precede the two final captured-file records.
+                for (qsizetype row = recovered.transactions.size() - 2; row < recovered.transactions.size(); ++row) {
+                    const auto &state = recovered.transactions[row];
+                    const auto sources = state.value("snapshots").toObject();
+                    CHECK(!sources.isEmpty() && state.value("support").toInt() == static_cast<int>(Support::Supported));
+                    QString error;
+                    const auto encodedText = state.value("current").toObject().value("draft").toObject().value("text").toString().toLatin1();
+                    CHECK(!store.payload(encodedText, &error).isEmpty() && error.isEmpty());
+                }
+                CHECK(model->replaceDraft(openedFile(controller).id(), 1, {"editable after recovery\n", {}, 0}) == Transition::Applied);
+                CHECK(controller.startupState() == "ready" && repo.snapshot() == before);
+            }
+        });
         suite.run("merge and rebase captures retain verified sources provenance and the manual launch result", [] {
             for (const auto operation : {"merge", "rebase-merge", "rebase-apply"}) {
                 Repository repo;
