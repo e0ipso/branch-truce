@@ -151,12 +151,15 @@ bool restoreMergetoolFile(const QByteArray &path, const QByteArray &bytes, QStri
     const int fd = openWalk(path, false, error, true);
     if (fd < 0) return failBool(error, QStringLiteral("The original file could not be restored."));
     QFile file;
-    if (!file.open(fd, QIODevice::WriteOnly | QIODevice::Truncate, QFileDevice::AutoCloseHandle)) {
+    // Truncate is ignored for an already-open descriptor. Shrink after the
+    // new bytes are flushed so a shorter restore does not keep the old tail.
+    if (!file.open(fd, QIODevice::WriteOnly, QFileDevice::AutoCloseHandle)) {
         ::close(fd);
         return failBool(error, QStringLiteral("The original file could not be restored."));
     }
     const auto wrote = file.write(bytes);
-    if (wrote != static_cast<qint64>(bytes.size()) || !file.flush() || ::fsync(file.handle()) != 0)
+    if (wrote != static_cast<qint64>(bytes.size()) || !file.flush()
+        || !file.resize(static_cast<qint64>(bytes.size())) || ::fsync(file.handle()) != 0)
         return failBool(error, QStringLiteral("The original file could not be restored."));
     return true;
 }
