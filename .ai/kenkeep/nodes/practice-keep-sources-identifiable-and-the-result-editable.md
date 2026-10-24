@@ -12,6 +12,10 @@ kk_schema_version: 3
 kk_id: practice-keep-sources-identifiable-and-the-result-editable
 kk_derived_from:
   - PRD.md
+  - src/ui/ComparisonView.qml
+  - src/ui/Main.qml
+  - src/app/ApplicationController.cpp
+  - docs/editor-integration.md
 kk_relates_to: []
 kk_depends_on: []
 kk_confidence: medium
@@ -26,8 +30,14 @@ Show corresponding passages with enough surrounding text to judge them. Distingu
 
 Provide search within sources and result with a clear scope, line wrapping, and controls to reveal spaces and tabs. Keep whitespace-only changes discoverable. Make these reading controls preserve the text and resolution decisions.
 
+[ComparisonView](../../../src/ui/ComparisonView.qml) shows resizable labeled source panes around an editable center result, and shows common earlier context when that capture exists. [Main](../../../src/ui/Main.qml) hides and shows the source-choice list. Hiding that list leaves the comparison panes in place. [ApplicationController](../../../src/app/ApplicationController.cpp) owns direct result edits and the basic undo, redo, and clipboard shortcuts. Its event filter groups the document notifications from one native input event, including an input-method commit, into one command. The result `TextArea` sets `TextArea.flickable` on its `Flickable`, and that scroll surface follows the editor content. Search, space and tab markers, and full keyboard operation across files, choices, review, and saving are absent from this comparison. Physical desktop checks of composed input, clipboard, pointer selection, scrolling, and theme behavior have not been run. See [editor integration](../../../docs/editor-integration.md).
+
 <!-- kk:citations:start -->
 # Citations
 
 [1] [PRD.md](../../../PRD.md)
+[2] [src/ui/ComparisonView.qml](../../../src/ui/ComparisonView.qml)
+[3] [src/ui/Main.qml](../../../src/ui/Main.qml)
+[4] [src/app/ApplicationController.cpp](../../../src/app/ApplicationController.cpp)
+[5] [docs/editor-integration.md](../../../docs/editor-integration.md)
 <!-- kk:citations:end -->

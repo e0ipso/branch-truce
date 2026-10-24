@@ -1,6 +1,6 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:7abbd1fee3eaaa2a912f868079008980de0bedc557dfcfabbf03b7412d06d601'
+nodes_hash: 'sha256:6d627099dcbb4c4bfd7d1ea00922dde2292ecee6a7f968451b38f706b6a8fbd8'
 node_count: 19
 ---
 # kenkeep Graph
@@ -14,7 +14,7 @@ Total nodes: 19
 - **path:** map-branch-truce-desktop-implementation-baseline.md
 - **tags:** architecture, desktop, platform, cpp
 - **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope
-- **derived_from:** TECH_SPEC.md
+- **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ApplicationController.cpp, docs/editor-integration.md, docs/build.md
 
 ## map-branch-truce-first-release-scope
 
@@ -110,7 +110,7 @@ Total nodes: 19
 - **title:** Keep sources identifiable and the result editable
 - **path:** practice-keep-sources-identifiable-and-the-result-editable.md
 - **tags:** product, comparison, editing
-- **derived_from:** PRD.md
+- **derived_from:** PRD.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ApplicationController.cpp, docs/editor-integration.md
 
 ## practice-keep-techspecs-and-prds-independent
 
@@ -134,7 +134,7 @@ Total nodes: 19
 - **title:** Make conflict choices explicit and reversible
 - **path:** practice-make-conflict-choices-explicit-and-reversible.md
 - **tags:** product, choices, editing, undo
-- **derived_from:** PRD.md, src/core/EditingCommands.cpp, src/core/SessionState.cpp, docs/recovery-journal.md
+- **derived_from:** PRD.md, src/core/EditingCommands.cpp, src/core/EditingCommands.md, src/core/SessionState.cpp, docs/recovery-journal.md
 
 ## practice-reconcile-uncertain-destination-publication
 

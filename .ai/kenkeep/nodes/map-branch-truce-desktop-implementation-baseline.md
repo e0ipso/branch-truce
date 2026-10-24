@@ -12,6 +12,11 @@ kk_schema_version: 3
 kk_id: map-branch-truce-desktop-implementation-baseline
 kk_derived_from:
   - TECH_SPEC.md
+  - src/ui/ComparisonView.qml
+  - src/ui/Main.qml
+  - src/app/ApplicationController.cpp
+  - docs/editor-integration.md
+  - docs/build.md
 kk_relates_to:
   - practice-design-desktop-apps-around-screens-and-components
   - map-branch-truce-first-release-scope
@@ -24,7 +29,7 @@ C++20 is the selected implementation language standard, with a GCC 13.3-compatib
 
 The locked stack uses Qt 6, Qt Quick/QML, Qt Quick Controls and Kirigami for the interface; KDE HIG and Breeze for desktop conventions; CMake with KDE Extra CMake Modules where needed for builds; the installed Git CLI behind a constrained C++ adapter using asynchronous QProcess; and Qt file APIs for saving and recovery. Keep the application controller, merge engine, Git adapter, and saving/recovery components loosely coupled. Keep Qt-specific UI objects outside the merge engine. There is no Rust bridge, Python runtime or mandatory libgit2 dependency.
 
-[TECH_SPEC.md](../../../TECH_SPEC.md) is the technical design reference and takes precedence over earlier research recommendations. Save checkpoints app-owned drafts only; Mark resolved publishes and verifies Git resolution. Repository-session mode stages directly; mergetool mode assigns the launched path to parent-owned staging and verifies its acknowledgment. First-release conversion/helper restrictions apply before reading sources as well as before staging. Recovery precedes acknowledgment of completed edits; the [versioned recovery journal](map-recovery-journal-and-acknowledgment-boundary.md) defines the implemented layout and commit boundary. The [correspondence engine](map-revision-bound-passage-correspondence.md) maps source passages to result revisions. The editor component, mergetool transport/lifecycle and target packaging still need implementation evidence. Changing the locked stack requires an explicit technical-spec decision.
+[TECH_SPEC.md](../../../TECH_SPEC.md) is the technical design reference and takes precedence over earlier research recommendations. Save checkpoints app-owned drafts only; Mark resolved publishes and verifies Git resolution. Repository-session mode stages directly; mergetool mode assigns the launched path to parent-owned staging and verifies its acknowledgment. First-release conversion/helper restrictions apply before reading sources as well as before staging. Recovery precedes acknowledgment of completed edits; the [versioned recovery journal](map-recovery-journal-and-acknowledgment-boundary.md) defines the implemented layout and commit boundary. The [correspondence engine](map-revision-bound-passage-correspondence.md) maps source passages to result revisions. [ComparisonView](../../../src/ui/ComparisonView.qml) implements the comparison. It has resizable identified source panes around an editable center, optional earlier context, and command-owned direct edits and basic shortcuts. [Main](../../../src/ui/Main.qml) collapses the choice list beside that comparison. Search, whitespace reading aids, and full keyboard operation remain unimplemented there. Physical desktop verification was not run. Mergetool transport, mergetool lifecycle, and target packaging still need implementation evidence, including the missing mergetool parent handoff in [build notes](../../../docs/build.md). Changing the locked stack requires an explicit technical-spec decision.
 
 <!-- kk:related:start -->
 # Related
