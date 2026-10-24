@@ -46,10 +46,13 @@ struct RepositoryContext {
     QString worktreeRoot;
     QString gitDirectory; // Canonical per-worktree directory, including linked worktrees.
     RepositoryOperation operation = RepositoryOperation::None;
-    // Operation/stage identity only. File types and conversion policy must still
-    // be checked before editing or publishing. Reinspect before any mutation.
+    // Operation identity only. Check unsupportedPaths, file types and conversion
+    // policy before editing or publishing. Reinspect before any mutation.
     bool supported = false;
     QString diagnostic;
+    // Exact conflict paths whose stages cannot be attributed to the operation.
+    // Keep their index entries visible without rejecting other paths.
+    QHash<QByteArray, QString> unsupportedPaths;
     SourceIdentity stage2;
     SourceIdentity stage3;
     QByteArray baseCommitId; // Empty for an unavailable common earlier version.

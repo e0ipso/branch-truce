@@ -53,6 +53,7 @@ QList<QByteArray> RepositoryDiscovery::arguments() const
         for (qsizetype i = pathOffset; i < std::min(paths.size(), pathOffset + treeBatchSize); ++i) args.append(paths[i]);
         return args;
     }
+    case Step::SourceTree: return {"ls-tree", "--full-tree", "-r", "-z", treeQueue.front()};
     case Step::Done: return {};
     }
     return {};
@@ -233,6 +234,7 @@ void RepositoryDiscovery::beginTrees()
 
 bool RepositoryDiscovery::readTree(const QByteArray &bytes)
 {
+    const bool sourceTree = step == Step::SourceTree;
     auto &tree = trees[treeQueue.front()];
     qsizetype offset = 0;
     while (offset < bytes.size()) {
@@ -243,27 +245,50 @@ bool RepositoryDiscovery::readTree(const QByteArray &bytes)
         const auto fields = record.first(tab < 0 ? 0 : tab).split(' ');
         const auto path = tab < 0 ? QByteArray{} : record.mid(tab + 1);
         const auto batchEnd = std::min(paths.size(), pathOffset + treeBatchSize);
-        bool requested = false;
+        bool requested = sourceTree;
         for (qsizetype i = pathOffset; i < batchEnd; ++i) requested = requested || paths[i] == path;
         if (fields.size() != 3 || fields[0].size() != 6 || !objectId(fields[2])
             || (fields[1] != "blob" && fields[1] != "commit" && fields[1] != "tree")
-            || !requested || tree.contains(path)) return fail(QStringLiteral("Source tree does not match the captured conflict paths"));
-        tree.insert(path, {fields[0], fields[2]});
+            || !relativeFile(path) || !requested || (!sourceTree && tree.contains(path)))
+            return fail(QStringLiteral("Source tree does not match the captured conflict paths"));
+        if (sourceTree) {
+            auto &objects = sourceObjects[treeQueue.front()];
+            const auto key = fields[0] + ' ' + fields[2];
+            if (objects.contains(key)) objects[key] = true;
+        } else tree.insert(path, {fields[0], fields[2]});
         offset = end + 1;
     }
     pathOffset += treeBatchSize;
-    if (pathOffset >= paths.size()) {
+    if (sourceTree || pathOffset >= paths.size()) {
         treeQueue.removeFirst();
         pathOffset = 0;
     }
     if (treeQueue.isEmpty()) {
-        if (!verifyStages()) return false;
+        if (!sourceTree) {
+            // A text conflict can use its destination path for all index stages
+            // while an earlier contribution still lives at its old path. Verify
+            // the exact blob and mode in that commit without inferring a rename.
+            const QList<QByteArray> sources{base, head, other};
+            for (const auto &entry : result.indexEntries) {
+                const auto &source = sources[static_cast<qsizetype>(entry.stage) - 1];
+                if (!source.isEmpty() && !trees.value(source).contains(entry.path)
+                    && (entry.mode == "100644" || entry.mode == "100755")) {
+                    sourceObjects[source].insert(entry.mode + ' ' + entry.objectId, false);
+                    if (!treeQueue.contains(source)) treeQueue.append(source);
+                }
+            }
+            if (!treeQueue.isEmpty()) {
+                step = Step::SourceTree;
+                return true;
+            }
+        }
+        verifyStages();
         step = Step::FinalIndex;
     }
     return true;
 }
 
-bool RepositoryDiscovery::verifyStages()
+void RepositoryDiscovery::verifyStages()
 {
     const QList<QByteArray> sources{base, head, other};
     QSet<QByteArray> present;
@@ -271,19 +296,25 @@ bool RepositoryDiscovery::verifyStages()
         const auto &source = sources[static_cast<qsizetype>(entry.stage) - 1];
         const auto expected = trees.value(source).value(entry.path);
         const auto key = QByteArray::number(entry.stage) + '\0' + entry.path;
-        if (present.contains(key) || source.isEmpty() || expected.mode != entry.mode || expected.objectId != entry.objectId)
-            return fail(QStringLiteral("Index stage %1 provenance does not match its verified commit at %2")
-                            .arg(entry.stage).arg(displayPath(entry.path)));
+        const bool atPath = expected.mode == entry.mode && expected.objectId == entry.objectId;
+        const bool elsewhere = !trees.value(source).contains(entry.path)
+            && sourceObjects.value(source).value(entry.mode + ' ' + entry.objectId);
+        if (present.contains(key) || source.isEmpty() || (!atPath && !elsewhere)) {
+            result.repository.unsupportedPaths.insert(entry.path,
+                QStringLiteral("Outside app: index stage %1 provenance does not match its verified commit at %2")
+                    .arg(entry.stage).arg(displayPath(entry.path)));
+        }
         present.insert(key);
     }
     for (const auto &path : paths) {
         for (qsizetype i = 0; i < sources.size(); ++i) {
-            if (trees.value(sources[i]).contains(path) && !present.contains(QByteArray::number(i + 1) + '\0' + path))
-                return fail(QStringLiteral("Outside app: missing index stage %1 has ambiguous source topology at %2")
-                                .arg(i + 1).arg(displayPath(path)));
+            if (trees.value(sources[i]).contains(path) && !present.contains(QByteArray::number(i + 1) + '\0' + path)) {
+                result.repository.unsupportedPaths.insert(path,
+                    QStringLiteral("Outside app: missing index stage %1 has ambiguous source topology at %2")
+                        .arg(i + 1).arg(displayPath(path)));
+            }
         }
     }
-    return true;
 }
 
 bool RepositoryDiscovery::finish()
@@ -379,7 +410,8 @@ bool RepositoryDiscovery::consume(const QByteArray &output, int code)
     }
     case Step::ReplayAncestor: step = Step::OntoAncestor; break;
     case Step::OntoAncestor: beginTrees(); break;
-    case Step::Tree: return readTree(output);
+    case Step::Tree:
+    case Step::SourceTree: return readTree(output);
     case Step::FinalIndex:
         if (output != index) return fail(QStringLiteral("Unmerged index changed during discovery; inspect again"));
         if (head.isEmpty()) return finish();

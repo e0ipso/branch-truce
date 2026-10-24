@@ -15,7 +15,7 @@ public:
     bool consume(const QByteArray &output, int exitCode);
 private:
     enum class Step { GitDirectory, Index, Head, Commit, MergeBase, ReplayAncestor,
-                      OntoAncestor, Tree, FinalIndex, FinalHead, Done };
+                      OntoAncestor, Tree, SourceTree, FinalIndex, FinalHead, Done };
     struct Commit { QList<QByteArray> parents; };
     struct TreeEntry { QByteArray mode; QByteArray objectId; };
     bool captureMetadata(QMap<QString, QByteArray> &snapshot);
@@ -24,7 +24,7 @@ private:
     bool readCommit(const QByteArray &bytes);
     bool readTree(const QByteArray &bytes);
     void beginTrees();
-    bool verifyStages();
+    void verifyStages();
     bool finish();
     bool fail(const QString &reason);
     void unsupported(const QString &reason);
@@ -43,6 +43,7 @@ private:
     QList<QByteArray> paths;
     QList<QByteArray> treeQueue;
     QHash<QByteArray, QHash<QByteArray, TreeEntry>> trees;
+    QHash<QByteArray, QHash<QByteArray, bool>> sourceObjects;
     qsizetype pathOffset = 0;
     static constexpr qsizetype treeBatchSize = 64;
 };
