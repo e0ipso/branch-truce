@@ -179,7 +179,7 @@ Save creates an explicit checkpoint of the current result and decisions in the a
 
 Only Mark resolved publishes a result. Preserve the selected result-format policy, final-newline behavior and agreed executable permissions. Reading aids do not alter serialization. Known remaining merge-marker ranges block publishing until explicitly resolved; do not delete marker-like source text globally or treat absence of marker text as proof of review. When correspondence is ambiguous, require full-file review and explicit confirmation rather than inventing resolved decisions.
 
-Use guarded replacement writes with [QSaveFile](https://doc.qt.io/qt-6.10/qsavefile.html) where suitable, with direct-write fallback disabled. Validate the destination, expected content and path identity before writing. Symlinks, containment, permissions and race handling need an explicit implementation policy; a path precheck alone is insufficient. QSaveFile replacement does not make a file save plus Git staging one atomic transaction.
+The Linux storage writer uses pinned directory/file descriptors and atomic exchange, with no direct-write fallback. It validates the destination's exact path bytes, identity, content and permissions before replacement and inspects both the published and displaced entries afterward. See [destination publication](docs/destination-publication.md) for its policy, race evidence, retained-entry handling and caller requirements. Publication and Git staging remain separate operations.
 
 Mark resolved coordinates these steps:
 
