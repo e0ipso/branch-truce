@@ -107,6 +107,15 @@ Operation identity includes the canonical worktree and Git directory, source
 commits, base and rebase context. All captured files must share one session
 identity. Unrelated worktrees are not adopted.
 
+Diagnostics for stores that were not adopted remain visible in the session
+detail without blocking edits to the current conflict files. Only failures
+belonging to files in an adopted store become those files' recovery errors.
+An aborted or older operation's store is retained for inspection. To retire
+one, close all Branch Truce windows and move its complete `<session-uuid>`
+directory outside `QStandardPaths::AppLocalDataLocation/recovery/v1/`.
+Keep its journal and payloads together; moving the directory back makes it
+available for inspection again.
+
 The restore adapter replays the existing domain transitions and compares every
 complete state with its canonical encoding. This validates the state schema,
 enums, payload references, revisions and outcome relationships. Records are

@@ -320,10 +320,8 @@ bool SessionCoordinator::completeRecoveryLoad(const TaskStamp &stamp, std::vecto
     const bool recovered = restore.found;
     auto files = recovered ? std::move(restore.files) : std::move(observed);
     if (!replaceSession(d->worktree, d->operation, std::move(files), true, recovered ? &restore : nullptr)) return false;
-    if (!recovered && !restore.diagnostics.isEmpty()) {
-        for (const auto &file : d->model.files_)
-            d->model.recordRecoveryFailure(file.id(), restore.diagnostics.join(QLatin1Char('\n')));
-    }
+    // Inventory diagnostics describe stores we did not adopt. Only an adopted
+    // store's per-file failures may block the loaded files' recovery.
     return true;
 }
 
