@@ -21,12 +21,19 @@ std::size_t undecidedCount(const Draft &draft)
 }
 
 FileSession::FileSession(std::string id, std::string path, Draft initial,
-                         Support support, std::string supportDetail)
+                         Support support, std::string supportDetail,
+                         std::optional<FileSnapshots> snapshots)
     : id_(std::move(id)), path_(std::move(path)), support_(support),
       supportDetail_(std::move(supportDetail))
 {
     if (id_.empty() || path_.empty()) {
         throw std::invalid_argument("A file session needs an identity and path");
+    }
+    if (snapshots) {
+        if (snapshots->path != path_ || snapshots->launchResult.text.utf8 != initial.text) {
+            throw std::invalid_argument("Captured sources and launch result must belong to this file session");
+        }
+        snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
     }
     revisions_.emplace(1, Revision{1, 1, 1, std::move(initial)});
 }

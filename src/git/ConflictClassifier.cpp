@@ -18,6 +18,7 @@ void exclude(Conflict &conflict, ConflictSupport support, const QString &reason)
     conflict.reason = reason;
     conflict.sources.clear();
     conflict.result.reset();
+    conflict.resultIdentity.reset();
 }
 bool sameSnapshot(const Result &before, const Result &after)
 {
@@ -39,7 +40,15 @@ bool sameSnapshot(const Result &before, const Result &after)
 }
 // Walk exact byte components without following symlinks or opening a FIFO/device.
 // Use the adapter's existing 8 MiB payload budget for the current result too.
-bool readResult(const QString &root, const QByteArray &path, QByteArray &bytes)
+SnapshotFileIdentity fileIdentity(const struct stat &info)
+{
+    return {static_cast<std::uint64_t>(info.st_dev), static_cast<std::uint64_t>(info.st_ino),
+        static_cast<std::uint32_t>(info.st_mode), static_cast<std::int64_t>(info.st_size),
+        static_cast<std::int64_t>(info.st_mtim.tv_sec), static_cast<std::int64_t>(info.st_mtim.tv_nsec),
+        static_cast<std::int64_t>(info.st_ctim.tv_sec), static_cast<std::int64_t>(info.st_ctim.tv_nsec)};
+}
+bool readResult(const QString &root, const QByteArray &path, QByteArray &bytes,
+                SnapshotFileIdentity &identity)
 {
     int fd = ::open(QFile::encodeName(root).constData(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
     if (fd < 0) return false;
@@ -58,7 +67,11 @@ bool readResult(const QString &root, const QByteArray &path, QByteArray &bytes)
     if (!file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) { ::close(fd); return false; }
     constexpr qsizetype limit = 8 * 1024 * 1024;
     bytes = file.read(limit + 1);
-    return file.error() == QFileDevice::NoError && bytes.size() <= limit;
+    struct stat after {};
+    if (file.error() != QFileDevice::NoError || bytes.size() > limit
+        || ::fstat(fd, &after) != 0 || fileIdentity(info) != fileIdentity(after)) return false;
+    identity = fileIdentity(info);
+    return true;
 }
 } // namespace
 
@@ -101,8 +114,9 @@ public:
             for (auto &conflict : result.conflicts) {
                 if (!conflict.editable()) continue;
                 QByteArray current;
-                if (!readResult(result.repository.worktreeRoot, conflict.path, current)
-                    || current != conflict.result->originalBytes) {
+                SnapshotFileIdentity identity;
+                if (!readResult(result.repository.worktreeRoot, conflict.path, current, identity)
+                    || current != conflict.result->originalBytes || identity != conflict.resultIdentity) {
                     exclude(conflict, ConflictSupport::TopologyConflict,
                         QStringLiteral("Outside app: current result changed or became unreadable during classification; inspect again"));
                 } else if (conflict.sources.front().policy.configuration != observed.conversionPolicy.configuration) {
@@ -168,7 +182,7 @@ public:
         while (offset < result.conflicts.size()) {
             auto &conflict = result.conflicts[offset];
             if (conflict.editable()) {
-                if (readResult(result.repository.worktreeRoot, conflict.path, launchBytes)) {
+                if (readResult(result.repository.worktreeRoot, conflict.path, launchBytes, launchIdentity)) {
                     source = 0;
                     readSource();
                     return;
@@ -210,7 +224,10 @@ public:
             conflict.sources.append(*observed.text);
             if (++source < conflict.stages.size()) { readSource(); return; }
             const auto decoded = storage::decodeText(launchBytes, conflict.sources.front().policy.attributes.value("working-tree-encoding"));
-            if (decoded.document) conflict.result = decoded.document;
+            if (decoded.document) {
+                conflict.result = decoded.document;
+                conflict.resultIdentity = launchIdentity;
+            }
             else exclude(conflict, ConflictSupport::UnsupportedText, decoded.diagnostic);
         }
         ++offset;
@@ -222,6 +239,7 @@ public:
     ConflictClassificationResult result;
     Result snapshot;
     QByteArray launchBytes;
+    SnapshotFileIdentity launchIdentity;
     qsizetype offset = 0;
     qsizetype source = 0;
     bool active = false;

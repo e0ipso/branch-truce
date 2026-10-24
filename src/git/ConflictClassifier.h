@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TextConversion.h"
+#include "core/FileSnapshot.h"
 
 namespace branch_truce::git {
 enum class ConflictSupport {
@@ -16,6 +17,7 @@ struct Conflict {
     QByteArray mode; // Agreed stage-2/stage-3 mode, never inferred from the result.
     QList<ConvertedText> sources; // Present only after every available stage passes.
     std::optional<storage::TextDocument> result; // Preserves launch-time manual edits.
+    std::optional<SnapshotFileIdentity> resultIdentity; // Same stable read as result.
     [[nodiscard]] bool editable() const { return support == ConflictSupport::SupportedText; }
 };
 struct ConflictClassificationRequest {

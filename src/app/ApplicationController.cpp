@@ -1,9 +1,80 @@
 #include "ApplicationController.h"
 #include "core/BuildInfo.h"
 #include <QStandardPaths>
+#include <QUuid>
 #include <algorithm>
 
 namespace branch_truce {
+namespace {
+TextSnapshot textSnapshot(const storage::TextDocument &document)
+{
+    SnapshotFormat format;
+    switch (document.format.encoding) {
+    case storage::TextEncoding::Utf8: format.encoding = SnapshotFormat::Encoding::Utf8; break;
+    case storage::TextEncoding::Utf16LittleEndian: format.encoding = SnapshotFormat::Encoding::Utf16LittleEndian; break;
+    case storage::TextEncoding::Utf16BigEndian: format.encoding = SnapshotFormat::Encoding::Utf16BigEndian; break;
+    }
+    format.bom = document.format.bom;
+    format.newline = document.format.newline == storage::Newline::CrLf
+        ? SnapshotFormat::Newline::CrLf : SnapshotFormat::Newline::Lf;
+    format.finalNewline = document.format.finalNewline;
+    return {document.utf8.toStdString(), document.originalBytes.toStdString(), format};
+}
+
+std::optional<FileSnapshots> captureFile(const git::Conflict &file,
+    const git::RepositoryContext &repository, const std::string &sessionId)
+{
+    if (!file.editable() || !file.result || !file.resultIdentity || !repository.supported
+        || file.sources.size() != file.stages.size() || file.sources.isEmpty()) return std::nullopt;
+    FileSnapshots captured;
+    captured.path = file.path.toStdString();
+    captured.resultMode = file.mode.toStdString();
+    captured.launchResult = {textSnapshot(*file.result), *file.resultIdentity};
+    auto &provenance = captured.provenance;
+    provenance.sessionId = sessionId;
+    provenance.worktreeRoot = repository.worktreeRoot.toStdString();
+    provenance.gitDirectory = repository.gitDirectory.toStdString();
+    if (repository.operation == git::RepositoryOperation::Merge) provenance.operation = SnapshotProvenance::Operation::Merge;
+    else if (repository.operation == git::RepositoryOperation::Rebase) provenance.operation = SnapshotProvenance::Operation::Rebase;
+    else return std::nullopt;
+    provenance.stage2CommitId = repository.stage2.commitId.toStdString();
+    provenance.stage3CommitId = repository.stage3.commitId.toStdString();
+    if (!repository.baseCommitId.isEmpty()) provenance.baseCommitId = repository.baseCommitId.toStdString();
+    provenance.headName = repository.headName.toStdString();
+    provenance.originalHead = repository.originalHead.toStdString();
+    provenance.onto = repository.onto.toStdString();
+    const auto &policy = file.sources.front().policy;
+    for (auto entry = policy.attributes.cbegin(); entry != policy.attributes.cend(); ++entry)
+        captured.conversion.attributes.emplace(entry.key().toStdString(), entry.value().toStdString());
+    for (auto entry = policy.configuration.cbegin(); entry != policy.configuration.cend(); ++entry)
+        captured.conversion.configuration.emplace(entry.key().toStdString(), entry.value().toStdString());
+    for (qsizetype i = 0; i < file.stages.size(); ++i) {
+        const auto &stage = file.stages[i];
+        const auto &source = file.sources[i];
+        if (stage.path != file.path || source.path != file.path || source.worktreeRoot != repository.worktreeRoot
+            || source.canonicalObjectId != stage.objectId || source.sourceMode != stage.mode
+            || source.mode != file.mode || source.policy != policy) return std::nullopt;
+        SourceSnapshot snapshot{stage.objectId.toStdString(), stage.mode.toStdString(),
+            source.canonicalBytes.toStdString(), textSnapshot(source.document), std::nullopt, {}};
+        if (stage.stage == 1 && !captured.earlier) {
+            snapshot.commitId = provenance.baseCommitId;
+            snapshot.label = "Common earlier version";
+            captured.earlier = std::move(snapshot);
+        } else if (stage.stage == 2 && !captured.stage2) {
+            snapshot.commitId = provenance.stage2CommitId;
+            snapshot.label = repository.stage2.label.toStdString();
+            captured.stage2 = std::move(snapshot);
+        } else if (stage.stage == 3 && !captured.stage3) {
+            snapshot.commitId = provenance.stage3CommitId;
+            snapshot.label = repository.stage3.label.toStdString();
+            captured.stage3 = std::move(snapshot);
+        } else return std::nullopt;
+    }
+    if (!captured.stage2 || !captured.stage3) return std::nullopt;
+    return captured;
+}
+}
+
 ApplicationController::ApplicationController(QObject *parent)
     : QObject(parent), files_(this),
       coordinator_(files_, QStandardPaths::findExecutable(QStringLiteral("git")), this),
@@ -105,24 +176,26 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
     }
     auto loaded = std::make_shared<std::vector<FileSession>>();
     const auto anchor = conflicts.front().path.toHex().toStdString();
+    const auto sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
     const auto task = coordinator_.submit(anchor, 1,
-        [files = std::move(conflicts), loaded](const TaskInput &, const TaskControl &control) {
+        [files = std::move(conflicts), repository = repository_, sessionId, loaded](const TaskInput &, const TaskControl &control) {
             for (const auto &file : files) {
                 if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
                 Draft draft;
                 auto support = Support::OutsideApp;
                 auto detail = file.reason;
-                if (file.editable() && file.result) {
+                auto snapshots = captureFile(file, repository, sessionId);
+                if (snapshots) {
                     support = Support::Supported;
                     draft.text = file.result->utf8.toStdString();
                     const auto lines = file.result->utf8.split('\n');
                     draft.unresolvedMarkers = static_cast<std::size_t>(std::count_if(
                         lines.cbegin(), lines.cend(), [](const auto &line) { return line.startsWith("<<<<<<<"); }));
                 } else if (detail.isEmpty()) {
-                    detail = QStringLiteral("Outside app: conflict inspection did not provide an editable result.");
+                    detail = QStringLiteral("Outside app: conflict inspection did not provide complete source and result snapshots; inspect again.");
                 }
                 loaded->emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), std::move(draft),
-                                     support, detail.toStdString());
+                                     support, detail.toStdString(), std::move(snapshots));
             }
             return TaskResult{};
         }, [this, root, identity, loaded](const TaskCompletion &completion) {

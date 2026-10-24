@@ -1,7 +1,9 @@
 #pragma once
 
+#include "FileSnapshot.h"
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -81,12 +83,16 @@ struct FileFacts {
 class FileSession {
 public:
     FileSession(std::string id, std::string path, Draft initial,
-                Support support = Support::Supported, std::string supportDetail = {});
+                Support support = Support::Supported, std::string supportDetail = {},
+                std::optional<FileSnapshots> snapshots = std::nullopt);
 
     [[nodiscard]] const std::string &id() const noexcept { return id_; }
     [[nodiscard]] const std::string &path() const noexcept { return path_; }
     [[nodiscard]] Support support() const noexcept { return support_; }
     [[nodiscard]] const std::string &supportDetail() const noexcept { return supportDetail_; }
+    // Shared immutable capture, retained independently of every result revision.
+    // Null for sessions without an admitted source/result capture.
+    [[nodiscard]] const FileSnapshots *snapshots() const noexcept { return snapshots_.get(); }
     [[nodiscard]] const Revision &current() const { return revisions_.at(current_); }
     [[nodiscard]] const std::optional<Revision> &checkpoint() const noexcept { return checkpoint_; }
     [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return reviewed_; }
@@ -127,6 +133,7 @@ private:
     std::string path_;
     Support support_;
     std::string supportDetail_;
+    std::shared_ptr<const FileSnapshots> snapshots_;
     std::map<RevisionId, Revision> revisions_;
     RevisionId current_ = 1;
     RevisionId next_ = 2;
