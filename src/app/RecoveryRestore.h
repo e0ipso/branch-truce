@@ -12,6 +12,7 @@ struct RecoveryMutation {
     QString kind;
     QString observation;
     FileSession target;
+    bool completed = false;
 };
 
 struct RecoveryReplay {

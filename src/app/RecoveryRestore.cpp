@@ -236,7 +236,16 @@ std::optional<QByteArray> stagedIdentity(const FileSession &file, const Revision
     return canonical.canonicalObjectId;
 }
 
-QString reconcile(FileSession &file, const std::vector<RecoveryMutation> &mutations,
+void completeMutations(std::vector<RecoveryMutation> &mutations, const std::string &fileId,
+                       const QString &kind, RevisionId revision)
+{
+    for (auto &mutation : mutations) {
+        if (mutation.kind == kind && mutation.target.id() == fileId
+            && mutation.target.current().id == revision) mutation.completed = true;
+    }
+}
+
+QString reconcile(FileSession &file, std::vector<RecoveryMutation> &mutations,
                   const std::vector<FileSession> &observed, const git::RepositoryContext &repository,
                   const QString &executable, const QString &directory)
 {
@@ -257,12 +266,10 @@ QString reconcile(FileSession &file, const std::vector<RecoveryMutation> &mutati
     // A crash can lose the completion callback after Git installed the exact
     // reviewed result. Verify content, policy, mode and the written revision,
     // then persist that observation before exposing a resolved state.
-    for (const auto &mutation : mutations) {
-        if (mutation.kind != QLatin1String("staging") || mutation.target.id() != file.id()
+    for (auto &mutation : mutations) {
+        if (mutation.completed || mutation.kind != QLatin1String("staging") || mutation.target.id() != file.id()
             || mutation.observation == QLatin1String("not-attempted") || mutation.observation == QLatin1String("unchanged")
-            || !file.written() || file.written()->id != mutation.target.current().id
-            || (file.stageOutcome() && file.stageOutcome()->revision == mutation.target.current().id
-                && file.stageOutcome()->outcome == Outcome::Succeeded)) continue;
+            || !file.written() || file.written()->id != mutation.target.current().id) continue;
         const auto bytes = serialized(file, *file.written());
         const auto objectId = stagedIdentity(file, *file.written(), index.indexEntries, repository, executable);
         if (!bytes || !objectId || *bytes != disk.destination->bytes()
@@ -276,6 +283,7 @@ QString reconcile(FileSession &file, const std::vector<RecoveryMutation> &mutati
             return QStringLiteral("Staging evidence matched, but recovery could not retain its completion: %1").arg(committed.error);
         file = std::move(candidate);
         captured = file.snapshots();
+        completeMutations(mutations, file.id(), QStringLiteral("staging"), file.written()->id);
     }
 
     const auto live = std::find_if(observed.begin(), observed.end(), [&](const auto &entry) { return entry.id() == file.id(); });
@@ -300,10 +308,8 @@ QString reconcile(FileSession &file, const std::vector<RecoveryMutation> &mutati
         indexMatches = objectId && objectId->toStdString() == staged.objectId && staged.mode == captured->resultMode;
     }
     for (const auto &mutation : mutations) {
-        if (mutation.target.id() != file.id() || mutation.observation == QLatin1String("not-attempted")
+        if (mutation.completed || mutation.target.id() != file.id() || mutation.observation == QLatin1String("not-attempted")
             || mutation.observation == QLatin1String("unchanged")) continue;
-        const auto &outcome = mutation.kind == QLatin1String("publication") ? file.writeOutcome() : file.stageOutcome();
-        if (outcome && outcome->revision == mutation.target.current().id && outcome->outcome == Outcome::Succeeded) continue;
         const auto bytes = serialized(mutation.target, mutation.target.current());
         const bool resultPresent = bytes && *bytes == disk.destination->bytes();
         return resultPresent
@@ -426,6 +432,14 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
             require(encoded.value("snapshots") == state.value("snapshots"), "Recovery session or immutable capture identity changed.");
             require(encoded == state,
                     "Recovery state schema or transition does not match the acknowledged record.");
+            if (action == QLatin1String("write-outcome") || action == QLatin1String("stage-outcome")) {
+                const auto kind = action == QLatin1String("write-outcome") ? QStringLiteral("publication") : QStringLiteral("staging");
+                const auto &outcome = action == QLatin1String("write-outcome") ? found->second.writeOutcome() : found->second.stageOutcome();
+                // Match completion in journal order before a later revision can
+                // replace the file's latest outcome, or a new intent can reuse it.
+                if (outcome && outcome->outcome == Outcome::Succeeded)
+                    completeMutations(result.mutations, id, kind, outcome->revision);
+            }
         }
         std::optional<SnapshotProvenance> provenance;
         for (auto &[id, file] : files) {
