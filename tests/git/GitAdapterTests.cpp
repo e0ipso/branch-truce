@@ -2,6 +2,7 @@
 #include "TextConversion.h"
 #include "ConflictClassifier.h"
 #include "TestHarness.h"
+#include "fixtures/conversions/ConversionCases.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -308,6 +309,14 @@ TextConversionResult run(TextConversion &conversion, const TextConversionRequest
     CHECK(results.front().request.sessionGeneration == request.sessionGeneration);
     CHECK(results.front().request.inputRevision == request.inputRevision);
     return results.front();
+}
+
+void checkConversionCleanup(Repository &repo)
+{
+    const auto root = repo.root.path();
+    const auto executables = repo.executables.path();
+    CHECK(repo.root.remove() && repo.executables.remove());
+    CHECK(!QFileInfo::exists(root) && !QFileInfo::exists(executables));
 }
 
 ConflictClassificationResult run(ConflictClassifier &classifier, const ConflictClassificationRequest &request)
@@ -624,97 +633,87 @@ public:
             }
         });
         suite.run("conversion format matrix preserves reviewed bytes through real Git publication", [] {
-            using namespace branch_truce::storage;
-            const auto bom = QByteArray::fromHex("efbbbf");
-            const TextFormat lf{};
-            const TextFormat crlf{TextEncoding::Utf8, false, Newline::CrLf, false};
-            const TextFormat bomCrLf{TextEncoding::Utf8, true, Newline::CrLf, false};
-            struct FormatCase {
-                const char *name;
-                QByteArray attributes;
-                QStringList configuration;
-                QByteArray canonicalSource;
-                QByteArray checkoutSource;
-                TextFormat launch;
-                QByteArray checkoutResult;
-                QByteArray canonicalResult;
-            };
-            const FormatCase cases[]{
-                {"unattributed LF", {}, {}, "s\n", "s\n", lf, "r\n", "r\n"},
-                {"unattributed CRLF", {}, {}, "s\r\n", "s\r\n", crlf, "r\r\n", "r\r\n"},
-                {"UTF-8 BOM", {}, {}, bom + "s\n", bom + "s\n", bomCrLf, bom + "r\r\n", bom + "r\r\n"},
-                {"explicit LF overrides launch", "text eol=lf", {}, "s\n", "s\n", crlf, "r\n", "r\n"},
-                {"auto text with explicit CRLF", "text=auto eol=crlf", {}, "s\n", "s\r\n", lf, "r\r\n", "r\n"},
-                {"disabled text conversion", "-text", {}, "s\r\n", "s\r\n", crlf, "r\r\n", "r\r\n"},
-                {"explicit UTF-8 retains BOM", "text eol=crlf working-tree-encoding=utf-8", {},
-                    bom + "s\n", bom + "s\r\n", bomCrLf, bom + "r\r\n", bom + "r\n"},
-                {"UTF-16LE without BOM", "text eol=lf working-tree-encoding=UTF-16LE", {}, "s\n",
-                    QByteArray::fromHex("73000a00"), bomCrLf, QByteArray::fromHex("72000a00"), "r\n"},
-                {"UTF-16BE with CRLF", "text eol=crlf working-tree-encoding=UTF-16BE", {}, "s\n",
-                    QByteArray::fromHex("0073000d000a"), lf, QByteArray::fromHex("0072000d000a"), "r\n"},
-                {"UTF-16 default byte order and BOM", "text eol=lf working-tree-encoding=UTF-16", {}, "s\n",
-                    QByteArray::fromHex("fffe73000a00"), bomCrLf, QByteArray::fromHex("fffe72000a00"), "r\n"},
-                {"autocrlf with explicit CRLF", "text eol=crlf", {"core.autocrlf", "true"},
-                    "s\n", "s\r\n", lf, "r\r\n", "r\n"},
-                {"core EOL conversion", "text", {"core.eol", "crlf"}, "s\n", "s\r\n", crlf, "r\r\n", "r\n"},
-                {"autocrlf input", "text=auto", {"core.autocrlf", "input"}, "s\n", "s\n", lf, "r\n", "r\n"},
-                {"disabled text overrides autocrlf", "-text", {"core.autocrlf", "true"},
-                    "s\r\n", "s\r\n", crlf, "r\r\n", "r\r\n"}
-            };
-            for (const auto &format : cases) {
+            for (const auto &format : conversion_fixtures::accepted) {
                 std::cout << "FORMAT " << format.name << '\n';
                 Repository repo;
                 if (!format.attributes.isEmpty()) writeFile(repo.path(".gitattributes"), "tracked.txt " + format.attributes + '\n');
                 if (!format.configuration.isEmpty()) repo.git({"config", format.configuration[0], format.configuration[1]});
                 const auto object = repo.git({"hash-object", "-w", "--stdin"}, format.canonicalSource).trimmed();
+                const auto nul = QByteArray(1, '\0');
+                repo.git({"update-index", "-z", "--index-info"},
+                    "0 " + QByteArray(40, '0') + "\ttracked.txt" + nul
+                    + format.mode + ' ' + object + " 2\ttracked.txt" + nul
+                    + format.mode + ' ' + object + " 3\ttracked.txt" + nul);
+                GitAdapter adapter(gitExecutable);
+                const auto captured = run(adapter, repo.request(Operation::InspectIndex, "tracked.txt"));
+                CHECK(captured.outcome == Outcome::Success && captured.indexEntries.size() == 2);
+                auto sourceRequest = textRequest(repo, TextOperation::ReadSource, object);
+                sourceRequest.stages = captured.indexEntries;
                 TextConversion conversion(gitExecutable);
-                const auto source = run(conversion, textRequest(repo, TextOperation::ReadSource, object));
+                const auto source = run(conversion, sourceRequest);
                 CHECK(source.outcome == Outcome::Success && source.text);
                 CHECK(source.text->canonicalBytes == format.canonicalSource && source.text->canonicalObjectId == object);
                 CHECK(source.text->document.originalBytes == format.checkoutSource);
-                CHECK(source.text->document.utf8 == "s\n" && source.text->mode == "100644");
+                CHECK(source.text->document.utf8 == format.displayedSource);
+                CHECK(source.text->mode == format.mode && source.text->sourceMode == format.mode);
                 if (!format.configuration.isEmpty()) {
                     CHECK(source.text->policy.configuration.value(format.configuration[0].toLatin1()) == format.configuration[1].toLatin1());
                 }
                 const auto before = repo.git({"ls-files", "--stage", "-z"});
-                auto request = textRequest(repo, TextOperation::PrepareResult, object);
+                auto request = sourceRequest;
+                request.operation = TextOperation::PrepareResult;
                 request.launchResultFormat = format.launch;
-                request.editedUtf8 = "r\n";
+                request.editedUtf8 = format.editedUtf8;
                 const auto prepared = run(conversion, request);
                 CHECK(prepared.outcome == Outcome::Success && prepared.text);
-                CHECK(prepared.text->document.utf8 == request.editedUtf8 && prepared.text->document.format.finalNewline);
+                CHECK(prepared.text->document.utf8 == format.editedUtf8);
+                CHECK(prepared.text->document.format == format.resultFormat && prepared.text->mode == format.mode);
                 CHECK(prepared.text->document.originalBytes == format.checkoutResult);
                 CHECK(prepared.text->canonicalBytes == format.canonicalResult && prepared.text->policy == source.text->policy);
+                const auto expectedObject = repo.git({"hash-object", "--no-filters", "--stdin"}, format.canonicalResult).trimmed();
+                CHECK(prepared.text->canonicalObjectId == expectedObject);
                 CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
                 QFile untouched(repo.path("tracked.txt"));
                 CHECK(untouched.open(QIODevice::ReadOnly) && untouched.readAll() == "before\n");
-                repo.git({"cat-file", "-e", QString::fromLatin1(prepared.text->canonicalObjectId)}, {}, 1);
+                if (expectedObject != object) repo.git({"cat-file", "-e", QString::fromLatin1(expectedObject)}, {}, 1);
                 untouched.close();
-                writeFile(repo.path("tracked.txt"), format.checkoutResult);
-                GitAdapter adapter(gitExecutable);
-                CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
+                writeFile(repo.path("tracked.txt"), prepared.text->document.originalBytes, format.mode == "100755");
+                CHECK(QFileInfo(repo.path("tracked.txt")).isExecutable() == (format.mode == "100755"));
+                const auto staged = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
+                CHECK(staged.outcome == Outcome::Success && staged.mutation == Mutation::ObservedChanged);
+                CHECK(staged.indexBefore == before);
+                CHECK(staged.indexAfter == format.mode + ' ' + expectedObject + " 0\ttracked.txt" + nul);
+                CHECK(repo.git({"ls-files", "--unmerged", "-z"}).isEmpty());
                 auto verify = textRequest(repo, TextOperation::VerifyPublished, {});
                 verify.expected = prepared.text;
                 const auto published = run(conversion, verify);
                 CHECK(published.outcome == Outcome::Success && published.text);
-                CHECK(published.text->canonicalBytes == format.canonicalResult);
+                CHECK(published.text->canonicalBytes == format.canonicalResult && published.text->canonicalObjectId == expectedObject);
+                CHECK(published.text->document.utf8 == format.editedUtf8 && published.text->document.originalBytes == format.checkoutResult);
+                CHECK(published.text->document.format == format.resultFormat && published.text->mode == format.mode);
                 CHECK(repo.git({"show", ":tracked.txt"}) == format.canonicalResult);
+                QFile written(repo.path("tracked.txt"));
+                CHECK(written.open(QIODevice::ReadOnly) && written.readAll() == format.checkoutResult);
+                written.close();
+                checkConversionCleanup(repo);
             }
         });
         suite.run("invalid source bytes and contradictory attributes reject without accepted text or writes", [] {
-            for (const auto &bytes : {QByteArray::fromHex("ff"), QByteArray::fromHex("610062"),
-                    QByteArray::fromHex("610162"), QByteArray("a\rb"), QByteArray("a\r\nb\n")}) {
+            for (const auto &invalid : conversion_fixtures::rejectedSources) {
+                std::cout << "REJECT SOURCE " << invalid.name << '\n';
                 Repository repo;
-                const auto object = repo.git({"hash-object", "-w", "--stdin"}, bytes).trimmed();
+                if (!invalid.attributes.isEmpty()) writeFile(repo.path(".gitattributes"), "tracked.txt " + invalid.attributes + '\n');
+                const auto object = repo.git({"hash-object", "-w", "--stdin"}, invalid.canonical).trimmed();
                 const auto before = repo.git({"ls-files", "--stage", "-z"});
                 TextConversion conversion(gitExecutable);
                 const auto rejected = run(conversion, textRequest(repo, TextOperation::ReadSource, object));
                 CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
-                CHECK(rejected.failure == TextConversionFailure::UnsupportedText);
+                CHECK(rejected.failure == invalid.failure);
                 CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                checkConversionCleanup(repo);
             }
-            for (const auto attributes : {"-text eol=crlf", "text=custom", "ident=custom", "text eol=native",
-                    "working-tree-encoding=ISO-8859-1"}) {
+            for (const auto attributes : conversion_fixtures::rejectedAttributes) {
+                std::cout << "REJECT ATTRIBUTES " << attributes << '\n';
                 Repository repo;
                 writeFile(repo.path(".gitattributes"), QByteArray("tracked.txt ") + attributes + '\n');
                 const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
@@ -727,18 +726,45 @@ public:
                     CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
                     CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
                 }
+                checkConversionCleanup(repo);
             }
-            Repository repo;
-            repo.git({"config", "core.autocrlf", "true"});
-            repo.git({"config", "core.safecrlf", "false"});
-            const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
-            TextConversion conversion(gitExecutable);
-            auto request = textRequest(repo, TextOperation::PrepareResult, object);
-            request.editedUtf8 = "reviewed\n";
-            const auto rejected = run(conversion, request);
-            CHECK(rejected.outcome == Outcome::Rejected && !rejected.text);
-            CHECK(rejected.diagnostic.contains("clean/checkout changes"));
-            CHECK(repo.git({"show", ":tracked.txt"}) == "before\n");
+            for (const auto &invalid : conversion_fixtures::rejectedEdits) {
+                std::cout << "REJECT EDIT " << invalid.name << '\n';
+                Repository repo;
+                const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
+                TextConversion conversion(gitExecutable);
+                auto request = textRequest(repo, TextOperation::PrepareResult, object);
+                request.editedUtf8 = invalid.bytes;
+                const auto rejected = run(conversion, request);
+                CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
+                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                QFile untouched(repo.path("tracked.txt"));
+                CHECK(untouched.open(QIODevice::ReadOnly) && untouched.readAll() == "before\n");
+                untouched.close();
+                checkConversionCleanup(repo);
+            }
+            for (const bool bigEndian : {false, true}) {
+                std::cout << "REJECT ROUNDTRIP " << (bigEndian ? "UTF-16 byte order" : "autocrlf changes LF") << '\n';
+                Repository repo;
+                if (bigEndian) writeFile(repo.path(".gitattributes"), "tracked.txt text eol=lf working-tree-encoding=UTF-16\n");
+                else {
+                    repo.git({"config", "core.autocrlf", "true"});
+                    repo.git({"config", "core.safecrlf", "false"});
+                }
+                const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
+                TextConversion conversion(gitExecutable);
+                auto request = textRequest(repo, TextOperation::PrepareResult, object);
+                if (bigEndian) request.launchResultFormat = conversion_fixtures::beBomCrLf;
+                request.editedUtf8 = "reviewed\n";
+                const auto rejected = run(conversion, request);
+                CHECK(rejected.outcome == Outcome::Rejected && !rejected.text);
+                CHECK(rejected.diagnostic.contains("clean/checkout changes"));
+                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                CHECK(repo.git({"show", ":tracked.txt"}) == "before\n");
+                checkConversionCleanup(repo);
+            }
         });
         suite.run("ident expansion round-trips exactly and rejects an expansion made stale by editing", [] {
             Repository repo;
@@ -755,11 +781,25 @@ public:
             const auto unchanged = run(conversion, request);
             CHECK(unchanged.outcome == Outcome::Success && unchanged.text);
             CHECK(unchanged.text->canonicalObjectId == object && unchanged.text->canonicalBytes == "$Id$\n");
+            CHECK(unchanged.text->document.originalBytes == "$Id: " + object + " $\n");
+            writeFile(repo.path("tracked.txt"), unchanged.text->document.originalBytes);
+            GitAdapter adapter(gitExecutable);
+            const auto staged = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
+            CHECK(staged.outcome == Outcome::Success);
+            CHECK(staged.indexAfter == "100644 " + object + " 0\ttracked.txt" + QByteArray(1, '\0'));
+            auto verify = textRequest(repo, TextOperation::VerifyPublished, {});
+            verify.expected = unchanged.text;
+            const auto published = run(conversion, verify);
+            CHECK(published.outcome == Outcome::Success && published.text);
+            CHECK(published.text->document.utf8 == request.editedUtf8 && published.text->canonicalBytes == "$Id$\n");
+            std::cout << "FORMAT ident expansion with staged canonical token\n";
             request.editedUtf8 += "changed\n";
             const auto stale = run(conversion, request);
             CHECK(stale.outcome == Outcome::Rejected && !stale.text);
             CHECK(stale.diagnostic.contains("clean/checkout changes"));
-            CHECK(repo.git({"show", ":tracked.txt"}) == "before\n");
+            CHECK(repo.git({"show", ":tracked.txt"}) == "$Id$\n");
+            CHECK(repo.git({"ls-files", "--stage", "-z"}) == staged.indexAfter);
+            checkConversionCleanup(repo);
         });
         suite.run("conversion requires exact unique stages and preserves agreed executable modes", [] {
             for (const auto &mode : {QByteArray("100644"), QByteArray("100755")}) {
