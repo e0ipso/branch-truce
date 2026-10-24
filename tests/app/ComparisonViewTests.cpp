@@ -169,6 +169,89 @@ int markerKind(QQuickItem *markers, bool tab)
     if (query.hasError()) throw std::runtime_error(query.error().toString().toStdString());
     return value.toInt();
 }
+
+void expectProgress(Fixture &fixture, bool saved, bool reviewed, bool resolved, bool earlier,
+                    const QString &current, const QString &savedRevision,
+                    const QString &reviewedRevision, const QString &stagedRevision,
+                    qulonglong undecided)
+{
+    CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
+    const auto progress = fixture.controller.selectedFile().value(QStringLiteral("progress")).toMap();
+    const auto describe = [&] {
+        return std::string("progress saved=") + std::to_string(progress.value(QStringLiteral("saved")).toBool())
+            + " reviewed=" + std::to_string(progress.value(QStringLiteral("reviewed")).toBool())
+            + " resolved=" + std::to_string(progress.value(QStringLiteral("resolved")).toBool())
+            + " earlier=" + std::to_string(progress.value(QStringLiteral("earlierResolved")).toBool())
+            + " current=" + progress.value(QStringLiteral("currentRevision")).toString().toStdString()
+            + " savedRev=" + progress.value(QStringLiteral("savedRevision")).toString().toStdString()
+            + " reviewedRev=" + progress.value(QStringLiteral("reviewedRevision")).toString().toStdString()
+            + " stagedRev=" + progress.value(QStringLiteral("stagedRevision")).toString().toStdString()
+            + " undecided=" + std::to_string(progress.value(QStringLiteral("undecided")).toULongLong());
+    };
+    if (progress.value(QStringLiteral("saved")).toBool() != saved
+        || progress.value(QStringLiteral("reviewed")).toBool() != reviewed
+        || progress.value(QStringLiteral("resolved")).toBool() != resolved
+        || progress.value(QStringLiteral("earlierResolved")).toBool() != earlier
+        || progress.value(QStringLiteral("currentRevision")).toString() != current
+        || progress.value(QStringLiteral("savedRevision")).toString() != savedRevision
+        || progress.value(QStringLiteral("reviewedRevision")).toString() != reviewedRevision
+        || progress.value(QStringLiteral("stagedRevision")).toString() != stagedRevision
+        || progress.value(QStringLiteral("undecided")).toULongLong() != undecided)
+        throw std::runtime_error(describe());
+    CHECK(progress.value(QStringLiteral("saved")).toBool() == saved);
+    CHECK(progress.value(QStringLiteral("reviewed")).toBool() == reviewed);
+    CHECK(progress.value(QStringLiteral("resolved")).toBool() == resolved);
+    CHECK(progress.value(QStringLiteral("earlierResolved")).toBool() == earlier);
+    CHECK(progress.value(QStringLiteral("currentRevision")).toString() == current);
+    CHECK(progress.value(QStringLiteral("savedRevision")).toString() == savedRevision);
+    CHECK(progress.value(QStringLiteral("reviewedRevision")).toString() == reviewedRevision);
+    CHECK(progress.value(QStringLiteral("stagedRevision")).toString() == stagedRevision);
+    CHECK(progress.value(QStringLiteral("undecided")).toULongLong() == undecided);
+    QString summary = QStringLiteral("Undecided: %1").arg(undecided);
+    summary += QStringLiteral(" · ");
+    summary += saved ? QStringLiteral("Saved") : QStringLiteral("Not saved");
+    summary += QStringLiteral(" · ");
+    summary += reviewed ? QStringLiteral("Reviewed") : QStringLiteral("Not reviewed");
+    summary += QStringLiteral(" · ");
+    summary += resolved ? QStringLiteral("Resolved") : QStringLiteral("Not resolved");
+    if (earlier) summary += QStringLiteral(" · Earlier result staged; current draft not applied");
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    const auto status = fixture.item("selectedStatus")->property("text").toString();
+    if (!status.contains(summary))
+        throw std::runtime_error(("status: " + status + " summary: " + summary).toStdString());
+    CHECK(status.contains(summary));
+}
+
+void expectNavigation(Fixture &fixture, const QString &mode, const QString &fileId,
+                      const QString &scope, int index, int count, int begin, int end,
+                      const QString &label, const QString &contribution = {})
+{
+    const auto target = fixture.controller.navigationTarget();
+    const auto actual = target.value(QStringLiteral("label")).toString();
+    if (actual != label) throw std::runtime_error(("navigation label: " + actual).toStdString());
+    CHECK(actual == label);
+    CHECK(fixture.item("navigationTarget")->property("text").toString() == label);
+    CHECK(target.value(QStringLiteral("mode")).toString() == mode);
+    CHECK(target.value(QStringLiteral("fileId")).toString() == fileId);
+    CHECK(target.value(QStringLiteral("scope")).toString() == scope);
+    CHECK(target.value(QStringLiteral("index")).toInt() == index);
+    CHECK(target.value(QStringLiteral("count")).toInt() == count);
+    CHECK(fixture.controller.selectedFileId() == fileId);
+    if (scope != QStringLiteral("result")) return;
+    CHECK(target.value(QStringLiteral("utf16Begin")).toInt() == begin);
+    CHECK(target.value(QStringLiteral("utf16End")).toInt() == end);
+    CHECK(target.value(QStringLiteral("byteBegin")).toULongLong() == static_cast<qulonglong>(begin));
+    CHECK(target.value(QStringLiteral("byteEnd")).toULongLong() == static_cast<qulonglong>(end));
+    if (!contribution.isEmpty())
+        CHECK(target.value(QStringLiteral("contributionId")).toString() == contribution);
+    auto *editor = fixture.item("resultText");
+    const int selectionStart = editor->property("selectionStart").toInt();
+    const int selectionEnd = editor->property("selectionEnd").toInt();
+    if (selectionStart != begin || selectionEnd != end)
+        throw std::runtime_error("selection " + std::to_string(selectionStart) + "-" + std::to_string(selectionEnd));
+    CHECK(selectionStart == begin && selectionEnd == end);
+    CHECK(editor->property("selectedText").toString() == fixture.text().mid(begin, end - begin));
+}
 }
 
 class ComparisonViewTests {
@@ -564,6 +647,164 @@ public:
             settle([&] { return markers->property("markerCount").toInt() == 0 && paintedMarkers(markers) == 0; });
             CHECK(fixture.item("resultText")->property("text").toString().toStdString() == result);
             checkUnchanged(fixture, before);
+        });
+        suite.run("TRUCE-0059 revision progress, within-file navigation, unfinished files and file-list location", [] {
+            const std::string result = "same\nAAA\nmid\nBBB\n";
+            const std::string left = "same\nleftA\nmid\nleftB\n";
+            Fixture fixture(test_support::choiceFile(left, result, result));
+            const auto revision = fixture.file().current().id;
+            CHECK(revision == 1);
+            CHECK(fixture.file().facts().undecided == 4);
+            expectProgress(fixture, false, false, false, false,
+                QStringLiteral("1"), {}, {}, {}, 4);
+
+            fixture.select(0, 0);
+            fixture.click("nextDifference");
+            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"),
+                QStringLiteral("result"), 0, 2, 5, 9,
+                QStringLiteral("Difference 1 of 2 · result bytes 5-9"));
+            fixture.click("nextDifference");
+            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"),
+                QStringLiteral("result"), 1, 2, 13, 17,
+                QStringLiteral("Difference 2 of 2 · result bytes 13-17"));
+            fixture.click("nextDifference");
+            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"),
+                QStringLiteral("result"), 0, 2, 5, 9,
+                QStringLiteral("Difference 1 of 2 · result bytes 5-9"));
+            fixture.click("previousDifference");
+            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"),
+                QStringLiteral("result"), 1, 2, 13, 17,
+                QStringLiteral("Difference 2 of 2 · result bytes 13-17"));
+
+            fixture.select(0, 0);
+            fixture.click("nextUndecided");
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
+                QStringLiteral("result"), 0, 4, 5, 9,
+                QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
+                QStringLiteral("pick/1/5/11"));
+            fixture.click("nextUndecided");
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
+                QStringLiteral("result"), 1, 4, 5, 9,
+                QStringLiteral("Undecided 2 of 4 · Right · result bytes 5-9"),
+                QStringLiteral("pick/2/5/9"));
+            fixture.click("nextUndecided");
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
+                QStringLiteral("result"), 2, 4, 13, 17,
+                QStringLiteral("Undecided 3 of 4 · Left · result bytes 13-17"),
+                QStringLiteral("pick/1/15/21"));
+            fixture.click("nextUndecided");
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
+                QStringLiteral("result"), 3, 4, 13, 17,
+                QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
+                QStringLiteral("pick/2/13/17"));
+            fixture.click("nextUndecided");
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
+                QStringLiteral("result"), 0, 4, 5, 9,
+                QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
+                QStringLiteral("pick/1/5/11"));
+            fixture.click("previousUndecided");
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
+                QStringLiteral("result"), 3, 4, 13, 17,
+                QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
+                QStringLiteral("pick/2/13/17"));
+            CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
+            CHECK(fixture.file().current().id == revision);
+            CHECK(fixture.text().toStdString() == result);
+
+            CHECK(fixture.item("saveDraft")->isEnabled());
+            fixture.click("saveDraft");
+            CHECK(fixture.controller.commandMessage()
+                == QStringLiteral("Draft saved in Branch Truce; repository file unchanged."));
+            CHECK(fixture.file().checkpoint() && fixture.file().checkpoint()->id == revision);
+            CHECK(!fixture.file().written() && !fixture.file().staged() && !fixture.file().reviewed());
+            expectProgress(fixture, true, false, false, false,
+                QStringLiteral("1"), QStringLiteral("1"), {}, {}, 4);
+
+            // Progress keeps the review, write and stage revisions separate.
+            CHECK(fixture.controller.files()->beginMarkResolved("choices", revision, true) == Transition::Applied);
+            CHECK(fixture.file().reviewed() && fixture.file().reviewed()->revision.id == revision);
+            CHECK(!fixture.file().written() && !fixture.file().staged() && !fixture.file().facts().resolved);
+            expectProgress(fixture, true, true, false, false,
+                QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"), {}, 4);
+            CHECK(fixture.controller.files()->recordWrite("choices", revision, Outcome::Succeeded) == Transition::Applied);
+            CHECK(fixture.controller.files()->recordStage("choices", revision, Outcome::Succeeded,
+                "verified-object", "100644") == Transition::Applied);
+            CHECK(fixture.file().facts().resolved && fixture.file().staged()->revision.id == revision);
+            CHECK(fixture.text().toStdString() == result);
+            expectProgress(fixture, true, true, true, false,
+                QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"), 4);
+
+            CHECK(fixture.controller.files()->appendFile(
+                FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+            CHECK(fixture.controller.outsideAppFiles() == 1);
+            CHECK(fixture.file().facts().resolved);
+            fixture.click("nextUnfinished");
+            expectNavigation(fixture, QStringLiteral("unfinished"), QStringLiteral("outside"),
+                QStringLiteral("outside-editor"), 0, 1, 0, 0,
+                QStringLiteral("Unfinished file · outside the editor · diagram.png"));
+            const auto unfinished = fixture.controller.navigationTarget();
+            CHECK(unfinished.value(QStringLiteral("support")).toString() == QStringLiteral("outside-app"));
+            CHECK(!unfinished.value(QStringLiteral("resolved")).toBool());
+            CHECK(unfinished.value(QStringLiteral("path")).toString() == QStringLiteral("diagram.png"));
+            CHECK(fixture.item("selectedProblem")->property("text").toString().contains(
+                QStringLiteral("Outside app · outstanding")));
+            CHECK(fixture.item("selectedProblem")->property("text").toString().contains(
+                QStringLiteral("image content")));
+            const auto *outside = fixture.controller.files()->file("outside");
+            CHECK(outside && outside->support() == Support::OutsideApp);
+            CHECK(outside->supportDetail() == "image content");
+            CHECK(outside->current().draft.text.empty() && !outside->facts().resolved);
+            fixture.click("previousUnfinished");
+            expectNavigation(fixture, QStringLiteral("unfinished"), QStringLiteral("outside"),
+                QStringLiteral("outside-editor"), 0, 1, 0, 0,
+                QStringLiteral("Unfinished file · outside the editor · diagram.png"));
+            CHECK(fixture.file().support() == Support::Supported && fixture.file().facts().resolved);
+
+            CHECK(fixture.controller.selectFile(QStringLiteral("choices")));
+            settle([&] { return fixture.text().toStdString() == result; });
+            auto newer = fixture.file().current().draft;
+            newer.text += "newer\n";
+            CHECK(fixture.controller.files()->replaceDraft("choices", revision, newer) == Transition::Applied);
+            CHECK(fixture.file().current().id == revision + 1);
+            CHECK(fixture.file().staged() && fixture.file().staged()->revision.id == revision);
+            CHECK(fixture.file().facts().earlierStaged && !fixture.file().facts().resolved && fixture.file().facts().unsaved);
+            settle([&] { return fixture.text().toStdString() == newer.text; });
+            expectProgress(fixture, false, false, false, true,
+                QStringLiteral("2"), {}, {}, QStringLiteral("1"), 4);
+
+            const auto heldRevision = fixture.file().current().id;
+            const auto heldText = fixture.text();
+            fixture.select(1, 6);
+            auto *editor = fixture.item("resultText");
+            const int cursor = editor->property("cursorPosition").toInt();
+            const int selectionStart = editor->property("selectionStart").toInt();
+            const int selectionEnd = editor->property("selectionEnd").toInt();
+            if (cursor != 6 || selectionStart != 1 || selectionEnd != 6)
+                throw std::runtime_error("held selection " + std::to_string(selectionStart)
+                    + "-" + std::to_string(selectionEnd) + " cursor " + std::to_string(cursor));
+            CHECK(cursor == 6 && selectionStart == 1 && selectionEnd == 6);
+            CHECK(fixture.controller.fileListVisible() && fixture.item("fileList")->isVisible());
+            CHECK(fixture.item("toggleFileList")->property("text").toString() == QStringLiteral("Hide file list"));
+            fixture.click("toggleFileList");
+            CHECK(!fixture.controller.fileListVisible() && !fixture.item("fileList")->isVisible());
+            CHECK(fixture.item("toggleFileList")->property("text").toString() == QStringLiteral("Show file list"));
+            CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
+            CHECK(fixture.file().current().id == heldRevision && fixture.file().facts().unsaved);
+            CHECK(fixture.text() == heldText && fixture.text().toStdString() == newer.text);
+            CHECK(editor->property("cursorPosition").toInt() == cursor);
+            CHECK(editor->property("selectionStart").toInt() == selectionStart);
+            CHECK(editor->property("selectionEnd").toInt() == selectionEnd);
+            fixture.click("toggleFileList");
+            CHECK(fixture.controller.fileListVisible() && fixture.item("fileList")->isVisible());
+            CHECK(fixture.item("toggleFileList")->property("text").toString() == QStringLiteral("Hide file list"));
+            CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
+            CHECK(fixture.file().current().id == heldRevision && fixture.text() == heldText && fixture.file().facts().unsaved);
+            CHECK(editor->property("cursorPosition").toInt() == cursor);
+            CHECK(editor->property("selectionStart").toInt() == selectionStart);
+            CHECK(editor->property("selectionEnd").toInt() == selectionEnd);
+            const auto *stillOutside = fixture.controller.files()->file("outside");
+            CHECK(stillOutside && stillOutside->support() == Support::OutsideApp);
+            CHECK(stillOutside->supportDetail() == "image content" && stillOutside->current().draft.text.empty());
         });
         return suite.report();
     }
