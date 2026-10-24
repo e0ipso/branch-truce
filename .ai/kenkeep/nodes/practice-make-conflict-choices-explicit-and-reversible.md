@@ -13,6 +13,9 @@ kk_schema_version: 3
 kk_id: practice-make-conflict-choices-explicit-and-reversible
 kk_derived_from:
   - PRD.md
+  - src/core/EditingCommands.cpp
+  - src/core/SessionState.cpp
+  - docs/recovery-journal.md
 kk_relates_to: []
 kk_depends_on: []
 kk_confidence: medium
@@ -25,8 +28,13 @@ Allow individual-line choices, whole-section choices, and direct result editing.
 
 Limit bulk non-conflict choices to the stated file and changes, leaving competing choices and unrelated manual edits alone. Explain whole-file replacement, including contributions and manual edits it gives up, and allow inspection, undo, and review before saving. Make undo and redo restore both text and undecided states for manual edits and choices at every supported scope.
 
+Scoped Accept, Ignore and resolve using one side in [EditingCommands](../../../src/core/EditingCommands.cpp) share [SessionState](../../../src/core/SessionState.cpp) history with manual edits. Undo and redo restore text and decision state together. [SessionModel](../../../src/app/SessionModel.cpp) commits each completed command, undo and redo across the recovery boundary before acknowledgment. Earlier recovered drafts retain their existing decision vocabulary. When a scoped choice is absent or cannot be mapped safely, keep it unavailable and leave direct result editing available for otherwise editable files.
+
 <!-- kk:citations:start -->
 # Citations
 
 [1] [PRD.md](../../../PRD.md)
+[2] [src/core/EditingCommands.cpp](../../../src/core/EditingCommands.cpp)
+[3] [src/core/SessionState.cpp](../../../src/core/SessionState.cpp)
+[4] [docs/recovery-journal.md](../../../docs/recovery-journal.md)
 <!-- kk:citations:end -->

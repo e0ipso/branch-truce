@@ -1,6 +1,6 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:203995e320ef5c40c9a0ad94d5156eaf84ee7faa5dc88376b8ab4ac4ebf87d79'
+nodes_hash: 'sha256:7abbd1fee3eaaa2a912f868079008980de0bedc557dfcfabbf03b7412d06d601'
 node_count: 19
 ---
 # kenkeep Graph
@@ -39,6 +39,7 @@ Total nodes: 19
 - **path:** map-recovery-journal-and-acknowledgment-boundary.md
 - **tags:** recovery, storage, editing, failures
 - **relates_to:** practice-recover-unfinished-work-without-changing-its-status, practice-keep-session-captures-immutable-across-revisions, practice-keep-failed-work-outstanding
+- **derived_from:** docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/SessionModel.h
 
 ## map-repository-discovery-and-verified-source-identities
 
@@ -133,7 +134,7 @@ Total nodes: 19
 - **title:** Make conflict choices explicit and reversible
 - **path:** practice-make-conflict-choices-explicit-and-reversible.md
 - **tags:** product, choices, editing, undo
-- **derived_from:** PRD.md
+- **derived_from:** PRD.md, src/core/EditingCommands.cpp, src/core/SessionState.cpp, docs/recovery-journal.md
 
 ## practice-reconcile-uncertain-destination-publication
 
@@ -149,7 +150,7 @@ Total nodes: 19
 - **title:** Recover unfinished work without changing its status
 - **path:** practice-recover-unfinished-work-without-changing-its-status.md
 - **tags:** product, recovery, editing, progress
-- **derived_from:** PRD.md
+- **derived_from:** PRD.md, docs/recovery-journal.md, src/app/RecoveryRestore.cpp
 
 ## practice-separate-save-from-mark-resolved
 
