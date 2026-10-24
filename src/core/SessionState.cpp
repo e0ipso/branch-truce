@@ -35,28 +35,38 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
         }
         snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
     }
-    revisions_.emplace(1, Revision{1, 1, 1, std::move(initial)});
+    auto correspondence = snapshots_
+        ? std::make_shared<const CorrespondenceMap>(1, *snapshots_, initial.text) : nullptr;
+    revisions_.emplace(1, Revision{1, 1, 1, std::move(initial), std::move(correspondence)});
 }
 
-RevisionId FileSession::advance(const Draft &draft)
+RevisionId FileSession::advance(const Draft &draft,
+                                std::shared_ptr<const CorrespondenceMap> correspondence)
 {
     if (next_ == std::numeric_limits<RevisionId>::max()) {
         throw std::overflow_error("Session revision space exhausted");
     }
     const auto &previous = current();
-    const auto id = next_++;
+    const auto id = next_;
+    if (!correspondence && previous.correspondence) {
+        correspondence = std::make_shared<const CorrespondenceMap>(
+            previous.correspondence->recomputed(id, draft.text));
+    }
     const auto result = draft.text == previous.draft.text ? previous.result : id;
     const auto decisions = draft.decisions == previous.draft.decisions
             && draft.unresolvedMarkers == previous.draft.unresolvedMarkers
         ? previous.decisions : id;
-    revisions_.emplace(id, Revision{id, result, decisions, draft});
+    revisions_.emplace(id, Revision{id, result, decisions, draft, std::move(correspondence)});
+    ++next_;
     current_ = id;
     return id;
 }
 
 RevisionId FileSession::restore(const Revision &revision)
 {
-    const auto id = advance(revision.draft);
+    auto correspondence = revision.correspondence
+        ? std::make_shared<const CorrespondenceMap>(revision.correspondence->atRevision(next_)) : nullptr;
+    const auto id = advance(revision.draft, std::move(correspondence));
     // Restored content can still be the manually saved content. The transaction
     // identity is fresh, so restoring it never restores review.
     auto &restored = revisions_.at(id);
@@ -78,6 +88,61 @@ Transition FileSession::replaceDraft(RevisionId expected, Draft draft)
     if (support_ != Support::Supported) return Transition::Blocked;
     if (draft == current().draft) return Transition::NoChange;
     appendHistory(advance(draft));
+    return Transition::Applied;
+}
+
+Transition FileSession::bindSourceAnchor(RevisionId expected, SourceAnchor source)
+{
+    if (expected != current_) return Transition::StaleRevision;
+    if (support_ != Support::Supported) return Transition::Blocked;
+    const auto *mapping = correspondence();
+    if (!mapping) return Transition::InvalidAnchor;
+    if (const auto *existing = mapping->anchor(source.contributionId))
+        return existing->source == source ? Transition::NoChange : Transition::InvalidAnchor;
+    auto updated = std::make_shared<CorrespondenceMap>(*mapping);
+    if (!updated->bind(std::move(source))) return Transition::InvalidAnchor;
+    revisions_.at(current_).correspondence = std::move(updated);
+    return Transition::Applied;
+}
+
+Transition FileSession::editResult(RevisionId expected, ResultEdit edit)
+{
+    if (expected != current_) return Transition::StaleRevision;
+    if (support_ != Support::Supported) return Transition::Blocked;
+    if (!validUtf8(current().draft.text) || !validByteRange(current().draft.text, edit.range)
+        || !validUtf8(edit.replacement))
+        return Transition::InvalidAnchor;
+    auto draft = current().draft;
+    draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
+    if (draft == current().draft) return Transition::NoChange;
+    auto mapping = correspondence()
+        ? std::make_shared<const CorrespondenceMap>(correspondence()->edited(next_, edit)) : nullptr;
+    appendHistory(advance(draft, std::move(mapping)));
+    return Transition::Applied;
+}
+
+Transition FileSession::replaceMapped(RevisionId expected, const ResultAnchor &anchor,
+                                      std::string replacement, std::optional<Decision> decision,
+                                      bool confirmManual)
+{
+    if (expected != current_ || anchor.revision != current_) return Transition::StaleRevision;
+    if (support_ != Support::Supported) return Transition::Blocked;
+    const auto *mapping = correspondence();
+    const auto *bound = mapping ? mapping->anchor(anchor.source.contributionId) : nullptr;
+    if (!bound || *bound != anchor) return Transition::InvalidAnchor;
+    if (anchor.state == AnchorState::Ambiguous) return Transition::AmbiguousTarget;
+    if (anchor.state != AnchorState::Mapped || !anchor.result
+        || !validByteRange(current().draft.text, *anchor.result) || !validUtf8(replacement))
+        return Transition::InvalidAnchor;
+    if (anchor.manualOverlap && !confirmManual) return Transition::ConfirmationRequired;
+    auto draft = current().draft;
+    draft.text.replace(anchor.result->begin, anchor.result->end - anchor.result->begin, replacement);
+    if (decision) draft.decisions[anchor.source.contributionId] = *decision;
+    if (draft == current().draft) return Transition::NoChange;
+    const ResultEdit edit{*anchor.result, std::move(replacement)};
+    auto updated = std::make_shared<const CorrespondenceMap>(
+        mapping->edited(next_, edit, false, anchor.source.contributionId));
+    appendHistory(advance(draft, std::move(updated)));
     return Transition::Applied;
 }
 

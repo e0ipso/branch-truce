@@ -1,7 +1,6 @@
 #pragma once
 
-#include "FileSnapshot.h"
-#include <cstdint>
+#include "Correspondence.h"
 #include <map>
 #include <memory>
 #include <optional>
@@ -9,8 +8,6 @@
 #include <vector>
 
 namespace branch_truce {
-
-using RevisionId = std::uint64_t;
 
 enum class DecisionValue { Undecided, Accepted, Ignored };
 struct Decision {
@@ -32,6 +29,7 @@ struct Revision {
     RevisionId result;
     RevisionId decisions;
     Draft draft;
+    std::shared_ptr<const CorrespondenceMap> correspondence = {};
 };
 
 enum class Outcome { Succeeded, Failed, Uncertain };
@@ -55,7 +53,8 @@ struct StagedResult {
 
 enum class Support { Supported, OutsideApp, Unreadable };
 enum class Transition {
-    Applied, NoChange, StaleRevision, ConfirmationRequired, Blocked, InvalidOutcome
+    Applied, NoChange, StaleRevision, ConfirmationRequired, Blocked, InvalidOutcome,
+    InvalidAnchor, AmbiguousTarget
 };
 enum class Blocker {
     OutsideApp, Unreadable, UnresolvedMarkers, Undecided, UnsavedDraft,
@@ -94,6 +93,9 @@ public:
     // Null for sessions without an admitted source/result capture.
     [[nodiscard]] const FileSnapshots *snapshots() const noexcept { return snapshots_.get(); }
     [[nodiscard]] const Revision &current() const { return revisions_.at(current_); }
+    [[nodiscard]] const CorrespondenceMap *correspondence() const noexcept {
+        return current().correspondence.get();
+    }
     [[nodiscard]] const std::optional<Revision> &checkpoint() const noexcept { return checkpoint_; }
     [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return reviewed_; }
     [[nodiscard]] const std::optional<Revision> &written() const noexcept { return written_; }
@@ -108,6 +110,15 @@ public:
     // Each editing transaction carries text and decisions together. Stale
     // editor commands cannot overwrite a later revision.
     Transition replaceDraft(RevisionId expected, Draft draft);
+    // Binding records a stable source contribution without changing decisions.
+    // Inspect the returned current anchor's state before offering a choice.
+    Transition bindSourceAnchor(RevisionId expected, SourceAnchor source);
+    Transition editResult(RevisionId expected, ResultEdit edit);
+    // A preview uses this exact anchor and revision. Passing confirmation after
+    // either changes cannot authorize a different replacement.
+    Transition replaceMapped(RevisionId expected, const ResultAnchor &anchor,
+                             std::string replacement, std::optional<Decision> decision = {},
+                             bool confirmManual = false);
     Transition undo(RevisionId expected);
     Transition redo(RevisionId expected);
     Transition discardToCheckpoint(RevisionId expected);
@@ -126,7 +137,8 @@ public:
     Transition setSupport(Support support, std::string detail = {});
 
 private:
-    RevisionId advance(const Draft &draft);
+    RevisionId advance(const Draft &draft,
+                       std::shared_ptr<const CorrespondenceMap> correspondence = {});
     RevisionId restore(const Revision &revision);
     void appendHistory(RevisionId revision);
     std::string id_;
