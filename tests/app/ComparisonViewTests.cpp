@@ -807,6 +807,40 @@ public:
             CHECK(stillOutside && stillOutside->support() == Support::OutsideApp);
             CHECK(stillOutside->supportDetail() == "image content" && stillOutside->current().draft.text.empty());
         });
+        suite.run("TRUCE-0026 Mark resolved confirms, rejects a stale revision and keeps a failed write visible", [] {
+            Fixture fixture;
+            const auto text = fixture.text();
+            CHECK(fixture.file().facts().undecided > 0 && fixture.file().facts().unsaved && !fixture.file().reviewed());
+            CHECK(fixture.item("markResolved")->isVisible() && fixture.item("markResolved")->isEnabled());
+            CHECK(!fixture.item("confirmResolution")->isVisible());
+            fixture.click("markResolved");
+            CHECK(fixture.controller.resolutionConfirmation());
+            CHECK(fixture.controller.commandMessage().contains(QStringLiteral("intentional")));
+            CHECK(fixture.text() == text && !fixture.file().reviewed() && fixture.file().facts().unsaved);
+            settle([&] {
+                return fixture.item("confirmResolution")->isVisible() && fixture.item("cancelResolution")->isVisible()
+                    && fixture.item("cancelResolution")->width() > 0 && fixture.item("cancelResolution")->height() > 0;
+            });
+            fixture.click("cancelResolution");
+            CHECK(!fixture.controller.resolutionConfirmation());
+            CHECK(fixture.controller.commandMessage().contains(QStringLiteral("unchanged")));
+            CHECK(fixture.text() == text && fixture.file().current().draft.text == text.toStdString());
+            CHECK(!fixture.controller.markResolved(QStringLiteral("choices"), QStringLiteral("999"), true));
+            CHECK(fixture.controller.commandMessage().contains(QStringLiteral("changed")));
+            CHECK(fixture.text() == text && !fixture.file().reviewed() && !fixture.file().facts().resolved);
+            fixture.click("markResolved");
+            settle([&] { return fixture.item("confirmResolution")->isVisible() && fixture.item("confirmResolution")->height() > 0; });
+            fixture.click("confirmResolution");
+            settle([&] {
+                return fixture.controller.selectedFile().value(QStringLiteral("status")).toString()
+                    == QStringLiteral("Repository write failed");
+            });
+            CHECK(fixture.text() == text);
+            CHECK(fixture.file().reviewed() && fixture.file().checkpoint() && !fixture.file().written());
+            CHECK(!fixture.file().facts().resolved && !fixture.file().staged());
+            CHECK(fixture.item("selectedStatus")->property("text").toString().contains(QStringLiteral("Repository write failed")));
+            CHECK(!fixture.item("parentStagingState")->isVisible());
+        });
         return suite.report();
     }
 };

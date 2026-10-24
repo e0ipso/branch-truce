@@ -1,6 +1,6 @@
 # Destination publication
 
-`src/storage/DestinationWriter.h` provides synchronous capture and publication operations for a Linux worker. It does not save drafts or stage Git entries. The publication coordinator must persist the reviewed draft and intent, validate the operation/index/conversion policy, and serialize mutations through `SessionCoordinator` before calling it. A successful filesystem write alone never means Git resolution succeeded.
+`src/storage/DestinationWriter.h` provides synchronous capture and publication operations for a Linux worker. It does not save drafts or stage Git entries. `ResolutionPublisher` persists the reviewed draft and intent, validates the operation/index/conversion policy, and serializes mutations through `SessionCoordinator` before calling it. A successful filesystem write alone never means Git resolution succeeded.
 
 Capture the destination at launch or after a verified publication, before editing. The snapshot holds the initial bytes, metadata and open descriptors. Keep that snapshot across retries. Recapturing a failed stale baseline without the user's review would accept an unexpected external edit. A successful publication returns the replacement's baseline for the next edit.
 

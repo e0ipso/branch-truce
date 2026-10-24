@@ -221,9 +221,14 @@ std::vector<ScopeTarget> undecidedTargets(const FileSession &file)
 ApplicationController::ApplicationController(QObject *parent)
     : QObject(parent), files_(this),
       coordinator_(files_, QStandardPaths::findExecutable(QStringLiteral("git")), this),
+      publisher_(files_, coordinator_, QStandardPaths::findExecutable(QStringLiteral("git")), this),
       classifier_(QStandardPaths::findExecutable(QStringLiteral("git")), this)
 {
     connect(&classifier_, &git::ConflictClassifier::finished, this, &ApplicationController::classified);
+    connect(&publisher_, &ResolutionPublisher::changed, this, [this](const QString &message) {
+        commandMessage_ = message;
+        Q_EMIT commandChanged();
+    });
     connect(&files_, &SessionModel::summaryChanged, this, [this] {
         if (!files_.file(selectedFileId_.toStdString())) {
             selectedFileId_ = files_.totalFiles() > 0
@@ -701,6 +706,47 @@ bool ApplicationController::saveDraft(const QString &fileId, const QString &revi
     commandMessage_ = tr("Draft saved in Branch Truce; repository file unchanged.");
     Q_EMIT commandChanged();
     return true;
+}
+
+QString ApplicationController::parentStagingPath() const
+{
+    if (!publisher_.parentStagingOffer(selectedFileId_.toStdString())) return {};
+    return displayPath(selectedFileId_);
+}
+
+bool ApplicationController::markResolved(const QString &fileId, const QString &revision, bool confirmUndecided)
+{
+    RevisionId expected = 0;
+    const auto *session = files_.file(fileId.toStdString());
+    if (!session || !revisionId(revision) || fileId != selectedFileId_ || session->current().id != *revisionId(revision))
+        return commandResult(Transition::StaleRevision);
+    if (!commandReady(fileId, revision, &expected)) return commandResult(Transition::Blocked);
+    const auto started = publisher_.start(fileId.toStdString(), expected, confirmUndecided);
+    commandMessage_ = started.detail;
+    Q_EMIT commandChanged();
+    return started.transition == Transition::Applied || started.transition == Transition::NoChange;
+}
+
+void ApplicationController::cancelResolution()
+{
+    publisher_.cancelConfirmation();
+}
+
+bool ApplicationController::assignParentStaging(const QByteArray &path)
+{
+    return publisher_.assignParentStaging(path);
+}
+
+bool ApplicationController::verifyParentAcknowledgment(const QString &fileId, const QString &revision)
+{
+    const auto expected = revisionId(revision);
+    if (!expected) return false;
+    return publisher_.verifyParentAcknowledgment(fileId.toStdString(), *expected);
+}
+
+std::optional<ResolutionPublisher::Offer> ApplicationController::parentStagingOffer(const QString &fileId) const
+{
+    return publisher_.parentStagingOffer(fileId.toStdString());
 }
 
 bool ApplicationController::discardUnsaved(const QString &fileId, const QString &revision)
@@ -1333,6 +1379,7 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
                     diagnostics.isEmpty() ? tr("This operation has no current unmerged files. Return to your Git workflow.") : diagnostics);
                 return;
             }
+            if (repository_.supported) publisher_.captureBaselines(repository_);
             auto detail = recovered ? tr("Recovered app drafts and decisions. Manual Save, review and Git resolution keep their recorded status.")
                 : tr("Current conflict files are open. Files marked outside app remain outstanding.");
             if (!diagnostics.isEmpty()) detail += QLatin1Char('\n') + diagnostics;

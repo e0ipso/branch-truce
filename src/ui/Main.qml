@@ -555,6 +555,30 @@ Kirigami.ApplicationWindow {
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
                     }
+                    Label {
+                        objectName: "parentStagingState"
+                        Layout.fillWidth: true
+                        visible: window.controller.parentStagingPath.length > 0
+                        text: qsTr("Written, unresolved. Waiting for Git to stage %1.").arg(window.controller.parentStagingPath)
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                    RowLayout {
+                        visible: window.controller.resolutionConfirmation
+                            && window.controller.resolutionFileId === window.controller.selectedFileId
+                            && window.controller.resolutionRevision === window.selectedFile.currentRevision
+                        Button {
+                            objectName: "confirmResolution"
+                            text: qsTr("Confirm resolution")
+                            enabled: !window.controller.resolutionBusy && !comparison.inputMethodComposing
+                            onClicked: window.controller.markResolved(window.controller.selectedFileId, window.selectedFile.currentRevision, true)
+                        }
+                        Button {
+                            objectName: "cancelResolution"
+                            text: qsTr("Cancel")
+                            onClicked: window.controller.cancelResolution()
+                        }
+                    }
                     Button {
                         objectName: "retryRecovery"
                         visible: !!window.selectedFile.pendingInput && window.selectedFile.recoveryState !== "save-failed"
@@ -580,6 +604,12 @@ Kirigami.ApplicationWindow {
                             text: qsTr("Save")
                             enabled: !!window.selectedFile.canEdit && !!window.selectedFile.unsaved && !comparison.inputMethodComposing
                             onClicked: window.controller.saveDraft(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                        }
+                        Button {
+                            objectName: "markResolved"
+                            text: qsTr("Mark resolved")
+                            enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing && !window.controller.resolutionBusy
+                            onClicked: window.controller.markResolved(window.controller.selectedFileId, window.selectedFile.currentRevision, false)
                         }
                         Button {
                             objectName: "discardUnsaved"

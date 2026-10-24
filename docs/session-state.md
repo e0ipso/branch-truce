@@ -50,6 +50,12 @@ by storage and Git adapters, always for the captured transaction ID:
    written. Staging success requires the adapter's opaque canonical object ID
    and mode. A child process exit alone is insufficient verification.
 
+`ApplicationController::markResolved` runs that sequence for the selected
+revision. It does not require a prior Save. Repository mode stages only that
+literal path. A path assigned to parent staging is written and then left
+unresolved until `verifyParentAcknowledgment` sees the canonical index entry.
+The app does not stage a parent-owned path.
+
 `Outcome::Uncertain` represents timeouts or other uninspected mutation results.
 It blocks finish until an adapter inspects the outcome. Successful snapshots
 and the most recent operation outcomes are separate: a failed newer write or
@@ -130,7 +136,7 @@ application controller, not other processes. Workers cooperate with cancellation
 the coordinator never waits on them on the GUI thread. Destruction cancels
 controls and disconnects delivery. In-flight mutations may still finish, so a
 normal close must settle them and retain outcomes before destroying the controller.
-The startup window still has no repository-loading or publication action.
+Mark resolved publishes and verifies one reviewed revision.
 
 `canFinish` requires at least one loaded file and current verified resolution
 of every file. `finishBlockers` includes each file ID and display path for

@@ -1,4 +1,5 @@
 #pragma once
+#include "ResolutionPublisher.h"
 #include "SessionModel.h"
 #include "SessionCoordinator.h"
 #include "git/ConflictClassifier.h"
@@ -29,6 +30,11 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(int loadErrorFiles READ loadErrorFiles NOTIFY inventoryChanged)
     Q_PROPERTY(QVariantMap commandPreview READ commandPreview NOTIFY commandChanged)
     Q_PROPERTY(QString commandMessage READ commandMessage NOTIFY commandChanged)
+    Q_PROPERTY(bool resolutionConfirmation READ resolutionConfirmation NOTIFY commandChanged)
+    Q_PROPERTY(QString resolutionFileId READ resolutionFileId NOTIFY commandChanged)
+    Q_PROPERTY(QString resolutionRevision READ resolutionRevision NOTIFY commandChanged)
+    Q_PROPERTY(bool resolutionBusy READ resolutionBusy NOTIFY commandChanged)
+    Q_PROPERTY(QString parentStagingPath READ parentStagingPath NOTIFY commandChanged)
     Q_PROPERTY(QVariantMap nonConflictingPreview READ nonConflictingPreview NOTIFY commandChanged)
     Q_PROPERTY(QVariantMap wholeFilePreview READ wholeFilePreview NOTIFY commandChanged)
     Q_PROPERTY(bool fileListVisible READ fileListVisible NOTIFY fileListChanged)
@@ -52,6 +58,11 @@ public:
     [[nodiscard]] int loadErrorFiles() const;
     [[nodiscard]] QVariantMap commandPreview() const;
     [[nodiscard]] QString commandMessage() const { return commandMessage_; }
+    [[nodiscard]] bool resolutionConfirmation() const { return publisher_.confirmationPending(); }
+    [[nodiscard]] QString resolutionFileId() const { return publisher_.confirmationFileId(); }
+    [[nodiscard]] QString resolutionRevision() const { return publisher_.confirmationRevision(); }
+    [[nodiscard]] bool resolutionBusy() const { return publisher_.busy(); }
+    [[nodiscard]] QString parentStagingPath() const;
     [[nodiscard]] QVariantMap nonConflictingPreview() const;
     Q_INVOKABLE bool previewNonConflicting(const QString &fileId, const QString &revision, const QString &scope);
     Q_INVOKABLE bool applyNonConflicting();
@@ -71,6 +82,13 @@ public:
     Q_INVOKABLE bool redo(const QString &fileId, const QString &revision);
     // Save checkpoints the current text and decisions in the app store only.
     Q_INVOKABLE bool saveDraft(const QString &fileId, const QString &revision);
+    // Review, checkpoint and publish one exact revision. Confirmation is required while source choices remain undecided.
+    Q_INVOKABLE bool markResolved(const QString &fileId, const QString &revision, bool confirmUndecided = false);
+    Q_INVOKABLE void cancelResolution();
+    // The launcher assigns one parent-owned path. Repository mode leaves this empty.
+    bool assignParentStaging(const QByteArray &path);
+    bool verifyParentAcknowledgment(const QString &fileId, const QString &revision);
+    [[nodiscard]] std::optional<ResolutionPublisher::Offer> parentStagingOffer(const QString &fileId) const;
     // Discard restores the manual checkpoint, or the initial result, only after that decision is durable.
     Q_INVOKABLE bool discardUnsaved(const QString &fileId, const QString &revision);
     Q_INVOKABLE void attachResultEditor(QObject *editor);
@@ -117,6 +135,7 @@ private:
     bool navigateAcrossFiles(const QString &mode, int direction);
     SessionModel files_;
     SessionCoordinator coordinator_;
+    ResolutionPublisher publisher_;
     git::ConflictClassifier classifier_;
     git::RepositoryContext repository_;
     QString state_ = QStringLiteral("idle");
