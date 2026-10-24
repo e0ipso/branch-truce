@@ -54,7 +54,10 @@ by storage and Git adapters, always for the captured transaction ID:
 revision. It does not require a prior Save. Repository mode stages only that
 literal path. A path assigned to parent staging is written and then left
 unresolved until `verifyParentAcknowledgment` sees the canonical index entry.
-The app does not stage a parent-owned path.
+The app does not stage a parent-owned path. While a mergetool parent session
+is active, an unlaunched path waits instead of being staged here. The blocking
+launcher and its local socket are recorded in
+[the mergetool launcher note](mergetool-launcher.md).
 
 `Outcome::Uncertain` represents timeouts or other uninspected mutation results.
 It blocks finish until an adapter inspects the outcome. Successful snapshots

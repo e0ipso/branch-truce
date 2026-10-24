@@ -1,4 +1,5 @@
 #include "ApplicationController.h"
+#include "MergetoolLauncher.h"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
@@ -39,6 +40,10 @@ private:
 
 int main(int argc, char *argv[])
 {
+    for (int index = 1; index < argc; ++index) {
+        if (qstrcmp(argv[index], "--mergetool") == 0)
+            return branch_truce::runMergetoolLauncher(argc, argv);
+    }
     QApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("branch-truce.local"));

@@ -563,6 +563,43 @@ Kirigami.ApplicationWindow {
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
                     }
+                    Button {
+                        objectName: "recheckParentStaging"
+                        visible: window.controller.parentStagingPath.length > 0
+                        text: qsTr("Check Git staging")
+                        enabled: !window.controller.resolutionBusy
+                        onClicked: window.controller.recheckParentAcknowledgment()
+                    }
+                    Label {
+                        objectName: "mergetoolHolding"
+                        Layout.fillWidth: true
+                        visible: window.controller.mergetoolWaiting
+                        text: qsTr("Git is waiting on this path. Mark resolved hands it back. Leave keeps the draft and returns the original file.")
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                    Button {
+                        objectName: "leaveMergetool"
+                        visible: window.controller.mergetoolWaiting
+                        enabled: !window.controller.resolutionBusy
+                        text: qsTr("Leave unresolved")
+                        onClicked: window.controller.leaveMergetool()
+                    }
+                    Label {
+                        objectName: "mergetoolWait"
+                        Layout.fillWidth: true
+                        visible: window.controller.parentSessionActive && !window.controller.mergetoolWaiting
+                                 && window.controller.parentStagingPath.length === 0 && window.supportedSelection
+                        text: qsTr("Waiting for Git to launch this path. It is not resolved.")
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                    Button {
+                        objectName: "endParentSession"
+                        visible: window.controller.canEndParentSession
+                        text: qsTr("Parent Git is finished")
+                        onClicked: window.controller.endParentSession()
+                    }
                     RowLayout {
                         visible: window.controller.resolutionConfirmation
                             && window.controller.resolutionFileId === window.controller.selectedFileId

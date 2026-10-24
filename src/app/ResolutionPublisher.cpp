@@ -534,6 +534,22 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
         }
         return;
     }
+    // Git mergetool moves the worktree file aside and copies it back before the
+    // tool runs. The launch inode is then the backup. Publish onto the copy when
+    // its bytes are still the captured launch bytes; a different file is refused.
+    if (attempt_->parentOwned) {
+        auto live = storage::captureDestination(repository_.worktreeRoot, attempt_->path);
+        auto baseline = baselines_.find(attempt_->fileId);
+        if (!live.destination || baseline == baselines_.end() || !baseline->second.destination
+            || live.destination->bytes() != baseline->second.destination->bytes()) {
+            fail(Outcome::Failed, live.diagnostic.isEmpty()
+                ? tr("The repository file changed while Git was waiting. The draft was not published.")
+                : live.diagnostic, false);
+            return;
+        }
+        baseline->second.destination = std::move(live.destination);
+        baseline->second.diagnostic.clear();
+    }
     auto evidence = std::make_shared<storage::PublicationResult>();
     const auto baseline = baselines_.at(attempt_->fileId).destination;
     const auto bytes = attempt_->serialized;

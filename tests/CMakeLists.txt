@@ -71,6 +71,13 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_test(NAME app.resolution COMMAND branch_truce_resolution_tests)
     set_tests_properties(app.resolution PROPERTIES TIMEOUT 90)
 
+    add_executable(branch_truce_mergetool_tests app/MergetoolLauncherTests.cpp)
+    target_include_directories(branch_truce_mergetool_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_mergetool_tests PRIVATE branch_truce_controller branch_truce_build_options)
+    add_dependencies(branch_truce_mergetool_tests branch-truce)
+    add_test(NAME app.mergetool-launcher COMMAND branch_truce_mergetool_tests $<TARGET_FILE:branch-truce>)
+    set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 120)
+
     add_executable(branch_truce_coordinator_tests app/SessionCoordinatorTests.cpp)
     target_include_directories(branch_truce_coordinator_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_coordinator_tests PRIVATE branch_truce_controller branch_truce_build_options)

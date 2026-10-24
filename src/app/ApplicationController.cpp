@@ -239,13 +239,20 @@ ApplicationController::ApplicationController(QObject *parent)
     : QObject(parent), files_(this),
       coordinator_(files_, QStandardPaths::findExecutable(QStringLiteral("git")), this),
       publisher_(files_, coordinator_, QStandardPaths::findExecutable(QStringLiteral("git")), this),
-      classifier_(QStandardPaths::findExecutable(QStringLiteral("git")), this)
+      classifier_(QStandardPaths::findExecutable(QStringLiteral("git")), this),
+      mergetool_(this)
 {
     connect(&classifier_, &git::ConflictClassifier::finished, this, &ApplicationController::classified);
     connect(&publisher_, &ResolutionPublisher::changed, this, [this](const QString &message) {
         commandMessage_ = message;
+        mergetool_.onPublisherChanged();
         Q_EMIT commandChanged();
     });
+    connect(&mergetool_, &MergetoolSession::notice, this, [this](const QString &message) {
+        commandMessage_ = message;
+        Q_EMIT commandChanged();
+    });
+    connect(&mergetool_, &MergetoolSession::changed, this, [this] { Q_EMIT commandChanged(); });
     connect(&files_, &SessionModel::summaryChanged, this, [this] {
         if (!files_.file(selectedFileId_.toStdString())) {
             selectedFileId_ = files_.totalFiles() > 0
@@ -738,6 +745,22 @@ QString ApplicationController::parentStagingPath() const
     return displayPath(selectedFileId_);
 }
 
+bool ApplicationController::mergetoolWaiting() const
+{
+    const auto *file = files_.file(selectedFileId_.toStdString());
+    return file && mergetool_.waitingOn(QByteArray::fromStdString(file->path()));
+}
+
+bool ApplicationController::parentSessionActive() const
+{
+    return mergetool_.parentSessionActive();
+}
+
+bool ApplicationController::canEndParentSession() const
+{
+    return mergetool_.canEndParentSession();
+}
+
 bool ApplicationController::markResolved(const QString &fileId, const QString &revision, bool confirmUndecided)
 {
     RevisionId expected = 0;
@@ -745,6 +768,11 @@ bool ApplicationController::markResolved(const QString &fileId, const QString &r
     if (!session || !revisionId(revision) || fileId != selectedFileId_ || session->current().id != *revisionId(revision))
         return commandResult(Transition::StaleRevision);
     if (!commandReady(fileId, revision, &expected)) return commandResult(Transition::Blocked);
+    if (mergetool_.blocks(QByteArray::fromStdString(session->path()))) {
+        commandMessage_ = tr("Waiting for Git to launch this path. It is not resolved.");
+        Q_EMIT commandChanged();
+        return false;
+    }
     const auto started = publisher_.start(fileId.toStdString(), expected, confirmUndecided);
     commandMessage_ = started.detail;
     Q_EMIT commandChanged();
@@ -771,6 +799,30 @@ bool ApplicationController::verifyParentAcknowledgment(const QString &fileId, co
 std::optional<ResolutionPublisher::Offer> ApplicationController::parentStagingOffer(const QString &fileId) const
 {
     return publisher_.parentStagingOffer(fileId.toStdString());
+}
+
+bool ApplicationController::mergetoolListening() const { return mergetool_.listening(); }
+QByteArray ApplicationController::mergetoolWaitingPath() const { return mergetool_.waitingPath(); }
+bool ApplicationController::mergetoolHasWaiter(const QByteArray &path) const { return mergetool_.hasWaiter(path); }
+QStringList ApplicationController::mergetoolIntakes() const { return mergetool_.intakes(); }
+
+bool ApplicationController::leaveMergetool()
+{
+    const auto *file = files_.file(selectedFileId_.toStdString());
+    if (!file) return false;
+    return mergetool_.leave(QByteArray::fromStdString(file->path()));
+}
+
+bool ApplicationController::endParentSession()
+{
+    return mergetool_.endParentSession();
+}
+
+bool ApplicationController::recheckParentAcknowledgment()
+{
+    const auto offer = publisher_.parentStagingOffer(selectedFileId_.toStdString());
+    if (!offer) return false;
+    return verifyParentAcknowledgment(selectedFileId_, QString::number(offer->revision));
 }
 
 QString ApplicationController::discardedMessage(const FileSession *current) const
@@ -1464,7 +1516,10 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
                     diagnostics.isEmpty() ? tr("This operation has no current unmerged files. Return to your Git workflow.") : diagnostics);
                 return;
             }
-            if (repository_.supported) publisher_.captureBaselines(repository_);
+            if (repository_.supported) {
+                publisher_.captureBaselines(repository_);
+                mergetool_.listen(repository_);
+            }
             auto detail = recovered ? tr("Recovered app drafts and decisions. Manual Save, review and Git resolution keep their recorded status.")
                 : tr("Current conflict files are open. Files marked outside app remain outstanding.");
             if (!diagnostics.isEmpty()) detail += QLatin1Char('\n') + diagnostics;

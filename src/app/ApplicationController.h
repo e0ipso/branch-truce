@@ -1,10 +1,12 @@
 #pragma once
+#include "MergetoolSession.h"
 #include "ResolutionPublisher.h"
 #include "SessionModel.h"
 #include "SessionCoordinator.h"
 #include "git/ConflictClassifier.h"
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QPointer>
 #include <string>
 
@@ -35,6 +37,9 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QString resolutionRevision READ resolutionRevision NOTIFY commandChanged)
     Q_PROPERTY(bool resolutionBusy READ resolutionBusy NOTIFY commandChanged)
     Q_PROPERTY(QString parentStagingPath READ parentStagingPath NOTIFY commandChanged)
+    Q_PROPERTY(bool mergetoolWaiting READ mergetoolWaiting NOTIFY commandChanged)
+    Q_PROPERTY(bool parentSessionActive READ parentSessionActive NOTIFY commandChanged)
+    Q_PROPERTY(bool canEndParentSession READ canEndParentSession NOTIFY commandChanged)
     Q_PROPERTY(QVariantMap nonConflictingPreview READ nonConflictingPreview NOTIFY commandChanged)
     Q_PROPERTY(QVariantMap wholeFilePreview READ wholeFilePreview NOTIFY commandChanged)
     Q_PROPERTY(bool fileListVisible READ fileListVisible NOTIFY fileListChanged)
@@ -63,6 +68,9 @@ public:
     [[nodiscard]] QString resolutionRevision() const { return publisher_.confirmationRevision(); }
     [[nodiscard]] bool resolutionBusy() const { return publisher_.busy(); }
     [[nodiscard]] QString parentStagingPath() const;
+    [[nodiscard]] bool mergetoolWaiting() const;
+    [[nodiscard]] bool parentSessionActive() const;
+    [[nodiscard]] bool canEndParentSession() const;
     [[nodiscard]] QVariantMap nonConflictingPreview() const;
     Q_INVOKABLE bool previewNonConflicting(const QString &fileId, const QString &revision, const QString &scope);
     Q_INVOKABLE bool applyNonConflicting();
@@ -89,6 +97,13 @@ public:
     bool assignParentStaging(const QByteArray &path);
     bool verifyParentAcknowledgment(const QString &fileId, const QString &revision);
     [[nodiscard]] std::optional<ResolutionPublisher::Offer> parentStagingOffer(const QString &fileId) const;
+    [[nodiscard]] bool mergetoolListening() const;
+    [[nodiscard]] QByteArray mergetoolWaitingPath() const;
+    [[nodiscard]] bool mergetoolHasWaiter(const QByteArray &path) const;
+    [[nodiscard]] QStringList mergetoolIntakes() const;
+    Q_INVOKABLE bool leaveMergetool();
+    Q_INVOKABLE bool endParentSession();
+    Q_INVOKABLE bool recheckParentAcknowledgment();
     // Discard restores the manual checkpoint, or the initial result, only after that decision is durable.
     Q_INVOKABLE bool discardUnsaved(const QString &fileId, const QString &revision);
     Q_INVOKABLE void attachResultEditor(QObject *editor);
@@ -138,6 +153,7 @@ private:
     SessionCoordinator coordinator_;
     ResolutionPublisher publisher_;
     git::ConflictClassifier classifier_;
+    MergetoolSession mergetool_;
     git::RepositoryContext repository_;
     QString state_ = QStringLiteral("idle");
     QString operation_;

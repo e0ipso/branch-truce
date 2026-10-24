@@ -31,7 +31,7 @@ Do not call provisioning from worktree preparation. Agents prohibited from
 system changes must report missing packages to the environment owner.
 
 CMake >= 3.28, a GCC 13.3-compatible C++20 compiler, Make and Git >= 2.43
-are required. Desktop configuration checks ECM, Qt Core/Gui/Widgets/Qml/Quick/
+are required. Desktop configuration checks ECM, Qt Core/Gui/Widgets/Network/Qml/Quick/
 QuickControls2 and KF6 Kirigami. Qt Widgets supplies the QApplication bootstrap
 for desktop controls; the interface is Qt Quick/Kirigami. The current API floor
 is Qt 6.6 and KF6 6.0, below the selected reference stack Qt 6.10.2/KF6 6.24.
@@ -90,9 +90,10 @@ Discovery verifies the operation and source identities locally. Unsupported
 operations and files remain visible with an explanation, and unreadable files
 never appear as empty supported results. Startup does not change the worktree or
 index. The session uses no account or network and covers the conflicts present at
-launch. Continue and commit in the usual Git workflow. This repository-session
-entry point does not yet implement the mergetool parent handoff described in the
-technical specification.
+launch. Continue and commit in the usual Git workflow. `branch-truce --mergetool`
+is the blocking parent launcher. Its transport and lifecycle are recorded in
+[the mergetool launcher note](mergetool-launcher.md). That note does not declare
+mergetool compatibility.
 
 Build directories are disposable. The default root `build/` directory is ignored
 by Git. An optional second absolute argument to `prepare-worktree.sh` places
