@@ -17,7 +17,9 @@
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextBlock>
 #include <QTextDocument>
+#include <QTextLayout>
 #include <QtQml/qqml.h>
 
 using namespace branch_truce;
@@ -96,6 +98,77 @@ public:
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };
+
+struct WorkSnapshot {
+    RevisionId id = 0;
+    Draft draft;
+    bool canUndo = false;
+    bool canRedo = false;
+    QVariant progress;
+    std::size_t undecided = 0;
+    bool unsaved = false;
+    bool resolved = false;
+    bool needsReview = false;
+    FileStatus status = FileStatus::Undecided;
+    QString resultText;
+    QString leftText;
+    QString rightText;
+};
+
+WorkSnapshot captureWork(Fixture &fixture)
+{
+    const auto &current = fixture.file().current();
+    const auto facts = fixture.file().facts();
+    return {current.id, current.draft, fixture.file().canUndo(), fixture.file().canRedo(),
+        fixture.controller.selectedFile().value(QStringLiteral("progress")),
+        facts.undecided, facts.unsaved, facts.resolved, facts.needsReview, facts.status,
+        fixture.item("resultText")->property("text").toString(),
+        fixture.item("stage2Text")->property("text").toString(),
+        fixture.item("stage3Text")->property("text").toString()};
+}
+
+void checkUnchanged(Fixture &fixture, const WorkSnapshot &before)
+{
+    const auto after = captureWork(fixture);
+    CHECK(after.id == before.id);
+    CHECK(after.draft == before.draft);
+    CHECK(after.canUndo == before.canUndo && after.canRedo == before.canRedo);
+    CHECK(after.progress == before.progress);
+    CHECK(after.undecided == before.undecided && after.unsaved == before.unsaved
+        && after.resolved == before.resolved && after.needsReview == before.needsReview
+        && after.status == before.status);
+    CHECK(after.resultText == before.resultText && after.leftText == before.leftText
+        && after.rightText == before.rightText);
+}
+
+int visualLines(QQuickItem *editor, int blockNumber)
+{
+    auto *quick = editor->property("textDocument").value<QQuickTextDocument *>();
+    if (!quick || !quick->textDocument()) throw std::runtime_error("missing text document");
+    const auto *layout = quick->textDocument()->findBlockByNumber(blockNumber).layout();
+    return layout ? layout->lineCount() : 0;
+}
+
+int paintedMarkers(QQuickItem *markers)
+{
+    int count = 0;
+    for (auto *child : markers->childItems()) {
+        if (child->isVisible() && child->width() >= 2.0 && child->height() >= 2.0)
+            ++count;
+    }
+    return count;
+}
+
+int markerKind(QQuickItem *markers, bool tab)
+{
+    const auto expression = tab
+        ? QStringLiteral("spots.filter(function(spot) { return spot.tab; }).length")
+        : QStringLiteral("spots.filter(function(spot) { return !spot.tab; }).length");
+    QQmlExpression query(qmlContext(markers), markers, expression);
+    const auto value = query.evaluate();
+    if (query.hasError()) throw std::runtime_error(query.error().toString().toStdString());
+    return value.toInt();
+}
 }
 
 class ComparisonViewTests {
@@ -366,6 +439,131 @@ public:
             CHECK(fixture.controller.selectedFile().value("status").toString()
                   == "Draft saved in Branch Truce; repository file unchanged");
             CHECK(!fixture.file().written() && !fixture.file().staged());
+        });
+        suite.run("TRUCE-0058 search scope switches the pane Find selects", [] {
+            Fixture fixture;
+            const auto before = captureWork(fixture);
+            auto *scope = fixture.item("searchScope");
+            auto *query = fixture.item("searchQuery");
+            CHECK(scope->property("count").toInt() == 3);
+            CHECK(scope->property("currentIndex").toInt() == 0);
+            CHECK(scope->property("currentText").toString() == "Left source");
+            CHECK(fixture.item("searchStatus")->property("text").toString() == "Search scope: Left source.");
+            CHECK(query->setProperty("text", "left only"));
+            fixture.click("findPassage");
+            auto *left = fixture.item("stage2Text");
+            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Left source.");
+            CHECK(left->property("selectedText").toString() == "left only");
+            CHECK(left->property("selectionStart").toInt() == left->property("text").toString().indexOf("left only"));
+            CHECK(fixture.item("resultText")->property("selectedText").toString().isEmpty());
+            CHECK(fixture.item("stage3Text")->property("selectedText").toString().isEmpty());
+            checkUnchanged(fixture, before);
+
+            CHECK(scope->setProperty("currentIndex", 2));
+            CHECK(scope->property("currentText").toString() == "Right source");
+            CHECK(fixture.item("searchStatus")->property("text").toString() == "Search scope: Right source.");
+            fixture.click("findPassage");
+            CHECK(fixture.item("searchStatus")->property("text").toString() == "No passage in Right source.");
+            CHECK(fixture.item("stage3Text")->property("selectedText").toString().isEmpty());
+            CHECK(query->setProperty("text", "right only"));
+            fixture.click("findPassage");
+            auto *right = fixture.item("stage3Text");
+            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Right source.");
+            CHECK(right->property("selectedText").toString() == "right only");
+            CHECK(right->property("selectionStart").toInt() == right->property("text").toString().indexOf("right only"));
+            checkUnchanged(fixture, before);
+
+            CHECK(scope->setProperty("currentIndex", 1));
+            CHECK(scope->property("currentText").toString() == "Editable result");
+            CHECK(query->setProperty("text", "base conflict"));
+            fixture.click("findPassage");
+            auto *result = fixture.item("resultText");
+            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Editable result.");
+            CHECK(result->property("selectedText").toString() == "base conflict");
+            CHECK(result->property("selectionStart").toInt() == result->property("text").toString().indexOf("base conflict"));
+            checkUnchanged(fixture, before);
+
+            CHECK(fixture.item("showEarlier")->setProperty("checked", true));
+            settle([&] { return fixture.item("earlierText")->isVisible() && scope->property("count").toInt() == 4; });
+            CHECK(scope->property("currentText").toString() == "Editable result");
+            CHECK(scope->setProperty("currentIndex", 3));
+            CHECK(scope->property("currentText").toString() == "Earlier version");
+            fixture.click("findPassage");
+            auto *earlier = fixture.item("earlierText");
+            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Earlier version.");
+            CHECK(earlier->property("selectedText").toString() == "base conflict");
+            CHECK(earlier->property("selectionStart").toInt() == earlier->property("text").toString().indexOf("base conflict"));
+            checkUnchanged(fixture, before);
+        });
+        suite.run("TRUCE-0058 Find selects a passage and wraps to the earlier match", [] {
+            const std::string result = "prefix REPEAT middle REPEAT suffix\n";
+            Fixture fixture(test_support::choiceFile("left\n", "right\n", result));
+            const auto before = captureWork(fixture);
+            auto *scope = fixture.item("searchScope");
+            CHECK(scope->setProperty("currentIndex", 1));
+            CHECK(scope->property("currentText").toString() == "Editable result");
+            CHECK(fixture.item("searchQuery")->setProperty("text", "REPEAT"));
+            auto *editor = fixture.item("resultText");
+            const auto text = editor->property("text").toString();
+            const auto first = text.indexOf("REPEAT");
+            const auto second = text.indexOf("REPEAT", first + 6);
+            CHECK(first >= 0 && second > first);
+            fixture.click("findPassage");
+            CHECK(editor->property("selectedText").toString() == "REPEAT");
+            CHECK(editor->property("selectionStart").toInt() == first);
+            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Editable result.");
+            checkUnchanged(fixture, before);
+            fixture.click("findPassage");
+            CHECK(editor->property("selectionStart").toInt() == second);
+            CHECK(editor->property("selectedText").toString() == "REPEAT");
+            checkUnchanged(fixture, before);
+            fixture.click("findPassage");
+            CHECK(editor->property("selectionStart").toInt() == first);
+            CHECK(editor->property("selectedText").toString() == "REPEAT");
+            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Editable result.");
+            checkUnchanged(fixture, before);
+        });
+        suite.run("TRUCE-0058 wrapping a long line changes its visual line count", [] {
+            const std::string result(480, 'M');
+            Fixture fixture(test_support::choiceFile("left\n", "right\n", result + "\n"));
+            const auto before = captureWork(fixture);
+            auto *editor = fixture.item("resultText");
+            auto *wrap = fixture.item("wrapLines");
+            CHECK(!wrap->property("checked").toBool());
+            const auto unwrappedMode = editor->property("wrapMode").toInt();
+            settle([&] { return visualLines(editor, 0) == 1; });
+            const auto unwrappedHeight = editor->property("contentHeight").toReal();
+            CHECK(unwrappedHeight > 0);
+            CHECK(wrap->setProperty("checked", true));
+            settle([&] { return visualLines(editor, 0) > 1; });
+            CHECK(editor->property("wrapMode").toInt() != unwrappedMode);
+            CHECK(editor->property("contentHeight").toReal() > unwrappedHeight);
+            checkUnchanged(fixture, before);
+            CHECK(wrap->setProperty("checked", false));
+            settle([&] { return visualLines(editor, 0) == 1; });
+            CHECK(editor->property("wrapMode").toInt() == unwrappedMode);
+            checkUnchanged(fixture, before);
+        });
+        suite.run("TRUCE-0058 whitespace markers paint spaces and tabs", [] {
+            const std::string result = "aa bb\tcc\n";
+            Fixture fixture(test_support::choiceFile("left\n", "right\n", result));
+            const auto before = captureWork(fixture);
+            auto *markers = fixture.item("resultWhitespace");
+            auto *toggle = fixture.item("showWhitespace");
+            CHECK(!toggle->property("checked").toBool());
+            settle([&] { return markers->property("markerCount").toInt() == 0 && paintedMarkers(markers) == 0; });
+            CHECK(markerKind(markers, false) == 0 && markerKind(markers, true) == 0);
+            CHECK(toggle->setProperty("checked", true));
+            settle([&] { return markers->property("markerCount").toInt() == 2 && paintedMarkers(markers) == 2; });
+            CHECK(markerKind(markers, false) == 1 && markerKind(markers, true) == 1);
+            CHECK(fixture.item("stage2Whitespace")->property("markerCount").toInt() == 0);
+            CHECK(fixture.item("stage3Whitespace")->property("markerCount").toInt() == 0);
+            CHECK(fixture.item("resultText")->property("text").toString().toStdString() == result);
+            checkUnchanged(fixture, before);
+            CHECK(toggle->setProperty("checked", false));
+            settle([&] { return markers->property("markerCount").toInt() == 0 && paintedMarkers(markers) == 0; });
+            CHECK(fixture.item("resultText")->property("text").toString().toStdString() == result);
+            checkUnchanged(fixture, before);
         });
         return suite.report();
     }
