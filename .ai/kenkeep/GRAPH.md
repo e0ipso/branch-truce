@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:01759f0d2c52a279d3bc274bf58dec96962cea5368d2a2192dfdc774630bc9f7'
-node_count: 16
+nodes_hash: 'sha256:2e4573be564ca4e23eed8fb5297de36be165c2c7a1c27d95e188c645e17e839f'
+node_count: 17
 ---
 # kenkeep Graph
 
-Total nodes: 16
+Total nodes: 17
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -78,6 +78,14 @@ Total nodes: 16
 - **title:** Keep PRD.md focused on user needs
 - **path:** practice-keep-prd-focused-on-user-needs.md
 - **tags:** product, prd, documentation
+
+## practice-keep-session-captures-immutable-across-revisions
+
+- **kind:** practice
+- **title:** Keep session captures immutable across revisions
+- **path:** practice-keep-session-captures-immutable-across-revisions.md
+- **tags:** session, snapshots, editing, source-identity
+- **relates_to:** practice-keep-sources-identifiable-and-the-result-editable, practice-fence-session-work-and-serialize-worktree-mutations, map-conflict-admission-and-offline-startup
 
 ## practice-keep-sources-identifiable-and-the-result-editable
 

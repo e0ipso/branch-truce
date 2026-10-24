@@ -2,8 +2,8 @@
 type: practice
 title: Bound each converted representation independently
 description: >-
-  Canonical blob and checkout reads each get 8 MiB; validation does not
-  guarantee that expanding encodings fit every stage.
+  Reject cleaned canonical objects over 8 MiB before reading; give canonical
+  blob and checkout reads separate 8 MiB budgets.
 tags:
   - git
   - conversion
@@ -21,7 +21,7 @@ kk_confidence: high
 
 An `OutputLimit` result leaves an incomplete captured prefix that cannot serve as complete content. The exact-boundary case in [GitAdapterTests.cpp](../../../tests/git/GitAdapterTests.cpp) covers canonical and checkout reads after preflight.
 
-Separate budgets and successful validation do not guarantee that every accepted input fits every later representation. UTF-16LE input can pass validation and still exceed the output budget during clean conversion, returning `OutputLimit`. [TextFormat.cpp](../../../src/storage/TextFormat.cpp) handles decoding and serialization. [TextConversion.cpp](../../../src/git/TextConversion.cpp) separately verifies byte and canonical-object round trips and propagates output-limit failures.
+After clean conversion, `CanonicalizeText` checks the cleaned object's size with `git cat-file -s` before reading its blob. A size over 8 MiB returns `Outcome::Rejected` with the canonical byte count in the diagnostic and no canonical bytes. UTF-16LE input can expand beyond the limit during conversion, so the cleaned size needs its own check. [GitAdapterTests.cpp](../../../tests/git/GitAdapterTests.cpp) covers this expansion rejection. The independent read budgets still bound each representation, and [TextConversion.cpp](../../../src/git/TextConversion.cpp) separately verifies byte and canonical-object round trips.
 
 <!-- kk:related:start -->
 # Related
