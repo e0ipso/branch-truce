@@ -29,6 +29,7 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QVariantMap commandPreview READ commandPreview NOTIFY commandChanged)
     Q_PROPERTY(QString commandMessage READ commandMessage NOTIFY commandChanged)
     Q_PROPERTY(QVariantMap nonConflictingPreview READ nonConflictingPreview NOTIFY commandChanged)
+    Q_PROPERTY(QVariantMap wholeFilePreview READ wholeFilePreview NOTIFY commandChanged)
 public:
     explicit ApplicationController(QObject *parent = nullptr);
     [[nodiscard]] QString version() const;
@@ -51,6 +52,9 @@ public:
     [[nodiscard]] QVariantMap nonConflictingPreview() const;
     Q_INVOKABLE bool previewNonConflicting(const QString &fileId, const QString &revision, const QString &scope);
     Q_INVOKABLE bool applyNonConflicting();
+    [[nodiscard]] QVariantMap wholeFilePreview() const;
+    Q_INVOKABLE bool previewWholeFile(const QString &fileId, const QString &revision, const QString &side);
+    Q_INVOKABLE bool applyWholeFile();
     Q_INVOKABLE bool previewChoice(const QString &fileId, const QString &revision,
                                   const QString &target, const QString &action);
     Q_INVOKABLE bool applyChoice(bool confirmReplacement = false);
@@ -91,6 +95,7 @@ private:
     QString selectedFileId_;
     std::optional<ChoicePreview> preview_;
     std::optional<NonConflictingPreview> nonConflictingPreview_;
+    std::optional<WholeFilePreview> wholeFilePreview_;
     QString previewFileId_;
     QString commandMessage_;
     QPointer<QObject> resultEditor_;

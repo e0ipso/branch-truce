@@ -33,7 +33,27 @@ changes neither text nor decisions.
 decision updates. `FileSession::applyCommand` validates all current registered
 targets, UTF-8 boundaries and nonoverlapping edits before publishing one history
 entry. It supports planners that need several ranges or ordered decisions.
-Whole-file replacement is a separate workflow.
+Its explicit `WholeFile` scope requires one full-result edit and confirmation,
+so whole-file choices do not depend on an uncertain passage mapping.
+
+`previewWholeFile` offers either captured source, including an empty source,
+without requiring an earlier version. It shows the complete current and proposed
+result, every differing passage including pre-existing and manual work, and the
+source contributions with their current and proposed decisions. The chosen
+source's recorded contributions become accepted; the other source's become
+ignored. Previous combination orders are cleared. Earlier recovered drafts keep
+their exact decision vocabulary, and decisions without a source scope remain
+unchanged. The preview explains the text and contributions given up.
+
+Whole-file confirmation regenerates and compares the entire preview, including
+session, file, source identity and current revision. Cancellation changes no text,
+decisions or history. Stale or modified previews require renewed inspection.
+One shared `EditingCommand` replaces the full result and decisions atomically.
+The model persists it through the existing `replace-draft` recovery transaction
+before acknowledgment. Undo and redo restore complete text and decisions through
+the same boundary, including after journal replay. A failed commit retains the
+complete pending candidate for retry. Replacement leaves Save, review and Git
+resolution as separate actions.
 
 `previewNonConflicting` offers Left, Right and Both batches for the selected
 file. It compares each captured side against the available common earlier

@@ -451,4 +451,71 @@ Transition applyNonConflicting(FileSession &file, const NonConflictingPreview &p
     if (!confirm) return Transition::ConfirmationRequired;
     return file.applyCommand(current.command);
 }
+
+WholeFilePreview previewWholeFile(const FileSession &file, RevisionId expected, SourceSide side)
+{
+    WholeFilePreview preview;
+    preview.revision = expected;
+    preview.fileId = file.id();
+    preview.side = side;
+    if (expected != file.current().id) {
+        preview.state = Transition::StaleRevision;
+        preview.detail = "The result changed. Inspect a new whole-file preview.";
+        return preview;
+    }
+    if (file.support() != Support::Supported || !file.snapshots() || !file.correspondence()) {
+        preview.detail = "This file has no editable captured source.";
+        return preview;
+    }
+    if (side != SourceSide::Stage2 && side != SourceSide::Stage3) {
+        preview.state = Transition::InvalidAnchor;
+        preview.detail = "Choose Left or Right for whole-file replacement.";
+        return preview;
+    }
+    const auto &captured = *file.snapshots();
+    const auto &source = side == SourceSide::Stage2 ? captured.stage2 : captured.stage3;
+    if (!source) {
+        preview.detail = "The selected source is unavailable.";
+        return preview;
+    }
+    preview.origin = {captured.provenance.sessionId, file.path(), source->objectId};
+    preview.before = file.current().draft.text;
+    preview.replacement = source->worktree.utf8;
+    preview.command.expected = expected;
+    preview.command.scope = EditingScope::WholeFile;
+    preview.command.edits.push_back({{0, preview.before.size()}, preview.replacement});
+    for (const auto &target : file.choices()) {
+        if (target.scope != ChoiceScope::Section) continue;
+        for (const auto &id : target.decisions) {
+            const auto found = file.current().draft.decisions.find(id);
+            // Earlier recovered drafts keep their exact decision vocabulary.
+            if (found == file.current().draft.decisions.end() || preview.command.decisions.contains(id)) continue;
+            const auto *anchor = file.correspondence()->anchor(id);
+            if (!anchor) continue;
+            const Decision after{target.source.side == side ? DecisionValue::Accepted : DecisionValue::Ignored, {}};
+            preview.contributions.push_back({anchor->source, found->second, after});
+            preview.command.decisions.emplace(id, after);
+        }
+    }
+    preview.retainedDecisions = file.current().draft.decisions.size() - preview.command.decisions.size();
+    for (const auto &passage : *file.correspondence()->passages(side))
+        if (passage.kind != PassageKind::Equal) preview.differences.push_back(passage);
+    preview.state = Transition::ConfirmationRequired;
+    preview.detail = "Replace the entire result for this file with the selected source. "
+        "This gives up the other source's contributions and replaces all differing current text, "
+        "including edits made before opening and manual edits made in this session. "
+        "Inspect the full result, contribution decisions and replaced passages before confirming. "
+        "Undo restores the previous text and decisions. Review the result before saving.";
+    return preview;
+}
+
+Transition applyWholeFile(FileSession &file, const WholeFilePreview &preview, bool confirm)
+{
+    if (preview.revision != file.current().id) return Transition::StaleRevision;
+    const auto current = previewWholeFile(file, preview.revision, preview.side);
+    if (current != preview) return Transition::InvalidAnchor;
+    if (current.state != Transition::ConfirmationRequired) return current.state;
+    if (!confirm) return Transition::ConfirmationRequired;
+    return file.applyCommand(current.command, true);
+}
 }

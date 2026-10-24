@@ -429,10 +429,100 @@ bool ApplicationController::applyNonConflicting()
     return commandResult(result);
 }
 
+QVariantMap ApplicationController::wholeFilePreview() const
+{
+    if (!wholeFilePreview_) return {};
+    const auto &preview = *wholeFilePreview_;
+    const auto *file = files_.file(previewFileId_.toStdString());
+    if (!file || !file->snapshots()) return {};
+    const auto &captured = *file->snapshots();
+    const auto &selected = preview.side == SourceSide::Stage2 ? captured.stage2 : captured.stage3;
+    if (!selected || captured.provenance.sessionId != preview.origin.sessionId
+        || selected->objectId != preview.origin.sourceObjectId) return {};
+    const auto rangeLabel = [&](const QString &label, const std::string &value, ByteRange range) {
+        const auto line = [&](std::size_t offset) {
+            return 1 + std::count(value.begin(), value.begin() + static_cast<std::ptrdiff_t>(offset), '\n');
+        };
+        return range.begin == range.end ? tr("%1, empty scope at line %2").arg(label).arg(line(range.begin))
+            : tr("%1, lines %2–%3").arg(label).arg(line(range.begin)).arg(line(range.end - 1));
+    };
+    const auto decisionLabel = [&](const Decision &decision) {
+        auto label = decision.value == DecisionValue::Accepted ? tr("accepted")
+            : decision.value == DecisionValue::Ignored ? tr("ignored") : tr("undecided");
+        if (decision.order) label += tr(" · order %1").arg(*decision.order);
+        return label;
+    };
+    QVariantList contributions;
+    for (const auto &contribution : preview.contributions) {
+        const auto &source = contribution.source.side == SourceSide::Stage2 ? captured.stage2 : captured.stage3;
+        const auto &value = source->worktree.utf8;
+        contributions.push_back(QVariantMap{
+            {QStringLiteral("scope"), rangeLabel(contribution.source.side == SourceSide::Stage2 ? tr("Left") : tr("Right"),
+                value, contribution.source.range) + QStringLiteral(" · ") + text(source->label)},
+            {QStringLiteral("sourceText"), text(value.substr(contribution.source.range.begin,
+                contribution.source.range.end - contribution.source.range.begin))},
+            {QStringLiteral("beforeState"), decisionLabel(contribution.before)},
+            {QStringLiteral("afterState"), decisionLabel(contribution.after)}});
+    }
+    QVariantList differences;
+    for (const auto &passage : preview.differences) {
+        differences.push_back(QVariantMap{
+            {QStringLiteral("scope"), rangeLabel(tr("Current result"), preview.before, passage.result)
+                + QStringLiteral(" → ") + rangeLabel(tr("Selected source"), preview.replacement, passage.source)},
+            {QStringLiteral("before"), text(preview.before.substr(passage.result.begin, passage.result.end - passage.result.begin))},
+            {QStringLiteral("replacement"), text(preview.replacement.substr(passage.source.begin, passage.source.end - passage.source.begin))}});
+    }
+    return {{QStringLiteral("path"), displayPath(previewFileId_)},
+        {QStringLiteral("side"), preview.side == SourceSide::Stage2 ? tr("Left") : tr("Right")},
+        {QStringLiteral("source"), text(selected->label) + QStringLiteral("\n") + text(selected->objectId)},
+        {QStringLiteral("before"), text(preview.before)}, {QStringLiteral("replacement"), text(preview.replacement)},
+        {QStringLiteral("detail"), text(preview.detail)}, {QStringLiteral("contributions"), contributions},
+        {QStringLiteral("differences"), differences},
+        {QStringLiteral("retainedDecisions"), preview.retainedDecisions
+            ? tr("%1 earlier decisions without a source scope are retained.").arg(preview.retainedDecisions) : QString{}}};
+}
+
+bool ApplicationController::previewWholeFile(const QString &fileId, const QString &revision, const QString &side)
+{
+    cancelChoice();
+    const auto *file = files_.file(fileId.toStdString());
+    const auto expected = revisionId(revision);
+    if (!file || !expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
+    if (files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id())
+        || (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool())) return commandResult(Transition::Blocked);
+    SourceSide source;
+    if (side == QLatin1String("left")) source = SourceSide::Stage2;
+    else if (side == QLatin1String("right")) source = SourceSide::Stage3;
+    else return commandResult(Transition::InvalidAnchor);
+    auto preview = branch_truce::previewWholeFile(*file, *expected, source);
+    commandMessage_ = text(preview.detail);
+    if (preview.state != Transition::ConfirmationRequired) {
+        Q_EMIT commandChanged();
+        return false;
+    }
+    wholeFilePreview_ = std::move(preview);
+    previewFileId_ = fileId;
+    Q_EMIT commandChanged();
+    return true;
+}
+
+bool ApplicationController::applyWholeFile()
+{
+    if (!wholeFilePreview_ || previewFileId_ != selectedFileId_) return commandResult(Transition::StaleRevision);
+    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return commandResult(Transition::Blocked);
+    const auto preview = *wholeFilePreview_;
+    const auto id = previewFileId_;
+    const auto result = files_.applyWholeFile(id.toStdString(), preview, true);
+    wholeFilePreview_.reset();
+    previewFileId_.clear();
+    return commandResult(result);
+}
+
 void ApplicationController::cancelChoice()
 {
     preview_.reset();
     nonConflictingPreview_.reset();
+    wholeFilePreview_.reset();
     previewFileId_.clear();
     commandMessage_.clear();
     Q_EMIT commandChanged();

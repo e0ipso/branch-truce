@@ -22,6 +22,148 @@ Kirigami.ApplicationWindow {
         if (controller.previewNonConflicting(controller.selectedFileId, selectedFile.currentRevision, scope))
             nonConflictingDialog.open();
     }
+    function chooseWholeFile(side: string): void {
+        if (controller.previewWholeFile(controller.selectedFileId, selectedFile.currentRevision, side))
+            wholeFileDialog.open();
+    }
+    Dialog {
+        id: wholeFileDialog
+        objectName: "wholeFileDialog"
+        title: qsTr("Replace whole file from %1").arg(window.controller.wholeFilePreview.side || "")
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(window.width - 40, 950)
+        height: Math.min(window.height - 40, 650)
+        standardButtons: Dialog.Apply | Dialog.Cancel
+        onApplied: {
+            window.controller.applyWholeFile();
+            close();
+        }
+        onRejected: window.controller.cancelChoice()
+        ColumnLayout {
+            anchors.fill: parent
+            Label {
+                Layout.fillWidth: true
+                text: window.controller.wholeFilePreview.path || ""
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+                font.bold: true
+            }
+            Label {
+                Layout.fillWidth: true
+                text: window.controller.wholeFilePreview.source || ""
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+            }
+            Label {
+                objectName: "wholeFileWarning"
+                Layout.fillWidth: true
+                text: window.controller.wholeFilePreview.detail || ""
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+            }
+            TabBar {
+                id: wholeFileTabs
+                Layout.fillWidth: true
+                TabButton { text: qsTr("Full file") }
+                TabButton { text: qsTr("Contribution decisions") }
+                TabButton { text: qsTr("Text and edits replaced") }
+            }
+            StackLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                currentIndex: wholeFileTabs.currentIndex
+                RowLayout {
+                    SnapshotPane {
+                        paneName: "wholeFileBefore"
+                        paneTitle: qsTr("Full current result, including manual edits")
+                        paneText: window.controller.wholeFilePreview.before || ""
+                    }
+                    SnapshotPane {
+                        paneName: "wholeFileAfter"
+                        paneTitle: qsTr("Full proposed result")
+                        paneText: window.controller.wholeFilePreview.replacement || ""
+                    }
+                }
+                ColumnLayout {
+                    Label {
+                        Layout.fillWidth: true
+                        visible: !!window.controller.wholeFilePreview.retainedDecisions
+                        text: window.controller.wholeFilePreview.retainedDecisions || ""
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                    ListView {
+                        objectName: "wholeFileContributions"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        model: window.controller.wholeFilePreview.contributions || []
+                        delegate: ColumnLayout {
+                            id: wholeContribution
+                            required property var modelData
+                            width: ListView.view.width
+                            Label {
+                                Layout.fillWidth: true
+                                text: wholeContribution.modelData.scope + "\n"
+                                    + wholeContribution.modelData.beforeState + " → " + wholeContribution.modelData.afterState
+                                textFormat: Text.PlainText
+                                wrapMode: Text.Wrap
+                            }
+                            SnapshotPane {
+                                Layout.preferredHeight: 120
+                                paneName: "wholeContributionSource"
+                                paneTitle: qsTr("Source contribution")
+                                paneText: wholeContribution.modelData.sourceText
+                            }
+                        }
+                        ScrollBar.vertical: ScrollBar {}
+                    }
+                }
+                ColumnLayout {
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("All differences from the selected source are replaced, including manual and pre-existing edits. Identical text stays the same.")
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                    ListView {
+                        objectName: "wholeFileDifferences"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        model: window.controller.wholeFilePreview.differences || []
+                        delegate: ColumnLayout {
+                            id: wholeDifference
+                            required property var modelData
+                            width: ListView.view.width
+                            Label {
+                                Layout.fillWidth: true
+                                text: wholeDifference.modelData.scope
+                                textFormat: Text.PlainText
+                                wrapMode: Text.Wrap
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 150
+                                SnapshotPane {
+                                    paneName: "wholeDifferenceBefore"
+                                    paneTitle: qsTr("Current text being replaced")
+                                    paneText: wholeDifference.modelData.before
+                                }
+                                SnapshotPane {
+                                    paneName: "wholeDifferenceAfter"
+                                    paneTitle: qsTr("Replacement text")
+                                    paneText: wholeDifference.modelData.replacement
+                                }
+                            }
+                        }
+                        ScrollBar.vertical: ScrollBar {}
+                    }
+                }
+            }
+        }
+    }
     Dialog {
         id: nonConflictingDialog
         objectName: "nonConflictingDialog"
@@ -383,6 +525,20 @@ Kirigami.ApplicationWindow {
                             objectName: "nonConflictingBoth"
                             text: qsTr("Preview non-conflicting Both")
                             onClicked: window.chooseNonConflicting("both")
+                        }
+                    }
+                    RowLayout {
+                        visible: window.supportedSelection
+                        enabled: !!window.selectedFile.canEdit && !resultEditor.inputMethodComposing
+                        Button {
+                            objectName: "wholeFileLeft"
+                            text: qsTr("Preview whole file from Left")
+                            onClicked: window.chooseWholeFile("left")
+                        }
+                        Button {
+                            objectName: "wholeFileRight"
+                            text: qsTr("Preview whole file from Right")
+                            onClicked: window.chooseWholeFile("right")
                         }
                     }
                     RowLayout {

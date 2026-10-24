@@ -352,6 +352,13 @@ Transition SessionModel::replaceDraft(const std::string &id, RevisionId expected
 {
     return update(id, QStringLiteral("replace-draft"), [&](auto &file) { return file.replaceDraft(expected, std::move(draft)); });
 }
+Transition SessionModel::applyWholeFile(const std::string &id, const WholeFilePreview &preview, bool confirm)
+{
+    return update(id, QStringLiteral("replace-draft"), [&](auto &file) {
+        return branch_truce::applyWholeFile(file, preview, confirm);
+    });
+}
+
 Transition SessionModel::undo(const std::string &id, RevisionId expected)
 {
     return update(id, QStringLiteral("undo"), [&](auto &file) { return file.undo(expected); });

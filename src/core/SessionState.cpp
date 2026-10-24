@@ -181,7 +181,14 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
     if (command.expected != current_) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
     const auto *mapping = correspondence();
-    if (!mapping || command.targets.empty()) return Transition::InvalidAnchor;
+    if (!mapping) return Transition::InvalidAnchor;
+    const bool wholeFile = command.scope == EditingScope::WholeFile;
+    if (wholeFile) {
+        if (!command.targets.empty() || command.edits.size() != 1
+            || command.edits.front().range != ByteRange{0, current().draft.text.size()})
+            return Transition::InvalidAnchor;
+        if (!confirmReplacement) return Transition::ConfirmationRequired;
+    } else if (command.targets.empty()) return Transition::InvalidAnchor;
     for (const auto &target : command.targets) {
         if (target.revision != current_) return Transition::StaleRevision;
         const auto *bound = mapping->anchor(target.source.contributionId);
@@ -196,6 +203,7 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
         if (!validByteRange(current().draft.text, edit.range) || !validUtf8(edit.replacement)) return Transition::InvalidAnchor;
         if (i && (edit.range.end > edits[i - 1].range.begin || edit.range.begin == edits[i - 1].range.begin))
             return Transition::AmbiguousTarget;
+        if (wholeFile) continue;
         const auto target = std::find_if(command.targets.begin(), command.targets.end(),
             [&](const auto &anchor) { return anchor.result == edit.range; });
         if (target == command.targets.end()) return Transition::InvalidAnchor;
@@ -211,6 +219,10 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
     auto updated = std::make_shared<CorrespondenceMap>(*mapping);
     for (const auto &edit : edits) {
         draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
+        if (wholeFile) {
+            *updated = updated->recomputed(next_, draft.text);
+            continue;
+        }
         const auto target = std::find_if(command.targets.begin(), command.targets.end(),
             [&](const auto &anchor) { return anchor.result == edit.range; });
         *updated = updated->edited(next_, edit, false, target->source.contributionId);

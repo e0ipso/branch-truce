@@ -79,4 +79,32 @@ struct NonConflictingPreview {
     NonConflictingScope scope = NonConflictingScope::Both);
 Transition applyNonConflicting(FileSession &file, const NonConflictingPreview &preview, bool confirm = false);
 
+struct WholeFileContribution {
+    SourceAnchor source;
+    Decision before;
+    Decision after;
+    bool operator==(const WholeFileContribution &) const = default;
+};
+
+struct WholeFilePreview {
+    Transition state = Transition::Blocked;
+    RevisionId revision = 0;
+    std::string fileId;
+    AnchorOrigin origin;
+    SourceSide side = SourceSide::Stage2;
+    std::string before;
+    std::string replacement;
+    std::string detail;
+    std::vector<WholeFileContribution> contributions;
+    // Source ranges address replacement; result ranges address before. These
+    // show all differences, including manual work, without guessing provenance.
+    std::vector<Passage> differences;
+    std::size_t retainedDecisions = 0;
+    EditingCommand command;
+    bool operator==(const WholeFilePreview &) const = default;
+};
+
+[[nodiscard]] WholeFilePreview previewWholeFile(const FileSession &file, RevisionId expected, SourceSide side);
+Transition applyWholeFile(FileSession &file, const WholeFilePreview &preview, bool confirm = false);
+
 }
