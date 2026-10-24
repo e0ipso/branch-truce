@@ -26,6 +26,16 @@ storage::TextFormat launchFormat(const SnapshotFormat &format)
     return result;
 }
 
+std::optional<QByteArray> writtenRevisionBytes(const FileSession &session)
+{
+    const auto *snapshots = session.snapshots();
+    if (!snapshots || !session.written()) return std::nullopt;
+    const auto serialized = storage::serializeText(QByteArray::fromStdString(session.written()->draft.text),
+        launchFormat(snapshots->launchResult.text.format));
+    if (!serialized.document) return std::nullopt;
+    return serialized.document->originalBytes;
+}
+
 bool samePairs(const std::map<std::string, std::string> &expected, const QHash<QByteArray, QByteArray> &live)
 {
     if (expected.size() != static_cast<std::size_t>(live.size())) return false;
@@ -326,11 +336,35 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
     if (!serialized.document)
         return recordWrite(fileId, expected, Outcome::Failed, serialized.diagnostic.isEmpty()
             ? tr("Repository write failed. The saved draft is still available.") : serialized.diagnostic);
-    const auto baseline = baselines_.find(fileId);
-    if (baseline == baselines_.end() || !baseline->second.destination)
-        return recordWrite(fileId, expected, Outcome::Failed, baseline == baselines_.end() || baseline->second.diagnostic.isEmpty()
-            ? tr("Repository write failed. No launch destination is available, and the file is unresolved.")
-            : baseline->second.diagnostic);
+    auto baseline = baselines_.find(fileId);
+    if (baseline == baselines_.end() || !baseline->second.destination) {
+        const auto missingLaunch = [&] {
+            return recordWrite(fileId, expected, Outcome::Failed,
+                baseline == baselines_.end() || baseline->second.diagnostic.isEmpty()
+                    ? tr("Repository write failed. No launch destination is available, and the file is unresolved.")
+                    : baseline->second.diagnostic);
+        };
+        // Restart only has the launch snapshot. A successful write already replaced
+        // that file, so keep the write when the live bytes are still that revision.
+        if (!previouslyWritten(*session, expected)) return missingLaunch();
+        const auto live = storage::captureDestination(repository_.worktreeRoot,
+            QByteArray::fromStdString(session->path()));
+        const auto writtenBytes = writtenRevisionBytes(*session);
+        if (!live.destination || !writtenBytes || live.destination->bytes() != *writtenBytes
+            || *writtenBytes != serialized.document->originalBytes) {
+            return recordWrite(fileId, expected, Outcome::Failed, live.destination
+                ? tr("The repository file no longer matches the written revision.")
+                : (live.diagnostic.isEmpty()
+                    ? tr("Repository write failed. No launch destination is available, and the file is unresolved.")
+                    : live.diagnostic));
+        }
+        if (baseline == baselines_.end())
+            baselines_.emplace(fileId, Baseline{std::move(live.destination), QString{}});
+        else {
+            baseline->second.destination = std::move(live.destination);
+            baseline->second.diagnostic.clear();
+        }
+    }
     offer_.reset();
     attempt_ = Attempt{};
     attempt_->generation = coordinator_.generation();

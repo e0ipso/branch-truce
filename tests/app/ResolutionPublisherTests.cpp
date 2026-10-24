@@ -14,6 +14,7 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <functional>
+#include <memory>
 
 using namespace branch_truce;
 
@@ -210,6 +211,49 @@ struct Session {
     }
     QString revision() { return revisionOf(openedFile(controller)); }
 };
+
+struct RestartedWrite {
+    Repository repo;
+    ScopedEnvironment environment;
+    std::unique_ptr<ApplicationController> controller;
+    QString id;
+    QByteArray edited;
+    RestartedWrite()
+        : environment(repo.environment), id(QString::fromLatin1(QByteArray("tracked.txt").toHex())),
+          edited("edited in app\n")
+    {
+        const auto hook = repo.path(".git/hooks/post-index-change");
+        {
+            ApplicationController first;
+            openController(first, repo);
+            CHECK(first.selectFile(id));
+            auto draft = openedFile(first).current().draft;
+            draft.text = edited.toStdString();
+            draft.unresolvedMarkers = 0;
+            CHECK(first.files()->replaceDraft(id.toStdString(), openedFile(first).current().id, draft) == Transition::Applied);
+            writeFile(hook, "#!/bin/sh\nexit 1\n");
+            CHECK(QFile::setPermissions(hook, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+            CHECK(first.markResolved(id, revisionOf(openedFile(first)), true));
+            waitFor(first, [&] {
+                const auto &file = openedFile(first);
+                return !first.resolutionBusy() && file.writeOutcome()
+                    && file.writeOutcome()->outcome == Outcome::Succeeded && file.stageOutcome();
+            });
+            CHECK(openedFile(first).stageOutcome()->outcome != Outcome::Succeeded);
+            CHECK(!openedFile(first).facts().resolved);
+            CHECK(readFile(repo.path("tracked.txt")) == edited);
+        }
+        CHECK(QFile::remove(hook));
+        controller = std::make_unique<ApplicationController>();
+        openController(*controller, repo);
+        CHECK(controller->selectFile(id));
+        const auto &restored = openedFile(*controller);
+        CHECK(restored.written() && restored.writeOutcome()
+            && restored.writeOutcome()->outcome == Outcome::Succeeded);
+        CHECK(!restored.facts().resolved);
+        CHECK(readFile(repo.path("tracked.txt")) == edited);
+    }
+};
 }
 
 int main(int argc, char **argv)
@@ -340,6 +384,37 @@ int main(int argc, char **argv)
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
         CHECK(session.repo.git({"show", ":tracked.txt"}) == session.repo.manual);
         CHECK(!session.controller.files()->canFinish());
+    });
+    suite.run("TRUCE-0061 a restarted retry keeps the successful write and resolves it", [] {
+        RestartedWrite restarted;
+        CHECK(restarted.controller->markResolved(restarted.id, revisionOf(openedFile(*restarted.controller)), true));
+        waitFor(*restarted.controller, [&] { return openedFile(*restarted.controller).facts().resolved; });
+        const auto &file = openedFile(*restarted.controller);
+        CHECK(file.writeOutcome() && file.writeOutcome()->outcome == Outcome::Succeeded
+            && file.writeOutcome()->revision == file.current().id);
+        CHECK(file.facts().status == FileStatus::Resolved);
+        CHECK(!restarted.controller->commandMessage().contains(QStringLiteral("no longer matches")));
+        CHECK(restarted.repo.git({"show", ":tracked.txt"}) == restarted.edited);
+        CHECK(readFile(restarted.repo.path("tracked.txt")) == restarted.edited);
+        const auto remaining = unmerged(restarted.repo);
+        CHECK(!remaining.contains("tracked.txt") && remaining.contains("excluded.txt"));
+        CHECK(restarted.repo.git({"rev-parse", ":notes.txt"}).trimmed() == restarted.repo.notesObject);
+    });
+    suite.run("TRUCE-0061 a destination that differs from the written revision fails closed after restart", [] {
+        RestartedWrite restarted;
+        const auto tampered = QByteArray("tampered\n");
+        writeFile(restarted.repo.path("tracked.txt"), tampered);
+        CHECK(!restarted.controller->markResolved(restarted.id, revisionOf(openedFile(*restarted.controller)), true));
+        CHECK(!restarted.controller->resolutionBusy());
+        const auto &file = openedFile(*restarted.controller);
+        CHECK(file.writeOutcome() && file.writeOutcome()->outcome == Outcome::Failed);
+        CHECK(!file.facts().resolved);
+        CHECK(restarted.controller->commandMessage().contains(QStringLiteral("written revision")));
+        CHECK(readFile(restarted.repo.path("tracked.txt")) == tampered);
+        const auto index = restarted.repo.git({"ls-files", "-s", "--", "tracked.txt"});
+        CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
+        CHECK(unmerged(restarted.repo).contains("tracked.txt") && unmerged(restarted.repo).contains("excluded.txt"));
+        CHECK(restarted.repo.git({"rev-parse", ":notes.txt"}).trimmed() == restarted.repo.notesObject);
     });
     return suite.report();
 }
