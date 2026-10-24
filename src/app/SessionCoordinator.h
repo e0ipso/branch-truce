@@ -82,6 +82,10 @@ public:
     // Canonicalization coalesces symlink aliases. Replacing cancels old work
     // without releasing an active mutation's queue slot prematurely.
     bool replaceSession(const QString &worktree, const QString &operation, std::vector<FileSession> files);
+    // Complete a current load of the same initial placeholders, including
+    // failed open commits. Captured files replace their pending placeholders;
+    // pending edits and unrelated session replacements remain protected.
+    bool completeSessionLoad(const TaskStamp &stamp, std::vector<FileSession> files);
     [[nodiscard]] quint64 generation() const;
     [[nodiscard]] int pendingTasks() const;
     // Zero rejects invalid/stale requests. Accepted requests finish once,
@@ -106,6 +110,8 @@ Q_SIGNALS:
     void taskFinished(const branch_truce::TaskCompletion &completion);
 
 private:
+    bool replaceSession(const QString &worktree, const QString &operation,
+                        std::vector<FileSession> files, bool completingLoad);
     class State;
     std::unique_ptr<State> d;
 };

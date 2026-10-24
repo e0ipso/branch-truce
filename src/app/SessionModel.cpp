@@ -126,9 +126,28 @@ bool SessionModel::retryPendingRecovery(const QString &id)
     return retryRecovery(id.toStdString()) == Transition::Applied;
 }
 
+bool SessionModel::canCompleteLoad(const std::vector<FileSession> &files) const
+{
+    if (files.size() != files_.size()) return false;
+    for (std::size_t row = 0; row < files_.size(); ++row) {
+        const auto &current = files_[row];
+        if (current.id() != files[row].id() || current.path() != files[row].path()
+            || current.support() != Support::Unreadable || current.snapshots()
+            || current.current().id != 1 || current.current().draft != Draft{}
+            || current.checkpoint() || current.reviewed() || current.written() || current.staged()
+            || current.checkpointOutcome() || current.writeOutcome() || current.stageOutcome()) return false;
+    }
+    return std::all_of(pending_.cbegin(), pending_.cend(), [](const auto &pending) {
+        return pending.second.action == QLatin1String("open");
+    });
+}
+
 void SessionModel::replaceFiles(std::vector<FileSession> files)
 {
     beginResetModel();
+    // The coordinator permits pending entries only for the placeholders of
+    // this load. Retry must commit the captured files, never old placeholders.
+    pending_.clear();
     files_ = std::move(files);
     for (std::size_t row = 0; row < files_.size(); ++row)
         (void)commitCandidate(row, files_[row], QStringLiteral("open"));

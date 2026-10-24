@@ -291,9 +291,9 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
                                      support, detail.toStdString(), std::move(snapshots));
             }
             return TaskResult{};
-        }, [this, root, identity, loaded](const TaskCompletion &completion) {
+        }, [this, loaded](const TaskCompletion &completion) {
             if (completion.result.status != TaskStatus::Succeeded
-                || !coordinator_.replaceSession(root, identity, std::move(*loaded))) {
+                || !coordinator_.completeSessionLoad(completion.stamp, std::move(*loaded))) {
                 setState(QStringLiteral("error"), tr("Could not load the current conflict files."));
                 return;
             }

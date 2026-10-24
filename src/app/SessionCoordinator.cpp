@@ -61,15 +61,20 @@ public:
     {
         return QThread::currentThread() == owner.thread() && model.thread() == owner.thread();
     }
-    [[nodiscard]] TaskDisposition disposition(const Job &job) const
+    [[nodiscard]] TaskDisposition disposition(const TaskStamp &stamp) const
     {
-        const auto &stamp = job.input.stamp;
         if (stamp.generation != generation || stamp.worktree != worktree || stamp.operation != operation)
             return TaskDisposition::StaleSession;
         const auto *file = model.file(stamp.fileId);
         if (!file || file->current().id != stamp.inputRevision
             || file->current().result != stamp.resultRevision
             || file->current().decisions != stamp.decisionRevision) return TaskDisposition::StaleRevision;
+        return TaskDisposition::Current;
+    }
+    [[nodiscard]] TaskDisposition disposition(const Job &job) const
+    {
+        const auto current = disposition(job.input.stamp);
+        if (current != TaskDisposition::Current) return current;
         if (job.control.cancellationRequested()) return TaskDisposition::Cancelled;
         return TaskDisposition::Current;
     }
@@ -252,7 +257,20 @@ SessionCoordinator::~SessionCoordinator()
 
 bool SessionCoordinator::replaceSession(const QString &worktree, const QString &operation, std::vector<FileSession> files)
 {
-    if (!d->owningThread() || d->replacing || d->model.hasPendingRecovery() || operation.isEmpty()
+    return replaceSession(worktree, operation, std::move(files), false);
+}
+
+bool SessionCoordinator::completeSessionLoad(const TaskStamp &stamp, std::vector<FileSession> files)
+{
+    if (!d->owningThread() || d->replacing || d->disposition(stamp) != TaskDisposition::Current
+        || !d->model.canCompleteLoad(files)) return false;
+    return replaceSession(d->worktree, d->operation, std::move(files), true);
+}
+
+bool SessionCoordinator::replaceSession(const QString &worktree, const QString &operation,
+                                        std::vector<FileSession> files, bool completingLoad)
+{
+    if (!d->owningThread() || d->replacing || (!completingLoad && d->model.hasPendingRecovery()) || operation.isEmpty()
         || d->generation == std::numeric_limits<quint64>::max()
         || files.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) return false;
     const QFileInfo root(worktree);

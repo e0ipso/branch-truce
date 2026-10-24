@@ -50,7 +50,13 @@ returned alongside an error are diagnostics, not a successful restore.
 
 Opening a file persists its capture before the model accepts edits. Loading
 can still display captured content when this fails, but editing remains
-blocked and recovery failure stays visible. For every applied model command:
+blocked and recovery failure stays visible. A current load can replace its
+initial unreadable placeholders with the captured files, including their
+pending open records. Recovery retry then commits the captured sources and
+result, rather than the placeholders. Pending edits still prevent session
+replacement.
+
+For every applied model command:
 
 1. Apply the domain command to a private candidate, retaining the acknowledged
    model state. Text and decisions are one candidate, including undo and redo.

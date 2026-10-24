@@ -62,6 +62,7 @@ Q_SIGNALS:
 
 private:
     friend class SessionCoordinator;
+    [[nodiscard]] bool canCompleteLoad(const std::vector<FileSession> &files) const;
     void replaceFiles(std::vector<FileSession> files);
     bool commitCandidate(std::size_t row, FileSession candidate, const QString &action);
     void notifyRow(std::size_t row);
