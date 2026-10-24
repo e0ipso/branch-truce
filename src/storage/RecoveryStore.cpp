@@ -1,4 +1,5 @@
 #include "RecoveryStore.h"
+#include "core/ResourceLimits.h"
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -68,6 +69,10 @@ QByteArray RecoveryStore::payload(const QByteArray &hash, QString *error) const
     QFile file(path);
     if (!validDigest(hash) || !regularPrivateFile(path) || !file.open(QIODevice::ReadOnly)) {
         if (error) *error = QStringLiteral("Recovery payload is missing or unsafe.");
+        return {};
+    }
+    if (file.size() > static_cast<qint64>(branch_truce::kMaxRecoveryPayloadBytes)) {
+        if (error) *error = QStringLiteral("Recovery payload of %1 bytes exceeds the 8388608 byte limit; pending input is retained.").arg(file.size());
         return {};
     }
     const auto bytes = file.readAll();
@@ -172,6 +177,8 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
     for (auto entry = transaction.payloads.cbegin(); entry != transaction.payloads.cend(); ++entry) {
         if (!validDigest(entry.key()) || digest(entry.value()) != entry.key())
             return {false, QStringLiteral("Invalid recovery payload identity.")};
+        if (entry.value().size() > static_cast<qsizetype>(branch_truce::kMaxRecoveryPayloadBytes))
+            return {false, QStringLiteral("Recovery payload of %1 bytes exceeds the 8388608 byte limit; pending input is retained.").arg(entry.value().size())};
         const auto path = directory_ + QStringLiteral("/payloads/") + QString::fromLatin1(entry.key());
         if (!QFileInfo::exists(path) && !atomicFile(path, entry.value()))
             return {false, QStringLiteral("Could not commit a recovery payload; pending input is retained.")};

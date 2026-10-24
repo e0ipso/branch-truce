@@ -1,5 +1,6 @@
 #include "ApplicationController.h"
 #include "RecoveryRestore.h"
+#include "core/ResourceLimits.h"
 #include <QDir>
 #include <QFileInfo>
 #include "core/BuildInfo.h"
@@ -13,6 +14,8 @@
 #include <QKeySequence>
 #include <QMouseEvent>
 #include <QCoreApplication>
+#include <QGuiApplication>
+#include <QClipboard>
 #include <QScopedValueRollback>
 #include <algorithm>
 #include <limits>
@@ -50,6 +53,20 @@ bool scalarBoundary(const QString &value, int offset)
 QString documentText(const QTextDocument &document)
 {
     return document.toRawText().replace(QChar(0x2029), QLatin1Char('\n'));
+}
+
+QString envelopeRejection(std::string_view bytes)
+{
+    const auto assessment = assessText(bytes);
+    if (assessment.limit == TextLimit::Within) return {};
+    return QString::fromStdString(textLimitDiagnostic(assessment))
+        + QStringLiteral(". The existing edit was kept and this change was not acknowledged.");
+}
+
+QString envelopeRejection(const QString &text)
+{
+    const auto bytes = text.toUtf8();
+    return envelopeRejection(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
 }
 
 Support supportFor(const git::Conflict &file)
@@ -815,6 +832,12 @@ void ApplicationController::captureResultEdit()
     if (syncingEditor_ || processingEditorEvent_ || !resultDocument_) return;
     const auto next = documentText(*resultDocument_);
     if (next == editorText_) return;
+    if (const auto rejection = envelopeRejection(next); !rejection.isEmpty()) {
+        syncResultEditor();
+        commandMessage_ = rejection;
+        Q_EMIT commandChanged();
+        return;
+    }
     const auto *file = files_.file(selectedFileId_.toStdString());
     const auto old = editorText_;
     if (!file || old != text(file->current().draft.text)
@@ -856,6 +879,19 @@ bool ApplicationController::resultClipboard(const QString &action)
     if ((action == QLatin1String("cut") || action == QLatin1String("paste"))
         && (resultEditor_->property("readOnly").toBool() || resultEditor_->property("inputMethodComposing").toBool()))
         return false;
+    if (action == QLatin1String("paste")) {
+        const auto clip = QGuiApplication::clipboard()->text();
+        const int start = resultEditor_->property("selectionStart").toInt();
+        const int end = resultEditor_->property("selectionEnd").toInt();
+        const int from = std::clamp(std::min(start, end), 0, static_cast<int>(editorText_.size()));
+        const int to = std::clamp(std::max(start, end), 0, static_cast<int>(editorText_.size()));
+        if (const auto rejection = envelopeRejection(editorText_.left(from) + clip + editorText_.mid(to));
+            !rejection.isEmpty()) {
+            commandMessage_ = rejection;
+            Q_EMIT commandChanged();
+            return false;
+        }
+    }
     if (auto *item = qobject_cast<QQuickItem *>(resultEditor_.data())) item->forceActiveFocus(Qt::ShortcutFocusReason);
     bool invoked = false;
     {
@@ -869,6 +905,25 @@ bool ApplicationController::resultClipboard(const QString &action)
 bool ApplicationController::eventFilter(QObject *watched, QEvent *event)
 {
     if (syncingEditor_ || processingEditorEvent_) return QObject::eventFilter(watched, event);
+    if (watched == resultEditor_ && event->type() == QEvent::KeyPress) {
+        auto *key = static_cast<QKeyEvent *>(event);
+        const bool newline = key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter;
+        const auto modifiers = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
+        if (modifiers == Qt::NoModifier && (newline || !key->text().isEmpty())) {
+            const int start = resultEditor_->property("selectionStart").toInt();
+            const int end = resultEditor_->property("selectionEnd").toInt();
+            const int from = std::clamp(std::min(start, end), 0, static_cast<int>(editorText_.size()));
+            const int to = std::clamp(std::max(start, end), 0, static_cast<int>(editorText_.size()));
+            const auto insertion = newline ? QString(QLatin1Char('\n')) : key->text();
+            if (const auto rejection = envelopeRejection(editorText_.left(from) + insertion + editorText_.mid(to));
+                !rejection.isEmpty()) {
+                event->accept();
+                commandMessage_ = rejection;
+                Q_EMIT commandChanged();
+                return true;
+            }
+        }
+    }
     if (watched == resultEditor_ && (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)) {
         auto *key = static_cast<QKeyEvent *>(event);
         const bool backwards = key->matches(QKeySequence::Undo);
@@ -905,7 +960,22 @@ void ApplicationController::syncResultEditor()
     if (!resultDocument_ || !resultEditor_ || syncingEditor_) return;
     const auto *file = files_.file(selectedFileId_.toStdString());
     const auto *pending = file ? files_.pendingDraft(file->id()) : nullptr;
-    const auto desired = file ? text(pending ? pending->text : file->current().draft.text) : QString{};
+    const auto stored = file ? (pending ? pending->text : file->current().draft.text) : std::string{};
+    if (file && !withinTextEnvelope(stored)) {
+        const auto rejection = QString::fromStdString(textLimitDiagnostic(assessText(stored)))
+            + QStringLiteral(". The captured text was kept and was not loaded into the editor.");
+        syncingEditor_ = true;
+        resultDocument_->setPlainText({});
+        editorText_.clear();
+        resultEditor_->setProperty("readOnly", true);
+        syncingEditor_ = false;
+        if (commandMessage_ != rejection) {
+            commandMessage_ = rejection;
+            Q_EMIT commandChanged();
+        }
+        return;
+    }
+    const auto desired = file ? text(stored) : QString{};
     syncingEditor_ = true;
     if (documentText(*resultDocument_) != desired) resultDocument_->setPlainText(desired);
     editorText_ = desired;

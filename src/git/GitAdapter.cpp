@@ -1,6 +1,7 @@
 #include "GitAdapter.h"
 #include "GitParsing.h"
 #include "RepositoryDiscovery.h"
+#include "core/ResourceLimits.h"
 
 #include <QDir>
 #include <QFile>
@@ -31,8 +32,9 @@ namespace {
 using detail::objectId;
 using detail::parseIndex;
 using detail::relativeFile;
-// Conservative process guards, pending the measured limits work.
-constexpr qsizetype outputLimit = 8 * 1024 * 1024;
+// Measured Git process-output budget. Every phase starts a fresh counter so
+// preflight cannot consume the operation or a later representation.
+constexpr qsizetype outputLimit = static_cast<qsizetype>(branch_truce::kMaxGitReadBytes);
 constexpr qsizetype inspectionLimit = 1024 * 1024;
 constexpr int deadlineMs = 30000;
 constexpr int inspectionMs = 5000;
@@ -386,9 +388,10 @@ public:
     void launch(Phase next, const QList<QByteArray> &arguments, bool configuration = false,
                 const QByteArray &input = {})
     {
-        // Bound each canonical representation independently of preflight and
-        // the other read, while keeping stdout and stderr in the same budget.
-        if (next == Phase::CanonicalObject || next == Phase::CanonicalCheckout) bytesRead = 0;
+        // Each phase gets the full measured budget. Preflight must not shrink
+        // the operation, canonical blob, or checkout read. Stdout and stderr
+        // still share the budget of the phase they belong to.
+        bytesRead = 0;
         phase = next;
         phaseOutput.clear();
         phaseInput = input;
@@ -506,7 +509,7 @@ public:
                 if (phase == Phase::Inspection) {
                     inspectionFailed(QStringLiteral("Index reinspection exceeded 1 MiB"));
                 } else {
-                    stop(Outcome::OutputLimit, QStringLiteral("Git output exceeded 8 MiB; captured prefix is incomplete"));
+                    stop(Outcome::OutputLimit, QStringLiteral("Git output exceeded %1 bytes; captured prefix is incomplete").arg(outputLimit));
                 }
             }
         }
@@ -954,7 +957,7 @@ public:
             if (!valid || QByteArray::number(size) + '\n' != phaseOutput) {
                 reject(QStringLiteral("Invalid canonical object size response"));
             } else if (size > static_cast<qulonglong>(outputLimit)) {
-                reject(QStringLiteral("Canonical text size %1 bytes after clean conversion exceeds the 8 MiB output limit").arg(size));
+                reject(QStringLiteral("Canonical text size %1 bytes after clean conversion exceeds the %2 byte output limit").arg(size).arg(outputLimit));
             } else {
                 launch(Phase::CanonicalObject, {"cat-file", "blob", result.canonicalObjectId});
             }

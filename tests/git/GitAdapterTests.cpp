@@ -1,6 +1,7 @@
 #include "GitAdapter.h"
 #include "TextConversion.h"
 #include "ConflictClassifier.h"
+#include "core/ResourceLimits.h"
 #include "TestHarness.h"
 #include "fixtures/conversions/ConversionCases.h"
 #include <QCoreApplication>
@@ -1848,8 +1849,29 @@ public:
             const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
             CHECK(result.outcome == Outcome::OutputLimit && result.outputIncomplete);
             CHECK(result.standardOutput.startsWith("operation prefix"));
-            CHECK(result.standardOutput.size() <= 8 * 1024 * 1024);
+            CHECK(result.standardOutput.size() == static_cast<qsizetype>(branch_truce::kMaxGitReadBytes));
+            CHECK(result.diagnostic.contains(QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))));
             CHECK(result.mutation == Mutation::ObservedChanged && result.indexAfter.contains(QByteArray(40, 'b')));
+        });
+        suite.run("measured git output envelope accepts the limit and rejects one extra byte", [] {
+            for (const qsizetype bytes : {static_cast<qsizetype>(branch_truce::kMaxGitReadBytes) - 1,
+                                          static_cast<qsizetype>(branch_truce::kMaxGitReadBytes),
+                                          static_cast<qsizetype>(branch_truce::kMaxGitReadBytes) + 1}) {
+                Repository repo;
+                const auto fake = repo.fakeGit(QByteArray(": > .after-add\n/usr/bin/head -c ")
+                    + QByteArray::number(bytes) + " /dev/zero\n");
+                GitAdapter adapter(fake);
+                const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
+                if (bytes <= static_cast<qsizetype>(branch_truce::kMaxGitReadBytes)) {
+                    CHECK(result.outcome == Outcome::Success && !result.outputIncomplete);
+                    CHECK(result.standardOutput.size() == bytes);
+                } else {
+                    CHECK(result.outcome == Outcome::OutputLimit && result.outputIncomplete);
+                    CHECK(result.standardOutput.size() == static_cast<qsizetype>(branch_truce::kMaxGitReadBytes));
+                    CHECK(result.diagnostic.contains(QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))));
+                    CHECK(result.mutation == Mutation::ObservedChanged);
+                }
+            }
         });
         suite.run("status skips absent filters and streams large filter inspections", [] {
             {
@@ -1902,7 +1924,7 @@ public:
             const auto inputBlock = QByteArray::fromHex("2d4e").repeated(39) + QByteArray::fromHex("0a00");
             const auto canonicalBlock = QByteArray::fromHex("e4b8ad").repeated(39) + '\n';
             GitAdapter adapter(gitExecutable);
-            for (const auto inputSize : {2000000, 6000000}) {
+            for (const auto inputSize : {2000000, 3000000}) {
                 auto request = repo.request(Operation::CanonicalizeText, "tracked.txt");
                 request.input = inputBlock.repeated(inputSize / inputBlock.size());
                 CHECK(request.input.size() == inputSize);
@@ -1915,7 +1937,7 @@ public:
                     CHECK(result.canonicalObjectId == repo.git({"hash-object", "--no-filters", "--stdin"}, expected).trimmed());
                 } else {
                     CHECK(result.outcome == Outcome::Rejected && result.canonicalBytes.isEmpty());
-                    CHECK(result.diagnostic.contains("8850000 bytes") && result.diagnostic.contains("8 MiB output limit"));
+                    CHECK(result.diagnostic.contains("4425000 bytes") && result.diagnostic.contains("4194304 byte output limit"));
                 }
                 CHECK(repo.git({"count-objects", "-v"}) == objects);
                 CHECK(repo.git({"ls-files", "--stage", "-z"}) == index);
@@ -1927,7 +1949,7 @@ public:
             writeFile(repo.path(".gitattributes"), "tracked.txt text eol=lf\n");
             const auto objects = repo.git({"count-objects", "-v"});
             auto request = repo.request(Operation::CanonicalizeText, "tracked.txt");
-            request.input = QByteArray(8 * 1024 * 1024, 'a');
+            request.input = QByteArray(static_cast<qsizetype>(branch_truce::kMaxGitReadBytes), 'a');
             for (qsizetype i = 79; i < request.input.size(); i += 80) request.input[i] = '\n';
             const auto expected = repo.git({"hash-object", "--no-filters", "--stdin"}, request.input).trimmed();
             GitAdapter adapter(gitExecutable);

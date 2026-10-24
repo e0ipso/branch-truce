@@ -1,3 +1,4 @@
+#include "core/ResourceLimits.h"
 #include "core/SessionState.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
@@ -952,6 +953,70 @@ public:
             CHECK(file.recordWrite(1, Outcome::Succeeded) == Transition::StaleRevision);
             CHECK(file.recordStage(1, Outcome::Succeeded, "earlier", "100644") == Transition::StaleRevision);
             CHECK(!file.written() && !file.staged() && file.reviewed()->revision.id == newer);
+        });
+        suite.run("TRUCE-0029 text envelope rejects the next file, line and payload without dropping the buffer", [] {
+            const auto lines = [](std::size_t count) {
+                std::string text;
+                text.reserve(count * 2);
+                for (std::size_t i = 0; i < count; ++i) text += "x\n";
+                return text;
+            };
+            const auto admit = [](const std::string &text) {
+                FileSnapshots captured;
+                captured.path = "limit.txt";
+                captured.provenance.sessionId = "limits";
+                captured.stage2 = SourceSnapshot{"source-object", "100644", text,
+                    {text, text, {}}, "source-commit", "Source"};
+                captured.launchResult.text = {text, text, {}};
+                return FileSession("limit", captured.path, {text, {}, 0}, Support::Supported, {}, captured);
+            };
+            const auto belowLine = std::string(262143, 'a');
+            const auto atLine = std::string(262144, 'a');
+            const auto aboveLine = std::string(262145, 'a');
+            CHECK(assessText(lines(3999)).limit == TextLimit::Within);
+            CHECK(assessText(lines(4000)).limit == TextLimit::Within);
+            CHECK(assessText(lines(4001)).limit == TextLimit::FileLines);
+            CHECK(assessText(belowLine).limit == TextLimit::Within);
+            CHECK(assessText(atLine).limit == TextLimit::Within);
+            CHECK(assessText(aboveLine).limit == TextLimit::LineBytes);
+            CHECK(admit(lines(3999)).support() == Support::Supported);
+            CHECK(admit(lines(4000)).support() == Support::Supported);
+            CHECK(admit(lines(4000)).correspondence());
+            const auto tooMany = admit(lines(4001));
+            CHECK(tooMany.support() == Support::Unreadable && !tooMany.correspondence());
+            CHECK(tooMany.current().draft.text == lines(4001));
+            CHECK(tooMany.supportDetail().find("4000") != std::string::npos);
+            CHECK(admit(belowLine).support() == Support::Supported);
+            CHECK(admit(atLine).support() == Support::Supported);
+            CHECK(admit(atLine).current().draft.text.size() == 262144);
+            const auto tooLong = admit(aboveLine);
+            CHECK(tooLong.support() == Support::Unreadable && !tooLong.correspondence());
+            CHECK(tooLong.current().draft.text.size() == 262145);
+            CHECK(tooLong.supportDetail().find("262144") != std::string::npos);
+            const auto line = std::string(262143, 'p') + "\n";
+            std::string atPayload;
+            for (int i = 0; i < 32; ++i) atPayload += line;
+            std::string abovePayload = atPayload + line;
+            CHECK(atPayload.size() == 8388608 && abovePayload.size() == 8650752);
+            CHECK(assessText(atPayload).limit == TextLimit::Within);
+            CHECK(assessText(abovePayload).limit == TextLimit::RecoveryPayload);
+            CHECK(admit(atPayload).support() == Support::Supported);
+            const auto tooHeavy = admit(abovePayload);
+            CHECK(tooHeavy.support() == Support::Unreadable);
+            CHECK(tooHeavy.current().draft.text.size() == abovePayload.size());
+            CHECK(tooHeavy.supportDetail().find("8388608") != std::string::npos);
+            FileSession file("id", "file", {lines(4000), {}, 0});
+            CHECK(file.support() == Support::Supported);
+            CHECK(file.editResult(1, {{file.current().draft.text.size(), file.current().draft.text.size()}, "z\n"})
+                == Transition::Blocked);
+            CHECK(file.current().draft.text == lines(4000));
+            CHECK(file.editResult(1, {{0, 1}, "y"}) == Transition::Applied);
+            CHECK(file.current().draft.text.starts_with("y"));
+            CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
+            FileSession narrow("id", "file", {atLine, {}, 0});
+            CHECK(narrow.editResult(1, {{atLine.size(), atLine.size()}, "z"}) == Transition::Blocked);
+            CHECK(narrow.current().draft.text == atLine);
+            CHECK(narrow.beginMarkResolved(1) == Transition::Applied);
         });
         return suite.report();
     }

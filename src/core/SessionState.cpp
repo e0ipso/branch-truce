@@ -1,5 +1,6 @@
 #include "SessionState.h"
 #include "EditingCommands.h"
+#include "ResourceLimits.h"
 
 #include <algorithm>
 #include <limits>
@@ -18,6 +19,11 @@ std::size_t undecidedCount(const Draft &draft)
     return static_cast<std::size_t>(std::count_if(
         draft.decisions.begin(), draft.decisions.end(),
         [](const auto &entry) { return entry.second.value == DecisionValue::Undecided; }));
+}
+
+bool exceedsEnvelope(const std::string &text)
+{
+    return !withinTextEnvelope(text);
 }
 
 std::size_t markerCount(const std::string &text)
@@ -49,7 +55,11 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
         snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
     }
     std::shared_ptr<const CorrespondenceMap> correspondence;
-    if (snapshots_) {
+    const auto resultBudget = assessText(initial.text);
+    if (resultBudget.limit != TextLimit::Within) {
+        support_ = Support::Unreadable;
+        supportDetail_ = "Load error: " + textLimitDiagnostic(resultBudget);
+    } else if (snapshots_) {
         try {
             correspondence = std::make_shared<const CorrespondenceMap>(1, *snapshots_, initial.text);
             choices_ = std::make_shared<const std::vector<ChoiceTarget>>(choiceTargets(*snapshots_));
@@ -140,6 +150,7 @@ Transition FileSession::replaceDraft(RevisionId expected, Draft draft)
 {
     if (expected != current_) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
+    if (exceedsEnvelope(draft.text)) return Transition::Blocked;
     if (draft == current().draft) return Transition::NoChange;
     appendHistory(advance(draft));
     return Transition::Applied;
@@ -168,6 +179,7 @@ Transition FileSession::editResult(RevisionId expected, ResultEdit edit)
         return Transition::InvalidAnchor;
     auto draft = current().draft;
     draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
+    if (exceedsEnvelope(draft.text)) return Transition::Blocked;
     draft.unresolvedMarkers = markerCount(draft.text);
     if (draft == current().draft) return Transition::NoChange;
     auto mapping = correspondence()
@@ -219,6 +231,7 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
     auto updated = std::make_shared<CorrespondenceMap>(*mapping);
     for (const auto &edit : edits) {
         draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
+        if (exceedsEnvelope(draft.text)) return Transition::Blocked;
         if (wholeFile) {
             *updated = updated->recomputed(next_, draft.text);
             continue;
@@ -250,6 +263,7 @@ Transition FileSession::replaceMapped(RevisionId expected, const ResultAnchor &a
     if (anchor.manualOverlap && !confirmManual) return Transition::ConfirmationRequired;
     auto draft = current().draft;
     draft.text.replace(anchor.result->begin, anchor.result->end - anchor.result->begin, replacement);
+    if (exceedsEnvelope(draft.text)) return Transition::Blocked;
     if (decision) draft.decisions[anchor.source.contributionId] = *decision;
     if (draft == current().draft) return Transition::NoChange;
     const ResultEdit edit{*anchor.result, std::move(replacement)};

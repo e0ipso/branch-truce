@@ -1,5 +1,6 @@
 #include "ConflictClassifier.h"
 #include "GitParsing.h"
+#include "core/ResourceLimits.h"
 
 #include <QFile>
 #include <QSet>
@@ -40,7 +41,8 @@ bool sameSnapshot(const Result &before, const Result &after)
     return true;
 }
 // Walk exact byte components without following symlinks or opening a FIFO/device.
-// Use the adapter's existing 8 MiB payload budget for the current result too.
+// The read ceiling is the recovery payload budget. Line and file limits are
+// applied to a complete read before that result becomes editable.
 SnapshotFileIdentity fileIdentity(const struct stat &info)
 {
     return {static_cast<std::uint64_t>(info.st_dev), static_cast<std::uint64_t>(info.st_ino),
@@ -70,13 +72,23 @@ ResultRead readResult(const QString &root, const QByteArray &path, QByteArray &b
     if (!S_ISREG(info.st_mode)) { ::close(fd); return ResultRead::UnsupportedTopology; }
     QFile file;
     if (!file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) { ::close(fd); return ResultRead::Failed; }
-    constexpr qsizetype limit = 8 * 1024 * 1024;
+    constexpr qsizetype limit = static_cast<qsizetype>(branch_truce::kMaxRecoveryPayloadBytes);
     bytes = file.read(limit + 1);
     struct stat after {};
     if (file.error() != QFileDevice::NoError || bytes.size() > limit
         || ::fstat(fd, &after) != 0 || fileIdentity(info) != fileIdentity(after)) return ResultRead::Failed;
     identity = fileIdentity(info);
     return ResultRead::Success;
+}
+
+QString textEnvelopeFailure(const QByteArray &bytes)
+{
+    if (bytes.isEmpty()) return {};
+    const auto assessment = branch_truce::assessText(
+        std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
+    if (assessment.limit == branch_truce::TextLimit::Within) return {};
+    return QString::fromStdString("Load error: " + branch_truce::textLimitDiagnostic(assessment)
+        + "; the captured file was not loaded");
 }
 
 void excludeUnreadResult(Conflict &conflict, ResultRead read)
@@ -86,7 +98,7 @@ void excludeUnreadResult(Conflict &conflict, ResultRead read)
             QStringLiteral("Outside app: current result must be a regular file without symlink traversal"));
     } else {
         exclude(conflict, ConflictSupport::LoadFailure,
-            QStringLiteral("Load error: current result could not be read completely and stably within the 8 MiB limit; check the file and reopen the session"));
+            QStringLiteral("Load error: current result could not be read completely and stably within the 8388608 byte limit; check the file and reopen the session"));
     }
 }
 } // namespace
@@ -132,8 +144,12 @@ public:
                 QByteArray current;
                 SnapshotFileIdentity identity;
                 const auto read = readResult(result.repository.worktreeRoot, conflict.path, current, identity);
+                const auto envelope = read == ResultRead::Success ? textEnvelopeFailure(current) : QString{};
                 if (read != ResultRead::Success) {
                     excludeUnreadResult(conflict, read);
+                } else if (!envelope.isEmpty()) {
+                    current.clear();
+                    exclude(conflict, ConflictSupport::LoadFailure, envelope);
                 } else if (current != conflict.result->originalBytes || identity != conflict.resultIdentity) {
                     exclude(conflict, ConflictSupport::TopologyConflict,
                         QStringLiteral("Outside app: current result changed or became unreadable during classification; inspect again"));
@@ -201,12 +217,16 @@ public:
             auto &conflict = result.conflicts[offset];
             if (conflict.editable()) {
                 const auto read = readResult(result.repository.worktreeRoot, conflict.path, launchBytes, launchIdentity);
-                if (read == ResultRead::Success) {
+                const auto envelope = read == ResultRead::Success ? textEnvelopeFailure(launchBytes) : QString{};
+                if (read == ResultRead::Success && envelope.isEmpty()) {
                     source = 0;
                     readSource();
                     return;
                 }
-                excludeUnreadResult(conflict, read);
+                if (!envelope.isEmpty()) {
+                    launchBytes.clear();
+                    exclude(conflict, ConflictSupport::LoadFailure, envelope);
+                } else excludeUnreadResult(conflict, read);
             }
             ++offset;
         }

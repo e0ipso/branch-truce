@@ -158,6 +158,6 @@ not promise recovery from machine power loss. Orphan payloads left before a
 record commit are harmless and are retained; garbage collection is separate.
 
 The initial implementation scans and verifies the journal before each append.
-Local acceptance measures acknowledgment cost with disposable fixtures, but
-does not set final latency, file-size or retention limits. Those operating
-limits and compaction/checkpoint replacement remain validation gates.
+A recovery payload larger than 8388608 bytes is refused before it is written.
+The prior acknowledged record stays in the journal, and the failure says that
+pending input is retained. Compaction and checkpoint replacement remain separate.

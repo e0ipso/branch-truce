@@ -3,6 +3,7 @@
 #include "fixtures/RecoveryFaults.h"
 #include <QCoreApplication>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QTemporaryDir>
 #include <array>
@@ -96,6 +97,36 @@ public:
                 CHECK(error.isEmpty());
             });
         }
+        suite.run("TRUCE-0029 recovery payload envelope keeps the boundary and the acknowledged journal", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            RecoveryStore store(directory.path() + "/recovery");
+            const auto acknowledged = transaction("acknowledged", "kept");
+            CHECK(store.commit(acknowledged).succeeded);
+            const auto below = transaction("below", QByteArray(8388607, 'b'));
+            const auto at = transaction("at", QByteArray(8388608, 'a'));
+            const auto above = transaction("above", QByteArray(8388609, 'Z'));
+            CHECK(store.commit(below).succeeded);
+            CHECK(store.commit(at).succeeded);
+            const auto journalBefore = readFile(store.directory() + "/journal");
+            const auto failed = store.commit(above);
+            CHECK(!failed.succeeded);
+            CHECK(failed.error.contains("8388609"));
+            CHECK(failed.error.contains("pending input is retained"));
+            CHECK(readFile(store.directory() + "/journal") == journalBefore);
+            const auto reloaded = RecoveryStore(store.directory()).read();
+            CHECK(reloaded.succeeded && !reloaded.incompleteTail);
+            CHECK(reloaded.transactions.size() == 3);
+            QString error;
+            CHECK(store.payload(RecoveryStore::digest(QByteArray(8388607, 'b')), &error).size() == 8388607);
+            CHECK(error.isEmpty());
+            CHECK(store.payload(RecoveryStore::digest(QByteArray(8388608, 'a')), &error).size() == 8388608);
+            CHECK(error.isEmpty());
+            const auto aboveHash = RecoveryStore::digest(QByteArray(8388609, 'Z'));
+            CHECK(!QFileInfo::exists(store.directory() + "/payloads/" + QString::fromLatin1(aboveHash)));
+            CHECK(store.payload(aboveHash, &error).isEmpty());
+            CHECK(error.contains("missing or unsafe"));
+        });
         return suite.report();
     }
 };

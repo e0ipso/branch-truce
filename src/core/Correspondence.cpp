@@ -1,4 +1,5 @@
 #include "Correspondence.h"
+#include "ResourceLimits.h"
 
 #include <algorithm>
 #include <span>
@@ -228,6 +229,12 @@ std::vector<Passage> ExactLineCorrespondence::compare(std::string_view source, s
 {
     if (!validUtf8(source) || !validUtf8(result))
         throw std::invalid_argument("Correspondence requires valid UTF-8 text");
+    const auto sourceBudget = assessText(source);
+    const auto resultBudget = assessText(result);
+    if (sourceBudget.limit != TextLimit::Within)
+        throw std::invalid_argument(textLimitDiagnostic(sourceBudget));
+    if (resultBudget.limit != TextLimit::Within)
+        throw std::invalid_argument(textLimitDiagnostic(resultBudget));
     if (source == result) return {{{0, source.size()}, {0, result.size()}, PassageKind::Equal}};
     std::map<std::string_view, std::size_t, std::less<>> tokens;
     const auto a = lines(source, tokens);
