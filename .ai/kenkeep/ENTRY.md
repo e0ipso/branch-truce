@@ -1,7 +1,7 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:6a4e3d25664a911ea88b5be6ed119498bcc5e1ef3675d719653adc2ff730d27e'
-node_count: 13
+nodes_hash: 'sha256:01759f0d2c52a279d3bc274bf58dec96962cea5368d2a2192dfdc774630bc9f7'
+node_count: 16
 ---
 # kenkeep
 
@@ -11,18 +11,21 @@ node_count: 13
 _None._
 
 ## Conventions (how we build)
-- Open [**Design desktop apps around screens and components**](nodes/practice-design-desktop-apps-around-screens-and-components.md) to learn about: Define screens and components, then build loosely coupled implementations using each desktop environment's idiomatic UI kit. #architecture #desktop #techspec
 - Open [**Keep failed work outstanding**](nodes/practice-keep-failed-work-outstanding.md) to learn about: Keep failed saves and resolutions visible, retain edited results, and claim resolution only after both steps succeed. #product #failures #saving #resolution
-- Open [**Keep PRD.md focused on user needs**](nodes/practice-keep-prd-focused-on-user-needs.md) to learn about: PRD.md describes user needs, interactions, and capabilities without technical or implementation details. #product #prd #documentation
 - Open [**Keep sources identifiable and the result editable**](nodes/practice-keep-sources-identifiable-and-the-result-editable.md) to learn about: Require truthful source identities, an editable center result, earlier context, and reading aids that preserve text. #product #comparison #editing
-- Open [**Keep TechSpecs and PRDs independent**](nodes/practice-keep-techspecs-and-prds-independent.md) to learn about: TechSpecs explain how to build; PRDs explain what to build and why. Keep both separate and independently understandable. #documentation #techspec #prd
 - Open [**Keep unsupported and unfinished work visible**](nodes/practice-keep-unsupported-and-unfinished-work-visible.md) to learn about: Show all current files, prominent outside-app warnings, and an honest handoff that directs users to outstanding work. #product #scope #progress #handoff
+- Open [**Bound each converted representation independently**](nodes/practice-bound-each-converted-representation-independently.md) to learn about: Canonical blob and checkout reads each get 8 MiB; validation does not guarantee that expanding encodings fit every stage. #git #conversion #limits #failures
+- Open [**Design desktop apps around screens and components**](nodes/practice-design-desktop-apps-around-screens-and-components.md) to learn about: Define screens and components, then build loosely coupled implementations using each desktop environment's idiomatic UI kit. #architecture #desktop #techspec
 - Open [**Fence session work and serialize worktree mutations**](nodes/practice-fence-session-work-and-serialize-worktree-mutations.md) to learn about: Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation. #architecture #concurrency #cancellation #git #desktop
-- Open [**Make conflict choices explicit and reversible**](nodes/practice-make-conflict-choices-explicit-and-reversible.md) to learn about: Keep accept, ignore, combine, and broader choices distinct, inspectable, and reversible with their decision states. #product #choices #editing #undo
-- Open [**Recover unfinished work without changing its status**](nodes/practice-recover-unfinished-work-without-changing-its-status.md) to learn about: Restore unsaved edits and outstanding decisions after closing or a crash while preserving honest work status. #product #recovery #editing #progress
+- Open [**Keep PRD.md focused on user needs**](nodes/practice-keep-prd-focused-on-user-needs.md) to learn about: PRD.md describes user needs, interactions, and capabilities without technical or implementation details. #product #prd #documentation
+- Open [**Keep TechSpecs and PRDs independent**](nodes/practice-keep-techspecs-and-prds-independent.md) to learn about: TechSpecs explain how to build; PRDs explain what to build and why. Keep both separate and independently understandable. #documentation #techspec #prd
 - Open [**Separate Save from Mark resolved**](nodes/practice-separate-save-from-mark-resolved.md) to learn about: Save keeps app-only drafts; Mark resolved writes the reviewed result and resolves the file in Git. #product #saving #resolution #review
+- Open [**Make conflict choices explicit and reversible**](nodes/practice-make-conflict-choices-explicit-and-reversible.md) to learn about: Keep accept, ignore, combine, and broader choices distinct, inspectable, and reversible with their decision states. #product #choices #editing #undo
+- Open [**Reconcile uncertain destination publication**](nodes/practice-reconcile-uncertain-destination-publication.md) to learn about: Use captured destination identities, fail closed on unsupported metadata, and inspect uncertain exchanges before retrying. #publication #storage #concurrency #git
+- Open [**Recover unfinished work without changing its status**](nodes/practice-recover-unfinished-work-without-changing-its-status.md) to learn about: Restore unsaved edits and outstanding decisions after closing or a crash while preserving honest work status. #product #recovery #editing #progress
 
 ## Components (what exists)
 - Open [**Branch Truce first-release scope**](nodes/map-branch-truce-first-release-scope.md) to learn about: PRD.md defines a standalone, offline Linux app for text conflicts during merges and rebases. #product #scope #workflow
 - Open [**Branch Truce desktop implementation baseline**](nodes/map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation. #architecture #desktop #platform #cpp
 - Open [**Repository discovery and verified source identities**](nodes/map-repository-discovery-and-verified-source-identities.md) to learn about: Verify merge/rebase source identities and keep renamed text conflicts supported while isolating path provenance failures. #git #discovery #source-identity #scope
+- Open [**Conflict admission and offline startup**](nodes/map-conflict-admission-and-offline-startup.md) to learn about: ConflictClassifier admits editable merge/rebase files; startup preserves excluded reasons and existing manual edits. #git #classification #conversion #startup #scope

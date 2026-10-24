@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:6a4e3d25664a911ea88b5be6ed119498bcc5e1ef3675d719653adc2ff730d27e'
-node_count: 13
+nodes_hash: 'sha256:01759f0d2c52a279d3bc274bf58dec96962cea5368d2a2192dfdc774630bc9f7'
+node_count: 16
 ---
 # kenkeep Graph
 
-Total nodes: 13
+Total nodes: 16
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -24,6 +24,14 @@ Total nodes: 13
 - **tags:** product, scope, workflow
 - **derived_from:** PRD.md
 
+## map-conflict-admission-and-offline-startup
+
+- **kind:** map
+- **title:** Conflict admission and offline startup
+- **path:** map-conflict-admission-and-offline-startup.md
+- **tags:** git, classification, conversion, startup, scope
+- **relates_to:** map-repository-discovery-and-verified-source-identities, practice-keep-unsupported-and-unfinished-work-visible, practice-keep-sources-identifiable-and-the-result-editable, practice-bound-each-converted-representation-independently
+
 ## map-repository-discovery-and-verified-source-identities
 
 - **kind:** map
@@ -31,6 +39,14 @@ Total nodes: 13
 - **path:** map-repository-discovery-and-verified-source-identities.md
 - **tags:** git, discovery, source-identity, scope
 - **relates_to:** practice-keep-sources-identifiable-and-the-result-editable, practice-keep-unsupported-and-unfinished-work-visible, map-branch-truce-first-release-scope
+
+## practice-bound-each-converted-representation-independently
+
+- **kind:** practice
+- **title:** Bound each converted representation independently
+- **path:** practice-bound-each-converted-representation-independently.md
+- **tags:** git, conversion, limits, failures
+- **relates_to:** practice-keep-failed-work-outstanding
 
 ## practice-design-desktop-apps-around-screens-and-components
 
@@ -94,6 +110,14 @@ Total nodes: 13
 - **path:** practice-make-conflict-choices-explicit-and-reversible.md
 - **tags:** product, choices, editing, undo
 - **derived_from:** PRD.md
+
+## practice-reconcile-uncertain-destination-publication
+
+- **kind:** practice
+- **title:** Reconcile uncertain destination publication
+- **path:** practice-reconcile-uncertain-destination-publication.md
+- **tags:** publication, storage, concurrency, git
+- **relates_to:** practice-separate-save-from-mark-resolved, practice-fence-session-work-and-serialize-worktree-mutations, practice-keep-failed-work-outstanding
 
 ## practice-recover-unfinished-work-without-changing-its-status
 
