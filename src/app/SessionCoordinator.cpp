@@ -134,7 +134,7 @@ public:
             if (job->mutation) {
                 const auto *file = model.file(job->input.stamp.fileId);
                 const auto leaseError = model.ensureRecoveryLease();
-                if (!file || model.hasPendingRecovery() || model.hasRecoveryFailures() || !leaseError.isEmpty()) {
+                if (!file || model.hasPendingRecovery() || model.hasRecoveryFailure(file->id()) || !leaseError.isEmpty()) {
                     finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {},
                         QStringLiteral("Mutation blocked by unavailable recovery storage: ") + leaseError, {}});
                     if (!alive) return;

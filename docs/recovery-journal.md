@@ -131,6 +131,12 @@ commit remains distinct from these restored recovery failures. The interface
 shows unsaved, review-needed and unresolved status and retains pending text
 separately from the acknowledged result.
 
+A restored file's recovery error blocks editing, choices, history and
+repository mutations for that file. Other files remain editable, including
+after another restart. The session cannot finish while any recovery error
+remains. Pending recovery commits still block commands across the shared
+store until retry succeeds.
+
 The coordinator commits a mutation intent before admitting publication or
 staging, and records its inspection observation before releasing the queue.
 These records retain the original target even after cancellation or session

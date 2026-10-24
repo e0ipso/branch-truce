@@ -209,7 +209,7 @@ QVariantMap ApplicationController::selectedFile() const
             {QStringLiteral("text"), text(snapshots->launchResult.text.utf8)}});
     }
     result.insert(QStringLiteral("canEdit"), file->support() == Support::Supported
-        && !files_.hasPendingRecovery() && !files_.hasRecoveryFailures());
+        && !files_.hasPendingRecovery() && !files_.hasRecoveryFailure(file->id()));
     QVariantList choices;
     std::map<SourceSide, std::vector<std::size_t>> lineStarts;
     if (file->snapshots()) {
@@ -307,7 +307,7 @@ bool ApplicationController::previewChoice(const QString &fileId, const QString &
     const auto *file = files_.file(fileId.toStdString());
     const auto expected = revisionId(revision);
     if (!file || !expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
-    if (files_.hasPendingRecovery() || files_.hasRecoveryFailures()
+    if (files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id())
         || (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool())) return commandResult(Transition::Blocked);
     ChoiceAction kind;
     if (action == QLatin1String("accept")) kind = ChoiceAction::Accept;
@@ -448,7 +448,7 @@ void ApplicationController::syncResultEditor()
     const bool lossless = documentText(*resultDocument_) == desired && !desired.contains(QChar(0x2028))
         && !desired.contains(QChar(0x2029)) && !desired.contains(QLatin1Char('\r'));
     resultEditor_->setProperty("readOnly", !file || file->support() != Support::Supported || !lossless
-        || files_.hasPendingRecovery() || files_.hasRecoveryFailures());
+        || files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id()));
     if (!lossless && file && file->support() == Support::Supported) {
         commandMessage_ = tr("This text cannot be edited losslessly by the current editor. Its captured result is retained.");
         Q_EMIT commandChanged();

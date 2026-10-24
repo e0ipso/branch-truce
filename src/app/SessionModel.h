@@ -48,6 +48,7 @@ public:
     [[nodiscard]] const Draft *pendingDraft(const std::string &id) const;
     [[nodiscard]] bool hasPendingRecovery() const { return !pending_.empty(); }
     [[nodiscard]] bool hasRecoveryFailures() const { return !recoveryFailures_.empty(); }
+    [[nodiscard]] bool hasRecoveryFailure(const std::string &id) const { return recoveryFailures_.contains(id); }
     [[nodiscard]] const QString &recoveryDirectory() const { return recovery_.directory(); }
     Transition retryRecovery(const std::string &id);
     Q_INVOKABLE bool retryPendingRecovery(const QString &id);
@@ -85,7 +86,7 @@ private:
     {
         for (std::size_t row = 0; row < files_.size(); ++row) {
             if (files_[row].id() != id) continue;
-            if (hasPendingRecovery() || hasRecoveryFailures()) return Transition::Blocked;
+            if (hasPendingRecovery() || hasRecoveryFailure(id)) return Transition::Blocked;
             auto candidate = files_[row];
             const auto result = command(candidate);
             if (result == Transition::Applied) {
