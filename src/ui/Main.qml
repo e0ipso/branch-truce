@@ -31,11 +31,13 @@ Kirigami.ApplicationWindow {
     Dialog {
         id: replacementDialog
         objectName: "replacementDialog"
-        title: qsTr("Replace manual work in this scope?")
+        title: window.controller.commandPreview.orderedCombination
+            ? qsTr("Preview %1").arg(window.controller.commandPreview.order)
+            : qsTr("Replace manual work in this scope?")
         modal: true
         anchors.centerIn: parent
         width: Math.min(window.width - 40, 700)
-        height: Math.min(window.height - 40, 500)
+        height: Math.min(window.height - 40, 600)
         standardButtons: Dialog.Ok | Dialog.Cancel
         onAccepted: window.controller.applyChoice(true)
         onRejected: window.controller.cancelChoice()
@@ -44,6 +46,22 @@ Kirigami.ApplicationWindow {
             Label {
                 Layout.fillWidth: true
                 text: window.controller.commandPreview.detail || ""
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: !!window.controller.commandPreview.orderedCombination
+                text: window.controller.commandPreview.sourceScopes || ""
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+            }
+            Label {
+                objectName: "manualReplacementNotice"
+                Layout.fillWidth: true
+                visible: !!window.controller.commandPreview.replacesManual
+                text: qsTr("Manual or pre-existing edits in the current scope below will be replaced. Confirm to replace this work, or cancel to keep it.")
+                textFormat: Text.PlainText
                 wrapMode: Text.Wrap
             }
             RowLayout {
@@ -56,7 +74,9 @@ Kirigami.ApplicationWindow {
                 }
                 SnapshotPane {
                     paneName: "replacementAfter"
-                    paneTitle: qsTr("Replacement from the selected source")
+                    paneTitle: window.controller.commandPreview.orderedCombination
+                        ? qsTr("Proposed text · %1").arg(window.controller.commandPreview.order)
+                        : qsTr("Replacement from the selected source")
                     paneText: window.controller.commandPreview.replacement || ""
                 }
             }
@@ -347,6 +367,19 @@ Kirigami.ApplicationWindow {
                                     text: qsTr("Resolve using this side")
                                     Accessible.name: qsTr("Resolve %1 using this side and ignore its competitor").arg(choiceRow.modelData.label)
                                     onClicked: window.choose(choiceRow.modelData.id, "resolve")
+                                }
+                            }
+                            RowLayout {
+                                enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.combinationAvailable && !resultEditor.inputMethodComposing
+                                Button {
+                                    text: qsTr("Preview Left then Right")
+                                    Accessible.name: qsTr("Preview both for %1, Left then Right").arg(choiceRow.modelData.label)
+                                    onClicked: window.choose(choiceRow.modelData.id, "left-first")
+                                }
+                                Button {
+                                    text: qsTr("Preview Right then Left")
+                                    Accessible.name: qsTr("Preview both for %1, Right then Left").arg(choiceRow.modelData.label)
+                                    onClicked: window.choose(choiceRow.modelData.id, "right-first")
                                 }
                             }
                             Label {

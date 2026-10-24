@@ -256,7 +256,8 @@ QVariantMap ApplicationController::selectedFile() const
             {QStringLiteral("state"), states.join(QStringLiteral(", "))},
             {QStringLiteral("sourceText"), text(sourceText.substr(target.source.range.begin, target.source.range.end - target.source.range.begin))},
             {QStringLiteral("available"), available},
-            {QStringLiteral("detail"), !undecided ? tr("Undo intervening actions to change a decided scope.")
+            {QStringLiteral("combinationAvailable"), mapped},
+            {QStringLiteral("detail"), !undecided ? tr("Preview both to replace this scope, or undo intervening actions to change its decision.")
                 : !mapped ? tr("This scope cannot be mapped safely. Edit the result directly.") : QString{}}});
     }
     result.insert(QStringLiteral("choices"), choices);
@@ -279,9 +280,28 @@ bool ApplicationController::selectFile(const QString &fileId)
 QVariantMap ApplicationController::commandPreview() const
 {
     if (!preview_) return {};
+    QStringList sources;
+    const auto *file = files_.file(previewFileId_.toStdString());
+    if (!file || !file->snapshots()) return {};
+    for (const auto &scope : preview_->sourceOrder) {
+        const auto &source = scope.side == SourceSide::Stage2 ? file->snapshots()->stage2 : file->snapshots()->stage3;
+        const auto &value = source->worktree.utf8;
+        const auto line = [&](std::size_t offset) {
+            return 1 + std::count(value.begin(), value.begin() + static_cast<std::ptrdiff_t>(offset), '\n');
+        };
+        const auto side = scope.side == SourceSide::Stage2 ? tr("Left") : tr("Right");
+        sources.push_back(scope.range.begin == scope.range.end
+            ? tr("%1, empty scope at line %2 · %3").arg(side).arg(line(scope.range.begin)).arg(text(source->label))
+            : tr("%1, lines %2–%3 · %4").arg(side).arg(line(scope.range.begin)).arg(line(scope.range.end - 1))
+                .arg(text(source->label)));
+    }
     return {{QStringLiteral("before"), text(preview_->before)},
         {QStringLiteral("replacement"), text(preview_->replacement)},
         {QStringLiteral("detail"), text(preview_->detail)},
+        {QStringLiteral("orderedCombination"), !preview_->sourceOrder.empty()},
+        {QStringLiteral("order"), preview_->action == ChoiceAction::CombineLeftFirst ? tr("Left then Right") : tr("Right then Left")},
+        {QStringLiteral("sourceScopes"), sources.join(QLatin1Char('\n'))},
+        {QStringLiteral("replacesManual"), preview_->replacesManual},
         {QStringLiteral("confirmationRequired"), preview_->state == Transition::ConfirmationRequired}};
 }
 
@@ -313,6 +333,8 @@ bool ApplicationController::previewChoice(const QString &fileId, const QString &
     if (action == QLatin1String("accept")) kind = ChoiceAction::Accept;
     else if (action == QLatin1String("ignore")) kind = ChoiceAction::Ignore;
     else if (action == QLatin1String("resolve")) kind = ChoiceAction::ResolveUsingSide;
+    else if (action == QLatin1String("left-first")) kind = ChoiceAction::CombineLeftFirst;
+    else if (action == QLatin1String("right-first")) kind = ChoiceAction::CombineRightFirst;
     else return commandResult(Transition::InvalidAnchor);
     auto preview = branch_truce::previewChoice(*file, *expected, target.toStdString(), kind);
     commandMessage_ = text(preview.detail);

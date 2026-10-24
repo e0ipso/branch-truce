@@ -1,6 +1,7 @@
 #include "EditingCommands.h"
 
 #include <algorithm>
+#include <set>
 
 namespace branch_truce {
 namespace {
@@ -34,6 +35,108 @@ bool overlaps(ByteRange a, ByteRange b)
 {
     if (a == b) return true;
     return a.begin < b.end && b.begin < a.end;
+}
+
+bool adjoining(ByteRange a, ByteRange b)
+{
+    return a == b || a.end == b.begin || b.end == a.begin;
+}
+
+ChoicePreview previewCombination(const FileSession &file, RevisionId expected,
+                                 const ChoiceTarget &selected, ChoiceAction action)
+{
+    ChoicePreview preview;
+    preview.revision = expected;
+    preview.action = action;
+    preview.target = selected.source.contributionId;
+    const auto fail = [&](Transition state, std::string detail) {
+        preview.state = state;
+        preview.detail = std::move(detail);
+        return preview;
+    };
+    const auto *mapping = file.correspondence();
+    const auto *anchor = mapping->anchor(preview.target);
+    const ChoiceTarget *competitor = nullptr;
+    const ResultAnchor *other = nullptr;
+    std::size_t matches = 0;
+    bool exact = false;
+    for (const auto &target : file.choices()) {
+        if (target.section != selected.section || target.scope != selected.scope
+            || target.source.side == selected.source.side) continue;
+        const auto *candidate = mapping->anchor(target.source.contributionId);
+        if (!candidate || candidate->state != AnchorState::Mapped || !candidate->result
+            || !adjoining(*anchor->result, *candidate->result)) continue;
+        const bool sameRange = *anchor->result == *candidate->result;
+        // Neighboring lines are also adjacent. An exact competing range has
+        // priority, so an unrelated adjacent line cannot make it ambiguous.
+        if (sameRange && !exact) { exact = true; matches = 0; }
+        if (!sameRange && exact) continue;
+        ++matches;
+        competitor = &target;
+        other = candidate;
+    }
+    if (matches > 1)
+        return fail(Transition::AmbiguousTarget, "Several competing scopes could match. Use a section or edit the result directly.");
+    if (!competitor)
+        return fail(Transition::AmbiguousTarget, "The two source scopes cannot be combined safely. Use a section or edit the result directly.");
+
+    const auto *first = &selected;
+    const auto *second = competitor;
+    const auto firstSide = action == ChoiceAction::CombineLeftFirst ? SourceSide::Stage2 : SourceSide::Stage3;
+    if (first->source.side != firstSide) std::swap(first, second);
+    preview.sourceOrder = {first->source, second->source};
+    preview.command.expected = expected;
+    preview.command.targets = {*anchor, *other};
+    std::uint64_t order = 1;
+    for (const auto *target : {first, second}) {
+        for (const auto &id : target->decisions) {
+            if (!file.current().draft.decisions.contains(id))
+                return fail(Transition::Blocked, "This draft has no recorded scoped choices. Edit the result directly.");
+            preview.command.decisions[id] = {DecisionValue::Accepted, order};
+        }
+        const auto &source = target->source.side == SourceSide::Stage2
+            ? file.snapshots()->stage2 : file.snapshots()->stage3;
+        preview.replacement += source->worktree.utf8.substr(target->source.range.begin,
+            target->source.range.end - target->source.range.begin);
+        ++order;
+    }
+    const ByteRange affected{std::min(anchor->result->begin, other->result->begin),
+                             std::max(anchor->result->end, other->result->end)};
+    // A partial combination must not erase another contribution, even if it
+    // is still undecided. Unknown line mappings within this section are unsafe.
+    std::set<std::string> inspected;
+    for (const auto &target : file.choices()) {
+        for (const auto &id : target.decisions) {
+            if (preview.command.decisions.contains(id) || !inspected.insert(id).second) continue;
+            const auto *unselected = mapping->anchor(id);
+            if (!unselected || unselected->state != AnchorState::Mapped || !unselected->result) {
+                if (target.section == selected.section)
+                    return fail(Transition::AmbiguousTarget, "Other lines in this section cannot be located safely. Use a section or edit manually.");
+            } else if (overlaps(affected, *unselected->result)) {
+                return fail(Transition::AmbiguousTarget, "This combination would replace an unselected contribution. Use a section or edit manually.");
+            }
+        }
+    }
+    preview.affectedRange = affected;
+    preview.before = file.current().draft.text.substr(affected.begin, affected.end - affected.begin);
+    preview.replacesManual = anchor->manualOverlap || other->manualOverlap;
+    if (*anchor->result == *other->result || anchor->result->begin == anchor->result->end
+        || other->result->begin == other->result->end) {
+        const auto range = anchor->result->begin == anchor->result->end ? *other->result : *anchor->result;
+        preview.command.edits.push_back({range, preview.replacement});
+    } else {
+        // Already-present contributions can occupy adjacent ranges. Replace
+        // their exact union atomically, without duplicating either old range.
+        const auto earlier = anchor->result->begin < other->result->begin ? *anchor->result : *other->result;
+        const auto later = anchor->result->begin < other->result->begin ? *other->result : *anchor->result;
+        preview.command.edits = {{earlier, preview.replacement}, {later, {}}};
+    }
+    // Every combination is inspectable and explicitly confirmed, including a
+    // new ordering of a decided scope after subsequent manual editing.
+    preview.state = Transition::ConfirmationRequired;
+    preview.detail = action == ChoiceAction::CombineLeftFirst ? "Take both: Left then Right. " : "Take both: Right then Left. ";
+    preview.detail += "Only the displayed source scopes are combined. Review the exact text for duplication and edit it afterwards if needed.";
+    return preview;
 }
 }
 
@@ -96,6 +199,8 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected,
     if (!anchor || anchor->state != AnchorState::Mapped || !anchor->result)
         return fail(anchor && anchor->state == AnchorState::Ambiguous ? Transition::AmbiguousTarget : Transition::InvalidAnchor,
                     "This scope cannot be mapped safely. Edit the result directly.");
+    if (action == ChoiceAction::CombineLeftFirst || action == ChoiceAction::CombineRightFirst)
+        return previewCombination(file, expected, *found, action);
     for (const auto &selected : found->decisions) {
         if (!file.current().draft.decisions.contains(selected))
             return fail(Transition::Blocked, "This draft has no recorded scoped choices. Edit the result directly.");
@@ -127,6 +232,7 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected,
         const auto &source = found->source.side == SourceSide::Stage2 ? snapshots->stage2 : snapshots->stage3;
         preview.before = file.current().draft.text.substr(replacementAnchor->result->begin,
             replacementAnchor->result->end - replacementAnchor->result->begin);
+        preview.affectedRange = replacementAnchor->result;
         preview.replacement = source->worktree.utf8.substr(found->source.range.begin,
             found->source.range.end - found->source.range.begin);
         preview.command.edits.push_back({*replacementAnchor->result, preview.replacement});
@@ -136,7 +242,7 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected,
                 || decision(file, target.source.contributionId).value != DecisionValue::Accepted) continue;
             const auto *other = file.correspondence()->anchor(target.source.contributionId);
             if (!other || !other->result || overlaps(*replacementAnchor->result, *other->result))
-                return fail(Transition::Blocked, "Accepted text may overlap this choice. Undo its acceptance before replacing this scope.");
+                return fail(Transition::Blocked, "Accepted text may overlap this choice. Preview an ordered combination or undo its acceptance.");
         }
     }
     if (action == ChoiceAction::ResolveUsingSide) {
@@ -165,6 +271,7 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected,
     }
     const bool confirmation = action != ChoiceAction::Ignore && std::any_of(
         preview.command.targets.begin(), preview.command.targets.end(), [](const auto &value) { return value.manualOverlap; });
+    preview.replacesManual = confirmation;
     preview.state = confirmation ? Transition::ConfirmationRequired : Transition::Applied;
     preview.detail = action == ChoiceAction::Ignore ? "Ignore preserves result text and leaves the other side undecided."
         : action == ChoiceAction::Accept ? "Accept changes only this scope and leaves the other side undecided."

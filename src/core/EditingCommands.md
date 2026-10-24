@@ -33,7 +33,26 @@ changes neither text nor decisions.
 decision updates. `FileSession::applyCommand` validates all current registered
 targets, UTF-8 boundaries and nonoverlapping edits before publishing one history
 entry. It supports later planners that need several ranges or ordered decisions.
-Ordered combination, bulk and whole-file workflows are separate work.
+Bulk and whole-file workflows are separate work.
+
+`CombineLeftFirst` and `CombineRightFirst` preview both immutable source scopes
+in their stated order. A line pairs with exactly one mapped competing line in
+the same section; a section pairs with its competing section. A unique identical
+result range takes priority over adjacent ranges. Without an exact match, a
+unique adjacent range is required. Unequal overlapping ranges, repeated passages
+without unique correspondence, and replacements that would erase unselected
+contributions require a larger safe scope or direct editing.
+
+The preview captures the source order, exact current and proposed text, affected
+result range and whether that scope includes manual or pre-existing work.
+Concatenation preserves the selected bytes, including final-newline behavior;
+it does not silently deduplicate or claim a correct merge. Every combination
+requires confirmation. Cancelling changes nothing, and applying regenerates the
+whole preview to reject stale or modified content. A new preview can reorder
+decided scopes or replace later overlapping edits. It records both contributions
+as accepted with explicit order 1 and 2, while preserving all other decisions.
+Adjacent already-present contributions are replaced atomically rather than
+appended a second time. Manual edits outside the displayed range remain intact.
 
 Manual edits use exact UTF-8 byte ranges. The Qt adapter converts scalar-safe
 UTF-16 document changes to those ranges and disables the document's native undo

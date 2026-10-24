@@ -4,7 +4,7 @@
 
 namespace branch_truce {
 
-enum class ChoiceAction { Accept, Ignore, ResolveUsingSide };
+enum class ChoiceAction { Accept, Ignore, ResolveUsingSide, CombineLeftFirst, CombineRightFirst };
 enum class ChoiceScope { Line, Section };
 
 struct ChoiceTarget {
@@ -29,6 +29,11 @@ struct ChoicePreview {
     std::string before;
     std::string replacement;
     std::string detail;
+    // The exact result scope being replaced, including any protected manual
+    // work. Ordered sources are captured explicitly, never inferred from text.
+    std::optional<ByteRange> affectedRange;
+    bool replacesManual = false;
+    std::vector<SourceAnchor> sourceOrder;
     EditingCommand command;
     bool operator==(const ChoicePreview &) const = default;
 };
