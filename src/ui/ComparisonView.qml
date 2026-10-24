@@ -12,6 +12,7 @@ ColumnLayout {
     readonly property real headerHeight: Math.max(leftPane.headerImplicitHeight,
         resultHeader.implicitHeight, rightPane.headerImplicitHeight)
     readonly property bool wrapLines: wrapLinesBox.checked
+    readonly property bool showWhitespace: showWhitespaceBox.checked
     property var scopeNames: ["stage2", "result", "stage3"]
     property string searchDetail: ""
     property bool whitespaceReady: false
@@ -77,6 +78,136 @@ ColumnLayout {
         whitespaceReady = true
     }
 
+    // Qt Quick ignores QTextOption.ShowTabsAndSpaces, so the markers are drawn
+    // over the text. They are not document characters.
+    component WhitespaceMarkers: Item {
+        id: markers
+        required property Item editor
+        required property Flickable viewport
+        property bool active: false
+        property bool wrapped: false
+        property var spots: []
+        readonly property int markerCount: spots.length
+        readonly property color ink: editor.color.a > 0 ? editor.color : "#202020"
+        anchors.fill: parent
+        z: 2
+        enabled: false
+        clip: true
+
+        property bool refreshQueued: false
+        function schedule(): void {
+            if (refreshQueued)
+                return
+            refreshQueued = true
+            Qt.callLater(markers.refresh)
+        }
+        function refresh(): void {
+            refreshQueued = false
+            if (!active || width < 1 || height < 1) {
+                spots = []
+                return
+            }
+            const text = editor.text || ""
+            const found = []
+            if (text.length === 0) {
+                spots = found
+                return
+            }
+            const origin = editor.mapFromItem(markers, 0, 0)
+            let pos = editor.positionAt(origin.x, Math.max(0, origin.y))
+            if (pos < 0)
+                pos = 0
+            while (pos > 0) {
+                const prev = text.charAt(pos - 1)
+                if (prev === "\n" || prev === "\u2028" || prev === "\u2029")
+                    break
+                pos = pos - 1
+            }
+            let guard = 0
+            while (pos < text.length && guard < 200000) {
+                guard = guard + 1
+                const ch = text.charAt(pos)
+                const rect = editor.positionToRectangle(pos)
+                const mapped = editor.mapToItem(markers, rect.x, rect.y)
+                if (mapped.y > height + rect.height)
+                    break
+                let span = rect.width
+                if (pos + 1 <= text.length) {
+                    const next = editor.positionToRectangle(pos + 1)
+                    const mappedNext = editor.mapToItem(markers, next.x, next.y)
+                    if (Math.abs(mappedNext.y - mapped.y) < 1)
+                        span = mappedNext.x - mapped.x
+                }
+                if (span < 2)
+                    span = ch === "\t" ? 8 : 2
+                if ((ch === " " || ch === "\t") && mapped.y + rect.height >= 0
+                        && mapped.x < width && mapped.x + span > 0)
+                    found.push({x: mapped.x, y: mapped.y, w: span, h: Math.max(rect.height, 2), tab: ch === "\t"})
+                if (mapped.x > width && !wrapped) {
+                    const newline = text.indexOf("\n", pos)
+                    if (newline < 0)
+                        break
+                    pos = newline + 1
+                    continue
+                }
+                pos = pos + 1
+            }
+            spots = found
+        }
+        onActiveChanged: schedule()
+        Component.onCompleted: schedule()
+        Connections {
+            target: markers.editor
+            function onTextChanged(): void { markers.schedule() }
+            function onWidthChanged(): void { markers.schedule() }
+            function onHeightChanged(): void { markers.schedule() }
+        }
+        Connections {
+            target: markers.viewport
+            function onContentXChanged(): void { markers.schedule() }
+            function onContentYChanged(): void { markers.schedule() }
+            function onWidthChanged(): void { markers.schedule() }
+            function onHeightChanged(): void { markers.schedule() }
+        }
+        Repeater {
+            model: markers.spots
+            delegate: Item {
+                id: spot
+                required property var modelData
+                x: modelData.x
+                y: modelData.y
+                width: Math.max(2, modelData.w)
+                height: Math.max(2, modelData.h)
+                Rectangle {
+                    visible: !spot.modelData.tab
+                    width: Math.min(4, Math.max(2, spot.height * 0.22))
+                    height: width
+                    radius: width / 2
+                    color: markers.ink
+                    anchors.centerIn: parent
+                }
+                Rectangle {
+                    visible: spot.modelData.tab
+                    x: 1
+                    height: 2
+                    width: Math.max(1, parent.width - 8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: markers.ink
+                }
+                Rectangle {
+                    visible: spot.modelData.tab
+                    width: 5
+                    height: 5
+                    radius: 1
+                    anchors.right: parent.right
+                    anchors.rightMargin: 1
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: markers.ink
+                }
+            }
+        }
+    }
+
     component CapturedSource: ColumnLayout {
         id: sourcePane
         required property string paneName
@@ -108,29 +239,39 @@ ColumnLayout {
                 .arg(sourcePane.source.objectId || qsTr("unavailable"))
             Accessible.description: ToolTip.text
         }
-        Flickable {
-            id: sourceViewport
-            objectName: sourcePane.paneName + "Viewport"
+        Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.horizontal: ScrollBar {}
-            ScrollBar.vertical: ScrollBar {}
-            TextArea.flickable: TextArea {
-                id: sourceText
-                objectName: sourcePane.paneName + "Text"
-                text: sourcePane.source.text || ""
-                readOnly: true
-                selectByMouse: true
-                persistentSelection: true
-                textFormat: TextEdit.PlainText
-                font.family: "monospace"
-                width: comparison.wrapLines ? sourceViewport.width : implicitWidth
-                wrapMode: comparison.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
-                Accessible.name: sourcePane.paneRole + " · " + (sourcePane.source.label || "")
-                onTextChanged: if (comparison.whitespaceReady)
-                    comparison.applyWhitespace()
+            Flickable {
+                id: sourceViewport
+                objectName: sourcePane.paneName + "Viewport"
+                anchors.fill: parent
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.horizontal: ScrollBar {}
+                ScrollBar.vertical: ScrollBar {}
+                TextArea.flickable: TextArea {
+                    id: sourceText
+                    objectName: sourcePane.paneName + "Text"
+                    text: sourcePane.source.text || ""
+                    readOnly: true
+                    selectByMouse: true
+                    persistentSelection: true
+                    textFormat: TextEdit.PlainText
+                    font.family: "monospace"
+                    width: comparison.wrapLines ? sourceViewport.width : implicitWidth
+                    wrapMode: comparison.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
+                    Accessible.name: sourcePane.paneRole + " · " + (sourcePane.source.label || "")
+                    onTextChanged: if (comparison.whitespaceReady)
+                        comparison.applyWhitespace()
+                }
+            }
+            WhitespaceMarkers {
+                objectName: sourcePane.paneName + "Whitespace"
+                editor: sourceText
+                viewport: sourceViewport
+                active: comparison.showWhitespace
+                wrapped: comparison.wrapLines
             }
         }
     }
@@ -216,65 +357,75 @@ ColumnLayout {
                 text: qsTr("Initial content and your edits are kept")
                 elide: Text.ElideRight
             }
-            Flickable {
-                id: resultViewport
-                objectName: "resultViewport"
+            Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.horizontal: ScrollBar {}
-                ScrollBar.vertical: ScrollBar {}
-                TextArea.flickable: TextArea {
-                    id: resultEditor
-                    objectName: "resultText"
-                    // Only the adapter enables editing after loading durable captures.
-                    readOnly: true
-                    selectByMouse: true
-                    persistentSelection: true
-                    textFormat: TextEdit.PlainText
-                    font.family: "monospace"
-                    width: comparison.wrapLines ? resultViewport.width : implicitWidth
-                    wrapMode: comparison.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
-                    Accessible.name: qsTr("Editable result")
-                    Component.onCompleted: comparison.controller.attachResultEditor(resultEditor)
-                    TapHandler {
-                        acceptedButtons: Qt.RightButton
-                        onTapped: resultMenu.popup()
+                Flickable {
+                    id: resultViewport
+                    objectName: "resultViewport"
+                    anchors.fill: parent
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.horizontal: ScrollBar {}
+                    ScrollBar.vertical: ScrollBar {}
+                    TextArea.flickable: TextArea {
+                        id: resultEditor
+                        objectName: "resultText"
+                        // Only the adapter enables editing after loading durable captures.
+                        readOnly: true
+                        selectByMouse: true
+                        persistentSelection: true
+                        textFormat: TextEdit.PlainText
+                        font.family: "monospace"
+                        width: comparison.wrapLines ? resultViewport.width : implicitWidth
+                        wrapMode: comparison.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
+                        Accessible.name: qsTr("Editable result")
+                        Component.onCompleted: comparison.controller.attachResultEditor(resultEditor)
+                        TapHandler {
+                            acceptedButtons: Qt.RightButton
+                            onTapped: resultMenu.popup()
+                        }
+                        Menu {
+                            id: resultMenu
+                            MenuItem {
+                                text: qsTr("Undo")
+                                enabled: !!comparison.file.canEdit && !!comparison.file.canUndo && !comparison.inputMethodComposing
+                                onTriggered: comparison.controller.undo(comparison.controller.selectedFileId, comparison.file.currentRevision)
+                            }
+                            MenuItem {
+                                text: qsTr("Redo")
+                                enabled: !!comparison.file.canEdit && !!comparison.file.canRedo && !comparison.inputMethodComposing
+                                onTriggered: comparison.controller.redo(comparison.controller.selectedFileId, comparison.file.currentRevision)
+                            }
+                            MenuSeparator {}
+                            MenuItem {
+                                text: qsTr("Cut")
+                                enabled: !resultEditor.readOnly && resultEditor.selectedText.length > 0 && !comparison.inputMethodComposing
+                                onTriggered: comparison.controller.resultClipboard("cut")
+                            }
+                            MenuItem {
+                                text: qsTr("Copy")
+                                enabled: resultEditor.selectedText.length > 0
+                                onTriggered: comparison.controller.resultClipboard("copy")
+                            }
+                            MenuItem {
+                                text: qsTr("Paste")
+                                enabled: !resultEditor.readOnly && resultEditor.canPaste && !comparison.inputMethodComposing
+                                onTriggered: comparison.controller.resultClipboard("paste")
+                            }
+                            MenuItem {
+                                text: qsTr("Select all")
+                                onTriggered: comparison.controller.resultClipboard("selectAll")
+                            }
+                        }
                     }
-                    Menu {
-                        id: resultMenu
-                        MenuItem {
-                            text: qsTr("Undo")
-                            enabled: !!comparison.file.canEdit && !!comparison.file.canUndo && !comparison.inputMethodComposing
-                            onTriggered: comparison.controller.undo(comparison.controller.selectedFileId, comparison.file.currentRevision)
-                        }
-                        MenuItem {
-                            text: qsTr("Redo")
-                            enabled: !!comparison.file.canEdit && !!comparison.file.canRedo && !comparison.inputMethodComposing
-                            onTriggered: comparison.controller.redo(comparison.controller.selectedFileId, comparison.file.currentRevision)
-                        }
-                        MenuSeparator {}
-                        MenuItem {
-                            text: qsTr("Cut")
-                            enabled: !resultEditor.readOnly && resultEditor.selectedText.length > 0 && !comparison.inputMethodComposing
-                            onTriggered: comparison.controller.resultClipboard("cut")
-                        }
-                        MenuItem {
-                            text: qsTr("Copy")
-                            enabled: resultEditor.selectedText.length > 0
-                            onTriggered: comparison.controller.resultClipboard("copy")
-                        }
-                        MenuItem {
-                            text: qsTr("Paste")
-                            enabled: !resultEditor.readOnly && resultEditor.canPaste && !comparison.inputMethodComposing
-                            onTriggered: comparison.controller.resultClipboard("paste")
-                        }
-                        MenuItem {
-                            text: qsTr("Select all")
-                            onTriggered: comparison.controller.resultClipboard("selectAll")
-                        }
-                    }
+                }
+                WhitespaceMarkers {
+                    objectName: "resultWhitespace"
+                    editor: resultEditor
+                    viewport: resultViewport
+                    active: comparison.showWhitespace
+                    wrapped: comparison.wrapLines
                 }
             }
         }
