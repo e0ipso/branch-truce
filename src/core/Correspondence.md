@@ -29,8 +29,10 @@ length calculation. Initial correspondence failure marks only that file session
 unreadable with a path-specific diagnostic, retaining its captured sources and
 launch result. Other files can finish loading. Allocation or representation
 failure during later edits still throws before a new session revision is
-published. There is no selected file-size or latency limit. Measurements on
-representative user files remain a wave-gate obligation.
+published. There is no enforced file-size or latency limit. Representative
+measurements and a proposed envelope for TRUCE-0029 are in
+tests/fixtures/performance/evidence.md. Product output, line and recovery
+limits are unchanged.
 
 `SourceAnchor` carries the caller's stable contribution ID, immutable source
 side/range and insertion affinity. `ResultAnchor` adds captured session, path and
@@ -78,6 +80,7 @@ cap. The `-O2` fixture process peaked at 44,184 KiB resident memory; constructio
 took 12,225 ms and the edit took 15,498 ms. A real desktop load of a separate
 20,000-line conflict beside a small manually edited file completed under a
 3,000,000 KiB cap, with 13 acceptance and cleanup assertions. These are local
-observations, not supported latency budgets or representative user-file
-measurements. Quadratic time remains a tradeoff. Permanent regression additions
-are deferred to the wave gate by the worker contract.
+observations from that fixture run. The representative measurements and proposed
+envelope are in tests/fixtures/performance/evidence.md. Quadratic time remains a
+tradeoff. Permanent regression additions are deferred to the wave gate by the
+worker contract.

@@ -1,0 +1,62 @@
+kind	name	metric	group	outcome	bytes	lines	max_line	samples	min_ms	median_ms	max_ms	rss_kb	detail
+correspondence	correspondence-lines-200-construct	construct	corr-lines	completed	18795	200	96	3	1	1	1	27840	three differing sources
+correspondence	correspondence-lines-200-edit	edit	corr-lines	completed	18795	200	96	3	1	1	1	27936	one-byte insertion realigned all sources
+correspondence	correspondence-lines-1000-construct	construct	corr-lines	completed	93975	1000	96	3	28	28	41	29452	three differing sources
+correspondence	correspondence-lines-1000-edit	edit	corr-lines	completed	93975	1000	96	3	27	28	28	29684	one-byte insertion realigned all sources
+correspondence	correspondence-lines-2000-construct	construct	corr-lines	completed	187950	2000	96	3	112	112	112	31180	three differing sources
+correspondence	correspondence-lines-2000-edit	edit	corr-lines	completed	187950	2000	96	3	111	111	112	31508	one-byte insertion realigned all sources
+correspondence	correspondence-lines-4000-construct	construct	corr-lines	completed	375900	4000	96	3	450	450	450	35112	three differing sources
+correspondence	correspondence-lines-4000-edit	edit	corr-lines	completed	375900	4000	96	3	449	450	450	35864	one-byte insertion realigned all sources
+correspondence	correspondence-lines-8000-construct	construct	corr-lines	completed	751800	8000	96	3	1803	1813	1814	42720	three differing sources
+correspondence	correspondence-lines-8000-edit	edit	corr-lines	completed	751800	8000	96	3	1799	1801	1803	44112	one-byte insertion realigned all sources
+correspondence	correspondence-lines-16000-construct	construct	corr-lines	completed	1503600	16000	96	3	7221	7222	7224	58172	three differing sources
+correspondence	correspondence-lines-16000-edit	edit	corr-lines	completed	1503600	16000	96	3	7206	7208	7209	60924	one-byte insertion realigned all sources
+correspondence	correspondence-long-4096-construct	construct	corr-long	completed	4096	1	4096	3	0	0	0	27480	three differing sources
+correspondence	correspondence-long-4096-edit	edit	corr-long	completed	4096	1	4096	3	0	0	0	27560	one-byte insertion realigned all sources
+correspondence	correspondence-long-65536-construct	construct	corr-long	completed	65536	1	65536	3	0	0	0	28580	three differing sources
+correspondence	correspondence-long-65536-edit	edit	corr-long	completed	65536	1	65536	3	0	0	0	28776	one-byte insertion realigned all sources
+correspondence	correspondence-long-1048576-construct	construct	corr-long	completed	1048576	1	1048576	3	7	11	12	46908	three differing sources
+correspondence	correspondence-long-1048576-edit	edit	corr-long	completed	1048576	1	1048576	3	5	7	8	48976	one-byte insertion realigned all sources
+correspondence	correspondence-long-8388608-construct	construct	corr-long	completed	8388608	1	8388608	3	69	70	70	183108	three differing sources
+correspondence	correspondence-long-8388608-edit	edit	corr-long	completed	8388608	1	8388608	3	46	46	46	199444	one-byte insertion realigned all sources
+correspondence	correspondence-identical-4000-construct	construct	corr-control	completed	375900	4000	96	1	3	3	3	34376	identical buffers take the direct path
+correspondence	correspondence-identical-4000-edit	edit	corr-control	completed	375900	4000	96	1	462	462	462	35472	one-byte insertion realigned all sources
+editor	editor-startup	startup	editor-lines	completed	0	0	0	3	65	75	79	59472	offscreen software scene startup, excluded from the envelope
+editor	editor-lines-200-load	load	editor-lines	completed	18795	200	96	3	13	13	16	60620	three panes, offscreen software, layout included
+editor	editor-lines-200-key	key	editor-lines	completed	18795	200	96	3	0	0	0	60744	inserted one ASCII letter at the start
+editor	editor-lines-2000-load	load	editor-lines	completed	187950	2000	96	3	104	107	107	66140	three panes, offscreen software, layout included
+editor	editor-lines-2000-key	key	editor-lines	completed	187950	2000	96	3	0	0	0	66288	inserted one ASCII letter at the start
+editor	editor-lines-10000-load	load	editor-lines	completed	939750	10000	96	3	526	528	531	90920	three panes, offscreen software, layout included
+editor	editor-lines-10000-key	key	editor-lines	completed	939750	10000	96	3	3	3	3	90920	inserted one ASCII letter at the start
+editor	editor-lines-20000-load	load	editor-lines	completed	1879500	20000	96	3	1067	1073	1076	121536	three panes, offscreen software, layout included
+editor	editor-lines-20000-key	key	editor-lines	completed	1879500	20000	96	3	10	10	13	121536	inserted one ASCII letter at the start
+editor	editor-long-1024-load	load	editor-long	completed	1024	1	1024	3	0	0	0	59664	three panes, offscreen software, layout included
+editor	editor-long-1024-key	key	editor-long	completed	1024	1	1024	3	0	0	0	59852	inserted one ASCII letter at the start
+editor	editor-long-8192-load	load	editor-long	completed	8192	1	8192	3	10	11	13	61356	three panes, offscreen software, layout included
+editor	editor-long-8192-key	key	editor-long	completed	8192	1	8192	3	1	1	3	61708	inserted one ASCII letter at the start
+editor	editor-long-65536-load	load	editor-long	completed	65536	1	65536	3	69	70	70	70860	three panes, offscreen software, layout included
+editor	editor-long-65536-key	key	editor-long	completed	65536	1	65536	3	23	23	23	73380	inserted one ASCII letter at the start
+editor	editor-long-262144-load	load	editor-long	completed	262144	1	262144	3	281	284	297	110496	three panes, offscreen software, layout included
+editor	editor-long-262144-key	key	editor-long	completed	262144	1	262144	3	89	89	109	112740	inserted one ASCII letter at the start
+editor	editor-long-1048576-load	load	editor-long	completed	1048576	1	1048576	3	1178	1193	1197	255676	three panes, offscreen software, layout included
+editor	editor-long-1048576-key	key	editor-long	completed	1048576	1	1048576	3	387	394	395	267968	inserted one ASCII letter at the start
+editor	editor-long-4194304-load	load	editor-long	explicit-failure	4194304	1	4194304	3	-	-	-	795492	loaded=4194304 expected=4194304 width=0 height=19 text retained but layout geometry is empty
+editor	editor-long-4194304-key	key	editor-long	incomplete	4194304	1	4194304	3	-	-	-	795492	skipped after the load was not completed
+git	git-read-65536	read	git-read	completed	65536	1	65536	3	14	14	15	30756	api=Success incomplete=0 captured=65536 expected=65536 exit=0 git_rss_kb=512 diagnostic=
+git	git-read-1048576	read	git-read	completed	1048576	1	1048576	3	15	15	16	33044	api=Success incomplete=0 captured=1048576 expected=1048576 exit=0 git_rss_kb=4364 diagnostic=
+git	git-read-4194304	read	git-read	completed	4194304	1	4194304	3	21	24	24	42280	api=Success incomplete=0 captured=4194304 expected=4194304 exit=0 git_rss_kb=8272 diagnostic=
+git	git-read-8388608	read	git-read	explicit-failure	8388608	1	8388608	3	-	-	-	46704	api=OutputLimit incomplete=1 captured=8387891 expected=8388608 exit=-1 git_rss_kb=4388 diagnostic=Git output exceeded 8 MiB; captured prefix is incomplete
+git	git-read-over-limit	read	git-probe	explicit-failure	8392704	1	8392704	1	-	-	-	46864	api=OutputLimit incomplete=1 captured=8387891 expected=8392704 exit=-1 git_rss_kb=12056 diagnostic=Git output exceeded 8 MiB; captured prefix is incomplete
+git	git-input-over-limit	input	git-probe	explicit-failure	8388609	1	8388609	1	-	-	-	37200	api=Rejected incomplete=0 captured=0 expected=8388609 exit=-1 git_rss_kb=- diagnostic=Invalid operands for the named Git operation
+recovery	recovery-4096-commit	commit	recovery	completed	4096	1	4096	3	14	15	15	29140	acknowledged=1 transactions=1 incompleteTail=0 error=
+recovery	recovery-4096-reload	reload	recovery	completed	4096	1	4096	3	0	0	0	29244	journal and payload match the acknowledged bytes
+recovery	recovery-65536-commit	commit	recovery	completed	65536	1	65536	3	16	16	17	29168	acknowledged=1 transactions=1 incompleteTail=0 error=
+recovery	recovery-65536-reload	reload	recovery	completed	65536	1	65536	3	1	1	1	29336	journal and payload match the acknowledged bytes
+recovery	recovery-1048576-commit	commit	recovery	completed	1048576	1	1048576	3	44	44	46	31108	acknowledged=1 transactions=1 incompleteTail=0 error=
+recovery	recovery-1048576-reload	reload	recovery	completed	1048576	1	1048576	3	17	17	25	32252	journal and payload match the acknowledged bytes
+recovery	recovery-4194304-commit	commit	recovery	completed	4194304	1	4194304	3	87	87	96	37264	acknowledged=1 transactions=1 incompleteTail=0 error=
+recovery	recovery-4194304-reload	reload	recovery	completed	4194304	1	4194304	3	68	68	68	41480	journal and payload match the acknowledged bytes
+recovery	recovery-8388608-commit	commit	recovery	completed	8388608	1	8388608	3	163	164	165	45504	acknowledged=1 transactions=1 incompleteTail=0 error=
+recovery	recovery-8388608-reload	reload	recovery	completed	8388608	1	8388608	3	137	137	137	53816	journal and payload match the acknowledged bytes
+recovery	recovery-bad-digest	bad-digest	recovery-probe	explicit-failure	64	1	64	1	-	-	-	28940	acknowledged=0 transactions=0 incompleteTail=0 error=Invalid recovery payload identity.
+recovery	recovery-overload	overload	recovery-probe	explicit-failure	1048576	1	1048576	1	-	-	-	29952	acknowledged=0 transactions=0 incompleteTail=0 error=Could not commit a recovery payload; pending input is retained.

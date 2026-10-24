@@ -174,8 +174,8 @@ unsaved; it implies neither review nor Git resolution.
 
 New committed regression tests are deferred to the wave gate under the worker
 contract; these local acceptance fixtures remain reproducible. Add coverage for
-all native mutation routes, cursor/selection restoration after application undo,
-large-file responsiveness and resource limits. Replace full-buffer snapshots,
+all native mutation routes and for cursor and selection restoration after application undo.
+Representative editor, correspondence, Git and recovery measurements, including long lines, are in tests/fixtures/performance/evidence.md. Enforced resource limits remain TRUCE-0029. Replace full-buffer snapshots,
 linear offset scans and whole-text rerendering before production-scale use.
 Implement acknowledgment queuing and normal-close/file-switch behavior, including
 explicit disposition of pending composition. Do not infer support for arbitrary

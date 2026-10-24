@@ -89,6 +89,18 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     set_tests_properties(editor.baseline editor.regression PROPERTIES TIMEOUT 30
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
+    # Gate profile classifies outcomes. The evidence profile publishes timings.
+    add_executable(branch_truce_workload_measurements performance/WorkloadMeasurements.cpp)
+    target_link_libraries(branch_truce_workload_measurements PRIVATE branch_truce_core
+        branch_truce_storage branch_truce_git Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
+    target_compile_definitions(branch_truce_workload_measurements PRIVATE
+        "BRANCH_TRUCE_MEASUREMENT_BUILD=\"${CMAKE_BUILD_TYPE}\"")
+    qt_add_resources(branch_truce_workload_measurements workload_editor PREFIX "/" BASE "${editor_fixture}"
+        FILES "${editor_fixture}/Editor.qml")
+    add_test(NAME performance.workloads COMMAND branch_truce_workload_measurements --profile gate)
+    set_tests_properties(performance.workloads PROPERTIES TIMEOUT 180
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
     add_test(NAME desktop.startup COMMAND branch-truce --smoke-test)
     set_tests_properties(desktop.startup PROPERTIES TIMEOUT 30
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
