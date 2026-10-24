@@ -7,7 +7,7 @@ namespace branch_truce::git {
 enum class ConflictSupport {
     SupportedText, MissingSide, ModeConflict, UnsupportedType, TopologyConflict,
     UnsupportedText, UnsupportedConversion, UnverifiedSource, UnsupportedOperation,
-    InspectionFailure
+    InspectionFailure, LoadFailure
 };
 struct Conflict {
     QByteArray path; // Exact repository filename bytes, including unsupported paths.

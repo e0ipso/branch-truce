@@ -19,6 +19,10 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QString stage2 READ stage2 NOTIFY launchChanged)
     Q_PROPERTY(QString stage3 READ stage3 NOTIFY launchChanged)
     Q_PROPERTY(QString workflow READ workflow CONSTANT)
+    Q_PROPERTY(QString selectedFileId READ selectedFileId NOTIFY selectedFileChanged)
+    Q_PROPERTY(QVariantMap selectedFile READ selectedFile NOTIFY selectedFileChanged)
+    Q_PROPERTY(int outsideAppFiles READ outsideAppFiles NOTIFY inventoryChanged)
+    Q_PROPERTY(int loadErrorFiles READ loadErrorFiles NOTIFY inventoryChanged)
 public:
     explicit ApplicationController(QObject *parent = nullptr);
     [[nodiscard]] QString version() const;
@@ -32,12 +36,21 @@ public:
     [[nodiscard]] QString stage2() const;
     [[nodiscard]] QString stage3() const;
     [[nodiscard]] QString workflow() const;
+    [[nodiscard]] QString selectedFileId() const { return selectedFileId_; }
+    [[nodiscard]] QVariantMap selectedFile() const;
+    [[nodiscard]] int outsideAppFiles() const;
+    [[nodiscard]] int loadErrorFiles() const;
+    // Select by the exact byte-derived file ID, never by a display path.
+    Q_INVOKABLE bool selectFile(const QString &fileId);
+    Q_INVOKABLE QString displayPath(const QString &fileId) const;
     // One launched repository session per controller. Paths are launch directories,
     // never inferred from a filename or a Git environment override.
     bool openRepository(const QString &directory);
 
 Q_SIGNALS:
     void launchChanged();
+    void selectedFileChanged();
+    void inventoryChanged();
 
 private:
     void classified(const git::ConflictClassificationResult &result);
@@ -50,5 +63,6 @@ private:
     QString state_ = QStringLiteral("idle");
     QString operation_;
     QString detail_;
+    QString selectedFileId_;
 };
 }

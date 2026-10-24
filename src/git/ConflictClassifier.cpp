@@ -6,6 +6,7 @@
 #include <QThread>
 #include <QTimer>
 #include <array>
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -47,31 +48,46 @@ SnapshotFileIdentity fileIdentity(const struct stat &info)
         static_cast<std::int64_t>(info.st_mtim.tv_sec), static_cast<std::int64_t>(info.st_mtim.tv_nsec),
         static_cast<std::int64_t>(info.st_ctim.tv_sec), static_cast<std::int64_t>(info.st_ctim.tv_nsec)};
 }
-bool readResult(const QString &root, const QByteArray &path, QByteArray &bytes,
-                SnapshotFileIdentity &identity)
+enum class ResultRead { Success, UnsupportedTopology, Failed };
+ResultRead readResult(const QString &root, const QByteArray &path, QByteArray &bytes,
+                      SnapshotFileIdentity &identity)
 {
     int fd = ::open(QFile::encodeName(root).constData(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
-    if (fd < 0) return false;
+    if (fd < 0) return ResultRead::Failed;
     const auto parts = path.split('/');
     for (qsizetype i = 0; i < parts.size(); ++i) {
         const bool last = i + 1 == parts.size();
         const int flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | (last ? O_NONBLOCK : O_DIRECTORY);
         const int next = ::openat(fd, parts[i].constData(), flags);
+        const int error = errno;
         ::close(fd);
-        if (next < 0) return false;
+        if (next < 0) return error == ELOOP || error == ENOTDIR
+            ? ResultRead::UnsupportedTopology : ResultRead::Failed;
         fd = next;
     }
     struct stat info {};
-    if (::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) { ::close(fd); return false; }
+    if (::fstat(fd, &info) != 0) { ::close(fd); return ResultRead::Failed; }
+    if (!S_ISREG(info.st_mode)) { ::close(fd); return ResultRead::UnsupportedTopology; }
     QFile file;
-    if (!file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) { ::close(fd); return false; }
+    if (!file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) { ::close(fd); return ResultRead::Failed; }
     constexpr qsizetype limit = 8 * 1024 * 1024;
     bytes = file.read(limit + 1);
     struct stat after {};
     if (file.error() != QFileDevice::NoError || bytes.size() > limit
-        || ::fstat(fd, &after) != 0 || fileIdentity(info) != fileIdentity(after)) return false;
+        || ::fstat(fd, &after) != 0 || fileIdentity(info) != fileIdentity(after)) return ResultRead::Failed;
     identity = fileIdentity(info);
-    return true;
+    return ResultRead::Success;
+}
+
+void excludeUnreadResult(Conflict &conflict, ResultRead read)
+{
+    if (read == ResultRead::UnsupportedTopology) {
+        exclude(conflict, ConflictSupport::TopologyConflict,
+            QStringLiteral("Outside app: current result must be a regular file without symlink traversal"));
+    } else {
+        exclude(conflict, ConflictSupport::LoadFailure,
+            QStringLiteral("Load error: current result could not be read completely and stably within the 8 MiB limit; check the file and reopen the session"));
+    }
 }
 } // namespace
 
@@ -115,8 +131,10 @@ public:
                 if (!conflict.editable()) continue;
                 QByteArray current;
                 SnapshotFileIdentity identity;
-                if (!readResult(result.repository.worktreeRoot, conflict.path, current, identity)
-                    || current != conflict.result->originalBytes || identity != conflict.resultIdentity) {
+                const auto read = readResult(result.repository.worktreeRoot, conflict.path, current, identity);
+                if (read != ResultRead::Success) {
+                    excludeUnreadResult(conflict, read);
+                } else if (current != conflict.result->originalBytes || identity != conflict.resultIdentity) {
                     exclude(conflict, ConflictSupport::TopologyConflict,
                         QStringLiteral("Outside app: current result changed or became unreadable during classification; inspect again"));
                 } else if (conflict.sources.front().policy.configuration != observed.conversionPolicy.configuration) {
@@ -182,13 +200,13 @@ public:
         while (offset < result.conflicts.size()) {
             auto &conflict = result.conflicts[offset];
             if (conflict.editable()) {
-                if (readResult(result.repository.worktreeRoot, conflict.path, launchBytes, launchIdentity)) {
+                const auto read = readResult(result.repository.worktreeRoot, conflict.path, launchBytes, launchIdentity);
+                if (read == ResultRead::Success) {
                     source = 0;
                     readSource();
                     return;
                 }
-                exclude(conflict, ConflictSupport::TopologyConflict,
-                    QStringLiteral("Outside app: current result must be a readable regular file without symlink traversal and within the 8 MiB limit"));
+                excludeUnreadResult(conflict, read);
             }
             ++offset;
         }

@@ -449,7 +449,7 @@ public:
                  {"submodule-source", ConflictSupport::UnsupportedType}, {"binary-source", ConflictSupport::UnsupportedText},
                  {"symlink-base", ConflictSupport::UnsupportedType}, {"submodule-base", ConflictSupport::UnsupportedType},
                  {"invalid-utf8-source", ConflictSupport::UnsupportedText}, {"mixed-newlines-source", ConflictSupport::UnsupportedText},
-                 {"invalid-result", ConflictSupport::UnsupportedText}, {"missing-result", ConflictSupport::TopologyConflict},
+                 {"invalid-result", ConflictSupport::UnsupportedText}, {"missing-result", ConflictSupport::LoadFailure},
                  {"directory-result", ConflictSupport::TopologyConflict}, {"fifo-result", ConflictSupport::TopologyConflict},
                  {"symlink-result", ConflictSupport::TopologyConflict}, {"excluded-attributes", ConflictSupport::UnsupportedConversion},
                  {"filter", ConflictSupport::UnsupportedConversion}, {"unverified-source", ConflictSupport::UnverifiedSource}}) {

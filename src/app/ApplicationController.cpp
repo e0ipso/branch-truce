@@ -6,6 +6,26 @@
 
 namespace branch_truce {
 namespace {
+QString text(const std::string &value)
+{
+    return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size()));
+}
+
+QVariantMap sourceData(const std::optional<SourceSnapshot> &source)
+{
+    if (!source) return {};
+    return {{QStringLiteral("available"), true}, {QStringLiteral("text"), text(source->worktree.utf8)},
+            {QStringLiteral("label"), text(source->label)}, {QStringLiteral("objectId"), text(source->objectId)},
+            {QStringLiteral("commitId"), source->commitId ? text(*source->commitId) : QString{}},
+            {QStringLiteral("mode"), text(source->mode)}};
+}
+
+Support supportFor(const git::Conflict &file)
+{
+    return file.support == git::ConflictSupport::LoadFailure || file.support == git::ConflictSupport::InspectionFailure
+        ? Support::Unreadable : Support::OutsideApp;
+}
+
 TextSnapshot textSnapshot(const storage::TextDocument &document)
 {
     SnapshotFormat format;
@@ -81,6 +101,14 @@ ApplicationController::ApplicationController(QObject *parent)
       classifier_(QStandardPaths::findExecutable(QStringLiteral("git")), this)
 {
     connect(&classifier_, &git::ConflictClassifier::finished, this, &ApplicationController::classified);
+    connect(&files_, &SessionModel::summaryChanged, this, [this] {
+        if (!files_.file(selectedFileId_.toStdString())) {
+            selectedFileId_ = files_.totalFiles() > 0
+                ? files_.data(files_.index(0), SessionModel::FileIdRole).toString() : QString{};
+        }
+        Q_EMIT inventoryChanged();
+        Q_EMIT selectedFileChanged();
+    });
 }
 QString ApplicationController::version() const
 {
@@ -104,6 +132,70 @@ QString ApplicationController::workflow() const
 {
     return tr("Continue the operation and commit in your usual Git workflow. "
               "This session covers only the work opened at launch.");
+}
+
+QString ApplicationController::displayPath(const QString &fileId) const
+{
+    const auto *file = files_.file(fileId.toStdString());
+    if (!file) return {};
+    auto display = text(file->path());
+    const QByteArray bytes(file->path().data(), static_cast<qsizetype>(file->path().size()));
+    const bool exact = display.toUtf8() == bytes;
+    display.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    display.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+    display.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
+    display.replace(QLatin1Char('\t'), QStringLiteral("\\t"));
+    return exact ? display : tr("%1 [path bytes: %2]").arg(display, QString::fromLatin1(bytes.toHex()));
+}
+
+QVariantMap ApplicationController::selectedFile() const
+{
+    const auto *file = files_.file(selectedFileId_.toStdString());
+    if (!file) return {};
+    QString support;
+    switch (file->support()) {
+    case Support::Supported: support = QStringLiteral("supported"); break;
+    case Support::OutsideApp: support = QStringLiteral("outside-app"); break;
+    case Support::Unreadable: support = QStringLiteral("unreadable"); break;
+    }
+    QVariantMap result{{QStringLiteral("fileId"), selectedFileId_},
+        {QStringLiteral("path"), displayPath(selectedFileId_)},
+        {QStringLiteral("pathBytes"), QByteArray(file->path().data(), static_cast<qsizetype>(file->path().size()))},
+        {QStringLiteral("support"), support}, {QStringLiteral("supportDetail"), text(file->supportDetail())},
+        {QStringLiteral("resultText"), text(file->current().draft.text)}};
+    if (const auto &snapshots = file->snapshots(); snapshots && file->support() == Support::Supported) {
+        result.insert(QStringLiteral("stage2"), sourceData(snapshots->stage2));
+        result.insert(QStringLiteral("stage3"), sourceData(snapshots->stage3));
+        result.insert(QStringLiteral("earlier"), sourceData(snapshots->earlier));
+        result.insert(QStringLiteral("initialResult"), QVariantMap{
+            {QStringLiteral("text"), text(snapshots->launchResult.text.utf8)}});
+    }
+    return result;
+}
+
+bool ApplicationController::selectFile(const QString &fileId)
+{
+    if (!files_.file(fileId.toStdString())) return false;
+    if (selectedFileId_ == fileId) return true;
+    selectedFileId_ = fileId;
+    Q_EMIT selectedFileChanged();
+    return true;
+}
+
+int ApplicationController::outsideAppFiles() const
+{
+    int count = 0;
+    for (int row = 0; row < files_.totalFiles(); ++row)
+        if (files_.data(files_.index(row), SessionModel::SupportRole).toString() == QLatin1String("outside-app")) ++count;
+    return count;
+}
+
+int ApplicationController::loadErrorFiles() const
+{
+    int count = 0;
+    for (int row = 0; row < files_.totalFiles(); ++row)
+        if (files_.data(files_.index(row), SessionModel::SupportRole).toString() == QLatin1String("unreadable")) ++count;
+    return count;
 }
 
 void ApplicationController::setState(QString state, QString detail)
@@ -141,7 +233,7 @@ void ApplicationController::classified(const git::ConflictClassificationResult &
         std::vector<FileSession> files;
         for (const auto &file : result.conflicts) {
             files.emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), Draft{},
-                               Support::OutsideApp, file.reason.toStdString());
+                               supportFor(file), file.reason.isEmpty() ? result.diagnostic.toStdString() : file.reason.toStdString());
         }
         if (!files.empty()) coordinator_.replaceSession(repository_.worktreeRoot, QStringLiteral("unsupported"), std::move(files));
         if (result.outcome != git::Outcome::Success) {
@@ -182,7 +274,7 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
             for (const auto &file : files) {
                 if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
                 Draft draft;
-                auto support = Support::OutsideApp;
+                auto support = supportFor(file);
                 auto detail = file.reason;
                 auto snapshots = captureFile(file, repository, sessionId);
                 if (snapshots) {
@@ -192,7 +284,8 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
                     draft.unresolvedMarkers = static_cast<std::size_t>(std::count_if(
                         lines.cbegin(), lines.cend(), [](const auto &line) { return line.startsWith("<<<<<<<"); }));
                 } else if (detail.isEmpty()) {
-                    detail = QStringLiteral("Outside app: conflict inspection did not provide complete source and result snapshots; inspect again.");
+                    support = Support::Unreadable;
+                    detail = QStringLiteral("Load error: conflict inspection did not provide complete source and result snapshots; reopen the session.");
                 }
                 loaded->emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), std::move(draft),
                                      support, detail.toStdString(), std::move(snapshots));

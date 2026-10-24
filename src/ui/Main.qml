@@ -8,22 +8,61 @@ import org.kde.kirigami as Kirigami
 Kirigami.ApplicationWindow {
     id: window
     required property var controller
-    readonly property ConflictRow selectedFile: fileList.currentItem as ConflictRow
+    readonly property var selectedFile: controller.selectedFile
+    readonly property bool supportedSelection: selectedFile.support === "supported"
     component ConflictRow: ItemDelegate {
         id: row
         required property int index
-        required property string path
+        required property string fileId
         required property string support
         required property string supportDetail
-        required property string resultText
         width: ListView.view.width
-        text: path + (support === "supported" ? ""
-            : support === "unreadable" ? qsTr(" · unreadable") : qsTr(" · outside app"))
-        highlighted: ListView.isCurrentItem
-        contentItem: Label {
-            text: row.text
+        text: window.controller.displayPath(fileId) + (support === "supported" ? ""
+            : support === "unreadable" ? qsTr(" · load error · outside app") : qsTr(" · outside app"))
+        highlighted: fileId === window.controller.selectedFileId
+        contentItem: ColumnLayout {
+            Label {
+                Layout.fillWidth: true
+                text: row.text
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: row.support !== "supported"
+                text: row.supportDetail
+                textFormat: Text.PlainText
+                wrapMode: Text.WrapAnywhere
+            }
+        }
+    }
+    component SnapshotPane: ColumnLayout {
+        id: pane
+        required property string paneName
+        required property string paneTitle
+        required property string paneText
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        Label {
+            objectName: pane.paneName + "Label"
+            Layout.fillWidth: true
+            text: pane.paneTitle
             textFormat: Text.PlainText
             wrapMode: Text.WrapAnywhere
+        }
+        ScrollView {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            TextArea {
+                objectName: pane.paneName + "Text"
+                text: pane.paneText
+                readOnly: true
+                selectByMouse: true
+                textFormat: TextEdit.PlainText
+                font.family: "monospace"
+                wrapMode: TextEdit.NoWrap
+                Accessible.name: pane.paneTitle
+            }
         }
     }
     width: 1000
@@ -56,6 +95,15 @@ Kirigami.ApplicationWindow {
                     .arg(window.controller.files.totalFiles).arg(window.controller.files.resolvedFiles)
                 visible: !window.controller.opening && window.controller.files.totalFiles > 0
             }
+            Kirigami.InlineMessage {
+                objectName: "inventoryWarning"
+                Layout.fillWidth: true
+                visible: !window.controller.opening
+                    && window.controller.outsideAppFiles + window.controller.loadErrorFiles > 0
+                type: Kirigami.MessageType.Warning
+                text: qsTr("%1 outside app · %2 load errors. These files remain outstanding. Select a file for its reason and handle it outside Branch Truce.")
+                    .arg(window.controller.outsideAppFiles).arg(window.controller.loadErrorFiles)
+            }
             RowLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -69,7 +117,10 @@ Kirigami.ApplicationWindow {
                     currentIndex: 0
                     delegate: ConflictRow {
                         id: fileDelegate
-                        onClicked: fileList.currentIndex = fileDelegate.index
+                        onClicked: {
+                            fileList.currentIndex = fileDelegate.index;
+                            window.controller.selectFile(fileDelegate.fileId);
+                        }
                     }
                     ScrollBar.vertical: ScrollBar {}
                 }
@@ -78,34 +129,57 @@ Kirigami.ApplicationWindow {
                     Layout.fillHeight: true
                     Label {
                         Layout.fillWidth: true
-                        text: window.selectedFile ? window.selectedFile.path : ""
+                        objectName: "selectedPath"
+                        text: window.selectedFile.path || ""
                         textFormat: Text.PlainText
                         wrapMode: Text.WrapAnywhere
                         font.bold: true
                     }
                     Label {
                         Layout.fillWidth: true
-                        visible: !!window.selectedFile && window.selectedFile.support !== "supported"
-                        text: window.selectedFile ? window.selectedFile.supportDetail : ""
+                        objectName: "selectedProblem"
+                        visible: window.controller.selectedFileId.length > 0 && !window.supportedSelection
+                        text: (window.selectedFile.support === "unreadable"
+                            ? qsTr("Load error · outside app · outstanding\n") : qsTr("Outside app · outstanding\n"))
+                            + (window.selectedFile.supportDetail || "")
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
                     }
-                    Label {
-                        visible: !!window.selectedFile && window.selectedFile.support === "supported"
-                        text: qsTr("Current working file · preview")
-                    }
-                    ScrollView {
+                    RowLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: !!window.selectedFile && window.selectedFile.support === "supported"
-                        TextArea {
-                            text: window.selectedFile ? window.selectedFile.resultText : ""
-                            readOnly: true
-                            selectByMouse: true
-                            textFormat: TextEdit.PlainText
-                            font.family: "monospace"
-                            wrapMode: TextEdit.NoWrap
+                        visible: window.supportedSelection
+                        SnapshotPane {
+                            paneName: "stage2"
+                            paneTitle: window.selectedFile.stage2
+                                ? window.selectedFile.stage2.label + "\n" + window.selectedFile.stage2.objectId : ""
+                            paneText: window.selectedFile.stage2 ? window.selectedFile.stage2.text : ""
                         }
+                        SnapshotPane {
+                            paneName: "result"
+                            paneTitle: qsTr("Result · preview")
+                            paneText: window.selectedFile.resultText || ""
+                        }
+                        SnapshotPane {
+                            paneName: "stage3"
+                            paneTitle: window.selectedFile.stage3
+                                ? window.selectedFile.stage3.label + "\n" + window.selectedFile.stage3.objectId : ""
+                            paneText: window.selectedFile.stage3 ? window.selectedFile.stage3.text : ""
+                        }
+                    }
+                    CheckBox {
+                        id: showEarlier
+                        objectName: "showEarlier"
+                        visible: window.supportedSelection
+                        enabled: !!window.selectedFile.earlier && !!window.selectedFile.earlier.available
+                        text: enabled ? qsTr("Show common earlier version") : qsTr("Common earlier version unavailable")
+                    }
+                    SnapshotPane {
+                        visible: window.supportedSelection && showEarlier.enabled && showEarlier.checked
+                        paneName: "earlier"
+                        paneTitle: window.selectedFile.earlier
+                            ? window.selectedFile.earlier.label + "\n" + window.selectedFile.earlier.objectId : ""
+                        paneText: window.selectedFile.earlier ? window.selectedFile.earlier.text : ""
                     }
                 }
             }

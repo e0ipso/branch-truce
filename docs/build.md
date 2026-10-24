@@ -5,8 +5,12 @@ The build separates `branch_truce_core`, `branch_truce_controller`,
 `branch-truce` executable. Git provides constrained asynchronous inspection and
 conversion; storage provides lossless text codecs. See the
 [supported conversion envelope](text-conversion.md). The window opens the launched
-repository's current conflict session with a file list and a read-only working-file
-preview. Editing and resolution controls remain separate implementation work.
+repository's complete current conflict inventory, including outside-app work and
+load errors with persistent reasons. Selecting a file by its exact byte-derived ID
+opens read-only captured sources around the preserved result preview; the common
+earlier version is available on demand. The session warning keeps outside-app work
+visible while supported files are selected. Editing and resolution controls remain
+separate implementation work.
 The core uses C++20 and the standard library without Qt or platform I/O.
 
 ## Machine provisioning
