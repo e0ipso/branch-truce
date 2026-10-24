@@ -10,6 +10,11 @@ add_test(NAME lifecycle.cli-guards
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/SetupGuards.sh")
 set_tests_properties(lifecycle.cli-guards PROPERTIES TIMEOUT 30)
 if(BRANCH_TRUCE_BUILD_DESKTOP)
+    add_executable(branch_truce_text_format_tests storage/TextFormatTests.cpp)
+    target_include_directories(branch_truce_text_format_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_text_format_tests PRIVATE branch_truce_storage branch_truce_build_options)
+    add_test(NAME storage.text-format COMMAND branch_truce_text_format_tests)
+
     add_executable(branch_truce_model_tests app/SessionModelTests.cpp)
     target_include_directories(branch_truce_model_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_model_tests PRIVATE branch_truce_controller branch_truce_build_options)

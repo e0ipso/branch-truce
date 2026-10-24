@@ -6,6 +6,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
@@ -197,6 +198,83 @@ Result run(GitAdapter &adapter, const Request &request)
     return completion.run(request);
 }
 
+QByteArray commitFixture(const Repository &repo, const QString &message)
+{
+    repo.git({"-c", "user.name=Branch Truce Tests", "-c", "user.email=tests@example.invalid",
+              "commit", "--quiet", "-am", message});
+    return repo.git({"rev-parse", "HEAD"}).trimmed();
+}
+
+QByteArray numberedText(const QByteArray &tenth)
+{
+    QByteArray bytes;
+    for (int line = 1; line <= 50; ++line) bytes += (line == 10 ? tenth : QByteArray::number(line)) + '\n';
+    return bytes;
+}
+
+struct ConflictHistory { QByteArray base; QByteArray main; QByteArray side; };
+
+ConflictHistory conflictHistory(Repository &repo, bool renamed = false)
+{
+    repo.git({"config", "user.name", "Branch Truce Tests"});
+    repo.git({"config", "user.email", "tests@example.invalid"});
+    writeFile(repo.path("tracked.txt"), "base\n");
+    if (renamed) {
+        writeFile(repo.path("a.txt"), numberedText("10"));
+        repo.git({"add", "--", "a.txt"});
+    }
+    ConflictHistory history;
+    history.base = commitFixture(repo, "base");
+    repo.git({"checkout", "--quiet", "-b", "side"});
+    writeFile(repo.path("tracked.txt"), "side\n");
+    if (renamed) writeFile(repo.path("a.txt"), numberedText("side"));
+    history.side = commitFixture(repo, "side");
+    repo.git({"checkout", "--quiet", "main"});
+    writeFile(repo.path("tracked.txt"), "main\n");
+    if (renamed) {
+        repo.git({"mv", "--", "a.txt", "b.txt"});
+        writeFile(repo.path("b.txt"), numberedText("main"));
+    }
+    history.main = commitFixture(repo, "main");
+    return history;
+}
+
+void checkOperationIdentity(const Result &result, const ConflictHistory &history, RepositoryOperation operation)
+{
+    CHECK(result.outcome == Outcome::Success && result.exitCode == 0);
+    CHECK(result.mutation == Mutation::NotAttempted && !result.outputIncomplete);
+    CHECK(result.repository.supported && result.repository.operation == operation);
+    CHECK(result.repository.unsupportedPaths.isEmpty() && result.repository.diagnostic.isEmpty());
+    CHECK(result.repository.stage2.commitId == history.main && result.repository.stage3.commitId == history.side);
+    CHECK(result.repository.baseCommitId == history.base);
+    CHECK(result.repository.stage2.label.contains(QString::fromLatin1(history.main)));
+    CHECK(result.repository.stage3.label.contains(QString::fromLatin1(history.side)));
+    if (operation == RepositoryOperation::Rebase) {
+        CHECK(result.repository.stage2.label.startsWith("Current rebased state:"));
+        CHECK(result.repository.stage3.label.startsWith("Commit being replayed:"));
+        CHECK(result.repository.headName == "refs/heads/side");
+        CHECK(result.repository.originalHead == history.side && result.repository.onto == history.main);
+    } else {
+        CHECK(result.repository.stage2.label.startsWith("Current checkout:"));
+        CHECK(result.repository.stage3.label.startsWith("Merged commit:"));
+        CHECK(result.repository.headName.isEmpty() && result.repository.originalHead.isEmpty() && result.repository.onto.isEmpty());
+    }
+}
+
+void checkUnsupportedDiscovery(Repository &repo, const QString &reason, Outcome outcome = Outcome::InspectionFailure)
+{
+    const auto before = repo.git({"ls-files", "--unmerged", "-z"});
+    GitAdapter adapter(gitExecutable);
+    const auto result = run(adapter, repo.request(Operation::DiscoverRepository));
+    CHECK(result.outcome == outcome && !result.repository.supported);
+    CHECK(result.repository.operation == RepositoryOperation::Unsupported);
+    CHECK(result.repository.diagnostic.contains(reason));
+    CHECK(result.repository.stage2.commitId.isEmpty() && result.repository.stage3.commitId.isEmpty());
+    CHECK(result.indexEntries.size() == before.count('\0') && !result.indexEntries.isEmpty());
+    CHECK(result.mutation == Mutation::NotAttempted);
+    CHECK(repo.git({"ls-files", "--unmerged", "-z"}) == before);
+}
+
 TextConversionRequest textRequest(const Repository &repo, TextOperation operation, const QByteArray &object)
 {
     TextConversionRequest request;
@@ -312,6 +390,419 @@ public:
     int runTests()
     {
         test_support::Suite suite("GitAdapterTests");
+        suite.run("merge discovery uses per-worktree metadata and verified stage identities", [] {
+            for (const bool linked : {false, true}) {
+                Repository repo;
+                const auto history = conflictHistory(repo);
+                QTemporaryDir linkedParent;
+                CHECK(linkedParent.isValid());
+                auto directory = repo.root.path();
+                if (linked) {
+                    directory = linkedParent.path() + "/checkout";
+                    repo.git({"worktree", "add", "--quiet", "--detach", directory, "main"});
+                }
+                repo.git({"-C", directory, "merge", "--no-edit", "side"}, {}, 1);
+                CHECK(QDir().mkpath(directory + "/nested"));
+                auto request = repo.request(Operation::DiscoverRepository);
+                request.directory = directory + "/nested";
+                const auto before = repo.git({"-C", directory, "ls-files", "--unmerged", "-z"});
+                GitAdapter adapter(gitExecutable);
+                const auto result = run(adapter, request);
+                checkOperationIdentity(result, history, RepositoryOperation::Merge);
+                CHECK(result.repository.worktreeRoot == directory && result.indexEntries.size() == 3);
+                const auto gitDirectory = QString::fromUtf8(repo.git({"-C", directory, "rev-parse", "--absolute-git-dir"}).trimmed());
+                CHECK(result.repository.gitDirectory == QFileInfo(gitDirectory).canonicalFilePath());
+                CHECK(repo.git({"-C", directory, "ls-files", "--unmerged", "-z"}) == before);
+                if (linked) {
+                    CHECK(result.repository.gitDirectory != repo.path(".git"));
+                    const auto original = run(adapter, repo.request(Operation::DiscoverRepository));
+                    CHECK(original.outcome == Outcome::Success && original.repository.operation == RepositoryOperation::None);
+                    CHECK(!original.repository.supported && original.indexEntries.isEmpty());
+                }
+            }
+        });
+        suite.run("both rebase backends label the current state and replayed commit truthfully", [] {
+            for (const auto backend : {"--merge", "--apply"}) {
+                Repository repo;
+                const auto history = conflictHistory(repo);
+                repo.git({"checkout", "--quiet", "side"});
+                repo.git({"-c", "user.name=Branch Truce Tests", "-c", "user.email=tests@example.invalid",
+                          "rebase", backend, "main"}, {}, 1);
+                GitAdapter adapter(gitExecutable);
+                const auto before = repo.git({"ls-files", "--unmerged", "-z"});
+                const auto result = run(adapter, repo.request(Operation::DiscoverRepository));
+                checkOperationIdentity(result, history, RepositoryOperation::Rebase);
+                CHECK(result.indexEntries.size() == 3 && repo.git({"ls-files", "--unmerged", "-z"}) == before);
+                CHECK(result.repository.gitDirectory == repo.path(".git"));
+            }
+        });
+        suite.run("unsupported and inconsistent operation metadata cannot acquire source labels", [] {
+            for (int scenario = 0; scenario < 8; ++scenario) {
+                Repository repo;
+                const auto history = conflictHistory(repo);
+                repo.git({"merge", "--no-edit", "side"}, {}, 1);
+                QString reason;
+                auto outcome = Outcome::InspectionFailure;
+                if (scenario == 0) {
+                    CHECK(QDir().mkdir(repo.path(".git/rebase-merge")));
+                    reason = "Conflicting merge, rebase";
+                } else if (scenario == 1) {
+                    writeFile(repo.path(".git/MERGE_HEAD"), history.side + '\n' + history.main + '\n');
+                    reason = "multiple MERGE_HEAD";
+                } else if (scenario == 2) {
+                    writeFile(repo.path(".git/MERGE_HEAD"), "not-a-commit\n");
+                    reason = "Invalid commit identity";
+                } else if (scenario == 3) {
+                    CHECK(QFile::remove(repo.path(".git/MERGE_HEAD")));
+                    writeFile(repo.path("marker"), history.side + '\n');
+                    CHECK(QFile::link(repo.path("marker"), repo.path(".git/MERGE_HEAD")));
+                    reason = "not a regular file";
+                } else {
+                    CHECK(QFile::remove(repo.path(".git/MERGE_HEAD")));
+                    if (scenario == 4) {
+                        writeFile(repo.path(".git/CHERRY_PICK_HEAD"), history.side + '\n');
+                        reason = "cherry-pick, revert and sequencer";
+                        outcome = Outcome::Success;
+                    } else if (scenario == 5) {
+                        writeFile(repo.path(".git/REVERT_HEAD"), history.side + '\n');
+                        reason = "cherry-pick, revert and sequencer";
+                        outcome = Outcome::Success;
+                    } else if (scenario == 6) {
+                        CHECK(QDir().mkdir(repo.path(".git/rebase-apply")));
+                        writeFile(repo.path(".git/rebase-apply/applying"), "");
+                        reason = "apply-mailbox";
+                        outcome = Outcome::Success;
+                    } else {
+                        writeFile(repo.path(".git/REBASE_HEAD"), history.side + '\n');
+                        reason = "REBASE_HEAD exists without";
+                    }
+                }
+                checkUnsupportedDiscovery(repo, reason, outcome);
+            }
+        });
+        suite.run("rebase discovery rejects disagreement and unverified ancestry", [] {
+            for (int scenario = 0; scenario < 6; ++scenario) {
+                Repository repo;
+                const auto history = conflictHistory(repo);
+                repo.git({"checkout", "--quiet", "side"});
+                repo.git({"rebase", "--merge", "main"}, {}, 1);
+                QString reason;
+                if (scenario == 0) {
+                    writeFile(repo.path(".git/rebase-merge/stopped-sha"), history.main + '\n');
+                    reason = "replay metadata disagrees";
+                } else if (scenario == 1) {
+                    writeFile(repo.path(".git/rebase-merge/head-name"), "refs/heads/../side\n");
+                    reason = "Invalid rebase head-name";
+                } else if (scenario == 2) {
+                    writeFile(repo.path(".git/rebase-merge/orig-head"), history.main + '\n');
+                    reason = "not part of the original rebase history";
+                } else if (scenario == 3) {
+                    writeFile(repo.path(".git/rebase-merge/onto"), history.side + '\n');
+                    reason = "not based on the recorded rebase onto";
+                } else if (scenario == 4) {
+                    CHECK(QFile::remove(repo.path(".git/REBASE_HEAD")));
+                    CHECK(QFile::remove(repo.path(".git/rebase-merge/stopped-sha")));
+                    reason = "no verified commit being replayed";
+                } else {
+                    CHECK(QFile::remove(repo.path(".git/rebase-merge/orig-head")));
+                    reason = "Required operation metadata is missing";
+                }
+                checkUnsupportedDiscovery(repo, reason);
+            }
+        });
+        suite.run("multiple merge bases and replayed merge commits reject ambiguous provenance", [] {
+            Repository repo;
+            const auto history = conflictHistory(repo);
+            const auto mergeCommit = [&](const QByteArray &first, const QByteArray &second) {
+                const auto tree = repo.git({"rev-parse", QString::fromLatin1(first) + "^{tree}"}).trimmed();
+                return repo.git({"-c", "user.name=Branch Truce Tests", "-c", "user.email=tests@example.invalid",
+                    "commit-tree", QString::fromLatin1(tree), "-p", QString::fromLatin1(first), "-p",
+                    QString::fromLatin1(second), "-m", "criss-cross"}).trimmed();
+            };
+            const auto left = mergeCommit(history.main, history.side);
+            const auto right = mergeCommit(history.side, history.main);
+            repo.git({"reset", "--hard", QString::fromLatin1(left)});
+            repo.git({"update-ref", "refs/heads/side", QString::fromLatin1(right)});
+            CHECK(repo.git({"merge-base", "--all", "main", "side"}).count('\n') == 2);
+            repo.git({"merge", "--no-edit", "side"}, {}, 1);
+            checkUnsupportedDiscovery(repo, "multiple merge bases");
+            CHECK(QFile::remove(repo.path(".git/MERGE_HEAD")));
+            CHECK(QDir().mkdir(repo.path(".git/rebase-merge")));
+            writeFile(repo.path(".git/rebase-merge/head-name"), "refs/heads/side\n");
+            writeFile(repo.path(".git/rebase-merge/orig-head"), right + '\n');
+            writeFile(repo.path(".git/rebase-merge/onto"), history.main + '\n');
+            writeFile(repo.path(".git/rebase-merge/stopped-sha"), right + '\n');
+            writeFile(repo.path(".git/REBASE_HEAD"), right + '\n');
+            checkUnsupportedDiscovery(repo, "replaying merge commits");
+        });
+        suite.run("renamed text conflicts verify old-path blobs and isolate invalid paths", [] {
+            Repository repo;
+            const auto history = conflictHistory(repo, true);
+            repo.git({"merge", "--no-edit", "side"}, {}, 1);
+            const auto before = repo.git({"ls-files", "--unmerged", "-z"});
+            GitAdapter adapter(gitExecutable);
+            const auto discovered = run(adapter, repo.request(Operation::DiscoverRepository));
+            checkOperationIdentity(discovered, history, RepositoryOperation::Merge);
+            CHECK(discovered.indexEntries.size() == 6);
+            CHECK(repo.git({"ls-tree", QString::fromLatin1(history.base), "--", "b.txt"}).isEmpty());
+            CHECK(repo.git({"ls-tree", QString::fromLatin1(history.side), "--", "b.txt"}).isEmpty());
+            for (const auto &entry : discovered.indexEntries) {
+                if (entry.path != "b.txt") continue;
+                const auto commit = entry.stage == 1 ? history.base : entry.stage == 2 ? history.main : history.side;
+                const auto sourcePath = entry.stage == 2 ? "b.txt" : "a.txt";
+                CHECK(entry.objectId == repo.git({"rev-parse", QString::fromLatin1(commit) + ':' + sourcePath}).trimmed());
+                CHECK(entry.mode == "100644");
+            }
+            const auto unrelated = repo.git({"hash-object", "-w", "--stdin"}, "unrelated\n").trimmed();
+            const auto nul = QByteArray(1, '\0');
+            for (const auto &path : {QByteArray("b.txt"), QByteArray("tracked.txt")}) {
+                for (const bool wrongMode : {false, true}) {
+                    repo.git({"update-index", "-z", "--index-info"}, before);
+                    QByteArray object;
+                    for (const auto &entry : discovered.indexEntries) {
+                        if (entry.path == path && entry.stage == 3) object = entry.objectId;
+                    }
+                    CHECK(!object.isEmpty());
+                    repo.git({"update-index", "-z", "--index-info"},
+                        (wrongMode ? QByteArray("100755 ") : QByteArray("100644 "))
+                        + (wrongMode ? object : unrelated) + " 3\t" + path + nul);
+                    const auto index = repo.git({"ls-files", "--unmerged", "-z"});
+                    const auto result = run(adapter, repo.request(Operation::DiscoverRepository));
+                    CHECK(result.outcome == Outcome::Success && result.repository.supported);
+                    CHECK(result.repository.operation == RepositoryOperation::Merge && result.indexEntries.size() == 6);
+                    CHECK(result.repository.unsupportedPaths.size() == 1 && result.repository.unsupportedPaths.contains(path));
+                    CHECK(result.repository.unsupportedPaths.value(path).contains("stage 3 provenance"));
+                    CHECK(result.repository.stage2.commitId == history.main && result.repository.stage3.commitId == history.side);
+                    CHECK(repo.git({"ls-files", "--unmerged", "-z"}) == index);
+                }
+            }
+        });
+        suite.run("conversion format matrix preserves reviewed bytes through real Git publication", [] {
+            using namespace branch_truce::storage;
+            const auto bom = QByteArray::fromHex("efbbbf");
+            const TextFormat lf{};
+            const TextFormat crlf{TextEncoding::Utf8, false, Newline::CrLf, false};
+            const TextFormat bomCrLf{TextEncoding::Utf8, true, Newline::CrLf, false};
+            struct FormatCase {
+                const char *name;
+                QByteArray attributes;
+                QStringList configuration;
+                QByteArray canonicalSource;
+                QByteArray checkoutSource;
+                TextFormat launch;
+                QByteArray checkoutResult;
+                QByteArray canonicalResult;
+            };
+            const FormatCase cases[]{
+                {"unattributed LF", {}, {}, "s\n", "s\n", lf, "r\n", "r\n"},
+                {"unattributed CRLF", {}, {}, "s\r\n", "s\r\n", crlf, "r\r\n", "r\r\n"},
+                {"UTF-8 BOM", {}, {}, bom + "s\n", bom + "s\n", bomCrLf, bom + "r\r\n", bom + "r\r\n"},
+                {"explicit LF overrides launch", "text eol=lf", {}, "s\n", "s\n", crlf, "r\n", "r\n"},
+                {"auto text with explicit CRLF", "text=auto eol=crlf", {}, "s\n", "s\r\n", lf, "r\r\n", "r\n"},
+                {"disabled text conversion", "-text", {}, "s\r\n", "s\r\n", crlf, "r\r\n", "r\r\n"},
+                {"explicit UTF-8 retains BOM", "text eol=crlf working-tree-encoding=utf-8", {},
+                    bom + "s\n", bom + "s\r\n", bomCrLf, bom + "r\r\n", bom + "r\n"},
+                {"UTF-16LE without BOM", "text eol=lf working-tree-encoding=UTF-16LE", {}, "s\n",
+                    QByteArray::fromHex("73000a00"), bomCrLf, QByteArray::fromHex("72000a00"), "r\n"},
+                {"UTF-16BE with CRLF", "text eol=crlf working-tree-encoding=UTF-16BE", {}, "s\n",
+                    QByteArray::fromHex("0073000d000a"), lf, QByteArray::fromHex("0072000d000a"), "r\n"},
+                {"UTF-16 default byte order and BOM", "text eol=lf working-tree-encoding=UTF-16", {}, "s\n",
+                    QByteArray::fromHex("fffe73000a00"), bomCrLf, QByteArray::fromHex("fffe72000a00"), "r\n"},
+                {"autocrlf with explicit CRLF", "text eol=crlf", {"core.autocrlf", "true"},
+                    "s\n", "s\r\n", lf, "r\r\n", "r\n"},
+                {"core EOL conversion", "text", {"core.eol", "crlf"}, "s\n", "s\r\n", crlf, "r\r\n", "r\n"},
+                {"autocrlf input", "text=auto", {"core.autocrlf", "input"}, "s\n", "s\n", lf, "r\n", "r\n"},
+                {"disabled text overrides autocrlf", "-text", {"core.autocrlf", "true"},
+                    "s\r\n", "s\r\n", crlf, "r\r\n", "r\r\n"}
+            };
+            for (const auto &format : cases) {
+                std::cout << "FORMAT " << format.name << '\n';
+                Repository repo;
+                if (!format.attributes.isEmpty()) writeFile(repo.path(".gitattributes"), "tracked.txt " + format.attributes + '\n');
+                if (!format.configuration.isEmpty()) repo.git({"config", format.configuration[0], format.configuration[1]});
+                const auto object = repo.git({"hash-object", "-w", "--stdin"}, format.canonicalSource).trimmed();
+                TextConversion conversion(gitExecutable);
+                const auto source = run(conversion, textRequest(repo, TextOperation::ReadSource, object));
+                CHECK(source.outcome == Outcome::Success && source.text);
+                CHECK(source.text->canonicalBytes == format.canonicalSource && source.text->canonicalObjectId == object);
+                CHECK(source.text->document.originalBytes == format.checkoutSource);
+                CHECK(source.text->document.utf8 == "s\n" && source.text->mode == "100644");
+                if (!format.configuration.isEmpty()) {
+                    CHECK(source.text->policy.configuration.value(format.configuration[0].toLatin1()) == format.configuration[1].toLatin1());
+                }
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
+                auto request = textRequest(repo, TextOperation::PrepareResult, object);
+                request.launchResultFormat = format.launch;
+                request.editedUtf8 = "r\n";
+                const auto prepared = run(conversion, request);
+                CHECK(prepared.outcome == Outcome::Success && prepared.text);
+                CHECK(prepared.text->document.utf8 == request.editedUtf8 && prepared.text->document.format.finalNewline);
+                CHECK(prepared.text->document.originalBytes == format.checkoutResult);
+                CHECK(prepared.text->canonicalBytes == format.canonicalResult && prepared.text->policy == source.text->policy);
+                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                QFile untouched(repo.path("tracked.txt"));
+                CHECK(untouched.open(QIODevice::ReadOnly) && untouched.readAll() == "before\n");
+                repo.git({"cat-file", "-e", QString::fromLatin1(prepared.text->canonicalObjectId)}, {}, 1);
+                untouched.close();
+                writeFile(repo.path("tracked.txt"), format.checkoutResult);
+                GitAdapter adapter(gitExecutable);
+                CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
+                auto verify = textRequest(repo, TextOperation::VerifyPublished, {});
+                verify.expected = prepared.text;
+                const auto published = run(conversion, verify);
+                CHECK(published.outcome == Outcome::Success && published.text);
+                CHECK(published.text->canonicalBytes == format.canonicalResult);
+                CHECK(repo.git({"show", ":tracked.txt"}) == format.canonicalResult);
+            }
+        });
+        suite.run("invalid source bytes and contradictory attributes reject without accepted text or writes", [] {
+            for (const auto &bytes : {QByteArray::fromHex("ff"), QByteArray::fromHex("610062"),
+                    QByteArray::fromHex("610162"), QByteArray("a\rb"), QByteArray("a\r\nb\n")}) {
+                Repository repo;
+                const auto object = repo.git({"hash-object", "-w", "--stdin"}, bytes).trimmed();
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
+                TextConversion conversion(gitExecutable);
+                const auto rejected = run(conversion, textRequest(repo, TextOperation::ReadSource, object));
+                CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
+                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+            }
+            for (const auto attributes : {"-text eol=crlf", "text=custom", "ident=custom", "text eol=native",
+                    "working-tree-encoding=ISO-8859-1"}) {
+                Repository repo;
+                writeFile(repo.path(".gitattributes"), QByteArray("tracked.txt ") + attributes + '\n');
+                const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+                const auto before = repo.git({"ls-files", "--stage", "-z"});
+                TextConversion conversion(gitExecutable);
+                for (const auto operation : {TextOperation::ReadSource, TextOperation::PrepareResult}) {
+                    auto request = textRequest(repo, operation, object);
+                    request.editedUtf8 = "reviewed\n";
+                    const auto rejected = run(conversion, request);
+                    CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
+                    CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                }
+            }
+            Repository repo;
+            repo.git({"config", "core.autocrlf", "true"});
+            repo.git({"config", "core.safecrlf", "false"});
+            const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+            TextConversion conversion(gitExecutable);
+            auto request = textRequest(repo, TextOperation::PrepareResult, object);
+            request.editedUtf8 = "reviewed\n";
+            const auto rejected = run(conversion, request);
+            CHECK(rejected.outcome == Outcome::Rejected && !rejected.text);
+            CHECK(rejected.diagnostic.contains("clean/checkout changes"));
+            CHECK(repo.git({"show", ":tracked.txt"}) == "before\n");
+        });
+        suite.run("ident expansion round-trips exactly and rejects an expansion made stale by editing", [] {
+            Repository repo;
+            writeFile(repo.path(".gitattributes"), "tracked.txt text ident eol=lf\n");
+            const auto object = repo.git({"hash-object", "-w", "--stdin"}, "$Id$\n").trimmed();
+            TextConversion conversion(gitExecutable);
+            const auto source = run(conversion, textRequest(repo, TextOperation::ReadSource, object));
+            CHECK(source.outcome == Outcome::Success && source.text);
+            CHECK(source.text->document.utf8 == "$Id: " + object + " $\n");
+            CHECK(source.text->canonicalBytes == "$Id$\n");
+            auto request = textRequest(repo, TextOperation::PrepareResult, object);
+            request.launchResultFormat = source.text->document.format;
+            request.editedUtf8 = source.text->document.utf8;
+            const auto unchanged = run(conversion, request);
+            CHECK(unchanged.outcome == Outcome::Success && unchanged.text);
+            CHECK(unchanged.text->canonicalObjectId == object && unchanged.text->canonicalBytes == "$Id$\n");
+            request.editedUtf8 += "changed\n";
+            const auto stale = run(conversion, request);
+            CHECK(stale.outcome == Outcome::Rejected && !stale.text);
+            CHECK(stale.diagnostic.contains("clean/checkout changes"));
+            CHECK(repo.git({"show", ":tracked.txt"}) == "before\n");
+        });
+        suite.run("conversion requires exact unique stages and preserves agreed executable modes", [] {
+            for (const auto &mode : {QByteArray("100644"), QByteArray("100755")}) {
+                Repository repo;
+                const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+                auto request = textRequest(repo, TextOperation::ReadSource, object);
+                for (auto &entry : request.stages) entry.mode = mode;
+                TextConversion conversion(gitExecutable);
+                const auto source = run(conversion, request);
+                CHECK(source.outcome == Outcome::Success && source.text);
+                CHECK(source.text->mode == mode && source.text->sourceMode == mode);
+                request.operation = TextOperation::PrepareResult;
+                request.editedUtf8 = "executable result\n";
+                const auto prepared = run(conversion, request);
+                CHECK(prepared.outcome == Outcome::Success && prepared.text && prepared.text->mode == mode);
+                writeFile(repo.path("tracked.txt"), prepared.text->document.originalBytes, mode == "100755");
+                GitAdapter adapter(gitExecutable);
+                CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
+                auto verify = textRequest(repo, TextOperation::VerifyPublished, {});
+                verify.expected = prepared.text;
+                CHECK(run(conversion, verify).outcome == Outcome::Success);
+                CHECK(repo.git({"ls-files", "--stage", "-z"}).startsWith(mode + ' '));
+            }
+            Repository repo;
+            const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+            TextConversion conversion(gitExecutable);
+            for (int scenario = 0; scenario < 8; ++scenario) {
+                auto request = textRequest(repo, TextOperation::PrepareResult, object);
+                request.editedUtf8 = "reviewed\n";
+                switch (scenario) {
+                case 0: request.stages.removeFirst(); break;
+                case 1: request.stages.removeLast(); break;
+                case 2: request.stages.append(request.stages.front()); break;
+                case 3: request.stages.back().path = "other.txt"; break;
+                case 4: request.stages.back().mode = "120000"; break;
+                case 5: request.stages.back().mode = "100755"; break;
+                case 6: request.stages.back().stage = 4; break;
+                case 7: request.stages.back().objectId = "invalid"; break;
+                }
+                const auto rejected = run(conversion, request);
+                CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
+            }
+            const auto base = repo.git({"hash-object", "-w", "--stdin"}, "base\n").trimmed();
+            auto request = textRequest(repo, TextOperation::ReadSource, object);
+            request.objectId = base;
+            CHECK(run(conversion, request).outcome == Outcome::Rejected);
+            request.sourceStage = 1;
+            CHECK(run(conversion, request).outcome == Outcome::Rejected);
+            request.stages.prepend({request.path, "100755", base, 1});
+            const auto earlier = run(conversion, request);
+            CHECK(earlier.outcome == Outcome::Success && earlier.text);
+            CHECK(earlier.text->sourceMode == "100755" && earlier.text->mode == "100644");
+            CHECK(earlier.text->canonicalObjectId == base && earlier.text->document.utf8 == "base\n");
+        });
+        suite.run("publication verification rejects changed canonical identity, policy and prepared text", [] {
+            Repository repo;
+            const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+            TextConversion conversion(gitExecutable);
+            auto request = textRequest(repo, TextOperation::PrepareResult, object);
+            request.editedUtf8 = "reviewed\n";
+            const auto prepared = run(conversion, request);
+            CHECK(prepared.outcome == Outcome::Success && prepared.text);
+            writeFile(repo.path("tracked.txt"), prepared.text->document.originalBytes);
+            GitAdapter adapter(gitExecutable);
+            CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
+            auto verify = textRequest(repo, TextOperation::VerifyPublished, {});
+            verify.expected = prepared.text;
+            CHECK(run(conversion, verify).outcome == Outcome::Success);
+            const auto wrong = repo.git({"hash-object", "-w", "--stdin"}, "different\n").trimmed();
+            repo.git({"update-index", "--cacheinfo", "100644", QString::fromLatin1(wrong), "tracked.txt"});
+            const auto wrongObject = run(conversion, verify);
+            CHECK(wrongObject.outcome == Outcome::Rejected && !wrongObject.text);
+            CHECK(wrongObject.diagnostic.contains("canonical identity"));
+            repo.git({"update-index", "--cacheinfo", "100644",
+                      QString::fromLatin1(prepared.text->canonicalObjectId), "tracked.txt"});
+            writeFile(repo.path(".gitattributes"), "tracked.txt text eol=lf\n");
+            const auto wrongPolicy = run(conversion, verify);
+            CHECK(wrongPolicy.outcome == Outcome::Rejected && !wrongPolicy.text);
+            CHECK(wrongPolicy.diagnostic.contains("conversion policy"));
+            CHECK(QFile::remove(repo.path(".gitattributes")));
+            verify.expected->document.utf8 += "unreviewed\n";
+            const auto wrongText = run(conversion, verify);
+            CHECK(wrongText.outcome == Outcome::Rejected && !wrongText.text);
+            CHECK(wrongText.diagnostic.contains("no longer matches its serialized bytes"));
+            verify.expected = prepared.text;
+            verify.expected->worktreeRoot = repo.executables.path();
+            const auto wrongWorktree = run(conversion, verify);
+            CHECK(wrongWorktree.outcome == Outcome::Rejected && !wrongWorktree.text);
+            CHECK(wrongWorktree.diagnostic.contains("worktree identity changed"));
+        });
         suite.run("named reads use real Git and preserve request identity", [] {
             Repository repo;
             GitAdapter adapter(gitExecutable);
