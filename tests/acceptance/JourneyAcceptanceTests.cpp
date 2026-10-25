@@ -1202,6 +1202,54 @@ public:
             CHECK(scene.item("endParentSession")->isVisible());
             checkOffline(scene);
         });
+        suite.run("TRUCE-0082 clicking the launched path again after Git attached shows the waiting state and Leave unresolved", [] {
+            Repository repo("merge", {
+                {"launched.txt", QByteArray("launched base\n"), QByteArray("launched left\n"),
+                 QByteArray("launched right\n"), QByteArray("launched chosen by hand\n")},
+                {"other.txt", QByteArray("other base\n"), QByteArray("other left\n"), QByteArray("other right\n"),
+                 QByteArray("other chosen by hand\n")},
+            });
+            Scene scene(repo);
+            const auto state = [&] {
+                return "waiting=" + scene.controller->mergetoolWaitingPath().toStdString() + " selected="
+                    + scene.controller->selectedFileId().toStdString() + " message="
+                    + scene.controller->commandMessage().toStdString();
+            };
+            const auto waitingShown = [&] {
+                return scene.item("mergetoolHolding")->isVisible() && scene.item("leaveMergetool")->isVisible()
+                    && !scene.item("mergetoolWait")->isVisible();
+            };
+            clickFile(scene, "launched.txt");
+            const auto launchBytes = readFile(repo.path("launched.txt"));
+            auto parent = startMergetool(repo, {"launched.txt"});
+            waitFor("Git to launch launched.txt",
+                    [&] { return scene.controller->mergetoolWaitingPath() == QByteArray("launched.txt"); }, state);
+            settleFor("waiting state on the selected launched path", waitingShown);
+
+            // Git is not waiting on the other file, so it has no Leave control.
+            clickFile(scene, "other.txt");
+            settleFor("waiting text on the other file", [&] { return scene.item("mergetoolWait")->isVisible(); });
+            CHECK(!scene.controller->mergetoolWaiting());
+            CHECK(!scene.item("mergetoolHolding")->isVisible() && !scene.item("leaveMergetool")->isVisible());
+
+            // Clicking the launched path in the file list again brings both back.
+            clickFile(scene, "launched.txt");
+            settleFor("waiting state after re-selecting the launched path", waitingShown);
+            CHECK(scene.controller->mergetoolWaiting());
+            CHECK(scene.controller->mergetoolWaitingPath() == QByteArray("launched.txt"));
+            CHECK(scene.item("leaveMergetool")->isEnabled());
+            expectText(scene.text("leaveMergetool"), QStringLiteral("Leave unresolved"), "leave control");
+            CHECK(parent->state() != QProcess::NotRunning);
+
+            // The control releases Git: MERGED gets its launch bytes back and both paths stay unmerged.
+            scene.click("leaveMergetool");
+            waitFor("git mergetool to exit", [&] { return parent->state() == QProcess::NotRunning; }, state);
+            CHECK(parent->exitStatus() == QProcess::NormalExit && parent->exitCode() != 0);
+            CHECK(readFile(repo.path("launched.txt")) == launchBytes);
+            CHECK(!repo.unmerged("launched.txt").isEmpty() && !repo.unmerged("other.txt").isEmpty());
+            settleFor("leave control gone after leaving", [&] { return !scene.item("leaveMergetool")->isVisible(); });
+            checkOffline(scene);
+        });
         suite.run("TRUCE-0088 a 1280x720 logical screen fits the window with every control and text pane reachable", [] {
             Repository repo("merge", journeyPaths());
             Scene scene(repo);

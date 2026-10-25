@@ -30,6 +30,12 @@ set_tests_properties(lifecycle.cli-guards PROPERTIES TIMEOUT 30)
 add_test(NAME packaging.artifact-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ArtifactTooling.sh")
 set_tests_properties(packaging.artifact-tooling PROPERTIES TIMEOUT 30)
+# Host side of the installed-artifact validation and the AT-SPI probe against stub
+# container, sway and grim commands and a fake Atspi module (about 4 s). It exits 77,
+# reported as skipped, when jq or python3 is missing.
+add_test(NAME packaging.installed-validation-tooling
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/InstalledValidationTooling.sh")
+set_tests_properties(packaging.installed-validation-tooling PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
 if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_text_format_tests storage/TextFormatTests.cpp)
     target_include_directories(branch_truce_text_format_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
