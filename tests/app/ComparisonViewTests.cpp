@@ -3,6 +3,7 @@
 #include "core/ResourceLimits.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
+#include "fixtures/QuickScene.h"
 #include "fixtures/RecoveryFaults.h"
 #include <QApplication>
 #include <algorithm>
@@ -28,25 +29,11 @@
 using namespace branch_truce;
 
 namespace {
-template<typename Predicate>
-void settle(Predicate ready)
-{
-    QElapsedTimer deadline;
-    deadline.start();
-    while (!ready() && deadline.elapsed() < 5000)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    CHECK(ready());
-}
-
-template<typename Predicate>
-void settleFor(const std::string &what, Predicate ready)
-{
-    QElapsedTimer deadline;
-    deadline.start();
-    while (!ready() && deadline.elapsed() < 5000)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    if (!ready()) throw std::runtime_error("timed out waiting for " + what);
-}
+using test_support::markerKind;
+using test_support::paintedMarkers;
+using test_support::settle;
+using test_support::settleFor;
+using test_support::visualLines;
 
 class Fixture {
 public:
@@ -122,49 +109,14 @@ FileSession namedChoiceFile(const std::string &id)
     return FileSession(id, path, {text, {}, 0}, Support::Supported, {}, std::move(sources), true);
 }
 
-// Dialog rows get their final position only after a layout pass, so wait until
-// the named item is visible and its scene position stops moving.
-// Repeater delegates in a popup are reachable only through the visual item tree.
-QQuickItem *visualItem(QQuickItem *root, const QString &name)
-{
-    if (root->objectName() == name) return root;
-    for (auto *child : root->childItems())
-        if (auto *found = visualItem(child, name)) return found;
-    return nullptr;
-}
-
 void clickItem(Fixture &fixture, QQuickItem *target)
 {
-    CHECK(target->isVisible() && target->isEnabled() && target->width() > 0 && target->height() > 0);
-    const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
-    QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, center);
-    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    test_support::clickItem(fixture.window, target);
 }
 
 QQuickItem *waitForLayout(Fixture &fixture, const QString &name)
 {
-    QQuickItem *found = nullptr;
-    QPointF previous(-1, -1);
-    std::string state = "not found";
-    const auto laidOut = [&] {
-        auto *target = visualItem(fixture.window->contentItem(), name);
-        found = target;
-        if (!target) return false;
-        const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0));
-        state = "visible=" + std::to_string(target->isVisible()) + " size=" + std::to_string(target->width())
-            + "x" + std::to_string(target->height()) + " center=" + std::to_string(center.x()) + ","
-            + std::to_string(center.y());
-        if (!target->isVisible() || target->width() <= 0 || target->height() <= 0) return false;
-        const bool stable = center == previous && fixture.window->contentItem()->contains(center);
-        previous = center;
-        return stable;
-    };
-    QElapsedTimer deadline;
-    deadline.start();
-    while (!laidOut() && deadline.elapsed() < 5000)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    if (!laidOut()) throw std::runtime_error("layout of " + name.toStdString() + ": " + state);
-    return found;
+    return test_support::waitForLayout(fixture.window, name);
 }
 
 // atLimit ends in a non-newline byte that is exactly at a resource limit. Qt
@@ -250,35 +202,6 @@ void checkUnchanged(Fixture &fixture, const WorkSnapshot &before)
         && after.status == before.status);
     CHECK(after.resultText == before.resultText && after.leftText == before.leftText
         && after.rightText == before.rightText);
-}
-
-int visualLines(QQuickItem *editor, int blockNumber)
-{
-    auto *quick = editor->property("textDocument").value<QQuickTextDocument *>();
-    if (!quick || !quick->textDocument()) throw std::runtime_error("missing text document");
-    const auto *layout = quick->textDocument()->findBlockByNumber(blockNumber).layout();
-    return layout ? layout->lineCount() : 0;
-}
-
-int paintedMarkers(QQuickItem *markers)
-{
-    int count = 0;
-    for (auto *child : markers->childItems()) {
-        if (child->isVisible() && child->width() >= 2.0 && child->height() >= 2.0)
-            ++count;
-    }
-    return count;
-}
-
-int markerKind(QQuickItem *markers, bool tab)
-{
-    const auto expression = tab
-        ? QStringLiteral("spots.filter(function(spot) { return spot.tab; }).length")
-        : QStringLiteral("spots.filter(function(spot) { return !spot.tab; }).length");
-    QQmlExpression query(qmlContext(markers), markers, expression);
-    const auto value = query.evaluate();
-    if (query.hasError()) throw std::runtime_error(query.error().toString().toStdString());
-    return value.toInt();
 }
 
 void expectProgress(Fixture &fixture, bool saved, bool reviewed, bool resolved, bool earlier,
