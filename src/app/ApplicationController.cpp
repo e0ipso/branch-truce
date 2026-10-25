@@ -255,8 +255,13 @@ ApplicationController::ApplicationController(QObject *parent)
     connect(&mergetool_, &MergetoolSession::changed, this, [this] { Q_EMIT commandChanged(); });
     connect(&files_, &SessionModel::summaryChanged, this, [this] {
         if (!files_.file(selectedFileId_.toStdString())) {
-            selectedFileId_ = files_.totalFiles() > 0
-                ? files_.data(files_.index(0), SessionModel::FileIdRole).toString() : QString{};
+            if (!preferredFileId_.isEmpty() && files_.file(preferredFileId_.toStdString())) {
+                selectedFileId_ = preferredFileId_;
+                preferredFileId_.clear();
+            } else {
+                selectedFileId_ = files_.totalFiles() > 0
+                    ? files_.data(files_.index(0), SessionModel::FileIdRole).toString() : QString{};
+            }
         }
         // Retry publishes the pending discard. The failure sentence must not
         // remain once that restored result is acknowledged.
@@ -269,6 +274,8 @@ ApplicationController::ApplicationController(QObject *parent)
         Q_EMIT selectedFileChanged();
     });
     connect(this, &ApplicationController::selectedFileChanged, this, &ApplicationController::syncResultEditor);
+    // The mergetool waiting state and the parent staging path follow the selection.
+    connect(this, &ApplicationController::selectedFileChanged, this, &ApplicationController::commandChanged);
     connect(&files_, &SessionModel::summaryChanged, this, &ApplicationController::handoffChanged);
     connect(this, &ApplicationController::commandChanged, this, &ApplicationController::handoffChanged);
 }
@@ -1478,9 +1485,10 @@ void ApplicationController::setState(QString state, QString detail)
     Q_EMIT launchChanged();
 }
 
-bool ApplicationController::openRepository(const QString &directory)
+bool ApplicationController::openRepository(const QString &directory, const QString &preferredFileId)
 {
     if (state_ != QLatin1String("idle")) return false;
+    preferredFileId_ = preferredFileId;
     setState(QStringLiteral("opening"), tr("Inspecting the selected local repository…"));
     git::ConflictClassificationRequest request;
     request.directory = directory;

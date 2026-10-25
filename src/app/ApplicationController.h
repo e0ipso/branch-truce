@@ -135,7 +135,8 @@ public:
     Q_INVOKABLE bool leaveSession();
     // One launched repository session per controller. Paths are launch directories,
     // never inferred from a filename or a Git environment override.
-    bool openRepository(const QString &directory);
+    // preferredFileId selects that file first when the session contains it.
+    bool openRepository(const QString &directory, const QString &preferredFileId = {});
 
 Q_SIGNALS:
     void launchChanged();
@@ -174,6 +175,7 @@ private:
     QString operation_;
     QString detail_;
     QString selectedFileId_;
+    QString preferredFileId_;
     std::optional<ChoicePreview> preview_;
     std::optional<NonConflictingPreview> nonConflictingPreview_;
     std::optional<WholeFilePreview> wholeFilePreview_;

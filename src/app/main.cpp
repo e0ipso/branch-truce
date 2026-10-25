@@ -61,6 +61,13 @@ int main(int argc, char *argv[])
                                 QStringLiteral("Repository directory, defaults to the current directory."),
                                 QStringLiteral("[repository]"));
     parser.addOption({QStringLiteral("smoke-test"), QStringLiteral("Load the window and session, report startup state, and exit.")});
+    // A mergetool launcher that starts the GUI names the path Git launched,
+    // hex-encoded like its attach frame, so the window opens on it.
+    QCommandLineOption launchedPath(QStringLiteral("mergetool-path"),
+                                    QStringLiteral("Select this hex-encoded repository path first."),
+                                    QStringLiteral("hex-path"));
+    launchedPath.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(launchedPath);
     parser.process(application);
     const auto paths = parser.positionalArguments();
     if (paths.size() > 1) parser.showHelp(2);
@@ -105,6 +112,9 @@ int main(int argc, char *argv[])
         });
     }
     const auto directory = paths.isEmpty() ? QDir::currentPath() : QDir(paths.front()).absolutePath();
-    QTimer::singleShot(0, &controller, [&controller, directory] { controller.openRepository(directory); });
+    const auto preferredFileId = parser.value(launchedPath);
+    QTimer::singleShot(0, &controller, [&controller, directory, preferredFileId] {
+        controller.openRepository(directory, preferredFileId);
+    });
     return application.exec();
 }

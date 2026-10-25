@@ -45,6 +45,19 @@ bool readFrame(QLocalSocket *socket, QByteArray *buffer, QJsonObject *object, bo
     }
 }
 
+// The GUI opens on the launched path. Its standard streams go to the null
+// device, so it never writes into the git mergetool terminal.
+void startSession(const QString &worktreeRoot, const QByteArray &path)
+{
+    QProcess gui;
+    gui.setProgram(QCoreApplication::applicationFilePath());
+    gui.setArguments({QStringLiteral("--mergetool-path"), QString::fromLatin1(path.toHex()), worktreeRoot});
+    gui.setStandardInputFile(QProcess::nullDevice());
+    gui.setStandardOutputFile(QProcess::nullDevice());
+    gui.setStandardErrorFile(QProcess::nullDevice());
+    gui.startDetached();
+}
+
 bool connectSession(QLocalSocket *socket, const QString &name, int attempts)
 {
     for (int attempt = 0; attempt < attempts; ++attempt) {
@@ -138,7 +151,7 @@ int runMergetoolLauncher(int argc, char **argv)
     QLocalSocket socket;
     bool connected = connectSession(&socket, server, 5);
     if (!connected && !noSpawn) {
-        QProcess::startDetached(QCoreApplication::applicationFilePath(), {discovered->repository.worktreeRoot});
+        startSession(discovered->repository.worktreeRoot, sources.path);
         connected = connectUntilDeadline(&socket, server, kPostSpawnListenDeadlineMs);
     }
     if (!connected) return fail(QStringLiteral("No Branch Truce session is listening for this repository."));

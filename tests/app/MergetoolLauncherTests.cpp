@@ -10,6 +10,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMap>
+#include <QMetaMethod>
+#include <QMetaProperty>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
@@ -187,7 +189,7 @@ void pump(const std::function<bool()> &ready, const QString &detail)
     if (!ready()) throw std::runtime_error(detail.toStdString());
 }
 
-void startController(ApplicationController &controller, const Repository &repo)
+void startController(ApplicationController &controller, const Repository &repo, const QString &preferredFileId = {})
 {
     QEventLoop loop;
     QTimer timeout;
@@ -196,15 +198,15 @@ void startController(ApplicationController &controller, const Repository &repo)
     QObject::connect(&controller, &ApplicationController::launchChanged, &loop, [&] {
         if (!controller.opening()) loop.quit();
     });
-    CHECK(controller.openRepository(repo.root));
+    CHECK(controller.openRepository(repo.root, preferredFileId));
     timeout.start(15000);
     if (controller.opening()) loop.exec();
     CHECK(!controller.opening());
 }
 
-void openController(ApplicationController &controller, const Repository &repo)
+void openController(ApplicationController &controller, const Repository &repo, const QString &preferredFileId = {})
 {
-    startController(controller, repo);
+    startController(controller, repo, preferredFileId);
     if (controller.startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.detail().toStdString());
     CHECK(controller.mergetoolListening());
@@ -314,7 +316,11 @@ public:
         writeFile(git, "#!/bin/sh\nwhile [ ! -e '" + gate.toUtf8() + "' ]; do sleep 0.02; done\n"
                        "exec /usr/bin/git \"$@\"\n");
         makeExecutable(git);
-        writeFile(stub, "#!/bin/sh\nprintf '%s' \"$1\" > '" + marker.toUtf8() + ".part' && mv '"
+        // The stub records its arguments, one per line, and where its standard streams point.
+        // Command substitution runs in a child, so /proc/$$ still shows the stub's own streams.
+        writeFile(stub, "#!/bin/sh\nstreams=$(for fd in 0 1 2; do readlink /proc/$$/fd/$fd; done)\n"
+                        "printf '%s\\n' \"$streams\" > '" + marker.toUtf8()
+                        + ".streams'\nprintf '%s\\n' \"$@\" > '" + marker.toUtf8() + ".part' && mv '"
                         + marker.toUtf8() + ".part' '" + marker.toUtf8() + "'\n");
         makeExecutable(stub);
         // Linux names a replaced running image "<path> (deleted)" in /proc/self/exe,
@@ -338,6 +344,19 @@ public:
         writeFile(gate, {});
     }
     bool spawned() const { return QFile::exists(marker); }
+    // The GUI start names the launched path before the worktree, and keeps the
+    // launcher's terminal out of the GUI's standard streams.
+    QString checkSpawnArguments() const
+    {
+        const auto launched = QByteArray("tracked.txt").toHex();
+        const auto arguments = readFile(marker);
+        const auto streams = readFile(marker + QStringLiteral(".streams"));
+        if (arguments.split('\n') != QList<QByteArray>{"--mergetool-path", launched, repo.root.toUtf8(), ""}
+            || streams != "/dev/null\n/dev/null\n/dev/null\n")
+            throw std::runtime_error("spawned GUI arguments:\n" + arguments.toStdString()
+                                     + "streams:\n" + streams.toStdString());
+        return QString::fromLatin1(launched);
+    }
     void finish(int expected)
     {
         pump([&] { return process.state() == QProcess::NotRunning; }, QStringLiteral("launcher still running"));
@@ -510,6 +529,56 @@ int main(int argc, char **argv)
         CHECK(!opened(controller, second).facts().resolved);
         CHECK(repo.git({"rev-parse", ":notes.txt"}).trimmed() == repo.notesObject);
     });
+    suite.run("selecting the launched path after Git attached notifies the waiting state and the staging path", [] {
+        Repository repo("selected after the attach\n", "excluded stays conflicted\n");
+        ScopedEnvironment environment(repo.environment);
+        ApplicationController controller;
+        openController(controller, repo);
+        // QML reads both properties again only when their notify signal fires.
+        const auto *meta = controller.metaObject();
+        for (const auto *name : {"mergetoolWaiting", "parentStagingPath"}) {
+            CHECK(meta->property(meta->indexOfProperty(name)).notifySignal()
+                  == QMetaMethod::fromSignal(&ApplicationController::commandChanged));
+        }
+        struct Observed {
+            bool waiting = false;
+            QString staging;
+        };
+        QList<Observed> seen;
+        QObject::connect(&controller, &ApplicationController::commandChanged, &controller, [&] {
+            seen.append({controller.mergetoolWaiting(), controller.parentStagingPath()});
+        });
+        const auto other = select(controller, "excluded.txt");
+        // A direct launcher has no Git parent, so the written offer stays unstaged.
+        QTemporaryDir sides;
+        QProcess launcher;
+        launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
+        launcher.setWorkingDirectory(repo.root);
+        launcher.start(launcherBinary, {"--mergetool"});
+        CHECK(launcher.waitForStarted(5000));
+        pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; }, controller.commandMessage());
+        CHECK(!controller.mergetoolWaiting() && controller.parentStagingPath().isEmpty());
+        seen.clear();
+        const auto id = select(controller, "tracked.txt");
+        CHECK(controller.mergetoolWaiting());
+        CHECK(!seen.isEmpty() && seen.last().waiting);
+        seen.clear();
+        select(controller, "excluded.txt");
+        CHECK(!seen.isEmpty() && !seen.last().waiting);
+        select(controller, "tracked.txt");
+        CHECK(controller.markResolved(id, revisionOf(opened(controller, "tracked.txt")), true));
+        waitFinished(launcher, 0, controller);
+        pump([&] { return controller.parentStagingPath() == QStringLiteral("tracked.txt"); },
+             controller.commandMessage());
+        CHECK(!controller.mergetoolWaiting());
+        seen.clear();
+        CHECK(controller.selectFile(other));
+        CHECK(!seen.isEmpty() && seen.last().staging.isEmpty());
+        seen.clear();
+        select(controller, "tracked.txt");
+        CHECK(!seen.isEmpty() && seen.last().staging == QStringLiteral("tracked.txt"));
+        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+    });
     suite.run("TRUCE-0065 a session that listens after the GUI start is attached within the deadline", [] {
         Repository repo("attached after the spawn\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
@@ -518,15 +587,20 @@ int main(int argc, char **argv)
         launcher.start();
         pump([&] { return launcher.spawned() || launcher.process.state() == QProcess::NotRunning; },
              QStringLiteral("the launcher did not start a session"));
-        CHECK(launcher.spawned() && readFile(launcher.marker) == repo.root.toUtf8());
+        CHECK(launcher.spawned());
+        const auto launched = launcher.checkSpawnArguments();
         // Retries that fail at once would have given up long before this.
         QElapsedTimer pause;
         pause.start();
         while (pause.elapsed() < 1500) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
         CHECK(launcher.process.state() == QProcess::Running);
-        openController(controller, repo);
+        openController(controller, repo, launched);
+        // The session opens on the launched path, not on the first file in the list.
+        CHECK(controller.files()->data(controller.files()->index(0), SessionModel::FileIdRole).toString() != launched);
+        CHECK(controller.selectedFileId() == launched);
         pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; }, controller.commandMessage());
         CHECK(launcher.clock.elapsed() < 75 * 200);
+        CHECK(controller.mergetoolWaiting());
         CHECK(controller.mergetoolIntakes().size() == 1);
         CHECK(readFile(controller.mergetoolIntakes().front() + "/merged") == repo.tracked);
         select(controller, "tracked.txt");
@@ -541,7 +615,8 @@ int main(int argc, char **argv)
         SpawnedLauncher launcher(repo);
         launcher.start();
         launcher.finish(1);
-        CHECK(launcher.spawned() && readFile(launcher.marker) == repo.root.toUtf8());
+        CHECK(launcher.spawned());
+        launcher.checkSpawnArguments();
         CHECK(launcher.errors.contains("mergetool: No Branch Truce session is listening for this repository.\n"));
         CHECK(launcher.elapsed >= 75 * 200);
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);

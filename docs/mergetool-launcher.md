@@ -75,8 +75,11 @@ waits instead of staging it. `endParentSession` returns remaining files to app-o
 no waiter is blocked and no parent offer is still unverified.
 
 If nothing is listening, the launcher can start the GUI on the discovered
-worktree and wait for the socket. `BRANCH_TRUCE_MERGETOOL_NO_SPAWN` disables
-that start.
+worktree and wait for the socket. It passes the launched path, hex-encoded as
+in the attach frame, with the hidden `--mergetool-path` option, so the window
+opens on that file. The started GUI's standard input, output and error go to
+`/dev/null`, so it writes nothing into the `git mergetool` terminal.
+`BRANCH_TRUCE_MERGETOOL_NO_SPAWN` disables that start.
 
 ## Tested with a real parent
 
