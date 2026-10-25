@@ -79,7 +79,7 @@ public:
     explicit Repository(QByteArray trackedText, QByteArray excludedText)
         : tracked(std::move(trackedText)), excluded(std::move(excludedText))
     {
-        CHECK(directory.isValid() && executables.isValid());
+        CHECK(directory.isValid() && executables.isValid() && runtime.isValid());
         root = QFileInfo(directory.path()).canonicalFilePath();
         environment.insert("PATH", "/usr/bin:/bin");
         environment.insert("HOME", executables.path());
@@ -87,7 +87,7 @@ public:
         environment.insert("XDG_CACHE_HOME", executables.path() + "/cache");
         environment.insert("XDG_DATA_HOME", executables.path() + "/data");
         // The session socket lives here, so the in-process session and every launcher meet.
-        environment.insert("XDG_RUNTIME_DIR", privateDirectory(executables.path() + "/run"));
+        environment.insert("XDG_RUNTIME_DIR", privateDirectory(runtime.path()));
         environment.insert("LC_ALL", "C");
         environment.insert("GIT_CONFIG_NOSYSTEM", "1");
         environment.insert("GIT_CONFIG_GLOBAL", "/dev/null");
@@ -138,6 +138,10 @@ public:
     }
     QTemporaryDir directory;
     QTemporaryDir executables;
+    // Under a long TMPDIR a QTemporaryDir would push the socket path past its
+    // length limit, and every session would fall back to the shared
+    // /tmp/branch-truce-<uid>. A short base under /tmp keeps it private.
+    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
     QString root;
     QProcessEnvironment environment;
     QByteArray notesObject;
@@ -189,8 +193,20 @@ void pump(const std::function<bool()> &ready, const QString &detail)
     if (!ready()) throw std::runtime_error(detail.toStdString());
 }
 
+// The session in this process listens in the fixture's private runtime directory, not a fallback.
+QString checkSocketDirectory(const Repository &repo)
+{
+    const auto runtime = repo.environment.value(QStringLiteral("XDG_RUNTIME_DIR"));
+    CHECK(!runtime.isEmpty() && qEnvironmentVariable("XDG_RUNTIME_DIR") == runtime);
+    const auto socket = mergetoolSocketDirectory();
+    if (socket != runtime + QStringLiteral("/branch-truce"))
+        throw std::runtime_error("socket directory outside the private runtime directory: " + socket.toStdString());
+    return socket;
+}
+
 void startController(ApplicationController &controller, const Repository &repo, const QString &preferredFileId = {})
 {
+    checkSocketDirectory(repo);
     QEventLoop loop;
     QTimer timeout;
     timeout.setSingleShot(true);
@@ -210,6 +226,7 @@ void openController(ApplicationController &controller, const Repository &repo, c
     if (controller.startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.detail().toStdString());
     CHECK(controller.mergetoolListening());
+    CHECK(QFileInfo(checkSocketDirectory(repo)).isDir());
     CHECK(!controller.parentSessionActive());
 }
 
@@ -744,7 +761,8 @@ int main(int argc, char **argv)
     });
     suite.run("TRUCE-0072 a socket that cannot listen is reported and the launcher exits non-zero", [] {
         Repository repo("nobody can attach\n", "excluded stays conflicted\n");
-        QTemporaryDir runtime;
+        // Short enough for the socket path, so the file below blocks the directory the session uses.
+        QTemporaryDir runtime(QStringLiteral("/tmp/bt-run-XXXXXX"));
         CHECK(runtime.isValid());
         // A regular file where the socket directory belongs makes listening impossible.
         writeFile(runtime.filePath(QStringLiteral("branch-truce")), "not a directory\n");

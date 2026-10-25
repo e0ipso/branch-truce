@@ -4,6 +4,7 @@
 // offscreen and drives it with mouse clicks and key events. Coverage notes and
 // the entry point are in tests/acceptance/README.md.
 #include "app/ApplicationController.h"
+#include "app/MergetoolProtocol.h"
 #include "TestHarness.h"
 #include "fixtures/QuickScene.h"
 #include <QApplication>
@@ -32,6 +33,10 @@ namespace {
 // offline guard in front of /usr/bin/git. Created by main() before QApplication.
 struct Sandbox {
     QTemporaryDir root;
+    // The private XDG_RUNTIME_DIR. Under a long TMPDIR a QTemporaryDir would push
+    // the socket path past its length limit, and the session would fall back to
+    // the shared /tmp/branch-truce-<uid>. A short base under /tmp keeps it private.
+    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
     QString bin;
     QString argvLog;
     QString networkMarker;
@@ -199,6 +204,11 @@ public:
                                      + controller->detail().toStdString());
         // Opening a session inspects Git and never mutates the repository.
         CHECK(repo.snapshot() == before);
+        // The session listens in the sandbox's private runtime directory, not a fallback.
+        const auto socket = mergetoolSocketDirectory();
+        if (socket != sandbox->runtime.path() + QStringLiteral("/branch-truce"))
+            throw std::runtime_error("socket directory outside the private runtime directory: " + socket.toStdString());
+        CHECK(controller->mergetoolListening() && QFileInfo(socket).isDir());
     }
     ~Scene()
     {
@@ -1049,15 +1059,15 @@ public:
 int main(int argc, char **argv)
 {
     Sandbox shared;
-    if (!shared.root.isValid()) return 2;
+    if (!shared.root.isValid() || !shared.runtime.isValid()) return 2;
     sandbox = &shared;
     const auto base = shared.root.path();
-    for (const auto *name : {"/home", "/config", "/cache", "/data", "/run", "/bin"})
+    for (const auto *name : {"/home", "/config", "/cache", "/data", "/bin"})
         if (!QDir().mkpath(base + name)) return 2;
     // A private runtime directory keeps the mergetool socket out of the real one. The
     // app trusts a Git executable only in directories that other users cannot write.
-    for (const auto *name : {"/run", "/bin"})
-        if (!QFile::setPermissions(base + name, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner))
+    for (const auto &path : {shared.runtime.path(), base + "/bin"})
+        if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner))
             return 2;
     shared.bin = base + "/bin";
     shared.argvLog = base + "/git-argv";
@@ -1077,7 +1087,7 @@ int main(int argc, char **argv)
     qputenv("XDG_CONFIG_HOME", (base + "/config").toUtf8());
     qputenv("XDG_CACHE_HOME", (base + "/cache").toUtf8());
     qputenv("XDG_DATA_HOME", (base + "/data").toUtf8());
-    qputenv("XDG_RUNTIME_DIR", (base + "/run").toUtf8());
+    qputenv("XDG_RUNTIME_DIR", shared.runtime.path().toUtf8());
     qputenv("PATH", (shared.bin + ":/usr/bin:/bin").toUtf8());
     qputenv("LC_ALL", "C.UTF-8");
     qputenv("GIT_CONFIG_NOSYSTEM", "1");

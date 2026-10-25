@@ -104,7 +104,7 @@ public:
     ParentRepository(const QString &launcher, const QList<ConflictPath> &conflicts)
         : conflicts_(conflicts)
     {
-        CHECK(directory_.isValid() && home_.isValid() && probe_.isValid());
+        CHECK(directory_.isValid() && home_.isValid() && probe_.isValid() && runtime_.isValid());
         root = QFileInfo(directory_.path()).canonicalFilePath();
         probe = QFileInfo(probe_.path()).canonicalFilePath();
         globalConfig = home_.path() + QStringLiteral("/gitconfig");
@@ -115,10 +115,9 @@ public:
         environment.insert("XDG_CACHE_HOME", home_.path() + "/cache");
         environment.insert("XDG_DATA_HOME", home_.path() + "/data");
         // The session socket lives here, so the in-process session and every launcher meet.
-        CHECK(QDir(home_.path()).mkdir(QStringLiteral("run"))
-              && QFile::setPermissions(home_.path() + QStringLiteral("/run"),
-                                       QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-        environment.insert("XDG_RUNTIME_DIR", home_.path() + "/run");
+        CHECK(QFile::setPermissions(runtime_.path(),
+                                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+        environment.insert("XDG_RUNTIME_DIR", runtime_.path());
         environment.insert("LC_ALL", "C");
         environment.insert("GIT_CONFIG_NOSYSTEM", "1");
         environment.insert("GIT_CONFIG_GLOBAL", globalConfig);
@@ -168,6 +167,9 @@ public:
         for (const auto &name : names) found.append(root + QLatin1Char('/') + name);
         return found;
     }
+
+    // The private XDG_RUNTIME_DIR; the session's socket directory belongs directly inside it.
+    QString runtimeDirectory() const { return runtime_.path(); }
 
     QString releaseFile() const { return probe + QStringLiteral("/release"); }
     // The gated tool appends "<MERGED> <launcher status>" here after each launcher exit.
@@ -248,6 +250,10 @@ private:
     QTemporaryDir directory_;
     QTemporaryDir home_;
     QTemporaryDir probe_;
+    // Under a long TMPDIR a QTemporaryDir would push the socket path past its
+    // length limit, and the session would fall back to the shared
+    // /tmp/branch-truce-<uid>. A short base under /tmp keeps it private.
+    QTemporaryDir runtime_{QStringLiteral("/tmp/bt-run-XXXXXX")};
 
 public:
     QByteArray notesObject;

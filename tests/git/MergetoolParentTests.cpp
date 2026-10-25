@@ -3,6 +3,7 @@
 // docs/mergetool-launcher.md records the tested Git version and configuration.
 
 #include "app/ApplicationController.h"
+#include "app/MergetoolProtocol.h"
 #include "fixtures/mergetool/RealParent.h"
 #include "TestHarness.h"
 
@@ -23,8 +24,19 @@ ConflictPath conflict(const QByteArray &path, const QByteArray &launch)
     return {path, "base\n", "main\n", "side\n", launch};
 }
 
+// The session in this process listens in the fixture's private runtime directory, not a fallback.
+QString checkSocketDirectory(const ParentRepository &repo)
+{
+    CHECK(qEnvironmentVariable("XDG_RUNTIME_DIR") == repo.runtimeDirectory());
+    const auto socket = mergetoolSocketDirectory();
+    if (socket != repo.runtimeDirectory() + QStringLiteral("/branch-truce"))
+        throw std::runtime_error("socket directory outside the private runtime directory: " + socket.toStdString());
+    return socket;
+}
+
 void openController(ApplicationController &controller, const ParentRepository &repo)
 {
+    checkSocketDirectory(repo);
     QEventLoop loop;
     QTimer timeout;
     timeout.setSingleShot(true);
@@ -39,6 +51,7 @@ void openController(ApplicationController &controller, const ParentRepository &r
     if (controller.startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.detail().toStdString());
     CHECK(controller.mergetoolListening());
+    CHECK(QFileInfo(checkSocketDirectory(repo)).isDir());
 }
 
 const FileSession &opened(ApplicationController &controller, const QByteArray &path)
