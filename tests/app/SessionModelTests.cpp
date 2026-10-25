@@ -6,6 +6,7 @@
 #include "fixtures/RecoveryFaults.h"
 #include <QCoreApplication>
 #include <QJsonArray>
+#include <QMap>
 #include <QProcess>
 #include <QPersistentModelIndex>
 #include <QSet>
@@ -57,6 +58,29 @@ FileSession recoverableFile()
     captured.launchResult.identity = {11, 22, 0100644, 18, 33, 44, 55, 66};
     return FileSession("recoverable", captured.path, draft(captured.launchResult.text.utf8),
         Support::Supported, {}, captured);
+}
+// A supported file of the recoverable session under another identity.
+FileSession sessionFile(const std::string &id, Draft value = draft())
+{
+    auto captured = *recoverableFile().snapshots();
+    captured.path = id + ".txt";
+    captured.launchResult.text = test_support::choiceText(value.text);
+    return FileSession(id, captured.path, std::move(value), Support::Supported, {}, captured);
+}
+// fileId -> handoff entry; every file must appear in exactly one group.
+QMap<QString, QVariantMap> handoffEntries(const QVariantMap &summary)
+{
+    QMap<QString, QVariantMap> result;
+    for (const auto &group : summary.value("groups").toList()) {
+        const auto category = group.toMap().value("category").toString();
+        for (const auto &value : group.toMap().value("entries").toList()) {
+            const auto entry = value.toMap();
+            CHECK(entry.value("category").toString() == category);
+            CHECK(!result.contains(entry.value("fileId").toString()));
+            result.insert(entry.value("fileId").toString(), entry);
+        }
+    }
+    return result;
 }
 QByteArray payload(const storage::RecoveryStore &store, const QJsonValue &reference)
 {
@@ -679,6 +703,89 @@ public:
             CHECK(!model.canFinish() && model.resolvedFiles() == 1);
             CHECK(role(model, SessionModel::CheckpointOutcomeRole, 1).toMap().value("detail").toString() == "disk full");
             CHECK(role(model, SessionModel::StatusRole, 1).toString() == "Draft save failed");
+        });
+        suite.run("TRUCE-0028 handoff puts each mixed outcome in one category and pending input stays failed until retried", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            auto choices = draft();
+            choices.decisions["left"] = {};
+            CHECK(model.appendFile(sessionFile("undecided", choices)));
+            CHECK(model.appendFile(sessionFile("saved")));
+            CHECK(model.recordCheckpoint("saved", 1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(model.appendFile(sessionFile("review")));
+            CHECK(model.appendFile(sessionFile("newer")));
+            resolve(model, "newer");
+            CHECK(model.replaceDraft("newer", 1, draft("newer draft\n")) == Transition::Applied);
+            CHECK(model.appendFile(sessionFile("written")));
+            CHECK(model.beginMarkResolved("written", 1) == Transition::Applied);
+            CHECK(model.recordCheckpoint("written", 1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(model.recordWrite("written", 1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(model.appendFile(sessionFile("published")));
+            resolve(model, "published");
+            CHECK(model.appendFile(sessionFile("failed")));
+            CHECK(model.beginMarkResolved("failed", 1) == Transition::Applied);
+            CHECK(model.recordCheckpoint("failed", 1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(model.recordWrite("failed", 1, Outcome::Failed, "disk full") == Transition::Applied);
+            CHECK(model.appendFile(FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+            CHECK(model.appendFile(sessionFile("pending")));
+            {
+                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                CHECK(model.replaceDraft("pending", 1, draft("pending input\n")) == Transition::Blocked);
+                CHECK(recovery_faults::failures == 1);
+            }
+            CHECK(model.hasPendingRecovery() && !model.canFinish());
+
+            struct Expected { const char *category; const char *action; };
+            const QMap<QString, Expected> expected{
+                {"undecided", {"undecided", "decide"}}, {"saved", {"saved-draft", "mark-resolved"}},
+                {"review", {"review-needed", "mark-resolved"}}, {"newer", {"newer-draft", "apply-or-discard"}},
+                {"written", {"written-unresolved", "check-git"}}, {"published", {"published", ""}},
+                {"failed", {"failed", "mark-resolved"}}, {"outside", {"outside-app", "outside-app"}},
+                {"pending", {"failed", "retry-recovery"}}};
+            auto summary = model.handoff();
+            auto entries = handoffEntries(summary);
+            CHECK(entries.size() == expected.size());
+            for (auto wanted = expected.cbegin(); wanted != expected.cend(); ++wanted) {
+                const auto entry = entries.value(wanted.key());
+                if (entry.value("category").toString() != wanted->category || entry.value("action").toString() != wanted->action)
+                    throw std::runtime_error((wanted.key() + ": " + entry.value("category").toString() + "/"
+                        + entry.value("action").toString()).toStdString());
+                CHECK(entry.value("outstanding").toBool() == (wanted.key() != "published"));
+                CHECK(entry.value("outstanding").toBool() != entry.value("blockers").toStringList().isEmpty());
+                CHECK(entry.value("outstanding").toBool() != entry.value("actionLabel").toString().isEmpty());
+            }
+            QStringList order;
+            for (const auto &group : summary.value("groups").toList()) order << group.toMap().value("category").toString();
+            CHECK(order == QStringList({"undecided", "saved-draft", "review-needed", "newer-draft",
+                "written-unresolved", "failed", "outside-app", "published"}));
+            const auto counts = summary.value("counts").toMap();
+            CHECK(counts.value("failed").toInt() == 2 && counts.value("review-needed").toInt() == 1);
+            CHECK(counts.value("outside-app").toInt() == 1 && counts.value("published").toInt() == 1);
+            CHECK(!summary.value("clean").toBool());
+            CHECK(summary.value("totalFiles").toInt() == 9 && summary.value("outstandingFiles").toInt() == 8);
+            CHECK(summary.value("outcome").toString()
+                == "8 of 9 files in this session remain outstanding. This session is not finished.");
+            CHECK(entries.value("pending").value("status").toString() == "Recovery failed; pending input retained");
+            CHECK(entries.value("pending").value("blockers").toStringList().contains("Pending input needs recovery retry"));
+            CHECK(entries.value("pending").value("actionLabel").toString() == "Retry recovery");
+            CHECK(entries.value("pending").value("unsaved").toBool());
+            CHECK(entries.value("review").value("actionLabel").toString() == "Save or Mark resolved");
+            CHECK(entries.value("undecided").value("undecided").toULongLong() == 1);
+            CHECK(entries.value("failed").value("status").toString() == "Repository write failed");
+            CHECK(entries.value("newer").value("status").toString() == "Earlier result staged; current draft not applied");
+
+            CHECK(model.retryRecovery("pending") == Transition::Applied);
+            CHECK(!model.hasPendingRecovery() && model.file("pending")->current().draft == draft("pending input\n"));
+            summary = model.handoff();
+            entries = handoffEntries(summary);
+            CHECK(entries.value("pending").value("category").toString() == "review-needed");
+            CHECK(entries.value("pending").value("action").toString() == "mark-resolved");
+            CHECK(entries.value("pending").value("status").toString() == "Current result needs review");
+            CHECK(!entries.value("pending").value("blockers").toStringList().contains("Pending input needs recovery retry"));
+            CHECK(summary.value("counts").toMap().value("failed").toInt() == 1);
+            CHECK(summary.value("counts").toMap().value("review-needed").toInt() == 2);
+            CHECK(summary.value("outstandingFiles").toInt() == 8 && !summary.value("clean").toBool());
         });
         suite.run("Qt history restores atomic decisions, invalidates review and fences discard callbacks", [] {
             SessionModel model;

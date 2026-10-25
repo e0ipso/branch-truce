@@ -82,6 +82,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_mergetool_tests app/MergetoolLauncherTests.cpp)
     target_include_directories(branch_truce_mergetool_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_mergetool_tests PRIVATE branch_truce_controller branch_truce_build_options)
+    # Its --foreign-peer-launcher child reports another uid for SO_PEERCRED.
+    target_link_options(branch_truce_mergetool_tests PRIVATE "LINKER:--wrap=getsockopt")
     add_dependencies(branch_truce_mergetool_tests branch-truce)
     add_test(NAME app.mergetool-launcher COMMAND branch_truce_mergetool_tests $<TARGET_FILE:branch-truce>)
     set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 120)
@@ -131,6 +133,13 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_test(NAME performance.workloads COMMAND branch_truce_workload_measurements --profile gate)
     set_tests_properties(performance.workloads PROPERTIES TIMEOUT 180
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
+    # Rebuilds a Release copy in a fixture under ${TMPDIR:-/tmp}, installs it, launches only the
+    # installed files and removes the fixture (about 100 s on the development host).
+    add_test(NAME install.prefix COMMAND "${BASH_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/verify-install-prefix.sh"
+        --mergetool-tests $<TARGET_FILE:branch_truce_mergetool_tests>)
+    # Serial, so its Release build does not slow the wall-clock deadlines of other tests.
+    set_tests_properties(install.prefix PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
 
     add_test(NAME desktop.startup COMMAND branch-truce --smoke-test)
     set_tests_properties(desktop.startup PROPERTIES TIMEOUT 30

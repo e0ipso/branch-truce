@@ -11,6 +11,7 @@
 #include <QEventLoop>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
+#include <QMap>
 #include <QQmlApplicationEngine>
 #include <QQmlExpression>
 #include <QQuickItem>
@@ -35,6 +36,16 @@ void settle(Predicate ready)
     while (!ready() && deadline.elapsed() < 5000)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     CHECK(ready());
+}
+
+template<typename Predicate>
+void settleFor(const std::string &what, Predicate ready)
+{
+    QElapsedTimer deadline;
+    deadline.start();
+    while (!ready() && deadline.elapsed() < 5000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    if (!ready()) throw std::runtime_error("timed out waiting for " + what);
 }
 
 class Fixture {
@@ -100,6 +111,61 @@ public:
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };
+
+// A supported choice file under another identity, so one session holds several.
+FileSession namedChoiceFile(const std::string &id)
+{
+    auto sources = *test_support::choiceFile().snapshots();
+    const auto path = id + ".txt";
+    sources.path = path;
+    const auto text = sources.launchResult.text.utf8;
+    return FileSession(id, path, {text, {}, 0}, Support::Supported, {}, std::move(sources), true);
+}
+
+// Dialog rows get their final position only after a layout pass, so wait until
+// the named item is visible and its scene position stops moving.
+// Repeater delegates in a popup are reachable only through the visual item tree.
+QQuickItem *visualItem(QQuickItem *root, const QString &name)
+{
+    if (root->objectName() == name) return root;
+    for (auto *child : root->childItems())
+        if (auto *found = visualItem(child, name)) return found;
+    return nullptr;
+}
+
+void clickItem(Fixture &fixture, QQuickItem *target)
+{
+    CHECK(target->isVisible() && target->isEnabled() && target->width() > 0 && target->height() > 0);
+    const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
+    QTest::mouseClick(fixture.window, Qt::LeftButton, Qt::NoModifier, center);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+}
+
+QQuickItem *waitForLayout(Fixture &fixture, const QString &name)
+{
+    QQuickItem *found = nullptr;
+    QPointF previous(-1, -1);
+    std::string state = "not found";
+    const auto laidOut = [&] {
+        auto *target = visualItem(fixture.window->contentItem(), name);
+        found = target;
+        if (!target) return false;
+        const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0));
+        state = "visible=" + std::to_string(target->isVisible()) + " size=" + std::to_string(target->width())
+            + "x" + std::to_string(target->height()) + " center=" + std::to_string(center.x()) + ","
+            + std::to_string(center.y());
+        if (!target->isVisible() || target->width() <= 0 || target->height() <= 0) return false;
+        const bool stable = center == previous && fixture.window->contentItem()->contains(center);
+        previous = center;
+        return stable;
+    };
+    QElapsedTimer deadline;
+    deadline.start();
+    while (!laidOut() && deadline.elapsed() < 5000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    if (!laidOut()) throw std::runtime_error("layout of " + name.toStdString() + ": " + state);
+    return found;
+}
 
 // atLimit ends in a non-newline byte that is exactly at a resource limit. Qt
 // reports Backspace and Delete with control characters in text(), as real
@@ -934,6 +1000,80 @@ public:
             CHECK(!fixture.file().facts().resolved && !fixture.file().staged());
             CHECK(fixture.item("selectedStatus")->property("text").toString().contains(QStringLiteral("Repository write failed")));
             CHECK(!fixture.item("parentStagingState")->isVisible());
+        });
+        suite.run("TRUCE-0028 closing with work outstanding opens the handoff and each route returns to its file", [] {
+            Fixture fixture;
+            auto *files = fixture.controller.files();
+            CHECK(files->appendFile(namedChoiceFile("saved")));
+            CHECK(files->recordCheckpoint("saved", 1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(files->appendFile(namedChoiceFile("published")));
+            CHECK(files->beginMarkResolved("published", 1, true) == Transition::Applied);
+            CHECK(files->recordCheckpoint("published", 1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(files->recordWrite("published", 1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(files->recordStage("published", 1, Outcome::Succeeded, "verified-object", "100644")
+                == Transition::Applied);
+            CHECK(files->file("published")->facts().resolved);
+            CHECK(files->appendFile(FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+
+            auto *dialog = fixture.object("handoffDialog");
+            const auto opened = [&] { return dialog->property("opened").toBool(); };
+            CHECK(!dialog->property("visible").toBool());
+            // The window close handler keeps the window and opens the handoff.
+            fixture.window->close();
+            settleFor("handoff opened by close", opened);
+            CHECK(fixture.window->isVisible() && fixture.controller.sessionOutcome().isEmpty());
+            CHECK(fixture.item("handoffOutcome")->property("text").toString()
+                == QStringLiteral("3 of 4 files in this session remain outstanding. This session is not finished."));
+            CHECK(!fixture.item("handoffFinish")->isVisible());
+
+            QStringList outstanding;
+            QMap<QString, QString> categories;
+            for (const auto &group : fixture.controller.handoff().value(QStringLiteral("groups")).toList())
+                for (const auto &entry : group.toMap().value(QStringLiteral("entries")).toList()) {
+                    const auto fields = entry.toMap();
+                    categories.insert(fields.value(QStringLiteral("fileId")).toString(),
+                                      fields.value(QStringLiteral("category")).toString());
+                    if (fields.value(QStringLiteral("outstanding")).toBool())
+                        outstanding << fields.value(QStringLiteral("fileId")).toString();
+                }
+            CHECK(outstanding.size() == 3 && outstanding.contains(QStringLiteral("choices")));
+            CHECK(categories.value(QStringLiteral("saved")) == QStringLiteral("saved-draft"));
+            CHECK(categories.value(QStringLiteral("outside")) == QStringLiteral("outside-app"));
+            CHECK(categories.value(QStringLiteral("published")) == QStringLiteral("published"));
+            for (const auto &id : outstanding) {
+                CHECK(fixture.controller.selectFile(QStringLiteral("published")));
+                if (!opened()) fixture.click("openHandoff");
+                settleFor("handoff reopened for " + id.toStdString(), opened);
+                const auto route = QStringLiteral("handoffRoute-") + id;
+                clickItem(fixture, waitForLayout(fixture, route));
+                settleFor("handoff closed by route " + id.toStdString(), [&] { return !opened(); });
+                if (fixture.controller.selectedFileId() != id)
+                    throw std::runtime_error(("route " + id + " selected " + fixture.controller.selectedFileId()).toStdString());
+                CHECK(fixture.controller.selectedFileId() == id);
+            }
+            CHECK(fixture.item("selectedProblem")->property("text").toString().contains(QStringLiteral("image content")));
+
+            int ended = 0;
+            bool clean = true;
+            QObject::connect(&fixture.controller, &ApplicationController::sessionEnded, &fixture.controller,
+                             [&](const QString &, bool value) { ++ended; clean = value; });
+            fixture.click("openHandoff");
+            settleFor("handoff opened for leave", opened);
+            auto *leave = waitForLayout(fixture, QStringLiteral("handoffLeave"));
+            CHECK(leave == fixture.item("handoffLeave") && leave->isEnabled());
+            clickItem(fixture, leave);
+            CHECK(ended == 1 && !clean);
+            CHECK(fixture.controller.sessionOutcome().startsWith(QStringLiteral("Left with 3 of 4 files outstanding.")));
+            CHECK(!fixture.controller.leaveSession() && ended == 1);
+            CHECK(QMetaObject::invokeMethod(dialog, "close"));
+            settleFor("handoff closed after leave", [&] { return !opened(); });
+            // After the deliberate leave the close handler accepts the close.
+            const bool quitOnClose = QGuiApplication::quitOnLastWindowClosed();
+            QGuiApplication::setQuitOnLastWindowClosed(false);
+            fixture.window->close();
+            settleFor("window closed after leave", [&] { return !fixture.window->isVisible(); });
+            QGuiApplication::setQuitOnLastWindowClosed(quitOnClose);
+            CHECK(!opened() && ended == 1);
         });
         suite.run("TRUCE-0029 a rejected insertion at the file limit leaves the editor usable", [] {
             const auto atLimit = [] {

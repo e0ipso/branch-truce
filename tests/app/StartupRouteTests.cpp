@@ -7,6 +7,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -1348,6 +1349,68 @@ public:
             CHECK(restored.current().draft.decisions.at("kept").value == DecisionValue::Ignored);
             CHECK(restored.checkpoint() && restored.checkpoint()->draft == edited);
             CHECK(!restored.facts().unsaved && !restored.written() && !restored.staged());
+            CHECK(repo.snapshot() == before);
+        });
+        suite.run("TRUCE-0028 a deliberate leave keeps drafts, runs no Git command and ends the session once", [] {
+            Repository repo(true);
+            repo.conflict("merge");
+            repo.offlineGuard();
+            ScopedEnvironment environment(repo.environment);
+            const auto before = repo.snapshot();
+            const auto trace = repo.executables.path() + "/git-argv";
+            Draft kept;
+            {
+                ApplicationController controller;
+                openController(controller, repo);
+                const auto &tracked = openedFile(controller);
+                auto edited = tracked.current().draft;
+                edited.text += "kept app draft\n";
+                CHECK(controller.files()->replaceDraft(tracked.id(), tracked.current().id, edited) == Transition::Applied);
+                kept = openedFile(controller).current().draft;
+                const auto excluded = QString::fromLatin1(QByteArray("excluded.txt").toHex());
+                const auto summary = controller.handoff();
+                CHECK(!summary.value("clean").toBool() && summary.value("canLeave").toBool());
+                CHECK(summary.value("leaveBlocker").toString().isEmpty());
+                CHECK(summary.value("totalFiles").toInt() == 2 && summary.value("outstandingFiles").toInt() == 2);
+                CHECK(summary.value("counts").toMap().value("outside-app").toInt() == 1);
+                QStringList routes;
+                for (const auto &group : summary.value("groups").toList())
+                    for (const auto &entry : group.toMap().value("entries").toList()) {
+                        const auto fields = entry.toMap();
+                        CHECK(fields.value("outstanding").toBool() && !fields.value("action").toString().isEmpty());
+                        if (fields.value("fileId").toString() == excluded)
+                            CHECK(fields.value("category").toString() == "outside-app");
+                        // A route opens its own file, including the outside-app one.
+                        CHECK(controller.selectFile(fields.value("fileId").toString()));
+                        CHECK(controller.selectedFileId() == fields.value("fileId").toString());
+                        routes << fields.value("fileId").toString();
+                    }
+                CHECK(routes.size() == 2 && routes.contains(excluded));
+                CHECK(!controller.finishSession());
+                int ended = 0;
+                QString outcome;
+                bool clean = true;
+                QObject::connect(&controller, &ApplicationController::sessionEnded, &controller,
+                                 [&](const QString &text, bool value) { ++ended; outcome = text; clean = value; });
+                const auto calls = readFile(trace);
+                CHECK(controller.leaveSession());
+                // Give any Git child the leave could have started time to record its argv.
+                QElapsedTimer settle;
+                settle.start();
+                while (settle.elapsed() < 500) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                CHECK(readFile(trace) == calls);
+                CHECK(ended == 1 && !clean);
+                CHECK(outcome == "Left with 2 of 2 files outstanding. Drafts stay in Branch Truce; "
+                                 "the Git operation was not continued or committed.");
+                CHECK(controller.sessionOutcome() == outcome);
+                CHECK(!controller.handoff().value("canLeave").toBool());
+                CHECK(!controller.leaveSession() && !controller.finishSession() && ended == 1);
+                CHECK(openedFile(controller).current().draft == kept);
+                CHECK(repo.snapshot() == before);
+            }
+            ApplicationController controller;
+            openController(controller, repo);
+            CHECK(openedFile(controller).current().draft == kept);
             CHECK(repo.snapshot() == before);
         });
         suite.run("invalid selections expose an error without an empty supported session", [&] {

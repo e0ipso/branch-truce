@@ -352,6 +352,31 @@ struct RestartedWrite {
         CHECK(readFile(repo.path("tracked.txt")) == edited);
     }
 };
+
+// Every sessionEnded emission of one controller.
+struct SessionEnd {
+    int count = 0;
+    QString outcome;
+    bool clean = false;
+};
+
+void watchSessionEnd(ApplicationController &controller, SessionEnd &end)
+{
+    QObject::connect(&controller, &ApplicationController::sessionEnded, &controller,
+                     [&end](const QString &outcome, bool clean) {
+        ++end.count;
+        end.outcome = outcome;
+        end.clean = clean;
+    });
+}
+
+QVariantMap handoffEntry(const QVariantMap &summary, const QString &fileId)
+{
+    for (const auto &group : summary.value("groups").toList())
+        for (const auto &entry : group.toMap().value("entries").toList())
+            if (entry.toMap().value("fileId").toString() == fileId) return entry.toMap();
+    throw std::runtime_error("handoff has no entry for " + fileId.toStdString());
+}
 }
 
 int main(int argc, char **argv)
@@ -650,6 +675,92 @@ int main(int argc, char **argv)
         CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
+    });
+    suite.run("TRUCE-0074 leave refuses unrecovered input and a running resolution and finish waits for a clean handoff", [] {
+        Session session;
+        SessionEnd end;
+        watchSessionEnd(session.controller, end);
+        auto &controller = session.controller;
+        const QString pendingBlocker = "Pending input is not in recovery yet. Retry recovery before leaving so the draft is kept.";
+        const QString runningBlocker = "Wait for the running resolution to finish before leaving.";
+        const QString unclean = "Work remains outstanding, so this session cannot finish cleanly. "
+                                "Open an outstanding file or leave deliberately.";
+        const auto before = session.repo.snapshot();
+
+        auto edited = openedFile(controller).current().draft;
+        edited.text = "pending input before leaving\n";
+        edited.unresolvedMarkers = 0;
+        {
+            recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+            CHECK(controller.files()->replaceDraft(session.id.toStdString(), openedFile(controller).current().id, edited)
+                  == Transition::Blocked);
+            CHECK(recovery_faults::failures == 1);
+        }
+        CHECK(controller.files()->hasPendingRecovery());
+        auto summary = controller.handoff();
+        CHECK(!summary.value("canLeave").toBool() && summary.value("leaveBlocker").toString() == pendingBlocker);
+        CHECK(!summary.value("clean").toBool() && summary.value("sessionBlockers").toStringList().isEmpty());
+        CHECK(handoffEntry(summary, session.id).value("action").toString() == "retry-recovery");
+        CHECK(!controller.leaveSession());
+        CHECK(controller.commandMessage() == pendingBlocker);
+        CHECK(end.count == 0 && controller.sessionOutcome().isEmpty());
+        CHECK(!controller.finishSession());
+        CHECK(controller.commandMessage() == unclean && end.count == 0);
+        CHECK(controller.files()->hasPendingRecovery());
+        expectUnchanged(session.repo, before);
+
+        CHECK(controller.files()->retryPendingRecovery(session.id));
+        CHECK(openedFile(controller).current().draft == edited);
+        summary = controller.handoff();
+        CHECK(summary.value("canLeave").toBool() && summary.value("leaveBlocker").toString().isEmpty());
+        CHECK(handoffEntry(summary, session.id).value("category").toString() != "failed");
+
+        {
+            PublishStall stall;
+            CHECK(controller.markResolved(session.id, session.revision(), true));
+            CHECK(stall.waitForExchange());
+            CHECK(controller.resolutionBusy());
+            summary = controller.handoff();
+            CHECK(!summary.value("canLeave").toBool() && summary.value("leaveBlocker").toString() == runningBlocker);
+            CHECK(summary.value("sessionBlockers").toStringList()
+                  == QStringList{"A resolution is still running; its outcome is not known yet."});
+            CHECK(!summary.value("clean").toBool());
+            CHECK(!controller.leaveSession());
+            CHECK(controller.commandMessage() == runningBlocker);
+            CHECK(!controller.finishSession());
+            CHECK(controller.commandMessage() == unclean);
+            CHECK(end.count == 0 && controller.sessionOutcome().isEmpty());
+            stall.releaseWorker();
+            waitFor(controller, [&] { return !controller.resolutionBusy(); });
+        }
+        CHECK(openedFile(controller).facts().resolved);
+
+        // One file stays outstanding, so finishing is still refused.
+        CHECK(!controller.handoff().value("clean").toBool());
+        CHECK(!controller.finishSession() && controller.commandMessage() == unclean && end.count == 0);
+        const auto excluded = QString::fromLatin1(QByteArray("excluded.txt").toHex());
+        CHECK(controller.selectFile(excluded));
+        auto resolved = openedFile(controller, "excluded.txt").current().draft;
+        resolved.text = "excluded resolved\n";
+        resolved.unresolvedMarkers = 0;
+        CHECK(controller.files()->replaceDraft(excluded.toStdString(), openedFile(controller, "excluded.txt").current().id,
+                                               resolved) == Transition::Applied);
+        CHECK(controller.markResolved(excluded, revisionOf(openedFile(controller, "excluded.txt")), true));
+        waitFor(controller, [&] {
+            return !controller.resolutionBusy() && openedFile(controller, "excluded.txt").facts().resolved;
+        });
+        CHECK(unmerged(session.repo).isEmpty());
+
+        summary = controller.handoff();
+        CHECK(summary.value("clean").toBool() && summary.value("canLeave").toBool());
+        CHECK(summary.value("outstandingFiles").toInt() == 0 && summary.value("totalFiles").toInt() == 2);
+        CHECK(controller.finishSession());
+        CHECK(end.count == 1 && end.clean);
+        CHECK(end.outcome == summary.value("outcome").toString() && controller.sessionOutcome() == end.outcome);
+        CHECK(end.outcome.startsWith("All 2 files in this session are written and resolved in Git."));
+        CHECK(!controller.handoff().value("canLeave").toBool());
+        CHECK(!controller.finishSession() && !controller.leaveSession());
+        CHECK(end.count == 1 && controller.sessionOutcome() == end.outcome);
     });
     return suite.report();
 }

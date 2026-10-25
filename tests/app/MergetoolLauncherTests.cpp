@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "app/MergetoolLauncher.h"
 #include "app/MergetoolProtocol.h"
 #include "TestHarness.h"
 
@@ -17,15 +18,34 @@
 
 #include <csignal>
 #include <cstdio>
+#include <cstring>
 #include <functional>
 #include <optional>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <utility>
 
 #include <memory>
 
 using namespace branch_truce;
+
+namespace peer_credentials {
+// Set only in the --foreign-peer-launcher child of this test binary.
+bool foreign = false;
+}
+
+// Linked into this test executable only. The launcher's SO_PEERCRED query then
+// reports another uid, as a socket answered by a different user would.
+extern "C" int __real_getsockopt(int descriptor, int level, int name, void *value, socklen_t *size);
+extern "C" int __wrap_getsockopt(int descriptor, int level, int name, void *value, socklen_t *size)
+{
+    const int result = __real_getsockopt(descriptor, level, name, value, size);
+    if (result == 0 && peer_credentials::foreign && level == SOL_SOCKET && name == SO_PEERCRED
+        && value != nullptr && size != nullptr && *size == sizeof(ucred))
+        static_cast<ucred *>(value)->uid = ::geteuid() + 1;
+    return result;
+}
 
 namespace {
 QString launcherBinary;
@@ -365,6 +385,13 @@ private:
 
 int main(int argc, char **argv)
 {
+    // Child mode: run the real launcher code from this binary with a foreign peer uid.
+    if (argc == 2 && std::strcmp(argv[1], "--foreign-peer-launcher") == 0) {
+        peer_credentials::foreign = true;
+        char mergetool[] = "--mergetool";
+        char *launcherArguments[] = {argv[0], mergetool, nullptr};
+        return runMergetoolLauncher(2, launcherArguments);
+    }
     QCoreApplication application(argc, argv);
     if (argc != 2) {
         QTextStream(stderr) << "usage: mergetool-launcher-tests <branch-truce>\n";
@@ -666,6 +693,32 @@ int main(int argc, char **argv)
         const QByteArray refusal("mergetool: No Branch Truce session is listening for this repository.\n");
         const auto errors = launcher.readAllStandardError();
         CHECK(errors == refusal || errors.endsWith('\n' + refusal));
+        CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+        CHECK(unmerged(repo, "tracked.txt"));
+    });
+    suite.run("TRUCE-0072 a session socket answered by another uid is refused before the launcher sends anything", [] {
+        Repository repo("never attached\n", "excluded stays conflicted\n");
+        ScopedEnvironment environment(repo.environment);
+        ApplicationController controller;
+        openController(controller, repo);
+        QTemporaryDir sides;
+        QProcess launcher;
+        launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
+        launcher.setWorkingDirectory(repo.root);
+        launcher.start(QCoreApplication::applicationFilePath(), {"--foreign-peer-launcher"});
+        CHECK(launcher.waitForStarted(5000));
+        waitFinished(launcher, 1, controller);
+        // Qt may warn about the C locale first.
+        const QByteArray refusal("mergetool: The session socket does not belong to this user.\n");
+        const auto errors = launcher.readAllStandardError();
+        if (errors != refusal && !errors.endsWith('\n' + refusal))
+            throw std::runtime_error("launcher stderr: " + errors.toStdString());
+        // Let the session handle whatever reached its socket before the launcher closed it.
+        QElapsedTimer settle;
+        settle.start();
+        while (settle.elapsed() < 300) QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+        CHECK(controller.mergetoolListening() && controller.mergetoolIntakes().isEmpty());
+        CHECK(controller.mergetoolWaitingPath().isEmpty() && !controller.mergetoolHasWaiter("tracked.txt"));
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
         CHECK(unmerged(repo, "tracked.txt"));
     });
