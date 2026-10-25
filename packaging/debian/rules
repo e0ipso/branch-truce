@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DBUILD_TESTING=OFF -DBRANCH_TRUCE_BUILD_DESKTOP=ON
+
+# The package build has no tests; CTest runs from a development build.
+override_dh_auto_test:

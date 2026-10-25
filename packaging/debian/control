@@ -1,0 +1,42 @@
+Source: branch-truce
+Section: devel
+Priority: optional
+Maintainer: Branch Truce contributors <contributors@example.invalid>
+# Floors are the CMake API floors in CMakeLists.txt. Each OS base resolves
+# them to its own packages; docs/target-platforms.md records the versions.
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.28),
+               extra-cmake-modules (>= 6.0~),
+               libkirigami-dev (>= 6.0~),
+               qt6-base-dev (>= 6.6~),
+               qt6-declarative-dev (>= 6.6~)
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: branch-truce
+Architecture: amd64
+# QML imports are resolved at run time, so dpkg-shlibdeps cannot see them.
+# These are the modules src/ui imports; tools/inspect-artifact.sh checks the
+# list against the sources and loads the window from the installed package.
+# The application runs the installed Git CLI.
+Depends: git (>= 1:2.43),
+         qml6-module-org-kde-kirigami (>= 6.0~),
+         qml6-module-qtquick (>= 6.6~),
+         qml6-module-qtquick-controls (>= 6.6~),
+         qml6-module-qtquick-layouts (>= 6.6~),
+         ${misc:Depends},
+         ${shlibs:Depends}
+# Plasma integration: the KDE Quick Controls style, the Breeze widget style
+# and icons, and native Wayland. Without them the window still loads.
+Recommends: kde-style-breeze,
+            kf6-breeze-icon-theme,
+            qml6-module-org-kde-desktop,
+            qt6-wayland
+Description: Resolve Git merge and rebase text conflicts offline
+ Branch Truce opens every conflicted file of the current Git merge or rebase
+ in one session. It shows both contributions around an editable result,
+ keeps drafts inside the app until a file is marked resolved, and leaves
+ unsupported files visible with the reason.
+ .
+ Separate amd64 builds target Kubuntu 26.04 and Tuxedo OS 24.04 (noble),
+ each against its own Qt and KDE packages.

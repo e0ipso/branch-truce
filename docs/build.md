@@ -133,7 +133,8 @@ application ID is the reverse-DNS form of the organization domain
 `branch-truce.local`. The GUI sets it as its desktop file name, which is how
 Plasma matches a window to the entry and icon. For a prefix outside the system
 data directories, add `<prefix>/share` to `XDG_DATA_DIRS` so menus and icon
-lookup find the files. Package formats for each OS are separate work.
+lookup find the files. The per-OS `.deb` packages, their build containers and
+their inspection are described in [target-platforms.md](target-platforms.md).
 
 ```sh
 cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
@@ -221,9 +222,10 @@ core CTest each passed 1/1. QML lint completed without diagnostics. The same
 checks passed in a disposable detached worktree, which stayed clean and was
 removed afterward. These are scaffold checks only.
 The install-prefix check under [Install](#install) passed on this host.
-Native Kubuntu 26.04 builds, per-OS packages and their installation, Wayland,
-theme/scaling and accessibility checks remain required before platform
-compatibility claims.
+Separate Kubuntu 26.04 and Tuxedo OS 24.04 packages are built and inspected
+in containers of each base, as [target-platforms.md](target-platforms.md)
+records. Installing them on the real desktops, Wayland, theme/scaling and
+accessibility checks remain required before platform compatibility claims.
 Build separate artifacts on each OS base. A user-owned prefix via
 `CMAKE_PREFIX_PATH` can supply compatible Qt/KDE packages, but must keep their ABI
 and runtime modules consistent; no such alternate toolchain was needed here.
