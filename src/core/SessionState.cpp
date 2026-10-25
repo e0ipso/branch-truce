@@ -411,14 +411,19 @@ FileFacts FileSession::facts() const
     auto &blockers = facts.blockers;
     if (support_ == Support::OutsideApp) blockers.push_back(Blocker::OutsideApp);
     if (support_ == Support::Unreadable) blockers.push_back(Blocker::Unreadable);
-    if (current().draft.unresolvedMarkers != 0) blockers.push_back(Blocker::UnresolvedMarkers);
-    if (undecided != 0 && !(reviewed && reviewed_->confirmedUndecided))
-        blockers.push_back(Blocker::Undecided);
-    if (facts.unsaved) blockers.push_back(Blocker::UnsavedDraft);
-    if (facts.needsReview) blockers.push_back(Blocker::ReviewNeeded);
-    if (!written) blockers.push_back(Blocker::WriteRequired);
-    if (!staged) blockers.push_back(Blocker::StageRequired);
-    if (facts.earlierStaged) blockers.push_back(Blocker::EarlierStagedResult);
+    // A file the app cannot edit has no draft to Save, mark resolved, write or
+    // stage, so only its support blocker and recorded failures apply. It stays
+    // unresolved because resolution requires Support::Supported.
+    if (support_ == Support::Supported) {
+        if (current().draft.unresolvedMarkers != 0) blockers.push_back(Blocker::UnresolvedMarkers);
+        if (undecided != 0 && !(reviewed && reviewed_->confirmedUndecided))
+            blockers.push_back(Blocker::Undecided);
+        if (facts.unsaved) blockers.push_back(Blocker::UnsavedDraft);
+        if (facts.needsReview) blockers.push_back(Blocker::ReviewNeeded);
+        if (!written) blockers.push_back(Blocker::WriteRequired);
+        if (!staged) blockers.push_back(Blocker::StageRequired);
+        if (facts.earlierStaged) blockers.push_back(Blocker::EarlierStagedResult);
+    }
     const auto addFailure = [&](const auto &outcome, Blocker failure) {
         if (!outcome) return;
         if (outcome->outcome == Outcome::Failed) blockers.push_back(failure);

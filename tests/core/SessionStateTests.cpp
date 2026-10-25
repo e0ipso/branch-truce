@@ -804,7 +804,28 @@ public:
                 CHECK(file.discardToStaged(id) == Transition::Blocked);
                 CHECK(file.beginMarkResolved(id, true) == Transition::Blocked && !file.facts().resolved);
                 CHECK(file.supportDetail() == "unavailable");
+                // TRUCE-0098: no app draft blockers for a file the app cannot edit.
+                const auto expected = support == Support::OutsideApp ? Blocker::OutsideApp : Blocker::Unreadable;
+                CHECK(file.facts().blockers == std::vector<Blocker>{expected});
+                CHECK(file.facts().status == (support == Support::OutsideApp ? FileStatus::OutsideApp : FileStatus::Unreadable));
             }
+        });
+        suite.run("TRUCE-0098 an outside-app file keeps its support blocker and recorded failures only", [] {
+            FileSession file("id", "file", draft());
+            CHECK(file.beginMarkResolved(1) == Transition::Applied);
+            CHECK(file.recordCheckpoint(1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(file.recordWrite(1, Outcome::Failed, "disk full") == Transition::Applied);
+            CHECK(file.setSupport(Support::OutsideApp, "binary now") == Transition::Applied);
+            const auto facts = file.facts();
+            CHECK((facts.blockers == std::vector<Blocker>{Blocker::OutsideApp, Blocker::WriteFailed}));
+            CHECK(!facts.resolved && facts.status == FileStatus::OutsideApp);
+            FileSession uncertain("id", "file", draft());
+            CHECK(uncertain.beginMarkResolved(1) == Transition::Applied);
+            CHECK(uncertain.recordCheckpoint(1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(uncertain.recordWrite(1, Outcome::Uncertain, "lost reply") == Transition::Applied);
+            CHECK(uncertain.setSupport(Support::Unreadable, "gone") == Transition::Applied);
+            CHECK((uncertain.facts().blockers == std::vector<Blocker>{Blocker::Unreadable, Blocker::UncertainOutcome}));
+            CHECK(!uncertain.facts().resolved && uncertain.facts().status == FileStatus::Unreadable);
         });
         suite.run("outcomes require the reviewed saved and written transaction", [] {
             FileSession file("id", "file", draft());

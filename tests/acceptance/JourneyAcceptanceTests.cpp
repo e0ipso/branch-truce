@@ -1137,6 +1137,8 @@ public:
             expectContains(blockers("locked/failing.txt"), "Repository write failed", "failure blocker");
             expectContains(blockers("written.txt"), "Git resolution failed", "stage blocker");
             expectContains(blockers("removed.txt"), "Handle this file outside Branch Truce", "outside-app blocker");
+            // TRUCE-0098: an outside-app file has no app draft to Save, mark resolved, write or stage.
+            expectText(blockers("removed.txt"), "Handle this file outside Branch Truce", "outside-app blockers");
             CHECK(blockers("done.txt").isEmpty());
 
             // Each route returns to its file.

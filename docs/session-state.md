@@ -92,7 +92,10 @@ resolved facts plus all finish blockers. Confirmed undecided contributions stay
 visible as decisions; they stop blocking finish for that reviewed revision.
 Failures, unsupported/unreadable content and known remaining markers stay
 outstanding. An earlier staged result beside a different current transaction
-produces "Earlier result staged; current draft not applied".
+produces "Earlier result staged; current draft not applied". An outside-app or
+unreadable file has no app draft, so its blockers are its support blocker plus
+any recorded Save, write, staging or uncertain-outcome failure; it never gets
+draft, Mark resolved, written or staged blockers and still never resolves.
 
 The Qt model exposes snapshots, outcomes and independent facts through named
 roles. Revisions and combination order use decimal strings to preserve 64-bit
