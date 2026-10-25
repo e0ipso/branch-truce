@@ -7,10 +7,10 @@ conversion; storage provides lossless text codecs. See the
 [supported conversion envelope](text-conversion.md). The window opens the launched
 repository's complete current conflict inventory, including outside-app work and
 load errors with persistent reasons. Selecting a file by its exact byte-derived ID
-opens read-only captured sources around the preserved result preview; the common
+opens read-only captured sources around the editable result; the common
 earlier version is available on demand. The session warning keeps outside-app work
-visible while supported files are selected. Editing and resolution controls remain
-separate implementation work.
+visible while supported files are selected. Using the app, including Save and
+Mark resolved, is described in the [README](../README.md#launch).
 The core uses C++20 and the standard library without Qt or platform I/O.
 
 ## Machine provisioning
@@ -65,8 +65,10 @@ and `-Werror` for project C++ targets. Direct CMake users can set
 `BRANCH_TRUCE_WARNINGS_AS_ERRORS`, `BRANCH_TRUCE_SANITIZERS`,
 `BRANCH_TRUCE_BUILD_DESKTOP` and `BUILD_TESTING` explicitly. Sanitizers enable
 AddressSanitizer and UndefinedBehaviorSanitizer with frame pointers. The default
-sanitizer preparation tests the core without Qt; desktop sanitizers can be
-configured separately with both desktop and sanitizer options ON.
+sanitizer preparation tests the core without Qt, and CI runs it as
+`./tools/prepare-worktree.sh sanitize` followed by the build and CTest above.
+Desktop sanitizers can be configured separately with both desktop and
+sanitizer options ON; no preparation mode or CI job runs that configuration.
 
 CTest includes the core build canary, revisioned session tests, correspondence
 command fixtures and CLI guards. Desktop builds also test the Qt session model,
@@ -91,9 +93,9 @@ operations and files remain visible with an explanation, and unreadable files
 never appear as empty supported results. Startup does not change the worktree or
 index. The session uses no account or network and covers the conflicts present at
 launch. Continue and commit in the usual Git workflow. `branch-truce --mergetool`
-is the blocking parent launcher. Its transport and lifecycle are recorded in
-[the mergetool launcher note](mergetool-launcher.md). That note does not declare
-mergetool compatibility.
+is the blocking parent launcher. [mergetool.md](mergetool.md) gives the tested
+Git configuration, and [the mergetool launcher note](mergetool-launcher.md)
+records its transport, lifecycle and the behaviours tested with a real parent.
 
 Build directories are disposable. The default root `build/` directory is ignored
 by Git. An optional second absolute argument to `prepare-worktree.sh` places

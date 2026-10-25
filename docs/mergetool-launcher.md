@@ -2,7 +2,8 @@
 
 This is the transport for Git's mergetool parent. Compatibility is declared
 only for the configuration and behaviour listed under "Tested with a real
-parent" below. It is not a Kubuntu 26.04 claim.
+parent" below. It is not a Kubuntu 26.04 claim. For setup and day-to-day use,
+see [mergetool.md](mergetool.md).
 
 Installed Git 2.43 runs the tool once per path. Its shell sets `BASE`,
 `LOCAL`, `REMOTE` and `MERGED` for the evaluated `mergetool.<tool>.cmd` and
