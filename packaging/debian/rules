@@ -1,0 +1,16 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+ifeq ($(strip $(BRANCH_TRUCE_VERSION)),)
+$(error BRANCH_TRUCE_VERSION is not set; build with packaging/scripts/package-release.sh)
+endif
+
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DBRANCH_TRUCE_VERSION=$(BRANCH_TRUCE_VERSION) -DBRANCH_TRUCE_BUILD_DESKTOP=ON -DBRANCH_TRUCE_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=OFF
+
+# The tests run in CI before packaging.
+override_dh_auto_test:
