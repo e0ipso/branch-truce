@@ -244,3 +244,9 @@ Wayland, the KDE style or a display, and the containers' runtime closure is
 what `--no-install-recommends` installs on a minimal base. Each artifact
 still has to be installed on its real desktop, with the runtime matrix
 recorded, before any compatibility claim.
+
+[platform-validation.md](platform-validation.md) records the installed-package
+runs of `tools/validate-installed-artifact.sh`: Wayland, scale factors,
+Breeze Light and Dark, editor input, AT-SPI and a real `git mergetool`
+handoff, all in containers of each base on a headless compositor. Its
+real-desktop rows are unavailable.
