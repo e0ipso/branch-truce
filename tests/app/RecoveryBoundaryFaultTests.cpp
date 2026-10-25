@@ -1,3 +1,4 @@
+#include "app/ApplicationController.h"
 #include "app/RecoveryRestore.h"
 #include "app/SessionModel.h"
 #include "storage/DestinationWriter.h"
@@ -6,17 +7,22 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QMap>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
+#include <QTimer>
 
 #include <cerrno>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <sys/stat.h>
@@ -301,27 +307,6 @@ void truncateFinalFrame(const QString &directory)
     CHECK(journal.write(bytes) == bytes.size());
 }
 
-QByteArray runGit(const QString &root, const QStringList &arguments, int expected = 0)
-{
-    QProcess process;
-    QProcessEnvironment environment;
-    environment.insert(QStringLiteral("PATH"), QStringLiteral("/usr/bin:/bin"));
-    environment.insert(QStringLiteral("HOME"), root + QStringLiteral("/home"));
-    environment.insert(QStringLiteral("GIT_CONFIG_NOSYSTEM"), QStringLiteral("1"));
-    environment.insert(QStringLiteral("GIT_CONFIG_GLOBAL"), QStringLiteral("/dev/null"));
-    environment.insert(QStringLiteral("GIT_AUTHOR_NAME"), QStringLiteral("Branch Truce Tests"));
-    environment.insert(QStringLiteral("GIT_AUTHOR_EMAIL"), QStringLiteral("tests@example.invalid"));
-    environment.insert(QStringLiteral("GIT_COMMITTER_NAME"), QStringLiteral("Branch Truce Tests"));
-    environment.insert(QStringLiteral("GIT_COMMITTER_EMAIL"), QStringLiteral("tests@example.invalid"));
-    process.setProcessEnvironment(environment);
-    process.setWorkingDirectory(root);
-    process.start(QStringLiteral("/usr/bin/git"), QStringList{QStringLiteral("--no-pager"), QStringLiteral("--literal-pathspecs")} + arguments);
-    CHECK(process.waitForStarted(5000) && process.waitForFinished(15000));
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != expected)
-        throw std::runtime_error("git: " + process.readAllStandardError().toStdString());
-    return process.readAllStandardOutput();
-}
-
 void writeFile(const QString &path, const QByteArray &bytes)
 {
     QFile file(path);
@@ -336,6 +321,161 @@ QByteArray readFile(const QString &path)
     const auto bytes = file.readAll();
     CHECK(file.error() == QFileDevice::NoError);
     return bytes;
+}
+
+// Restores the process environment even when fixture construction throws.
+class ScopedEnvironment {
+public:
+    ScopedEnvironment() = default;
+    ScopedEnvironment(const ScopedEnvironment &) = delete;
+    ScopedEnvironment &operator=(const ScopedEnvironment &) = delete;
+    void apply(const QProcessEnvironment &environment)
+    {
+        for (const auto &name : environment.keys()) {
+            const auto key = name.toLatin1();
+            if (!previous.contains(key))
+                previous.insert(key, qEnvironmentVariableIsSet(key.constData()) ? std::optional<QByteArray>(qgetenv(key.constData())) : std::nullopt);
+            qputenv(key.constData(), environment.value(name).toUtf8());
+        }
+    }
+    ~ScopedEnvironment()
+    {
+        for (auto entry = previous.cbegin(); entry != previous.cend(); ++entry) {
+            if (entry.value()) qputenv(entry.key().constData(), *entry.value());
+            else qunsetenv(entry.key().constData());
+        }
+    }
+private:
+    QMap<QByteArray, std::optional<QByteArray>> previous;
+};
+
+// One real text conflict on result.txt, opened through the application so
+// Mark resolved runs the product publication and Git index path.
+class IndexConflict {
+public:
+    IndexConflict()
+    {
+        CHECK(directory.isValid() && home.isValid());
+        root = QFileInfo(directory.path()).canonicalFilePath();
+        environment.insert(QStringLiteral("PATH"), QStringLiteral("/usr/bin:/bin"));
+        environment.insert(QStringLiteral("HOME"), home.path());
+        environment.insert(QStringLiteral("XDG_CONFIG_HOME"), home.path() + QStringLiteral("/config"));
+        environment.insert(QStringLiteral("XDG_CACHE_HOME"), home.path() + QStringLiteral("/cache"));
+        environment.insert(QStringLiteral("XDG_DATA_HOME"), home.path() + QStringLiteral("/data"));
+        environment.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
+        environment.insert(QStringLiteral("GIT_CONFIG_NOSYSTEM"), QStringLiteral("1"));
+        environment.insert(QStringLiteral("GIT_CONFIG_GLOBAL"), QStringLiteral("/dev/null"));
+        environment.insert(QStringLiteral("GIT_TERMINAL_PROMPT"), QStringLiteral("0"));
+        git({QStringLiteral("init"), QStringLiteral("--quiet"), QStringLiteral("--initial-branch=main")});
+        git({QStringLiteral("config"), QStringLiteral("user.name"), QStringLiteral("Branch Truce Tests")});
+        git({QStringLiteral("config"), QStringLiteral("user.email"), QStringLiteral("tests@example.invalid")});
+        git({QStringLiteral("config"), QStringLiteral("core.autocrlf"), QStringLiteral("false")});
+        commit("base\n", QStringLiteral("base"));
+        git({QStringLiteral("checkout"), QStringLiteral("--quiet"), QStringLiteral("-b"), QStringLiteral("side")});
+        commit("side\n", QStringLiteral("side"));
+        git({QStringLiteral("checkout"), QStringLiteral("--quiet"), QStringLiteral("main")});
+        commit("main\n", QStringLiteral("main"));
+        git({QStringLiteral("merge"), QStringLiteral("--no-edit"), QStringLiteral("side")}, 1);
+        writeFile(path(QStringLiteral("result.txt")), manual);
+        scoped.apply(environment);
+        controller = std::make_unique<ApplicationController>();
+        open();
+        CHECK(controller->selectFile(id));
+        auto draft = file().current().draft;
+        draft.text = reviewed.toStdString();
+        draft.unresolvedMarkers = 0;
+        CHECK(controller->files()->replaceDraft(id.toStdString(), file().current().id, draft) == Transition::Applied);
+    }
+    IndexConflict(const IndexConflict &) = delete;
+    IndexConflict &operator=(const IndexConflict &) = delete;
+
+    QString path(const QString &relative) const { return root + QLatin1Char('/') + relative; }
+    QByteArray git(const QStringList &arguments, int expected = 0) const
+    {
+        QProcess process;
+        process.setProcessEnvironment(environment);
+        process.setWorkingDirectory(root);
+        process.start(QStringLiteral("/usr/bin/git"), QStringList{QStringLiteral("--no-pager"), QStringLiteral("--literal-pathspecs")} + arguments);
+        CHECK(process.waitForStarted(5000) && process.waitForFinished(15000));
+        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != expected)
+            throw std::runtime_error("fixture git: " + process.readAllStandardError().toStdString());
+        return process.readAllStandardOutput();
+    }
+    QByteArray indexEntries() const
+    {
+        return git({QStringLiteral("ls-files"), QStringLiteral("--stage"), QStringLiteral("--"), QStringLiteral("result.txt")});
+    }
+    const FileSession &file() const
+    {
+        const auto *selected = controller->files()->file(id.toStdString());
+        CHECK(selected != nullptr);
+        return *selected;
+    }
+    // Starts the real publisher on the current revision and waits until it records an outcome.
+    void markResolved()
+    {
+        CHECK(controller->markResolved(id, QString::number(static_cast<qulonglong>(file().current().id)), true));
+        QElapsedTimer timer;
+        timer.start();
+        const auto settled = [&] {
+            return !controller->resolutionBusy() && (file().stageOutcome()
+                || (file().writeOutcome() && file().writeOutcome()->outcome != Outcome::Succeeded));
+        };
+        while (!settled() && timer.elapsed() < 25000) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        if (!settled()) throw std::runtime_error("publisher did not settle: " + controller->commandMessage().toStdString());
+    }
+
+    QTemporaryDir directory;
+    QTemporaryDir home;
+    QString root;
+    QProcessEnvironment environment;
+    ScopedEnvironment scoped;
+    std::unique_ptr<ApplicationController> controller; // Destroyed before the environment is restored.
+    const QString id = QString::fromLatin1(QByteArray("result.txt").toHex());
+    const QByteArray manual = "manual merge bytes\n";
+    const QByteArray reviewed = "reviewed in app\n";
+
+private:
+    void commit(const QByteArray &bytes, const QString &message)
+    {
+        writeFile(path(QStringLiteral("result.txt")), bytes);
+        git({QStringLiteral("add"), QStringLiteral("--"), QStringLiteral("result.txt")});
+        git({QStringLiteral("commit"), QStringLiteral("--quiet"), QStringLiteral("-m"), message});
+    }
+    void open()
+    {
+        QEventLoop loop;
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+        QObject::connect(controller.get(), &ApplicationController::launchChanged, &loop, [&] {
+            if (!controller->opening()) loop.quit();
+        });
+        CHECK(controller->openRepository(root));
+        timeout.start(15000);
+        if (controller->opening()) loop.exec();
+        if (controller->opening() || controller->startupState() != QLatin1String("ready"))
+            throw std::runtime_error("controller startup: " + controller->detail().toStdString());
+    }
+};
+
+RecoveryReplay replayedJournal(const QString &directory)
+{
+    auto replay = replayRecovery(storage::RecoveryStore(directory));
+    if (!replay.succeeded) throw std::runtime_error("recovery replay: " + replay.error.toStdString());
+    CHECK(!replay.incompleteTail && replay.files.size() == 1);
+    return replay;
+}
+
+const RecoveryMutation *journalMutation(const RecoveryReplay &replay, const char *kind)
+{
+    const RecoveryMutation *found = nullptr;
+    for (const auto &mutation : replay.mutations) {
+        if (mutation.kind != QLatin1String(kind)) continue;
+        CHECK(found == nullptr);
+        found = &mutation;
+    }
+    return found;
 }
 
 template<typename Prepare, typename ModelAction, typename FileAction>
@@ -474,7 +614,8 @@ public:
                 return file.recordWrite(file.current().id, Outcome::Succeeded);
             });
         });
-        suite.run("TRUCE-0034 index sync failure retains the written draft and retries one stage", [] {
+        // A recovery-journal fsync failure while recording a stage; the Git index is not involved.
+        suite.run("TRUCE-0034 stage outcome journal sync failure retains the written draft and retries one stage", [] {
             retryBoundary("stage", writeSaved, [](SessionModel &session) {
                 return session.recordStage("file", session.file("file")->current().id, Outcome::Succeeded,
                     "verified-object", "100644");
@@ -559,39 +700,70 @@ public:
             CHECK(restored.value(QStringLiteral("status")).toString() != QLatin1String("Written and resolved"));
             CHECK(!restored.value(QStringLiteral("written")).toBool());
         });
-        suite.run("TRUCE-0034 a replaced Git index keeps the draft and records an uncertain stage", [] {
-            QTemporaryDir directory;
-            CHECK(directory.isValid());
-            const auto root = QFileInfo(directory.path()).canonicalFilePath();
-            CHECK(QDir().mkpath(root + QStringLiteral("/home")));
-            runGit(root, {QStringLiteral("init"), QStringLiteral("--quiet")});
-            const QByteArray reviewed = "acknowledged draft\n";
-            const QByteArray stale = "stale index bytes\n";
-            writeFile(root + QStringLiteral("/result.txt"), reviewed);
-            runGit(root, {QStringLiteral("add"), QStringLiteral("--"), QStringLiteral("result.txt")});
-            const auto acknowledged = runGit(root, {QStringLiteral("rev-parse"), QStringLiteral(":result.txt")}).trimmed();
-            writeFile(root + QStringLiteral("/result.txt"), stale);
-            runGit(root, {QStringLiteral("add"), QStringLiteral("--"), QStringLiteral("result.txt")});
-            const auto replaced = runGit(root, {QStringLiteral("rev-parse"), QStringLiteral(":result.txt")}).trimmed();
-            CHECK(acknowledged.size() == 40 && replaced.size() == 40 && acknowledged != replaced);
-            const Draft draft{reviewed.toStdString(), {{"left", {DecisionValue::Accepted, 1}}}, 0};
-            SessionModel model(root + QStringLiteral("/recovery"));
-            CHECK(model.appendFile(FileSession("file", "result.txt", draft)));
-            const auto revision = model.file("file")->current().id;
-            CHECK(model.recordCheckpoint("file", revision, Outcome::Succeeded) == Transition::Applied);
-            CHECK(model.beginMarkResolved("file", revision) == Transition::Applied);
-            CHECK(model.recordWrite("file", revision, Outcome::Succeeded) == Transition::Applied);
-            CHECK(model.recordStage("file", revision, Outcome::Uncertain, {}, {}, "index object changed") == Transition::Applied);
-            CHECK(readFile(root + QStringLiteral("/result.txt")) == stale);
-            bool incomplete = true;
-            const auto restored = replayed(model.recoveryDirectory(), &incomplete);
-            CHECK(!incomplete);
-            CHECK(restored.value(QStringLiteral("text")).toString() == QString::fromUtf8(reviewed));
-            CHECK(restored.value(QStringLiteral("status")).toString() == QLatin1String("Outcome uncertain; verification required"));
-            CHECK(restored.value(QStringLiteral("stageOutcome")).toString() == QLatin1String("uncertain"));
-            CHECK(!restored.value(QStringLiteral("staged")).toBool());
-            CHECK(!restored.value(QStringLiteral("resolved")).toBool());
-            CHECK(restored.value(QStringLiteral("decisions")).toArray().size() == 1);
+        // Git index faults run through the real publisher; TRUCE_CRASH_FSYNC stays unset,
+        // so the recovery journal syncs normally and records what the product observed.
+        suite.run("TRUCE-0068 a replaced Git index entry stops publication and replay shows the recorded write failure", [] {
+            IndexConflict conflict;
+            const auto staleFile = conflict.home.path() + QStringLiteral("/stale-index-bytes");
+            writeFile(staleFile, "stale index bytes\n");
+            const auto stale = conflict.git({QStringLiteral("hash-object"), QStringLiteral("-w"),
+                QStringLiteral("--no-filters"), staleFile}).trimmed();
+            CHECK(stale.size() == 40);
+            conflict.git({QStringLiteral("update-index"), QStringLiteral("--cacheinfo"),
+                QStringLiteral("100644,") + QString::fromLatin1(stale) + QStringLiteral(",result.txt")});
+            const auto replacedIndex = conflict.indexEntries();
+            CHECK(replacedIndex == "100644 " + stale + " 0\tresult.txt\n");
+            const auto revision = conflict.file().current().id;
+            conflict.markResolved();
+            const auto &file = conflict.file();
+            CHECK(file.writeOutcome() && file.writeOutcome()->revision == revision
+                && file.writeOutcome()->outcome == Outcome::Failed);
+            CHECK(QString::fromStdString(file.writeOutcome()->detail).contains(QLatin1String("index no longer matches this conflict")));
+            CHECK(!file.stageOutcome() && !file.written() && !file.staged() && !file.facts().resolved);
+            CHECK(file.facts().status == FileStatus::WriteFailed);
+            CHECK(file.current().draft.text == conflict.reviewed.toStdString() && file.checkpoint());
+            CHECK(readFile(conflict.path(QStringLiteral("result.txt"))) == conflict.manual);
+            CHECK(conflict.indexEntries() == replacedIndex);
+            CHECK(!conflict.controller->files()->hasPendingRecovery());
+            const auto replay = replayedJournal(conflict.controller->files()->recoveryDirectory());
+            CHECK(replay.mutations.empty());
+            const auto &restored = replay.files.front();
+            CHECK(observation(restored) == observation(file));
+            CHECK(observation(restored).value(QStringLiteral("writeOutcome")).toString() == QLatin1String("failed"));
+            CHECK(restored.writeOutcome() && restored.writeOutcome()->detail == file.writeOutcome()->detail);
+        });
+        suite.run("TRUCE-0068 a locked Git index fails staging after the write and replay shows the recorded stage failure", [] {
+            IndexConflict conflict;
+            const auto conflicted = conflict.indexEntries();
+            CHECK(conflicted.contains(" 1\tresult.txt\n") && conflicted.contains(" 2\tresult.txt\n")
+                && conflicted.contains(" 3\tresult.txt\n"));
+            // Git refuses every index update while another writer holds index.lock.
+            const auto lock = conflict.path(QStringLiteral(".git/index.lock"));
+            writeFile(lock, {});
+            const auto revision = conflict.file().current().id;
+            conflict.markResolved();
+            const auto &file = conflict.file();
+            CHECK(file.writeOutcome() && file.writeOutcome()->revision == revision
+                && file.writeOutcome()->outcome == Outcome::Succeeded);
+            CHECK(file.stageOutcome() && file.stageOutcome()->revision == revision
+                && file.stageOutcome()->outcome == Outcome::Failed);
+            CHECK(QString::fromStdString(file.stageOutcome()->detail).contains(QLatin1String("Git exited with code")));
+            CHECK(file.written() && !file.staged() && !file.facts().resolved);
+            CHECK(file.facts().status == FileStatus::StageFailed);
+            CHECK(readFile(conflict.path(QStringLiteral("result.txt"))) == conflict.reviewed);
+            CHECK(conflict.indexEntries() == conflicted);
+            CHECK(QFile::exists(lock));
+            CHECK(!conflict.controller->files()->hasPendingRecovery());
+            CHECK(QFile::remove(lock));
+            const auto replay = replayedJournal(conflict.controller->files()->recoveryDirectory());
+            const auto *publication = journalMutation(replay, "publication");
+            const auto *staging = journalMutation(replay, "staging");
+            CHECK(publication && publication->observation == QLatin1String("changed") && publication->completed);
+            CHECK(staging && staging->observation == QLatin1String("unchanged") && !staging->completed);
+            const auto &restored = replay.files.front();
+            CHECK(observation(restored) == observation(file));
+            CHECK(observation(restored).value(QStringLiteral("stageOutcome")).toString() == QLatin1String("failed"));
+            CHECK(restored.stageOutcome() && restored.stageOutcome()->detail == file.stageOutcome()->detail);
         });
         return suite.report();
     }
