@@ -3,8 +3,8 @@
 Branch Truce ships one `.deb` per OS base. Each is built in a container from
 that base's own archive and inspected on a clean copy of the same base.
 Neither package is assumed to install on the other base. Installation and
-runtime compatibility on the real desktops stay pending until TRUCE-0039
-validates them.
+runtime compatibility on the real desktops stay pending until both artifacts
+are validated on those desktops.
 
 ## OS bases
 
@@ -233,13 +233,14 @@ their own dependencies, `qml6-module-qtqml`, `-qtqml-models`,
 Kirigami came in at 6.24.0 with its private libraries. The `.inspection`
 report kept beside each artifact lists the full closure with versions.
 `appstreamcli` reported three infos, `cid-maybe-not-rdns`,
-`url-homepage-missing` and `developer-info-missing`, which TRUCE-0073 owns.
+`url-homepage-missing` and `developer-info-missing`, which stay open until the
+application identity and metadata are confirmed before publishing.
 
 ## Compatibility status
 
 Pending. These results come from containers of each base, not from Kubuntu
 or Tuxedo OS desktops. The smoke test runs offscreen, without Plasma,
 Wayland, the KDE style or a display, and the containers' runtime closure is
-what `--no-install-recommends` installs on a minimal base. TRUCE-0039
-installs each artifact on its real desktop and records the runtime matrix
-before any compatibility claim.
+what `--no-install-recommends` installs on a minimal base. Each artifact
+still has to be installed on its real desktop, with the runtime matrix
+recorded, before any compatibility claim.
