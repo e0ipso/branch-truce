@@ -88,6 +88,11 @@ public:
         environment.insert("XDG_CONFIG_HOME", executables.path() + "/config");
         environment.insert("XDG_CACHE_HOME", executables.path() + "/cache");
         environment.insert("XDG_DATA_HOME", executables.path() + "/data");
+        // The mergetool socket directory is created under here; keep it out of the real runtime directory.
+        const auto runtime = executables.path() + "/run";
+        CHECK(QDir().mkpath(runtime)
+              && QFile::setPermissions(runtime, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+        environment.insert("XDG_RUNTIME_DIR", runtime);
         environment.insert("LC_ALL", "C");
         environment.insert("GIT_CONFIG_NOSYSTEM", "1");
         environment.insert("GIT_TERMINAL_PROMPT", "0");
@@ -215,7 +220,7 @@ public:
     explicit ScopedEnvironment(const QProcessEnvironment &environment)
     {
         for (const auto name : {"HOME", "PATH", "LC_ALL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
-                                "XDG_DATA_HOME", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"}) {
+                                "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"}) {
             previous.insert(name, qEnvironmentVariableIsSet(name)
                 ? std::optional<QByteArray>(qgetenv(name)) : std::nullopt);
             qputenv(name, environment.value(QString::fromLatin1(name)).toUtf8());
