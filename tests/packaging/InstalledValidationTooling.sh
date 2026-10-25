@@ -294,7 +294,8 @@ expect_output "Report: $report"
 pass
 expect_no_fixture
 
-# A failed install stops the run: no later step, no result section.
+# A failed install stops the run: no later step, but the report still ends
+# with its result section and failure count, and the path is printed.
 invoke STUB_FAIL_STEPS=install -- "$script" --target kubuntu --package "$deb" --output "$work/reports/install"
 expect_status 1
 report=$work/reports/install/$deb_name.validation
@@ -302,7 +303,11 @@ report=$work/reports/install/$deb_name.validation
 pass
 grep -qx 'FAIL step install exited 3' "$report" || fail "install failure in report"
 pass
-! grep -q '^== Result' "$report" || fail "result section after a failed install"
+[[ "$(tail -n 4 "$report")" == $'FAIL step install exited 3\n\n== Result\nValidation failed: 1 failed checks' ]] \
+    || fail "result after a failed install: $(tail -n 4 "$report")"
+pass
+[[ "$output" == *$'\nReport: '"$report"$'\nValidation failed: 1 failed checks' ]] \
+    || fail "terminal output after a failed install: $output"
 pass
 [[ "$(tail -n 1 "$work/state/engine.log")" == "rm --force bt-validate-kubuntu-"* ]] || fail "container kept after install failed"
 pass

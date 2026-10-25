@@ -112,12 +112,13 @@ host_main() {
     ((wayland == 0)) || mounts+=(--volume "$socket:$wayland_socket")
     "$engine" run --detach --init --name "$container" "${mounts[@]}" "$image" sleep infinity >/dev/null
 
-    local report=$output/$name.validation
-    run_steps "$base" "$wayland" "$socket" 2>&1 | tee "$report"
-    local failed
+    local report=$output/$name.validation status=0 failed
+    # A failed install makes run_steps return 1; keep going so the summary
+    # below prints on every path.
+    run_steps "$base" "$wayland" "$socket" 2>&1 | tee "$report" || status=$?
     failed=$(grep -c '^FAIL ' "$report" || true)
     echo "Report: $report"
-    if [[ "$failed" != 0 ]] || ! grep -q '^== Result' "$report"; then
+    if ((status != 0)) || [[ "$failed" != 0 ]] || ! grep -q '^== Result' "$report"; then
         echo "Validation failed: $failed failed checks" | tee -a "$report"
         return 1
     fi
@@ -144,7 +145,8 @@ run_steps() {
     set +e
     printf '== Artifact\nfile %s.deb\nsha256 %s\nhost kernel %s\n' "$name" \
         "$(sha256sum < "$package" | cut -d' ' -f1)" "$(uname -r)"
-    inside install "$base" "/artifact/$name.deb" || return 1
+    # Nothing else can run without the package, so the result follows at once.
+    inside install "$base" "/artifact/$name.deb" || { printf '\n== Result\n'; return 1; }
     inside layout
     inside cli
     inside desktop
