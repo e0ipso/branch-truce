@@ -518,9 +518,20 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
         fail(Outcome::Failed, tr("The index no longer matches this conflict. The repository file was not published."), preserveWrite());
         return;
     }
-    if (previouslyWritten(*session, attempt_->revision)
+    // A recorded write does not prove the file still holds it: a failed mergetool
+    // exit moves Git's backup back over MERGED. Skip publication only while the
+    // live bytes are still the written revision.
+    const bool written = previouslyWritten(*session, attempt_->revision)
         && baselines_.contains(attempt_->fileId) && baselines_.at(attempt_->fileId).destination
-        && baselines_.at(attempt_->fileId).destination->bytes() == attempt_->serialized) {
+        && baselines_.at(attempt_->fileId).destination->bytes() == attempt_->serialized;
+    const auto current = written ? storage::captureDestination(repository_.worktreeRoot, attempt_->path)
+                                 : storage::DestinationCapture{};
+    if (written && !attempt_->parentOwned && (!current.destination || current.destination->bytes() != attempt_->serialized)) {
+        fail(Outcome::Failed, current.diagnostic.isEmpty()
+            ? tr("The repository file no longer matches the written revision.") : current.diagnostic, false);
+        return;
+    }
+    if (written && current.destination && current.destination->bytes() == attempt_->serialized) {
         if (attempt_->parentOwned) {
             git::Request request;
             request.operation = git::Operation::CheckParentStaging;
@@ -537,11 +548,14 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
     // Git mergetool moves the worktree file aside and copies it back before the
     // tool runs. The launch inode is then the backup. Publish onto the copy when
     // its bytes are still the captured launch bytes; a different file is refused.
+    // A failed exit moves that backup back over a written file, so the launch
+    // bytes are accepted after a write as well.
     if (attempt_->parentOwned) {
         auto live = storage::captureDestination(repository_.worktreeRoot, attempt_->path);
         auto baseline = baselines_.find(attempt_->fileId);
         if (!live.destination || baseline == baselines_.end() || !baseline->second.destination
-            || live.destination->bytes() != baseline->second.destination->bytes()) {
+            || (live.destination->bytes() != baseline->second.destination->bytes()
+                && live.destination->bytes().toStdString() != session->snapshots()->launchResult.text.bytes)) {
             fail(Outcome::Failed, live.diagnostic.isEmpty()
                 ? tr("The repository file changed while Git was waiting. The draft was not published.")
                 : live.diagnostic, false);

@@ -15,12 +15,14 @@
 #include <QTimer>
 #include <atomic>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <functional>
 #include <memory>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 
 using namespace branch_truce;
 
@@ -552,6 +554,59 @@ int main(int argc, char **argv)
         CHECK(readFile(session.repo.path("tracked.txt")) == tampered);
         CHECK(session.controller.commandMessage().contains(QStringLiteral("changed")));
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
+        CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
+    });
+    suite.run("TRUCE-0067 Mark resolved republishes after Git restores the mergetool backup", [] {
+        Session session;
+        const auto merged = session.repo.path("tracked.txt");
+        const auto backup = session.repo.path("tracked_BACKUP_1.txt");
+        const QByteArray reviewed("reviewed in app\n");
+        auto draft = openedFile(session.controller).current().draft;
+        draft.text = reviewed.toStdString();
+        draft.unresolvedMarkers = 0;
+        CHECK(session.controller.files()->replaceDraft(session.id.toStdString(), openedFile(session.controller).current().id, draft)
+            == Transition::Applied);
+        const auto revision = session.revision();
+        // git mergetool moves MERGED to BACKUP and copies it back before the tool runs.
+        CHECK(QFile::rename(merged, backup) && QFile::copy(backup, merged));
+        const auto offered = [&] {
+            CHECK(session.controller.assignParentStaging({}) && session.controller.assignParentStaging("tracked.txt"));
+            CHECK(session.controller.markResolved(session.id, revision, true));
+            waitFor(session.controller, [&] {
+                return !session.controller.resolutionBusy() && session.controller.parentStagingOffer(session.id).has_value();
+            });
+        };
+        const auto inode = [&] {
+            struct stat entry {};
+            CHECK(::stat(QFile::encodeName(merged).constData(), &entry) == 0);
+            return entry.st_ino;
+        };
+        offered();
+        CHECK(readFile(merged) == reviewed);
+        // The resolved reply is lost and the launcher exits non-zero: Git moves BACKUP onto MERGED.
+        CHECK(::rename(QFile::encodeName(backup).constData(), QFile::encodeName(merged).constData()) == 0);
+        CHECK(readFile(merged) == session.repo.manual);
+        offered();
+        CHECK(readFile(merged) == reviewed);
+        CHECK(openedFile(session.controller).writeOutcome()
+            && openedFile(session.controller).writeOutcome()->outcome == Outcome::Succeeded);
+        CHECK(!openedFile(session.controller).facts().resolved && unmerged(session.repo).contains("tracked.txt"));
+        const auto written = inode();
+        offered();
+        CHECK(inode() == written && readFile(merged) == reviewed);
+        const QByteArray tampered("changed while Git was waiting\n");
+        writeFile(merged, tampered);
+        CHECK(session.controller.assignParentStaging({}) && session.controller.assignParentStaging("tracked.txt"));
+        CHECK(session.controller.markResolved(session.id, revision, true));
+        waitFor(session.controller, [&] {
+            const auto &file = openedFile(session.controller);
+            return !session.controller.resolutionBusy() && file.writeOutcome() && file.writeOutcome()->outcome == Outcome::Failed;
+        });
+        CHECK(!session.controller.parentStagingOffer(session.id));
+        CHECK(!openedFile(session.controller).facts().resolved);
+        CHECK(readFile(merged) == tampered);
+        const auto index = session.repo.git({"ls-files", "-s", "--", "tracked.txt"});
+        CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
     });
     return suite.report();
