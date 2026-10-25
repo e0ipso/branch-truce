@@ -261,7 +261,7 @@ private:
     QMap<QByteArray, std::optional<QByteArray>> previous;
 };
 
-void openController(ApplicationController &controller, const Repository &repo)
+void openController(ApplicationController &controller, const Repository &repo, const QString &recoverySession = {})
 {
     const auto before = repo.snapshot();
     QEventLoop loop;
@@ -273,7 +273,7 @@ void openController(ApplicationController &controller, const Repository &repo)
     });
     repo.checkSocketDirectory();
     CHECK(mergetoolSocketDirectory() == repo.socketDirectory());
-    CHECK(controller.openRepository(repo.root));
+    CHECK(controller.openRepository(repo.root, {}, recoverySession));
     timeout.start(10000);
     if (controller.opening()) loop.exec();
     CHECK(!controller.opening());
@@ -676,6 +676,114 @@ public:
             openController(controller, repo);
             CHECK(controller.detail().contains("integrity") && !controller.files()->hasRecoveryFailures());
             CHECK(openedFile(controller).current().draft.text.starts_with("live edit\n"));
+        });
+        suite.run("TRUCE-0083 two windows closed before any edit leave later launches able to recover", [] {
+            Repository repo;
+            repo.conflict("merge");
+            ScopedEnvironment environment(repo.environment);
+            QStringList untouched;
+            {
+                ApplicationController first;
+                openController(first, repo);
+                ApplicationController second;
+                openController(second, repo);
+                untouched = {first.files()->recoveryDirectory(), second.files()->recoveryDirectory()};
+                CHECK(untouched.front() != untouched.back());
+                CHECK(second.detail().contains("active or unavailable"));
+            }
+            QString location;
+            {
+                ApplicationController controller;
+                openController(controller, repo);
+                CHECK(!controller.detail().contains("Multiple recovery sessions"));
+                CHECK(controller.detail().contains("without app edits that were set aside: 2"));
+                CHECK(!untouched.contains(controller.files()->recoveryDirectory()));
+                // Set aside, never deleted: each store keeps its journal next to the marker.
+                for (const auto &store : untouched)
+                    CHECK(QFileInfo::exists(store + "/journal") && QFileInfo::exists(store + "/set-aside"));
+                const auto &selected = openedFile(controller);
+                CHECK(controller.files()->editResult(selected.id(), selected.current().id,
+                    {{0, 0}, "after two windows\n"}) == Transition::Applied);
+                location = controller.files()->recoveryDirectory();
+            }
+            for (int restart = 0; restart < 2; ++restart) {
+                ApplicationController controller;
+                openController(controller, repo);
+                CHECK(!controller.detail().contains("Multiple recovery sessions"));
+                CHECK(controller.detail().contains("Recovered app drafts"));
+                CHECK(controller.files()->recoveryDirectory() == location);
+                CHECK(openedFile(controller).current().draft.text.starts_with("after two windows\n"));
+            }
+        });
+        suite.run("TRUCE-0083 edits from two windows block restoration until the user chooses a session", [] {
+            Repository repo;
+            repo.conflict("merge");
+            ScopedEnvironment environment(repo.environment);
+            QString first;
+            QString second;
+            {
+                ApplicationController one;
+                openController(one, repo);
+                ApplicationController two;
+                openController(two, repo);
+                for (auto *controller : {&one, &two}) {
+                    const auto &selected = openedFile(*controller);
+                    const std::string text = controller == &one ? "first window\n" : "second window\n";
+                    CHECK(controller->files()->editResult(selected.id(), selected.current().id, {{0, 0}, text}) == Transition::Applied);
+                }
+                first = one.files()->recoveryDirectory();
+                second = two.files()->recoveryDirectory();
+            }
+            const auto firstName = QFileInfo(first).fileName();
+            const auto secondName = QFileInfo(second).fileName();
+            const auto retained = storeContents(second);
+            // The block holds across launches; each blocked launch opens the live files.
+            for (int restart = 0; restart < 2; ++restart) {
+                ApplicationController controller;
+                openController(controller, repo);
+                const auto detail = controller.detail();
+                CHECK(detail.contains("restoration is blocked rather than guessing") && detail.contains("--recovery-session"));
+                CHECK(detail.contains(firstName) && detail.contains(secondName));
+                const auto location = controller.files()->recoveryDirectory();
+                CHECK(location != first && location != second && !controller.files()->hasRecoveryFailures());
+                const auto &live = openedFile(controller);
+                CHECK(!live.current().draft.text.starts_with("first window") && !live.current().draft.text.starts_with("second window"));
+            }
+            {
+                ApplicationController controller;
+                openController(controller, repo, firstName);
+                CHECK(controller.files()->recoveryDirectory() == first);
+                CHECK(controller.detail().contains("Recovered app drafts"));
+                CHECK(controller.detail().contains(secondName + " was set aside, not deleted"));
+                CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
+            }
+            auto setAside = storeContents(second);
+            CHECK(setAside.contains("set-aside") && setAside.value("set-aside").contains(secondName.toUtf8()));
+            setAside.remove("set-aside");
+            CHECK(setAside == retained);
+            {
+                ApplicationController controller;
+                openController(controller, repo);
+                CHECK(controller.files()->recoveryDirectory() == first && !controller.detail().contains("blocked"));
+                CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
+            }
+            // Choosing the set-aside session brings it back and sets the other one aside.
+            {
+                ApplicationController controller;
+                openController(controller, repo, secondName);
+                CHECK(controller.files()->recoveryDirectory() == second);
+                CHECK(controller.detail().contains(firstName + " was set aside, not deleted"));
+                CHECK(openedFile(controller).current().draft.text.starts_with("second window\n"));
+            }
+            CHECK(!QFileInfo::exists(second + "/set-aside") && QFileInfo::exists(first + "/set-aside"));
+        });
+        suite.run("TRUCE-0083 the recovery-session option reaches startup recovery", [&] {
+            Repository repo;
+            repo.conflict("merge");
+            const auto unknown = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            const auto state = repo.launch(application, {"--recovery-session", unknown});
+            CHECK(state.value("state") == "ready");
+            CHECK(state.value("detail").toString().contains("Recovery session " + unknown + " does not match this operation"));
         });
         suite.run("TRUCE-0055 external resolution blocks only its file across reopenings choices history and mutation admission", [] {
             Repository repo;

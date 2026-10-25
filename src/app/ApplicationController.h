@@ -136,7 +136,10 @@ public:
     // One launched repository session per controller. Paths are launch directories,
     // never inferred from a filename or a Git environment override.
     // preferredFileId selects that file first when the session contains it.
-    bool openRepository(const QString &directory, const QString &preferredFileId = {});
+    // recoverySession names the recovery session the user chose to restore when
+    // several match; the other matching sessions are set aside.
+    bool openRepository(const QString &directory, const QString &preferredFileId = {},
+                        const QString &recoverySession = {});
 
 Q_SIGNALS:
     void launchChanged();
@@ -176,6 +179,7 @@ private:
     QString detail_;
     QString selectedFileId_;
     QString preferredFileId_;
+    QString recoverySession_;
     std::optional<ChoicePreview> preview_;
     std::optional<NonConflictingPreview> nonConflictingPreview_;
     std::optional<WholeFilePreview> wholeFilePreview_;

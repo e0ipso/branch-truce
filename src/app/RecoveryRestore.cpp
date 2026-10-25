@@ -1,10 +1,12 @@
 #include "RecoveryRestore.h"
 #include "storage/DestinationWriter.h"
 #include "storage/TextFormat.h"
+#include <QDateTime>
 #include <QDir>
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QJsonArray>
+#include <QSaveFile>
 #include <QUuid>
 #include <algorithm>
 #include <limits>
@@ -372,6 +374,7 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
                 found = files.find(id);
             } else {
                 require(found != files.end() && found->second.path() == path, "Recovery command has no matching open file.");
+                result.userWork = true;
                 auto &file = found->second;
                 Transition transition = Transition::InvalidOutcome;
                 if (action == QLatin1String("replace-draft"))
@@ -459,10 +462,47 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
     return result;
 }
 
+namespace {
+struct RecoveryCandidate {
+    QString directory;
+    std::shared_ptr<QLockFile> lease;
+    RecoveryReplay replay;
+    bool setAside = false;
+};
+
+QString setAsideMarker(const QString &directory)
+{
+    return directory + QStringLiteral("/set-aside");
+}
+
+QString lastChanged(const QString &directory)
+{
+    return QFileInfo(directory + QStringLiteral("/journal")).lastModified().toString(Qt::ISODate);
+}
+
+// Marks a store whose lease this launch holds. The journal and payloads stay
+// complete and in place, so choosing the store later restores it.
+QString setAside(const QString &directory)
+{
+    const auto path = setAsideMarker(directory);
+    QSaveFile marker(path);
+    const auto text = QStringLiteral("Set aside by Branch Truce on %1. Start Branch Truce with "
+        "--recovery-session %2 to restore it.\n").arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODate),
+        QFileInfo(directory).fileName()).toUtf8();
+    if (!marker.open(QIODevice::WriteOnly) || marker.write(text) != text.size() || !marker.commit())
+        return marker.errorString();
+    if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner))
+        return QStringLiteral("Could not restrict the set-aside marker permissions.");
+    return {};
+}
+}
+
 RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude,
-    const git::RepositoryContext &repository, const std::vector<FileSession> &observed, const QString &executable)
+    const git::RepositoryContext &repository, const std::vector<FileSession> &observed, const QString &executable,
+    const QString &chosenSession)
 {
     RecoveryRestore result;
+    std::vector<RecoveryCandidate> candidates;
     for (const auto &entry : QDir(inventory).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
         if (entry.absoluteFilePath() == exclude) continue;
         if (entry.isSymLink() || entry.ownerId() != ::geteuid()) {
@@ -474,6 +514,9 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
             result.diagnostics.push_back(QStringLiteral("Recovery session %1 is active or unavailable; it was not restored.").arg(entry.fileName()));
             continue;
         }
+        // A set-aside store returns only when the user names it.
+        const bool setAside = QFileInfo::exists(setAsideMarker(entry.absoluteFilePath()));
+        if (setAside && entry.fileName() != chosenSession) continue;
         auto replay = replayRecovery(storage::RecoveryStore(entry.absoluteFilePath()));
         if (!replay.succeeded) {
             result.diagnostics.push_back(QStringLiteral("Recovery %1 rejected: %2").arg(entry.fileName(), replay.error));
@@ -487,21 +530,68 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
             result.diagnostics.push_back(QStringLiteral("Recovery %1 rejected: worktree/operation session identity does not match.").arg(entry.fileName()));
             continue;
         }
-        if (result.found) {
-            result.found = false;
-            result.files.clear();
-            result.lease.reset();
-            result.directory.clear();
-            result.diagnostics.push_back(QStringLiteral("Multiple recovery sessions match this operation; restoration is blocked rather than guessing."));
-            return result;
+        candidates.push_back({entry.absoluteFilePath(), std::move(lease), std::move(replay), setAside});
+    }
+
+    RecoveryCandidate *adopted = nullptr;
+    bool chosen = false;
+    if (!chosenSession.isEmpty()) {
+        const auto match = std::find_if(candidates.begin(), candidates.end(),
+            [&](const auto &candidate) { return QFileInfo(candidate.directory).fileName() == chosenSession; });
+        if (match == candidates.end()) {
+            result.diagnostics.push_back(QStringLiteral("Recovery session %1 does not match this operation; it was not restored.").arg(chosenSession));
+        } else if (match->setAside && !QFile::remove(setAsideMarker(match->directory))) {
+            result.diagnostics.push_back(QStringLiteral("Recovery session %1 is set aside and its marker could not be removed; it was not restored.").arg(chosenSession));
+            candidates.erase(match);
+        } else {
+            adopted = &*match;
+            chosen = true;
         }
+    }
+    if (!adopted && candidates.size() == 1) adopted = &candidates.front();
+    if (!adopted && candidates.size() > 1) {
+        // Stores holding only launch captures carry no work, so they cannot
+        // make the choice ambiguous. Several edited stores still block.
+        std::vector<RecoveryCandidate *> edited;
+        for (auto &candidate : candidates)
+            if (candidate.replay.userWork) edited.push_back(&candidate);
+        if (edited.size() == 1) adopted = edited.front();
+        if (edited.size() > 1) {
+            result.diagnostics.push_back(QStringLiteral("Multiple recovery sessions with app edits match this operation; restoration is blocked rather than guessing. "
+                "To restore one, close every Branch Truce window and start Branch Truce with --recovery-session followed by the session to keep. "
+                "The other sessions are set aside, not deleted."));
+            for (const auto *candidate : edited)
+                result.diagnostics.push_back(QStringLiteral("Recovery session %1 was last changed %2.")
+                    .arg(QFileInfo(candidate->directory).fileName(), lastChanged(candidate->directory)));
+        }
+    }
+    int setAsideWithoutEdits = 0;
+    if (candidates.size() > 1) {
+        for (auto &candidate : candidates) {
+            if (&candidate == adopted || (!chosen && candidate.replay.userWork)) continue;
+            const auto name = QFileInfo(candidate.directory).fileName();
+            if (const auto error = setAside(candidate.directory); !error.isEmpty())
+                result.diagnostics.push_back(QStringLiteral("Recovery session %1 could not be set aside: %2").arg(name, error));
+            else if (candidate.replay.userWork)
+                result.diagnostics.push_back(QStringLiteral("Recovery session %1 was set aside, not deleted.").arg(name));
+            else
+                ++setAsideWithoutEdits;
+        }
+    }
+    if (setAsideWithoutEdits > 0)
+        result.diagnostics.push_back(QStringLiteral("Recovery sessions without app edits that were set aside: %1.").arg(setAsideWithoutEdits));
+
+    if (adopted) {
+        auto &replay = adopted->replay;
+        const auto captured = std::find_if(replay.files.begin(), replay.files.end(), [](const auto &file) { return file.snapshots(); });
+        const auto sessionId = captured->snapshots()->provenance.sessionId;
         result.found = true;
-        result.directory = entry.absoluteFilePath();
-        result.lease = std::move(lease);
+        result.directory = adopted->directory;
+        result.lease = std::move(adopted->lease);
         if (replay.incompleteTail)
             result.diagnostics.push_back(QStringLiteral("An interrupted final recovery record was ignored. Pending input may need repeating."));
         for (auto &file : replay.files) {
-            const auto failure = reconcile(file, replay.mutations, observed, repository, executable, entry.absoluteFilePath());
+            const auto failure = reconcile(file, replay.mutations, observed, repository, executable, adopted->directory);
             if (!failure.isEmpty()) result.failures.emplace(file.id(), failure);
             result.files.push_back(std::move(file));
         }
@@ -509,7 +599,7 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
             if (std::none_of(result.files.begin(), result.files.end(), [&](const auto &recovered) { return recovered.id() == file.id(); })) {
                 result.newFiles.insert(file.id());
                 auto snapshots = file.snapshots() ? std::optional<FileSnapshots>(*file.snapshots()) : std::nullopt;
-                if (snapshots) snapshots->provenance.sessionId = provenance.sessionId;
+                if (snapshots) snapshots->provenance.sessionId = sessionId;
                 result.files.emplace_back(file.id(), file.path(), file.current().draft, file.support(),
                     file.supportDetail(), std::move(snapshots));
             }

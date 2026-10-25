@@ -19,6 +19,9 @@ struct RecoveryReplay {
     bool succeeded = false;
     QString error;
     bool incompleteTail = false;
+    // False when every record is a launch capture: the store holds no app edit,
+    // decision, Save, review or repository outcome.
+    bool userWork = false;
     std::vector<FileSession> files;
     std::vector<RecoveryMutation> mutations;
 };
@@ -42,7 +45,12 @@ struct RecoveryRestore {
 
 // Worker-only, read-only repository inspection. Ambiguous inventories and
 // mismatched identities fail closed; no worktree/index mutation is retried.
+// When several stores match, stores holding only launch captures are set
+// aside and never make the inventory ambiguous. chosenSession names the store
+// the user picked; it is adopted and the other matching stores are set aside.
+// Setting aside writes a marker inside the store and never deletes it.
 [[nodiscard]] RecoveryRestore restoreRecovery(const QString &inventory,
     const QString &exclude, const git::RepositoryContext &repository,
-    const std::vector<FileSession> &observed, const QString &gitExecutable);
+    const std::vector<FileSession> &observed, const QString &gitExecutable,
+    const QString &chosenSession = {});
 }

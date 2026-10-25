@@ -1485,10 +1485,12 @@ void ApplicationController::setState(QString state, QString detail)
     Q_EMIT launchChanged();
 }
 
-bool ApplicationController::openRepository(const QString &directory, const QString &preferredFileId)
+bool ApplicationController::openRepository(const QString &directory, const QString &preferredFileId,
+                                           const QString &recoverySession)
 {
     if (state_ != QLatin1String("idle")) return false;
     preferredFileId_ = preferredFileId;
+    recoverySession_ = recoverySession;
     setState(QStringLiteral("opening"), tr("Inspecting the selected local repository…"));
     git::ConflictClassificationRequest request;
     request.directory = directory;
@@ -1560,7 +1562,7 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
     const auto sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
     const auto task = coordinator_.submit(anchor, 1,
         [files = std::move(conflicts), repository = repository_, sessionId, loaded, recovery,
-         recoveryDirectory, recoveryInventory, executable](const TaskInput &, const TaskControl &control) {
+         recoveryDirectory, recoveryInventory, executable, chosen = recoverySession_](const TaskInput &, const TaskControl &control) {
             for (const auto &file : files) {
                 if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
                 Draft draft;
@@ -1580,7 +1582,7 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
                 loaded->emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), std::move(draft),
                                      support, detail.toStdString(), std::move(snapshots), true);
             }
-            *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, executable);
+            *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, executable, chosen);
             return TaskResult{};
         }, [this, loaded, recovery](const TaskCompletion &completion) {
             const auto diagnostics = recovery->diagnostics.join(QLatin1Char('\n'));

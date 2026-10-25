@@ -3,7 +3,8 @@
 `SessionModel` keeps automatic recovery under
 `QStandardPaths::AppLocalDataLocation/recovery/v1/<session-uuid>/`. Each model
 starts with a new store. Startup adopts a validated inactive store for the same
-operation when exactly one matches. Tests and adapters can supply an absolute store directory.
+operation when exactly one matches, or when exactly one of several matches holds
+app edits. Tests and adapters can supply an absolute store directory.
 The store is independent of the repository, Git index and mergetool files.
 
 ## Layout and integrity
@@ -115,6 +116,24 @@ one, close all Branch Truce windows and move its complete `<session-uuid>`
 directory outside `QStandardPaths::AppLocalDataLocation/recovery/v1/`.
 Keep its journal and payloads together; moving the directory back makes it
 available for inspection again.
+
+Two windows open on the same operation each keep their own store, because a
+store's session lock keeps the second window from adopting the first window's
+store. A store whose journal holds only launch captures (`open` records) has no
+app edit, decision, Save, review or repository outcome. When several stores
+match, startup sets these aside and they never make the inventory ambiguous.
+Setting a store aside writes an owner-only `set-aside` marker inside it; the
+journal and payloads stay in place and are never deleted. Startup skips a
+set-aside store unless the user names it.
+
+When two or more matching stores hold app edits, restoration stays blocked
+rather than guessing. The current files still open in a new store, and the
+diagnostic lists each session UUID with its journal's last change time. To
+clear the block, close every Branch Truce window and start Branch Truce with
+`--recovery-session <session-uuid>`. Startup adopts that store and sets aside
+every other matching store. Naming a set-aside session the same way removes
+its marker and restores it, which sets the others aside in turn. A name that
+does not match the operation produces a diagnostic and the normal rules apply.
 
 The restore adapter replays the existing domain transitions and compares every
 complete state with its canonical encoding. This validates the state schema,

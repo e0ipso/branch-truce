@@ -68,6 +68,10 @@ int main(int argc, char *argv[])
                                     QStringLiteral("hex-path"));
     launchedPath.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(launchedPath);
+    QCommandLineOption recoverySession(QStringLiteral("recovery-session"),
+        QStringLiteral("Restore this recovery session when several match the operation; the others are set aside, not deleted."),
+        QStringLiteral("session"));
+    parser.addOption(recoverySession);
     parser.process(application);
     const auto paths = parser.positionalArguments();
     if (paths.size() > 1) parser.showHelp(2);
@@ -113,8 +117,9 @@ int main(int argc, char *argv[])
     }
     const auto directory = paths.isEmpty() ? QDir::currentPath() : QDir(paths.front()).absolutePath();
     const auto preferredFileId = parser.value(launchedPath);
-    QTimer::singleShot(0, &controller, [&controller, directory, preferredFileId] {
-        controller.openRepository(directory, preferredFileId);
+    const auto chosenRecovery = parser.value(recoverySession);
+    QTimer::singleShot(0, &controller, [&controller, directory, preferredFileId, chosenRecovery] {
+        controller.openRepository(directory, preferredFileId, chosenRecovery);
     });
     return application.exec();
 }
