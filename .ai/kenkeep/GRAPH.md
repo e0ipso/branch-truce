@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:f60ce6cc2f232c635cad4a2d91d18d98b2b96f5d80058d75f1c8be46eef55562'
-node_count: 25
+nodes_hash: 'sha256:776c9fa586d8fe74e1c052514fcca11f5668a2b427c489bcfabdb89edb319612'
+node_count: 27
 ---
 # kenkeep Graph
 
-Total nodes: 25
+Total nodes: 27
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -32,6 +32,14 @@ Total nodes: 25
 - **tags:** git, classification, conversion, startup, scope
 - **relates_to:** map-repository-discovery-and-verified-source-identities, practice-keep-unsupported-and-unfinished-work-visible, practice-keep-sources-identifiable-and-the-result-editable, practice-bound-each-converted-representation-independently
 
+## map-installed-artifact-validation-in-base-containers
+
+- **kind:** map
+- **title:** Installed-artifact validation in base containers
+- **path:** map-installed-artifact-validation-in-base-containers.md
+- **tags:** packaging, platform, validation, wayland, accessibility, compatibility
+- **relates_to:** map-per-base-debian-artifacts-and-container-inspection, map-branch-truce-desktop-implementation-baseline, map-journey-acceptance-suite
+
 ## map-journey-acceptance-suite
 
 - **kind:** map
@@ -54,7 +62,7 @@ Total nodes: 25
 - **title:** Per-base Debian artifacts and container inspection
 - **path:** map-per-base-debian-artifacts-and-container-inspection.md
 - **tags:** packaging, platform, debian, containers, compatibility
-- **relates_to:** map-branch-truce-desktop-implementation-baseline, practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins
+- **relates_to:** map-branch-truce-desktop-implementation-baseline, practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins, map-installed-artifact-validation-in-base-containers
 
 ## map-recovery-journal-and-acknowledgment-boundary
 
@@ -151,6 +159,13 @@ Total nodes: 25
 - **path:** practice-keep-techspecs-and-prds-independent.md
 - **tags:** documentation, techspec, prd
 - **relates_to:** practice-keep-prd-focused-on-user-needs
+
+## practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files
+
+- **kind:** practice
+- **title:** Keep ticket IDs and AI trailers out of commits and tracked files
+- **path:** practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md
+- **tags:** git, commits, ci, conventions, release
 
 ## practice-keep-unsupported-and-unfinished-work-visible
 

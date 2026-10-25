@@ -27,6 +27,8 @@ Before Qt starts, the process points `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`
 
 When the result is Git's raw conflict output, Accept and Resolve using one side change only decisions, because both sides' lines are already in the text. The remaining conflict markers then block Mark resolved. A journey that checks text changes from choices has to start from a result the user set before launch, such as the common version.
 
+The window-fit journey resizes the window to 1280x720 and 960x540, the logical sizes of 1920x1080 at 150% and 200%. Its `checkFits` scrolls each control and text pane into view and checks that it lies inside the window, and the journey requires each pane to be at least eight lines high.
+
 Uncovered PRD examples and environment-dependent gaps are listed in [tests/acceptance/README.md](../../../tests/acceptance/README.md). The write-failure journey relies on a read-only directory and fails when the suite runs as root.
 
 <!-- kk:related:start -->

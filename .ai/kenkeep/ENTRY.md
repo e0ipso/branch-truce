@@ -1,7 +1,7 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:f60ce6cc2f232c635cad4a2d91d18d98b2b96f5d80058d75f1c8be46eef55562'
-node_count: 25
+nodes_hash: 'sha256:776c9fa586d8fe74e1c052514fcca11f5668a2b427c489bcfabdb89edb319612'
+node_count: 27
 ---
 # kenkeep
 
@@ -27,14 +27,16 @@ _None._
 - Open [**Reconcile uncertain destination publication**](nodes/practice-reconcile-uncertain-destination-publication.md) to learn about: Use captured destination identities, fail closed on unsupported metadata, and inspect uncertain exchanges before retrying. #publication #storage #concurrency #git
 - Open [**Separate Save from Mark resolved**](nodes/practice-separate-save-from-mark-resolved.md) to learn about: Save keeps app-only drafts; Mark resolved writes the reviewed result and resolves the file in Git. #product #saving #resolution #review
 - Open [**Wait for layout before clicking offscreen dialog items**](nodes/practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) to learn about: In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles. #testing #qml #ui #offscreen
+- Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](nodes/practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) to learn about: Conventional Commits headers carry no TRUCE IDs or co-author/AI trailers; check:tracker-refs bans ticket IDs outside agent paths. #git #commits #ci #conventions #release
 
 ## Components (what exists)
 - Open [**Branch Truce desktop implementation baseline**](nodes/map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation. #architecture #desktop #platform #cpp
 - Open [**Branch Truce first-release scope**](nodes/map-branch-truce-first-release-scope.md) to learn about: PRD.md defines a standalone, offline Linux app for text conflicts during merges and rebases. #product #scope #workflow
-- Open [**Mergetool session socket and real Git parent**](nodes/map-mergetool-session-socket-and-real-git-parent.md) to learn about: The session socket sits under XDG_RUNTIME_DIR or /tmp/branch-truce-<uid>; real Git 2.43 parent tests bound the compatibility claim. #mergetool #git #transport #compatibility
 - Open [**Journey acceptance suite**](nodes/map-journey-acceptance-suite.md) to learn about: ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard. #testing #acceptance #qml #offscreen #git
+- Open [**Mergetool session socket and real Git parent**](nodes/map-mergetool-session-socket-and-real-git-parent.md) to learn about: The session socket sits under XDG_RUNTIME_DIR or /tmp/branch-truce-<uid>; real Git 2.43 parent tests bound the compatibility claim. #mergetool #git #transport #compatibility
 - Open [**Per-base Debian artifacts and container inspection**](nodes/map-per-base-debian-artifacts-and-container-inspection.md) to learn about: Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base. #packaging #platform #debian #containers #compatibility
 - Open [**Conflict admission and offline startup**](nodes/map-conflict-admission-and-offline-startup.md) to learn about: ConflictClassifier admits editable merge/rebase files; startup preserves excluded reasons and existing manual edits. #git #classification #conversion #startup #scope
+- Open [**Installed-artifact validation in base containers**](nodes/map-installed-artifact-validation-in-base-containers.md) to learn about: validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE. #packaging #platform #validation #wayland #accessibility #compatibility
 - Open [**Repository discovery and verified source identities**](nodes/map-repository-discovery-and-verified-source-identities.md) to learn about: Verify merge/rebase source identities and keep renamed text conflicts supported while isolating path provenance failures. #git #discovery #source-identity #scope
 - Open [**Recovery journal and acknowledgment boundary**](nodes/map-recovery-journal-and-acknowledgment-boundary.md) to learn about: Persist complete text-and-decision transactions before acknowledgment; retain failed input and loaded captures for retry. #recovery #storage #editing #failures
 - Open [**Revision-bound passage correspondence**](nodes/map-revision-bound-passage-correspondence.md) to learn about: Map immutable source ranges to one result revision; reject uncertain targets and keep alignment memory linear. #comparison #editing #revisions #failures

@@ -16,6 +16,7 @@ kk_derived_from: []
 kk_relates_to:
   - map-branch-truce-desktop-implementation-baseline
   - practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins
+  - map-installed-artifact-validation-in-base-containers
 kk_depends_on: []
 kk_confidence: high
 ---
@@ -25,11 +26,12 @@ Branch Truce ships one native debhelper `.deb` per OS base, and [docs/target-pla
 
 `dpkg-shlibdeps` cannot see QML imports, so `packaging/debian/control` lists the imported QML modules and `git` by hand. A new `import` in `src/ui` needs a matching `Depends` entry, or the inspection's `qmldir` check fails.
 
-The ctest `packaging.artifact-tooling` runs [tests/packaging/ArtifactTooling.sh](../../../tests/packaging/ArtifactTooling.sh) against a stub `CONTAINER_ENGINE`, so it needs no Docker, network or root. It covers only the host side. The `--in-container` half of `inspect-artifact.sh`, including its private Qt ABI branches, runs only inside the target container, and the test feeds a canned report instead. Container results are not desktop compatibility. Installation and runtime on real Kubuntu and Tuxedo OS desktops stay pending under TRUCE-0039.
+The ctest `packaging.artifact-tooling` runs [tests/packaging/ArtifactTooling.sh](../../../tests/packaging/ArtifactTooling.sh) against a stub `CONTAINER_ENGINE`, so it needs no Docker, network or root. It covers the host side, and it sources `inspect-artifact.sh` to test pure helpers. The script returns before its entry point when sourced. `symbol_tags` and `check_private_abi` sit outside `container_main`, so the test runs every private Qt ABI branch on synthetic `objdump` output, including a binary with no version tags. The rest of the `--in-container` half runs only inside the target container, and the test feeds a canned report for it. Container results are not desktop compatibility. Running the installed package in a container of each base is a separate step, described in the [installed-artifact validation node](map-installed-artifact-validation-in-base-containers.md). Installation and runtime on real Kubuntu and Tuxedo OS desktops are still untested.
 
 <!-- kk:related:start -->
 # Related
 
 - Related: [map-branch-truce-desktop-implementation-baseline](map-branch-truce-desktop-implementation-baseline.md)
 - Related: [practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins](practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins.md)
+- Related: [map-installed-artifact-validation-in-base-containers](map-installed-artifact-validation-in-base-containers.md)
 <!-- kk:related:end -->
