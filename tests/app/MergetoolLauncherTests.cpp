@@ -1,8 +1,10 @@
 #include "app/ApplicationController.h"
+#include "app/MergetoolProtocol.h"
 #include "TestHarness.h"
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -13,8 +15,11 @@
 #include <QTextStream>
 #include <QTimer>
 
+#include <csignal>
+#include <cstdio>
 #include <functional>
 #include <optional>
+#include <sys/resource.h>
 
 #include <memory>
 
@@ -211,9 +216,9 @@ QString revisionOf(const FileSession &file)
     return QString::number(static_cast<qulonglong>(file.current().id));
 }
 
-void rejectDuplicate(const Repository &repo, ApplicationController &controller, QProcess &parent)
+// Environment for a launcher started directly on tracked.txt, without a Git parent.
+QProcessEnvironment directLauncherEnvironment(const Repository &repo, const QTemporaryDir &sides)
 {
-    QTemporaryDir sides;
     CHECK(sides.isValid());
     writeFile(sides.filePath("base"), "base\n");
     writeFile(sides.filePath("local"), "local\n");
@@ -223,8 +228,14 @@ void rejectDuplicate(const Repository &repo, ApplicationController &controller, 
     environment.insert("BASE", sides.filePath("base"));
     environment.insert("LOCAL", sides.filePath("local"));
     environment.insert("REMOTE", sides.filePath("remote"));
+    return environment;
+}
+
+void rejectDuplicate(const Repository &repo, ApplicationController &controller, QProcess &parent)
+{
+    QTemporaryDir sides;
     QProcess duplicate;
-    duplicate.setProcessEnvironment(environment);
+    duplicate.setProcessEnvironment(directLauncherEnvironment(repo, sides));
     duplicate.setWorkingDirectory(repo.root);
     duplicate.start(launcherBinary, {"--mergetool"});
     CHECK(duplicate.waitForStarted(5000));
@@ -235,6 +246,101 @@ void rejectDuplicate(const Repository &repo, ApplicationController &controller, 
     CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
     CHECK(unmerged(repo, "tracked.txt"));
 }
+
+void makeExecutable(const QString &path)
+{
+    CHECK(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+}
+
+// The launcher starts the GUI from its own executable path. It runs from a
+// private copy whose path is then replaced by a stub that only records the
+// spawn, so no GUI starts and nothing listens unless the test opens a session.
+// A git wrapper holds repository discovery, and so the spawn, until the stub
+// is in place.
+class SpawnedLauncher {
+public:
+    explicit SpawnedLauncher(const Repository &repository) : repo(repository)
+    {
+        CHECK(stage.isValid() && QDir(stage.path()).mkdir(QStringLiteral("bin")));
+        // GitAdapter trusts only executables whose file and directories nobody else can write.
+        makeExecutable(stage.filePath(QStringLiteral("bin")));
+        binary = stage.filePath(QStringLiteral("branch-truce"));
+        marker = stage.filePath(QStringLiteral("spawned"));
+        gate = stage.filePath(QStringLiteral("gate"));
+        stub = stage.filePath(QStringLiteral("stub"));
+        CHECK(QFile::copy(launcherBinary, binary));
+        makeExecutable(binary);
+        const auto git = stage.filePath(QStringLiteral("bin/git"));
+        writeFile(git, "#!/bin/sh\nwhile [ ! -e '" + gate.toUtf8() + "' ]; do sleep 0.02; done\n"
+                       "exec /usr/bin/git \"$@\"\n");
+        makeExecutable(git);
+        writeFile(stub, "#!/bin/sh\nprintf '%s' \"$1\" > '" + marker.toUtf8() + ".part' && mv '"
+                        + marker.toUtf8() + ".part' '" + marker.toUtf8() + "'\n");
+        makeExecutable(stub);
+        // Linux names a replaced running image "<path> (deleted)" in /proc/self/exe,
+        // and Qt 6.10 returns that name from applicationFilePath().
+        const auto deleted = binary + QStringLiteral(" (deleted)");
+        CHECK(QFile::copy(stub, deleted));
+        makeExecutable(deleted);
+        auto environment = directLauncherEnvironment(repo, sides);
+        environment.remove(QStringLiteral("BRANCH_TRUCE_MERGETOOL_NO_SPAWN"));
+        environment.insert(QStringLiteral("PATH"), stage.filePath(QStringLiteral("bin")) + QStringLiteral(":/usr/bin:/bin"));
+        process.setProcessEnvironment(environment);
+        process.setWorkingDirectory(repo.root);
+    }
+    void start()
+    {
+        clock.start();
+        process.start(binary, {QStringLiteral("--mergetool")});
+        CHECK(process.waitForStarted(5000));
+        // The running image keeps its inode. The path it would spawn is now the stub.
+        CHECK(::rename(QFile::encodeName(stub).constData(), QFile::encodeName(binary).constData()) == 0);
+        writeFile(gate, {});
+    }
+    bool spawned() const { return QFile::exists(marker); }
+    void finish(int expected)
+    {
+        pump([&] { return process.state() == QProcess::NotRunning; }, QStringLiteral("launcher still running"));
+        elapsed = clock.elapsed();
+        CHECK(process.exitStatus() == QProcess::NormalExit);
+        errors = process.readAllStandardError();
+        if (process.exitCode() != expected)
+            throw std::runtime_error("launcher exit " + std::to_string(process.exitCode()) + ": " + errors.toStdString());
+    }
+
+    const Repository &repo;
+    QTemporaryDir stage;
+    QTemporaryDir sides;
+    QString binary;
+    QString marker;
+    QString gate;
+    QString stub;
+    QProcess process;
+    QElapsedTimer clock;
+    qint64 elapsed = 0;
+    QByteArray errors;
+};
+
+// Every file write fails with EFBIG while this is alive; truncation still works.
+class NoFileGrowth {
+public:
+    NoFileGrowth()
+    {
+        previousHandler = std::signal(SIGXFSZ, SIG_IGN);
+        CHECK(::getrlimit(RLIMIT_FSIZE, &previous) == 0);
+        auto limited = previous;
+        limited.rlim_cur = 0;
+        CHECK(::setrlimit(RLIMIT_FSIZE, &limited) == 0);
+    }
+    ~NoFileGrowth()
+    {
+        ::setrlimit(RLIMIT_FSIZE, &previous);
+        std::signal(SIGXFSZ, previousHandler);
+    }
+private:
+    struct rlimit previous {};
+    void (*previousHandler)(int) = nullptr;
+};
 }
 
 int main(int argc, char **argv)
@@ -356,6 +462,90 @@ int main(int argc, char **argv)
         CHECK(opened(controller, first).checkpoint());
         CHECK(!opened(controller, second).facts().resolved);
         CHECK(repo.git({"rev-parse", ":notes.txt"}).trimmed() == repo.notesObject);
+    });
+    suite.run("TRUCE-0065 a session that listens after the GUI start is attached within the deadline", [] {
+        Repository repo("attached after the spawn\n", "excluded stays conflicted\n");
+        ScopedEnvironment environment(repo.environment);
+        ApplicationController controller;
+        SpawnedLauncher launcher(repo);
+        launcher.start();
+        pump([&] { return launcher.spawned() || launcher.process.state() == QProcess::NotRunning; },
+             QStringLiteral("the launcher did not start a session"));
+        CHECK(launcher.spawned() && readFile(launcher.marker) == repo.root.toUtf8());
+        // Retries that fail at once would have given up long before this.
+        QElapsedTimer pause;
+        pause.start();
+        while (pause.elapsed() < 1500) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        CHECK(launcher.process.state() == QProcess::Running);
+        openController(controller, repo);
+        pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; }, controller.commandMessage());
+        CHECK(launcher.clock.elapsed() < 75 * 200);
+        CHECK(controller.mergetoolIntakes().size() == 1);
+        CHECK(readFile(controller.mergetoolIntakes().front() + "/merged") == repo.tracked);
+        select(controller, "tracked.txt");
+        CHECK(controller.leaveMergetool());
+        launcher.finish(1);
+        CHECK(!launcher.errors.contains("No Branch Truce session is listening"));
+        CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+    });
+    suite.run("TRUCE-0065 a started session that never listens fails after the wall-clock deadline", [] {
+        Repository repo("nobody listens\n", "excluded stays conflicted\n");
+        SpawnedLauncher launcher(repo);
+        launcher.start();
+        launcher.finish(1);
+        CHECK(launcher.spawned() && readFile(launcher.marker) == repo.root.toUtf8());
+        CHECK(launcher.errors.contains("mergetool: No Branch Truce session is listening for this repository.\n"));
+        CHECK(launcher.elapsed >= 75 * 200);
+        CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+        CHECK(unmerged(repo, "tracked.txt"));
+    });
+    suite.run("TRUCE-0066 a leave after a longer write restores exactly the launch bytes", [] {
+        Repository repo("short launch\n", "excluded stays conflicted\n");
+        ScopedEnvironment environment(repo.environment);
+        ApplicationController controller;
+        openController(controller, repo);
+        // A direct launcher has no Git parent whose backup move would hide a leftover tail.
+        QTemporaryDir sides;
+        QProcess launcher;
+        launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
+        launcher.setWorkingDirectory(repo.root);
+        launcher.start(launcherBinary, {"--mergetool"});
+        CHECK(launcher.waitForStarted(5000));
+        pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; }, controller.commandMessage());
+        const auto longer = QByteArray("a GUI write longer than the launch bytes\n").repeated(32);
+        writeFile(repo.path("tracked.txt"), longer);
+        select(controller, "tracked.txt");
+        CHECK(controller.leaveMergetool());
+        waitFinished(launcher, 1, controller);
+        CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+        CHECK(QFileInfo(repo.path("tracked.txt")).size() == repo.tracked.size());
+        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+    });
+    suite.run("TRUCE-0066 a restore writes exactly the launch bytes and a failed write keeps the longer file", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto path = QFileInfo(directory.path()).canonicalFilePath() + QStringLiteral("/merged.txt");
+        const auto native = QFile::encodeName(path);
+        const QByteArray launch("<<<<<<< ours\nlaunch\n=======\nother\n>>>>>>> theirs\n");
+        const auto longer = launch + QByteArray("a longer GUI write\n").repeated(64);
+        QString error;
+        writeFile(path, longer);
+        CHECK(restoreMergetoolFile(native, launch, &error) && error.isEmpty());
+        CHECK(readFile(path) == launch);
+        writeFile(path, QByteArray(launch.size(), 'e'));
+        CHECK(restoreMergetoolFile(native, launch, &error) && readFile(path) == launch);
+        writeFile(path, "short\n");
+        CHECK(restoreMergetoolFile(native, longer, &error) && readFile(path) == longer);
+        writeFile(path, longer);
+        bool restored = true;
+        {
+            NoFileGrowth limit;
+            restored = restoreMergetoolFile(native, launch, &error);
+        }
+        CHECK(!restored);
+        CHECK(error == QStringLiteral("The original file could not be restored."));
+        CHECK(readFile(path) == longer);
     });
     return suite.report();
 }

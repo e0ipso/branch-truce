@@ -609,5 +609,47 @@ int main(int argc, char **argv)
         CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
     });
+    suite.run("TRUCE-0067 repository mode fails before git add when the written revision was edited outside the app", [] {
+        Session session;
+        const auto merged = session.repo.path("tracked.txt");
+        const QByteArray reviewed("reviewed in app\n");
+        auto draft = openedFile(session.controller).current().draft;
+        draft.text = reviewed.toStdString();
+        draft.unresolvedMarkers = 0;
+        CHECK(session.controller.files()->replaceDraft(session.id.toStdString(), openedFile(session.controller).current().id, draft)
+            == Transition::Applied);
+        const auto revision = session.revision();
+        // The write succeeds and the refused staging hook keeps the conflict in the index.
+        const auto hook = session.repo.path(".git/hooks/post-index-change");
+        writeFile(hook, "#!/bin/sh\nexit 1\n");
+        CHECK(QFile::setPermissions(hook, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+        CHECK(session.controller.markResolved(session.id, revision, true));
+        waitFor(session.controller, [&] {
+            const auto &file = openedFile(session.controller);
+            return !session.controller.resolutionBusy() && file.writeOutcome()
+                && file.writeOutcome()->outcome == Outcome::Succeeded && file.stageOutcome();
+        });
+        CHECK(openedFile(session.controller).stageOutcome()->outcome == Outcome::Failed);
+        CHECK(readFile(merged) == reviewed && unmerged(session.repo).contains("tracked.txt"));
+        // Staging would now succeed, so any git add would reach stage 0.
+        CHECK(QFile::remove(hook));
+        const QByteArray external("edited outside the app after the write\n");
+        writeFile(merged, external);
+        CHECK(session.controller.markResolved(session.id, revision, true));
+        waitFor(session.controller, [&] {
+            const auto &file = openedFile(session.controller);
+            return !session.controller.resolutionBusy() && file.writeOutcome()
+                && file.writeOutcome()->outcome == Outcome::Failed;
+        });
+        const auto &file = openedFile(session.controller);
+        CHECK(file.writeOutcome()->revision == file.current().id && !file.facts().resolved);
+        CHECK(session.controller.commandMessage().contains(QStringLiteral("no longer matches the written revision")));
+        CHECK(file.stageOutcome() && file.stageOutcome()->outcome == Outcome::Failed);
+        CHECK(readFile(merged) == external);
+        const auto index = session.repo.git({"ls-files", "-s", "--", "tracked.txt"});
+        CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
+        CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
+        CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
+    });
     return suite.report();
 }

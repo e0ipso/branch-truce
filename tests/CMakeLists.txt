@@ -56,7 +56,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
     target_link_options(branch_truce_comparison_tests PRIVATE "LINKER:--wrap=fsync")
     add_test(NAME app.comparison-view COMMAND branch_truce_comparison_tests)
-    set_tests_properties(app.comparison-view PROPERTIES TIMEOUT 30
+    # The TRUCE-0063 boundary fixtures edit an 8388608-byte buffer in the real editor.
+    set_tests_properties(app.comparison-view PROPERTIES TIMEOUT 60
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp)
