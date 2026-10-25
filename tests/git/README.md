@@ -37,3 +37,17 @@ tests do not fetch, change system packages or modify a user's repository.
 
 The adapter suite includes a real 30-second operation deadline. CTest reports
 case and assertion totals separately for the adapter and classification suites.
+
+## Real mergetool parent
+
+`MergetoolParentTests.cpp` (CTest `git.mergetool-parent`) runs
+`/usr/bin/git mergetool` against the built `branch-truce` launcher and an
+in-process session. The shared fixture is
+`tests/fixtures/mergetool/RealParent.h`. Each parent runs in its own process
+group and is killed with it when a case ends. TRUCE-0033 exercised Git 2.43.0
+only. `docs/mergetool-launcher.md` lists the tested configuration, the
+behaviour declared compatible and the trust boundaries.
+
+```sh
+ctest --test-dir build/desktop --output-on-failure -V -R '^git\.mergetool-parent$'
+```

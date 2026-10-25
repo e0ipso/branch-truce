@@ -1,8 +1,8 @@
 # Mergetool launcher
 
-This is the prototype transport for Git's mergetool parent. It is not a
-compatibility claim, a Kubuntu 26.04 claim, or a configuration recipe. The
-real-parent verification gate is still outstanding.
+This is the transport for Git's mergetool parent. Compatibility is declared
+only for the configuration and behaviour listed under "Tested with a real
+parent" below. It is not a Kubuntu 26.04 claim.
 
 Installed Git 2.43 runs the tool once per path. Its shell sets `BASE`,
 `LOCAL`, `REMOTE` and `MERGED` for the evaluated `mergetool.<tool>.cmd` and
@@ -43,13 +43,97 @@ unresolved.
 
 Leave, a rejected second attach, and a dropped launcher return non-zero. Only
 the waiter that was accepted restores `MERGED` when its bytes differ from the
-captured snapshot. Drafts and Save checkpoints stay in Branch Truce. Closing
-the GUI drops open waiters without success. While the parent session is
-active, Mark resolved on a path Git has not launched waits instead of staging
-it. `endParentSession` returns remaining files to app-owned staging only when
+captured snapshot. Drafts and Save checkpoints stay in Branch Truce. A hard
+quit, which destroys the session, drops open waiters without success. Closing
+the window while work is outstanding opens a handoff dialog instead (TRUCE-0028).
+Its deliberate leave, `leaveSession`, keeps drafts in the recovery store, sends
+an explicit leave to every waiting launcher and runs no Git command. While
+the parent session is active, Mark resolved on a path Git has not launched
+waits instead of staging it. `endParentSession` returns remaining files to app-owned staging only when
 no waiter is blocked and no parent offer is still unverified.
 
 If nothing is listening, the launcher can start the GUI on the discovered
 worktree and wait for the socket. `BRANCH_TRUCE_MERGETOOL_NO_SPAWN` disables
-that start. Local installed-Git checks cover success, cancellation, a repeated
-invocation and multi-file blocking. They do not close the real-parent gate.
+that start.
+
+## Tested with a real parent
+
+`git.mergetool-parent` (`tests/git/MergetoolParentTests.cpp`, fixture
+`tests/fixtures/mergetool/RealParent.h`) runs `/usr/bin/git mergetool
+--no-prompt --tool=<tool>` against the `branch-truce` launcher and a session
+in the test process. Only Git 2.43.0 (Ubuntu package 1:2.43.0-1ubuntu7.4)
+on TUXEDO OS 24.04 was exercised, on 2026-10-25. No other Git version was run.
+
+Each case creates a throwaway repository with a real `git merge` conflict.
+`HOME`, the XDG directories and `GIT_CONFIG_GLOBAL` point into temporary
+directories, `GIT_CONFIG_NOSYSTEM=1`, `PATH=/usr/bin:/bin` and `LC_ALL=C`.
+The user's Git configuration and repositories are never read. This is the
+exact tested global configuration, with the launcher path single-quoted:
+
+```ini
+[mergetool "truce"]
+	cmd = MERGED=\"$MERGED\" BASE=\"$BASE\" LOCAL=\"$LOCAL\" REMOTE=\"$REMOTE\" '/path/to/branch-truce' --mergetool
+	trustExitCode = true
+[mergetool]
+	keepBackup = false
+	keepTemporaries = false
+[core]
+	autocrlf = false
+[init]
+	defaultBranch = main
+[user]
+	name = Branch Truce Tests
+	email = tests@example.invalid
+```
+
+`mergetool.writeToTemp` is unset, so Git writes its temporaries next to
+`MERGED`. Two test-only tools run the same command and then do more in the
+parent's shell. `truce-gated` records the launcher's exit status and holds
+the parent before Git stages or restores. `truce-tamper` overwrites `MERGED`
+after a successful launcher exit. Neither is a recommended setup.
+
+These behaviours pass and are the compatibility declaration:
+
+- Save writes a checkpoint in the app store only. While Git stays inside
+  the tool command, `MERGED` keeps its launch bytes and `git ls-files
+  --stage` does not change.
+- After Mark resolved the launcher exits 0, and Git's own `git add` stages
+  the path. With the parent held before that `git add`, the session does not
+  report the path resolved. It reports it once the index holds the offer's
+  canonical object id, which equals `git hash-object` of the reviewed text.
+- If the parent stages other bytes, the session reports "Written,
+  unresolved. The index does not contain the reviewed result."
+- Leave (`leaveMergetool` on the waiting path), a hard quit that destroys
+  the session, and a terminal interrupt (SIGINT to Git's process group) all
+  fail the tool without staging. After leave or a hard quit,
+  `MERGED` holds the launch bytes again, even after an outside edit during the
+  wait. After an interrupt `MERGED` keeps the launch bytes, and Git 2.43 leaves
+  its BACKUP, LOCAL, REMOTE and BASE files in the worktree because it has no
+  interrupt trap. The saved draft stays in the session, and a new session on
+  the same repository restores it. The fixtures predate `leaveSession` and
+  the window-close handoff dialog, so neither is covered by a real parent.
+- Each invocation gets its own intake. Its copies match Git's LOCAL, REMOTE
+  and BASE files while the tool runs, and stay after Git deletes those files.
+- Running `git mergetool` with no paths visits unmerged paths in name order.
+  Mark resolved on the second path waits. That path is not offered while Git
+  is held before staging the first, and it stays blocked and unacknowledged
+  after the first is staged, even when both resolve to the same object.
+
+## Trust boundaries
+
+Git evaluates the configured `cmd` as `( eval $merge_tool_cmd )`. The value
+is unquoted, so the shell splits it into words and expands filename patterns
+before `eval`. A literal newline or a run of spaces inside quotes becomes one
+space. Keep the launcher path free of whitespace runs and glob characters.
+
+The parent shell and everything it runs before the launcher are outside the
+app's control. Git has already written `MERGED`, its backup and its
+temporaries, and has run any checkout conversion or filesystem monitor
+configured at that point. The launcher trusts the four paths it receives and
+copies their bytes. The app's guards protect only the staging handoff that
+follows. The real-parent fixture covers one guard. When `core.fsmonitor` is set
+during the wait, Mark resolved still writes `MERGED`, then refuses to release
+the parent ("unsupported partial repository or filesystem monitor setting").
+The monitor never runs, and leave restores the launch bytes. Guards for
+filters, hooks and other helpers are covered by `git.adapter`, not by a real
+parent.
