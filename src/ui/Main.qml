@@ -486,465 +486,492 @@ Kirigami.ApplicationWindow {
     }
     width: 1200
     height: 850
-    minimumWidth: 1000
-    minimumHeight: 760
+    // Fits 1920x1080 at 200% scaling (960x540 logical pixels); the page scrolls below its content height.
+    minimumWidth: 900
+    minimumHeight: 500
     visible: true
     title: qsTr("Branch Truce")
     pageStack.initialPage: Kirigami.Page {
         title: window.controller.operation || qsTr("Open conflict session")
-        ColumnLayout {
+        // On a short screen, such as 1080p at 150% or 200%, the content keeps its minimum
+        // height and scrolls, so the text panes keep a usable height and nothing is cut off.
+        Flickable {
+            id: pageScroll
+            objectName: "pageScroll"
+            readonly property bool overflowing: contentHeight > height
             anchors.fill: parent
-            spacing: Kirigami.Units.largeSpacing
-            Label {
-                Layout.fillWidth: true
-                text: window.controller.repositoryRoot
-                textFormat: Text.PlainText
-                wrapMode: Text.WrapAnywhere
+            clip: true
+            contentWidth: width
+            contentHeight: Math.max(height, pageContent.Layout.minimumHeight)
+            boundsBehavior: Flickable.StopAtBounds
+            // Mouse drags select text in the panes; the wheel and the scroll bar move the page.
+            interactive: false
+            ScrollBar.vertical: ScrollBar {
+                id: pageScrollBar
+                policy: pageScroll.overflowing ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
             }
-            RowLayout {
-                BusyIndicator { running: window.controller.opening; visible: running }
+            Kirigami.WheelHandler {
+                target: pageScroll
+            }
+            ColumnLayout {
+                id: pageContent
+                width: pageScroll.width - (pageScroll.overflowing ? pageScrollBar.width : 0)
+                height: pageScroll.contentHeight
+                spacing: Kirigami.Units.largeSpacing
                 Label {
                     Layout.fillWidth: true
-                    text: window.controller.detail
+                    text: window.controller.repositoryRoot
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                }
+                RowLayout {
+                    BusyIndicator { running: window.controller.opening; visible: running }
+                    Label {
+                        Layout.fillWidth: true
+                        text: window.controller.detail
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("%1 files in this session · %2 resolved")
+                        .arg(window.controller.files.totalFiles).arg(window.controller.files.resolvedFiles)
+                    visible: !window.controller.opening && window.controller.files.totalFiles > 0
+                }
+                Kirigami.InlineMessage {
+                    objectName: "inventoryWarning"
+                    Layout.fillWidth: true
+                    visible: !window.controller.opening
+                        && window.controller.outsideAppFiles + window.controller.loadErrorFiles > 0
+                    type: Kirigami.MessageType.Warning
+                    text: qsTr("%1 outside app · %2 load errors. These files remain outstanding. Select a file for its reason and handle it outside Branch Truce.")
+                        .arg(window.controller.outsideAppFiles).arg(window.controller.loadErrorFiles)
+                }
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+                    visible: !window.controller.opening && window.controller.files.totalFiles > 0
+                    Button {
+                        objectName: "openHandoff"
+                        text: qsTr("Review handoff…")
+                        onClicked: handoffDialog.open()
+                    }
+                    Button {
+                        objectName: "toggleFileList"
+                        text: window.controller.fileListVisible ? qsTr("Hide file list") : qsTr("Show file list")
+                        onClicked: window.controller.toggleFileList()
+                    }
+                    Button {
+                        objectName: "previousDifference"
+                        text: qsTr("Previous difference")
+                        onClicked: window.controller.navigate("difference", -1)
+                    }
+                    Button {
+                        objectName: "nextDifference"
+                        text: qsTr("Next difference")
+                        onClicked: window.controller.navigate("difference", 1)
+                    }
+                    Button {
+                        objectName: "previousUndecided"
+                        text: qsTr("Previous undecided")
+                        onClicked: window.controller.navigate("undecided", -1)
+                    }
+                    Button {
+                        objectName: "nextUndecided"
+                        text: qsTr("Next undecided")
+                        onClicked: window.controller.navigate("undecided", 1)
+                    }
+                    Button {
+                        objectName: "previousUnfinished"
+                        text: qsTr("Previous unfinished file")
+                        onClicked: window.controller.navigate("unfinished", -1)
+                    }
+                    Button {
+                        objectName: "nextUnfinished"
+                        text: qsTr("Next unfinished file")
+                        onClicked: window.controller.navigate("unfinished", 1)
+                    }
+                    Button {
+                        objectName: "previousSavedOrReviewed"
+                        text: qsTr("Previous saved or reviewed")
+                        onClicked: window.controller.navigate("saved-or-reviewed", -1)
+                    }
+                    Button {
+                        objectName: "nextSavedOrReviewed"
+                        text: qsTr("Next saved or reviewed")
+                        onClicked: window.controller.navigate("saved-or-reviewed", 1)
+                    }
+                }
+                Label {
+                    objectName: "navigationTarget"
+                    Layout.fillWidth: true
+                    visible: !window.controller.opening && (window.controller.navigationTarget.label || "").length > 0
+                    text: window.controller.navigationTarget.label || ""
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
-            }
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("%1 files in this session · %2 resolved")
-                    .arg(window.controller.files.totalFiles).arg(window.controller.files.resolvedFiles)
-                visible: !window.controller.opening && window.controller.files.totalFiles > 0
-            }
-            Kirigami.InlineMessage {
-                objectName: "inventoryWarning"
-                Layout.fillWidth: true
-                visible: !window.controller.opening
-                    && window.controller.outsideAppFiles + window.controller.loadErrorFiles > 0
-                type: Kirigami.MessageType.Warning
-                text: qsTr("%1 outside app · %2 load errors. These files remain outstanding. Select a file for its reason and handle it outside Branch Truce.")
-                    .arg(window.controller.outsideAppFiles).arg(window.controller.loadErrorFiles)
-            }
-            Flow {
-                Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing
-                visible: !window.controller.opening && window.controller.files.totalFiles > 0
-                Button {
-                    objectName: "openHandoff"
-                    text: qsTr("Review handoff…")
-                    onClicked: handoffDialog.open()
-                }
-                Button {
-                    objectName: "toggleFileList"
-                    text: window.controller.fileListVisible ? qsTr("Hide file list") : qsTr("Show file list")
-                    onClicked: window.controller.toggleFileList()
-                }
-                Button {
-                    objectName: "previousDifference"
-                    text: qsTr("Previous difference")
-                    onClicked: window.controller.navigate("difference", -1)
-                }
-                Button {
-                    objectName: "nextDifference"
-                    text: qsTr("Next difference")
-                    onClicked: window.controller.navigate("difference", 1)
-                }
-                Button {
-                    objectName: "previousUndecided"
-                    text: qsTr("Previous undecided")
-                    onClicked: window.controller.navigate("undecided", -1)
-                }
-                Button {
-                    objectName: "nextUndecided"
-                    text: qsTr("Next undecided")
-                    onClicked: window.controller.navigate("undecided", 1)
-                }
-                Button {
-                    objectName: "previousUnfinished"
-                    text: qsTr("Previous unfinished file")
-                    onClicked: window.controller.navigate("unfinished", -1)
-                }
-                Button {
-                    objectName: "nextUnfinished"
-                    text: qsTr("Next unfinished file")
-                    onClicked: window.controller.navigate("unfinished", 1)
-                }
-                Button {
-                    objectName: "previousSavedOrReviewed"
-                    text: qsTr("Previous saved or reviewed")
-                    onClicked: window.controller.navigate("saved-or-reviewed", -1)
-                }
-                Button {
-                    objectName: "nextSavedOrReviewed"
-                    text: qsTr("Next saved or reviewed")
-                    onClicked: window.controller.navigate("saved-or-reviewed", 1)
-                }
-            }
-            Label {
-                objectName: "navigationTarget"
-                Layout.fillWidth: true
-                visible: !window.controller.opening && (window.controller.navigationTarget.label || "").length > 0
-                text: window.controller.navigationTarget.label || ""
-                textFormat: Text.PlainText
-                wrapMode: Text.Wrap
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                visible: !window.controller.opening && window.controller.files.totalFiles > 0
-                ListView {
-                    id: fileList
-                    objectName: "fileList"
-                    visible: window.controller.fileListVisible
-                    Layout.preferredWidth: 220
-                    Layout.fillHeight: true
-                    clip: true
-                    model: window.controller.files
-                    currentIndex: 0
-                    function revealSelection(): void {
-                        const row = window.controller.selectedRow()
-                        if (row < 0 || row >= count)
-                            return
-                        currentIndex = row
-                        positionViewAtIndex(row, ListView.Contain)
-                    }
-                    Component.onCompleted: revealSelection()
-                    Connections {
-                        target: window.controller
-                        function onSelectedFileChanged(): void {
-                            fileList.revealSelection()
-                        }
-                    }
-                    delegate: ConflictRow {
-                        id: fileDelegate
-                        onClicked: {
-                            fileList.currentIndex = fileDelegate.index;
-                            window.controller.selectFile(fileDelegate.fileId);
-                        }
-                    }
-                    ScrollBar.vertical: ScrollBar {}
-                }
-                ColumnLayout {
+                RowLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Label {
-                        Layout.fillWidth: true
-                        objectName: "selectedPath"
-                        text: window.selectedFile.path || ""
-                        textFormat: Text.PlainText
-                        wrapMode: Text.WrapAnywhere
-                        font.bold: true
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        objectName: "selectedProblem"
-                        visible: window.controller.selectedFileId.length > 0 && !window.supportedSelection
-                        text: (window.selectedFile.support === "unreadable"
-                            ? qsTr("Load error · outside app · outstanding\n") : qsTr("Outside app · outstanding\n"))
-                            + (window.selectedFile.supportDetail || "")
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                    }
-                    Label {
-                        objectName: "selectedStatus"
-                        Layout.fillWidth: true
-                        visible: window.controller.selectedFileId.length > 0
-                        text: (window.selectedFile.status || "") + "\n"
-                            + (window.selectedFile.unsaved ? qsTr("Unsaved draft") : qsTr("Manual Save checkpoint retained"))
-                            + "\n" + window.progressSummary(window.selectedFile.progress)
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                    }
-                    Kirigami.InlineMessage {
-                        objectName: "recoveryProblem"
-                        Layout.fillWidth: true
-                        visible: !!window.selectedFile.recoveryError
-                        type: Kirigami.MessageType.Error
-                        text: window.selectedFile.recoveryError || ""
-                    }
-                    Label {
-                        objectName: "commandMessage"
-                        Layout.fillWidth: true
-                        visible: window.controller.commandMessage.length > 0
-                        text: window.controller.commandMessage
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                    }
-                    Label {
-                        objectName: "parentStagingState"
-                        Layout.fillWidth: true
-                        visible: window.controller.parentStagingPath.length > 0
-                        text: qsTr("Written, unresolved. Waiting for Git to stage %1.").arg(window.controller.parentStagingPath)
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                    }
-                    Button {
-                        objectName: "recheckParentStaging"
-                        visible: window.controller.parentStagingPath.length > 0
-                        text: qsTr("Check Git staging")
-                        enabled: !window.controller.resolutionBusy
-                        onClicked: window.controller.recheckParentAcknowledgment()
-                    }
-                    Label {
-                        objectName: "mergetoolHolding"
-                        Layout.fillWidth: true
-                        visible: window.controller.mergetoolWaiting
-                        text: qsTr("Git is waiting on this path. Mark resolved hands it back. Leave keeps the draft and returns the original file.")
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                    }
-                    Button {
-                        objectName: "leaveMergetool"
-                        visible: window.controller.mergetoolWaiting
-                        enabled: !window.controller.resolutionBusy
-                        text: qsTr("Leave unresolved")
-                        onClicked: window.controller.leaveMergetool()
-                    }
-                    // A path whose result Git already staged is not waiting for a launch.
-                    Label {
-                        objectName: "mergetoolWait"
-                        Layout.fillWidth: true
-                        visible: window.controller.parentSessionActive && !window.controller.mergetoolWaiting
-                                 && window.controller.parentStagingPath.length === 0 && window.supportedSelection
-                                 && !window.selectedFile.resolved
-                                 && !(window.selectedFile.progress && window.selectedFile.progress.earlierResolved)
-                        text: qsTr("Waiting for Git to launch this path. It is not resolved.")
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                    }
-                    Button {
-                        objectName: "endParentSession"
-                        visible: window.controller.canEndParentSession
-                        text: qsTr("Parent Git is finished")
-                        onClicked: window.controller.endParentSession()
-                    }
-                    RowLayout {
-                        visible: window.controller.resolutionConfirmation
-                            && window.controller.resolutionFileId === window.controller.selectedFileId
-                            && window.controller.resolutionRevision === window.selectedFile.currentRevision
-                        Button {
-                            objectName: "confirmResolution"
-                            text: qsTr("Confirm resolution")
-                            enabled: !window.controller.resolutionBusy && !comparison.inputMethodComposing
-                            onClicked: window.controller.markResolved(window.controller.selectedFileId, window.selectedFile.currentRevision, true)
-                        }
-                        Button {
-                            objectName: "cancelResolution"
-                            text: qsTr("Cancel")
-                            onClicked: window.controller.cancelResolution()
-                        }
-                    }
-                    Button {
-                        objectName: "retryRecovery"
-                        visible: !!window.selectedFile.pendingInput && window.selectedFile.recoveryState !== "save-failed"
-                        text: qsTr("Retry keeping pending input")
-                        onClicked: window.controller.files.retryPendingRecovery(window.controller.selectedFileId)
-                    }
-                    Button {
-                        objectName: "retrySave"
-                        visible: window.selectedFile.recoveryState === "save-failed"
-                        text: qsTr("Retry Save")
-                        onClicked: window.controller.files.retryPendingRecovery(window.controller.selectedFileId)
-                    }
-                    SnapshotPane {
-                        visible: !!window.selectedFile.pendingInput && window.selectedFile.recoveryState !== "save-failed"
-                        paneName: "pendingInput"
-                        paneTitle: qsTr("Pending input · not acknowledged")
-                        paneText: window.selectedFile.pendingText || ""
-                    }
-                    RowLayout {
-                        visible: window.supportedSelection
-                        Button {
-                            objectName: "saveDraft"
-                            text: qsTr("Save")
-                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.unsaved && !comparison.inputMethodComposing
-                            onClicked: window.controller.saveDraft(window.controller.selectedFileId, window.selectedFile.currentRevision)
-                        }
-                        Button {
-                            objectName: "markResolved"
-                            text: qsTr("Mark resolved")
-                            enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing && !window.controller.resolutionBusy
-                            onClicked: window.controller.markResolved(window.controller.selectedFileId, window.selectedFile.currentRevision, false)
-                        }
-                        Button {
-                            objectName: "discardUnsaved"
-                            text: qsTr("Discard")
-                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.unsaved && !comparison.inputMethodComposing
-                            onClicked: window.controller.discardUnsaved(window.controller.selectedFileId, window.selectedFile.currentRevision)
-                        }
-                        Button {
-                            objectName: "undoCommand"
-                            text: qsTr("Undo")
-                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canUndo && !comparison.inputMethodComposing
-                            onClicked: window.controller.undo(window.controller.selectedFileId, window.selectedFile.currentRevision)
-                        }
-                        Button {
-                            objectName: "redoCommand"
-                            text: qsTr("Redo")
-                            enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canRedo && !comparison.inputMethodComposing
-                            onClicked: window.controller.redo(window.controller.selectedFileId, window.selectedFile.currentRevision)
-                        }
-                        Button {
-                            objectName: "copyResult"
-                            text: qsTr("Copy")
-                            onClicked: window.controller.resultClipboard("copy")
-                        }
-                        Button {
-                            objectName: "pasteResult"
-                            text: qsTr("Paste")
-                            enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
-                            onClicked: window.controller.resultClipboard("paste")
-                        }
-                        Button {
-                            id: sourceChoices
-                            objectName: "showSourceChoices"
-                            text: checked ? qsTr("Hide source choices") : qsTr("Show source choices")
-                            checkable: true
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            text: comparison.inputMethodComposing ? qsTr("Composing input · not acknowledged") : qsTr("Shared undo/redo")
-                            elide: Text.ElideRight
-                        }
-                    }
-                    Label {
-                        objectName: "nonConflictingScope"
-                        Layout.fillWidth: true
-                        visible: window.supportedSelection && sourceChoices.checked
-                        text: qsTr("Non-conflicting changes in %1. Preview the eligible changes before applying.")
-                            .arg(window.selectedFile.path || "")
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                    }
-                    RowLayout {
-                        visible: window.supportedSelection && sourceChoices.checked
-                        enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
-                        Button {
-                            objectName: "nonConflictingLeft"
-                            text: qsTr("Preview non-conflicting Left")
-                            onClicked: window.chooseNonConflicting("left")
-                        }
-                        Button {
-                            objectName: "nonConflictingRight"
-                            text: qsTr("Preview non-conflicting Right")
-                            onClicked: window.chooseNonConflicting("right")
-                        }
-                        Button {
-                            objectName: "nonConflictingBoth"
-                            text: qsTr("Preview non-conflicting Both")
-                            onClicked: window.chooseNonConflicting("both")
-                        }
-                    }
-                    RowLayout {
-                        visible: window.supportedSelection && sourceChoices.checked
-                        enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
-                        Button {
-                            objectName: "wholeFileLeft"
-                            text: qsTr("Preview whole file from Left")
-                            onClicked: window.chooseWholeFile("left")
-                        }
-                        Button {
-                            objectName: "wholeFileRight"
-                            text: qsTr("Preview whole file from Right")
-                            onClicked: window.chooseWholeFile("right")
-                        }
-                    }
-                    ComparisonView {
-                        id: comparison
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        Layout.minimumHeight: 200
-                        visible: window.supportedSelection
-                        controller: window.controller
-                        file: window.selectedFile
-                    }
+                    visible: !window.controller.opening && window.controller.files.totalFiles > 0
                     ListView {
-                        objectName: "scopedChoices"
-                        visible: window.supportedSelection && sourceChoices.checked
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: Math.min(contentHeight, 180)
+                        id: fileList
+                        objectName: "fileList"
+                        visible: window.controller.fileListVisible
+                        Layout.preferredWidth: 220
+                        Layout.fillHeight: true
                         clip: true
-                        model: window.selectedFile.choices || []
-                        delegate: ColumnLayout {
-                            id: choiceRow
-                            required property var modelData
-                            width: ListView.view.width
-                            Label {
-                                Layout.fillWidth: true
-                                text: choiceRow.modelData.label + " · " + choiceRow.modelData.state
-                                textFormat: Text.PlainText
-                                wrapMode: Text.Wrap
+                        model: window.controller.files
+                        currentIndex: 0
+                        function revealSelection(): void {
+                            const row = window.controller.selectedRow()
+                            if (row < 0 || row >= count)
+                                return
+                            currentIndex = row
+                            positionViewAtIndex(row, ListView.Contain)
+                        }
+                        Component.onCompleted: revealSelection()
+                        Connections {
+                            target: window.controller
+                            function onSelectedFileChanged(): void {
+                                fileList.revealSelection()
                             }
-                            Label {
-                                Layout.fillWidth: true
-                                text: choiceRow.modelData.sourceText || qsTr("Empty source scope · deletion")
-                                textFormat: Text.PlainText
-                                font.family: "monospace"
-                                wrapMode: Text.WrapAnywhere
-                                maximumLineCount: 3
-                                elide: Text.ElideRight
-                            }
-                            RowLayout {
-                                enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.available && !comparison.inputMethodComposing
-                                Button {
-                                    text: qsTr("Accept →")
-                                    Accessible.name: qsTr("Accept %1").arg(choiceRow.modelData.label)
-                                    onClicked: window.choose(choiceRow.modelData.id, "accept")
-                                }
-                                Button {
-                                    text: qsTr("× Ignore")
-                                    Accessible.name: qsTr("Ignore %1").arg(choiceRow.modelData.label)
-                                    onClicked: window.choose(choiceRow.modelData.id, "ignore")
-                                }
-                                Button {
-                                    text: qsTr("Resolve using this side")
-                                    Accessible.name: qsTr("Resolve %1 using this side and ignore its competitor").arg(choiceRow.modelData.label)
-                                    onClicked: window.choose(choiceRow.modelData.id, "resolve")
-                                }
-                            }
-                            RowLayout {
-                                enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.combinationAvailable && !comparison.inputMethodComposing
-                                Button {
-                                    text: qsTr("Preview Left then Right")
-                                    Accessible.name: qsTr("Preview both for %1, Left then Right").arg(choiceRow.modelData.label)
-                                    onClicked: window.choose(choiceRow.modelData.id, "left-first")
-                                }
-                                Button {
-                                    text: qsTr("Preview Right then Left")
-                                    Accessible.name: qsTr("Preview both for %1, Right then Left").arg(choiceRow.modelData.label)
-                                    onClicked: window.choose(choiceRow.modelData.id, "right-first")
-                                }
-                            }
-                            Label {
-                                visible: !choiceRow.modelData.available
-                                Layout.fillWidth: true
-                                text: choiceRow.modelData.detail
-                                textFormat: Text.PlainText
-                                wrapMode: Text.Wrap
+                        }
+                        delegate: ConflictRow {
+                            id: fileDelegate
+                            onClicked: {
+                                fileList.currentIndex = fileDelegate.index;
+                                window.controller.selectFile(fileDelegate.fileId);
                             }
                         }
                         ScrollBar.vertical: ScrollBar {}
                     }
-                    Label {
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        visible: sourceChoices.checked && !!window.selectedFile.choiceNotice
-                        text: window.selectedFile.choiceNotice || ""
-                        wrapMode: Text.Wrap
-                    }
+                        Layout.fillHeight: true
+                        Label {
+                            Layout.fillWidth: true
+                            objectName: "selectedPath"
+                            text: window.selectedFile.path || ""
+                            textFormat: Text.PlainText
+                            wrapMode: Text.WrapAnywhere
+                            font.bold: true
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            objectName: "selectedProblem"
+                            visible: window.controller.selectedFileId.length > 0 && !window.supportedSelection
+                            text: (window.selectedFile.support === "unreadable"
+                                ? qsTr("Load error · outside app · outstanding\n") : qsTr("Outside app · outstanding\n"))
+                                + (window.selectedFile.supportDetail || "")
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                        }
+                        Label {
+                            objectName: "selectedStatus"
+                            Layout.fillWidth: true
+                            visible: window.controller.selectedFileId.length > 0
+                            text: (window.selectedFile.status || "") + "\n"
+                                + (window.selectedFile.unsaved ? qsTr("Unsaved draft") : qsTr("Manual Save checkpoint retained"))
+                                + "\n" + window.progressSummary(window.selectedFile.progress)
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                        }
+                        Kirigami.InlineMessage {
+                            objectName: "recoveryProblem"
+                            Layout.fillWidth: true
+                            visible: !!window.selectedFile.recoveryError
+                            type: Kirigami.MessageType.Error
+                            text: window.selectedFile.recoveryError || ""
+                        }
+                        Label {
+                            objectName: "commandMessage"
+                            Layout.fillWidth: true
+                            visible: window.controller.commandMessage.length > 0
+                            text: window.controller.commandMessage
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                        }
+                        Label {
+                            objectName: "parentStagingState"
+                            Layout.fillWidth: true
+                            visible: window.controller.parentStagingPath.length > 0
+                            text: qsTr("Written, unresolved. Waiting for Git to stage %1.").arg(window.controller.parentStagingPath)
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                        }
+                        Button {
+                            objectName: "recheckParentStaging"
+                            visible: window.controller.parentStagingPath.length > 0
+                            text: qsTr("Check Git staging")
+                            enabled: !window.controller.resolutionBusy
+                            onClicked: window.controller.recheckParentAcknowledgment()
+                        }
+                        Label {
+                            objectName: "mergetoolHolding"
+                            Layout.fillWidth: true
+                            visible: window.controller.mergetoolWaiting
+                            text: qsTr("Git is waiting on this path. Mark resolved hands it back. Leave keeps the draft and returns the original file.")
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                        }
+                        Button {
+                            objectName: "leaveMergetool"
+                            visible: window.controller.mergetoolWaiting
+                            enabled: !window.controller.resolutionBusy
+                            text: qsTr("Leave unresolved")
+                            onClicked: window.controller.leaveMergetool()
+                        }
+                        // A path whose result Git already staged is not waiting for a launch.
+                        Label {
+                            objectName: "mergetoolWait"
+                            Layout.fillWidth: true
+                            visible: window.controller.parentSessionActive && !window.controller.mergetoolWaiting
+                                     && window.controller.parentStagingPath.length === 0 && window.supportedSelection
+                                     && !window.selectedFile.resolved
+                                     && !(window.selectedFile.progress && window.selectedFile.progress.earlierResolved)
+                            text: qsTr("Waiting for Git to launch this path. It is not resolved.")
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                        }
+                        Button {
+                            objectName: "endParentSession"
+                            visible: window.controller.canEndParentSession
+                            text: qsTr("Parent Git is finished")
+                            onClicked: window.controller.endParentSession()
+                        }
+                        RowLayout {
+                            visible: window.controller.resolutionConfirmation
+                                && window.controller.resolutionFileId === window.controller.selectedFileId
+                                && window.controller.resolutionRevision === window.selectedFile.currentRevision
+                            Button {
+                                objectName: "confirmResolution"
+                                text: qsTr("Confirm resolution")
+                                enabled: !window.controller.resolutionBusy && !comparison.inputMethodComposing
+                                onClicked: window.controller.markResolved(window.controller.selectedFileId, window.selectedFile.currentRevision, true)
+                            }
+                            Button {
+                                objectName: "cancelResolution"
+                                text: qsTr("Cancel")
+                                onClicked: window.controller.cancelResolution()
+                            }
+                        }
+                        Button {
+                            objectName: "retryRecovery"
+                            visible: !!window.selectedFile.pendingInput && window.selectedFile.recoveryState !== "save-failed"
+                            text: qsTr("Retry keeping pending input")
+                            onClicked: window.controller.files.retryPendingRecovery(window.controller.selectedFileId)
+                        }
+                        Button {
+                            objectName: "retrySave"
+                            visible: window.selectedFile.recoveryState === "save-failed"
+                            text: qsTr("Retry Save")
+                            onClicked: window.controller.files.retryPendingRecovery(window.controller.selectedFileId)
+                        }
+                        SnapshotPane {
+                            visible: !!window.selectedFile.pendingInput && window.selectedFile.recoveryState !== "save-failed"
+                            paneName: "pendingInput"
+                            paneTitle: qsTr("Pending input · not acknowledged")
+                            paneText: window.selectedFile.pendingText || ""
+                        }
+                        // Wraps on a narrow window instead of pushing the panes past its right edge.
+                        Flow {
+                            Layout.fillWidth: true
+                            spacing: Kirigami.Units.smallSpacing
+                            visible: window.supportedSelection
+                            Button {
+                                objectName: "saveDraft"
+                                text: qsTr("Save")
+                                enabled: !!window.selectedFile.canEdit && !!window.selectedFile.unsaved && !comparison.inputMethodComposing
+                                onClicked: window.controller.saveDraft(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                            }
+                            Button {
+                                objectName: "markResolved"
+                                text: qsTr("Mark resolved")
+                                enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing && !window.controller.resolutionBusy
+                                onClicked: window.controller.markResolved(window.controller.selectedFileId, window.selectedFile.currentRevision, false)
+                            }
+                            Button {
+                                objectName: "discardUnsaved"
+                                text: qsTr("Discard")
+                                enabled: !!window.selectedFile.canEdit && !!window.selectedFile.unsaved && !comparison.inputMethodComposing
+                                onClicked: window.controller.discardUnsaved(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                            }
+                            Button {
+                                objectName: "undoCommand"
+                                text: qsTr("Undo")
+                                enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canUndo && !comparison.inputMethodComposing
+                                onClicked: window.controller.undo(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                            }
+                            Button {
+                                objectName: "redoCommand"
+                                text: qsTr("Redo")
+                                enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canRedo && !comparison.inputMethodComposing
+                                onClicked: window.controller.redo(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                            }
+                            Button {
+                                objectName: "copyResult"
+                                text: qsTr("Copy")
+                                onClicked: window.controller.resultClipboard("copy")
+                            }
+                            Button {
+                                objectName: "pasteResult"
+                                text: qsTr("Paste")
+                                enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
+                                onClicked: window.controller.resultClipboard("paste")
+                            }
+                            Button {
+                                id: sourceChoices
+                                objectName: "showSourceChoices"
+                                text: checked ? qsTr("Hide source choices") : qsTr("Show source choices")
+                                checkable: true
+                            }
+                            Label {
+                                height: sourceChoices.height
+                                verticalAlignment: Text.AlignVCenter
+                                text: comparison.inputMethodComposing ? qsTr("Composing input · not acknowledged") : qsTr("Shared undo/redo")
+                            }
+                        }
+                        Label {
+                            objectName: "nonConflictingScope"
+                            Layout.fillWidth: true
+                            visible: window.supportedSelection && sourceChoices.checked
+                            text: qsTr("Non-conflicting changes in %1. Preview the eligible changes before applying.")
+                                .arg(window.selectedFile.path || "")
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                        }
+                        RowLayout {
+                            visible: window.supportedSelection && sourceChoices.checked
+                            enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
+                            Button {
+                                objectName: "nonConflictingLeft"
+                                text: qsTr("Preview non-conflicting Left")
+                                onClicked: window.chooseNonConflicting("left")
+                            }
+                            Button {
+                                objectName: "nonConflictingRight"
+                                text: qsTr("Preview non-conflicting Right")
+                                onClicked: window.chooseNonConflicting("right")
+                            }
+                            Button {
+                                objectName: "nonConflictingBoth"
+                                text: qsTr("Preview non-conflicting Both")
+                                onClicked: window.chooseNonConflicting("both")
+                            }
+                        }
+                        RowLayout {
+                            visible: window.supportedSelection && sourceChoices.checked
+                            enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
+                            Button {
+                                objectName: "wholeFileLeft"
+                                text: qsTr("Preview whole file from Left")
+                                onClicked: window.chooseWholeFile("left")
+                            }
+                            Button {
+                                objectName: "wholeFileRight"
+                                text: qsTr("Preview whole file from Right")
+                                onClicked: window.chooseWholeFile("right")
+                            }
+                        }
+                        ComparisonView {
+                            id: comparison
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            visible: window.supportedSelection
+                            controller: window.controller
+                            file: window.selectedFile
+                        }
+                        ListView {
+                            objectName: "scopedChoices"
+                            visible: window.supportedSelection && sourceChoices.checked
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Math.min(contentHeight, 180)
+                            clip: true
+                            model: window.selectedFile.choices || []
+                            delegate: ColumnLayout {
+                                id: choiceRow
+                                required property var modelData
+                                width: ListView.view.width
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: choiceRow.modelData.label + " · " + choiceRow.modelData.state
+                                    textFormat: Text.PlainText
+                                    wrapMode: Text.Wrap
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: choiceRow.modelData.sourceText || qsTr("Empty source scope · deletion")
+                                    textFormat: Text.PlainText
+                                    font.family: "monospace"
+                                    wrapMode: Text.WrapAnywhere
+                                    maximumLineCount: 3
+                                    elide: Text.ElideRight
+                                }
+                                RowLayout {
+                                    enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.available && !comparison.inputMethodComposing
+                                    Button {
+                                        text: qsTr("Accept →")
+                                        Accessible.name: qsTr("Accept %1").arg(choiceRow.modelData.label)
+                                        onClicked: window.choose(choiceRow.modelData.id, "accept")
+                                    }
+                                    Button {
+                                        text: qsTr("× Ignore")
+                                        Accessible.name: qsTr("Ignore %1").arg(choiceRow.modelData.label)
+                                        onClicked: window.choose(choiceRow.modelData.id, "ignore")
+                                    }
+                                    Button {
+                                        text: qsTr("Resolve using this side")
+                                        Accessible.name: qsTr("Resolve %1 using this side and ignore its competitor").arg(choiceRow.modelData.label)
+                                        onClicked: window.choose(choiceRow.modelData.id, "resolve")
+                                    }
+                                }
+                                RowLayout {
+                                    enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.combinationAvailable && !comparison.inputMethodComposing
+                                    Button {
+                                        text: qsTr("Preview Left then Right")
+                                        Accessible.name: qsTr("Preview both for %1, Left then Right").arg(choiceRow.modelData.label)
+                                        onClicked: window.choose(choiceRow.modelData.id, "left-first")
+                                    }
+                                    Button {
+                                        text: qsTr("Preview Right then Left")
+                                        Accessible.name: qsTr("Preview both for %1, Right then Left").arg(choiceRow.modelData.label)
+                                        onClicked: window.choose(choiceRow.modelData.id, "right-first")
+                                    }
+                                }
+                                Label {
+                                    visible: !choiceRow.modelData.available
+                                    Layout.fillWidth: true
+                                    text: choiceRow.modelData.detail
+                                    textFormat: Text.PlainText
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+                            ScrollBar.vertical: ScrollBar {}
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            visible: sourceChoices.checked && !!window.selectedFile.choiceNotice
+                            text: window.selectedFile.choiceNotice || ""
+                            wrapMode: Text.Wrap
+                        }
 
+                    }
                 }
-            }
-            Label {
-                Layout.fillWidth: true
-                visible: window.controller.stage2.length > 0
-                text: window.controller.stage2 + "\n" + window.controller.stage3
-                textFormat: Text.PlainText
-                wrapMode: Text.WrapAnywhere
-            }
-            Label {
-                Layout.fillWidth: true
-                text: window.controller.workflow
-                wrapMode: Text.Wrap
+                Label {
+                    Layout.fillWidth: true
+                    visible: window.controller.stage2.length > 0
+                    text: window.controller.stage2 + "\n" + window.controller.stage3
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                }
+                Label {
+                    objectName: "workflowStatus"
+                    Layout.fillWidth: true
+                    text: window.controller.workflow
+                    wrapMode: Text.Wrap
+                }
             }
         }
     }

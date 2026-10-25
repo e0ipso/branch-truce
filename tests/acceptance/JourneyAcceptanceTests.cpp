@@ -22,6 +22,7 @@
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QWheelEvent>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -516,6 +517,60 @@ std::unique_ptr<QProcess> startMergetool(const Repository &repo, const QStringLi
                                                "--tool=truce-launcher", "--"} + paths);
     CHECK(process->waitForStarted(5000));
     return process;
+}
+
+// Every named control of the main view, in reading order.
+const char *const mainControls[] = {
+    "inventoryWarning", "openHandoff", "toggleFileList", "previousDifference", "nextDifference",
+    "previousUndecided", "nextUndecided", "previousUnfinished", "nextUnfinished", "previousSavedOrReviewed",
+    "nextSavedOrReviewed", "fileList", "selectedPath", "selectedStatus", "saveDraft", "markResolved",
+    "discardUnsaved", "undoCommand", "redoCommand", "copyResult", "pasteResult", "showSourceChoices",
+    "searchScope", "searchQuery", "findPassage", "wrapLines", "showWhitespace", "stage2Label", "resultLabel",
+    "stage3Label", "showEarlier", "workflowStatus",
+};
+const char *const textPanes[] = {"stage2Viewport", "resultViewport", "stage3Viewport"};
+
+std::string geometry(QQuickItem *item)
+{
+    const auto origin = item->mapToScene(QPointF(0, 0));
+    return item->objectName().toStdString() + "@" + std::to_string(int(origin.x())) + ","
+        + std::to_string(int(origin.y())) + " " + std::to_string(int(item->width())) + "x"
+        + std::to_string(int(item->height())) + (item->isVisible() ? "" : " hidden");
+}
+
+// Resize to a logical screen size and require every control and text pane inside the window,
+// scrolling an enclosing view first as a user would. Returns the smallest pane height.
+qreal checkFits(Scene &scene, int width, int height)
+{
+    auto *window = scene.window;
+    if (window->minimumWidth() > width || window->minimumHeight() > height)
+        throw std::runtime_error("minimum size " + std::to_string(window->minimumWidth()) + "x"
+                                 + std::to_string(window->minimumHeight()) + " exceeds the screen "
+                                 + std::to_string(width) + "x" + std::to_string(height));
+    window->resize(width, height);
+    settleFor("window size", [&] { return window->width() == width && window->height() == height; });
+    const QRectF screen(0, 0, width, height);
+    const auto inside = [&](QQuickItem *item) {
+        const auto rect = item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+        return item->isVisible() && item->width() > 0 && item->height() > 0
+            && screen.adjusted(-0.5, -0.5, 0.5, 0.5).contains(rect);
+    };
+    std::vector<const char *> names(std::begin(mainControls), std::end(mainControls));
+    names.insert(names.end(), std::begin(textPanes), std::end(textPanes));
+    for (const auto *name : names) {
+        auto *item = scene.item(name);
+        if (Scene::reveal(item)) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QElapsedTimer deadline;
+        deadline.start();
+        while (!inside(item) && deadline.elapsed() < 2000)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        if (!inside(item))
+            throw std::runtime_error("unreachable at " + std::to_string(width) + "x" + std::to_string(height)
+                                     + ": " + geometry(item));
+    }
+    qreal smallest = height;
+    for (const auto *name : textPanes) smallest = std::min(smallest, scene.item(name)->height());
+    return smallest;
 }
 
 const QByteArray longLine = QByteArray(420, 'L') + "\n";
@@ -1145,6 +1200,36 @@ public:
             settleFor("waiting text after the handoff", [&] { return scene.item("mergetoolWait")->isVisible(); });
             expectText(scene.text("mergetoolWait"), waitText, "unlaunched path after the handoff");
             CHECK(scene.item("endParentSession")->isVisible());
+            checkOffline(scene);
+        });
+        suite.run("TRUCE-0088 a 1280x720 logical screen fits the window with every control and text pane reachable", [] {
+            Repository repo("merge", journeyPaths());
+            Scene scene(repo);
+            CHECK(scene.item("inventoryWarning")->isVisible());
+            clickFile(scene, "story.txt");
+            // A roomy window lays out as before, without scrolling the page.
+            CHECK(!scene.object("pageScroll")->property("overflowing").toBool());
+            auto *editor = scene.item("resultText");
+            const auto lineHeight = editor->property("contentHeight").toReal() / editor->property("lineCount").toInt();
+            CHECK(lineHeight > 0);
+            // 1920x1080 at 150% and at 200% scaling.
+            for (const auto &screen : {QSize(1280, 720), QSize(960, 540)}) {
+                const auto pane = checkFits(scene, screen.width(), screen.height());
+                if (pane < 8 * lineHeight)
+                    throw std::runtime_error("text panes " + std::to_string(pane) + " px high at "
+                                             + std::to_string(screen.width()) + "x" + std::to_string(screen.height())
+                                             + ", less than eight " + std::to_string(lineHeight) + " px lines");
+            }
+            // At 960x540 the page is taller than the window, and the mouse wheel over its labels scrolls it.
+            auto *page = scene.object("pageScroll");
+            CHECK(page->property("overflowing").toBool());
+            page->setProperty("contentY", 0);
+            auto *status = scene.item("selectedStatus");
+            const auto point = status->mapToScene(QPointF(status->width() / 2, status->height() / 2));
+            QWheelEvent wheel(point, scene.window->mapToGlobal(point), QPoint(), QPoint(0, -120), Qt::NoButton,
+                              Qt::NoModifier, Qt::NoScrollPhase, false);
+            QCoreApplication::sendEvent(scene.window, &wheel);
+            settleFor("page scrolled by the wheel", [&] { return page->property("contentY").toReal() > 0; });
             checkOffline(scene);
         });
         return suite.report();

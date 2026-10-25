@@ -19,7 +19,7 @@ about the package and the program, not about Plasma, KWin or real hardware.
 The rows that matter for compatibility are the first two, and both stay
 open. The container rows show that each package installs on its own base,
 that the installed program runs without the source or build tree, and what
-it does on a Wayland compositor with Breeze, two scale factors and AT-SPI.
+it does on a Wayland compositor with Breeze, three scale factors and AT-SPI.
 
 ## What was used
 
@@ -128,7 +128,8 @@ observed. The real-desktop column has no observations.
 | Wayland with `qt6-wayland` and `plasma-integration` | Pass, `xdg_shell` | Pass, `xdg_shell` | UNAVAILABLE |
 | Window `app_id` matches the desktop entry | Pass, `local.branch_truce.BranchTruce` | Pass, `local.branch_truce.BranchTruce` | UNAVAILABLE |
 | `QT_SCALE_FACTOR=1`, Breeze Light and Breeze Dark | Pass | Pass | UNAVAILABLE |
-| `QT_SCALE_FACTOR=2`, Breeze Light and Breeze Dark | Renders; clipped on a 1920x1080 output | Renders; clipped on a 1920x1080 output | UNAVAILABLE |
+| `QT_SCALE_FACTOR=1.5`, Breeze Light and Breeze Dark | Pass, fits 1920x1080 | Pass, fits 1920x1080 | UNAVAILABLE |
+| `QT_SCALE_FACTOR=2`, Breeze Light and Breeze Dark | Pass, fits 1920x1080 and scrolls; was clipped before the minimum size was lowered | Pass, fits 1920x1080 and scrolls; was clipped before the minimum size was lowered | UNAVAILABLE |
 | Plasma output scaling (KWin fractional or integer scale) | Not run | Not run | UNAVAILABLE |
 | Editor input through the Wayland virtual keyboard, accented letters | Pass | Pass | UNAVAILABLE |
 | Composed input through an input method (IBus, Fcitx 5, dead keys) | Not run | Not run | UNAVAILABLE |
@@ -196,14 +197,39 @@ scheme was set before launch; switching it while the app runs was not
 tested.
 
 At `QT_SCALE_FACTOR=2` the text and controls doubled, but the 1920x1080
-output is only 960x540 logical pixels. That is smaller than the window's
-minimum size of 1000x760 (`src/ui/Main.qml`). The window stayed at the
-output size, the toolbar wrapped onto two rows, the right edge and the
-bottom row were cut off, and each text pane showed about one line. By the
-same arithmetic, any scale above about 1.42 on a 1080-pixel-high screen
-leaves less than 760 logical pixels of height. That part was calculated,
-not observed. Plasma's own output scaling, which KWin applies rather than
-`QT_SCALE_FACTOR`, was not available.
+output is only 960x540 logical pixels. That was smaller than the window's
+minimum size at the time, 1000x760. The window stayed at the output size,
+the toolbar wrapped onto two rows, the right edge and the bottom row were
+cut off, and each text pane showed about one line.
+
+The minimum size is now 900x500 (`src/ui/Main.qml`). When the window is
+shorter than its content, the page scrolls and the text panes keep at least
+eight lines. The row of Save, Mark resolved and the other file actions wraps
+on a narrow window. The 150% and 200% cases were then observed in containers
+of both bases on the same sway output, with `QT_SCALE_FACTOR=1.5` and `2`,
+Breeze Light and Breeze Dark:
+
+| `QT_SCALE_FACTOR` on 1920x1080 | Logical size | Before (`46e0801`) | After |
+| --- | --- | --- | --- |
+| 1.5 | 1280x720 | Fits. Panes about 9 lines high. Kubuntu base only. | Fits without scrolling. Panes about 9 lines high, as before. |
+| 2 | 960x540 | Right edge and bottom cut off. Panes about 1 line high. Kubuntu base only. | Fits the width. The page shows a scroll bar, and the panes start below the fold. |
+
+The fixture has one conflicted file with short content and no warning, so
+the 150% window had room to spare before the change too. A session with
+more files, an outside-app warning or a long path is taller. The window-fit
+journey in `tests/acceptance/JourneyAcceptanceTests.cpp` covers that case
+offscreen. With four files and the warning, it checks at 1280x720 and
+960x540 that every control and all three text panes lie inside
+the window once the page has scrolled to them. It also checks that each pane
+is at least eight lines high and that the mouse wheel scrolls the page. It
+passes with the default offscreen style and with `org.kde.desktop`. In the
+container the 200% screenshot shows only the top of the page. Scrolling
+there was not exercised. The 150% runs used a copy of
+`tools/validate-installed-artifact.sh` with its scale list changed from `1 2`
+to `1.5 2`. The other checks in those runs gave the same results as above,
+36 passed, 0 failed and 1 warning on each base. Plasma's own output scaling, which KWin
+applies rather than `QT_SCALE_FACTOR`, was not available, and 125% was not
+measured.
 
 ### Editor input
 

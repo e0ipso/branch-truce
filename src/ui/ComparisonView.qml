@@ -15,6 +15,8 @@ ColumnLayout {
     readonly property bool showWhitespace: showWhitespaceBox.checked
     property var scopeNames: ["stage2", "result", "stage3"]
     property string searchDetail: ""
+    // Text panes never get shorter than this many lines; on a short window the page scrolls instead.
+    property int minimumPaneLines: 8
     property bool whitespaceReady: false
     readonly property string searchStatusText: searchDetail.length > 0
         ? searchDetail
@@ -208,6 +210,14 @@ ColumnLayout {
         }
     }
 
+    function paneMinimumHeight(lines: int): real {
+        return Math.ceil(lines * paneFont.lineSpacing + resultEditor.topPadding + resultEditor.bottomPadding)
+    }
+    FontMetrics {
+        id: paneFont
+        font: resultEditor.font
+    }
+
     component CapturedSource: ColumnLayout {
         id: sourcePane
         required property string paneName
@@ -215,6 +225,7 @@ ColumnLayout {
         required property var source
         property alias editor: sourceText
         property bool alignHeader: true
+        property int minimumLines: comparison.minimumPaneLines
         readonly property real headerImplicitHeight: sourceHeader.implicitHeight
         Label {
             id: sourceHeader
@@ -242,6 +253,7 @@ ColumnLayout {
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumHeight: comparison.paneMinimumHeight(sourcePane.minimumLines)
             Flickable {
                 id: sourceViewport
                 objectName: sourcePane.paneName + "Viewport"
@@ -331,6 +343,9 @@ ColumnLayout {
         objectName: "comparisonPanes"
         Layout.fillWidth: true
         Layout.fillHeight: true
+        // A SplitView does not pass its panes' minimum height on to the layout.
+        Layout.minimumHeight: Math.max(leftPane.Layout.minimumHeight, resultColumn.Layout.minimumHeight,
+            rightPane.Layout.minimumHeight)
         orientation: Qt.Horizontal
         CapturedSource {
             id: leftPane
@@ -341,6 +356,7 @@ ColumnLayout {
             source: comparison.file.stage2 || ({})
         }
         ColumnLayout {
+            id: resultColumn
             SplitView.minimumWidth: 180
             SplitView.preferredWidth: panes.width / 3
             Label {
@@ -360,6 +376,7 @@ ColumnLayout {
             Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                Layout.minimumHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
                 Flickable {
                     id: resultViewport
                     objectName: "resultViewport"
@@ -451,6 +468,7 @@ ColumnLayout {
         Layout.preferredHeight: Math.min(comparison.height / 3, 180)
         visible: showEarlier.enabled && showEarlier.checked
         alignHeader: false
+        minimumLines: 3
         paneName: "earlier"
         paneRole: qsTr("Earlier-version context · read-only")
         source: comparison.file.earlier || ({})
