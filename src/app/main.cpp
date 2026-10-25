@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -47,6 +48,9 @@ int main(int argc, char *argv[])
     QApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("branch-truce.local"));
+    // Matches the installed desktop entry so Plasma shows its name and icon.
+    QGuiApplication::setDesktopFileName(QStringLiteral(BRANCH_TRUCE_APP_ID));
+    QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral(BRANCH_TRUCE_APP_ID)));
     branch_truce::ApplicationController controller;
     QCoreApplication::setApplicationVersion(controller.version());
     QCommandLineParser parser;

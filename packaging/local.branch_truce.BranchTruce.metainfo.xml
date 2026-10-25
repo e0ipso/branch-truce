@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>local.branch_truce.BranchTruce</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <name>Branch Truce</name>
+  <summary>Resolve Git merge and rebase text conflicts offline</summary>
+  <description>
+    <p>
+      Branch Truce opens every conflicted file of the current Git merge or
+      rebase in one session. It shows both contributions around an editable
+      result, keeps drafts inside the app until you mark a file resolved, and
+      leaves unsupported files visible with the reason.
+    </p>
+    <p>
+      It runs offline and needs no account.
+    </p>
+  </description>
+  <launchable type="desktop-id">local.branch_truce.BranchTruce.desktop</launchable>
+  <provides>
+    <binary>branch-truce</binary>
+  </provides>
+  <categories>
+    <category>Development</category>
+    <category>RevisionControl</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+</component>

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Branch Truce
+GenericName=Conflict Resolver
+Comment=Resolve Git merge and rebase text conflicts offline
+Exec=branch-truce %f
+TryExec=branch-truce
+Icon=local.branch_truce.BranchTruce
+Terminal=false
+StartupNotify=true
+StartupWMClass=branch-truce
+Categories=Qt;KDE;Development;RevisionControl;
+Keywords=git;merge;rebase;conflict;mergetool;

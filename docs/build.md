@@ -116,6 +116,73 @@ shell syntax command above has a separate stamp covering env, Bash and their
 linked libraries. That stamp is empty when exported loader overrides are present,
 so the evidence helper must treat its declaration as incomplete in that case.
 
+## Install
+
+A desktop build installs four files under `CMAKE_INSTALL_PREFIX`, placed by
+ECM's KDE install directories:
+
+- `bin/branch-truce`, the GUI. With `--mergetool` it is the blocking launcher.
+- `share/applications/local.branch_truce.BranchTruce.desktop`
+- `share/metainfo/local.branch_truce.BranchTruce.metainfo.xml`
+- `share/icons/hicolor/scalable/apps/local.branch_truce.BranchTruce.svg`
+
+The QML module is compiled into the executable, so no QML directory is
+installed and the installed program reads nothing from the source or build
+tree. Qt, Kirigami and the KDE style come from system packages. The
+application ID is the reverse-DNS form of the organization domain
+`branch-truce.local`. The GUI sets it as its desktop file name, which is how
+Plasma matches a window to the entry and icon. For a prefix outside the system
+data directories, add `<prefix>/share` to `XDG_DATA_DIRS` so menus and icon
+lookup find the files. Package formats for each OS are separate work.
+
+```sh
+cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+    -DCMAKE_INSTALL_PREFIX="$prefix"
+cmake --build "$build" --parallel 2
+cmake --install "$build"
+```
+
+To check an install without touching the system or your home, run:
+
+```sh
+./tools/verify-install-prefix.sh --mergetool-tests build/desktop/tests/branch_truce_mergetool_tests
+```
+
+The script copies the checkout's tracked and untracked non-ignored files into
+a fixture under `${TMPDIR:-/tmp}`, builds and installs a Release prefix, and
+deletes the copied sources and build tree before launching anything. It then:
+
+1. Compares the deployed file list with the four files above and runs
+   `desktop-file-validate` and `appstreamcli validate --no-net`.
+2. Runs the installed `branch-truce --version` and
+   `branch-truce --smoke-test <repo>` on a disposable merge conflict.
+3. Starts the desktop entry with `gio launch`, attaches the installed
+   `branch-truce --mergetool` to that GUI, and checks that the launcher blocks
+   and leaves the file unmerged until the GUI closes.
+4. Runs `git mergetool` with the installed launcher, which starts the installed
+   GUI itself, and checks the same blocking and release.
+5. With `--mergetool-tests`, runs the mergetool protocol suite against the
+   installed executable. This covers the resolved handoff, where the launcher
+   exits 0 and Git stages the file.
+
+Launches run with `env -i`, an isolated `HOME` and XDG directories inside the
+fixture, and offscreen software rendering. The script prints every install and
+launch command, and removes the fixture and any process it started on exit.
+The session socket sits in `TMPDIR` and a Unix socket path holds at most 107
+bytes, so the script refuses a fixture path that would exceed it.
+
+The metainfo has no homepage or developer yet. `appstreamcli` reports
+`url-homepage-missing` as a warning, which the script downgrades to info so
+the finding stays visible. The ID's `local` TLD is reported as info.
+
+On 2026-10-25 every step above passed on the development host: four files
+deployed, `RUNPATH` `$ORIGIN:$ORIGIN/../lib/x86_64-linux-gnu`, both validators
+passed, the smoke test opened the merge session, the desktop-launched and the
+launcher-started GUIs each held their launcher until they closed (exit 1,
+file unmerged), and the protocol suite passed 7/7 against the installed
+executable. A Plasma menu launch, Wayland and a physical display were not
+exercised.
+
 ## Coordinator setup hook
 
 After this scaffold lands, run from the newly prepared checkout:
@@ -151,8 +218,10 @@ prepared host. Desktop CTest passed 2/2 canaries; independent core and sanitized
 core CTest each passed 1/1. QML lint completed without diagnostics. The same
 checks passed in a disposable detached worktree, which stayed clean and was
 removed afterward. These are scaffold checks only.
-Native Kubuntu 26.04 builds, packaging/installation, Wayland, theme/scaling and
-accessibility checks remain required before platform compatibility claims.
+The install-prefix check under [Install](#install) passed on this host.
+Native Kubuntu 26.04 builds, per-OS packages and their installation, Wayland,
+theme/scaling and accessibility checks remain required before platform
+compatibility claims.
 Build separate artifacts on each OS base. A user-owned prefix via
 `CMAKE_PREFIX_PATH` can supply compatible Qt/KDE packages, but must keep their ABI
 and runtime modules consistent; no such alternate toolchain was needed here.

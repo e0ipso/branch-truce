@@ -9,4 +9,5 @@ target_link_libraries(branch_truce_controller PUBLIC Qt6::Core Qt6::Network Qt6:
 qt_add_executable(branch-truce main.cpp)
 target_link_libraries(branch-truce PRIVATE branch_truce_controller Qt6::Widgets
     Qt6::Qml Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
+target_compile_definitions(branch-truce PRIVATE BRANCH_TRUCE_APP_ID="${BRANCH_TRUCE_APP_ID}")
 install(TARGETS branch-truce RUNTIME DESTINATION "${KDE_INSTALL_BINDIR}")
