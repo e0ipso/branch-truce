@@ -115,10 +115,13 @@ interaction was not measured.
 `dpkg-shlibdeps` cannot see QML imports, so `Depends` also lists the QML
 modules [src/ui](../src/ui) imports, with the API floors: `qml6-module-qtquick`,
 `qml6-module-qtquick-controls`, `qml6-module-qtquick-layouts` (>= 6.6~) and
-`qml6-module-org-kde-kirigami` (>= 6.0~). The application runs the installed
-Git, so it also depends on `git (>= 1:2.43)`. `Recommends` adds the Plasma
-integration the window loads without: `qml6-module-org-kde-desktop`,
-`kde-style-breeze`, `kf6-breeze-icon-theme` and `qt6-wayland`.
+`qml6-module-org-kde-kirigami` (>= 6.0~), plus `qml6-module-qtquick-templates`,
+`qml6-module-qtquick-window` and `qml6-module-qtqml-workerscript` (>= 6.6~),
+which those modules load. The application runs the installed Git, so it also depends on
+`git (>= 1:2.43~)`. The desktop styling is in `Depends` too:
+`qml6-module-org-kde-desktop`, `kde-style-breeze`, `kf6-breeze-icon-theme` and
+`hicolor-icon-theme`. There is no `Recommends`. This list is the one the CI
+release packages use; `packaging/scripts/check-package.sh` checks it.
 
 ## Packaging choice
 
@@ -126,16 +129,25 @@ A native `.deb` built by debhelper's CMake build system, as the technical
 spec's initial candidate. Flatpak would need its own design for Git access.
 
 - [packaging/debian/](../packaging/debian/) holds `control`, `rules`,
-  `copyright` and `source/format`, shared by both bases. `rules` configures
-  with `BUILD_TESTING=OFF`; tests run from development builds.
-- [tools/build-artifact.sh](../tools/build-artifact.sh) writes
-  `debian/changelog` with the base's suite (`resolute` or `noble`) and the
-  `+kubuntu26.04` or `+tuxedo24.04` version suffix, so the two packages have
-  different versions as well as different file names.
+  `copyright`, `compat` and `source/format`, shared by both bases and by the CI
+  release packages of `packaging/scripts/package-release.sh`. `rules` stops
+  unless `BRANCH_TRUCE_VERSION` is set, and configures with that version,
+  `BUILD_TESTING=OFF` and `BRANCH_TRUCE_WARNINGS_AS_ERRORS=ON`; tests run
+  from development builds and in CI. `control` declares `debhelper-compat`,
+  so both build scripts drop `compat` from the copied `debian/` directory.
+- [tools/build-artifact.sh](../tools/build-artifact.sh) takes the release
+  version from `package.json`, converts it with
+  `packaging/scripts/native-version.sh`, and passes it to `rules` as
+  `BRANCH_TRUCE_VERSION`. It writes `debian/changelog` with the base's suite
+  (`resolute` or `noble`) and the `+kubuntu26.04` or `+tuxedo24.04` version
+  suffix, so the two packages have different versions as well as different
+  file names. The CI release packages use the same `debian/` directory but
+  their own version form and file names.
 - The build uses each base's default `dpkg-buildflags`, including LTO,
   `_FORTIFY_SOURCE=3` and `hardening=+all`. No debug-symbol package is built.
-- `debian/copyright` states that no license is chosen yet (TRUCE-0073). The
-  packages are local validation artifacts, not for redistribution.
+- `debian/copyright` states all rights reserved, with the metadata under
+  CC0-1.0 as the AppStream metainfo declares. The packages built here are
+  local validation artifacts.
 - The binary keeps the `RUNPATH` `$ORIGIN:$ORIGIN/../lib/x86_64-linux-gnu`
   that the CMake build sets. Under `/usr/bin` it points at system directories
   only.
@@ -198,7 +210,10 @@ which needs network access for the package lists, and checks:
 ## Results on 2026-10-25
 
 Both artifacts were built from the same committed sources, with the QML
-compiled to bytecode only, and passed every inspection step. A second build
+compiled to bytecode only, and passed every inspection step. These builds
+predate the shared `debian/` directory above: their `control` had the desktop
+styling and `qt6-wayland` under `Recommends`, and their `rules` took no
+version. A second build
 of each, from cached images, was byte-identical to the first.
 
 | | Kubuntu 26.04 | Tuxedo OS 24.04 |

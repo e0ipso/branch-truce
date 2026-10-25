@@ -3,7 +3,7 @@
 set -euo pipefail
 root=$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)
 shopt -s globstar nullglob dotglob
-scripts=("$root"/tools/**/*.sh "$root"/tests/**/*.sh)
+scripts=("$root"/tools/**/*.sh "$root"/tests/**/*.sh "$root"/packaging/**/*.sh)
 ((${#scripts[@]} > 0)) || { echo 'No project shell scripts found.' >&2; exit 1; }
 checked=0
 for script in "${scripts[@]}"; do

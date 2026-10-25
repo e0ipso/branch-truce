@@ -1,6 +1,17 @@
 add_executable(branch_truce_core_smoke core/BuildSmoke.cpp)
+target_compile_definitions(branch_truce_core_smoke PRIVATE
+    BRANCH_TRUCE_EXPECTED_VERSION="${BRANCH_TRUCE_RESOLVED_VERSION}")
 target_link_libraries(branch_truce_core_smoke PRIVATE branch_truce_core branch_truce_build_options)
 add_test(NAME core.build-smoke COMMAND branch_truce_core_smoke)
+add_test(NAME core.version-resolution
+    COMMAND "${CMAKE_COMMAND}"
+        "-DBRANCH_TRUCE_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
+        "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/version-tests"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core/VersionTests.cmake")
+add_test(NAME core.native-version
+    COMMAND "${CMAKE_COMMAND}"
+        "-DBRANCH_TRUCE_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core/NativeVersionTests.cmake")
 add_executable(branch_truce_session_tests core/SessionStateTests.cpp)
 target_include_directories(branch_truce_session_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(branch_truce_session_tests PRIVATE branch_truce_core branch_truce_build_options)

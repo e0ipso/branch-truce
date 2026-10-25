@@ -104,6 +104,9 @@ chmod +x "$work/bin/engine"
 export STUB_STATE=$work/state
 
 build=$root/tools/build-artifact.sh
+# The release version build-artifact.sh reads from package.json and passes to debian/rules.
+release=$(sed -n 's/^  "version": "\([^"]*\)",\{0,1\}$/\1/p' "$root/package.json")
+[[ "$release" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "package.json version '$release'"
 inspect=$root/tools/inspect-artifact.sh
 
 # --- tools/build-artifact.sh argument handling
@@ -137,7 +140,7 @@ build_succeeds() {
 
     local version name
     version=$(sed -n "s/^branch-truce (\\(.*\\)) $suite; urgency=medium\$/\\1/p" "$work/state/changelog")
-    [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+\+$base$ ]] || fail "$target changelog version '$version' for $base/$suite"
+    [[ "$version" == "$release+$base" ]] || fail "$target changelog version '$version' for $release, $base/$suite"
     pass
     name=branch-truce_${version}_amd64
     [[ "$(ls -- "$out" | LC_ALL=C sort | tr '\n' ' ')" == "$name.buildinfo $name.deb $name.manifest " ]] \
@@ -164,6 +167,7 @@ build_succeeds() {
     [[ "$(engine_line 3)" == "$(quoted run --rm --network none --volume "$work_volume:/work" \
         --volume "$root/tools/artifact-baseline.sh:/opt/branch-truce/baseline.sh:ro" \
         --workdir "/work/branch-truce-$version" --env 'DEB_BUILD_OPTIONS=parallel=2 nocheck noddebs' \
+        --env "BRANCH_TRUCE_VERSION=$release" \
         "$image-build" /bin/bash -c '/opt/branch-truce/baseline.sh > ../baseline.txt && dpkg-buildpackage -b --no-sign')" ]] \
         || fail "$target package build: $(engine_line 3)"
     pass
@@ -176,6 +180,9 @@ build_succeeds() {
         pass
     done
     ! grep -qE '^\./(tests|tools|docs|build)/' "$work/state/snapshot" || fail "$target snapshot has paths outside the build inputs"
+    pass
+    # control declares debhelper-compat, so the package build must not see debian/compat.
+    ! grep -qxF ./debian/compat "$work/state/snapshot" || fail "$target snapshot keeps debian/compat"
     pass
 
     local manifest=$out/$name.manifest from

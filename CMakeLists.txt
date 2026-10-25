@@ -1,5 +1,23 @@
 cmake_minimum_required(VERSION 3.28)
-project(BranchTruce VERSION 0.1.0 LANGUAGES CXX)
+
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/BranchTruceVersion.cmake")
+
+# Empty by default: the version comes from the root package.json. Release
+# builds pass the resolved version explicitly, e.g. -DBRANCH_TRUCE_VERSION=1.2.0.
+set(BRANCH_TRUCE_VERSION "" CACHE STRING "Branch Truce release version; empty reads the root package.json")
+set(BRANCH_TRUCE_PACKAGE_JSON "${CMAKE_CURRENT_LIST_DIR}/package.json"
+    CACHE FILEPATH "package.json that provides the default version")
+
+branch_truce_resolve_version(BRANCH_TRUCE_RESOLVED_VERSION
+    PACKAGE_JSON "${BRANCH_TRUCE_PACKAGE_JSON}"
+    OVERRIDE "${BRANCH_TRUCE_VERSION}")
+branch_truce_version_core(_branch_truce_version_core "${BRANCH_TRUCE_RESOLVED_VERSION}")
+if(BRANCH_TRUCE_VERSION STREQUAL "")
+    # Re-run configure when the root version changes.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${BRANCH_TRUCE_PACKAGE_JSON}")
+endif()
+
+project(BranchTruce VERSION ${_branch_truce_version_core} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

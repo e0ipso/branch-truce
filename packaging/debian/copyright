@@ -1,10 +1,8 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: branch-truce
-Comment: The project license is not chosen yet (TRUCE-0073). These packages
- are local build artifacts for target validation, not for redistribution.
 
 Files: *
 Copyright: 2026 Branch Truce contributors
-License: UNDECIDED
- The project has not chosen a license yet. No redistribution terms apply
- until it does.
+License: All-rights-reserved
+ All rights reserved. Metadata is licensed under CC0-1.0 as declared in the
+ installed AppStream metainfo file.

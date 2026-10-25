@@ -13,7 +13,9 @@
 # fixture under ${TMPDIR:-/tmp}, which is removed on exit.
 #
 # DIR receives:
-#   branch-truce_<version>_amd64.deb   <version> is <project version>+<base>
+#   branch-truce_<version>_amd64.deb   <version> is <release>+<base>, <release>
+#                                      being the package.json version in the
+#                                      Debian form of packaging/scripts/native-version.sh
 #   branch-truce_<version>_amd64.buildinfo
 #   branch-truce_<version>_amd64.manifest   source digest, image and toolchain
 #
@@ -48,9 +50,13 @@ for tool in "$engine" git tar sha256sum; do
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool" >&2; exit 1; }
 done
 
-project_version=$(sed -n 's/^project(BranchTruce VERSION \([0-9][0-9.]*\) .*/\1/p' "$root/CMakeLists.txt")
-[[ "$project_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "No project version in CMakeLists.txt" >&2; exit 1; }
-version=$project_version+$base
+# The release version comes from package.json, as for the CI packages of
+# packaging/scripts/package-release.sh. debian/rules requires it in
+# BRANCH_TRUCE_VERSION and passes it to CMake.
+release=$(sed -n 's/^  "version": "\([^"]*\)",\{0,1\}$/\1/p' "$root/package.json")
+native=$("$root/packaging/scripts/native-version.sh" "$release") \
+    || { echo "No packageable version in package.json" >&2; exit 1; }
+version=$native+$base
 name=branch-truce_${version}_amd64
 mkdir -p -- "$output"
 output=$(cd -- "$output" && pwd -P)
@@ -81,6 +87,9 @@ mkdir -p -- "$tree"
     (cd -- "$root" && tar --null --files-from=- --create --file=-) |
     tar --extract --file=- --directory="$tree"
 cp -a -- "$tree/packaging/debian" "$tree/debian"
+# control declares debhelper-compat, which debhelper rejects alongside a
+# debian/compat file; package-release.sh drops it the same way.
+rm -f -- "$tree/debian/compat"
 # The changelog date fixes SOURCE_DATE_EPOCH for dpkg-buildpackage. It is the
 # author time of the last commit that changed the copied paths, so commits
 # elsewhere, or amending one, leave the artifact unchanged.
@@ -88,7 +97,7 @@ epoch=$(git -C "$root" log -1 --format=%at -- CMakeLists.txt cmake src packaging
 cat > "$tree/debian/changelog" <<EOF
 branch-truce ($version) $suite; urgency=medium
 
-  * Branch Truce $project_version for $base.
+  * Branch Truce $release for $base.
 
  -- Branch Truce contributors <contributors@example.invalid>  $(LC_ALL=C TZ=UTC date -R -d "@$epoch")
 EOF
@@ -101,7 +110,7 @@ echo "== Package build (no network)"
 run "$engine" run --rm --network none \
     --volume "$fixture/work:/work" --volume "$root/tools/artifact-baseline.sh:/opt/branch-truce/baseline.sh:ro" \
     --workdir "/work/branch-truce-$version" \
-    --env DEB_BUILD_OPTIONS="parallel=2 nocheck noddebs" \
+    --env DEB_BUILD_OPTIONS="parallel=2 nocheck noddebs" --env "BRANCH_TRUCE_VERSION=$release" \
     "$image-build" /bin/bash -c \
     '/opt/branch-truce/baseline.sh > ../baseline.txt && dpkg-buildpackage -b --no-sign'
 
