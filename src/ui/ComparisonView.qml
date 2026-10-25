@@ -84,14 +84,13 @@ ColumnLayout {
     // over the text. They are not document characters.
     component WhitespaceMarkers: Item {
         id: markers
-        required property Item editor
+        required property TextEdit editor
         required property Flickable viewport
         property bool active: false
         property bool wrapped: false
         property var spots: []
         readonly property int markerCount: spots.length
         readonly property color ink: editor.color.a > 0 ? editor.color : "#202020"
-        anchors.fill: parent
         z: 2
         enabled: false
         clip: true
@@ -280,6 +279,7 @@ ColumnLayout {
             }
             WhitespaceMarkers {
                 objectName: sourcePane.paneName + "Whitespace"
+                anchors.fill: parent
                 editor: sourceText
                 viewport: sourceViewport
                 active: comparison.showWhitespace
@@ -439,6 +439,7 @@ ColumnLayout {
                 }
                 WhitespaceMarkers {
                     objectName: "resultWhitespace"
+                    anchors.fill: parent
                     editor: resultEditor
                     viewport: resultViewport
                     active: comparison.showWhitespace
