@@ -8,6 +8,7 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QTimer>
+#include <algorithm>
 
 namespace branch_truce {
 MergetoolSession::MergetoolSession(ApplicationController *controller) : QObject(controller), controller_(controller)
@@ -82,6 +83,38 @@ bool MergetoolSession::leave(const QByteArray &path)
     }
     Q_EMIT changed();
     return true;
+}
+
+int MergetoolSession::unreleasedLaunches() const
+{
+    return static_cast<int>(std::count_if(waiters_.begin(), waiters_.end(),
+                                          [](const Waiter &waiter) { return !waiter.released; }));
+}
+
+int MergetoolSession::leaveAll()
+{
+    int told = 0;
+    bool clearAssignment = false;
+    for (auto &waiter : waiters_) {
+        if (waiter.released) continue;
+        const QJsonObject message{{QStringLiteral("v"), 1}, {QStringLiteral("kind"), QStringLiteral("leave")},
+                                  {QStringLiteral("invocation"), waiter.invocation}};
+        // A launcher that cannot be reached restores its file when its socket
+        // closes, so the outcome is unresolved either way.
+        if (send(waiter.socket, message)) ++told;
+        waiter.released = true;
+        if (waiter.assigned && !offerHeld_) {
+            waiter.assigned = false;
+            clearAssignment = true;
+        }
+    }
+    if (clearAssignment) {
+        assigning_ = true;
+        controller_->assignParentStaging({});
+        assigning_ = false;
+    }
+    Q_EMIT changed();
+    return told;
 }
 
 bool MergetoolSession::canEndParentSession() const

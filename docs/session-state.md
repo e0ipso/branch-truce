@@ -143,5 +143,16 @@ Mark resolved publishes and verifies one reviewed revision.
 
 `canFinish` requires at least one loaded file and current verified resolution
 of every file. `finishBlockers` includes each file ID and display path for
-navigation. Empty sessions are blocked. Explicit leave after a warning belongs
-to the future interface and must not claim successful resolution.
+navigation. Empty sessions are blocked.
+
+`SessionModel::handoff` places each file in exactly one category: undecided,
+saved-draft, review-needed, newer-draft, written-unresolved, published, failed
+(including uncertain outcomes, unreadable files and recovery problems) or
+outside-app. Each entry keeps its blockers and the next action. The controller
+adds session blockers for a running resolution and for launched paths Git is
+still waiting on; `clean` is the only success claim. `finishSession` succeeds
+only when clean. Closing the window with work outstanding opens the handoff.
+`leaveSession` is the deliberate leave: it keeps drafts in the recovery store,
+sends an explicit leave to every waiting launcher and runs no Git command. It
+refuses to leave while pending input is not in recovery or a resolution is
+running.

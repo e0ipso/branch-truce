@@ -281,14 +281,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
             return QString::fromUtf8(statusText(FileStatus::CheckpointFailed));
         if (pendingInput) return tr("Recovery failed; pending input retained");
         return QString::fromUtf8(statusText(facts.status));
-    case FinishBlockersRole: {
-        auto blockers = blockerData(facts);
-        if (pendingInput) blockers.push_back(pending->second.action == QLatin1String("manual-save")
-            ? tr("Draft save failed; the edited result is still available")
-            : tr("Pending input needs recovery retry"));
-        if (recoveryFailed) blockers.push_back(failure->second);
-        return blockers;
-    }
+    case FinishBlockersRole: return blockersFor(file);
     case CanUndoRole: return !pendingInput && !recoveryFailed && file.canUndo();
     case CanRedoRole: return !pendingInput && !recoveryFailed && file.canRedo();
     case PendingInputRole: return pendingInput;
@@ -365,18 +358,160 @@ QVariantList SessionModel::finishBlockers() const
             {QStringLiteral("blockers"), QStringList{QStringLiteral("No files loaded")}}});
     }
     for (const auto &file : files_) {
-        const auto facts = file.facts();
-        if (facts.blockers.empty() && !pending_.contains(file.id()) && !recoveryFailures_.contains(file.id())) continue;
-        auto blockers = blockerData(facts);
-        if (pending_.contains(file.id())) blockers.push_back(pending_.at(file.id()).action == QLatin1String("manual-save")
-            ? tr("Draft save failed; the edited result is still available")
-            : tr("Pending input needs recovery retry"));
-        if (recoveryFailures_.contains(file.id())) blockers.push_back(recoveryFailures_.at(file.id()));
+        const auto blockers = blockersFor(file);
+        if (blockers.isEmpty()) continue;
         result.push_back(QVariantMap{{QStringLiteral("fileId"), text(file.id())},
             {QStringLiteral("path"), text(file.path())},
             {QStringLiteral("blockers"), blockers}});
     }
     return result;
+}
+
+QStringList SessionModel::blockersFor(const FileSession &file) const
+{
+    auto blockers = blockerData(file.facts());
+    const auto pending = pending_.find(file.id());
+    if (pending != pending_.end()) blockers.push_back(pending->second.action == QLatin1String("manual-save")
+        ? tr("Draft save failed; the edited result is still available")
+        : tr("Pending input needs recovery retry"));
+    const auto failure = recoveryFailures_.find(file.id());
+    if (failure != recoveryFailures_.end()) blockers.push_back(failure->second);
+    return blockers;
+}
+
+QVariantMap SessionModel::handoffEntry(const FileSession &file) const
+{
+    const auto facts = file.facts();
+    const auto pending = pending_.find(file.id());
+    const bool pendingInput = pending != pending_.end();
+    const bool recoveryFailed = recoveryFailures_.contains(file.id());
+    QString category;
+    QString action;
+    QString actionLabel;
+    // Recovery problems outrank every revision fact: until they clear, the
+    // recorded state may not be the state the user last saw.
+    if (recoveryFailed) {
+        category = QStringLiteral("failed");
+        action = QStringLiteral("recovery");
+        actionLabel = tr("Open the recovery problem");
+    } else if (pendingInput) {
+        const bool save = pending->second.action == QLatin1String("manual-save");
+        category = QStringLiteral("failed");
+        action = save ? QStringLiteral("retry-save") : QStringLiteral("retry-recovery");
+        actionLabel = save ? tr("Retry Save") : tr("Retry recovery");
+    } else {
+        switch (facts.status) {
+        case FileStatus::OutsideApp:
+            category = QStringLiteral("outside-app");
+            action = QStringLiteral("outside-app");
+            actionLabel = tr("See why it needs work outside Branch Truce");
+            break;
+        case FileStatus::Unreadable:
+            category = QStringLiteral("failed");
+            action = QStringLiteral("inspect");
+            actionLabel = tr("See why it could not be read");
+            break;
+        case FileStatus::OutcomeUncertain:
+            category = QStringLiteral("failed");
+            action = QStringLiteral("inspect");
+            actionLabel = tr("Inspect the uncertain outcome");
+            break;
+        case FileStatus::CheckpointFailed:
+            category = QStringLiteral("failed");
+            action = QStringLiteral("retry-save");
+            actionLabel = tr("Retry Save");
+            break;
+        case FileStatus::WriteFailed:
+        case FileStatus::StageFailed:
+            category = QStringLiteral("failed");
+            action = QStringLiteral("mark-resolved");
+            actionLabel = tr("Retry Mark resolved");
+            break;
+        case FileStatus::EarlierStaged:
+            category = QStringLiteral("newer-draft");
+            action = QStringLiteral("apply-or-discard");
+            actionLabel = tr("Mark resolved or discard back to the staged result");
+            break;
+        case FileStatus::Resolved:
+            category = QStringLiteral("published");
+            break;
+        case FileStatus::WrittenUnresolved:
+            category = QStringLiteral("written-unresolved");
+            action = QStringLiteral("check-git");
+            actionLabel = tr("Check Git resolution");
+            break;
+        case FileStatus::SavedDraft:
+            category = QStringLiteral("saved-draft");
+            action = QStringLiteral("mark-resolved");
+            actionLabel = tr("Review and Mark resolved");
+            break;
+        case FileStatus::Undecided:
+            category = QStringLiteral("undecided");
+            action = QStringLiteral("decide");
+            actionLabel = tr("Decide source choices");
+            break;
+        case FileStatus::ReviewNeeded:
+            category = QStringLiteral("review-needed");
+            action = QStringLiteral("mark-resolved");
+            actionLabel = facts.unsaved ? tr("Save or Mark resolved") : tr("Review and Mark resolved");
+            break;
+        }
+    }
+    const bool outstanding = pendingInput || recoveryFailed || !facts.resolved;
+    QString status;
+    if (recoveryFailed) status = tr("Recovery requires attention; work remains outstanding");
+    else if (pendingInput && pending->second.action == QLatin1String("manual-save"))
+        status = QString::fromUtf8(statusText(FileStatus::CheckpointFailed));
+    else if (pendingInput) status = tr("Recovery failed; pending input retained");
+    else status = QString::fromUtf8(statusText(facts.status));
+    return {{QStringLiteral("fileId"), text(file.id())}, {QStringLiteral("path"), text(file.path())},
+            {QStringLiteral("category"), category}, {QStringLiteral("status"), status},
+            {QStringLiteral("blockers"), blockersFor(file)},
+            {QStringLiteral("unsaved"), pendingInput || facts.unsaved},
+            {QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(facts.undecided))},
+            {QStringLiteral("outstanding"), outstanding},
+            {QStringLiteral("action"), action}, {QStringLiteral("actionLabel"), actionLabel}};
+}
+
+QVariantMap SessionModel::handoff() const
+{
+    struct Group { const char *category; QString title; };
+    const Group order[] = {
+        {"undecided", tr("Unresolved decisions")},
+        {"saved-draft", tr("Saved drafts in Branch Truce; repository files unchanged")},
+        {"review-needed", tr("Review needed")},
+        {"newer-draft", tr("Newer drafts than the result staged in Git")},
+        {"written-unresolved", tr("Written, not yet resolved in Git")},
+        {"failed", tr("Failed or uncertain work")},
+        {"outside-app", tr("Files to handle outside Branch Truce")},
+        {"published", tr("Written and resolved in Git")},
+    };
+    std::map<QString, QVariantList> entries;
+    int outstanding = 0;
+    for (const auto &file : files_) {
+        auto entry = handoffEntry(file);
+        if (entry.value(QStringLiteral("outstanding")).toBool()) ++outstanding;
+        entries[entry.value(QStringLiteral("category")).toString()].push_back(std::move(entry));
+    }
+    QVariantList groups;
+    QVariantMap counts;
+    for (const auto &group : order) {
+        const auto category = QString::fromLatin1(group.category);
+        const auto &list = entries[category];
+        counts.insert(category, static_cast<int>(list.size()));
+        groups.push_back(QVariantMap{{QStringLiteral("category"), category},
+            {QStringLiteral("title"), group.title}, {QStringLiteral("entries"), list}});
+    }
+    const bool clean = canFinish();
+    QString outcome;
+    if (files_.empty()) outcome = tr("No files are loaded in this session.");
+    else if (clean) outcome = tr("All %1 files in this session are written and resolved in Git. "
+        "Continue and commit in your usual workflow; Branch Truce has not checked the code.").arg(totalFiles());
+    else outcome = tr("%1 of %2 files in this session remain outstanding. This session is not finished.")
+        .arg(outstanding).arg(totalFiles());
+    return {{QStringLiteral("clean"), clean}, {QStringLiteral("totalFiles"), totalFiles()},
+            {QStringLiteral("outstandingFiles"), outstanding}, {QStringLiteral("counts"), counts},
+            {QStringLiteral("groups"), groups}, {QStringLiteral("outcome"), outcome}};
 }
 
 Transition SessionModel::replaceDraft(const std::string &id, RevisionId expected, Draft draft)

@@ -269,6 +269,8 @@ ApplicationController::ApplicationController(QObject *parent)
         Q_EMIT selectedFileChanged();
     });
     connect(this, &ApplicationController::selectedFileChanged, this, &ApplicationController::syncResultEditor);
+    connect(&files_, &SessionModel::summaryChanged, this, &ApplicationController::handoffChanged);
+    connect(this, &ApplicationController::commandChanged, this, &ApplicationController::handoffChanged);
 }
 QString ApplicationController::version() const
 {
@@ -816,6 +818,77 @@ bool ApplicationController::leaveMergetool()
 bool ApplicationController::endParentSession()
 {
     return mergetool_.endParentSession();
+}
+
+QVariantMap ApplicationController::handoff() const
+{
+    auto result = files_.handoff();
+    QStringList sessionBlockers;
+    if (publisher_.busy()) sessionBlockers.push_back(tr("A resolution is still running; its outcome is not known yet."));
+    if (const auto launches = mergetool_.unreleasedLaunches(); launches > 0)
+        sessionBlockers.push_back(launches == 1 ? tr("Git is waiting on 1 launched path with no decision yet.")
+            : tr("Git is waiting on %1 launched paths with no decision yet.").arg(launches));
+    const bool clean = result.value(QStringLiteral("clean")).toBool() && sessionBlockers.isEmpty();
+    if (!clean && result.value(QStringLiteral("clean")).toBool())
+        result.insert(QStringLiteral("outcome"), tr("Every file is resolved, but this session is not finished."));
+    result.insert(QStringLiteral("clean"), clean);
+    result.insert(QStringLiteral("sessionBlockers"), sessionBlockers);
+    // Leaving must not lose input that never reached the recovery store, or
+    // a publication whose outcome is still unknown.
+    QString leaveBlocker;
+    if (files_.hasPendingRecovery())
+        leaveBlocker = tr("Pending input is not in recovery yet. Retry recovery before leaving so the draft is kept.");
+    else if (publisher_.busy())
+        leaveBlocker = tr("Wait for the running resolution to finish before leaving.");
+    result.insert(QStringLiteral("canLeave"), leaveBlocker.isEmpty() && sessionOutcome_.isEmpty());
+    result.insert(QStringLiteral("leaveBlocker"), leaveBlocker);
+    return result;
+}
+
+bool ApplicationController::finishSession()
+{
+    if (!sessionOutcome_.isEmpty()) return false;
+    const auto summary = handoff();
+    if (!summary.value(QStringLiteral("clean")).toBool()) {
+        commandMessage_ = tr("Work remains outstanding, so this session cannot finish cleanly. "
+                             "Open an outstanding file or leave deliberately.");
+        Q_EMIT commandChanged();
+        return false;
+    }
+    sessionOutcome_ = summary.value(QStringLiteral("outcome")).toString();
+    Q_EMIT handoffChanged();
+    Q_EMIT sessionEnded(sessionOutcome_, true);
+    return true;
+}
+
+bool ApplicationController::leaveSession()
+{
+    const auto summary = handoff();
+    if (!summary.value(QStringLiteral("canLeave")).toBool()) {
+        const auto blocker = summary.value(QStringLiteral("leaveBlocker")).toString();
+        if (!blocker.isEmpty()) {
+            commandMessage_ = blocker;
+            Q_EMIT commandChanged();
+        }
+        return false;
+    }
+    const bool clean = summary.value(QStringLiteral("clean")).toBool();
+    const auto launches = mergetool_.unreleasedLaunches();
+    if (launches > 0) (void)mergetool_.leaveAll();
+    if (clean) {
+        sessionOutcome_ = summary.value(QStringLiteral("outcome")).toString();
+    } else {
+        const auto outstanding = summary.value(QStringLiteral("outstandingFiles")).toInt();
+        const auto total = summary.value(QStringLiteral("totalFiles")).toInt();
+        sessionOutcome_ = tr("Left with %1 of %2 files outstanding. Drafts stay in Branch Truce; "
+                             "the Git operation was not continued or committed.").arg(outstanding).arg(total);
+        if (launches > 0)
+            sessionOutcome_ += QLatin1Char(' ') + (launches == 1 ? tr("1 launched path returned to Git unresolved.")
+                : tr("%1 launched paths returned to Git unresolved.").arg(launches));
+    }
+    Q_EMIT handoffChanged();
+    Q_EMIT sessionEnded(sessionOutcome_, clean);
+    return true;
 }
 
 bool ApplicationController::recheckParentAcknowledgment()

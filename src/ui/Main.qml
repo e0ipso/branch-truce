@@ -39,6 +39,116 @@ Kirigami.ApplicationWindow {
             parts.push(qsTr("Earlier result staged; current draft not applied"))
         return parts.join(" · ")
     }
+    // Closing the window is an ordinary finish action: with work outstanding it
+    // opens the handoff instead, where leaving is a deliberate choice.
+    onClosing: close => {
+        if (window.controller.sessionOutcome.length > 0 || window.controller.files.totalFiles === 0
+                || window.controller.handoff.clean)
+            return;
+        close.accepted = false;
+        handoffDialog.open();
+    }
+    Dialog {
+        id: handoffDialog
+        objectName: "handoffDialog"
+        readonly property var summary: window.controller.handoff
+        title: qsTr("Session handoff")
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(window.width - 40, 760)
+        height: Math.min(window.height - 40, 640)
+        standardButtons: Dialog.Close
+        ScrollView {
+            anchors.fill: parent
+            contentWidth: availableWidth
+            ColumnLayout {
+                width: parent.width
+                spacing: Kirigami.Units.smallSpacing
+                Kirigami.InlineMessage {
+                    objectName: "handoffOutcome"
+                    Layout.fillWidth: true
+                    visible: true
+                    type: handoffDialog.summary.clean ? Kirigami.MessageType.Positive : Kirigami.MessageType.Warning
+                    text: handoffDialog.summary.outcome || ""
+                }
+                Repeater {
+                    model: handoffDialog.summary.sessionBlockers || []
+                    delegate: Label {
+                        required property string modelData
+                        Layout.fillWidth: true
+                        text: modelData
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                }
+                Repeater {
+                    model: handoffDialog.summary.groups || []
+                    delegate: ColumnLayout {
+                        id: handoffGroup
+                        required property var modelData
+                        Layout.fillWidth: true
+                        visible: modelData.entries.length > 0
+                        Kirigami.Heading {
+                            Layout.fillWidth: true
+                            level: 4
+                            text: qsTr("%1 (%2)").arg(handoffGroup.modelData.title).arg(handoffGroup.modelData.entries.length)
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                        }
+                        Repeater {
+                            model: handoffGroup.modelData.entries
+                            delegate: RowLayout {
+                                id: handoffEntry
+                                required property var modelData
+                                Layout.fillWidth: true
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: window.controller.displayPath(handoffEntry.modelData.fileId) + " · "
+                                        + handoffEntry.modelData.status
+                                        + (handoffEntry.modelData.blockers.length > 0
+                                           ? "\n" + handoffEntry.modelData.blockers.join("; ") : "")
+                                    textFormat: Text.PlainText
+                                    wrapMode: Text.WrapAnywhere
+                                }
+                                Button {
+                                    objectName: "handoffRoute-" + handoffEntry.modelData.fileId
+                                    text: handoffEntry.modelData.actionLabel || qsTr("Open file")
+                                    onClicked: {
+                                        if (window.controller.selectFile(handoffEntry.modelData.fileId))
+                                            handoffDialog.close();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Label {
+                    objectName: "handoffLeaveBlocker"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: handoffDialog.summary.leaveBlocker || ""
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Button {
+                        objectName: "handoffFinish"
+                        visible: !!handoffDialog.summary.clean
+                        text: qsTr("Finish")
+                        onClicked: window.controller.finishSession()
+                    }
+                    Button {
+                        objectName: "handoffLeave"
+                        visible: !handoffDialog.summary.clean
+                        enabled: !!handoffDialog.summary.canLeave
+                        text: qsTr("Leave with work outstanding")
+                        onClicked: window.controller.leaveSession()
+                    }
+                }
+            }
+        }
+    }
     Dialog {
         id: wholeFileDialog
         objectName: "wholeFileDialog"
@@ -419,6 +529,11 @@ Kirigami.ApplicationWindow {
                 Layout.fillWidth: true
                 spacing: Kirigami.Units.smallSpacing
                 visible: !window.controller.opening && window.controller.files.totalFiles > 0
+                Button {
+                    objectName: "openHandoff"
+                    text: qsTr("Review handoff…")
+                    onClicked: handoffDialog.open()
+                }
                 Button {
                     objectName: "toggleFileList"
                     text: window.controller.fileListVisible ? qsTr("Hide file list") : qsTr("Show file list")

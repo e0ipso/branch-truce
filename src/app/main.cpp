@@ -69,6 +69,13 @@ int main(int argc, char *argv[])
     }
     RecoveryCloseGuard recoveryCloseGuard(*controller.files());
     for (auto *root : engine.rootObjects()) root->installEventFilter(&recoveryCloseGuard);
+    // Finish or deliberate leave ends the process; the outcome stays visible
+    // in the terminal the user returns to.
+    QObject::connect(&controller, &branch_truce::ApplicationController::sessionEnded, &application,
+                     [&application](const QString &outcome, bool) {
+        QTextStream(stderr) << "Branch Truce: " << outcome << Qt::endl;
+        QTimer::singleShot(0, &application, &QCoreApplication::quit);
+    });
     if (parser.isSet(QStringLiteral("smoke-test"))) {
         QObject::connect(&controller, &branch_truce::ApplicationController::launchChanged, &application, [&] {
             if (controller.opening()) return;

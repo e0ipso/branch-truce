@@ -30,6 +30,11 @@ public:
     [[nodiscard]] bool canEndParentSession() const;
     [[nodiscard]] QStringList intakes() const { return intakes_; }
     bool leave(const QByteArray &path);
+    // Launched paths whose launcher has not received a decision yet.
+    [[nodiscard]] int unreleasedLaunches() const;
+    // Deliberate session leave: every waiting launcher gets an explicit leave,
+    // restores its original file and exits unresolved. Returns how many were told.
+    int leaveAll();
     bool endParentSession();
     void onPublisherChanged();
 

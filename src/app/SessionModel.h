@@ -21,6 +21,7 @@ class SessionModel final : public QAbstractListModel {
     Q_PROPERTY(int resolvedFiles READ resolvedFiles NOTIFY summaryChanged)
     Q_PROPERTY(bool canFinish READ canFinish NOTIFY summaryChanged)
     Q_PROPERTY(QVariantList finishBlockers READ finishBlockers NOTIFY summaryChanged)
+    Q_PROPERTY(QVariantMap handoff READ handoff NOTIFY summaryChanged)
     Q_PROPERTY(bool hasPendingRecovery READ hasPendingRecovery NOTIFY summaryChanged)
     Q_PROPERTY(bool hasRecoveryFailures READ hasRecoveryFailures NOTIFY summaryChanged)
 public:
@@ -45,6 +46,10 @@ public:
     [[nodiscard]] int resolvedFiles() const;
     [[nodiscard]] bool canFinish() const;
     [[nodiscard]] QVariantList finishBlockers() const;
+    // Revision-derived handoff: one entry per file under exactly one category
+    // (undecided, saved-draft, review-needed, newer-draft, written-unresolved,
+    // published, failed, outside-app), each with its blockers and next action.
+    [[nodiscard]] QVariantMap handoff() const;
     [[nodiscard]] const FileSession *file(const std::string &id) const;
     [[nodiscard]] const Draft *pendingDraft(const std::string &id) const;
     [[nodiscard]] bool hasPendingRecovery() const { return !pending_.empty(); }
@@ -84,6 +89,8 @@ private:
     void recordRecoveryFailure(const std::string &id, const QString &error);
     bool commitCandidate(std::size_t row, FileSession candidate, const QString &action);
     void notifyRow(std::size_t row);
+    [[nodiscard]] QStringList blockersFor(const FileSession &file) const;
+    [[nodiscard]] QVariantMap handoffEntry(const FileSession &file) const;
     template<typename Command>
     Transition update(const std::string &id, const QString &action, Command command)
     {

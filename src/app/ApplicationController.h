@@ -44,6 +44,8 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QVariantMap wholeFilePreview READ wholeFilePreview NOTIFY commandChanged)
     Q_PROPERTY(bool fileListVisible READ fileListVisible NOTIFY fileListChanged)
     Q_PROPERTY(QVariantMap navigationTarget READ navigationTarget NOTIFY navigationChanged)
+    Q_PROPERTY(QVariantMap handoff READ handoff NOTIFY handoffChanged)
+    Q_PROPERTY(QString sessionOutcome READ sessionOutcome NOTIFY handoffChanged)
 public:
     explicit ApplicationController(QObject *parent = nullptr);
     [[nodiscard]] QString version() const;
@@ -121,6 +123,16 @@ public:
     // direction is -1 or 1. Difference and undecided stay inside the selected
     // file; the file modes walk the session inventory.
     Q_INVOKABLE bool navigate(const QString &mode, int direction);
+    // The file handoff plus session-level blockers (running resolution,
+    // launched paths Git is still waiting on). clean is the only success claim.
+    [[nodiscard]] QVariantMap handoff() const;
+    [[nodiscard]] QString sessionOutcome() const { return sessionOutcome_; }
+    // Ends the session only when the handoff is clean.
+    Q_INVOKABLE bool finishSession();
+    // Deliberate leave: keeps drafts in the recovery store, tells waiting
+    // launchers to leave their paths unresolved and runs no Git command.
+    // Refused while pending input or a running resolution could be lost.
+    Q_INVOKABLE bool leaveSession();
     // One launched repository session per controller. Paths are launch directories,
     // never inferred from a filename or a Git environment override.
     bool openRepository(const QString &directory);
@@ -132,6 +144,9 @@ Q_SIGNALS:
     void commandChanged();
     void fileListChanged();
     void navigationChanged();
+    void handoffChanged();
+    // Emitted once by finishSession or leaveSession; the outcome text is final.
+    void sessionEnded(const QString &outcome, bool clean);
 
 private:
     bool commandReady(const QString &fileId, const QString &revision, RevisionId *expected) const;
@@ -175,6 +190,7 @@ private:
     bool fileListVisible_ = true;
     bool selectingFromNavigation_ = false;
     QVariantMap navigationTarget_;
+    QString sessionOutcome_;
     QString navMode_;
     QString navFileId_;
     RevisionId navRevision_ = 0;
