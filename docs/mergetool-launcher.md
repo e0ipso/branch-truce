@@ -67,7 +67,7 @@ Leave, a rejected second attach, and a dropped launcher return non-zero. Only
 the waiter that was accepted restores `MERGED` when its bytes differ from the
 captured snapshot. Drafts and Save checkpoints stay in Branch Truce. A hard
 quit, which destroys the session, drops open waiters without success. Closing
-the window while work is outstanding opens a handoff dialog instead (TRUCE-0028).
+the window while work is outstanding opens a handoff dialog instead.
 Its deliberate leave, `leaveSession`, keeps drafts in the recovery store, sends
 an explicit leave to every waiting launcher and runs no Git command. While
 the parent session is active, Mark resolved on a path Git has not launched

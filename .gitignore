@@ -1,2 +1,4 @@
-/brainstorm
 /build/
+/dist/
+/node_modules/
+/Testing/

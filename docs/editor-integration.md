@@ -1,13 +1,13 @@
 # Qt Quick editor selection experiment
 
-TRUCE-0002 selects **Qt Quick Controls TextArea in plain-text mode**, with a C++
+The initial editor selection experiment chooses **Qt Quick Controls TextArea in plain-text mode**, with a C++
 QQuickTextDocument adapter, as the foundation for the merge editor. This keeps the
 locked C++20, Qt Quick and Kirigami stack. The standalone experiment imports
 Kirigami, uses its theme, and links no product targets.
 
 ## Product comparison
 
-TRUCE-0020 integrates that foundation in `src/ui/ComparisonView.qml`. Resizable
+The product comparison view integrates that foundation in `src/ui/ComparisonView.qml`. Resizable
 left-source, editable-result and right-source panes retain their reading space
 when the source-choice controls are hidden. Headers identify the side and display
 the captured verified merge or rebase label. Captured blob identities have full
@@ -53,12 +53,12 @@ Run from the repository root using the already-installed dependencies. Build
 output and disposable recovery data stay outside the checkout.
 
 ```sh
-cmake -S experiments/editor-integration -B /tmp/truce-0002-editor-build
-cmake --build /tmp/truce-0002-editor-build -j2
+cmake -S experiments/editor-integration -B /tmp/branch-truce-editor-build
+cmake --build /tmp/branch-truce-editor-build -j2
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
-  /tmp/truce-0002-editor-build/editor-experiment --baseline
+  /tmp/branch-truce-editor-build/editor-experiment --baseline
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
-  /tmp/truce-0002-editor-build/editor-experiment
+  /tmp/branch-truce-editor-build/editor-experiment
 /usr/lib/qt6/bin/qmllint "$PWD/experiments/editor-integration/Editor.qml"
 ```
 
@@ -86,7 +86,7 @@ only once across repeated retries.
 ### Text and positions
 
 The baseline `Aé😀é\n` occupies 11 UTF-8 bytes and 7 editor UTF-16 units. The
-mapping includes the end boundary, round-trips every scalar boundary in both
+nmapping includes the end boundary, round-trips every scalar boundary in both
 directions, and rejects interior UTF-8 bytes, split surrogates, unpaired
 surrogates, malformed UTF-8 and out-of-range positions. Combining marks remain
 separate scalar boundaries; cursor movement may instead follow grapheme clusters.
@@ -198,10 +198,3 @@ the platform obligations.
   underlying document for C++ integration and formatting.
 - [QTextDocument](https://doc.qt.io/qt-6.10/qtextdocument.html#toRawText) documents
   raw extraction, plain-text normalization and native undo control.
-- [QInputMethodEvent](https://doc.qt.io/qt-6/qinputmethodevent.html) describes
-  pre-edit, commit and relative replacement events.
-- [KTextEditor::View](https://api.kde.org/ktexteditor-view.html) declares QWidget
-  inheritance, which rules out assuming direct Quick-scene placement.
-
-Online references can describe newer patch releases. The executable observations
-above are for the installed Qt 6.10.2 runtime.

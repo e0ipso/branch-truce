@@ -30,7 +30,7 @@ unreadable with a path-specific diagnostic, retaining its captured sources and
 launch result. Other files can finish loading. Allocation or representation
 failure during later edits still throws before a new session revision is
 published. There is no enforced file-size or latency limit. Representative
-measurements and a proposed envelope for TRUCE-0029 are in
+measurements and a proposed envelope for large-file performance are in
 tests/fixtures/performance/evidence.md. Product output, line and recovery
 limits are unchanged.
 
