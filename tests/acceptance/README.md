@@ -29,6 +29,10 @@ The process sets up its own environment before Qt starts. It uses a private `HOM
 | the handoff separates resolved, saved, unsaved, newer, failed and outside-app work | PRD.md:141, :143, :145; TECH_SPEC.md:224 | A write failure into a read-only directory keeps the saved draft and leaves the file unresolved. A failing `post-index-change` hook leaves the file shown as "Written, unresolved". File rows state their progress in words. The handoff reports 6 of 7 files outstanding and gives each file its category and blockers, and each route button returns to its file. Leaving after the warning runs no Git command, leaves the repository unchanged and keeps every unfinished path unmerged in Git. |
 | offline startup without an account resumes drafts | PRD.md:149 (with :147) | Closing the window opens the handoff. After a deliberate leave, a new controller restores the saved draft and the draft that was never saved, keeps their status and still accepts edits. |
 
+Regression journeys outside the PRD table:
+
+- `TRUCE-0087 a resolved mergetool handoff drops the waiting text` runs real `git mergetool` on one of two paths. Git starts this test binary with `--mergetool`, and `main()` then runs the real launcher code against the session in the test process. While Git waits, the path it has not launched says "Waiting for Git to launch this path. It is not resolved." After Mark resolved, Git exits 0 and stages the result. The resolved file then shows no waiting text, and neither does the same file after a later edit leaves the earlier result staged. The other path still shows the text.
+
 Every journey also runs `checkOffline`. It asserts that the guard saw no network command, that the app ran local `rev-parse` and `cat-file`, and that no visible text in the scene mentions signing in, logging in, registering, an account, a subscription, a payment or a license key.
 
 PRD examples 4 (whole-file and bulk choices), 11 (crash recovery) and 15 (merge-tool cancellation) are outside this ticket. The suite does not cover them.

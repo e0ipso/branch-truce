@@ -244,8 +244,11 @@ or whether focus changes are spoken.
 
 After the resolved handoff, the selected file showed "Written and resolved."
 and, under it, "Waiting for Git to launch this path. It is not resolved."
-The second line contradicts the first. Its visibility in `src/ui/Main.qml`
-does not depend on the selected file's state.
+The second line contradicted the first, because its visibility in
+`src/ui/Main.qml` did not depend on the selected file's state. The label is now
+hidden once Git has staged a result for the selected file, and paths Git has
+not launched still show it. The acceptance suite checks both cases offscreen
+with real `git mergetool`. The container run has not been repeated since.
 
 ## What would close the real-desktop rows
 

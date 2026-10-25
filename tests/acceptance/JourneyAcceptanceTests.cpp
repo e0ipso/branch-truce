@@ -4,6 +4,7 @@
 // offscreen and drives it with mouse clicks and key events. Coverage notes and
 // the entry point are in tests/acceptance/README.md.
 #include "app/ApplicationController.h"
+#include "app/MergetoolLauncher.h"
 #include "app/MergetoolProtocol.h"
 #include "TestHarness.h"
 #include "fixtures/QuickScene.h"
@@ -21,6 +22,7 @@
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QTest>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -482,6 +484,38 @@ void markResolvedByMouse(Scene &scene)
                                  + std::to_string(scene.controller->resolutionConfirmation()) + " status="
                                  + scene.text("selectedStatus").toStdString() + " message="
                                  + scene.controller->commandMessage().toStdString());
+}
+
+// Waits longer than settleFor: a launcher process discovers the repository before it attaches.
+void waitFor(const std::string &what, const std::function<bool()> &ready, const std::function<std::string()> &state)
+{
+    QElapsedTimer deadline;
+    deadline.start();
+    while (!ready() && deadline.elapsed() < 25000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+    if (!ready()) throw std::runtime_error("timed out waiting for " + what + ": " + state());
+}
+
+// Real `git mergetool` over the given paths. This test binary is the launcher: main()
+// runs the real launcher code when Git starts it with --mergetool.
+std::unique_ptr<QProcess> startMergetool(const Repository &repo, const QStringList &paths)
+{
+    const auto binary = QFile::encodeName(QCoreApplication::applicationFilePath());
+    repo.git({"config", "mergetool.truce-launcher.cmd",
+              QString::fromLocal8Bit("MERGED=\"$MERGED\" BASE=\"$BASE\" LOCAL=\"$LOCAL\" REMOTE=\"$REMOTE\" "
+                                     + quoteShell(binary) + " --mergetool")});
+    repo.git({"config", "mergetool.truce-launcher.trustExitCode", "true"});
+    repo.git({"config", "mergetool.keepBackup", "false"});
+    auto environment = repo.environment;
+    // The session in this process must already listen; a launcher never starts another GUI.
+    environment.insert("BRANCH_TRUCE_MERGETOOL_NO_SPAWN", "1");
+    auto process = std::make_unique<QProcess>();
+    process->setProcessEnvironment(environment);
+    process->setWorkingDirectory(repo.root);
+    process->start("/usr/bin/git", QStringList{"--no-pager", "--literal-pathspecs", "mergetool", "--no-prompt",
+                                               "--tool=truce-launcher", "--"} + paths);
+    CHECK(process->waitForStarted(5000));
+    return process;
 }
 
 const QByteArray longLine = QByteArray(420, 'L') + "\n";
@@ -1052,12 +1086,75 @@ public:
             CHECK(!repo.unmerged("saved.txt").isEmpty() && !repo.unmerged("typed.txt").isEmpty());
             checkOffline(reopened);
         });
+        suite.run("TRUCE-0087 a resolved mergetool handoff drops the waiting text and a path Git has not launched keeps it", [] {
+            Repository repo("merge", {
+                {"launched.txt", QByteArray("launched base\n"), QByteArray("launched left\n"),
+                 QByteArray("launched right\n"), QByteArray("launched chosen by hand\n")},
+                {"later.txt", QByteArray("later base\n"), QByteArray("later left\n"), QByteArray("later right\n"),
+                 QByteArray("later chosen by hand\n")},
+            });
+            Scene scene(repo);
+            const QString waitText = QStringLiteral("Waiting for Git to launch this path. It is not resolved.");
+            const auto shownTexts = [&] {
+                QStringList texts;
+                collectTexts(scene.window->contentItem(), texts);
+                return texts.join('\n');
+            };
+            const auto state = [&] {
+                return "waiting=" + scene.controller->mergetoolWaitingPath().toStdString() + " staging="
+                    + scene.controller->parentStagingPath().toStdString() + " message="
+                    + scene.controller->commandMessage().toStdString();
+            };
+            auto parent = startMergetool(repo, {"launched.txt"});
+            waitFor("Git to launch launched.txt",
+                    [&] { return scene.controller->mergetoolWaitingPath() == QByteArray("launched.txt"); }, state);
+            CHECK(scene.controller->parentSessionActive());
+
+            // A path Git has not launched yet says so while Git is still running.
+            clickFile(scene, "later.txt");
+            settleFor("waiting text on the unlaunched path", [&] { return scene.item("mergetoolWait")->isVisible(); });
+            expectText(scene.text("mergetoolWait"), waitText, "unlaunched path");
+            clickFile(scene, "launched.txt");
+            settleFor("holding text on the launched path", [&] { return scene.item("mergetoolHolding")->isVisible(); });
+            CHECK(!scene.item("mergetoolWait")->isVisible());
+
+            markResolvedByMouse(scene);
+            waitFor("git mergetool to exit", [&] { return parent->state() == QProcess::NotRunning; }, state);
+            CHECK(parent->exitStatus() == QProcess::NormalExit && parent->exitCode() == 0);
+            CHECK(repo.unmerged("launched.txt").isEmpty() && !repo.unmerged("later.txt").isEmpty());
+            waitFor("the staged resolution", [&] {
+                return scene.progress().value("resolved").toBool() && scene.controller->parentStagingPath().isEmpty();
+            }, state);
+            CHECK(scene.controller->files()->resolvedFiles() == 1);
+
+            // Git has exited and the parent session stays open until the user ends it.
+            CHECK(scene.controller->parentSessionActive() && !scene.controller->mergetoolWaiting());
+            CHECK(!scene.item("mergetoolWait")->isVisible());
+            const auto resolvedTexts = shownTexts();
+            if (resolvedTexts.contains(QStringLiteral("It is not resolved"))
+                || resolvedTexts.contains(QStringLiteral("Waiting for Git to launch")))
+                throw std::runtime_error("resolved file still says it waits: " + resolvedTexts.toStdString());
+            expectContains(scene.text("selectedStatus"), "Resolved", "resolved file status");
+            // Editing after the handoff leaves an earlier result staged, and Git will not launch the path again.
+            appendToResult(scene, "x");
+            settleFor("earlier staged result", [&] { return scene.progress().value("earlierResolved").toBool(); });
+            CHECK(!scene.item("mergetoolWait")->isVisible());
+
+            // The file Git never launched keeps the waiting text after the handoff.
+            clickFile(scene, "later.txt");
+            settleFor("waiting text after the handoff", [&] { return scene.item("mergetoolWait")->isVisible(); });
+            expectText(scene.text("mergetoolWait"), waitText, "unlaunched path after the handoff");
+            CHECK(scene.item("endParentSession")->isVisible());
+            checkOffline(scene);
+        });
         return suite.report();
     }
 };
 
 int main(int argc, char **argv)
 {
+    // Child mode: git mergetool starts this binary as the real launcher.
+    if (argc == 2 && std::strcmp(argv[1], "--mergetool") == 0) return runMergetoolLauncher(argc, argv);
     Sandbox shared;
     if (!shared.root.isValid() || !shared.runtime.isValid()) return 2;
     sandbox = &shared;

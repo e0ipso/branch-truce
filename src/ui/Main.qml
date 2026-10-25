@@ -700,11 +700,14 @@ Kirigami.ApplicationWindow {
                         text: qsTr("Leave unresolved")
                         onClicked: window.controller.leaveMergetool()
                     }
+                    // A path whose result Git already staged is not waiting for a launch.
                     Label {
                         objectName: "mergetoolWait"
                         Layout.fillWidth: true
                         visible: window.controller.parentSessionActive && !window.controller.mergetoolWaiting
                                  && window.controller.parentStagingPath.length === 0 && window.supportedSelection
+                                 && !window.selectedFile.resolved
+                                 && !(window.selectedFile.progress && window.selectedFile.progress.earlierResolved)
                         text: qsTr("Waiting for Git to launch this path. It is not resolved.")
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
