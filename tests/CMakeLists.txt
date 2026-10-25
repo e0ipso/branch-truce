@@ -15,6 +15,10 @@ find_program(BASH_EXECUTABLE bash REQUIRED)
 add_test(NAME lifecycle.cli-guards
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/SetupGuards.sh")
 set_tests_properties(lifecycle.cli-guards PROPERTIES TIMEOUT 30)
+# Host side of the .deb build and inspection scripts against a stub container engine (about 1 s).
+add_test(NAME packaging.artifact-tooling
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ArtifactTooling.sh")
+set_tests_properties(packaging.artifact-tooling PROPERTIES TIMEOUT 30)
 if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_text_format_tests storage/TextFormatTests.cpp)
     target_include_directories(branch_truce_text_format_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
