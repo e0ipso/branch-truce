@@ -132,8 +132,18 @@ These behaviours pass and are the compatibility declaration:
   wait. After an interrupt `MERGED` keeps the launch bytes, and Git 2.43 leaves
   its BACKUP, LOCAL, REMOTE and BASE files in the worktree because it has no
   interrupt trap. The saved draft stays in the session, and a new session on
-  the same repository restores it. The fixtures predate `leaveSession` and
-  the window-close handoff dialog, so neither is covered by a real parent.
+  the same repository restores it.
+- `leaveSession` sends the waiting launcher an explicit leave. The launcher
+  exits 1 without reporting a missing decision, Git prints "merge of <path>
+  failed" and stages nothing. `MERGED` holds the launch bytes again, even
+  after an outside edit during the wait. With one launched path `git
+  mergetool` exits 1 and `git ls-files --stage` does not change. With no
+  paths given and three unmerged paths, the first resolved and staged before
+  the leave, the second gets the leave. Git then asks whether to continue,
+  and after "n" it exits 1 with the index as it was before the leave and the
+  third path never launched. A new session on the same repository restores
+  every saved draft, including one for a path Git never launched. The
+  window-close handoff dialog is not covered by a real parent.
 - Each invocation gets its own intake. Its copies match Git's LOCAL, REMOTE
   and BASE files while the tool runs, and stay after Git deletes those files.
 - Running `git mergetool` with no paths visits unmerged paths in name order.

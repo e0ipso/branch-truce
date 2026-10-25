@@ -82,6 +82,47 @@ bool parentBlocked(const QProcess &parent, ApplicationController &controller, co
 {
     return parent.state() == QProcess::Running && controller.mergetoolHasWaiter(path);
 }
+
+// Edits and saves an app-only draft for each path. Returns the saved text per path.
+QMap<QByteArray, std::string> saveDrafts(ApplicationController &controller, const QList<QByteArray> &paths)
+{
+    QMap<QByteArray, std::string> drafts;
+    for (const auto &path : paths) {
+        editDraft(controller, path, QStringLiteral("draft kept by leave: %1\n").arg(QString::fromLatin1(path)));
+        CHECK(controller.saveDraft(select(controller, path), revisionOf(controller, path)));
+        drafts.insert(path, draftOf(controller, path));
+    }
+    return drafts;
+}
+
+// A new session on the same repository restores every saved draft, still unresolved.
+void checkRecovered(const ParentRepository &repo, const QMap<QByteArray, std::string> &drafts)
+{
+    ApplicationController reopened;
+    openController(reopened, repo);
+    for (auto draft = drafts.cbegin(); draft != drafts.cend(); ++draft) {
+        const auto &file = opened(reopened, draft.key());
+        CHECK(file.checkpoint() && file.checkpoint()->draft.text == draft.value());
+        CHECK(!file.facts().resolved);
+    }
+}
+
+// Every sessionEnded emission of one controller.
+struct SessionEnd {
+    int count = 0;
+    QString outcome;
+    bool clean = true;
+};
+
+void watchSessionEnd(ApplicationController &controller, SessionEnd &end)
+{
+    QObject::connect(&controller, &ApplicationController::sessionEnded, &controller,
+                     [&end](const QString &outcome, bool clean) {
+        ++end.count;
+        end.outcome = outcome;
+        end.clean = clean;
+    });
+}
 // The Git temporary of one kind (LOCAL, REMOTE, BASE or BACKUP) for a path, which must exist exactly once.
 QString temporary(const ParentRepository &repo, const QByteArray &path, const QString &kind)
 {
@@ -240,6 +281,8 @@ int main(int argc, char **argv)
         CHECK(controller->saveDraft(select(*controller, "tracked.txt"), revisionOf(*controller, "tracked.txt")));
         controller.reset();
         waitParent(*parent, 1, QStringLiteral("closed session"));
+        // A dropped session, unlike an explicit leave, makes the launcher report the missing decision.
+        CHECK(parent->readAllStandardError().contains("closed before an explicit decision"));
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(repo.index() == indexBefore);
         ApplicationController reopened;
@@ -247,6 +290,93 @@ int main(int argc, char **argv)
         CHECK(opened(reopened, "tracked.txt").checkpoint());
         CHECK(opened(reopened, "tracked.txt").checkpoint()->draft.text == draft);
         CHECK(!opened(reopened, "tracked.txt").facts().resolved);
+    });
+
+    suite.run("leaveSession fails the launched tool without staging, restores MERGED and a new session restores the drafts", [] {
+        ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
+                                               conflict("other.txt", "other launch bytes\n")});
+        ScopedEnvironment environment(repo.environment);
+        const auto indexBefore = repo.index();
+        auto controller = std::make_unique<ApplicationController>();
+        openController(*controller, repo);
+        auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
+        waitForWaiter(*controller, "tracked.txt");
+        const auto intake = controller->mergetoolIntakes().front();
+        const auto drafts = saveDrafts(*controller, {"tracked.txt", "other.txt"});
+        writeFile(repo.path("tracked.txt"), "written by another editor\n");
+        SessionEnd end;
+        watchSessionEnd(*controller, end);
+        CHECK(controller->leaveSession());
+        CHECK(end.count == 1 && !end.clean);
+        CHECK(end.outcome.contains(QStringLiteral("1 launched path returned to Git unresolved.")));
+        // The session stays alive here, so only the explicit leave frame can release the launcher.
+        waitParent(*parent, 1, controller->commandMessage());
+        const auto errors = parent->readAllStandardError();
+        CHECK(errors.contains("merge of tracked.txt failed"));
+        CHECK(!errors.contains("closed before an explicit decision"));
+        CHECK(!controller->mergetoolHasWaiter("tracked.txt"));
+        CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+        CHECK(readFile(repo.path("other.txt")) == "other launch bytes\n");
+        CHECK(repo.index() == indexBefore);
+        CHECK(repo.gitTemporaries("tracked.txt").isEmpty());
+        CHECK(readFile(intake + "/merged") == "launch bytes\n");
+        CHECK(!controller->leaveSession() && end.count == 1);
+        controller.reset();
+        checkRecovered(repo, drafts);
+    });
+
+    suite.run("leaveSession during a multi-path run sends the waiting launcher a leave and Git stages nothing more", [] {
+        ParentRepository repo(launcherBinary, {conflict("alpha.txt", "alpha launch\n"),
+                                               conflict("beta.txt", "beta launch\n"),
+                                               conflict("gamma.txt", "gamma launch\n")});
+        ScopedEnvironment environment(repo.environment);
+        auto controller = std::make_unique<ApplicationController>();
+        openController(*controller, repo);
+        auto parent = startParent(repo, ParentRepository::GatedTool, {});
+        // Resolve alpha.txt first, so the leave must skip a launcher that already has its decision.
+        waitForWaiter(*controller, "alpha.txt");
+        editDraft(*controller, "alpha.txt", QStringLiteral("resolved before leaving\n"));
+        const auto alpha = QByteArray::fromStdString(draftOf(*controller, "alpha.txt"));
+        CHECK(controller->markResolved(select(*controller, "alpha.txt"), revisionOf(*controller, "alpha.txt"), true));
+        pump([&] { return repo.exits() == "alpha.txt 0\n"; }, controller->commandMessage());
+        repo.release();
+        pump([&] {
+            return opened(*controller, "alpha.txt").facts().resolved && controller->mergetoolWaitingPath() == "beta.txt";
+        }, controller->commandMessage() + " | waiting=" + QString::fromLatin1(controller->mergetoolWaitingPath()));
+        CHECK(repo.stagedObject("alpha.txt") == repo.objectOf(alpha));
+        const auto indexBefore = repo.index();
+        const auto drafts = saveDrafts(*controller, {"beta.txt", "gamma.txt"});
+        SessionEnd end;
+        watchSessionEnd(*controller, end);
+        CHECK(controller->leaveSession());
+        CHECK(end.count == 1 && !end.clean);
+        CHECK(end.outcome.contains(QStringLiteral("Left with 2 of 3 files outstanding.")));
+        CHECK(end.outcome.contains(QStringLiteral("1 launched path returned to Git unresolved.")));
+        // The gated parent records the launcher's status, then holds before Git restores or stages.
+        pump([&] { return repo.exits() == "alpha.txt 0\nbeta.txt 1\n"; }, controller->commandMessage());
+        CHECK(readFile(repo.path("beta.txt")) == "beta launch\n");
+        CHECK(repo.index() == indexBefore);
+        repo.release();
+        // Git asks whether to go on to gamma.txt. Answering no ends the run.
+        QByteArray output;
+        pump([&] {
+            output += parent->readAllStandardOutput();
+            return output.contains("Continue merging other unresolved paths");
+        }, QStringLiteral("Git did not ask to continue after the failed path"));
+        parent->write("n\n");
+        waitParent(*parent, 1, controller->commandMessage());
+        const auto errors = parent->readAllStandardError();
+        CHECK(errors.contains("merge of beta.txt failed"));
+        CHECK(!errors.contains("closed before an explicit decision"));
+        CHECK(repo.index() == indexBefore);
+        CHECK(repo.unmerged("beta.txt") && repo.unmerged("gamma.txt"));
+        CHECK(readFile(repo.path("beta.txt")) == "beta launch\n");
+        CHECK(readFile(repo.path("gamma.txt")) == "gamma launch\n");
+        CHECK(repo.gitTemporaries("beta.txt").isEmpty() && repo.gitTemporaries("gamma.txt").isEmpty());
+        // gamma.txt was never launched.
+        CHECK(controller->mergetoolIntakes().size() == 2);
+        controller.reset();
+        checkRecovered(repo, drafts);
     });
 
     suite.run("a terminal interrupt stops Git and the launcher without staging and keeps the saved draft", [] {
