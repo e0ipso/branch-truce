@@ -47,12 +47,13 @@ license_file="/usr/share/doc/branch-truce/copyright"
 expected_arch="amd64"
 
 expected_deps="git hicolor-icon-theme kde-style-breeze kf6-breeze-icon-theme
-    libkirigami6 libqt6core6t64 libqt6gui6 libqt6network6 libqt6qml6
-    libqt6quick6 libqt6quickcontrols2-6 libqt6widgets6
+    libqt6core6t64 libqt6gui6 libqt6network6 libqt6qml6
+    libqt6quick6 libqt6widgets6
     qml6-module-org-kde-desktop qml6-module-org-kde-kirigami
     qml6-module-qtqml-workerscript qml6-module-qtquick
     qml6-module-qtquick-controls qml6-module-qtquick-layouts
-    qml6-module-qtquick-templates qml6-module-qtquick-window"
+    qml6-module-qtquick-templates qml6-module-qtquick-window
+    qt6-wayland"
 
 expected_files="$binary_file
 $desktop_file

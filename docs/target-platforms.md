@@ -124,7 +124,7 @@ which those modules load. The application runs the installed Git, so it also dep
 integrations; without it the app aborts on a Wayland session that does not
 bring the package some other way. There is no `Recommends`. This list is the
 one the CI release packages use; `packaging/scripts/check-package.sh` checks
-it, except `qt6-wayland`.
+it.
 
 ## Packaging choice
 
