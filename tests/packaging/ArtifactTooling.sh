@@ -6,6 +6,8 @@
 #
 # The in-container half of tools/inspect-artifact.sh (--in-container) is not run:
 # it reads /inspect and writes /tmp at fixed paths, so it needs the target container.
+# Its private Qt ABI decision is tested on its own by sourcing the script and
+# feeding synthetic objdump -T output and Depends fields to its functions.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 work=$(mktemp -d "${TMPDIR:-/tmp}/bt-artifact-tooling.XXXXXXXX")
@@ -290,6 +292,92 @@ pass
 [[ "$(engine_line 2)" == *" branch-truce-artifact:kubuntu-26.04-target /bin/bash /inspect/inspect-artifact.sh --in-container kubuntu26.04 "* ]] \
     || fail "kubuntu inspection container: $(engine_line 2)"
 pass
+expect_no_fixture
+
+# --- tools/inspect-artifact.sh sourced, for the private Qt ABI check
+# Runs CODE in a new bash that first sources the script. ARGS become the
+# positional parameters, which the script's dispatch would see if it ran.
+sourced() {
+    local code=$1
+    shift
+    rm -rf -- "$work/state" && mkdir -p -- "$work/state"
+    if output=$(CONTAINER_ENGINE=$work/bin/engine BT_INSPECT=$inspect \
+        "$BASH" -c 'source "$BT_INSPECT"; '"$code" bash "$@" 2>&1); then status=0; else status=$?; fi
+}
+expect_only_output() {
+    [[ "$output" == "$1" ]] || fail "output is not exactly: $1"
+    pass
+}
+
+# Sourcing defines the functions and runs neither host_main nor container_main.
+expect_sourced_only() {
+    sourced 'declare -F host_main container_main symbol_tags check_private_abi >/dev/null; echo sourced' "$@"
+    expect_status 0
+    expect_only_output sourced
+    [[ ! -s "$work/state/engine.log" ]] || fail "sourcing with $(quoted "$@") ran the container engine"
+    pass
+}
+expect_sourced_only
+expect_sourced_only --target kubuntu --package "$work/debs/$deb_name.deb"
+expect_sourced_only --in-container kubuntu26.04 /nonexistent/branch-truce.deb
+# The inspection decides with these functions, not with a copy of them.
+sourced 'declare -f container_main'
+expect_status 0
+expect_output 'tags=$(objdump -T "$binary" | symbol_tags)'
+expect_output 'check_private_abi "$tags" "$depends"'
+
+objdump_head=$'\n/usr/bin/branch-truce:     file format elf64-x86-64\n\nDYNAMIC SYMBOL TABLE:'
+undefined() { printf '0000000000000000      DF *UND*\t0000000000000000 (%s) %s\n' "$1" "$2"; }
+public_dump=$objdump_head$'\n'$(
+    undefined GLIBC_2.34 __libc_start_main
+    undefined GLIBC_2.2.5 free
+    undefined GLIBCXX_3.4.32 _ZSt28__throw_bad_array_new_lengthv
+    undefined CXXABI_1.3.9 _ZdlPvm
+    undefined GCC_3.0 _Unwind_Resume
+    undefined Qt_6 _ZN7QObjectD2Ev
+    undefined GLIBC_2.34 pthread_create
+    printf '0000000000000000 g    DF .text\t0000000000000026  Base        main\n'
+)
+private_dump=$public_dump$'\n'$(undefined Qt_6_PRIVATE_API _ZN11QQmlPrivate8qmlregisterENS_16RegistrationTypeEPv)
+public_tags=$'CXXABI_1.3.9\nGCC_3.0\nGLIBCXX_3.4.32\nGLIBC_2.2.5\nGLIBC_2.34\nQt_6'
+
+# symbol_tags lists each version tag once, sorted, and an output without
+# any tag gives an empty list instead of aborting under set -e and pipefail.
+sourced 'symbol_tags <<<"$1"' "$public_dump"
+expect_status 0
+expect_only_output "$public_tags"
+sourced 'symbol_tags <<<"$1"' "$private_dump"
+expect_status 0
+expect_only_output "$public_tags"$'\nQt_6_PRIVATE_API'
+sourced 'tags=$(symbol_tags <<<"$1"); echo "tags=[$tags]"' "$objdump_head"
+expect_status 0
+expect_only_output 'tags=[]'
+
+# check_private_abi on the tags of a dump, as container_main calls it.
+private_abi() { sourced 'check_private_abi "$(symbol_tags <<<"$1")" "$2"; echo "failures=$failures"' "$@"; }
+no_pin='libc6 (>= 2.34), libqt6core6t64 (>= 6.10.2), qml6-module-org-kde-kirigami, git'
+base_pin='libc6 (>= 2.34), qt6-base-private-abi (= 6.10.2), libqt6core6t64 (>= 6.10.2)'
+declarative_pin='libc6 (>= 2.34), qt6-declarative-private-abi (= 6.10.2) | other, git'
+
+# No private symbols: passes whatever Depends says, including no tags at all.
+for dump in "$public_dump" "$objdump_head"; do
+    private_abi "$dump" "$no_pin"
+    expect_status 0
+    expect_only_output $'PASS no Qt_6_PRIVATE_API symbols\nfailures=0'
+done
+# Private symbols with an exact pin pass.
+for depends in "$base_pin" "$declarative_pin"; do
+    private_abi "$private_dump" "$depends"
+    expect_status 0
+    expect_only_output $'PASS Qt_6_PRIVATE_API symbols with an exact Qt private ABI pin in Depends\nfailures=0'
+done
+# Private symbols without one fail, including an unversioned or lower-bound private ABI package.
+for depends in "$no_pin" 'libc6 (>= 2.34), qt6-base-private-abi, libqt6core6t64 (>= 6.10.2)' \
+    'libc6 (>= 2.34), qt6-base-private-abi (>= 6.10.2), libqt6core6t64 (>= 6.10.2)'; do
+    private_abi "$private_dump" "$depends"
+    expect_status 0
+    expect_only_output $'FAIL Qt_6_PRIVATE_API symbols without an exact Qt private ABI pin in Depends\nfailures=1'
+done
 expect_no_fixture
 
 printf '%s artifact tooling assertions passed\n' "$assertions"

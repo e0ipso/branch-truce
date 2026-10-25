@@ -95,6 +95,25 @@ installed_set() { dpkg-query -W -f='${db:Status-Status}\t${Package}\t${Version}\
 # Package names in a Depends field, without versions or alternatives' order.
 depends_names() { tr ',|' '\n\n' <<<"$1" | sed 's/(.*//; s/:any//; s/[[:space:]]//g' | sed '/^$/d' | LC_ALL=C sort -u; }
 owner_of() { dpkg-query -S "$1" 2>/dev/null | head -1 | cut -d: -f1; }
+# The symbol version tags in `objdump -T` output on stdin, sorted and unique.
+# Output without any tag gives an empty list rather than grep's status 1.
+symbol_tags() {
+    { grep -oE '\b(GLIBC|GLIBCXX|CXXABI|GCC|Qt)_[0-9][0-9A-Z_.]*' || (($? == 1)); } | LC_ALL=C sort -u
+}
+# Qt's private API is only stable within one Qt release, so a binary that
+# uses it must refuse any other release through an exact Depends pin.
+check_private_abi() {
+    local tags=$1 depends=$2
+    if grep -qx 'Qt_6_PRIVATE_API' <<<"$tags"; then
+        if grep -qE 'qt6-[a-z]+-private-abi \(= [^)]+\)' <<<"$depends"; then
+            pass "Qt_6_PRIVATE_API symbols with an exact Qt private ABI pin in Depends"
+        else
+            fail "Qt_6_PRIVATE_API symbols without an exact Qt private ABI pin in Depends"
+        fi
+    else
+        pass "no Qt_6_PRIVATE_API symbols"
+    fi
+}
 
 container_main() {
     local base=$1 deb=$2 binary=/usr/bin/branch-truce
@@ -170,22 +189,12 @@ container_main() {
     ((failures == before_libs)) && pass "$(wc -w <<<"$needed") NEEDED libraries come from packages named in Depends"
     echo "Highest required symbol versions:"
     local tags namespace
-    tags=$(objdump -T "$binary" | grep -oE '\b(GLIBC|GLIBCXX|CXXABI|GCC|Qt)_[0-9][0-9A-Z_.]*' | LC_ALL=C sort -u)
+    tags=$(objdump -T "$binary" | symbol_tags)
     for namespace in GLIBC GLIBCXX CXXABI GCC; do
         grep "^${namespace}_[0-9.]*$" <<<"$tags" | sort -V | tail -1 | sed 's/^/  /' || true
     done
     echo "Qt symbol version tags: $(grep '^Qt_' <<<"$tags" | tr '\n' ' ')"
-    # Qt's private API is only stable within one Qt release, so a binary that
-    # uses it must refuse any other release through an exact Depends pin.
-    if grep -qx 'Qt_6_PRIVATE_API' <<<"$tags"; then
-        if grep -qE 'qt6-[a-z]+-private-abi \(= [^)]+\)' <<<"$depends"; then
-            pass "Qt_6_PRIVATE_API symbols with an exact Qt private ABI pin in Depends"
-        else
-            fail "Qt_6_PRIVATE_API symbols without an exact Qt private ABI pin in Depends"
-        fi
-    else
-        pass "no Qt_6_PRIVATE_API symbols"
-    fi
+    check_private_abi "$tags" "$depends"
 
     step "QML closure"
     local module dir before_qml=$failures
@@ -253,6 +262,9 @@ container_main() {
     echo "All inspection checks passed for $package $version"
 }
 
+# Sourcing the file defines its functions and sets the shell options above but
+# runs neither half, so tests can call the functions on their own.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 if [[ "${1:-}" == --in-container ]]; then
     [[ $# -eq 3 ]] || usage
     container_main "$2" "$3"
