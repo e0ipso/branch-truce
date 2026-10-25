@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "app/MergetoolProtocol.h"
 #include "app/RecoveryRestore.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
@@ -80,7 +81,7 @@ class Repository {
 public:
     explicit Repository(bool excludedAttributes = false)
     {
-        CHECK(directory.isValid() && executables.isValid());
+        CHECK(directory.isValid() && executables.isValid() && runtime.isValid());
         root = QFileInfo(directory.path()).canonicalFilePath();
         environment.insert("PATH", "/usr/bin:/bin");
         // App caches and user configuration must stay outside the launched worktree.
@@ -89,10 +90,9 @@ public:
         environment.insert("XDG_CACHE_HOME", executables.path() + "/cache");
         environment.insert("XDG_DATA_HOME", executables.path() + "/data");
         // The mergetool socket directory is created under here; keep it out of the real runtime directory.
-        const auto runtime = executables.path() + "/run";
-        CHECK(QDir().mkpath(runtime)
-              && QFile::setPermissions(runtime, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-        environment.insert("XDG_RUNTIME_DIR", runtime);
+        CHECK(QFile::setPermissions(runtime.path(),
+                                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+        environment.insert("XDG_RUNTIME_DIR", runtime.path());
         environment.insert("LC_ALL", "C");
         environment.insert("GIT_CONFIG_NOSYSTEM", "1");
         environment.insert("GIT_TERMINAL_PROMPT", "0");
@@ -193,6 +193,7 @@ public:
         }
         if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
             throw std::runtime_error("startup: " + process.readAllStandardError().toStdString());
+        checkSocketDirectory();
         const auto output = process.readAllStandardOutput();
         QByteArray record;
         int records = 0;
@@ -204,10 +205,33 @@ public:
         const auto document = QJsonDocument::fromJson(record, &error);
         CHECK(error.error == QJsonParseError::NoError && document.isObject());
         CHECK(snapshot() == before);
+        // A ready GUI listened, so it created the socket directory it actually used.
+        if (document.object().value("state") == "ready") CHECK(QFileInfo(socketDirectory()).isDir());
         return document.object();
+    }
+    // The socket directory the GUI and the controller use for this fixture's environment.
+    QString socketDirectory() const
+    {
+        const auto previous = qEnvironmentVariableIsSet("XDG_RUNTIME_DIR")
+            ? std::optional<QByteArray>(qgetenv("XDG_RUNTIME_DIR")) : std::nullopt;
+        qputenv("XDG_RUNTIME_DIR", environment.value(QStringLiteral("XDG_RUNTIME_DIR")).toUtf8());
+        const auto socket = mergetoolSocketDirectory();
+        if (previous) qputenv("XDG_RUNTIME_DIR", *previous);
+        else qunsetenv("XDG_RUNTIME_DIR");
+        return socket;
+    }
+    void checkSocketDirectory() const
+    {
+        const auto socket = socketDirectory();
+        if (socket != runtime.path() + QStringLiteral("/branch-truce"))
+            throw std::runtime_error("socket directory outside the private runtime directory: " + socket.toStdString());
     }
     QTemporaryDir directory;
     QTemporaryDir executables;
+    // QTemporaryDir under a long TMPDIR would push the socket path past its
+    // length limit and the lookup would fall back to the shared
+    // /tmp/branch-truce-<uid>. A short base under /tmp keeps it private.
+    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
     QString root;
     QProcessEnvironment environment;
     QByteArray main;
@@ -247,12 +271,15 @@ void openController(ApplicationController &controller, const Repository &repo)
     QObject::connect(&controller, &ApplicationController::launchChanged, &loop, [&] {
         if (!controller.opening()) loop.quit();
     });
+    repo.checkSocketDirectory();
+    CHECK(mergetoolSocketDirectory() == repo.socketDirectory());
     CHECK(controller.openRepository(repo.root));
     timeout.start(10000);
     if (controller.opening()) loop.exec();
     CHECK(!controller.opening());
     if (controller.startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.detail().toStdString());
+    CHECK(QFileInfo(repo.socketDirectory()).isDir());
     CHECK(repo.snapshot() == before);
 }
 
