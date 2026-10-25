@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:3da58d8e3f52692ddb1e5abfd7e5e20163c7abfde3ac6f1653b8f78696a71b03'
-node_count: 19
+nodes_hash: 'sha256:9e1cfd85a00c70a4f81da23676b4801b1cba7a55e519dd504a74ee9ee1d341bd'
+node_count: 20
 ---
 # kenkeep Graph
 
-Total nodes: 19
+Total nodes: 20
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -13,8 +13,8 @@ Total nodes: 19
 - **title:** Branch Truce desktop implementation baseline
 - **path:** map-branch-truce-desktop-implementation-baseline.md
 - **tags:** architecture, desktop, platform, cpp
-- **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope
-- **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ApplicationController.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md, src/core/ResourceLimits.h, docs/resource-limits.md
+- **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope, practice-treat-mergetool-file-state-as-live-evidence
+- **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ApplicationController.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md, src/core/ResourceLimits.h, docs/resource-limits.md, docs/mergetool-launcher.md, tests/app/ComparisonViewTests.cpp
 
 ## map-branch-truce-first-release-scope
 
@@ -159,3 +159,11 @@ Total nodes: 19
 - **path:** practice-separate-save-from-mark-resolved.md
 - **tags:** product, saving, resolution, review
 - **derived_from:** PRD.md, src/app/ResolutionPublisher.cpp
+
+## practice-treat-mergetool-file-state-as-live-evidence
+
+- **kind:** practice
+- **title:** Treat mergetool file state as live evidence
+- **path:** practice-treat-mergetool-file-state-as-live-evidence.md
+- **tags:** mergetool, publication, git, failures
+- **relates_to:** practice-reconcile-uncertain-destination-publication, practice-recover-unfinished-work-without-changing-its-status, practice-keep-failed-work-outstanding
