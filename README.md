@@ -27,10 +27,10 @@ the desktop entry `local.branch_truce.BranchTruce.desktop`, its AppStream
 metadata and an icon. The program reads nothing from the source or build
 tree.
 
-The validated packages did not pull in `qt6-wayland`, and without it the app
-aborts at start on Wayland ("No shell integration named "xdg-shell"
-found"). On Plasma, `plasma-workspace` depends on it. On another Wayland
-session, install `qt6-wayland` yourself. See
+The package depends on `qt6-wayland`, which ships the Wayland shell
+integrations, so it also starts on a Wayland session other than Plasma.
+Without that package the app aborts at start on Wayland ("No shell
+integration named "xdg-shell" found"). See
 [docs/platform-validation.md](docs/platform-validation.md#wayland-scaling-and-theme).
 
 Release packages come from a separate path. When a push to `main` has
