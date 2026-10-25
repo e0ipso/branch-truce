@@ -314,6 +314,8 @@ void makeExecutable(const QString &path)
 // The launcher starts the GUI from its own executable path. It runs from a
 // private copy whose path is then replaced by a stub that only records the
 // spawn, so no GUI starts and nothing listens unless the test opens a session.
+// Nothing sits at "<path> (deleted)", so every spawn test also covers a binary
+// replaced after the launcher started.
 // A git wrapper holds repository discovery, and so the spawn, until the stub
 // is in place.
 class SpawnedLauncher {
@@ -340,11 +342,6 @@ public:
                         + ".streams'\nprintf '%s\\n' \"$@\" > '" + marker.toUtf8() + ".part' && mv '"
                         + marker.toUtf8() + ".part' '" + marker.toUtf8() + "'\n");
         makeExecutable(stub);
-        // Linux names a replaced running image "<path> (deleted)" in /proc/self/exe,
-        // and Qt 6.10 returns that name from applicationFilePath().
-        const auto deleted = binary + QStringLiteral(" (deleted)");
-        CHECK(QFile::copy(stub, deleted));
-        makeExecutable(deleted);
         auto environment = directLauncherEnvironment(repo, sides);
         environment.remove(QStringLiteral("BRANCH_TRUCE_MERGETOOL_NO_SPAWN"));
         environment.insert(QStringLiteral("PATH"), stage.filePath(QStringLiteral("bin")) + QStringLiteral(":/usr/bin:/bin"));
@@ -356,7 +353,9 @@ public:
         clock.start();
         process.start(binary, {QStringLiteral("--mergetool")});
         CHECK(process.waitForStarted(5000));
-        // The running image keeps its inode. The path it would spawn is now the stub.
+        // As in a package upgrade, the running image keeps its inode and its path
+        // now holds another program. Linux then names the image "<path> (deleted)",
+        // and the launcher has to spawn the stub at the original path.
         CHECK(::rename(QFile::encodeName(stub).constData(), QFile::encodeName(binary).constData()) == 0);
         writeFile(gate, {});
     }

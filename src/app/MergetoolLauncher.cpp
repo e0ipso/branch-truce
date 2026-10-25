@@ -1,11 +1,16 @@
 #include "MergetoolLauncher.h"
 #include "MergetoolProtocol.h"
 
+#include <climits>
 #include <optional>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
+#include <QFileInfo>
 #include <QLocalSocket>
 #include <QProcess>
 #include <QStandardPaths>
@@ -45,17 +50,43 @@ bool readFrame(QLocalSocket *socket, QByteArray *buffer, QJsonObject *object, bo
     }
 }
 
+// Once a package upgrade replaces or removes the running file, Linux names the
+// running image "<path> (deleted)" in /proc/self/exe, and Qt returns that name
+// from applicationFilePath(). Start whatever is installed at the original path
+// instead, or fail at once when nothing is.
+std::optional<QString> guiProgram(QString *error)
+{
+    QByteArray link(PATH_MAX, Qt::Uninitialized);
+    const auto length = ::readlink("/proc/self/exe", link.data(), static_cast<size_t>(link.size()));
+    if (length <= 0 || length >= link.size()) return QCoreApplication::applicationFilePath();
+    link.truncate(length);
+    // A file really named "... (deleted)" can still be the running image.
+    struct stat running {};
+    struct stat named {};
+    if (::stat("/proc/self/exe", &running) == 0 && ::stat(link.constData(), &named) == 0
+        && running.st_dev == named.st_dev && running.st_ino == named.st_ino)
+        return QFile::decodeName(link);
+    const QByteArray deleted(" (deleted)");
+    if (!link.endsWith(deleted)) return QFile::decodeName(link);
+    link.chop(deleted.size());
+    const auto installed = QFile::decodeName(link);
+    const QFileInfo program(installed);
+    if (program.isFile() && program.isExecutable()) return installed;
+    *error = QStringLiteral("%1 was removed after this launcher started, so it cannot start Branch Truce.").arg(installed);
+    return std::nullopt;
+}
+
 // The GUI opens on the launched path. Its standard streams go to the null
 // device, so it never writes into the git mergetool terminal.
-void startSession(const QString &worktreeRoot, const QByteArray &path)
+bool startSession(const QString &program, const QString &worktreeRoot, const QByteArray &path)
 {
     QProcess gui;
-    gui.setProgram(QCoreApplication::applicationFilePath());
+    gui.setProgram(program);
     gui.setArguments({QStringLiteral("--mergetool-path"), QString::fromLatin1(path.toHex()), worktreeRoot});
     gui.setStandardInputFile(QProcess::nullDevice());
     gui.setStandardOutputFile(QProcess::nullDevice());
     gui.setStandardErrorFile(QProcess::nullDevice());
-    gui.startDetached();
+    return gui.startDetached();
 }
 
 bool connectSession(QLocalSocket *socket, const QString &name, int attempts)
@@ -151,7 +182,10 @@ int runMergetoolLauncher(int argc, char **argv)
     QLocalSocket socket;
     bool connected = connectSession(&socket, server, 5);
     if (!connected && !noSpawn) {
-        startSession(discovered->repository.worktreeRoot, sources.path);
+        const auto program = guiProgram(&error);
+        if (!program) return fail(error);
+        if (!startSession(*program, discovered->repository.worktreeRoot, sources.path))
+            return fail(QStringLiteral("%1 could not be started.").arg(*program));
         connected = connectUntilDeadline(&socket, server, kPostSpawnListenDeadlineMs);
     }
     if (!connected) return fail(QStringLiteral("No Branch Truce session is listening for this repository."));
