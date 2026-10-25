@@ -14,6 +14,8 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QFont>
+#include <QFontMetricsF>
 #include <QMap>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -22,6 +24,7 @@
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextLayout>
 #include <QWheelEvent>
 #include <cstring>
 #include <memory>
@@ -538,9 +541,16 @@ std::string geometry(QQuickItem *item)
         + std::to_string(int(item->height())) + (item->isVisible() ? "" : " hidden");
 }
 
-// Resize to a logical screen size and require every control and text pane inside the window,
-// scrolling an enclosing view first as a user would. Returns the smallest pane height.
-qreal checkFits(Scene &scene, int width, int height)
+std::vector<const char *> everyControl()
+{
+    std::vector<const char *> names(std::begin(mainControls), std::end(mainControls));
+    names.insert(names.end(), std::begin(textPanes), std::end(textPanes));
+    return names;
+}
+
+// Resize to a logical screen size and require the named items inside the window, scrolling
+// an enclosing view first as a user would. Returns the smallest text pane height.
+qreal checkFits(Scene &scene, int width, int height, const std::vector<const char *> &names = everyControl())
 {
     auto *window = scene.window;
     if (window->minimumWidth() > width || window->minimumHeight() > height)
@@ -555,15 +565,16 @@ qreal checkFits(Scene &scene, int width, int height)
         return item->isVisible() && item->width() > 0 && item->height() > 0
             && screen.adjusted(-0.5, -0.5, 0.5, 0.5).contains(rect);
     };
-    std::vector<const char *> names(std::begin(mainControls), std::end(mainControls));
-    names.insert(names.end(), std::begin(textPanes), std::end(textPanes));
     for (const auto *name : names) {
         auto *item = scene.item(name);
-        if (Scene::reveal(item)) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        // Scroll again while waiting: just after a resize the page can still lay out at the
+        // previous size, so the first scroll position can be stale.
         QElapsedTimer deadline;
         deadline.start();
-        while (!inside(item) && deadline.elapsed() < 2000)
+        do {
+            Scene::reveal(item);
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        } while (!inside(item) && deadline.elapsed() < 2000);
         if (!inside(item))
             throw std::runtime_error("unreachable at " + std::to_string(width) + "x" + std::to_string(height)
                                      + ": " + geometry(item));
@@ -571,6 +582,64 @@ qreal checkFits(Scene &scene, int width, int height)
     qreal smallest = height;
     for (const auto *name : textPanes) smallest = std::min(smallest, scene.item(name)->height());
     return smallest;
+}
+
+// Lays a wrapped text out as Text does, with its font, wrap mode and width inside its padding,
+// and returns the first line break between two letters or digits of a word that would fit on
+// a line of its own. The layout must give the item's own line count, or the check is not valid.
+std::optional<QString> midWordBreak(QQuickItem *label)
+{
+    const auto width = label->width() - label->property("leftPadding").toReal()
+        - label->property("rightPadding").toReal();
+    const auto font = label->property("font").value<QFont>();
+    const QFontMetricsF metrics(font);
+    QTextOption option;
+    option.setWrapMode(QTextOption::WrapMode(label->property("wrapMode").toInt()));
+    std::optional<QString> broken;
+    int lines = 0;
+    for (const auto &paragraph : label->property("text").toString().split(QLatin1Char('\n'))) {
+        QTextLayout layout(paragraph, font);
+        layout.setTextOption(option);
+        layout.beginLayout();
+        for (auto line = layout.createLine(); line.isValid(); line = layout.createLine()) line.setLineWidth(width);
+        layout.endLayout();
+        lines += std::max(1, layout.lineCount());
+        for (int i = 1; i < layout.lineCount() && !broken; ++i) {
+            auto start = layout.lineAt(i).textStart();
+            auto end = start;
+            if (start <= 0 || start >= paragraph.size() || !paragraph[start - 1].isLetterOrNumber()
+                || !paragraph[start].isLetterOrNumber())
+                continue;
+            while (start > 0 && paragraph[start - 1].isLetterOrNumber()) --start;
+            while (end < paragraph.size() && paragraph[end].isLetterOrNumber()) ++end;
+            const auto word = paragraph.mid(start, end - start);
+            if (metrics.horizontalAdvance(word) <= width) broken = "\"" + word + "\" in \"" + paragraph + "\"";
+        }
+    }
+    if (lines != label->property("lineCount").toInt())
+        throw std::runtime_error("layout of \"" + label->property("text").toString().toStdString() + "\" gives "
+                                 + std::to_string(lines) + " lines, the item has "
+                                 + label->property("lineCount").toString().toStdString());
+    return broken;
+}
+
+// Every visible wrapped text under root keeps its words whole. Returns how many texts wrap.
+int expectWholeWords(QQuickItem *root, const std::string &where)
+{
+    int wrapped = 0;
+    const std::function<void(QQuickItem *)> visit = [&](QQuickItem *item) {
+        if (!item->isVisible()) return;
+        if (item->inherits("QQuickText") && item->property("wrapMode").toInt() != QTextOption::NoWrap
+            && !item->property("text").toString().isEmpty()) {
+            if (const auto word = midWordBreak(item))
+                throw std::runtime_error(where + " breaks the word " + word->toStdString());
+            if (item->property("lineCount").toInt() > item->property("text").toString().count(QLatin1Char('\n')) + 1)
+                ++wrapped;
+        }
+        for (auto *child : item->childItems()) visit(child);
+    };
+    visit(root);
+    return wrapped;
 }
 
 const QByteArray longLine = QByteArray(420, 'L') + "\n";
@@ -700,6 +769,14 @@ public:
             clickFile(scene, "removed.txt");
             CHECK(scene.item("selectedProblem")->isVisible() && !scene.item("resultText")->isVisible());
             expectContains(scene.text("selectedProblem"), "Outside app", "outside-app reason");
+            // TRUCE-0084: an outside-app file has no app draft, so neither its row nor its status calls it one.
+            for (const auto &label : {rowText(scene, "removed.txt"), scene.text("selectedStatus")}) {
+                if (label.contains(QStringLiteral("draft"), Qt::CaseInsensitive)
+                    || label.contains(QStringLiteral("Manual Save checkpoint")))
+                    throw std::runtime_error("outside-app file labelled as a draft: " + label.toStdString());
+            }
+            expectContains(scene.text("selectedStatus"), "outside Branch Truce", "outside-app status");
+            expectContains(rowText(scene, "story.txt"), "Unsaved draft", "supported row");
 
             // Saving the three supported results leaves the session and file warnings.
             for (const auto *path : {"story.txt", "notes.txt", "reading.txt"}) {
@@ -1278,6 +1355,36 @@ public:
                               Qt::NoModifier, Qt::NoScrollPhase, false);
             QCoreApplication::sendEvent(scene.window, &wheel);
             settleFor("page scrolled by the wheel", [&] { return page->property("contentY").toReal() > 0; });
+
+            // TRUCE-0084: at 1280x800 the file list and the handoff dialog wrap between words.
+            scene.window->resize(1280, 800);
+            settleFor("window at 1280x800", [&] { return scene.window->width() == 1280 && scene.window->height() == 800; });
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            CHECK(expectWholeWords(scene.item("fileList"), "the file list at 1280x800") > 0);
+            auto *dialog = scene.object("handoffDialog");
+            scene.click("openHandoff");
+            settleFor("handoff opened", [&] { return dialog->property("opened").toBool(); });
+            test_support::waitForLayout(scene.window, QStringLiteral("handoffLeave"), Scene::settleMs);
+            CHECK(expectWholeWords(dialog->property("contentItem").value<QQuickItem *>(),
+                                   "the handoff dialog at 1280x800") > 0);
+            QMetaObject::invokeMethod(dialog, "close");
+            settleFor("handoff closed", [&] { return !dialog->property("opened").toBool(); });
+
+            // TRUCE-0084: with the source choices shown, the three panes keep eight lines and the
+            // panes and choices stay reachable, from a roomy window down to 960x540. There the file
+            // list beside them is taller than the window, so it is left out.
+            scene.click("showSourceChoices");
+            settleFor("source choices shown", [&] { return scene.item("scopedChoices")->isVisible(); });
+            const std::vector<const char *> withChoices{"showSourceChoices", "nonConflictingLeft", "nonConflictingBoth",
+                "wholeFileLeft", "wholeFileRight", "stage2Label", "resultLabel", "stage3Label", "stage2Viewport",
+                "resultViewport", "stage3Viewport", "scopedChoices", "workflowStatus"};
+            for (const auto &screen : {QSize(1500, 1040), QSize(1280, 800), QSize(1280, 720), QSize(960, 540)}) {
+                const auto pane = checkFits(scene, screen.width(), screen.height(), withChoices);
+                if (pane < 8 * lineHeight)
+                    throw std::runtime_error("with source choices, text panes " + std::to_string(pane) + " px high at "
+                                             + std::to_string(screen.width()) + "x" + std::to_string(screen.height())
+                                             + ", less than eight " + std::to_string(lineHeight) + " px lines");
+            }
             checkOffline(scene);
         });
         return suite.report();

@@ -39,6 +39,14 @@ Kirigami.ApplicationWindow {
             parts.push(qsTr("Earlier result staged; current draft not applied"))
         return parts.join(" · ")
     }
+    function statusLines(status: string, support: string, unsaved: bool, progress): string {
+        const lines = [status]
+        // Outside-app and unreadable files have no app draft to describe.
+        if (support === "supported")
+            lines.push(unsaved ? qsTr("Unsaved draft") : qsTr("Manual Save checkpoint retained"))
+        lines.push(progressSummary(progress))
+        return lines.join("\n")
+    }
     // Closing the window is an ordinary finish action: with work outstanding it
     // opens the handoff instead, where leaving is a deliberate choice.
     onClosing: close => {
@@ -108,7 +116,7 @@ Kirigami.ApplicationWindow {
                                         + (handoffEntry.modelData.blockers.length > 0
                                            ? "\n" + handoffEntry.modelData.blockers.join("; ") : "")
                                     textFormat: Text.PlainText
-                                    wrapMode: Text.WrapAnywhere
+                                    wrapMode: Text.Wrap
                                 }
                                 Button {
                                     objectName: "handoffRoute-" + handoffEntry.modelData.fileId
@@ -433,25 +441,25 @@ Kirigami.ApplicationWindow {
             : support === "unreadable" ? qsTr(" · load error · outside app") : qsTr(" · outside app"))
         highlighted: fileId === window.controller.selectedFileId
         contentItem: ColumnLayout {
+            // Wrap between words; only a word wider than the list breaks inside.
             Label {
                 Layout.fillWidth: true
                 text: row.text
                 textFormat: Text.PlainText
-                wrapMode: Text.WrapAnywhere
+                wrapMode: Text.Wrap
             }
             Label {
                 Layout.fillWidth: true
                 visible: row.support !== "supported"
                 text: row.supportDetail
                 textFormat: Text.PlainText
-                wrapMode: Text.WrapAnywhere
+                wrapMode: Text.Wrap
             }
             Label {
                 Layout.fillWidth: true
-                text: row.status + "\n" + (row.unsaved ? qsTr("Unsaved draft") : qsTr("Manual Save checkpoint retained"))
-                    + "\n" + window.progressSummary(row.progress)
+                text: window.statusLines(row.status, row.support, row.unsaved, row.progress)
                 textFormat: Text.PlainText
-                wrapMode: Text.WrapAnywhere
+                wrapMode: Text.Wrap
             }
         }
     }
@@ -672,9 +680,8 @@ Kirigami.ApplicationWindow {
                             objectName: "selectedStatus"
                             Layout.fillWidth: true
                             visible: window.controller.selectedFileId.length > 0
-                            text: (window.selectedFile.status || "") + "\n"
-                                + (window.selectedFile.unsaved ? qsTr("Unsaved draft") : qsTr("Manual Save checkpoint retained"))
-                                + "\n" + window.progressSummary(window.selectedFile.progress)
+                            text: window.statusLines(window.selectedFile.status || "", window.selectedFile.support || "",
+                                !!window.selectedFile.unsaved, window.selectedFile.progress)
                             textFormat: Text.PlainText
                             wrapMode: Text.Wrap
                         }
