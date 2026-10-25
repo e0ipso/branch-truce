@@ -120,8 +120,11 @@ modules [src/ui](../src/ui) imports, with the API floors: `qml6-module-qtquick`,
 which those modules load. The application runs the installed Git, so it also depends on
 `git (>= 1:2.43~)`. The desktop styling is in `Depends` too:
 `qml6-module-org-kde-desktop`, `kde-style-breeze`, `kf6-breeze-icon-theme` and
-`hicolor-icon-theme`. There is no `Recommends`. This list is the one the CI
-release packages use; `packaging/scripts/check-package.sh` checks it.
+`hicolor-icon-theme`. So is `qt6-wayland`, which ships the Wayland shell
+integrations; without it the app aborts on a Wayland session that does not
+bring the package some other way. There is no `Recommends`. This list is the
+one the CI release packages use; `packaging/scripts/check-package.sh` checks
+it, except `qt6-wayland`.
 
 ## Packaging choice
 

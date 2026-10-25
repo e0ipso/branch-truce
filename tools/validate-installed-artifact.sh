@@ -27,8 +27,9 @@
 # or $XDG_RUNTIME_DIR/sway-ipc.*.sock), swaymsg, jq and grim. The app runs
 # with the session variables of a Plasma session and plasma-integration, so
 # kdeglobals selects the colour scheme:
-#   wayland-minimal the installed closure alone tries the Wayland platform
-#   session         installs qt6-wayland and plasma-integration, as Plasma has
+#   wayland-minimal the installed closure alone, which has qt6-wayland, starts
+#                   on the Wayland platform
+#   session         installs plasma-integration, as Plasma has
 #   window LABEL    one desktop-entry launch per scale and Breeze scheme: the
 #                   window's app_id and size from sway, an AT-SPI readiness
 #                   check and a grim screenshot DIR/<package>-LABEL.png
@@ -457,17 +458,17 @@ c_wayland_minimal() {
     env -i "${base_env[@]}" "QT_QPA_PLATFORM=wayland" "WAYLAND_DISPLAY=$wayland_socket" \
         timeout 60 branch-truce --smoke-test "$repo" > /tmp/wayland-minimal.log 2>&1 || status=$?
     grep -E 'qt.qpa|platform plugin|BRANCH_TRUCE_SESSION' /tmp/wayland-minimal.log | cut -c1-200 | sed 's/^/  /' || true
-    echo "qt6-wayland: $(dpkg-query -W -f='${db:Status-Status}' qt6-wayland 2>/dev/null || echo not-installed)"
+    echo "qt6-wayland: $(dpkg-query -W -f='${db:Status-Status} ${Version}' qt6-wayland 2>/dev/null || echo not-installed)"
     if ((status == 0)); then
         pass "--smoke-test on Wayland with the closure alone"
     else
-        echo "WARN --smoke-test on Wayland exited $status with the closure alone; Depends does not bring the Wayland shell integration"
+        fail "--smoke-test on Wayland exited $status with the closure alone"
     fi
 }
 
 c_session() {
     step "Session packages a Plasma desktop has"
-    local packages=(qt6-wayland plasma-integration)
+    local packages=(plasma-integration)
     if DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "${packages[@]}" > /tmp/session.log 2>&1; then
         dpkg-query -W -f='${Package}\t${Version}\n' "${packages[@]}"
         pass "session packages installed"

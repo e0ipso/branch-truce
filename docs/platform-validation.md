@@ -13,8 +13,8 @@ about the package and the program, not about Plasma, KWin or real hardware.
 | --- | --- |
 | Kubuntu 26.04 LTS desktop, Plasma session | UNAVAILABLE. No Kubuntu 26.04 machine was available. |
 | Tuxedo OS 24.04 desktop, Plasma session | UNAVAILABLE. The only Tuxedo OS host is a headless server with no Plasma session, no display manager and no physical display. |
-| Container of the Kubuntu 26.04 base, on the host's headless sway | Observed on 2026-10-25. 36 checks passed, 0 failed, 1 warning. |
-| Container of the Tuxedo OS 24.04 base, on the host's headless sway | Observed on 2026-10-25. 36 checks passed, 0 failed, 1 warning. |
+| Container of the Kubuntu 26.04 base, on the host's headless sway | Observed on 2026-10-25. 37 checks passed, 0 failed, no warning. |
+| Container of the Tuxedo OS 24.04 base, on the host's headless sway | Observed on 2026-10-25. 37 checks passed, 0 failed, no warning. |
 
 The rows that matter for compatibility are the first two, and both stay
 open. The container rows show that each package installs on its own base,
@@ -35,14 +35,14 @@ Host, shared by both containers:
   (`/run/user/1000/wayland-1`) through a bind mount. They used their own
   D-Bus session bus, home and XDG directories, and never touched the host's.
 
-Artifacts, built with `tools/build-artifact.sh` from commit
-`46e080149c13fdf806fe390455be343e73882eec` with no changed source paths:
+Artifacts, built with `tools/build-artifact.sh` from the commit that added
+`qt6-wayland` to `Depends`, with no changed source paths:
 
 | | Kubuntu 26.04 | Tuxedo OS 24.04 |
 | --- | --- | --- |
 | File | `branch-truce_0.1.0+kubuntu26.04_amd64.deb` | `branch-truce_0.1.0+tuxedo24.04_amd64.deb` |
-| SHA-256 | `4bf41ce4ce83022ef97dd8d91b2275d1c9f76dbedd46ea7bed7216a09ab8889a` | `911931531f6cccf73c2b623c2eaf6670606fac44d40fc8e9b01f9232979e4f61` |
-| Size | 503196 bytes | 487276 bytes |
+| SHA-256 | `da990d279d98fd88dd8069c373889f95b1ea9092a8881cb8dd58f38e746ac07e` | `d524f8fe37d7c38da4c55b1121cab9a45f99afe34103ea29f881e77f0d0a0bdf` |
+| Size | 505068 bytes | 489554 bytes |
 | Container image | `branch-truce-artifact:kubuntu-26.04-target` | `branch-truce-artifact:tuxedo-24.04-target` |
 | Container OS | Ubuntu 26.04.1 LTS, resolute | Ubuntu 24.04.5 LTS, noble, with only the Tuxedo OS package sources |
 
@@ -55,7 +55,7 @@ Runtime packages after `apt-get install --no-install-recommends` of the
 
 | Package | Kubuntu 26.04 | Tuxedo OS 24.04 |
 | --- | --- | --- |
-| Packages added by the install | 189 | 180 |
+| Packages added by the install | 193 | 184 |
 | libc6 | 2.43-2ubuntu2.4 | 2.39-0ubuntu8.9 |
 | libqt6core6t64, libqt6gui6 | 6.10.2+dfsg-7 | 6.10.2+dfsg-7~tux1 |
 | libqt6qml6, libqt6quick6, qml6-module-qtquick* | 6.10.2+dfsg-3 | 6.10.2+dfsg-3~tux1 |
@@ -63,14 +63,14 @@ Runtime packages after `apt-get install --no-install-recommends` of the
 | kf6-breeze-icon-theme | 6.24.0-0ubuntu1 | 6.24.0-0ubuntu1~tux1 |
 | kde-style-breeze | 4:6.6.5-0ubuntu0.1 | 4:6.6.5-0ubuntu0.1~tux1 |
 | git | 1:2.53.0-1ubuntu1.1 | 1:2.43.0-1ubuntu7.4 |
+| qt6-wayland | 6.10.2-4 | 6.10.2-4~tux1 |
 
-Added afterwards, because a Plasma desktop has them: `plasma-workspace`
-depends on `qt6-wayland` and `plasma-integration` in both archives. This was
-read from the archive metadata, not from an installed desktop.
+Added after the Wayland check of the closure, because a Plasma desktop has
+it: `plasma-workspace` depends on `plasma-integration` in both archives. This
+was read from the archive metadata, not from an installed desktop.
 
 | Session package | Kubuntu 26.04 | Tuxedo OS 24.04 |
 | --- | --- | --- |
-| qt6-wayland | 6.10.2-4 | 6.10.2-4~tux1 |
 | plasma-integration | 6.6.5-0ubuntu0.1 | 6.6.5-0ubuntu0.1~tux1 |
 
 Validation tools, not part of the runtime closure: `libglib2.0-bin` (for
@@ -124,8 +124,8 @@ observed. The real-desktop column has no observations.
 | Plasma menu or KRunner launch | Not run | Not run | UNAVAILABLE |
 | Real `git mergetool`, launcher starts the GUI, GUI killed: `MERGED` restored, path unmerged | Pass, Git 2.53.0 | Pass, Git 2.43.0 | UNAVAILABLE |
 | Real `git mergetool` on Wayland: typed result, Mark resolved, Confirm resolution, Git stages the reviewed bytes, session reports 1 resolved | Pass | Pass | UNAVAILABLE |
-| Wayland with the package's closure only | Warning: aborts | Warning: aborts | UNAVAILABLE |
-| Wayland with `qt6-wayland` and `plasma-integration` | Pass, `xdg_shell` | Pass, `xdg_shell` | UNAVAILABLE |
+| Wayland with the package's closure only, `--smoke-test` | Pass | Pass | UNAVAILABLE |
+| Wayland with `plasma-integration` added, desktop-entry launches | Pass, `xdg_shell` | Pass, `xdg_shell` | UNAVAILABLE |
 | Window `app_id` matches the desktop entry | Pass, `local.branch_truce.BranchTruce` | Pass, `local.branch_truce.BranchTruce` | UNAVAILABLE |
 | `QT_SCALE_FACTOR=1`, Breeze Light and Breeze Dark | Pass | Pass | UNAVAILABLE |
 | `QT_SCALE_FACTOR=1.5`, Breeze Light and Breeze Dark | Pass, fits 1920x1080 | Pass, fits 1920x1080 | UNAVAILABLE |
@@ -174,21 +174,22 @@ installed GUI with `--mergetool-path` and attached `tracked.txt`.
 ### Wayland, scaling and theme
 
 With only the package's closure, `branch-truce --smoke-test` on Wayland
-aborted with exit status 134. Qt found the `wayland` platform plugin, which
-`libqt6waylandclient6` ships, but no shell integration:
+exited 0 on both bases. The package depends on `qt6-wayland`, which ships the
+shell integrations. Before it did, the same check aborted with exit status
+134: Qt found the `wayland` platform plugin, which `libqt6waylandclient6`
+ships, but no shell integration:
 
 ```text
 qt.qpa.wayland: No shell integration named "xdg-shell" found
 qt.qpa.wayland: Loading shell integration failed.
 ```
 
-The shell integrations are in `qt6-wayland`, which the package does not
-depend on. A Plasma install brings it through `plasma-workspace`, so this
-should not affect the target desktops, but a minimal or non-Plasma Wayland
-session cannot start the app. With `qt6-wayland` and `plasma-integration`
-installed, every desktop-entry launch opened an `xdg_shell` window whose
-`app_id` matched the desktop entry. sway tiled it to the full 1920x1080
-output.
+A Plasma install brought `qt6-wayland` through `plasma-workspace`, but a
+minimal or non-Plasma Wayland session could not start the app. The check now
+fails the run if the closure alone cannot start on Wayland. With
+`plasma-integration` added, every desktop-entry launch opened an `xdg_shell`
+window whose `app_id` matched the desktop entry. sway tiled it to the full
+1920x1080 output.
 
 Breeze Light and Breeze Dark both applied. On both bases the screenshots show
 Breeze-styled controls in the light and the dark palette; this was checked by
@@ -226,8 +227,9 @@ passes with the default offscreen style and with `org.kde.desktop`. In the
 container the 200% screenshot shows only the top of the page. Scrolling
 there was not exercised. The 150% runs used a copy of
 `tools/validate-installed-artifact.sh` with its scale list changed from `1 2`
-to `1.5 2`. The other checks in those runs gave the same results as above,
-36 passed, 0 failed and 1 warning on each base. Plasma's own output scaling, which KWin
+to `1.5 2`, before the package depended on `qt6-wayland`. The other checks
+in those runs gave 36 passed, 0 failed and 1 warning on each base; the
+warning was the closure-only Wayland check. Plasma's own output scaling, which KWin
 applies rather than `QT_SCALE_FACTOR`, was not available, and 125% was not
 measured.
 
