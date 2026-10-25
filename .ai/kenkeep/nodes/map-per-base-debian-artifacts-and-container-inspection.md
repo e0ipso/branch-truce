@@ -1,0 +1,35 @@
+---
+type: map
+title: Per-base Debian artifacts and container inspection
+description: >-
+  Each OS base builds its own .deb from shared packaging/debian in a pinned
+  container and is inspected on a clean copy of that base.
+tags:
+  - packaging
+  - platform
+  - debian
+  - containers
+  - compatibility
+kk_schema_version: 3
+kk_id: map-per-base-debian-artifacts-and-container-inspection
+kk_derived_from: []
+kk_relates_to:
+  - map-branch-truce-desktop-implementation-baseline
+  - practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins
+kk_depends_on: []
+kk_confidence: high
+---
+Branch Truce ships one native debhelper `.deb` per OS base, and [docs/target-platforms.md](../../../docs/target-platforms.md) is the reference for the bases, toolchains, dependency floors and the latest results. Both bases share [packaging/debian/](../../../packaging/debian/). Kubuntu 26.04 builds from `ubuntu:26.04` and Tuxedo OS 24.04 from `ubuntu:24.04`, each pinned by digest in [packaging/kubuntu/Dockerfile](../../../packaging/kubuntu/Dockerfile) and [packaging/tuxedo/Dockerfile](../../../packaging/tuxedo/Dockerfile). The Tuxedo image installs every package from the Tuxedo OS sources and archive key in `packaging/tuxedo/`, except `ca-certificates`, which comes from stock noble first because the Tuxedo repositories use HTTPS. Stock noble ships Qt 6.4, which cannot build the desktop target. Package versions carry a `+kubuntu26.04` or `+tuxedo24.04` suffix, so the two artifacts differ in version as well as file name. Do not assume either package installs on the other base.
+
+[tools/build-artifact.sh](../../../tools/build-artifact.sh) builds a `-target` image (the clean base) and a `-build` image (toolchain plus `Build-Depends`) per base, then runs `dpkg-buildpackage -b` on a copy of the sources with `--network none`. The image builds and the inspection fetch from the archives; the package build itself has no network. A fixed build path and `SOURCE_DATE_EPOCH` from the last commit that touched the copied paths make a rebuild from cached images byte-identical. [tools/inspect-artifact.sh](../../../tools/inspect-artifact.sh) installs the `.deb` in a throwaway container from the `-target` image. It checks the metadata and file list, that every linked library resolves through a package named in `Depends`, that each QML import has a `qmldir` from a `Depends` package, the desktop and AppStream validators, `--version` and `--smoke-test`, and that `apt-get remove` leaves no program files. [tools/artifact-baseline.sh](../../../tools/artifact-baseline.sh) runs inside both containers and records the OS, compiler and Qt/KDE package versions with the evidence. `CONTAINER_ENGINE` picks the engine and defaults to `docker`.
+
+`dpkg-shlibdeps` cannot see QML imports, so `packaging/debian/control` lists the imported QML modules and `git` by hand. A new `import` in `src/ui` needs a matching `Depends` entry, or the inspection's `qmldir` check fails.
+
+The ctest `packaging.artifact-tooling` runs [tests/packaging/ArtifactTooling.sh](../../../tests/packaging/ArtifactTooling.sh) against a stub `CONTAINER_ENGINE`, so it needs no Docker, network or root. It covers only the host side. The `--in-container` half of `inspect-artifact.sh`, including its private Qt ABI branches, runs only inside the target container, and the test feeds a canned report instead. Container results are not desktop compatibility. Installation and runtime on real Kubuntu and Tuxedo OS desktops stay pending under TRUCE-0039.
+
+<!-- kk:related:start -->
+# Related
+
+- Related: [map-branch-truce-desktop-implementation-baseline](map-branch-truce-desktop-implementation-baseline.md)
+- Related: [practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins](practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins.md)
+<!-- kk:related:end -->

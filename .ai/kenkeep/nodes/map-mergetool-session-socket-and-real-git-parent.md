@@ -16,6 +16,7 @@ kk_relates_to:
   - practice-treat-mergetool-file-state-as-live-evidence
   - map-branch-truce-desktop-implementation-baseline
   - practice-keep-unsupported-and-unfinished-work-visible
+  - map-journey-acceptance-suite
 kk_depends_on: []
 kk_confidence: high
 ---
@@ -27,10 +28,13 @@ Only a `resolved` reply makes the launcher exit 0, so that Git stages the file. 
 
 [MergetoolParentTests.cpp](../../../tests/git/MergetoolParentTests.cpp) and its fixture [RealParent.h](../../../tests/fixtures/mergetool/RealParent.h) make up `git.mergetool-parent`. It runs the installed `/usr/bin/git mergetool` against the launcher, with `HOME`, the XDG directories and `GIT_CONFIG_GLOBAL` isolated. Only Git 2.43.0 on TUXEDO OS 24.04 has been tested. The compatibility declaration in [docs/mergetool-launcher.md](../../../docs/mergetool-launcher.md) covers only the passing behaviours listed there, and it makes no claim about Kubuntu 26.04. Git runs the tool as `( eval $merge_tool_cmd )` with the value unquoted. The shell splits words and expands globs before `eval`, so a newline or a run of spaces inside quotes becomes a single space. Keep whitespace runs and glob characters out of the launcher path. If `core.fsmonitor` is set during the wait, Mark resolved still writes `MERGED` but then refuses to release the parent. Leave restores the launch bytes.
 
+The GUI, and every controller that opens a supported repository with current unmerged files, listens on the session socket and creates its directory. The app never removes that directory. A test that does either needs a private owner-only `XDG_RUNTIME_DIR` inside its fixture, as [StartupRouteTests.cpp](../../../tests/app/StartupRouteTests.cpp), `MergetoolLauncherTests.cpp`, `RealParent.h` and the [journey acceptance suite](map-journey-acceptance-suite.md) set, and a `ScopedEnvironment` that sets it must restore it too. Otherwise each run leaves a 0700 `branch-truce` directory in the real runtime directory or `/tmp/branch-truce-<uid>`. `ResolutionPublisherTests.cpp` and `RecoveryBoundaryFaultTests.cpp` open a repository without setting `XDG_RUNTIME_DIR`. The fixture directory comes from `QTemporaryDir` under `TMPDIR`, so a long `TMPDIR` pushes the socket path past 106 bytes, the lookup falls back to `/tmp/branch-truce-<uid>`, and that directory stays behind.
+
 <!-- kk:related:start -->
 # Related
 
 - Related: [practice-treat-mergetool-file-state-as-live-evidence](practice-treat-mergetool-file-state-as-live-evidence.md)
 - Related: [map-branch-truce-desktop-implementation-baseline](map-branch-truce-desktop-implementation-baseline.md)
 - Related: [practice-keep-unsupported-and-unfinished-work-visible](practice-keep-unsupported-and-unfinished-work-visible.md)
+- Related: [map-journey-acceptance-suite](map-journey-acceptance-suite.md)
 <!-- kk:related:end -->

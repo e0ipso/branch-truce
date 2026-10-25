@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:47ca3be1bace57b4c4a8963f52dcaca4f3904ba2bdad8c20e6425b3b5cd6f040'
-node_count: 22
+nodes_hash: 'sha256:f60ce6cc2f232c635cad4a2d91d18d98b2b96f5d80058d75f1c8be46eef55562'
+node_count: 25
 ---
 # kenkeep Graph
 
-Total nodes: 22
+Total nodes: 25
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -13,7 +13,7 @@ Total nodes: 22
 - **title:** Branch Truce desktop implementation baseline
 - **path:** map-branch-truce-desktop-implementation-baseline.md
 - **tags:** architecture, desktop, platform, cpp
-- **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope, practice-treat-mergetool-file-state-as-live-evidence, map-mergetool-session-socket-and-real-git-parent
+- **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope, practice-treat-mergetool-file-state-as-live-evidence, map-mergetool-session-socket-and-real-git-parent, map-per-base-debian-artifacts-and-container-inspection, practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins
 - **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ApplicationController.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md, src/core/ResourceLimits.h, docs/resource-limits.md, docs/mergetool-launcher.md, tests/app/ComparisonViewTests.cpp, tools/verify-install-prefix.sh
 
 ## map-branch-truce-first-release-scope
@@ -32,13 +32,29 @@ Total nodes: 22
 - **tags:** git, classification, conversion, startup, scope
 - **relates_to:** map-repository-discovery-and-verified-source-identities, practice-keep-unsupported-and-unfinished-work-visible, practice-keep-sources-identifiable-and-the-result-editable, practice-bound-each-converted-representation-independently
 
+## map-journey-acceptance-suite
+
+- **kind:** map
+- **title:** Journey acceptance suite
+- **path:** map-journey-acceptance-suite.md
+- **tags:** testing, acceptance, qml, offscreen, git
+- **relates_to:** practice-wait-for-layout-before-clicking-offscreen-dialog-items, map-branch-truce-first-release-scope, practice-make-conflict-choices-explicit-and-reversible, map-mergetool-session-socket-and-real-git-parent
+
 ## map-mergetool-session-socket-and-real-git-parent
 
 - **kind:** map
 - **title:** Mergetool session socket and real Git parent
 - **path:** map-mergetool-session-socket-and-real-git-parent.md
 - **tags:** mergetool, git, transport, compatibility
-- **relates_to:** practice-treat-mergetool-file-state-as-live-evidence, map-branch-truce-desktop-implementation-baseline, practice-keep-unsupported-and-unfinished-work-visible
+- **relates_to:** practice-treat-mergetool-file-state-as-live-evidence, map-branch-truce-desktop-implementation-baseline, practice-keep-unsupported-and-unfinished-work-visible, map-journey-acceptance-suite
+
+## map-per-base-debian-artifacts-and-container-inspection
+
+- **kind:** map
+- **title:** Per-base Debian artifacts and container inspection
+- **path:** map-per-base-debian-artifacts-and-container-inspection.md
+- **tags:** packaging, platform, debian, containers, compatibility
+- **relates_to:** map-branch-truce-desktop-implementation-baseline, practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins
 
 ## map-recovery-journal-and-acknowledgment-boundary
 
@@ -72,6 +88,14 @@ Total nodes: 22
 - **path:** practice-bound-each-converted-representation-independently.md
 - **tags:** git, conversion, limits, failures
 - **relates_to:** practice-keep-failed-work-outstanding
+
+## practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins
+
+- **kind:** practice
+- **title:** Compile QML to bytecode to avoid private Qt ABI pins
+- **path:** practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins.md
+- **tags:** packaging, qml, qt, abi, debian
+- **relates_to:** map-per-base-debian-artifacts-and-container-inspection, map-branch-truce-desktop-implementation-baseline
 
 ## practice-design-desktop-apps-around-screens-and-components
 
@@ -182,4 +206,4 @@ Total nodes: 22
 - **title:** Wait for layout before clicking offscreen dialog items
 - **path:** practice-wait-for-layout-before-clicking-offscreen-dialog-items.md
 - **tags:** testing, qml, ui, offscreen
-- **relates_to:** practice-keep-unsupported-and-unfinished-work-visible, practice-design-desktop-apps-around-screens-and-components
+- **relates_to:** practice-keep-unsupported-and-unfinished-work-visible, map-journey-acceptance-suite, practice-design-desktop-apps-around-screens-and-components
