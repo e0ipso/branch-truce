@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:9e1cfd85a00c70a4f81da23676b4801b1cba7a55e519dd504a74ee9ee1d341bd'
-node_count: 20
+nodes_hash: 'sha256:47ca3be1bace57b4c4a8963f52dcaca4f3904ba2bdad8c20e6425b3b5cd6f040'
+node_count: 22
 ---
 # kenkeep Graph
 
-Total nodes: 20
+Total nodes: 22
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -13,8 +13,8 @@ Total nodes: 20
 - **title:** Branch Truce desktop implementation baseline
 - **path:** map-branch-truce-desktop-implementation-baseline.md
 - **tags:** architecture, desktop, platform, cpp
-- **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope, practice-treat-mergetool-file-state-as-live-evidence
-- **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ApplicationController.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md, src/core/ResourceLimits.h, docs/resource-limits.md, docs/mergetool-launcher.md, tests/app/ComparisonViewTests.cpp
+- **relates_to:** practice-design-desktop-apps-around-screens-and-components, map-branch-truce-first-release-scope, practice-treat-mergetool-file-state-as-live-evidence, map-mergetool-session-socket-and-real-git-parent
+- **derived_from:** TECH_SPEC.md, src/ui/ComparisonView.qml, src/ui/Main.qml, src/app/ApplicationController.cpp, docs/editor-integration.md, docs/build.md, tests/fixtures/performance/evidence.md, src/core/ResourceLimits.h, docs/resource-limits.md, docs/mergetool-launcher.md, tests/app/ComparisonViewTests.cpp, tools/verify-install-prefix.sh
 
 ## map-branch-truce-first-release-scope
 
@@ -31,6 +31,14 @@ Total nodes: 20
 - **path:** map-conflict-admission-and-offline-startup.md
 - **tags:** git, classification, conversion, startup, scope
 - **relates_to:** map-repository-discovery-and-verified-source-identities, practice-keep-unsupported-and-unfinished-work-visible, practice-keep-sources-identifiable-and-the-result-editable, practice-bound-each-converted-representation-independently
+
+## map-mergetool-session-socket-and-real-git-parent
+
+- **kind:** map
+- **title:** Mergetool session socket and real Git parent
+- **path:** map-mergetool-session-socket-and-real-git-parent.md
+- **tags:** mergetool, git, transport, compatibility
+- **relates_to:** practice-treat-mergetool-file-state-as-live-evidence, map-branch-truce-desktop-implementation-baseline, practice-keep-unsupported-and-unfinished-work-visible
 
 ## map-recovery-journal-and-acknowledgment-boundary
 
@@ -126,7 +134,7 @@ Total nodes: 20
 - **title:** Keep unsupported and unfinished work visible
 - **path:** practice-keep-unsupported-and-unfinished-work-visible.md
 - **tags:** product, scope, progress, handoff
-- **derived_from:** PRD.md, src/app/SessionModel.cpp, src/app/ApplicationController.cpp, src/ui/Main.qml
+- **derived_from:** PRD.md, src/app/SessionModel.cpp, src/app/ApplicationController.cpp, src/ui/Main.qml, docs/session-state.md
 
 ## practice-make-conflict-choices-explicit-and-reversible
 
@@ -166,4 +174,12 @@ Total nodes: 20
 - **title:** Treat mergetool file state as live evidence
 - **path:** practice-treat-mergetool-file-state-as-live-evidence.md
 - **tags:** mergetool, publication, git, failures
-- **relates_to:** practice-reconcile-uncertain-destination-publication, practice-recover-unfinished-work-without-changing-its-status, practice-keep-failed-work-outstanding
+- **relates_to:** practice-reconcile-uncertain-destination-publication, practice-recover-unfinished-work-without-changing-its-status, practice-keep-failed-work-outstanding, map-mergetool-session-socket-and-real-git-parent
+
+## practice-wait-for-layout-before-clicking-offscreen-dialog-items
+
+- **kind:** practice
+- **title:** Wait for layout before clicking offscreen dialog items
+- **path:** practice-wait-for-layout-before-clicking-offscreen-dialog-items.md
+- **tags:** testing, qml, ui, offscreen
+- **relates_to:** practice-keep-unsupported-and-unfinished-work-visible, practice-design-desktop-apps-around-screens-and-components

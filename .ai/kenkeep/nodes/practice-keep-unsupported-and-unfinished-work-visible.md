@@ -16,6 +16,7 @@ kk_derived_from:
   - src/app/SessionModel.cpp
   - src/app/ApplicationController.cpp
   - src/ui/Main.qml
+  - docs/session-state.md
 kk_relates_to: []
 kk_depends_on: []
 kk_confidence: medium
@@ -25,6 +26,8 @@ Present all currently conflicted files together in one session with a useful fil
 [ApplicationController](../../../src/app/ApplicationController.cpp) keeps exact byte-path identities separate from escaped display paths. Select files by that identity so supported files open their own immutable sources and preserved launch result. Keep supported, outside-app and unreadable entries in the same session inventory. A load error retains the file entry and its diagnostic. [Main.qml](../../../src/ui/Main.qml) keeps outside-app reasons visible alongside the current inventory. Preserve the distinction between unavailable and empty content defined by [immutable session captures](practice-keep-session-captures-immutable-across-revisions.md).
 
 Before handoff, distinguish saved app drafts, repository results, outstanding decisions, unsaved changes, review needed, failures and outside-app work. A newer draft than an earlier staged result blocks a successful finish and needs an explicit stale-staged warning. Offer a route to each outstanding file. The user may deliberately leave after a warning without a success claim.
+
+`SessionModel::handoff` puts each file in exactly one category: undecided, saved-draft, review-needed, newer-draft, written-unresolved, published, failed or outside-app. Failed also covers uncertain outcomes, unreadable files and recovery problems. Each entry keeps its blockers and its next action. The controller adds session blockers for a running resolution and for launched paths Git is still waiting on. `clean` is the only success claim, and `finishSession` succeeds only when the handoff is clean. Closing the window with work outstanding opens the handoff dialog in [Main.qml](../../../src/ui/Main.qml), and each route opens its own file, outside-app files included. `leaveSession` is the deliberate leave. It keeps drafts in the recovery store, sends an explicit leave to every waiting launcher and runs no Git command. It refuses to leave while pending input is not yet in recovery or a resolution is running. See [docs/session-state.md](../../../docs/session-state.md).
 
 [SessionModel](../../../src/app/SessionModel.cpp) builds progress from the current, saved, reviewed, and staged revisions. Saved and reviewed count only when they belong to the current revision. A newer draft after an earlier resolved revision stays unresolved. The status then reads "Earlier result staged; current draft not applied", and the earlier staged revision remains recorded.
 
@@ -37,4 +40,5 @@ Difference navigation and undecided navigation stay inside the selected file. An
 [2] [src/app/SessionModel.cpp](../../../src/app/SessionModel.cpp)
 [3] [src/app/ApplicationController.cpp](../../../src/app/ApplicationController.cpp)
 [4] [src/ui/Main.qml](../../../src/ui/Main.qml)
+[5] [docs/session-state.md](../../../docs/session-state.md)
 <!-- kk:citations:end -->

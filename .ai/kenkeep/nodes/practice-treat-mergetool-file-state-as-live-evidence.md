@@ -16,6 +16,7 @@ kk_relates_to:
   - practice-reconcile-uncertain-destination-publication
   - practice-recover-unfinished-work-without-changing-its-status
   - practice-keep-failed-work-outstanding
+  - map-mergetool-session-socket-and-real-git-parent
 kk_depends_on: []
 kk_confidence: high
 ---
@@ -31,4 +32,5 @@ Git's mergetool parent moves its backup back over `MERGED` whenever the launcher
 - Related: [practice-reconcile-uncertain-destination-publication](practice-reconcile-uncertain-destination-publication.md)
 - Related: [practice-recover-unfinished-work-without-changing-its-status](practice-recover-unfinished-work-without-changing-its-status.md)
 - Related: [practice-keep-failed-work-outstanding](practice-keep-failed-work-outstanding.md)
+- Related: [map-mergetool-session-socket-and-real-git-parent](map-mergetool-session-socket-and-real-git-parent.md)
 <!-- kk:related:end -->
