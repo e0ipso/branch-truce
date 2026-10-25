@@ -111,9 +111,9 @@ run appstreamcli validate --no-net --override=url-homepage-missing=info \
 pass "desktop entry and metainfo validate"
 
 step "Create a disposable merge conflict"
-# The session socket lives in TMPDIR as bt-mt-<64 hex>; Unix socket paths
-# stop at 107 bytes and the GUI does not report a failed listen.
-((${#home} + 4 + 71 <= 107)) || fail "fixture path too long for the session socket: $home/tmp"
+# The session socket is $XDG_RUNTIME_DIR/branch-truce/bt-mt-<32 hex>. A longer
+# path than Qt accepts (106 bytes) moves it to /tmp/branch-truce-<uid>.
+((${#home} + 8 + 13 + 39 <= 106)) || fail "fixture path too long for the session socket: $home/runtime"
 mkdir -p -- "$home/data" "$home/config" "$home/cache" "$home/tmp" "$home/runtime" "$repo"
 chmod 700 -- "$home/runtime"
 environment=(
@@ -144,7 +144,7 @@ resolved_name=$(isolated sh -c 'command -v branch-truce')
 [[ "$resolved_name" == "$installed" ]] || fail "branch-truce resolves to $resolved_name"
 pass "conflicted repository $repo; branch-truce resolves to $resolved_name"
 unmerged() { [[ -n "$(isolated git ls-files -u -- tracked.txt)" ]]; }
-socket_present() { compgen -G "$home/tmp/bt-mt-*" >/dev/null; }
+socket_present() { compgen -G "$home/runtime/branch-truce/bt-mt-*" >/dev/null; }
 gui_running() { [[ -n "$(gui_pids)" ]]; }
 no_gui() { [[ -z "$(gui_pids)" ]]; }
 stop_gui() {
@@ -198,7 +198,7 @@ unmerged || fail "tracked.txt was staged without a resolution"
 pass "closing the GUI released the launcher with exit $status and left tracked.txt unmerged"
 
 step "Git mergetool parent spawns the installed GUI"
-rm -f -- "$home"/tmp/bt-mt-*
+rm -f -- "$home"/runtime/branch-truce/bt-mt-*
 fixture_git config mergetool.truce.cmd \
     'MERGED="$MERGED" BASE="$BASE" LOCAL="$LOCAL" REMOTE="$REMOTE" branch-truce --mergetool'
 fixture_git config mergetool.truce.trustExitCode true

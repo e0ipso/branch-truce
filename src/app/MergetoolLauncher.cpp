@@ -142,6 +142,9 @@ int runMergetoolLauncher(int argc, char **argv)
         connected = connectUntilDeadline(&socket, server, kPostSpawnListenDeadlineMs);
     }
     if (!connected) return fail(QStringLiteral("No Branch Truce session is listening for this repository."));
+    // The /tmp fallback directory is shared, so check who answered before sending anything.
+    if (!mergetoolPeerIsCurrentUser(socket.socketDescriptor()))
+        return fail(QStringLiteral("The session socket does not belong to this user."));
 
     const QJsonObject attach{{QStringLiteral("v"), 1}, {QStringLiteral("kind"), QStringLiteral("attach")},
         {QStringLiteral("invocation"), invocation}, {QStringLiteral("intake"), intake},

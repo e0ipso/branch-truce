@@ -168,8 +168,10 @@ deletes the copied sources and build tree before launching anything. It then:
 Launches run with `env -i`, an isolated `HOME` and XDG directories inside the
 fixture, and offscreen software rendering. The script prints every install and
 launch command, and removes the fixture and any process it started on exit.
-The session socket sits in `TMPDIR` and a Unix socket path holds at most 107
-bytes, so the script refuses a fixture path that would exceed it.
+The session socket sits in the fixture's `XDG_RUNTIME_DIR`, under
+`branch-truce/`. A runtime path too long for a Unix socket would move it to
+`/tmp/branch-truce-<uid>`, outside the fixture, so the script refuses such a
+fixture path.
 
 The metainfo has no homepage or developer yet. `appstreamcli` reports
 `url-homepage-missing` as a warning, which the script downgrades to info so

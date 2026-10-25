@@ -10,12 +10,28 @@
 
 #include <cerrno>
 #include <fcntl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 namespace branch_truce {
 namespace {
 constexpr qsizetype kFrameLimit = 65536;
+// sun_path keeps a byte for the terminating NUL. On Linux, Qt 6 also reserves
+// one for the abstract-namespace prefix, even for a filesystem path, so its
+// QLocalServer rejects a 107-byte path with "Name error".
+constexpr qsizetype kSocketPathLimit = sizeof(sockaddr_un::sun_path) - 2;
+constexpr char kSocketPrefix[] = "bt-mt-";
+// 128 bits of the session key name the socket; the intake is still checked
+// against the full key.
+constexpr qsizetype kSocketKeyLength = 32;
+constexpr qsizetype kSocketNameLength = sizeof(kSocketPrefix) - 1 + kSocketKeyLength;
+
+bool socketPathFits(const QByteArray &directory)
+{
+    return directory.size() + 1 + kSocketNameLength <= kSocketPathLimit;
+}
 
 QString fail(QString *error, const QString &message)
 {
@@ -99,11 +115,45 @@ QByteArray mergetoolSessionKey(const git::RepositoryContext &repository)
     return sha256(material);
 }
 
+QString mergetoolSocketDirectory()
+{
+    auto runtime = qgetenv("XDG_RUNTIME_DIR");
+    if (runtime.startsWith('/')) {
+        while (runtime.endsWith('/')) runtime.chop(1);
+        const auto directory = runtime + "/branch-truce";
+        if (socketPathFits(directory)) return QFile::decodeName(directory);
+    }
+    return QStringLiteral("/tmp/branch-truce-") + QString::number(::geteuid());
+}
+
 QString mergetoolServerName(const git::RepositoryContext &repository)
 {
     const auto key = mergetoolSessionKey(repository);
     if (key.isEmpty()) return {};
-    return QStringLiteral("bt-mt-") + QString::fromLatin1(key);
+    return mergetoolSocketDirectory() + QLatin1Char('/') + QString::fromLatin1(kSocketPrefix)
+        + QString::fromLatin1(key.left(kSocketKeyLength));
+}
+
+bool prepareMergetoolSocketDirectory(const QString &directory, QString *error)
+{
+    const auto native = QFile::encodeName(directory);
+    if (native.isEmpty() || (::mkdir(native.constData(), 0700) != 0 && errno != EEXIST))
+        return failBool(error, QStringLiteral("The mergetool socket directory %1 could not be created.").arg(directory));
+    struct stat info {};
+    if (::lstat(native.constData(), &info) != 0 || !S_ISDIR(info.st_mode))
+        return failBool(error, QStringLiteral("The mergetool socket directory %1 is not a directory.").arg(directory));
+    if (info.st_uid != ::geteuid() || (info.st_mode & 077) != 0)
+        return failBool(error, QStringLiteral("The mergetool socket directory %1 is not private to this user.").arg(directory));
+    return true;
+}
+
+bool mergetoolPeerIsCurrentUser(qintptr descriptor)
+{
+    struct ucred peer {};
+    socklen_t size = sizeof(peer);
+    if (descriptor < 0 || ::getsockopt(static_cast<int>(descriptor), SOL_SOCKET, SO_PEERCRED, &peer, &size) != 0
+        || size != sizeof(peer)) return false;
+    return peer.uid == ::geteuid();
 }
 
 QString mergetoolIntakeRoot()

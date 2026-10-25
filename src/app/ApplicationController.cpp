@@ -1593,14 +1593,21 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
                     diagnostics.isEmpty() ? tr("This operation has no current unmerged files. Return to your Git workflow.") : diagnostics);
                 return;
             }
+            auto listen = MergetoolSession::Listen::Listening;
+            QString listenError;
             if (repository_.supported) {
                 publisher_.captureBaselines(repository_);
-                mergetool_.listen(repository_);
+                listen = mergetool_.listen(repository_, &listenError);
             }
             auto detail = recovered ? tr("Recovered app drafts and decisions. Manual Save, review and Git resolution keep their recorded status.")
                 : tr("Current conflict files are open. Files marked outside app remain outstanding.");
+            if (listen == MergetoolSession::Listen::Elsewhere)
+                detail += QLatin1Char('\n') + tr("Another Branch Truce window receives git mergetool launches for this operation.");
+            if (listen == MergetoolSession::Listen::Unavailable)
+                detail = tr("Mergetool attach is unavailable: %1").arg(listenError) + QLatin1Char('\n') + detail;
             if (!diagnostics.isEmpty()) detail += QLatin1Char('\n') + diagnostics;
-            setState(QStringLiteral("ready"), detail);
+            setState(listen == MergetoolSession::Listen::Unavailable ? QStringLiteral("ready-without-mergetool")
+                                                                     : QStringLiteral("ready"), detail);
         });
     if (task == 0) setState(QStringLiteral("error"), tr("Could not schedule conflict loading."));
 }

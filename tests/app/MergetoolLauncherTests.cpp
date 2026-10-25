@@ -20,6 +20,8 @@
 #include <functional>
 #include <optional>
 #include <sys/resource.h>
+#include <unistd.h>
+#include <utility>
 
 #include <memory>
 
@@ -43,6 +45,13 @@ QByteArray readFile(const QString &path)
     return bytes;
 }
 
+QString privateDirectory(const QString &path)
+{
+    CHECK(QDir().mkpath(path)
+          && QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    return path;
+}
+
 class Repository {
 public:
     explicit Repository(QByteArray trackedText, QByteArray excludedText)
@@ -55,6 +64,8 @@ public:
         environment.insert("XDG_CONFIG_HOME", executables.path() + "/config");
         environment.insert("XDG_CACHE_HOME", executables.path() + "/cache");
         environment.insert("XDG_DATA_HOME", executables.path() + "/data");
+        // The session socket lives here, so the in-process session and every launcher meet.
+        environment.insert("XDG_RUNTIME_DIR", privateDirectory(executables.path() + "/run"));
         environment.insert("LC_ALL", "C");
         environment.insert("GIT_CONFIG_NOSYSTEM", "1");
         environment.insert("GIT_CONFIG_GLOBAL", "/dev/null");
@@ -112,15 +123,19 @@ public:
     QByteArray excluded;
 };
 
+// Variables the fixture leaves out are unset in this process while it lives.
 class ScopedEnvironment {
 public:
     explicit ScopedEnvironment(const QProcessEnvironment &environment)
     {
-        for (const auto name : {"HOME", "PATH", "LC_ALL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
-                                "XDG_DATA_HOME", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_TERMINAL_PROMPT"}) {
+        for (const auto name : {"HOME", "PATH", "LC_ALL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
+                                "XDG_RUNTIME_DIR", "TMPDIR", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
+                                "GIT_TERMINAL_PROMPT"}) {
             previous.insert(name, qEnvironmentVariableIsSet(name)
                 ? std::optional<QByteArray>(qgetenv(name)) : std::nullopt);
-            qputenv(name, environment.value(QString::fromLatin1(name)).toUtf8());
+            const auto key = QString::fromLatin1(name);
+            if (environment.contains(key)) qputenv(name, environment.value(key).toUtf8());
+            else qunsetenv(name);
         }
     }
     ~ScopedEnvironment()
@@ -152,7 +167,7 @@ void pump(const std::function<bool()> &ready, const QString &detail)
     if (!ready()) throw std::runtime_error(detail.toStdString());
 }
 
-void openController(ApplicationController &controller, const Repository &repo)
+void startController(ApplicationController &controller, const Repository &repo)
 {
     QEventLoop loop;
     QTimer timeout;
@@ -165,6 +180,11 @@ void openController(ApplicationController &controller, const Repository &repo)
     timeout.start(15000);
     if (controller.opening()) loop.exec();
     CHECK(!controller.opening());
+}
+
+void openController(ApplicationController &controller, const Repository &repo)
+{
+    startController(controller, repo);
     if (controller.startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.detail().toStdString());
     CHECK(controller.mergetoolListening());
@@ -546,6 +566,108 @@ int main(int argc, char **argv)
         CHECK(!restored);
         CHECK(error == QStringLiteral("The original file could not be restored."));
         CHECK(readFile(path) == longer);
+    });
+    suite.run("TRUCE-0072 the socket directory ignores TMPDIR and falls back from an unusable XDG_RUNTIME_DIR", [] {
+        const auto fallback = QStringLiteral("/tmp/branch-truce-") + QString::number(::geteuid());
+        git::RepositoryContext repository;
+        repository.operation = git::RepositoryOperation::Merge;
+        repository.supported = true;
+        repository.worktreeRoot = QStringLiteral("/srv/worktree");
+        repository.stage2.commitId = QByteArray(40, 'a');
+        repository.stage3.commitId = QByteArray(40, 'b');
+        const auto socketFor = [&](const std::optional<QString> &runtime, const QString &temporary) {
+            QProcessEnvironment environment;
+            environment.insert("TMPDIR", temporary);
+            if (runtime) environment.insert("XDG_RUNTIME_DIR", *runtime);
+            ScopedEnvironment scoped(environment);
+            CHECK(QDir::tempPath() == temporary);
+            return std::pair{mergetoolSocketDirectory(), mergetoolServerName(repository)};
+        };
+        const auto longTemporary = QStringLiteral("/tmp/") + QString(90, QLatin1Char('t'));
+        const auto [shortDirectory, shortSocket] = socketFor(QStringLiteral("/run/user/7/"), longTemporary);
+        CHECK(shortDirectory == QStringLiteral("/run/user/7/branch-truce"));
+        CHECK(socketFor(QStringLiteral("/run/user/7"), QStringLiteral("/other")).second == shortSocket);
+        CHECK(shortSocket.startsWith(shortDirectory + QStringLiteral("/bt-mt-")));
+        CHECK(shortSocket.size() == shortDirectory.size() + 1 + 6 + 32);
+        // The longest runtime directory whose socket path stays within Qt's 106 bytes.
+        const auto boundary = QStringLiteral("/r") + QString(52, QLatin1Char('x'));
+        const auto [fitDirectory, fitSocket] = socketFor(boundary, longTemporary);
+        CHECK(fitDirectory == boundary + QStringLiteral("/branch-truce"));
+        CHECK(QFile::encodeName(fitSocket).size() == 106);
+        CHECK(socketFor(boundary + QLatin1Char('x'), longTemporary).first == fallback);
+        CHECK(socketFor(std::nullopt, longTemporary).first == fallback);
+        CHECK(socketFor(QString(), longTemporary).first == fallback);
+        CHECK(socketFor(QStringLiteral("run/user/7"), longTemporary).first == fallback);
+        CHECK(QFile::encodeName(socketFor(std::nullopt, longTemporary).second).size() <= 106);
+    });
+    suite.run("TRUCE-0072 a GUI and launcher with different long TMPDIR values attach for the same worktree", [] {
+        Repository repo("attached across TMPDIR values\n", "excluded stays conflicted\n");
+        // A runtime directory at the boundary length gives a 106-byte socket path.
+        QTemporaryDir runtimeRoot(QStringLiteral("/tmp/bt-XXXXXX"));
+        CHECK(runtimeRoot.isValid());
+        const auto runtimePrefix = runtimeRoot.path() + QStringLiteral("/r");
+        const auto runtime = privateDirectory(runtimePrefix + QString(54 - runtimePrefix.size(), QLatin1Char('x')));
+        CHECK(runtime.size() == 54);
+        QTemporaryDir temporaries;
+        CHECK(temporaries.isValid());
+        const auto guiTemporary = temporaries.path() + QStringLiteral("/gui-") + QString(60, QLatin1Char('g'));
+        const auto launcherTemporary = temporaries.path() + QStringLiteral("/launcher-") + QString(60, QLatin1Char('l'));
+        CHECK(QDir().mkpath(guiTemporary) && QDir().mkpath(launcherTemporary));
+        repo.environment.insert("XDG_RUNTIME_DIR", runtime);
+        auto guiEnvironment = repo.environment;
+        guiEnvironment.insert("TMPDIR", guiTemporary);
+        ScopedEnvironment environment(guiEnvironment);
+        CHECK(QDir::tempPath() == guiTemporary);
+        ApplicationController controller;
+        openController(controller, repo);
+        const auto sockets = QDir(runtime + QStringLiteral("/branch-truce"))
+            .entryInfoList({QStringLiteral("bt-mt-*")}, QDir::System);
+        CHECK(sockets.size() == 1 && QFile::encodeName(sockets.front().filePath()).size() == 106);
+        CHECK(QDir(guiTemporary).entryList({QStringLiteral("bt-mt-*")}, QDir::System).isEmpty());
+        QTemporaryDir sides;
+        auto launcherEnvironment = directLauncherEnvironment(repo, sides);
+        launcherEnvironment.insert("TMPDIR", launcherTemporary);
+        QProcess launcher;
+        launcher.setProcessEnvironment(launcherEnvironment);
+        launcher.setWorkingDirectory(repo.root);
+        launcher.start(launcherBinary, {"--mergetool"});
+        CHECK(launcher.waitForStarted(5000));
+        pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; },
+             controller.commandMessage() + " | " + QString::fromLocal8Bit(launcher.readAllStandardError()));
+        select(controller, "tracked.txt");
+        CHECK(controller.leaveMergetool());
+        waitFinished(launcher, 1, controller);
+        CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+    });
+    suite.run("TRUCE-0072 a socket that cannot listen is reported and the launcher exits non-zero", [] {
+        Repository repo("nobody can attach\n", "excluded stays conflicted\n");
+        QTemporaryDir runtime;
+        CHECK(runtime.isValid());
+        // A regular file where the socket directory belongs makes listening impossible.
+        writeFile(runtime.filePath(QStringLiteral("branch-truce")), "not a directory\n");
+        repo.environment.insert("XDG_RUNTIME_DIR", runtime.path());
+        ScopedEnvironment environment(repo.environment);
+        ApplicationController controller;
+        startController(controller, repo);
+        CHECK(controller.startupState() == QStringLiteral("ready-without-mergetool"));
+        CHECK(controller.detail().startsWith(QStringLiteral("Mergetool attach is unavailable: The mergetool socket directory ")
+                                             + runtime.path() + QStringLiteral("/branch-truce is not a directory.")));
+        CHECK(!controller.mergetoolListening());
+        CHECK(controller.files()->totalFiles() == 2);
+        QTemporaryDir sides;
+        QProcess launcher;
+        launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
+        launcher.setWorkingDirectory(repo.root);
+        launcher.start(launcherBinary, {"--mergetool"});
+        CHECK(launcher.waitForStarted(5000));
+        waitFinished(launcher, 1, controller);
+        // Qt may warn about the C locale first.
+        const QByteArray refusal("mergetool: No Branch Truce session is listening for this repository.\n");
+        const auto errors = launcher.readAllStandardError();
+        CHECK(errors == refusal || errors.endsWith('\n' + refusal));
+        CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+        CHECK(unmerged(repo, "tracked.txt"));
     });
     return suite.report();
 }

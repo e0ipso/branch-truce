@@ -18,25 +18,37 @@ MergetoolSession::MergetoolSession(ApplicationController *controller) : QObject(
     connect(acknowledgment_, &QTimer::timeout, this, &MergetoolSession::pollAcknowledgment);
 }
 
-bool MergetoolSession::listen(const git::RepositoryContext &repository)
+MergetoolSession::Listen MergetoolSession::listen(const git::RepositoryContext &repository, QString *error)
 {
+    const auto unavailable = [error](const QString &reason) {
+        if (error) *error = reason;
+        return Listen::Unavailable;
+    };
+    if (listening_) return Listen::Listening;
     const auto name = mergetoolServerName(repository);
     sessionKey_ = mergetoolSessionKey(repository);
-    if (name.isEmpty() || listening_) return false;
+    if (name.isEmpty()) return unavailable(tr("This operation has no mergetool session identity."));
     repository_ = repository;
+    QString reason;
+    if (!prepareMergetoolSocketDirectory(QFileInfo(name).path(), &reason)) return unavailable(reason);
     QLocalSocket probe;
     probe.connectToServer(name);
     if (probe.waitForConnected(50)) {
         probe.disconnectFromServer();
-        return false;
+        return Listen::Elsewhere;
     }
     QLocalServer::removeServer(name);
     server_ = new QLocalServer(this);
     server_->setSocketOptions(QLocalServer::UserAccessOption);
-    if (!server_->listen(name)) return false;
+    if (!server_->listen(name)) {
+        reason = tr("The session socket %1 could not listen: %2").arg(name, server_->errorString());
+        delete server_;
+        server_ = nullptr;
+        return unavailable(reason);
+    }
     connect(server_, &QLocalServer::newConnection, this, &MergetoolSession::acceptConnection);
     listening_ = true;
-    return true;
+    return Listen::Listening;
 }
 
 bool MergetoolSession::blocks(const QByteArray &path) const

@@ -10,10 +10,20 @@ class QIODevice;
 
 namespace branch_truce {
 
-// Local socket for one worktree operation. Empty when the operation is not a
-// supported merge or rebase with both stage commits.
+// Absolute path of the local socket for one worktree operation, inside
+// mergetoolSocketDirectory(). Empty when the operation is not a supported
+// merge or rebase with both stage commits. The GUI and the launcher both use it.
 [[nodiscard]] QString mergetoolServerName(const git::RepositoryContext &repository);
 [[nodiscard]] QByteArray mergetoolSessionKey(const git::RepositoryContext &repository);
+// Per-user socket directory that ignores TMPDIR: $XDG_RUNTIME_DIR/branch-truce
+// when XDG_RUNTIME_DIR is absolute and the socket path stays within 106 bytes,
+// otherwise /tmp/branch-truce-<uid>.
+[[nodiscard]] QString mergetoolSocketDirectory();
+// Creates the socket directory with mode 0700 when missing, then requires a
+// real directory owned by this user with no group or other access.
+[[nodiscard]] bool prepareMergetoolSocketDirectory(const QString &directory, QString *error);
+// True when the process at the other end of a connected local socket runs as this user.
+[[nodiscard]] bool mergetoolPeerIsCurrentUser(qintptr descriptor);
 [[nodiscard]] QString mergetoolIntakeRoot();
 
 struct MergetoolIntake {

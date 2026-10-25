@@ -19,8 +19,11 @@ class ApplicationController;
 class MergetoolSession final : public QObject {
     Q_OBJECT
 public:
+    // Elsewhere: another live session already owns this operation's socket.
+    // Unavailable: no launcher can attach to this session; error says why.
+    enum class Listen { Listening, Elsewhere, Unavailable };
     explicit MergetoolSession(ApplicationController *controller);
-    bool listen(const git::RepositoryContext &repository);
+    Listen listen(const git::RepositoryContext &repository, QString *error);
     [[nodiscard]] bool listening() const { return listening_; }
     [[nodiscard]] bool parentSessionActive() const { return parentSession_; }
     [[nodiscard]] bool blocks(const QByteArray &path) const;

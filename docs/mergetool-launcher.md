@@ -14,9 +14,31 @@ Git's backup back onto `MERGED` and deletes the temporary inputs.
 ## Transport
 
 `branch-truce --mergetool` is a headless process. The open GUI session listens
-on a same-user local socket. The socket name is `bt-mt-` plus the SHA-256 of
-the canonical worktree root, the operation (`merge` or `rebase`) and the two
-stage commit ids. A second GUI does not steal a live socket.
+on a same-user local socket. The session key is the SHA-256 of the canonical
+worktree root, the operation (`merge` or `rebase`) and the two stage commit
+ids. The socket is `bt-mt-` plus the first 32 hex characters of that key. A
+second GUI does not steal a live socket; it says that another window receives
+the launches.
+
+The socket does not depend on `TMPDIR`. The GUI and the launcher use the same
+lookup, `mergetoolSocketDirectory()`:
+
+1. `$XDG_RUNTIME_DIR/branch-truce`, when `XDG_RUNTIME_DIR` is absolute and the
+   whole socket path stays within 106 bytes. A Unix socket address holds 107,
+   and Qt reserves one more byte on Linux.
+2. Otherwise `/tmp/branch-truce-<uid>`.
+
+The GUI creates that directory with mode 0700 and refuses one that is not a
+real directory, is owned by another user or grants group or other access. The
+Linux abstract socket namespace is not used, because it has no filesystem
+permissions. Before sending its attach frame, the launcher checks with
+`SO_PEERCRED` that the listening process runs as the same user.
+
+When the session cannot listen, the startup state is `ready-without-mergetool`
+instead of `ready`, and the detail starts with "Mergetool attach is
+unavailable:" and the reason. The files stay open in the app. A launcher for
+that worktree exits 1 with "No Branch Truce session is listening for this
+repository." and Git restores `MERGED`.
 
 The launcher discovers that same identity, copies the temporary inputs and the
 initial `MERGED` bytes into `$XDG_DATA_HOME/branch-truce/mergetool/<session>/<invocation>/`,
