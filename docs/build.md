@@ -126,9 +126,11 @@ ECM's KDE install directories:
 - `share/metainfo/local.branch_truce.BranchTruce.metainfo.xml`
 - `share/icons/hicolor/scalable/apps/local.branch_truce.BranchTruce.svg`
 
-The QML module is compiled into the executable, so no QML directory is
-installed and the installed program reads nothing from the source or build
-tree. Qt, Kirigami and the KDE style come from system packages. The
+The QML module is compiled to QML bytecode inside the executable, not to C++
+([target-platforms.md](target-platforms.md#qml-bytecode-instead-of-compiled-c)
+explains why), so no QML directory is installed and the installed program
+reads nothing from the source or build tree. Qt, Kirigami and the KDE style
+come from system packages. The
 application ID is the reverse-DNS form of the organization domain
 `branch-truce.local`. The GUI sets it as its desktop file name, which is how
 Plasma matches a window to the entry and icon. For a prefix outside the system

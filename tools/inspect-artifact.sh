@@ -15,8 +15,9 @@
 #   2. Clean install with apt and --no-install-recommends. The packages the
 #      install adds are the runtime closure; they are printed with versions.
 #   3. ELF closure: NEEDED libraries, RUNPATH, highest required symbol
-#      versions, every library resolves, and the package of each NEEDED
-#      library is in Depends.
+#      versions, every library resolves, the package of each NEEDED
+#      library is in Depends, and Qt_6_PRIVATE_API symbols, if any, come with
+#      an exact Qt private ABI pin in Depends.
 #   4. QML closure: each module src/ui imports has a qmldir whose package is
 #      in Depends.
 #   5. desktop-file-validate and appstreamcli validate --no-net.
@@ -174,6 +175,17 @@ container_main() {
         grep "^${namespace}_[0-9.]*$" <<<"$tags" | sort -V | tail -1 | sed 's/^/  /' || true
     done
     echo "Qt symbol version tags: $(grep '^Qt_' <<<"$tags" | tr '\n' ' ')"
+    # Qt's private API is only stable within one Qt release, so a binary that
+    # uses it must refuse any other release through an exact Depends pin.
+    if grep -qx 'Qt_6_PRIVATE_API' <<<"$tags"; then
+        if grep -qE 'qt6-[a-z]+-private-abi \(= [^)]+\)' <<<"$depends"; then
+            pass "Qt_6_PRIVATE_API symbols with an exact Qt private ABI pin in Depends"
+        else
+            fail "Qt_6_PRIVATE_API symbols without an exact Qt private ABI pin in Depends"
+        fi
+    else
+        pass "no Qt_6_PRIVATE_API symbols"
+    fi
 
     step "QML closure"
     local module dir before_qml=$failures

@@ -69,20 +69,48 @@ shlibs and symbols files, so they differ:
 | libqt6core6t64 | >= 6.10.2 | >= 6.10.2+dfsg |
 | libqt6gui6 | >= 6.6~ | >= 6.10.2+dfsg |
 | libqt6network6 | >= 6.6~ | >= 6.10.2+dfsg |
-| libqt6qml6 | >= 6.10.2 | >= 6.10.2+dfsg |
+| libqt6qml6 | >= 6.6.0 | >= 6.10.2+dfsg |
 | libqt6quick6 | >= 6.6.0 | >= 6.10.2+dfsg |
 | libqt6widgets6 | >= 6.6~ | >= 6.10.2+dfsg |
-| qt6-base-private-abi | = 6.10.2 | not declared |
-| qt6-declarative-private-abi | = 6.10.2 | not declared |
 
 Both binaries need `GLIBC_2.34`, `GLIBCXX_3.4.31`, `CXXABI_1.3.9` and
-`GCC_3.3.1` at most. Both also carry the `Qt_6_PRIVATE_API` symbol version:
-the QML that `qmlcachegen` compiles into the executable calls
-`QQmlPrivate::AOTCompiledContext::mark`. Kubuntu's Qt packages turn that into
-exact `=` 6.10.2 private-ABI dependencies, so a Qt update on Kubuntu needs a
-rebuild before the package installs. Tuxedo's Qt packages declare no private
-ABI, so its package would still install after a Qt update but might fail to
-start. TRUCE-0079 tracks this.
+`GCC_3.3.1` at most, and only the `Qt_6` and `Qt_6.10` Qt symbol versions.
+Tuxedo's shlibs files give every Qt library its packaged version as the floor,
+so its Qt floors are 6.10.2 whatever the binary uses.
+
+### QML bytecode instead of compiled C++
+
+[src/ui/CMakeLists.txt](../src/ui/CMakeLists.txt) passes `--only-bytecode`
+to `qmlcachegen`. The executable embeds the QML as bytecode, and the QML
+engine runs its bindings and functions. By default `qmlcachegen` also
+compiles them to C++. That C++ calls
+`QQmlPrivate::AOTCompiledContext::mark`, which carries the
+`Qt_6_PRIVATE_API` symbol version, and Qt only keeps private API stable
+within one release. On Kubuntu, `dpkg-shlibdeps` turned it into
+`qt6-base-private-abi (= 6.10.2)` and `qt6-declarative-private-abi (= 6.10.2)`,
+so any Qt update made the package uninstallable until it was rebuilt.
+Tuxedo's Qt packages declare no private ABI, so the Tuxedo package would have
+installed after a Qt update and could then fail to start.
+
+With bytecode only, neither binary has a `Qt_6_PRIVATE_API` symbol, neither
+package depends on a private ABI, and Kubuntu's `libqt6qml6` floor drops from
+6.10.2 to 6.6.0. `tools/inspect-artifact.sh` fails a binary that has private
+Qt symbols but no exact private ABI pin in `Depends`.
+
+Startup cost was measured on the Tuxedo OS 24.04 development host, Qt
+6.10.2, with both binaries built with the package's `dpkg-buildflags`.
+`branch-truce --smoke-test` on a disposable merge conflict ran 30 times per
+binary, alternating, offscreen with software rendering. It loads the window
+and opens the session. The host load average was between 6 and 12.
+
+| Build | Median | Mean | Min | Max |
+| --- | --- | --- | --- | --- |
+| QML compiled to C++ | 950 ms | 936 ms | 688 ms | 1064 ms |
+| QML bytecode only | 939 ms | 931 ms | 790 ms | 1233 ms |
+
+The difference is within the run-to-run spread. Startup was not measured on
+Kubuntu, and the cost of running bindings in the QML engine during
+interaction was not measured.
 
 `dpkg-shlibdeps` cannot see QML imports, so `Depends` also lists the QML
 modules [src/ui](../src/ui) imports, with the API floors: `qml6-module-qtquick`,
@@ -157,7 +185,8 @@ which needs network access for the package lists, and checks:
    adds are the runtime closure and are printed with their versions.
 3. Every linked library resolves. Each `NEEDED` library's package is named in
    `Depends`. The `RUNPATH` and the highest required symbol versions are
-   printed.
+   printed. A `Qt_6_PRIVATE_API` symbol fails the check unless `Depends`
+   pins a Qt private ABI to an exact version.
 4. Each QML module imported by `src/ui` has a `qmldir` from a package named in
    `Depends`.
 5. `desktop-file-validate` and `appstreamcli validate --no-net`.
@@ -168,14 +197,14 @@ which needs network access for the package lists, and checks:
 
 ## Results on 2026-10-25
 
-Both artifacts were built from the same committed sources and passed every
-inspection step. A second build of each, from cached images, was
-byte-identical to the first.
+Both artifacts were built from the same committed sources, with the QML
+compiled to bytecode only, and passed every inspection step. A second build
+of each, from cached images, was byte-identical to the first.
 
 | | Kubuntu 26.04 | Tuxedo OS 24.04 |
 | --- | --- | --- |
-| `.deb` SHA-256 | `b3e8f35cbb52103c7cffb833f580494a2e68f7d2ac7177f84211ae93c8643bc3` | `9f2c22d9ff8ccf51076050c90bc0ba68bb9fad215cf46849e4fe748f89deccde` |
-| Size | 519944 bytes | 503686 bytes |
+| `.deb` SHA-256 | `df24668acccf40eea8726e96f9d2eed6e4ba899eeee20ba6afc6992c23805b71` | `1cbe296f49501a1aefa82d0fdfc08717ea9bb696d20bba00e6fc50e9cb5e8826` |
+| Size | 502176 bytes | 486220 bytes |
 | Build warnings | none | none |
 | Packages added by install | 155 | 146 |
 | Linked libraries resolved | 83 | 88 |
