@@ -135,14 +135,21 @@ choose a session there, or close every Branch Truce window and start Branch
 Truce with `--recovery-session <session-uuid>`. Either way startup adopts that
 store and sets aside every other matching store. Naming a set-aside session
 the same way removes its marker and restores it, which sets the others aside in
-turn. A name that does not match the operation produces a diagnostic and the
-normal rules apply.
+turn. If the named session is not restored, because it does not match the
+operation, another window holds it, or its marker cannot be removed, startup
+reports why and restores no other store with app edits in its place.
+Restoration stays blocked and lists every remaining store with app edits as a
+choice, even when only one remains, and none of them is set aside. A single
+remaining store that holds only launch captures is still adopted, because it
+holds no work to choose between.
 
 The window choice (`chooseRecoverySession`) moves the window to a new store and
 reloads the current files through the same restore. It is refused while another
 window holds one of the listed sessions, and while this window's own store
 already holds app edits, pending input or a running resolution, because the
-reload would leave that work in a store nobody chose.
+reload would leave that work in a store nobody chose. The check releases its
+locks before the reload, so another window can still take the chosen session
+in between; the reload then stays blocked as described above.
 
 The restore adapter replays the existing domain transitions and compares every
 complete state with its canonical encoding. This validates the state schema,

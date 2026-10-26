@@ -883,6 +883,116 @@ public:
             CHECK(adopted.succeeded && kept != adopted.files.end()
                   && kept->current().draft.text.starts_with("kept\nfirst window\n"));
         });
+        suite.run("TRUCE-0099 a chosen session locked during the reload restores no other session in its place", [] {
+            Repository repo;
+            repo.conflict("merge");
+            ScopedEnvironment environment(repo.environment);
+            QString first;
+            QString second;
+            {
+                ApplicationController one;
+                openController(one, repo);
+                ApplicationController two;
+                openController(two, repo);
+                for (auto *controller : {&one, &two}) {
+                    const auto &selected = openedFile(*controller);
+                    const std::string text = controller == &one ? "first window\n" : "second window\n";
+                    CHECK(controller->files()->editResult(selected.id(), selected.current().id, {{0, 0}, text}) == Transition::Applied);
+                }
+                first = one.files()->recoveryDirectory();
+                second = two.files()->recoveryDirectory();
+            }
+            const auto firstName = QFileInfo(first).fileName();
+            const auto secondName = QFileInfo(second).fileName();
+            const auto retainedFirst = storeContents(first);
+            const auto retainedSecond = storeContents(second);
+            {
+                ApplicationController controller;
+                openController(controller, repo);
+                CHECK(controller.recoveryChoices().size() == 2);
+                const auto own = controller.files()->recoveryDirectory();
+                QEventLoop loop;
+                QTimer timeout;
+                timeout.setSingleShot(true);
+                QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+                QObject::connect(&controller, &ApplicationController::launchChanged, &loop, [&] {
+                    if (!controller.opening()) loop.quit();
+                });
+                CHECK(controller.chooseRecoverySession(firstName));
+                {
+                    // Another window takes the chosen session after the choice
+                    // was checked and before the background restore runs.
+                    QLockFile held(first + "/session.lock");
+                    CHECK(held.tryLock(0));
+                    timeout.start(10000);
+                    if (controller.opening()) loop.exec();
+                    CHECK(!controller.opening() && controller.startupState() == "ready");
+                }
+                const auto location = controller.files()->recoveryDirectory();
+                CHECK(location != first && location != second && location != own);
+                const auto detail = controller.detail();
+                CHECK(detail.contains(firstName + " is active or unavailable"));
+                CHECK(!detail.contains(firstName + " does not match"));
+                CHECK(detail.contains("restoration is blocked rather than guessing") && !detail.contains("Recovered app drafts"));
+                const auto choices = controller.recoveryChoices();
+                CHECK(choices.size() == 1 && choices.front().toMap().value("session").toString() == secondName);
+                CHECK(!openedFile(controller).current().draft.text.starts_with("second window"));
+                CHECK(!controller.files()->hasRecoveryFailures());
+                // Neither edited session is set aside or changed.
+                CHECK(storeContents(first) == retainedFirst && storeContents(second) == retainedSecond);
+                // The window's earlier store held only launch captures and is set aside.
+                CHECK(QFileInfo::exists(own + "/journal") && QFileInfo::exists(own + "/set-aside"));
+            }
+            // Once the other window lets go, the chosen session still restores.
+            ApplicationController controller;
+            openController(controller, repo, firstName);
+            CHECK(controller.files()->recoveryDirectory() == first);
+            CHECK(controller.detail().contains(secondName + " was set aside, not deleted"));
+            CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
+        });
+        suite.run("TRUCE-0099 a recovery-session name that does not match restores no edited session in its place", [] {
+            Repository repo;
+            repo.conflict("merge");
+            ScopedEnvironment environment(repo.environment);
+            const auto unknown = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            QString store;
+            {
+                ApplicationController controller;
+                openController(controller, repo);
+                store = controller.files()->recoveryDirectory();
+            }
+            // A lone store holding only launch captures has no work to choose
+            // between, so it is still adopted.
+            {
+                ApplicationController controller;
+                openController(controller, repo, unknown);
+                CHECK(controller.files()->recoveryDirectory() == store);
+                CHECK(controller.detail().contains("Recovery session " + unknown + " does not match this operation"));
+                CHECK(!controller.detail().contains("blocked") && controller.recoveryChoices().isEmpty());
+                const auto &selected = openedFile(controller);
+                CHECK(controller.files()->editResult(selected.id(), selected.current().id, {{0, 0}, "edited\n"})
+                      == Transition::Applied);
+            }
+            const auto storeName = QFileInfo(store).fileName();
+            const auto retained = storeContents(store);
+            {
+                ApplicationController controller;
+                openController(controller, repo, unknown);
+                CHECK(controller.files()->recoveryDirectory() != store);
+                CHECK(controller.detail().contains("Recovery session " + unknown + " does not match this operation"));
+                CHECK(controller.detail().contains("restoration is blocked rather than guessing")
+                      && !controller.detail().contains("Recovered app drafts"));
+                const auto choices = controller.recoveryChoices();
+                CHECK(choices.size() == 1 && choices.front().toMap().value("session").toString() == storeName);
+                CHECK(!openedFile(controller).current().draft.text.starts_with("edited\n"));
+                CHECK(storeContents(store) == retained);
+            }
+            // Without a name, the only edited store is restored as before.
+            ApplicationController controller;
+            openController(controller, repo);
+            CHECK(controller.files()->recoveryDirectory() == store);
+            CHECK(openedFile(controller).current().draft.text.starts_with("edited\n"));
+        });
         suite.run("TRUCE-0083 the recovery-session option reaches startup recovery", [&] {
             Repository repo;
             repo.conflict("merge");

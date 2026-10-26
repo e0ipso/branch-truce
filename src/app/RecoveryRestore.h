@@ -61,6 +61,8 @@ struct RecoveryRestore {
 // When several stores match, stores holding only launch captures are set
 // aside and never make the inventory ambiguous. chosenSession names the store
 // the user picked; it is adopted and the other matching stores are set aside.
+// If the named store is not adopted, no store with app edits is adopted in its
+// place: the edited stores stay unmarked and are listed as choices.
 // Setting aside writes a marker inside the store and never deletes it.
 [[nodiscard]] RecoveryRestore restoreRecovery(const QString &inventory,
     const QString &exclude, const git::RepositoryContext &repository,

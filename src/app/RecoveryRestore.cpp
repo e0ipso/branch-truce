@@ -505,6 +505,7 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
 {
     RecoveryRestore result;
     std::vector<RecoveryCandidate> candidates;
+    bool chosenUnavailable = false;
     for (const auto &entry : QDir(inventory).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
         if (entry.absoluteFilePath() == exclude) continue;
         if (entry.isSymLink() || entry.ownerId() != ::geteuid()) {
@@ -514,6 +515,7 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         auto lease = std::make_shared<QLockFile>(entry.absoluteFilePath() + QStringLiteral("/session.lock"));
         if (!lease->tryLock(0)) {
             result.diagnostics.push_back(QStringLiteral("Recovery session %1 is active or unavailable; it was not restored.").arg(entry.fileName()));
+            chosenUnavailable = chosenUnavailable || entry.fileName() == chosenSession;
             continue;
         }
         // A set-aside store returns only when the user names it.
@@ -541,7 +543,8 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         const auto match = std::find_if(candidates.begin(), candidates.end(),
             [&](const auto &candidate) { return QFileInfo(candidate.directory).fileName() == chosenSession; });
         if (match == candidates.end()) {
-            result.diagnostics.push_back(QStringLiteral("Recovery session %1 does not match this operation; it was not restored.").arg(chosenSession));
+            if (!chosenUnavailable)
+                result.diagnostics.push_back(QStringLiteral("Recovery session %1 does not match this operation; it was not restored.").arg(chosenSession));
         } else if (match->setAside && !QFile::remove(setAsideMarker(match->directory))) {
             result.diagnostics.push_back(QStringLiteral("Recovery session %1 is set aside and its marker could not be removed; it was not restored.").arg(chosenSession));
             candidates.erase(match);
@@ -550,27 +553,32 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
             chosen = true;
         }
     }
-    if (!adopted && candidates.size() == 1) adopted = &candidates.front();
-    if (!adopted && candidates.size() > 1) {
-        // Stores holding only launch captures carry no work, so they cannot
-        // make the choice ambiguous. Several edited stores still block.
-        std::vector<RecoveryCandidate *> edited;
-        for (auto &candidate : candidates)
-            if (candidate.replay.userWork) edited.push_back(&candidate);
-        if (edited.size() == 1) adopted = edited.front();
-        if (edited.size() > 1) {
-            result.diagnostics.push_back(QStringLiteral("Multiple recovery sessions with app edits match this operation; restoration is blocked rather than guessing. "
-                "To restore one, choose it in this window, or close every Branch Truce window and start Branch Truce with --recovery-session followed by the session to keep. "
-                "The other sessions are set aside, not deleted."));
-            for (const auto *candidate : edited) {
-                RecoveryChoice choice{QFileInfo(candidate->directory).fileName(), candidate->directory,
-                                      lastChanged(candidate->directory), {}};
-                for (const auto &file : candidate->replay.files)
-                    if (candidate->replay.editedFiles.contains(file.id())) choice.paths.push_back(file.path());
-                result.diagnostics.push_back(QStringLiteral("Recovery session %1 was last changed %2.")
-                    .arg(choice.session, choice.lastChanged));
-                result.choices.push_back(std::move(choice));
-            }
+    // A named session that was not restored is never replaced by another
+    // session with app edits. Only a lone store holding launch captures, which
+    // leaves nothing to choose between, is still adopted.
+    const bool lostChoice = !chosenSession.isEmpty() && !chosen;
+    std::vector<RecoveryCandidate *> edited;
+    for (auto &candidate : candidates)
+        if (candidate.replay.userWork) edited.push_back(&candidate);
+    if (!adopted && candidates.size() == 1 && (!lostChoice || edited.empty())) adopted = &candidates.front();
+    // Stores holding only launch captures carry no work, so they cannot make
+    // the choice ambiguous. Several edited stores still block.
+    if (!adopted && !lostChoice && edited.size() == 1) adopted = edited.front();
+    if (!adopted && (edited.size() > 1 || (lostChoice && !edited.empty()))) {
+        result.diagnostics.push_back((lostChoice
+            ? QStringLiteral("Recovery session %1 was not restored, and no other recovery session with app edits is restored in its place; "
+                "restoration is blocked rather than guessing. ").arg(chosenSession)
+            : QStringLiteral("Multiple recovery sessions with app edits match this operation; restoration is blocked rather than guessing. "))
+            + QStringLiteral("To restore one, choose it in this window, or close every Branch Truce window and start Branch Truce with "
+                "--recovery-session followed by the session to keep. The other sessions are set aside, not deleted."));
+        for (const auto *candidate : edited) {
+            RecoveryChoice choice{QFileInfo(candidate->directory).fileName(), candidate->directory,
+                                  lastChanged(candidate->directory), {}};
+            for (const auto &file : candidate->replay.files)
+                if (candidate->replay.editedFiles.contains(file.id())) choice.paths.push_back(file.path());
+            result.diagnostics.push_back(QStringLiteral("Recovery session %1 was last changed %2.")
+                .arg(choice.session, choice.lastChanged));
+            result.choices.push_back(std::move(choice));
         }
     }
     int setAsideWithoutEdits = 0;

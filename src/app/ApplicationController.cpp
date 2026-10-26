@@ -1525,6 +1525,8 @@ bool ApplicationController::chooseRecoverySession(const QString &session)
     if (own.userWork)
         return refuse(tr("This window already holds app edits, so it cannot switch to a recovery session. "
             "Leave this session, then start Branch Truce with --recovery-session followed by the session to keep."));
+    // These locks are released before the reload. If another window takes the
+    // chosen session in between, the restore adopts no other edited session.
     for (const auto &choice : recoveryChoices_) {
         QLockFile lease(choice.directory + QStringLiteral("/session.lock"));
         if (!lease.tryLock(0))
