@@ -20,9 +20,10 @@ RUN /opt/branch-truce/ci/baseline.sh --format tuxedo-deb > /opt/branch-truce/bas
 
 FROM build AS test
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
-        appstream desktop-file-utils libasan8 libglib2.0-bin libubsan1 \
-        kde-style-breeze kf6-breeze-icon-theme qml6-module-org-kde-desktop \
-        qml6-module-org-kde-kirigami qml6-module-qtqml-workerscript \
-        qml6-module-qtquick qml6-module-qtquick-controls \
-        qml6-module-qtquick-layouts qml6-module-qtquick-templates \
-        qml6-module-qtquick-window qml6-module-qttest
+        appstream desktop-file-utils hicolor-icon-theme kde-style-breeze \
+        kf6-breeze-icon-theme libasan8 libglib2.0-bin libubsan1 \
+        qml6-module-org-kde-desktop qml6-module-org-kde-kirigami \
+        qml6-module-qtqml-workerscript qml6-module-qtquick \
+        qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+        qml6-module-qtquick-templates qml6-module-qtquick-window \
+        qml6-module-qttest qt6-svg-plugins qt6-wayland

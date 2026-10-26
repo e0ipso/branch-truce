@@ -37,6 +37,10 @@ set_tests_properties(lifecycle.private-xdg-isolation PROPERTIES TIMEOUT 30)
 add_test(NAME packaging.artifact-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ArtifactTooling.sh")
 set_tests_properties(packaging.artifact-tooling PROPERTIES TIMEOUT 30)
+# The CI test stages install every runtime Depends of the package (text parsing, under 1 s).
+add_test(NAME packaging.ci-test-stage-depends
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/CiTestStageDepends.sh")
+set_tests_properties(packaging.ci-test-stage-depends PROPERTIES TIMEOUT 30)
 # Host side of the installed-artifact validation and the AT-SPI probe against stub
 # container, sway and grim commands and a fake Atspi module (about 4 s). It exits 77,
 # reported as skipped, when jq or python3 is missing.
