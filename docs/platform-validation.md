@@ -174,8 +174,10 @@ installed GUI with `--mergetool-path` and attached `tracked.txt`.
   then Mark resolved and Confirm resolution were pressed through AT-SPI.
   `git mergetool` exited 0. The index held blob
   `23a7d88d743520a735939b41fd8f0ea5ee330b56` at stage 0, which is
-  `git hash-object` of the typed text, and the session showed
-  "1 files in this session · 1 resolved".
+  `git hash-object` of the typed text, and the session's progress text
+  showed one file resolved. The check looks for a showing accessible object
+  whose name contains "1 resolved", so the words around the count and the
+  place the progress text appears do not matter.
 
 ### Wayland, scaling and theme
 

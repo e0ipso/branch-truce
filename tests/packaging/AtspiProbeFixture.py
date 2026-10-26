@@ -7,7 +7,7 @@ before the probe is loaded, and a fake clock replaces its time module, so waits
 and timeouts finish at once. Modes:
 
     selftest  checks argument handling, application lookup, the tree walk,
-              state names, dump format and the wait, text, focus and press
+              state names, dump format and the wait, wait-match, text, focus and press
               commands, then prints the assertion count
     dump      prints the probe's dump of a tree with the controls that
               tools/validate-installed-artifact.sh checks
@@ -286,6 +286,28 @@ def selftest(probe, clock):
     equal(run(probe, "Branch Truce", "wait", "Confirm resolution")[0],
           "no showing accessible object named 'Confirm resolution'", "default wait timeout")
     equal(clock.now - before, 60.0, "wait defaults to 60 s")
+
+    # wait-match finds a showing object whose name contains a match, whatever surrounds it.
+    progress = Node("label", "Merge · 1 files in this session · 1 resolved", ("enabled",))
+    other = Node("label", "Merge · 11 files in this session · 11 resolved", ("enabled", "showing"))
+    desktop = Node("application", "main", children=[Node("application", "Branch Truce", children=[
+        other, Node("label", None, ("showing",)), progress])])
+    pending = r"(?<![0-9])1 resolved\b"
+    del clock.sleeps[:]
+    clock.hooks.append(lambda count: count == 2 and progress.states.add("showing"))
+    equal(run(probe, "Branch Truce", "wait-match", pending, "5"),
+          (0, "showing 'Merge · 1 files in this session · 1 resolved'\n"), "wait-match for a showing object")
+    equal(len(clock.sleeps), 2, "wait-match polls until the object shows")
+    del clock.hooks[:]
+    progress.name = "1 files in this session · 1 resolved"
+    equal(run(probe, "Branch Truce", "wait-match", pending, "5")[0], 0, "wait-match without surrounding words")
+    progress.name = "1 files in this session · 0 resolved"
+    before = clock.now
+    equal(run(probe, "Branch Truce", "wait-match", pending, "1.5"),
+          ("no showing accessible object with a name matching %r" % pending, ""), "wait-match timeout")
+    equal(clock.now - before, 1.5, "wait-match honours its timeout")
+    equal(run(probe, "Branch Truce", "wait-match", "(")[0], 2, "wait-match rejects a bad pattern")
+    equal(run(probe, "Branch Truce", "wait-match"), (2, ""), "wait-match needs a pattern")
 
     # text prints the content with repr and whether it is editable.
     desktop = Node("application", "main", children=[application_tree()])

@@ -6,6 +6,11 @@
 APP is a case-insensitive part of the accessible application name. Commands:
 
     wait NAME [SECONDS]   wait until a showing object named NAME exists
+    wait-match REGEX [SECONDS]
+                          wait until a showing object whose name contains a
+                          match of the Python regular expression REGEX exists,
+                          for text such as a progress count that other words
+                          surround and that moves between screens
     dump                  print the tree: depth, role, name and states; roles
                           are the Atspi.Role nicks, which do not change
                           between AT-SPI releases as the display names do
@@ -19,6 +24,7 @@ gir1.2-atspi-2.0, and the application must expose AT-SPI, for example with
 QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1. Exit status 1 means the application or
 object was not found in time; 2 means a usage error.
 """
+import re
 import sys
 import time
 import warnings
@@ -60,14 +66,18 @@ def states(node):
     return [s for s in STATES if state_set.contains(getattr(Atspi.StateType, s.upper()))]
 
 
-def find(app, name, role=None, showing=False):
+def find_by(app, accepts, role=None, showing=False):
     for _, node in walk(app):
-        if node.get_name() != name or (role is not None and node.get_role() != role):
+        if not accepts(node.get_name()) or (role is not None and node.get_role() != role):
             continue
         if showing and "showing" not in states(node):
             continue
         return node
     return None
+
+
+def find(app, name, role=None, showing=False):
+    return find_by(app, lambda candidate: candidate == name, role, showing)
 
 
 def require(app, name, role=None):
@@ -85,17 +95,29 @@ def main(argv):
     if len(argv) < 3:
         sys.exit(2)
     name, command, args = argv[1], argv[2], argv[3:]
-    if command == "wait":
+    if command in ("wait", "wait-match"):
         if not args:
             sys.exit(2)
+        if command == "wait":
+            accepts, described = (lambda candidate: candidate == args[0]), "named %r" % args[0]
+        else:
+            try:
+                pattern = re.compile(args[0])
+            except re.error:
+                sys.exit(2)
+
+            def accepts(candidate):
+                return pattern.search(candidate or "") is not None
+
+            described = "with a name matching %r" % args[0]
         timeout = float(args[1]) if len(args) > 1 else 60.0
         deadline = time.monotonic() + timeout
         app = application(name, timeout)
-        while find(app, args[0], showing=True) is None:
+        while (found := find_by(app, accepts, showing=True)) is None:
             if time.monotonic() >= deadline:
-                sys.exit("no showing accessible object named %r" % args[0])
+                sys.exit("no showing accessible object %s" % described)
             time.sleep(0.5)
-        print("showing %r" % args[0])
+        print("showing %r" % found.get_name())
         return
     app = application(name, 30.0)
     if command == "dump":

@@ -546,8 +546,9 @@ c_mergetool_resolve() {
         && pass "Git staged the reviewed text $expected" || fail "index does not hold the reviewed text"
     [[ "$(isolated git hash-object tracked.txt)" == "$expected" ]] \
         && pass "MERGED holds the reviewed bytes" || fail "MERGED differs from the reviewed text"
-    # The session polls the index for the staged object before it claims the file.
-    probe wait '1 files in this session · 1 resolved' 60 \
+    # The session polls the index for the staged object before it claims the file. Match the
+    # resolved count, not the whole progress label, which other words surround and which moves.
+    probe wait-match '(?<![0-9])1 resolved\b' 60 \
         && pass "the session reports tracked.txt resolved after Git staged it" \
         || fail "the session did not report tracked.txt resolved"
 }
