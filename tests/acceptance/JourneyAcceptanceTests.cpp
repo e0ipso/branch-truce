@@ -1220,6 +1220,55 @@ public:
             CHECK(!repo.unmerged("saved.txt").isEmpty() && !repo.unmerged("typed.txt").isEmpty());
             checkOffline(reopened);
         });
+        suite.run("TRUCE-0097 a blocked startup lists each recovery session and restores the chosen one in the window", [] {
+            Repository repo("merge", {{"shared.txt", QByteArray("shared base\n"), QByteArray("shared left\n"),
+                                       QByteArray("shared right\n"), QByteArray("shared chosen by hand\n")}});
+            const auto id = fileId("shared.txt").toStdString();
+            const auto edit = [&](ApplicationController &controller, const std::string &text) {
+                const auto *file = controller.files()->file(id);
+                CHECK(file && controller.files()->editResult(id, file->current().id, {{0, 0}, text}) == Transition::Applied);
+            };
+            QString first;
+            QString second;
+            {
+                // Two windows on one merge each keep their own edits.
+                Scene one(repo);
+                ApplicationController two;
+                CHECK(two.openRepository(repo.root));
+                settleFor("second window", [&] { return !two.opening(); });
+                CHECK(two.startupState() == QStringLiteral("ready"));
+                edit(*one.controller, "first window\n");
+                edit(two, "second window\n");
+                first = one.controller->files()->recoveryDirectory();
+                second = two.files()->recoveryDirectory();
+            }
+            const auto firstName = QFileInfo(first).fileName();
+            const auto secondName = QFileInfo(second).fileName();
+            Scene scene(repo);
+            expectContains(scene.controller->detail(), "restoration is blocked rather than guessing", "blocked detail");
+            CHECK(scene.text("resultText").startsWith(QStringLiteral("shared chosen by hand")));
+            for (const auto &name : {firstName, secondName}) {
+                auto *row = test_support::waitForLayout(scene.window, "recoveryChoiceText-" + name);
+                const auto shown = row->property("text").toString();
+                expectContains(shown, name, "choice session");
+                expectContains(shown, "last changed", "choice time");
+                expectContains(shown, "Edited files: shared.txt", "choice files");
+            }
+            const auto repository = repo.snapshot();
+            scene.click(("recoveryChoice-" + firstName).toLatin1().constData());
+            settleFor("chosen session restored", [&] {
+                return !scene.controller->opening() && scene.controller->recoveryChoices().isEmpty();
+            });
+            CHECK(scene.controller->startupState() == QStringLiteral("ready"));
+            CHECK(scene.controller->files()->recoveryDirectory() == first);
+            expectContains(scene.controller->detail(), secondName + " was set aside, not deleted", "set aside");
+            settleFor("restored text", [&] { return scene.text("resultText").startsWith(QStringLiteral("first window\n")); });
+            CHECK(!scene.item("recoveryChoices")->isVisible());
+            CHECK(QFileInfo::exists(second + "/set-aside") && QFileInfo::exists(second + "/journal"));
+            // Choosing touched only app-owned recovery files.
+            CHECK(repo.snapshot() == repository && !repo.unmerged("shared.txt").isEmpty());
+            checkOffline(scene);
+        });
         suite.run("TRUCE-0087 a resolved mergetool handoff drops the waiting text and a path Git has not launched keeps it", [] {
             Repository repo("merge", {
                 {"launched.txt", QByteArray("launched base\n"), QByteArray("launched left\n"),

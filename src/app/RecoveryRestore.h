@@ -22,6 +22,8 @@ struct RecoveryReplay {
     // False when every record is a launch capture: the store holds no app edit,
     // decision, Save, review or repository outcome.
     bool userWork = false;
+    // File IDs with at least one record after their launch capture.
+    std::set<std::string> editedFiles;
     std::vector<FileSession> files;
     std::vector<RecoveryMutation> mutations;
 };
@@ -33,6 +35,15 @@ struct RecoveryReplay {
     const FileSession &file, const QString &kind, const QString &id,
     const QString &observation = {});
 
+// One matching store with app edits when restoration is blocked. The user
+// picks one of these; paths are the exact path bytes of the files it edited.
+struct RecoveryChoice {
+    QString session;
+    QString directory;
+    QString lastChanged;
+    std::vector<std::string> paths;
+};
+
 struct RecoveryRestore {
     bool found = false;
     QString directory;
@@ -40,6 +51,8 @@ struct RecoveryRestore {
     std::map<std::string, QString> failures;
     std::set<std::string> newFiles;
     QStringList diagnostics;
+    // Filled only when several stores with app edits block restoration.
+    std::vector<RecoveryChoice> choices;
     std::shared_ptr<QLockFile> lease;
 };
 

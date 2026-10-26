@@ -112,6 +112,15 @@ QString SessionModel::ensureRecoveryLease()
     return {};
 }
 
+bool SessionModel::startNewRecoveryStore()
+{
+    if (hasPendingRecovery()) return false;
+    recovery_ = storage::RecoveryStore(QFileInfo(recovery_.directory()).absolutePath() + QLatin1Char('/')
+        + QUuid::createUuid().toString(QUuid::WithoutBraces));
+    recoveryLease_.reset();
+    return true;
+}
+
 void SessionModel::recordRecoveryFailure(const std::string &id, const QString &error)
 {
     recoveryFailures_.insert_or_assign(id, error);

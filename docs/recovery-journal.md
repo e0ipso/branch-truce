@@ -128,12 +128,21 @@ set-aside store unless the user names it.
 
 When two or more matching stores hold app edits, restoration stays blocked
 rather than guessing. The current files still open in a new store, and the
-diagnostic lists each session UUID with its journal's last change time. To
-clear the block, close every Branch Truce window and start Branch Truce with
-`--recovery-session <session-uuid>`. Startup adopts that store and sets aside
-every other matching store. Naming a set-aside session the same way removes
-its marker and restores it, which sets the others aside in turn. A name that
-does not match the operation produces a diagnostic and the normal rules apply.
+diagnostic lists each session UUID with its journal's last change time. The
+controller's `recoveryChoices` lists the same sessions with the paths each one
+edited, and the window shows a Restore button for each. To clear the block,
+choose a session there, or close every Branch Truce window and start Branch
+Truce with `--recovery-session <session-uuid>`. Either way startup adopts that
+store and sets aside every other matching store. Naming a set-aside session
+the same way removes its marker and restores it, which sets the others aside in
+turn. A name that does not match the operation produces a diagnostic and the
+normal rules apply.
+
+The window choice (`chooseRecoverySession`) moves the window to a new store and
+reloads the current files through the same restore. It is refused while another
+window holds one of the listed sessions, and while this window's own store
+already holds app edits, pending input or a running resolution, because the
+reload would leave that work in a store nobody chose.
 
 The restore adapter replays the existing domain transitions and compares every
 complete state with its canonical encoding. This validates the state schema,

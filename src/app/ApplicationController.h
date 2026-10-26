@@ -1,5 +1,6 @@
 #pragma once
 #include "MergetoolSession.h"
+#include "RecoveryRestore.h"
 #include "ResolutionPublisher.h"
 #include "SessionModel.h"
 #include "SessionCoordinator.h"
@@ -23,6 +24,7 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QString repositoryRoot READ repositoryRoot NOTIFY launchChanged)
     Q_PROPERTY(QString operation READ operation NOTIFY launchChanged)
     Q_PROPERTY(QString detail READ detail NOTIFY launchChanged)
+    Q_PROPERTY(QVariantList recoveryChoices READ recoveryChoices NOTIFY launchChanged)
     Q_PROPERTY(QString stage2 READ stage2 NOTIFY launchChanged)
     Q_PROPERTY(QString stage3 READ stage3 NOTIFY launchChanged)
     Q_PROPERTY(QString workflow READ workflow CONSTANT)
@@ -56,6 +58,9 @@ public:
     [[nodiscard]] QString repositoryRoot() const { return repository_.worktreeRoot; }
     [[nodiscard]] QString operation() const { return operation_; }
     [[nodiscard]] QString detail() const { return detail_; }
+    // Matching recovery sessions with app edits that blocked restoration at
+    // this load: session, lastChanged and the display paths it edited.
+    [[nodiscard]] QVariantList recoveryChoices() const;
     [[nodiscard]] QString stage2() const;
     [[nodiscard]] QString stage3() const;
     [[nodiscard]] QString workflow() const;
@@ -140,6 +145,12 @@ public:
     // several match; the other matching sessions are set aside.
     bool openRepository(const QString &directory, const QString &preferredFileId = {},
                         const QString &recoverySession = {});
+    // Reloads the session with one of recoveryChoices, through the same startup
+    // restore as --recovery-session: it is adopted and the other matching
+    // sessions are set aside, not deleted. Refused while another window holds
+    // one of the choices, or while this window's own session holds app edits,
+    // pending input or a running resolution that a reload would leave behind.
+    Q_INVOKABLE bool chooseRecoverySession(const QString &session);
 
 Q_SIGNALS:
     void launchChanged();
@@ -155,6 +166,8 @@ Q_SIGNALS:
 private:
     bool commandReady(const QString &fileId, const QString &revision, RevisionId *expected) const;
     [[nodiscard]] QString discardedMessage(const FileSession *current) const;
+    // Escaped display text for exact path bytes; see displayPath.
+    [[nodiscard]] QString displayBytes(const std::string &path) const;
     bool eventFilter(QObject *watched, QEvent *event) override;
     void classified(const git::ConflictClassificationResult &result);
     void loadWorkingFiles(QList<git::Conflict> conflicts);
@@ -180,6 +193,7 @@ private:
     QString selectedFileId_;
     QString preferredFileId_;
     QString recoverySession_;
+    std::vector<RecoveryChoice> recoveryChoices_;
     std::optional<ChoicePreview> preview_;
     std::optional<NonConflictingPreview> nonConflictingPreview_;
     std::optional<WholeFilePreview> wholeFilePreview_;

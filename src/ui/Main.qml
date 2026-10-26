@@ -541,6 +541,43 @@ Kirigami.ApplicationWindow {
                         wrapMode: Text.Wrap
                     }
                 }
+                // Several recovery sessions with app edits match: nothing is
+                // restored until the user picks one here.
+                ColumnLayout {
+                    objectName: "recoveryChoices"
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+                    visible: !window.controller.opening && window.controller.recoveryChoices.length > 0
+                    Label {
+                        Layout.fillWidth: true
+                        text: qsTr("Choose the recovery session to restore. The other sessions are set aside, not deleted.")
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                        font.bold: true
+                    }
+                    Repeater {
+                        model: window.controller.recoveryChoices
+                        delegate: RowLayout {
+                            id: recoveryChoice
+                            required property var modelData
+                            Layout.fillWidth: true
+                            Label {
+                                objectName: "recoveryChoiceText-" + recoveryChoice.modelData.session
+                                Layout.fillWidth: true
+                                text: qsTr("Session %1, last changed %2").arg(recoveryChoice.modelData.session)
+                                    .arg(recoveryChoice.modelData.lastChanged)
+                                    + "\n" + qsTr("Edited files: %1").arg(recoveryChoice.modelData.paths.join(", "))
+                                textFormat: Text.PlainText
+                                wrapMode: Text.Wrap
+                            }
+                            Button {
+                                objectName: "recoveryChoice-" + recoveryChoice.modelData.session
+                                text: qsTr("Restore this session")
+                                onClicked: window.controller.chooseRecoverySession(recoveryChoice.modelData.session)
+                            }
+                        }
+                    }
+                }
                 Label {
                     Layout.fillWidth: true
                     text: qsTr("%1 files in this session · %2 resolved")

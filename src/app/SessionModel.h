@@ -56,6 +56,10 @@ public:
     [[nodiscard]] bool hasRecoveryFailures() const { return !recoveryFailures_.empty(); }
     [[nodiscard]] bool hasRecoveryFailure(const std::string &id) const { return recoveryFailures_.contains(id); }
     [[nodiscard]] const QString &recoveryDirectory() const { return recovery_.directory(); }
+    // Moves recovery to a new store beside the current one and releases the
+    // current store's lease, so a repeated load never records over captures
+    // already in it. Refused while pending input waits for this store.
+    bool startNewRecoveryStore();
     Transition retryRecovery(const std::string &id);
     Q_INVOKABLE bool retryPendingRecovery(const QString &id);
 

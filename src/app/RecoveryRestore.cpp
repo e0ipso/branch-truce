@@ -375,6 +375,7 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
             } else {
                 require(found != files.end() && found->second.path() == path, "Recovery command has no matching open file.");
                 result.userWork = true;
+                result.editedFiles.insert(id);
                 auto &file = found->second;
                 Transition transition = Transition::InvalidOutcome;
                 if (action == QLatin1String("replace-draft"))
@@ -458,6 +459,7 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
         result.error = QString::fromUtf8(error.what());
         result.files.clear();
         result.mutations.clear();
+        result.editedFiles.clear();
     }
     return result;
 }
@@ -558,11 +560,17 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         if (edited.size() == 1) adopted = edited.front();
         if (edited.size() > 1) {
             result.diagnostics.push_back(QStringLiteral("Multiple recovery sessions with app edits match this operation; restoration is blocked rather than guessing. "
-                "To restore one, close every Branch Truce window and start Branch Truce with --recovery-session followed by the session to keep. "
+                "To restore one, choose it in this window, or close every Branch Truce window and start Branch Truce with --recovery-session followed by the session to keep. "
                 "The other sessions are set aside, not deleted."));
-            for (const auto *candidate : edited)
+            for (const auto *candidate : edited) {
+                RecoveryChoice choice{QFileInfo(candidate->directory).fileName(), candidate->directory,
+                                      lastChanged(candidate->directory), {}};
+                for (const auto &file : candidate->replay.files)
+                    if (candidate->replay.editedFiles.contains(file.id())) choice.paths.push_back(file.path());
                 result.diagnostics.push_back(QStringLiteral("Recovery session %1 was last changed %2.")
-                    .arg(QFileInfo(candidate->directory).fileName(), lastChanged(candidate->directory)));
+                    .arg(choice.session, choice.lastChanged));
+                result.choices.push_back(std::move(choice));
+            }
         }
     }
     int setAsideWithoutEdits = 0;

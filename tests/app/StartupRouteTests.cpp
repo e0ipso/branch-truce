@@ -6,6 +6,7 @@
 #include "fixtures/RecoveryFaults.h"
 #include "fixtures/RecoveryJournal.h"
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QElapsedTimer>
@@ -776,6 +777,111 @@ public:
                 CHECK(openedFile(controller).current().draft.text.starts_with("second window\n"));
             }
             CHECK(!QFileInfo::exists(second + "/set-aside") && QFileInfo::exists(first + "/set-aside"));
+        });
+        suite.run("TRUCE-0097 a blocked window lists each session and restores the chosen one without a restart", [] {
+            Repository repo;
+            repo.conflict("merge");
+            ScopedEnvironment environment(repo.environment);
+            QString first;
+            QString second;
+            {
+                ApplicationController one;
+                openController(one, repo);
+                ApplicationController two;
+                openController(two, repo);
+                for (auto *controller : {&one, &two}) {
+                    const auto &selected = openedFile(*controller);
+                    const std::string text = controller == &one ? "first window\n" : "second window\n";
+                    CHECK(controller->files()->editResult(selected.id(), selected.current().id, {{0, 0}, text}) == Transition::Applied);
+                }
+                first = one.files()->recoveryDirectory();
+                second = two.files()->recoveryDirectory();
+            }
+            const auto firstName = QFileInfo(first).fileName();
+            const auto secondName = QFileInfo(second).fileName();
+            const auto retained = storeContents(second);
+            const auto reload = [](ApplicationController &controller, const QString &session) {
+                QEventLoop loop;
+                QTimer timeout;
+                timeout.setSingleShot(true);
+                QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+                QObject::connect(&controller, &ApplicationController::launchChanged, &loop, [&] {
+                    if (!controller.opening()) loop.quit();
+                });
+                if (!controller.chooseRecoverySession(session)) return false;
+                timeout.start(10000);
+                if (controller.opening()) loop.exec();
+                CHECK(!controller.opening() && controller.startupState() == "ready");
+                return true;
+            };
+
+            // A window with its own edits refuses to switch, so they are never left behind.
+            QString third;
+            {
+                ApplicationController controller;
+                openController(controller, repo);
+                CHECK(controller.recoveryChoices().size() == 2);
+                const auto &live = openedFile(controller);
+                CHECK(controller.files()->editResult(live.id(), live.current().id, {{0, 0}, "third window\n"}) == Transition::Applied);
+                third = controller.files()->recoveryDirectory();
+                CHECK(!controller.chooseRecoverySession(firstName));
+                CHECK(controller.commandMessage().contains("already holds app edits"));
+                CHECK(controller.files()->recoveryDirectory() == third && controller.recoveryChoices().size() == 2);
+                CHECK(!QFileInfo::exists(first + "/set-aside") && !QFileInfo::exists(second + "/set-aside"));
+            }
+            // Retire the third store outside v1 so the remaining checks see two choices again.
+            CHECK(QDir().rename(third, repo.executables.path() + "/retired-third"));
+
+            ApplicationController controller;
+            openController(controller, repo);
+            const auto choices = controller.recoveryChoices();
+            CHECK(choices.size() == 2);
+            QStringList sessions;
+            for (const auto &entry : choices) {
+                const auto choice = entry.toMap();
+                sessions.push_back(choice.value("session").toString());
+                CHECK(QDateTime::fromString(choice.value("lastChanged").toString(), Qt::ISODate).isValid());
+                CHECK(choice.value("paths").toStringList() == QStringList{"tracked.txt"});
+            }
+            sessions.sort();
+            QStringList expected{firstName, secondName};
+            expected.sort();
+            CHECK(sessions == expected);
+            const auto own = controller.files()->recoveryDirectory();
+
+            // Unknown sessions and sessions another window holds are refused without changes.
+            CHECK(!controller.chooseRecoverySession(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+            CHECK(controller.commandMessage().contains("not one of the choices"));
+            {
+                QLockFile held(second + "/session.lock");
+                CHECK(held.tryLock(0));
+                CHECK(!controller.chooseRecoverySession(firstName));
+                CHECK(controller.commandMessage().contains(secondName + " is open in another Branch Truce window"));
+            }
+            CHECK(controller.files()->recoveryDirectory() == own && controller.recoveryChoices().size() == 2);
+            CHECK(!QFileInfo::exists(first + "/set-aside") && !QFileInfo::exists(second + "/set-aside"));
+
+            // The choice reloads through the startup restore: adopted, the other set aside, nothing deleted.
+            CHECK(reload(controller, firstName));
+            CHECK(controller.files()->recoveryDirectory() == first && controller.recoveryChoices().isEmpty());
+            CHECK(controller.detail().contains("Recovered app drafts"));
+            CHECK(controller.detail().contains(secondName + " was set aside, not deleted"));
+            CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
+            auto setAside = storeContents(second);
+            CHECK(setAside.contains("set-aside"));
+            setAside.remove("set-aside");
+            CHECK(setAside == retained);
+            // The window's earlier store held only launch captures and is set aside too.
+            CHECK(QFileInfo::exists(own + "/journal") && QFileInfo::exists(own + "/set-aside"));
+            // Later edits go to the adopted store.
+            const auto restoredId = openedFile(controller).id();
+            CHECK(controller.files()->editResult(restoredId, openedFile(controller).current().id, {{0, 0}, "kept\n"})
+                  == Transition::Applied);
+            const auto adopted = replayRecovery(storage::RecoveryStore(first));
+            const auto kept = std::find_if(adopted.files.begin(), adopted.files.end(),
+                [&](const auto &file) { return file.id() == restoredId; });
+            CHECK(adopted.succeeded && kept != adopted.files.end()
+                  && kept->current().draft.text.starts_with("kept\nfirst window\n"));
         });
         suite.run("TRUCE-0083 the recovery-session option reaches startup recovery", [&] {
             Repository repo;

@@ -3,6 +3,7 @@
 #include "core/ResourceLimits.h"
 #include <QDir>
 #include <QFileInfo>
+#include <QLockFile>
 #include "core/BuildInfo.h"
 #include <QStandardPaths>
 #include <QUuid>
@@ -306,9 +307,13 @@ QString ApplicationController::workflow() const
 QString ApplicationController::displayPath(const QString &fileId) const
 {
     const auto *file = files_.file(fileId.toStdString());
-    if (!file) return {};
-    auto display = text(file->path());
-    const QByteArray bytes(file->path().data(), static_cast<qsizetype>(file->path().size()));
+    return file ? displayBytes(file->path()) : QString{};
+}
+
+QString ApplicationController::displayBytes(const std::string &path) const
+{
+    auto display = text(path);
+    const QByteArray bytes(path.data(), static_cast<qsizetype>(path.size()));
     const bool exact = display.toUtf8() == bytes;
     display.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
     display.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
@@ -1485,12 +1490,62 @@ void ApplicationController::setState(QString state, QString detail)
     Q_EMIT launchChanged();
 }
 
+QVariantList ApplicationController::recoveryChoices() const
+{
+    QVariantList result;
+    for (const auto &choice : recoveryChoices_) {
+        QStringList paths;
+        for (const auto &path : choice.paths) paths.push_back(displayBytes(path));
+        result.push_back(QVariantMap{{QStringLiteral("session"), choice.session},
+            {QStringLiteral("lastChanged"), choice.lastChanged}, {QStringLiteral("paths"), paths}});
+    }
+    return result;
+}
+
+bool ApplicationController::chooseRecoverySession(const QString &session)
+{
+    const auto refuse = [this](const QString &message) {
+        commandMessage_ = message;
+        Q_EMIT commandChanged();
+        return false;
+    };
+    const auto chosen = std::find_if(recoveryChoices_.cbegin(), recoveryChoices_.cend(),
+        [&](const auto &choice) { return choice.session == session; });
+    if (state_ != QLatin1String("ready") && state_ != QLatin1String("ready-without-mergetool"))
+        return refuse(tr("Choose a recovery session after the session finishes loading."));
+    if (chosen == recoveryChoices_.cend())
+        return refuse(tr("That recovery session is not one of the choices for this session."));
+    if (!sessionOutcome_.isEmpty() || publisher_.busy() || files_.hasPendingRecovery())
+        return refuse(tr("Choose a recovery session after the running resolution or pending recovery input finishes."));
+    // The reload replaces this window's files. Edits already recorded here
+    // would be left in a store nobody chose, so they refuse the choice.
+    const auto own = replayRecovery(storage::RecoveryStore(files_.recoveryDirectory()));
+    if (!own.succeeded)
+        return refuse(tr("This window's recovery store could not be read, so it cannot switch sessions: %1").arg(own.error));
+    if (own.userWork)
+        return refuse(tr("This window already holds app edits, so it cannot switch to a recovery session. "
+            "Leave this session, then start Branch Truce with --recovery-session followed by the session to keep."));
+    for (const auto &choice : recoveryChoices_) {
+        QLockFile lease(choice.directory + QStringLiteral("/session.lock"));
+        if (!lease.tryLock(0))
+            return refuse(tr("Recovery session %1 is open in another Branch Truce window. Close that window, then choose again.")
+                .arg(choice.session));
+    }
+    if (!files_.startNewRecoveryStore())
+        return refuse(tr("Choose a recovery session after the pending recovery input finishes."));
+    commandMessage_.clear();
+    Q_EMIT commandChanged();
+    state_ = QStringLiteral("idle");
+    return openRepository(repository_.worktreeRoot, selectedFileId_, session);
+}
+
 bool ApplicationController::openRepository(const QString &directory, const QString &preferredFileId,
                                            const QString &recoverySession)
 {
     if (state_ != QLatin1String("idle")) return false;
     preferredFileId_ = preferredFileId;
     recoverySession_ = recoverySession;
+    recoveryChoices_.clear();
     setState(QStringLiteral("opening"), tr("Inspecting the selected local repository…"));
     git::ConflictClassificationRequest request;
     request.directory = directory;
@@ -1587,6 +1642,7 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
         }, [this, loaded, recovery](const TaskCompletion &completion) {
             const auto diagnostics = recovery->diagnostics.join(QLatin1Char('\n'));
             const bool recovered = recovery->found;
+            auto choices = recovery->choices;
             if (completion.result.status != TaskStatus::Succeeded
                 || !coordinator_.completeRecoveryLoad(completion.stamp, std::move(*loaded), std::move(*recovery))) {
                 setState(QStringLiteral("error"), tr("Could not load the current conflict files."));
@@ -1616,6 +1672,7 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
             if (listen == MergetoolSession::Listen::Unavailable)
                 detail = tr("Mergetool attach is unavailable: %1").arg(listenError) + QLatin1Char('\n') + detail;
             if (!diagnostics.isEmpty()) detail += QLatin1Char('\n') + diagnostics;
+            recoveryChoices_ = std::move(choices);
             setState(listen == MergetoolSession::Listen::Unavailable ? QStringLiteral("ready-without-mergetool")
                                                                      : QStringLiteral("ready"), detail);
         });
