@@ -2,6 +2,7 @@
 #include "app/MergetoolLauncher.h"
 #include "app/MergetoolProtocol.h"
 #include "app/RecoveryRestore.h"
+#include "fixtures/mergetool/GitGate.h"
 #include "TestHarness.h"
 
 #include <QCoreApplication>
@@ -300,6 +301,69 @@ QProcessEnvironment directLauncherEnvironment(const Repository &repo, const QTem
     environment.insert("LOCAL", sides.filePath("local"));
     environment.insert("REMOTE", sides.filePath("remote"));
     return environment;
+}
+
+// Replaces a file by a same-byte copy with a new inode and timestamps, as
+// installed Git does with MERGED before it runs the tool.
+void copyInPlace(const QString &target)
+{
+    CHECK(QFile::rename(target, target + ".moved") && QFile::copy(target + ".moved", target));
+    CHECK(QFile::remove(target + ".moved"));
+}
+
+// A window captures tracked.txt and records an edit; then Git's copy replaces
+// tracked.txt, so the next window restores a copied launch path.
+void storeBeforeCopiedLaunch(const Repository &repo)
+{
+    {
+        ApplicationController before;
+        openController(before, repo);
+        CHECK(before.files()->editResult(QByteArray("tracked.txt").toHex().toStdString(),
+            opened(before, "tracked.txt").current().id, {{0, 0}, "recovered edit\n"}) == Transition::Applied);
+    }
+    copyInPlace(repo.path("tracked.txt"));
+}
+
+// Starts a launcher on tracked.txt after the window loaded and waits for its attach.
+void attachLauncher(QProcess &launcher, const Repository &repo, const QTemporaryDir &sides,
+    ApplicationController &controller)
+{
+    launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
+    launcher.setWorkingDirectory(repo.root);
+    launcher.start(launcherBinary, {"--mergetool"});
+    CHECK(launcher.waitForStarted(5000));
+    pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; }, controller.commandMessage());
+}
+
+// Runs the event loop for a fixed time and checks that `holds` stays true throughout.
+void holdFor(int milliseconds, const std::function<bool()> &holds, const QString &detail)
+{
+    QElapsedTimer clock;
+    clock.start();
+    while (clock.elapsed() < milliseconds) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
+        if (!holds()) throw std::runtime_error(detail.toStdString());
+    }
+}
+
+// The restored draft stays read-only, Mark resolved is refused and nothing is
+// written over the current bytes. Leave fails the launcher, which puts back
+// the MERGED bytes it saw when it attached.
+void checkCopiedLaunchRefused(ApplicationController &controller, QProcess &launcher, const QString &target,
+    const QByteArray &current, const QByteArray &attached)
+{
+    const auto fileId = QString::fromLatin1(QByteArray("tracked.txt").toHex());
+    select(controller, "tracked.txt");
+    const auto revision = revisionOf(opened(controller, "tracked.txt"));
+    CHECK(controller.files()->hasRecoveryFailure(fileId.toStdString()));
+    CHECK(!controller.editResult(fileId, revision, 0, 0, QStringLiteral("edited after the attach\n")));
+    CHECK(!controller.markResolved(fileId, revision, true));
+    CHECK(launcher.state() == QProcess::Running);
+    CHECK(readFile(target) == current);
+    CHECK(controller.leaveMergetool());
+    waitFinished(launcher, 1, controller);
+    CHECK(readFile(target) == attached);
+    CHECK(controller.files()->hasRecoveryFailure(fileId.toStdString()));
 }
 
 void rejectDuplicate(const Repository &repo, ApplicationController &controller, QProcess &parent)
@@ -708,6 +772,112 @@ int main(int argc, char **argv)
             waitFinished(launcher, 1, controller);
             CHECK(readFile(target) == "launch bytes\n");
             CHECK(controller.files()->hasRecoveryFailure(fileId.toStdString()));
+        }
+    });
+    // TRUCE-0101: a launcher that finds no window starts one on the path Git
+    // launched. That window restores through the same restoreRecovery call and
+    // must reach the same adoption when the waiting launcher attaches.
+    suite.run("TRUCE-0101 a launcher-started window restores a copied launch path and Mark resolved releases the launcher", [] {
+        Repository repo("launch bytes\n", "excluded stays conflicted\n");
+        ScopedEnvironment environment(repo.environment);
+        storeBeforeCopiedLaunch(repo);
+        const auto target = repo.path("tracked.txt");
+        ApplicationController controller;
+        SpawnedLauncher launcher(repo);
+        launcher.start();
+        pump([&] { return launcher.spawned() || launcher.process.state() == QProcess::NotRunning; },
+             QStringLiteral("the launcher did not start a session"));
+        CHECK(launcher.spawned());
+        const auto launched = launcher.checkSpawnArguments();
+        CHECK(launcher.process.state() == QProcess::Running);
+        openController(controller, repo, launched);
+        CHECK(controller.selectedFileId() == launched);
+        CHECK(opened(controller, "tracked.txt").current().draft.text.starts_with("recovered edit\n"));
+        pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; }, controller.commandMessage());
+        pump([&] { return !controller.files()->hasRecoveryFailure(launched.toStdString()); },
+             QStringLiteral("the launcher-started window kept the copied launch error: ")
+                 + recoveryError(controller, "tracked.txt"));
+        CHECK(controller.editResult(launched, revisionOf(opened(controller, "tracked.txt")), 0, 0,
+            QStringLiteral("reviewed in the started window\n")));
+        const auto expected = opened(controller, "tracked.txt").current().draft.text;
+        CHECK(expected.starts_with("reviewed in the started window\nrecovered edit\n"));
+        CHECK(controller.markResolved(launched, revisionOf(opened(controller, "tracked.txt")), true));
+        launcher.finish(0);
+        CHECK(readFile(target) == QByteArray::fromStdString(expected));
+        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+    });
+    // TRUCE-0101: the load validated Git's copy of tracked.txt. Before the
+    // launcher attached, the file changed again: a new same-byte copy, which
+    // still matches the launcher's MERGED digest, or other bytes, which do not.
+    // Neither file is the one validation saw, so the adoption refuses.
+    suite.run("TRUCE-0101 a copied launch path that changed after recovery validation keeps its recovery error on attach", [] {
+        for (const auto &change : {QStringLiteral("copied"), QStringLiteral("edited")}) {
+            Repository repo("launch bytes\n", "excluded stays conflicted\n");
+            ScopedEnvironment environment(repo.environment);
+            storeBeforeCopiedLaunch(repo);
+            const auto target = repo.path("tracked.txt");
+            ApplicationController controller;
+            openController(controller, repo);
+            CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
+            if (change == QStringLiteral("copied")) copyInPlace(target);
+            else writeFile(target, "written by another editor\n");
+            const auto expected = readFile(target);
+            QTemporaryDir sides;
+            QProcess launcher;
+            attachLauncher(launcher, repo, sides, controller);
+            if (change == QStringLiteral("copied")) {
+                pump([&] { return recoveryError(controller, "tracked.txt") != copiedLaunchFailure(); },
+                     change + QStringLiteral(": the attach did not settle the copied launch"));
+                CHECK(recoveryError(controller, "tracked.txt").contains(QStringLiteral("changed after recovery validation")));
+            } else {
+                // The launcher's MERGED digest is not the launch bytes, so nothing is checked.
+                holdFor(800, [&] { return recoveryError(controller, "tracked.txt") == copiedLaunchFailure(); },
+                        change + QStringLiteral(": the recovery error changed"));
+            }
+            checkCopiedLaunchRefused(controller, launcher, target, expected, expected);
+        }
+    });
+    // TRUCE-0102: an outside write lands while Git inspects the index for the
+    // late attach's revalidation, after its first file check passed. The
+    // revalidation's final file check, or the adoption after it, sees the
+    // write, so the error stays. "none" holds Git the same way and changes
+    // nothing, so the wrapper itself does not fail the check.
+    suite.run("TRUCE-0102 an outside write while the late attach revalidates keeps the recovery error", [] {
+        for (const auto &change : {QStringLiteral("none"), QStringLiteral("edited"), QStringLiteral("copied")}) {
+            Repository repo("launch bytes\n", "excluded stays conflicted\n");
+            ScopedEnvironment environment(repo.environment);
+            storeBeforeCopiedLaunch(repo);
+            const auto target = repo.path("tracked.txt");
+            ApplicationController controller;
+            openController(controller, repo);
+            CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
+            mergetool_fixture::GitGate gate("tracked.txt");
+            gate.close(QStringLiteral("ls-files"));
+            QTemporaryDir sides;
+            QProcess launcher;
+            attachLauncher(launcher, repo, sides, controller);
+            pump([&] { return !gate.held().isEmpty(); }, change + QStringLiteral(": the revalidation did not inspect the index"));
+            const auto held = gate.held();
+            CHECK(held.size() == 1);
+            CHECK(gate.arguments(held.front()).contains("ls-files --stage -z -- tracked.txt"));
+            gate.open();
+            CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
+            if (change == QStringLiteral("edited")) writeFile(target, "written by another editor\n");
+            if (change == QStringLiteral("copied")) copyInPlace(target);
+            const auto outside = readFile(target);
+            gate.release(held.front());
+            pump([&] { return recoveryError(controller, "tracked.txt") != copiedLaunchFailure(); },
+                 change + QStringLiteral(": the revalidation did not settle the copied launch"));
+            if (change == QStringLiteral("none")) {
+                CHECK(!controller.files()->hasRecoveryFailure(QByteArray("tracked.txt").toHex().toStdString()));
+                select(controller, "tracked.txt");
+                CHECK(controller.leaveMergetool());
+                waitFinished(launcher, 1, controller);
+                CHECK(readFile(target) == "launch bytes\n");
+                continue;
+            }
+            CHECK(recoveryError(controller, "tracked.txt").contains(QStringLiteral("index or conversion policy")));
+            checkCopiedLaunchRefused(controller, launcher, target, outside, "launch bytes\n");
         }
     });
     suite.run("TRUCE-0065 a session that listens after the GUI start is attached within the deadline", [] {

@@ -4,6 +4,7 @@
 
 #include "app/ApplicationController.h"
 #include "app/MergetoolProtocol.h"
+#include "fixtures/mergetool/GitGate.h"
 #include "fixtures/mergetool/RealParent.h"
 #include "TestHarness.h"
 
@@ -366,6 +367,63 @@ int main(int argc, char **argv)
             CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
             waitForWaiter(controller, "tracked.txt");
             const auto id = select(controller, "tracked.txt");
+            holdFor(800, [&] {
+                return controller.files()->hasRecoveryFailure(id.toStdString())
+                    && parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexChanged;
+            }, QString::fromLatin1(change) + QStringLiteral(": the recovery error cleared or the parent was released | ")
+                + controller.commandMessage());
+            CHECK(!controller.editResult(id, revisionOf(controller, "tracked.txt"), 0, 0, QStringLiteral("edited\n")));
+            CHECK(!controller.markResolved(id, revisionOf(controller, "tracked.txt"), true));
+            CHECK(controller.leaveMergetool());
+            waitParent(*parent, 1, controller.commandMessage());
+            CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+            CHECK(repo.index() == indexChanged);
+            CHECK(!opened(controller, "tracked.txt").facts().resolved);
+        }
+    });
+
+    // TRUCE-0102: the restore after the choice validates the index and policy
+    // itself, so the case above keeps its error even without the revalidation.
+    // Here both change after the restore and while the revalidation that the
+    // choice starts waits on its first index inspection, so only the
+    // revalidation can see them.
+    suite.run("a path staged or a conversion policy changed while a recovery choice revalidates the launched path keeps its recovery error", [] {
+        for (const QByteArray &change : {QByteArray("staged"), QByteArray("autocrlf")}) {
+            ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
+                                                   conflict("other.txt", "other launch bytes\n")});
+            ScopedEnvironment environment(repo.environment);
+            const auto session = twoEditedStores(repo);
+            ApplicationController controller;
+            openController(controller, repo);
+            auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
+            waitForWaiter(controller, "tracked.txt");
+            GitGate gate("tracked.txt");
+            gate.close(QStringLiteral("ls-files"));
+            CHECK(controller.chooseRecoverySession(session));
+            // Calls held while the load runs are the restore's. The load
+            // completes on this thread, so a call held after it is the
+            // revalidation's.
+            QString revalidation;
+            pump([&] {
+                for (const auto &call : gate.held()) {
+                    if (!controller.opening()) {
+                        revalidation = call;
+                        return true;
+                    }
+                    gate.release(call);
+                }
+                return false;
+            }, QString::fromLatin1(change) + QStringLiteral(": no revalidation after the choice | ") + controller.detail());
+            CHECK(gate.held() == QStringList{revalidation});
+            CHECK(gate.arguments(revalidation).contains("ls-files --stage -z -- tracked.txt"));
+            gate.open();
+            CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
+            const auto id = select(controller, "tracked.txt");
+            CHECK(controller.files()->hasRecoveryFailure(id.toStdString()));
+            if (change == "staged") repo.git({"add", "--", "tracked.txt"});
+            else repo.git({"config", "core.autocrlf", "true"});
+            const auto indexChanged = repo.index();
+            gate.release(revalidation);
             holdFor(800, [&] {
                 return controller.files()->hasRecoveryFailure(id.toStdString())
                     && parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexChanged;
