@@ -17,6 +17,7 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QFontMetricsF>
+#include <QLockFile>
 #include <QMap>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -27,6 +28,7 @@
 #include <QTest>
 #include <QTextLayout>
 #include <QWheelEvent>
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -1646,6 +1648,131 @@ public:
                         [&] { return firstUndecidedInView(scene).empty(); }, [&] { return firstUndecidedInView(scene); });
             }
             checkOffline(scene);
+        });
+        suite.run("TRUCE-0126 a choice clears hand edits on a line deleted in the editor and on text an edit left unchanged", [] {
+            // The left side changes two lines in one section, and the user set the result to it before launch.
+            const QByteArray left = "header\nleft first\nleft second\nbridge\nleft later\ntail\n";
+            Repository repo("merge", {{"pair.txt", QByteArray("header\nbase first\nbase second\nbridge\nbase later\ntail\n"),
+                                       left, QByteArray("header\nright first\nright second\nbridge\nright later\ntail\n"),
+                                       left}});
+            Scene scene(repo);
+            clickFile(scene, "pair.txt");
+            scene.click("showSourceChoices");
+            const auto region = [&](const char *label) { return regionFor(scene, QString::fromUtf8(label)); };
+            const auto edited = [&](const char *label) {
+                return region(label).value(QStringLiteral("handEdited")).toBool();
+            };
+            const auto noneEdited = [&] {
+                const auto regions = scene.controller->selectedFile().value(QStringLiteral("regions")).toList();
+                return std::none_of(regions.begin(), regions.end(), [](const QVariant &value) {
+                    return value.toMap().value(QStringLiteral("handEdited")).toBool();
+                });
+            };
+            auto *editor = scene.item("resultText");
+            const auto toLine = [&](int line) {
+                clickText(scene, editor);
+                CHECK(editor->hasActiveFocus());
+                keyClick(scene, Qt::Key_Home, Qt::ControlModifier);
+                for (int step = 1; step < line; ++step) keyClick(scene, Qt::Key_Down);
+            };
+
+            // Deleting a line of the section in the editor leaves its region marked but without a result range.
+            toLine(2);
+            keyClick(scene, Qt::Key_Down, Qt::ShiftModifier);
+            keyClick(scene, Qt::Key_Delete);
+            expectText(scene.text("resultText"), "header\nleft second\nbridge\nleft later\ntail\n", "deleted line");
+            CHECK(edited("Left line 2") && !region("Left line 2").value(QStringLiteral("mapped")).toBool());
+            const auto deleted = work(scene, "pair.txt");
+            // Accepting the section around it puts the line back and clears the mark.
+            clickChoice(scene, QString::fromUtf8("Left section, lines 2–3"), "Accept");
+            CHECK(scene.item("manualReplacementNotice")->isVisible());
+            clickDialogButton(scene, "replacementDialog", "OK");
+            expectText(scene.text("resultText"), utf8(left), "restored line");
+            CHECK(noneEdited());
+            CHECK(region("Left line 2").value(QStringLiteral("state")).toString() == QStringLiteral("accepted"));
+            const auto restored = work(scene, "pair.txt");
+            scene.click("undoCommand");
+            CHECK(work(scene, "pair.txt") == deleted && edited("Left line 2"));
+            scene.click("redoCommand");
+            CHECK(work(scene, "pair.txt") == restored && noneEdited());
+
+            // Typing a character and deleting it again leaves the text as the whole left side but marks it.
+            const auto wholeLeft = [&] {
+                scene.click("sourceChoicesMenu");
+                test_support::clickItem(scene.window,
+                    test_support::waitForLayout(scene.window, QStringLiteral("wholeFileLeft"), Scene::settleMs));
+                clickDialogButton(scene, "wholeFileDialog", "Apply");
+            };
+            wholeLeft();
+            expectText(scene.text("resultText"), utf8(left), "whole left");
+            CHECK(noneEdited());
+            toLine(2);
+            keyClick(scene, Qt::Key_End);
+            typeText(scene, "X");
+            keyClick(scene, Qt::Key_Backspace);
+            expectText(scene.text("resultText"), utf8(left), "typed and deleted");
+            CHECK(!noneEdited());
+            const auto manual = work(scene, "pair.txt");
+            const auto manualRegions = scene.controller->selectedFile().value(QStringLiteral("regions"));
+            // The same whole-file choice keeps the text and decisions but replaces the edit.
+            wholeLeft();
+            expectText(scene.text("resultText"), utf8(left), "whole left again");
+            CHECK(noneEdited() && scene.file("pair.txt").current().draft == manual.draft);
+            scene.click("undoCommand");
+            CHECK(work(scene, "pair.txt") == manual);
+            CHECK(scene.controller->selectedFile().value(QStringLiteral("regions")) == manualRegions);
+            scene.click("redoCommand");
+            CHECK(noneEdited());
+            checkOffline(scene);
+        });
+        suite.run("TRUCE-0116 closing with input recovery could not keep asks to retry, and cancel keeps the window open", [] {
+            Repository repo("merge", {{"kept.txt", QByteArray("kept base\n"), QByteArray("kept left\n"),
+                                       QByteArray("kept right\n"), QByteArray("kept by hand\n")}});
+            const auto launched = repo.snapshot();
+            {
+                Scene scene(repo);
+                clickFile(scene, "kept.txt");
+                auto &files = *scene.controller->files();
+                auto *prompt = scene.object("recoveryCloseDialog");
+                auto *handoff = scene.object("handoffDialog");
+                const auto closeWindow = [&] {
+                    scene.window->close();
+                    settleFor("close guard opened", [&] { return prompt->property("opened").toBool(); });
+                    CHECK(scene.window->isVisible() && !handoff->property("visible").toBool());
+                };
+                {
+                    // Another holder of the journal lock makes the recovery commit fail, so the typed input
+                    // stays pending.
+                    QLockFile busy(files.recoveryDirectory() + QStringLiteral("/journal.lock"));
+                    CHECK(busy.tryLock(0));
+                    appendToResult(scene, "!");
+                    settleFor("pending recovery", [&] { return files.hasPendingRecovery(); });
+                    CHECK(scene.item("recoveryProblem")->isVisible());
+                    closeWindow();
+                    expectContains(prompt->property("subtitle").toString(), "Retry before closing", "close guard");
+                    clickDialogButton(scene, "recoveryCloseDialog", "Cancel");
+                    CHECK(scene.window->isVisible() && files.hasPendingRecovery() && !handoff->property("visible").toBool());
+                    // Retrying while the journal is still busy keeps the input pending and the window open.
+                    closeWindow();
+                    clickDialogButton(scene, "recoveryCloseDialog", "Retry");
+                    CHECK(scene.window->isVisible() && files.hasPendingRecovery() && !handoff->property("visible").toBool());
+                    closeWindow();
+                }
+                // With the journal free, Retry keeps the input and the close goes on to the handoff.
+                clickDialogButton(scene, "recoveryCloseDialog", "Retry");
+                settleFor("handoff opened after retry", [&] { return handoff->property("opened").toBool(); });
+                CHECK(scene.window->isVisible() && !files.hasPendingRecovery());
+                expectText(QString::fromStdString(scene.file("kept.txt").current().draft.text), "kept by hand\n!", "kept input");
+                scene.click("handoffLeave");
+                CHECK(!scene.controller->sessionOutcome().isEmpty());
+                checkOffline(scene);
+            }
+            CHECK(repo.snapshot() == launched);
+            // The retried input is what a new window restores.
+            Scene reopened(repo);
+            clickFile(reopened, "kept.txt");
+            expectText(reopened.text("resultText"), "kept by hand\n!", "restored input");
+            checkOffline(reopened);
         });
         return suite.report();
     }
