@@ -66,6 +66,13 @@ struct RecoveryRestore {
 // The recovery error of a copiedLaunches entry.
 [[nodiscard]] QString copiedLaunchFailure();
 
+// Worker-only, read-only. Before a waiting launcher clears a copiedLaunches
+// error: empty while the file still has the identity validation observed and
+// the launch bytes, and its index entries and conversion policy still match
+// the capture. Otherwise the error that replaces copiedLaunchFailure.
+[[nodiscard]] QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
+    const git::RepositoryContext &repository, const QString &gitExecutable);
+
 // Worker-only, read-only repository inspection. Ambiguous inventories and
 // mismatched identities fail closed; no worktree/index mutation is retried.
 // When several stores match, stores holding only launch captures are set

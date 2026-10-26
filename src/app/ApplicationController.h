@@ -105,7 +105,8 @@ public:
     bool verifyParentAcknowledgment(const QString &fileId, const QString &revision);
     // Clears the recovery error of a restored file that git mergetool replaced
     // by a same-byte copy, once a launcher waits on its path with a MERGED copy
-    // of the launch bytes and the file still has the identity recovery saw.
+    // of the launch bytes, the file still has the identity recovery saw, and a
+    // background check finds its index entries and conversion policy unchanged.
     void acceptCopiedLaunches();
     [[nodiscard]] std::optional<ResolutionPublisher::Offer> parentStagingOffer(const QString &fileId) const;
     [[nodiscard]] bool mergetoolListening() const;
@@ -175,6 +176,8 @@ private:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void classified(const git::ConflictClassificationResult &result);
     void loadWorkingFiles(QList<git::Conflict> conflicts);
+    [[nodiscard]] bool launchedWithCapturedBytes(const FileSession &file) const;
+    void settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity, const QString &failure);
     void setState(QString state, QString detail);
     bool commandResult(Transition result);
     void captureResultEdit();
@@ -200,6 +203,8 @@ private:
     std::vector<RecoveryChoice> recoveryChoices_;
     // Restored files that only a waiting launcher can clear; see RecoveryRestore.
     std::map<std::string, SnapshotFileIdentity> copiedLaunches_;
+    // The revalidation task in flight for a copiedLaunches_ entry.
+    std::map<std::string, TaskId> copiedLaunchChecks_;
     std::optional<ChoicePreview> preview_;
     std::optional<NonConflictingPreview> nonConflictingPreview_;
     std::optional<WholeFilePreview> wholeFilePreview_;

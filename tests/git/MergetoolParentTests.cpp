@@ -294,7 +294,8 @@ int main(int argc, char **argv)
         CHECK(opened(controller, "tracked.txt").snapshots()->launchResult.text.bytes == "launch bytes\n");
         waitForWaiter(controller, "tracked.txt");
         const auto id = select(controller, "tracked.txt");
-        CHECK(!controller.files()->hasRecoveryFailure(id.toStdString()));
+        // TRUCE-0102: Git rechecks the index and conversion policy before the error clears.
+        pump([&] { return !controller.files()->hasRecoveryFailure(id.toStdString()); }, controller.commandMessage());
         CHECK(controller.mergetoolWaiting());
         editDraft(controller, "tracked.txt", QStringLiteral("reviewed after the choice\n"));
         const auto expected = QByteArray::fromStdString(draftOf(controller, "tracked.txt"));
@@ -341,6 +342,43 @@ int main(int argc, char **argv)
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
         CHECK(draftOf(controller, "tracked.txt") == draft);
         CHECK(!controller.mergetoolHasWaiter("tracked.txt"));
+    });
+
+    // TRUCE-0102: the waiting launcher's MERGED copy still holds the launch
+    // bytes, but the index entries or the conversion policy changed since the
+    // store captured the path, so the restored draft keeps its recovery error.
+    suite.run("a staged launched path or a changed conversion policy before a recovery choice keeps its recovery error", [] {
+        for (const QByteArray &change : {QByteArray("staged"), QByteArray("autocrlf")}) {
+            ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
+                                                   conflict("other.txt", "other launch bytes\n")});
+            ScopedEnvironment environment(repo.environment);
+            const auto session = twoEditedStores(repo);
+            ApplicationController controller;
+            openController(controller, repo);
+            auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
+            waitForWaiter(controller, "tracked.txt");
+            CHECK(readFile(controller.mergetoolIntakes().front() + "/merged") == "launch bytes\n");
+            if (change == "staged") repo.git({"add", "--", "tracked.txt"});
+            else repo.git({"config", "core.autocrlf", "true"});
+            const auto indexChanged = repo.index();
+            CHECK(controller.chooseRecoverySession(session));
+            pump([&] { return !controller.opening(); }, controller.detail());
+            CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
+            waitForWaiter(controller, "tracked.txt");
+            const auto id = select(controller, "tracked.txt");
+            holdFor(800, [&] {
+                return controller.files()->hasRecoveryFailure(id.toStdString())
+                    && parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexChanged;
+            }, QString::fromLatin1(change) + QStringLiteral(": the recovery error cleared or the parent was released | ")
+                + controller.commandMessage());
+            CHECK(!controller.editResult(id, revisionOf(controller, "tracked.txt"), 0, 0, QStringLiteral("edited\n")));
+            CHECK(!controller.markResolved(id, revisionOf(controller, "tracked.txt"), true));
+            CHECK(controller.leaveMergetool());
+            waitParent(*parent, 1, controller.commandMessage());
+            CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+            CHECK(repo.index() == indexChanged);
+            CHECK(!opened(controller, "tracked.txt").facts().resolved);
+        }
     });
 
     suite.run("bytes the parent stages after the launcher are not acknowledged as the reviewed result", [] {

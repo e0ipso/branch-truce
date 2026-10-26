@@ -255,6 +255,11 @@ ApplicationController::ApplicationController(QObject *parent)
         Q_EMIT commandChanged();
     });
     connect(&mergetool_, &MergetoolSession::changed, this, [this] { Q_EMIT commandChanged(); });
+    // A fenced revalidation never completes; the next attach may check again.
+    connect(&coordinator_, &SessionCoordinator::taskFinished, this, [this](const TaskCompletion &completion) {
+        if (completion.disposition == TaskDisposition::Current) return;
+        std::erase_if(copiedLaunchChecks_, [&](const auto &check) { return check.second == completion.stamp.id; });
+    });
     connect(&files_, &SessionModel::summaryChanged, this, [this] {
         if (!files_.file(selectedFileId_.toStdString())) {
             if (!preferredFileId_.isEmpty() && files_.file(preferredFileId_.toStdString())) {
@@ -1503,30 +1508,66 @@ QVariantList ApplicationController::recoveryChoices() const
     return result;
 }
 
+bool ApplicationController::launchedWithCapturedBytes(const FileSession &file) const
+{
+    const auto launch = QCryptographicHash::hash(QByteArray::fromStdString(file.snapshots()->launchResult.text.bytes),
+        QCryptographicHash::Sha256).toHex();
+    return mergetool_.waitingMergedSha256(QByteArray::fromStdString(file.path())) == launch;
+}
+
 void ApplicationController::acceptCopiedLaunches()
 {
-    bool settled = false;
     for (auto entry = copiedLaunches_.begin(); entry != copiedLaunches_.end();) {
         const auto *file = files_.file(entry->first);
         if (!file || !file->snapshots() || !files_.hasRecoveryFailure(entry->first)) {
+            copiedLaunchChecks_.erase(entry->first);
             entry = copiedLaunches_.erase(entry);
             continue;
         }
-        const auto launch = QCryptographicHash::hash(QByteArray::fromStdString(file->snapshots()->launchResult.text.bytes),
-            QCryptographicHash::Sha256).toHex();
-        if (mergetool_.waitingMergedSha256(QByteArray::fromStdString(file->path())) != launch) {
+        if (copiedLaunchChecks_.contains(entry->first) || !launchedWithCapturedBytes(*file)) {
             ++entry;
             continue;
         }
-        // Git launched this path with the launch bytes. The copy must still be
-        // the file recovery validated; any later change keeps the path failed.
-        settled |= publisher_.adoptCopiedLaunch(entry->first, entry->second)
-            ? files_.settleRecoveryFailure(entry->first, copiedLaunchFailure())
-            : files_.settleRecoveryFailure(entry->first, copiedLaunchFailure(),
-                tr("Recovered draft retained, but the repository file changed after recovery validation. "
-                   "Work remains outstanding; no publication is authorized."));
-        entry = copiedLaunches_.erase(entry);
+        // Git launched this path with the launch bytes. The index and the
+        // conversion policy may have changed since the restore validated them,
+        // so Git inspects both again off the GUI thread before the error clears.
+        const auto fileId = entry->first;
+        const auto identity = entry->second;
+        const auto task = coordinator_.submit(fileId, file->current().id,
+            [snapshots = *file->snapshots(), identity, repository = repository_,
+             executable = QStandardPaths::findExecutable(QStringLiteral("git"))](const TaskInput &, const TaskControl &) {
+                TaskResult result;
+                result.diagnostic = revalidateCopiedLaunch(snapshots, identity, repository, executable);
+                return result;
+            },
+            [this, fileId, identity](const TaskCompletion &completion) {
+                copiedLaunchChecks_.erase(fileId);
+                settleCopiedLaunch(fileId, identity, completion.result.diagnostic);
+            });
+        if (task != 0) copiedLaunchChecks_.insert_or_assign(fileId, task);
+        ++entry;
     }
+}
+
+void ApplicationController::settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
+    const QString &failure)
+{
+    const auto entry = copiedLaunches_.find(fileId);
+    if (entry == copiedLaunches_.end() || entry->second != identity) return;
+    const auto *file = files_.file(fileId);
+    if (!file || !file->snapshots() || !files_.hasRecoveryFailure(fileId)) {
+        copiedLaunches_.erase(entry);
+        return;
+    }
+    // The launcher left while Git inspected the path; a later attach checks again.
+    if (!launchedWithCapturedBytes(*file)) return;
+    // The copy must still be the file recovery validated; any change keeps the path failed.
+    const bool settled = failure.isEmpty() && publisher_.adoptCopiedLaunch(fileId, identity)
+        ? files_.settleRecoveryFailure(fileId, copiedLaunchFailure())
+        : files_.settleRecoveryFailure(fileId, copiedLaunchFailure(), !failure.isEmpty() ? failure
+            : tr("Recovered draft retained, but the repository file changed after recovery validation. "
+                 "Work remains outstanding; no publication is authorized."));
+    copiedLaunches_.erase(entry);
     if (settled) Q_EMIT commandChanged();
 }
 
@@ -1674,6 +1715,7 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
             const bool recovered = recovery->found;
             auto choices = recovery->choices;
             copiedLaunches_.clear();
+            copiedLaunchChecks_.clear();
             auto copiedLaunches = recovery->copiedLaunches;
             const bool replaced = completion.result.status == TaskStatus::Succeeded
                 && coordinator_.completeRecoveryLoad(completion.stamp, std::move(*loaded), std::move(*recovery));

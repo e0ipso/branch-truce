@@ -1,6 +1,7 @@
 #include "app/ApplicationController.h"
 #include "app/MergetoolLauncher.h"
 #include "app/MergetoolProtocol.h"
+#include "app/RecoveryRestore.h"
 #include "TestHarness.h"
 
 #include <QCoreApplication>
@@ -273,6 +274,17 @@ void waitFinished(QProcess &process, int expected, ApplicationController &contro
 QString revisionOf(const FileSession &file)
 {
     return QString::number(static_cast<qulonglong>(file.current().id));
+}
+
+QString recoveryError(ApplicationController &controller, const QByteArray &path)
+{
+    auto *files = controller.files();
+    for (int row = 0; row < files->totalFiles(); ++row) {
+        const auto index = files->index(row);
+        if (files->data(index, SessionModel::FileIdRole).toString() == QString::fromLatin1(path.toHex()))
+            return files->data(index, SessionModel::RecoveryErrorRole).toString();
+    }
+    throw std::runtime_error("no file row for " + path.toStdString());
 }
 
 // Environment for a launcher started directly on tracked.txt, without a Git parent.
@@ -643,6 +655,60 @@ int main(int argc, char **argv)
         // Only the parent stages the path, and the app waits for that acknowledgment.
         CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
+    });
+    // TRUCE-0102: a store captured tracked.txt before Git replaced it by a copy
+    // with the same bytes, and the window restored it before the launcher
+    // attached. The attach used to recheck only the file, so staging the path or
+    // changing core.autocrlf in between still cleared the recovery error.
+    suite.run("TRUCE-0102 a late launcher clears a copied launch path's recovery error only while its index and conversion policy match", [] {
+        for (const auto &change : {QStringLiteral("none"), QStringLiteral("staged"), QStringLiteral("autocrlf")}) {
+            Repository repo("launch bytes\n", "excluded stays conflicted\n");
+            ScopedEnvironment environment(repo.environment);
+            const auto fileId = QString::fromLatin1(QByteArray("tracked.txt").toHex());
+            {
+                ApplicationController before;
+                openController(before, repo);
+                CHECK(before.files()->editResult(fileId.toStdString(), opened(before, "tracked.txt").current().id,
+                    {{0, 0}, "recovered edit\n"}) == Transition::Applied);
+            }
+            const auto target = repo.path("tracked.txt");
+            CHECK(QFile::rename(target, target + ".moved") && QFile::copy(target + ".moved", target));
+            CHECK(QFile::remove(target + ".moved"));
+            ApplicationController controller;
+            openController(controller, repo);
+            CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
+            if (change == QStringLiteral("staged")) repo.git({"add", "--", "tracked.txt"});
+            if (change == QStringLiteral("autocrlf")) repo.git({"config", "core.autocrlf", "true"});
+            QTemporaryDir sides;
+            QProcess launcher;
+            launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
+            launcher.setWorkingDirectory(repo.root);
+            launcher.start(launcherBinary, {"--mergetool"});
+            CHECK(launcher.waitForStarted(5000));
+            pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; }, controller.commandMessage());
+            pump([&] { return recoveryError(controller, "tracked.txt") != copiedLaunchFailure(); },
+                 change + QStringLiteral(": the attach did not settle the copied launch"));
+            select(controller, "tracked.txt");
+            const auto revision = revisionOf(opened(controller, "tracked.txt"));
+            if (change == QStringLiteral("none")) {
+                CHECK(!controller.files()->hasRecoveryFailure(fileId.toStdString()));
+                CHECK(controller.editResult(fileId, revision, 0, 0, QStringLiteral("reviewed after the attach\n")));
+                const auto expected = opened(controller, "tracked.txt").current().draft.text;
+                CHECK(controller.markResolved(fileId, revisionOf(opened(controller, "tracked.txt")), true));
+                waitFinished(launcher, 0, controller);
+                CHECK(readFile(target) == QByteArray::fromStdString(expected));
+                CHECK(unmerged(repo, "tracked.txt"));
+                continue;
+            }
+            CHECK(controller.files()->hasRecoveryFailure(fileId.toStdString()));
+            CHECK(!controller.editResult(fileId, revision, 0, 0, QStringLiteral("edited after the attach\n")));
+            CHECK(!controller.markResolved(fileId, revision, true));
+            CHECK(readFile(target) == "launch bytes\n");
+            CHECK(controller.leaveMergetool());
+            waitFinished(launcher, 1, controller);
+            CHECK(readFile(target) == "launch bytes\n");
+            CHECK(controller.files()->hasRecoveryFailure(fileId.toStdString()));
+        }
     });
     suite.run("TRUCE-0065 a session that listens after the GUI start is attached within the deadline", [] {
         Repository repo("attached after the spawn\n", "excluded stays conflicted\n");

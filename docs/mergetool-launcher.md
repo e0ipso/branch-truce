@@ -157,6 +157,10 @@ These behaviours pass and are the compatibility declaration:
   draft with a recovery error, and Mark resolved refuses it. Git stays blocked
   and nothing is staged. Leave then makes the launcher exit 1, `MERGED` holds
   the launch bytes and `git ls-files --stage` does not change.
+- Staging the launched path or setting `core.autocrlf` before that choice also
+  keeps the recovery error, although `MERGED` still holds the launch bytes.
+  Editing and Mark resolved are refused, Git stays blocked, and Leave makes the
+  launcher exit 1 with `MERGED` holding the launch bytes.
 - Each invocation gets its own intake. Its copies match Git's LOCAL, REMOTE
   and BASE files while the tool runs, and stay after Git deletes those files.
 - Running `git mergetool` with no paths visits unmerged paths in name order.

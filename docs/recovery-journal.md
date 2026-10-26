@@ -160,13 +160,17 @@ the same bytes. The restore treats only that change as a copy: bytes, mode,
 size, device, index entries and conversion policy must all still match the
 launch capture, and the files loaded for the restore must already show the
 copy. The path keeps a recovery error until a launcher waits on it whose
-`MERGED` copy holds the captured launch bytes, and the file still has the
-identity the restore validated. Then the error clears, the copy becomes the
-launch destination, and Mark resolved hands the path back to Git. This happens
-right after an in-window choice, or when the launcher attaches to a window it
-started. Any other change keeps the error: different bytes, mode or index
-entries, a changed conversion policy, or a file that changed after validation.
-Leaving such a path returns it to Git unresolved.
+`MERGED` copy holds the captured launch bytes. A launcher can attach long after
+the restore, so Git then inspects the path's index entries and conversion
+policy again in the background. The error clears only when the file still has
+the identity the restore validated and the index entries and policy still
+match the capture. Then the copy becomes the launch destination, and Mark
+resolved hands the path back to Git. This happens right after an in-window
+choice, or when the launcher attaches to a window it started. Any other change
+keeps the error: different bytes, mode or index entries, a changed conversion
+policy, or a file, index or policy that changed after the restore, such as a
+staged path or a new `core.autocrlf`. Leaving such a path returns it to Git
+unresolved.
 
 The restore adapter replays the existing domain transitions and compares every
 complete state with its canonical encoding. This validates the state schema,

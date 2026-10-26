@@ -213,6 +213,16 @@ bool originalIndex(const QList<git::IndexEntry> &entries, const FileSnapshots &s
     return true;
 }
 
+ConversionSnapshot conversionSnapshot(const git::ConversionPolicy &live)
+{
+    ConversionSnapshot policy;
+    for (auto it = live.attributes.cbegin(); it != live.attributes.cend(); ++it)
+        policy.attributes.emplace(it.key().toStdString(), it.value().toStdString());
+    for (auto it = live.configuration.cbegin(); it != live.configuration.cend(); ++it)
+        policy.configuration.emplace(it.key().toStdString(), it.value().toStdString());
+    return policy;
+}
+
 std::optional<QByteArray> stagedIdentity(const FileSession &file, const Revision &revision,
     const QList<git::IndexEntry> &entries, const git::RepositoryContext &repository, const QString &executable)
 {
@@ -228,12 +238,7 @@ std::optional<QByteArray> stagedIdentity(const FileSession &file, const Revision
     request.path = path;
     request.input = *bytes;
     const auto canonical = inspect(executable, request);
-    ConversionSnapshot policy;
-    for (auto it = canonical.conversionPolicy.attributes.cbegin(); it != canonical.conversionPolicy.attributes.cend(); ++it)
-        policy.attributes.emplace(it.key().toStdString(), it.value().toStdString());
-    for (auto it = canonical.conversionPolicy.configuration.cbegin(); it != canonical.conversionPolicy.configuration.cend(); ++it)
-        policy.configuration.emplace(it.key().toStdString(), it.value().toStdString());
-    if (canonical.outcome != git::Outcome::Success || policy != snapshots->conversion
+    if (canonical.outcome != git::Outcome::Success || conversionSnapshot(canonical.conversionPolicy) != snapshots->conversion
         || canonical.canonicalObjectId != entries.front().objectId) return {};
     return canonical.canonicalObjectId;
 }
@@ -357,6 +362,36 @@ QString copiedLaunchFailure()
 {
     return QStringLiteral("Recovered draft retained, but the repository file was replaced by a copy with the same bytes. "
         "Work remains outstanding unless git mergetool is waiting on this path with those bytes.");
+}
+
+QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
+    const git::RepositoryContext &repository, const QString &executable)
+{
+    const auto path = QByteArray::fromStdString(captured.path);
+    const auto validatedFile = [&] {
+        const auto disk = storage::captureDestination(repository.worktreeRoot, path);
+        return disk.destination && disk.destination->identity() == identity
+            && disk.destination->bytes() == QByteArray::fromStdString(captured.launchResult.text.bytes);
+    };
+    git::Request indexRequest;
+    indexRequest.operation = git::Operation::InspectIndex;
+    indexRequest.directory = repository.worktreeRoot;
+    indexRequest.path = path;
+    git::Request policyRequest = indexRequest;
+    policyRequest.operation = git::Operation::ReadAttributes;
+    const auto changed = QStringLiteral("Recovered draft retained, but the repository file, index or conversion policy "
+        "changed after recovery validation. Work remains outstanding; no publication is authorized.");
+    if (!validatedFile()) return changed;
+    const auto index = inspect(executable, indexRequest);
+    if (index.outcome != git::Outcome::Success || !originalIndex(index.indexEntries, captured)) return changed;
+    const auto policy = inspect(executable, policyRequest);
+    if (policy.outcome != git::Outcome::Success || conversionSnapshot(policy.conversionPolicy) != captured.conversion)
+        return changed;
+    // As in the restore, the file and index must not move while Git inspected them.
+    const auto finalIndex = inspect(executable, indexRequest);
+    if (!validatedFile() || finalIndex.outcome != git::Outcome::Success || finalIndex.standardOutput != index.standardOutput)
+        return changed;
+    return {};
 }
 
 storage::RecoveryTransaction mutationRecoveryTransaction(const FileSession &file, const QString &kind,
