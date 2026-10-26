@@ -8,7 +8,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QMessageBox>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include <QTextStream>
@@ -28,31 +27,6 @@ void selectControlsStyle(const QQmlEngine &engine)
     QQuickStyle::setStyle(kdeStyle ? QStringLiteral("org.kde.desktop") : QStringLiteral("Fusion"));
     if (kdeStyle) QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
 }
-
-class RecoveryCloseGuard final : public QObject {
-public:
-    explicit RecoveryCloseGuard(branch_truce::SessionModel &model) : model_(model) {}
-protected:
-    bool eventFilter(QObject *object, QEvent *event) override
-    {
-        if (event->type() != QEvent::Close || !model_.hasPendingRecovery())
-            return QObject::eventFilter(object, event);
-        const auto choice = QMessageBox::warning(nullptr, tr("Pending input needs recovery"),
-            tr("Recovery could not keep the pending input. Retry before closing, or cancel to keep this window open."),
-            QMessageBox::Retry | QMessageBox::Cancel, QMessageBox::Cancel);
-        if (choice == QMessageBox::Retry) {
-            for (int row = 0; row < model_.totalFiles(); ++row) {
-                const auto id = model_.data(model_.index(row), branch_truce::SessionModel::FileIdRole).toString();
-                (void)model_.retryPendingRecovery(id);
-            }
-        }
-        if (!model_.hasPendingRecovery()) return QObject::eventFilter(object, event);
-        event->ignore();
-        return true;
-    }
-private:
-    branch_truce::SessionModel &model_;
-};
 }
 
 int main(int argc, char *argv[])
@@ -61,6 +35,8 @@ int main(int argc, char *argv[])
         if (qstrcmp(argv[index], "--mergetool") == 0)
             return branch_truce::runMergetoolLauncher(argc, argv);
     }
+    // QApplication rather than QGuiApplication: the org.kde.desktop style draws its
+    // controls through QApplication::style(). See docs/platform-validation.md.
     QApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("Branch Truce"));
@@ -108,8 +84,6 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty()) {
         return 1;
     }
-    RecoveryCloseGuard recoveryCloseGuard(*controller.files());
-    for (auto *root : engine.rootObjects()) root->installEventFilter(&recoveryCloseGuard);
     // Finish or deliberate leave ends the process; the outcome stays visible
     // in the terminal the user returns to.
     QObject::connect(&controller, &branch_truce::ApplicationController::sessionEnded, &application,

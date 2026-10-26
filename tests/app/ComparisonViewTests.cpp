@@ -1056,7 +1056,8 @@ public:
                 settleFor("handoff reopened for " + id.toStdString(), opened);
                 const auto route = QStringLiteral("handoffRoute-") + id;
                 clickItem(fixture, waitForLayout(fixture, route));
-                settleFor("handoff closed by route " + id.toStdString(), [&] { return !opened(); });
+                // Until its fade-out ends the closing dialog's overlay takes the next click.
+                settleFor("handoff closed by route " + id.toStdString(), [&] { return !dialog->property("visible").toBool(); });
                 if (fixture.controller.selectedFileId() != id)
                     throw std::runtime_error(("route " + id + " selected " + fixture.controller.selectedFileId()).toStdString());
                 CHECK(fixture.controller.selectedFileId() == id);

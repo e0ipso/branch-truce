@@ -380,6 +380,23 @@ builds are found where they are and nothing is moved. A later change that sets
 an organization name leaves the root alone. `app.session-model` pins both: the
 root, and a store written at the earlier path with an organization name set.
 
+### QApplication and the KDE style
+
+The close guard for pending recovery input is now a Kirigami prompt in
+`src/ui/Main.qml`, so the app shows no Qt Widgets dialog. It still starts a
+`QApplication` and links Qt6::Widgets, because the `org.kde.desktop` style needs
+them. Its private plugin `libqqc2desktopstyleplugin.so` links `libQt6Widgets`
+and calls `QApplication::style()`, `QApplication::palette()` and
+`QApplication::font()`.
+
+A build that started a `QGuiApplication` instead still loaded the style.
+`app.startup-appearance` passed, since it checks only the style name. The
+`tools/preview-app.sh` capture on the headless sway output showed the
+difference. Every button and menu label drew its mnemonic underline, and the
+combo box and toolbar menu arrows changed shape. Under `QApplication` neither
+happens. Dropping Qt6::Widgets would need a style that does not draw through
+`QStyle`.
+
 ## What would close the real-desktop rows
 
 On each real desktop: install the artifact with `apt` from the file, record

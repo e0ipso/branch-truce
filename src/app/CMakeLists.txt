@@ -7,6 +7,7 @@ target_include_directories(branch_truce_controller PUBLIC "${CMAKE_CURRENT_SOURC
 target_link_libraries(branch_truce_controller PUBLIC Qt6::Core Qt6::Network Qt6::Quick branch_truce_core branch_truce_git
     PRIVATE branch_truce_storage branch_truce_build_options)
 qt_add_executable(branch-truce main.cpp)
+# Widgets for QApplication, which the org.kde.desktop style draws through.
 target_link_libraries(branch-truce PRIVATE branch_truce_controller Qt6::Widgets
     Qt6::Qml Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
 target_compile_definitions(branch-truce PRIVATE BRANCH_TRUCE_APP_ID="${BRANCH_TRUCE_APP_ID}")

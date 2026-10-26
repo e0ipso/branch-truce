@@ -1226,7 +1226,8 @@ public:
                 if (!opened()) scene.click("openHandoff");
                 settleFor("handoff reopened", opened);
                 scene.click(("handoffRoute-" + fileId(path)).toLatin1().constData());
-                settleFor("handoff closed by route", [&] { return !opened(); });
+                // Until its fade-out ends the closing dialog's overlay takes the next click.
+                settleFor("handoff closed by route", [&] { return !dialog->property("visible").toBool(); });
                 CHECK(scene.controller->selectedFileId() == fileId(path));
             }
             CHECK(scene.item("selectedProblem")->isVisible());
@@ -1522,10 +1523,10 @@ public:
             scene.click("openHandoff");
             settleFor("handoff opened", [&] { return dialog->property("opened").toBool(); });
             test_support::waitForLayout(scene.window, QStringLiteral("handoffLeave"), Scene::settleMs);
-            CHECK(expectWholeWords(dialog->property("contentItem").value<QQuickItem *>(),
-                                   "the handoff dialog at 1280x800") > 0);
+            // Each blocker has a line of its own, so a row may not need to wrap at all.
+            expectWholeWords(dialog->property("contentItem").value<QQuickItem *>(), "the handoff dialog at 1280x800");
             QMetaObject::invokeMethod(dialog, "close");
-            settleFor("handoff closed", [&] { return !dialog->property("opened").toBool(); });
+            settleFor("handoff closed", [&] { return !dialog->property("visible").toBool(); });
 
             // TRUCE-0084: with the source choices shown, the three panes keep eight lines and the
             // panes and choices stay reachable, from a roomy window down to 960x540. There the file

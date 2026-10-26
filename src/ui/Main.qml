@@ -88,132 +88,140 @@ Kirigami.ApplicationWindow {
             return "vcs-conflicting"
         return unsaved ? "vcs-locally-modified" : "document-save"
     }
+    function handoffIcon(category: string): string {
+        switch (category) {
+        case "published": return "checkmark"
+        case "undecided": return "vcs-conflicting"
+        case "saved-draft": return "document-save"
+        case "newer-draft": return "vcs-update-required"
+        case "written-unresolved": return "vcs-locally-modified"
+        case "failed": return "dialog-error"
+        case "outside-app": return "unknown"
+        default: return "document-edit"
+        }
+    }
+    // Retries every file's pending recovery, then closes again if none is left.
+    function retryPendingRecoveryAndClose(): void {
+        for (const group of controller.handoff.groups || [])
+            for (const entry of group.entries)
+                controller.files.retryPendingRecovery(entry.fileId);
+        if (!controller.files.hasPendingRecovery)
+            window.close();
+    }
     // Closing the window is an ordinary finish action: with work outstanding it
-    // opens the handoff instead, where leaving is a deliberate choice.
+    // opens the handoff instead, where leaving is a deliberate choice. Input that
+    // recovery could not keep blocks the close until it is kept or the user cancels.
     onClosing: close => {
+        if (window.controller.files.hasPendingRecovery) {
+            close.accepted = false;
+            recoveryCloseDialog.open();
+            return;
+        }
         if (window.controller.sessionOutcome.length > 0 || window.controller.files.totalFiles === 0
                 || window.controller.handoff.clean)
             return;
         close.accepted = false;
         handoffDialog.open();
     }
-    Dialog {
+    Kirigami.PromptDialog {
+        id: recoveryCloseDialog
+        objectName: "recoveryCloseDialog"
+        title: qsTr("Pending input needs recovery")
+        subtitle: qsTr("Recovery could not keep the pending input. Retry before closing, or cancel to keep this window open.")
+        dialogType: Kirigami.PromptDialog.Warning
+        standardButtons: Kirigami.Dialog.Retry | Kirigami.Dialog.Cancel
+        onAccepted: window.retryPendingRecoveryAndClose()
+    }
+    Kirigami.Dialog {
         id: handoffDialog
         objectName: "handoffDialog"
         readonly property var summary: window.controller.handoff
         title: qsTr("Session handoff")
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(window.width - 40, 760)
-        height: Math.min(window.height - 40, 640)
-        standardButtons: Dialog.Close
-        ScrollView {
-            anchors.fill: parent
-            contentWidth: availableWidth
-            ColumnLayout {
-                width: parent.width
-                spacing: Kirigami.Units.smallSpacing
-                Kirigami.InlineMessage {
-                    objectName: "handoffOutcome"
+        preferredWidth: Kirigami.Units.gridUnit * 36
+        padding: Kirigami.Units.largeSpacing
+        standardButtons: Kirigami.Dialog.Close
+        footerLeadingComponent: RowLayout {
+            Button {
+                objectName: "handoffFinish"
+                visible: !!handoffDialog.summary.clean
+                icon.name: "dialog-ok-apply"
+                text: qsTr("Finish")
+                onClicked: window.controller.finishSession()
+            }
+            Button {
+                objectName: "handoffLeave"
+                visible: !handoffDialog.summary.clean
+                enabled: !!handoffDialog.summary.canLeave
+                icon.name: "application-exit"
+                text: qsTr("Leave with work outstanding")
+                onClicked: window.controller.leaveSession()
+            }
+        }
+        DialogBody {
+            Kirigami.InlineMessage {
+                objectName: "handoffOutcome"
+                Layout.fillWidth: true
+                visible: true
+                type: handoffDialog.summary.clean ? Kirigami.MessageType.Positive : Kirigami.MessageType.Warning
+                text: handoffDialog.summary.outcome || ""
+            }
+            Repeater {
+                model: handoffDialog.summary.sessionBlockers || []
+                delegate: Label {
+                    required property string modelData
                     Layout.fillWidth: true
-                    visible: true
-                    type: handoffDialog.summary.clean ? Kirigami.MessageType.Positive : Kirigami.MessageType.Warning
-                    text: handoffDialog.summary.outcome || ""
-                }
-                Repeater {
-                    model: handoffDialog.summary.sessionBlockers || []
-                    delegate: Label {
-                        required property string modelData
-                        Layout.fillWidth: true
-                        text: modelData
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                    }
-                }
-                Repeater {
-                    model: handoffDialog.summary.groups || []
-                    delegate: ColumnLayout {
-                        id: handoffGroup
-                        required property var modelData
-                        Layout.fillWidth: true
-                        visible: modelData.entries.length > 0
-                        Kirigami.Heading {
-                            Layout.fillWidth: true
-                            level: 4
-                            text: qsTr("%1 (%2)").arg(handoffGroup.modelData.title).arg(handoffGroup.modelData.entries.length)
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
-                        }
-                        Repeater {
-                            model: handoffGroup.modelData.entries
-                            delegate: RowLayout {
-                                id: handoffEntry
-                                required property var modelData
-                                Layout.fillWidth: true
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: window.controller.displayPath(handoffEntry.modelData.fileId) + " · "
-                                        + handoffEntry.modelData.status
-                                        + (handoffEntry.modelData.blockers.length > 0
-                                           ? "\n" + handoffEntry.modelData.blockers.join("; ") : "")
-                                    textFormat: Text.PlainText
-                                    wrapMode: Text.Wrap
-                                }
-                                Button {
-                                    objectName: "handoffRoute-" + handoffEntry.modelData.fileId
-                                    text: handoffEntry.modelData.actionLabel || qsTr("Open file")
-                                    onClicked: {
-                                        if (window.controller.selectFile(handoffEntry.modelData.fileId))
-                                            handoffDialog.close();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Label {
-                    objectName: "handoffLeaveBlocker"
-                    Layout.fillWidth: true
-                    visible: text.length > 0
-                    text: handoffDialog.summary.leaveBlocker || ""
+                    text: modelData
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
-                RowLayout {
+            }
+            Repeater {
+                model: handoffDialog.summary.groups || []
+                delegate: ColumnLayout {
+                    id: handoffGroup
+                    required property var modelData
                     Layout.fillWidth: true
-                    Button {
-                        objectName: "handoffFinish"
-                        visible: !!handoffDialog.summary.clean
-                        text: qsTr("Finish")
-                        onClicked: window.controller.finishSession()
+                    visible: modelData.entries.length > 0
+                    spacing: Kirigami.Units.smallSpacing
+                    Kirigami.Heading {
+                        Layout.fillWidth: true
+                        level: 4
+                        text: qsTr("%1 (%2)").arg(handoffGroup.modelData.title).arg(handoffGroup.modelData.entries.length)
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
                     }
-                    Button {
-                        objectName: "handoffLeave"
-                        visible: !handoffDialog.summary.clean
-                        enabled: !!handoffDialog.summary.canLeave
-                        text: qsTr("Leave with work outstanding")
-                        onClicked: window.controller.leaveSession()
+                    Repeater {
+                        model: handoffGroup.modelData.entries
+                        delegate: HandoffRow {
+                            onRouted: handoffDialog.close()
+                        }
                     }
                 }
             }
+            Label {
+                objectName: "handoffLeaveBlocker"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: handoffDialog.summary.leaveBlocker || ""
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+            }
         }
     }
-    Dialog {
+    Kirigami.Dialog {
         id: wholeFileDialog
         objectName: "wholeFileDialog"
         title: qsTr("Replace whole file from %1").arg(window.controller.wholeFilePreview.side || "")
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(window.width - 40, 950)
-        height: Math.min(window.height - 40, 650)
-        standardButtons: Dialog.Apply | Dialog.Cancel
+        preferredWidth: Kirigami.Units.gridUnit * 52
+        padding: Kirigami.Units.largeSpacing
+        standardButtons: Kirigami.Dialog.Apply | Kirigami.Dialog.Cancel
         onApplied: {
             window.controller.applyWholeFile();
             close();
         }
         onRejected: window.controller.cancelChoice()
-        ColumnLayout {
-            anchors.fill: parent
+        PreviewBody {
+            dialog: wholeFileDialog
             Label {
                 Layout.fillWidth: true
                 text: window.controller.wholeFilePreview.path || ""
@@ -283,7 +291,7 @@ Kirigami.ApplicationWindow {
                                 wrapMode: Text.Wrap
                             }
                             SnapshotPane {
-                                Layout.preferredHeight: 120
+                                Layout.preferredHeight: Kirigami.Units.gridUnit * 7
                                 paneName: "wholeContributionSource"
                                 paneTitle: qsTr("Source contribution")
                                 paneText: wholeContribution.modelData.sourceText
@@ -317,7 +325,7 @@ Kirigami.ApplicationWindow {
                             }
                             RowLayout {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 150
+                                Layout.preferredHeight: Kirigami.Units.gridUnit * 8
                                 SnapshotPane {
                                     paneName: "wholeDifferenceBefore"
                                     paneTitle: qsTr("Current text being replaced")
@@ -336,22 +344,20 @@ Kirigami.ApplicationWindow {
             }
         }
     }
-    Dialog {
+    Kirigami.Dialog {
         id: nonConflictingDialog
         objectName: "nonConflictingDialog"
         title: qsTr("Apply non-conflicting changes · %1").arg(window.controller.nonConflictingPreview.scope || "")
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(window.width - 40, 750)
-        height: Math.min(window.height - 40, 600)
-        standardButtons: Dialog.Apply | Dialog.Cancel
+        preferredWidth: Kirigami.Units.gridUnit * 42
+        padding: Kirigami.Units.largeSpacing
+        standardButtons: Kirigami.Dialog.Apply | Kirigami.Dialog.Cancel
         onApplied: {
             window.controller.applyNonConflicting();
             close();
         }
         onRejected: window.controller.cancelChoice()
-        ColumnLayout {
-            anchors.fill: parent
+        PreviewBody {
+            dialog: nonConflictingDialog
             Label {
                 Layout.fillWidth: true
                 text: window.controller.nonConflictingPreview.path || ""
@@ -387,7 +393,7 @@ Kirigami.ApplicationWindow {
                     }
                     RowLayout {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 150
+                        Layout.preferredHeight: Kirigami.Units.gridUnit * 8
                         SnapshotPane {
                             paneName: "batchBefore"
                             paneTitle: qsTr("Current text in this scope")
@@ -414,21 +420,19 @@ Kirigami.ApplicationWindow {
         enabled: !!window.selectedFile.canRedo && !!window.selectedFile.canEdit && !comparison.inputMethodComposing
         onActivated: window.controller.redo(window.controller.selectedFileId, window.selectedFile.currentRevision)
     }
-    Dialog {
+    Kirigami.Dialog {
         id: replacementDialog
         objectName: "replacementDialog"
         title: window.controller.commandPreview.orderedCombination
             ? qsTr("Preview %1").arg(window.controller.commandPreview.order)
             : qsTr("Replace manual work in this scope?")
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(window.width - 40, 700)
-        height: Math.min(window.height - 40, 600)
-        standardButtons: Dialog.Ok | Dialog.Cancel
+        preferredWidth: Kirigami.Units.gridUnit * 40
+        padding: Kirigami.Units.largeSpacing
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
         onAccepted: window.controller.applyChoice(true)
         onRejected: window.controller.cancelChoice()
-        ColumnLayout {
-            anchors.fill: parent
+        PreviewBody {
+            dialog: replacementDialog
             Label {
                 Layout.fillWidth: true
                 text: window.controller.commandPreview.detail || ""
@@ -544,6 +548,86 @@ Kirigami.ApplicationWindow {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             visible: row.index < row.ListView.view.count - 1
+        }
+    }
+    // One handoff entry: a category icon, the path as title, the status and each blocker on a
+    // line of its own, and the route to the file on the trailing side.
+    component HandoffRow: RowLayout {
+        id: handoffEntry
+        required property var modelData
+        signal routed()
+        Layout.fillWidth: true
+        spacing: Kirigami.Units.largeSpacing
+        Kirigami.Icon {
+            Layout.alignment: Qt.AlignTop
+            Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+            Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+            source: window.handoffIcon(handoffEntry.modelData.category)
+        }
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 0
+            Label {
+                Layout.fillWidth: true
+                text: window.controller.displayPath(handoffEntry.modelData.fileId)
+                textFormat: Text.PlainText
+                elide: Text.ElideMiddle
+            }
+            Label {
+                Layout.fillWidth: true
+                text: handoffEntry.modelData.status
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                font: Kirigami.Theme.smallFont
+            }
+            Repeater {
+                model: handoffEntry.modelData.blockers
+                delegate: Label {
+                    required property string modelData
+                    Layout.fillWidth: true
+                    text: modelData
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    font: Kirigami.Theme.smallFont
+                    color: Kirigami.Theme.disabledTextColor
+                }
+            }
+        }
+        Button {
+            objectName: "handoffRoute-" + handoffEntry.modelData.fileId
+            Layout.alignment: Qt.AlignVCenter
+            icon.name: "go-jump"
+            text: handoffEntry.modelData.actionLabel || qsTr("Open file")
+            onClicked: {
+                if (window.controller.selectFile(handoffEntry.modelData.fileId))
+                    handoffEntry.routed();
+            }
+        }
+    }
+    // A dialog body that sizes the dialog to its rows. Kirigami.Dialog keeps the content
+    // height it measured at creation when that was zero, and the handoff has no rows until
+    // the session loads, so the body never measures zero.
+    component DialogBody: Item {
+        default property alias content: dialogColumn.data
+        implicitWidth: dialogColumn.implicitWidth
+        implicitHeight: Math.max(Kirigami.Units.gridUnit, dialogColumn.implicitHeight)
+        ColumnLayout {
+            id: dialogColumn
+            width: parent.width
+            spacing: Kirigami.Units.largeSpacing
+        }
+    }
+    // The body of a preview dialog. It takes the height the window allows, up to 32 grid
+    // units, so its panes fill the dialog rather than shrinking to their implicit height.
+    component PreviewBody: Item {
+        required property Kirigami.Dialog dialog
+        default property alias content: bodyColumn.data
+        implicitHeight: Math.max(Kirigami.Units.gridUnit * 12, Math.min(Kirigami.Units.gridUnit * 32,
+            dialog.maximumHeight - dialog.implicitHeaderHeight - dialog.implicitFooterHeight
+            - dialog.topPadding - dialog.bottomPadding - Kirigami.Units.largeSpacing * 2))
+        ColumnLayout {
+            id: bodyColumn
+            anchors.fill: parent
         }
     }
     component SnapshotPane: ColumnLayout {
