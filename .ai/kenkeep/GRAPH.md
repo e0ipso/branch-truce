@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:6679c4c6545d391c6739abd5f1c8c97ad86d3f849f1b78661f27c49a02746203'
-node_count: 28
+nodes_hash: 'sha256:2e6aab6c5889bb32a4d3c9de89cb9b747567ddde46f56a7ebef1f335ed6d4a42'
+node_count: 29
 ---
 # kenkeep Graph
 
-Total nodes: 28
+Total nodes: 29
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -70,7 +70,7 @@ Total nodes: 28
 - **title:** Recovery journal and acknowledgment boundary
 - **path:** map-recovery-journal-and-acknowledgment-boundary.md
 - **tags:** recovery, storage, editing, failures
-- **relates_to:** practice-recover-unfinished-work-without-changing-its-status, practice-keep-session-captures-immutable-across-revisions, practice-keep-failed-work-outstanding
+- **relates_to:** practice-recover-unfinished-work-without-changing-its-status, practice-keep-session-captures-immutable-across-revisions, practice-keep-failed-work-outstanding, map-mergetool-session-socket-and-real-git-parent
 - **derived_from:** docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md, src/storage/RecoveryStore.cpp, src/app/ApplicationController.cpp, src/app/main.cpp, src/ui/Main.qml
 
 ## map-repository-discovery-and-verified-source-identities
@@ -120,6 +120,14 @@ Total nodes: 28
 - **path:** practice-fence-session-work-and-serialize-worktree-mutations.md
 - **tags:** architecture, concurrency, cancellation, git, desktop
 - **relates_to:** map-branch-truce-desktop-implementation-baseline, practice-keep-failed-work-outstanding
+
+## practice-hold-a-git-call-to-test-racing-repository-changes
+
+- **kind:** practice
+- **title:** Hold a Git call to test racing repository changes
+- **path:** practice-hold-a-git-call-to-test-racing-repository-changes.md
+- **tags:** testing, git, concurrency, mergetool
+- **relates_to:** map-recovery-journal-and-acknowledgment-boundary, map-mergetool-session-socket-and-real-git-parent, practice-fence-session-work-and-serialize-worktree-mutations
 
 ## practice-keep-failed-work-outstanding
 
