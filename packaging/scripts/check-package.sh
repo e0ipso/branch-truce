@@ -47,13 +47,14 @@ license_file="/usr/share/doc/branch-truce/copyright"
 expected_arch="amd64"
 
 expected_deps="git hicolor-icon-theme kde-style-breeze kf6-breeze-icon-theme
-    libqt6core6t64 libqt6gui6 libqt6network6 libqt6qml6
-    libqt6quick6 libqt6widgets6
+    libkf6syntaxhighlighting6 libqt6core6t64 libqt6gui6 libqt6network6
+    libqt6qml6 libqt6quick6 libqt6widgets6
     qml6-module-org-kde-desktop qml6-module-org-kde-kirigami
     qml6-module-qtqml-workerscript qml6-module-qtquick
     qml6-module-qtquick-controls qml6-module-qtquick-layouts
     qml6-module-qtquick-templates qml6-module-qtquick-window
     qt6-svg-plugins qt6-wayland"
+expected_recommends="plasma-integration"
 
 expected_files="$binary_file
 $desktop_file
@@ -76,7 +77,7 @@ pkg_files() {
     dpkg-deb --fsys-tarfile "$1" | tar -t | sed -n 's|^\./|/|p' | grep -v '/$' | sort
 }
 pkg_deps() {
-    dpkg-deb -f "$1" Depends | tr ',' '\n' | sed 's/^ *//; s/ .*//'
+    dpkg-deb -f "$1" "${2:-Depends}" | tr ',' '\n' | sed 's/^ *//; s/ .*//'
 }
 pkg_has_scripts() {
     dpkg-deb --ctrl-tarfile "$1" | tar -t \
@@ -96,7 +97,7 @@ remove_package() {
     DEBIAN_FRONTEND=noninteractive apt-get "${1:-remove}" -y -q branch-truce
 }
 target_versions() {
-    dpkg-query -W libqt6core6t64 libkirigami6 git | sed 's/^/target: /'
+    dpkg-query -W libqt6core6t64 libkirigami6 libkf6syntaxhighlighting6 git | sed 's/^/target: /'
 }
 verify_installed() {
     dpkg --verify branch-truce
@@ -126,6 +127,10 @@ inspect() {
     deps="$(pkg_deps "$file")"
     for dep in $expected_deps; do
         expect "depends on $dep" "does not depend on $dep" grep -qxF "$dep" <<<"$deps"
+    done
+    deps="$(pkg_deps "$file" Recommends)"
+    for dep in $expected_recommends; do
+        expect "recommends $dep" "does not recommend $dep" grep -qxF "$dep" <<<"$deps"
     done
 
     if pkg_has_scripts "$file"; then

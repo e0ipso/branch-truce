@@ -47,14 +47,18 @@ the same list for its build.
 | qt6-base-dev | 6.10.2+dfsg-7 | 6.10.2+dfsg-7~tux1 |
 | qt6-declarative-dev | 6.10.2+dfsg-3 | 6.10.2+dfsg-3~tux1 |
 | libkirigami-dev | 6.24.0-0ubuntu1 | 6.24.0-0ubuntu1~tux1 |
+| libkf6syntaxhighlighting-dev | 6.24.0-0ubuntu1 | 6.24.0-0ubuntu1~tux1 |
 | git (runtime) | 1:2.53.0-1ubuntu1.1 | 1:2.43.0-1ubuntu7.4 |
 
 The Tuxedo versions match the development host's installed packages.
+`libkf6syntaxhighlighting-dev` was added on 2026-10-26. Stock noble does not
+publish it, so the Tuxedo image installs it from `ubuntu-plasma`.
 
 ## Dependency floors
 
 Build floors are the API floors in [CMakeLists.txt](../CMakeLists.txt):
-CMake 3.28, ECM 6.0, Qt 6.6 and KF6 Kirigami 6.0. They are the
+CMake 3.28, ECM 6.0, Qt 6.6, KF6 Kirigami 6.0 and KF6 SyntaxHighlighting 6.0.
+They are the
 `Build-Depends` of [packaging/debian/control](../packaging/debian/control),
 which both bases share. The build images install them with `apt-get build-dep`.
 
@@ -72,6 +76,7 @@ shlibs and symbols files, so they differ:
 | libqt6qml6 | >= 6.6.0 | >= 6.10.2+dfsg |
 | libqt6quick6 | >= 6.6.0 | >= 6.10.2+dfsg |
 | libqt6widgets6 | >= 6.6~ | >= 6.10.2+dfsg |
+| libkf6syntaxhighlighting6 | >= 6.0.0 | >= 6.24.0 |
 
 Both binaries need `GLIBC_2.34`, `GLIBCXX_3.4.31`, `CXXABI_1.3.9` and
 `GCC_3.3.1` at most, and only the `Qt_6` and `Qt_6.10` Qt symbol versions.
@@ -124,9 +129,16 @@ which those modules load. The application runs the installed Git, so it also dep
 Qt's SVG icon engine, is listed too; without it every Breeze icon is null.
 `qt6-wayland` ships the Wayland shell
 integrations; without it the app aborts on a Wayland session that does not
-bring the package some other way. There is no `Recommends`. This list is the
-one the CI release packages use; `packaging/scripts/check-package.sh` checks
-it.
+bring the package some other way. The app selects the `org.kde.desktop`
+Qt Quick Controls style, so Kirigami loads the `org.kde.desktop` platform
+plugin, and `qml6-module-org-kde-desktop` ships both. The comparison panes
+highlight syntax through the KF6 SyntaxHighlighting C++ library, which
+`${shlibs:Depends}` adds as `libkf6syntaxhighlighting6`; that package pulls in
+`libkf6syntaxhighlighting-data`. No QML syntax-highlighting module is needed.
+`plasma-integration` is the only `Recommends`. The package starts on Wayland
+without it, and Plasma desktops have it through `plasma-workspace`. This list
+is the one the CI release packages use; `packaging/scripts/check-package.sh`
+checks it.
 
 ## Packaging choice
 

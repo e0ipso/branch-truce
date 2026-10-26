@@ -36,7 +36,7 @@ case "$format" in
     *) usage ;;
 esac
 
-libraries="qt:libQt6Core.so:6.6.0 kf:libKirigami.so:6.0.0"
+libraries="qt:libQt6Core.so:6.6.0 kf:libKirigami.so:6.0.0 kf:libKF6SyntaxHighlighting.so:6.0.0"
 
 owner() { dpkg -S "*/$1.*" 2>/dev/null | head -n 1 | cut -d: -f1; }
 installed() { dpkg-query -W -f '${Version}' "$1"; }

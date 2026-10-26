@@ -9,11 +9,12 @@ if command -v g++ >/dev/null; then
     printf 'compiler\t%s\n' "$(g++ --version | head -1)"
 fi
 packages=(libc6 libstdc++6 g++ cmake debhelper dpkg-dev git extra-cmake-modules
-    qt6-base-dev qt6-declarative-dev libkirigami-dev
+    qt6-base-dev qt6-declarative-dev libkirigami-dev libkf6syntaxhighlighting-dev
     libqt6core6t64 libqt6gui6 libqt6gui6t64 libqt6qml6 libqt6quick6
     qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts
     qml6-module-org-kde-kirigami qml6-module-org-kde-desktop kde-style-breeze
-    kf6-breeze-icon-theme qt6-wayland)
+    kf6-breeze-icon-theme qt6-wayland libkf6syntaxhighlighting6
+    libkf6syntaxhighlighting-data plasma-integration)
 for package in "${packages[@]}"; do
     version=$(dpkg-query -W -f='${db:Status-Status} ${Version}' "$package" 2>/dev/null || true)
     case "$version" in
