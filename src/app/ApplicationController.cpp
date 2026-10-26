@@ -82,6 +82,42 @@ QString envelopeRejection(const QString &text)
     return envelopeRejection(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
 }
 
+// The one range in which two texts differ, widened to whole surrogate pairs.
+struct TextChange {
+    qsizetype begin = 0;
+    qsizetype oldEnd = 0;
+    qsizetype newEnd = 0;
+};
+
+TextChange changedRange(const QString &old, const QString &next)
+{
+    TextChange change;
+    while (change.begin < old.size() && change.begin < next.size() && old.at(change.begin) == next.at(change.begin))
+        ++change.begin;
+    if (change.begin > 0 && change.begin < old.size() && old.at(change.begin).isLowSurrogate()) --change.begin;
+    change.oldEnd = old.size();
+    change.newEnd = next.size();
+    while (change.oldEnd > change.begin && change.newEnd > change.begin
+        && old.at(change.oldEnd - 1) == next.at(change.newEnd - 1)) {
+        --change.oldEnd;
+        --change.newEnd;
+    }
+    if (change.oldEnd < old.size() && old.at(change.oldEnd).isLowSurrogate()) {
+        ++change.oldEnd;
+        ++change.newEnd;
+    }
+    return change;
+}
+
+// An offset before the change keeps its place and one after it moves with the
+// text. An offset inside a replaced range, or at an insertion, goes to its end.
+int changedOffset(const TextChange &change, int offset)
+{
+    if (offset < change.begin || (offset == change.begin && change.oldEnd > change.begin)) return offset;
+    if (offset >= change.oldEnd) return static_cast<int>(offset + change.newEnd - change.oldEnd);
+    return static_cast<int>(change.newEnd);
+}
+
 Support supportFor(const git::Conflict &file)
 {
     return file.support == git::ConflictSupport::LoadFailure || file.support == git::ConflictSupport::InspectionFailure
@@ -1160,22 +1196,10 @@ void ApplicationController::captureResultEdit()
     }
     // Observe the complete native event, including a selection replacement or
     // an IME commit with several document notifications, as one domain command.
-    qsizetype begin = 0;
-    while (begin < old.size() && begin < next.size() && old.at(begin) == next.at(begin)) ++begin;
-    if (begin > 0 && begin < old.size() && old.at(begin).isLowSurrogate()) --begin;
-    auto oldEnd = old.size();
-    auto newEnd = next.size();
-    while (oldEnd > begin && newEnd > begin && old.at(oldEnd - 1) == next.at(newEnd - 1)) {
-        --oldEnd;
-        --newEnd;
-    }
-    if (oldEnd < old.size() && old.at(oldEnd).isLowSurrogate()) {
-        ++oldEnd;
-        ++newEnd;
-    }
+    const auto change = changedRange(old, next);
     editorText_ = next;
-    (void)editResult(selectedFileId_, QString::number(file->current().id), static_cast<int>(begin),
-        static_cast<int>(oldEnd), next.mid(begin, newEnd - begin));
+    (void)editResult(selectedFileId_, QString::number(file->current().id), static_cast<int>(change.begin),
+        static_cast<int>(change.oldEnd), next.mid(change.begin, change.newEnd - change.begin));
     syncResultEditor();
 }
 
@@ -1293,11 +1317,15 @@ void ApplicationController::syncResultEditor()
         return;
     }
     const auto desired = file ? text(stored) : QString{};
+    const auto shown = documentText(*resultDocument_);
+    // Undo, redo or a choice replaces the text of the file already shown.
+    const auto place = file && shown != desired && editorFileId_ == selectedFileId_ ? editorLocation() : EditorLocation{};
     syncingEditor_ = true;
-    if (documentText(*resultDocument_) != desired) resultDocument_->setPlainText(desired);
+    if (shown != desired) resultDocument_->setPlainText(desired);
     editorText_ = desired;
     applyVisibleWhitespace(resultDocument_);
-    const bool lossless = documentText(*resultDocument_) == desired && !desired.contains(QChar(0x2028))
+    const auto loaded = documentText(*resultDocument_);
+    const bool lossless = loaded == desired && !desired.contains(QChar(0x2028))
         && !desired.contains(QChar(0x2029)) && !desired.contains(QLatin1Char('\r'));
     resultEditor_->setProperty("readOnly", !file || file->support() != Support::Supported || !lossless
         || files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id()));
@@ -1309,11 +1337,27 @@ void ApplicationController::syncResultEditor()
     // A new selection, or a loading placeholder replaced by its supported file.
     const bool supported = file && file->support() == Support::Supported;
     if (editorFileId_ != selectedFileId_ || editorSupported_ != supported) placeEditor(file, desired);
+    else if (place.valid) keepEditorPlace(place, shown, loaded);
+}
+
+// The viewport goes back first, so the cursor moves it only when it would
+// otherwise leave the view.
+void ApplicationController::keepEditorPlace(const EditorLocation &place, const QString &before, const QString &after)
+{
+    if (auto *viewport = place.hasViewport ? scrollViewport(resultEditor_.data()) : nullptr) {
+        viewport->setProperty("contentX", place.contentX);
+        viewport->setProperty("contentY", place.contentY);
+    }
+    const auto change = changedRange(before, after);
+    const int anchor = place.cursor == place.selectionStart ? place.selectionEnd : place.selectionStart;
+    (void)QMetaObject::invokeMethod(resultEditor_, "select", Qt::DirectConnection,
+        Q_ARG(int, changedOffset(change, anchor)), Q_ARG(int, changedOffset(change, place.cursor)));
 }
 
 // Replacing the document text leaves the cursor at its end, and the result
-// viewport scrolls to keep the cursor in view. A newly selected file instead
-// puts the cursor at its first undecided region, or at the start without one.
+// viewport scrolls to keep the cursor in view. The file already shown keeps
+// its place through keepEditorPlace. A newly selected file instead puts the
+// cursor at its first undecided region, or at the start without one.
 void ApplicationController::placeEditor(const FileSession *file, const QString &loaded)
 {
     editorFileId_ = selectedFileId_;
@@ -1358,21 +1402,27 @@ void ApplicationController::clearNavigation()
     Q_EMIT navigationChanged();
 }
 
+ApplicationController::EditorLocation ApplicationController::editorLocation() const
+{
+    EditorLocation location;
+    if (!resultEditor_) return location;
+    location.valid = true;
+    location.fileId = selectedFileId_;
+    location.text = editorText_;
+    location.cursor = resultEditor_->property("cursorPosition").toInt();
+    location.selectionStart = resultEditor_->property("selectionStart").toInt();
+    location.selectionEnd = resultEditor_->property("selectionEnd").toInt();
+    if (auto *viewport = scrollViewport(resultEditor_.data())) {
+        location.hasViewport = true;
+        location.contentX = viewport->property("contentX").toReal();
+        location.contentY = viewport->property("contentY").toReal();
+    }
+    return location;
+}
+
 void ApplicationController::noteEditorLocation()
 {
-    heldLocation_ = {};
-    if (!resultEditor_) return;
-    heldLocation_.valid = true;
-    heldLocation_.fileId = selectedFileId_;
-    heldLocation_.text = editorText_;
-    heldLocation_.cursor = resultEditor_->property("cursorPosition").toInt();
-    heldLocation_.selectionStart = resultEditor_->property("selectionStart").toInt();
-    heldLocation_.selectionEnd = resultEditor_->property("selectionEnd").toInt();
-    if (auto *viewport = scrollViewport(resultEditor_.data())) {
-        heldLocation_.hasViewport = true;
-        heldLocation_.contentX = viewport->property("contentX").toReal();
-        heldLocation_.contentY = viewport->property("contentY").toReal();
-    }
+    heldLocation_ = editorLocation();
 }
 
 void ApplicationController::restoreEditorLocation()

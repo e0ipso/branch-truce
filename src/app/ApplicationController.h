@@ -263,5 +263,7 @@ private:
         bool hasViewport = false;
     };
     EditorLocation heldLocation_;
+    [[nodiscard]] EditorLocation editorLocation() const;
+    void keepEditorPlace(const EditorLocation &place, const QString &before, const QString &after);
 };
 }

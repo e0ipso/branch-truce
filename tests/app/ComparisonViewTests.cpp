@@ -353,6 +353,39 @@ FileSession insertionFile()
         + numberedLines("shared", 51, 350);
     return test_support::choiceFile(left, right, right);
 }
+
+// Opens insertionFile with the result scrolled to top and its cursor at the
+// start of the line holding marker, with keyboard focus in the result.
+void placeResultCursor(Fixture &fixture, const QString &marker, qreal top)
+{
+    auto *editor = fixture.item("resultText");
+    auto *result = fixture.item("resultViewport");
+    settle([&] { return editor->property("lineCount").toInt() > 400; });
+    settlePanes(fixture);
+    const auto offset = static_cast<int>(fixture.text().indexOf(marker));
+    CHECK(offset >= 0);
+    fixture.select(offset, offset);
+    editor->forceActiveFocus();
+    CHECK(result->setProperty("contentY", top));
+    for (int turn = 0; turn < 10; ++turn) QCoreApplication::processEvents();
+    CHECK(editor->property("cursorPosition").toInt() == offset && contentY(result) == top);
+}
+
+// Lets the replaced text lay out before reading the panes.
+void settleReplacement()
+{
+    for (int turn = 0; turn < 10; ++turn) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+}
+
+// A cursor rectangle within the result viewport.
+bool cursorInView(Fixture &fixture)
+{
+    auto *editor = fixture.item("resultText");
+    auto *result = fixture.item("resultViewport");
+    const auto cursor = editor->property("cursorRectangle").toRectF();
+    const auto top = editor->y() + cursor.top() - contentY(result);
+    return top >= 0 && top + cursor.height() <= result->height();
+}
 }
 
 class ComparisonViewTests {
@@ -1099,6 +1132,92 @@ public:
             wheelTo(fixture, "stage2Viewport", 80 * line);
             // The earlier version equals the left source, so it shows the same lines.
             CHECK(std::abs(contentY(earlierView) - contentY(left)) < 1);
+        });
+        suite.run("TRUCE-0137 undo and redo keep the result cursor and scroll position, and the sources stay", [] {
+            Fixture fixture(insertionFile());
+            auto *editor = fixture.item("resultText");
+            auto *left = fixture.item("stage2Viewport");
+            auto *result = fixture.item("resultViewport");
+            auto *right = fixture.item("stage3Viewport");
+            const auto line = paneLineHeight(editor);
+            placeResultCursor(fixture, QStringLiteral("shared 20\n"), 10 * line);
+            const auto offset = editor->property("cursorPosition").toInt();
+            fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+            settle([&] { return fixture.file().current().draft.text.find("xshared 20\n") != std::string::npos; });
+            settleReplacement();
+            CHECK(editor->property("cursorPosition").toInt() == offset + 1);
+            const std::array<QQuickItem *, 3> panes{left, result, right};
+            const std::array<qreal, 3> typed{contentY(left), contentY(result), contentY(right)};
+            CHECK(std::abs(typed[1] - 10 * line) < 1);
+
+            fixture.key(Qt::Key_Z, Qt::ControlModifier);
+            CHECK(fixture.file().current().draft.text.find("xshared") == std::string::npos);
+            settleReplacement();
+            CHECK(editor->property("cursorPosition").toInt() == offset);
+            CHECK(editor->property("selectionStart").toInt() == editor->property("selectionEnd").toInt());
+            // No pane follows the replaced text to its end.
+            for (std::size_t pane = 0; pane < panes.size(); ++pane) CHECK(std::abs(contentY(panes[pane]) - typed[pane]) < 1);
+
+            fixture.key(Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+            CHECK(fixture.file().current().draft.text.find("xshared 20\n") != std::string::npos);
+            settleReplacement();
+            // The cursor follows the restored insertion, as it did when the character was typed.
+            CHECK(editor->property("cursorPosition").toInt() == offset + 1);
+            for (std::size_t pane = 0; pane < panes.size(); ++pane) CHECK(std::abs(contentY(panes[pane]) - typed[pane]) < 1);
+        });
+        suite.run("TRUCE-0137 undo keeps a result selection on the same text", [] {
+            Fixture fixture(insertionFile());
+            auto *editor = fixture.item("resultText");
+            auto *result = fixture.item("resultViewport");
+            const auto line = paneLineHeight(editor);
+            placeResultCursor(fixture, QStringLiteral("shared 20\n"), 10 * line);
+            fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+            settle([&] { return fixture.file().current().draft.text.find("xshared 20\n") != std::string::npos; });
+            // Select "shared 22" backwards, so the cursor is at its start.
+            const auto selected = static_cast<int>(fixture.text().indexOf(QStringLiteral("shared 22")));
+            fixture.select(selected + 9, selected);
+            fixture.key(Qt::Key_Z, Qt::ControlModifier);
+            settleReplacement();
+            CHECK(fixture.text().indexOf(QStringLiteral("shared 22")) == selected - 1);
+            CHECK(editor->property("selectionStart").toInt() == selected - 1);
+            CHECK(editor->property("selectionEnd").toInt() == selected + 8);
+            CHECK(editor->property("cursorPosition").toInt() == selected - 1);
+            CHECK(std::abs(contentY(result) - 10 * line) < 1);
+        });
+        suite.run("TRUCE-0137 applying a choice keeps the result cursor and scroll position", [] {
+            Fixture fixture(insertionFile());
+            auto *editor = fixture.item("resultText");
+            auto *result = fixture.item("resultViewport");
+            const auto line = paneLineHeight(editor);
+            // Above the 30 inserted lines that the left source lacks.
+            placeResultCursor(fixture, QStringLiteral("shared 20\n"), 10 * line);
+            const auto offset = editor->property("cursorPosition").toInt();
+            const auto before = fixture.text();
+            const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+            CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
+                QString::fromStdString(target.source.contributionId), QStringLiteral("resolve")));
+            CHECK(fixture.controller.applyChoice(true));
+            CHECK(fixture.text() != before && !fixture.text().contains(QStringLiteral("right only")));
+            settleReplacement();
+            CHECK(editor->property("cursorPosition").toInt() == offset);
+            CHECK(std::abs(contentY(result) - 10 * line) < 1);
+        });
+        suite.run("TRUCE-0137 a choice above the result cursor keeps it on its text and in view", [] {
+            Fixture fixture(insertionFile());
+            auto *editor = fixture.item("resultText");
+            const auto line = paneLineHeight(editor);
+            // Below the 30 inserted lines, with the cursor near the top of the view.
+            placeResultCursor(fixture, QStringLiteral("shared 120\n"), 148 * line);
+            CHECK(cursorInView(fixture));
+            const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+            CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
+                QString::fromStdString(target.source.contributionId), QStringLiteral("resolve")));
+            CHECK(fixture.controller.applyChoice(true));
+            CHECK(!fixture.text().contains(QStringLiteral("right only")));
+            settleReplacement();
+            // The removed lines took the cursor's line out of the kept view, so the view follows it.
+            CHECK(editor->property("cursorPosition").toInt() == fixture.text().indexOf(QStringLiteral("shared 120\n")));
+            CHECK(cursorInView(fixture));
         });
         suite.run("TRUCE-0060 a failed Discard shows the restored result and retry finishes it", [] {
             Fixture fixture;

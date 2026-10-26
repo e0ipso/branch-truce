@@ -189,6 +189,14 @@ combination restores both its prior manual text and decisions. Branching history
 truncates redo. The command fixture deliberately has no Git, Save or publishing
 operations, and does not persist reopened undo history.
 
+Undo, redo and choices replace the whole document text. For the file already
+shown, the controller keeps the cursor, the selection and the result scroll
+position across that replacement. Offsets before the changed range stay, offsets
+after it move with the text, and offsets inside it go to the end of the new text.
+An offset at an insertion point moves past the inserted text, as it does when
+typing. The viewport moves only when the cursor would otherwise leave the view.
+A newly selected file still opens at its first undecided region.
+
 ### Reading aids
 
 The QML scene has labeled read-only sources around the result, external line and
@@ -228,7 +236,7 @@ unsaved; it implies neither review nor Git resolution.
 
 New committed regression tests are deferred to the wave gate under the worker
 contract; these local acceptance fixtures remain reproducible. Add coverage for
-all native mutation routes and for cursor and selection restoration after application undo.
+all native mutation routes.
 Representative editor, correspondence, Git and recovery measurements, including long lines, are in tests/fixtures/performance/evidence.md. The enforced envelope is documented in [resource limits](resource-limits.md). Replace full-buffer snapshots,
 linear offset scans and whole-text rerendering before production-scale use.
 Implement acknowledgment queuing and normal-close/file-switch behavior, including
