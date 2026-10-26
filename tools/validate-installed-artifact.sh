@@ -52,6 +52,9 @@ home=/tmp/bt-home
 repo=/tmp/bt-repo
 wayland_socket=/run/bt-wayland/wayland-0
 result_text='merged é ü'
+# make_merge_fixture, shared with tools/preview-app.sh. host_main copies it into
+# /validate next to this script.
+source "$(dirname -- "${BASH_SOURCE[0]}")/merge-fixture.sh"
 
 usage() { echo "Usage: $0 --target kubuntu|tuxedo --package DEB --output DIR [--wayland]" >&2; exit 2; }
 
@@ -109,8 +112,8 @@ host_main() {
     fixture=$(mktemp -d "${TMPDIR:-/tmp}/bt-validate.XXXXXXXX")
     container=bt-validate-$target-$$
     trap host_cleanup EXIT
-    cp -- "$root/tools/validate-installed-artifact.sh" "$root/tools/artifact-baseline.sh" \
-        "$root/tools/atspi-probe.py" "$fixture/"
+    cp -- "$root/tools/validate-installed-artifact.sh" "$root/tools/merge-fixture.sh" \
+        "$root/tools/artifact-baseline.sh" "$root/tools/atspi-probe.py" "$fixture/"
     local mounts=(--volume "$package:/artifact/$name.deb:ro" --volume "$fixture:/validate:ro")
     ((wayland == 0)) || mounts+=(--volume "$socket:$wayland_socket")
     "$engine" run --detach --init --name "$container" "${mounts[@]}" "$image" sleep infinity >/dev/null
@@ -272,34 +275,7 @@ isolated() { (cd "$repo" && env -i "${base_env[@]}" "$@"); }
 # A fresh home and a repository stopped on one merge conflict in tracked.txt.
 fresh_fixture() {
     pkill -x branch-truce 2>/dev/null || true
-    rm -rf -- "$home/data" "$home/config" "$home/cache" "$home/tmp" "$home/runtime" "$repo" \
-        "$home/mergetool.log" "$home/mergetool.status"
-    mkdir -p "$home/data" "$home/config" "$home/cache" "$home/tmp" "$home/runtime" "$repo"
-    chmod 700 "$home/runtime"
-    cat > "$home/gitconfig" <<'EOF'
-[mergetool "truce"]
-	cmd = MERGED=\"$MERGED\" BASE=\"$BASE\" LOCAL=\"$LOCAL\" REMOTE=\"$REMOTE\" '/usr/bin/branch-truce' --mergetool
-	trustExitCode = true
-[mergetool]
-	keepBackup = false
-	keepTemporaries = false
-[core]
-	autocrlf = false
-[init]
-	defaultBranch = main
-[user]
-	name = Branch Truce Validation
-	email = validation@example.invalid
-EOF
-    isolated git init --quiet
-    printf 'base\n' > "$repo/tracked.txt"
-    isolated git add tracked.txt && isolated git commit --quiet -m base
-    isolated git checkout --quiet -b side
-    printf 'side\n' > "$repo/tracked.txt"
-    isolated git commit --quiet -am side && isolated git checkout --quiet main
-    printf 'main\n' > "$repo/tracked.txt"
-    isolated git commit --quiet -am main
-    ! isolated git merge --no-edit side >/dev/null 2>&1 || fail "fixture merge did not conflict"
+    make_merge_fixture /usr/bin/branch-truce tracked.txt || fail "fixture merge did not conflict"
 }
 
 gui_pids() {

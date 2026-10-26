@@ -254,8 +254,8 @@ pass
 [[ "$(tail -n 1 "$work/state/engine.log")" == "rm --force $container" ]] || fail "container not removed last"
 pass
 # The container gets this checkout's validation scripts and nothing else.
-expect_files "$work/state/fixture-copy" 'artifact-baseline.sh atspi-probe.py validate-installed-artifact.sh '
-for file in artifact-baseline.sh atspi-probe.py validate-installed-artifact.sh; do
+expect_files "$work/state/fixture-copy" 'artifact-baseline.sh atspi-probe.py merge-fixture.sh validate-installed-artifact.sh '
+for file in artifact-baseline.sh atspi-probe.py merge-fixture.sh validate-installed-artifact.sh; do
     cmp -s -- "$root/tools/$file" "$work/state/fixture-copy/$file" || fail "fixture $file differs from tools/$file"
     pass
 done

@@ -118,6 +118,34 @@ shell syntax command above has a separate stamp covering env, Bash and their
 linked libraries. That stamp is empty when exported loader overrides are present,
 so the evidence helper must treat its declaration as incomplete in that case.
 
+## Preview
+
+After a desktop build, `tools/preview-app.sh` takes a light and a dark
+screenshot of the window on a real conflict. It runs on the current sway
+session, such as the headless one agents use here:
+
+```sh
+tools/preview-app.sh                              # build/desktop/src/app/branch-truce
+PREVIEW_FILE=notes.md tools/preview-app.sh        # open with notes.md selected
+tools/preview-app.sh /path/to/branch-truce        # another build
+```
+
+For each of BreezeLight and BreezeDark, the script builds a repository stopped
+on a merge with three conflicting files: `tracked.txt` (text), `notes.md`
+(Markdown) and `image.bin` (binary, listed as outside the app). It starts the
+app fullscreen with a private home and XDG directories and no D-Bus session.
+Once the session's recovery journal appears it waits `PREVIEW_SETTLE` seconds
+(default 1), saves the window with grim and stops the app. stdout gets one PNG
+path per scheme. The PNGs go to `PREVIEW_OUTPUT`, or to a new
+`/tmp/bt-preview-shots.*` directory that you remove when done. The fixture
+directory is deleted on exit. The script writes nothing to the checkout or
+`$HOME` and stops only the app it started. `PREVIEW_FILE` selects a file through
+the app's hidden `--mergetool-path` option.
+
+`tools/merge-fixture.sh` builds the fixture. The installed-artifact validator
+uses the same function inside its container for its single `tracked.txt`
+conflict.
+
 ## Install
 
 A desktop build installs four files under `CMAKE_INSTALL_PREFIX`, placed by
