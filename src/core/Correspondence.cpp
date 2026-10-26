@@ -152,6 +152,15 @@ void invalidate(ResultAnchor &anchor, AnchorState state)
     anchor.result.reset();
 }
 
+// Insertions at the edges of a nonempty range stay outside it, as in editing.
+bool within(const SourceAnchor &outer, const SourceAnchor &inner)
+{
+    const auto &a = outer.range;
+    const auto &b = inner.range;
+    return outer.side == inner.side && (b.begin == b.end ? a.begin < b.begin && b.begin < a.end
+        : a.begin <= b.begin && b.end <= a.end);
+}
+
 void transform(ResultAnchor &anchor, const ResultEdit &edit, bool manual, bool selected)
 {
     if (anchor.state != AnchorState::Mapped || !anchor.result) return;
@@ -358,7 +367,14 @@ CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdi
         throw std::invalid_argument("Result edit must use UTF-8 character boundaries");
     auto result = atRevision(revision);
     result.text_.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
-    for (auto &[id, anchor] : result.anchors_) transform(anchor, edit, manual, id == selectedAnchor);
+    const auto *selected = manual ? nullptr : anchor(selectedAnchor);
+    for (auto &[id, value] : result.anchors_) {
+        // An unmapped anchor has no result range to compare, but a source range
+        // inside the selected one means the choice replaced its text too.
+        if (selected && value.state != AnchorState::Mapped && within(selected->source, value.source))
+            value.handEdited = false;
+        transform(value, edit, manual, id == selectedAnchor);
+    }
     result.align();
     return result;
 }

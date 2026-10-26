@@ -152,13 +152,17 @@ Transition FileSession::replaceDraft(RevisionId expected, Draft draft,
     if (expected != current_) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
     if (exceedsEnvelope(draft.text)) return Transition::Blocked;
-    if (draft == current().draft) return Transition::NoChange;
+    const bool unchanged = draft == current().draft;
     std::shared_ptr<const CorrespondenceMap> mapping;
     if (handEdited && correspondence()) {
         auto replayed = correspondence()->recomputed(next_, draft.text);
         if (!replayed.restoreHandEdits(*handEdited)) return Transition::InvalidAnchor;
+        // A recorded choice can change only the hand-edit flags.
+        if (unchanged && replayed.handEditedAnchors() == correspondence()->handEditedAnchors())
+            return Transition::NoChange;
         mapping = std::make_shared<const CorrespondenceMap>(std::move(replayed));
-    } else if (handEdited && !handEdited->empty()) return Transition::InvalidAnchor;
+    } else if (unchanged) return Transition::NoChange;
+    else if (handEdited && !handEdited->empty()) return Transition::InvalidAnchor;
     appendHistory(advance(draft, std::move(mapping)));
     return Transition::Applied;
 }
@@ -249,7 +253,9 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
     }
     // Match the launch-time marker convention after every text command.
     if (!edits.empty()) draft.unresolvedMarkers = markerCount(draft.text);
-    if (draft == current().draft) return Transition::NoChange;
+    // Choosing the text a hand edit left unchanged still replaces that edit.
+    if (draft == current().draft && updated->handEditedAnchors() == mapping->handEditedAnchors())
+        return Transition::NoChange;
     appendHistory(advance(draft, std::make_shared<const CorrespondenceMap>(updated->atRevision(next_))));
     return Transition::Applied;
 }

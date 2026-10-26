@@ -57,7 +57,11 @@ Binding sets it where the launch text already differs. The hand-edit flag
 records editor changes only. A manual edit sets it on every anchor whose range
 contains the edit or that the edit crosses, and `replaceDraft` sets it wherever
 its comparison changed a range. A choice clears it on each anchor whose whole
-range it replaces. A whole-file command clears it on all.
+range it replaces. That includes an invalidated or ambiguous anchor whose source
+range lies inside the chosen one, since it has no result range left to compare.
+A whole-file command clears it on all. A choice that only clears flags, with
+text and decisions unchanged, still records a revision, so undo and recovery
+replay bring the flags back.
 
 The existing whole-buffer `replaceDraft` API has no editor edit location. Its
 old-to-new comparison transforms only ranges with unambiguous correspondence.

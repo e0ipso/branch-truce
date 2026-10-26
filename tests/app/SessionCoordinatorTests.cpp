@@ -205,6 +205,13 @@ std::vector<bool> handEdits(const QVariantMap &file)
     return result;
 }
 
+QVariantMap region(const QVariantMap &file, const QString &id)
+{
+    for (const auto &value : file.value("regions").toList())
+        if (value.toMap().value("id").toString() == id) return value.toMap();
+    throw std::runtime_error("fixture has no such region");
+}
+
 QStringList regionStates(const QVariantMap &file)
 {
     QStringList result;
@@ -522,6 +529,101 @@ public:
             file = view.redo();
             CHECK(handEdits(file) == noHandEdits && regionStates(file)[6] == "accepted");
             CHECK(file.value("resultText").toString().contains("\nleft conflict\n"));
+        });
+        test("a choice clears hand edits on a deleted line it restores and on text an edit left unchanged", [] {
+            const auto none = [](const QVariantMap &file) {
+                const auto edits = handEdits(file);
+                return std::none_of(edits.begin(), edits.end(), [](bool edited) { return edited; });
+            };
+            const auto left = test_support::choiceFile().snapshots()->stage2->worktree.utf8;
+
+            // Deleting a line by hand invalidates it, so only its source places it in the section.
+            RegionView deleted(test_support::choiceFile());
+            auto file = deleted.file();
+            const auto line = regionId(file, "stage2", "line", 2);
+            const auto at = deleted.text().find("left first\n");
+            file = deleted.edit({{at, at + 11}, ""});
+            CHECK(region(file, line).value("handEdited").toBool() && !region(file, line).value("mapped").toBool());
+            file = deleted.choose(regionId(file, "stage2", "section", 2), ChoiceAction::Accept);
+            CHECK(deleted.text() == left && none(file) && region(file, line).value("state") == "accepted");
+            file = deleted.undo();
+            CHECK(region(file, line).value("handEdited").toBool() && region(file, line).value("state") == "undecided");
+            file = deleted.redo();
+            CHECK(none(file) && region(file, line).value("state") == "accepted");
+
+            RegionView unchanged(test_support::choiceFile());
+            auto &files = *unchanged.controller.files();
+            const auto wholeLeft = [&] {
+                return files.applyWholeFile("choices",
+                    previewWholeFile(*files.file("choices"), unchanged.revision(), SourceSide::Stage2), true);
+            };
+            CHECK(wholeLeft() == Transition::Applied);
+            const auto typed = unchanged.text().find("left first") + 5;
+            unchanged.edit({{typed, typed}, "X"});
+            file = unchanged.edit({{typed, typed + 1}, ""});
+            const auto manual = handEdits(file);
+            CHECK(unchanged.text() == left && !none(file) && regionStates(file).contains("manual"));
+            // The same choice leaves text and decisions as they are but replaces the edit.
+            CHECK(wholeLeft() == Transition::Applied);
+            file = unchanged.file();
+            CHECK(unchanged.text() == left && none(file) && !regionStates(file).contains("manual"));
+            CHECK(wholeLeft() == Transition::NoChange);
+            file = unchanged.undo();
+            CHECK(handEdits(file) == manual && regionStates(file).contains("manual"));
+            file = unchanged.redo();
+            CHECK(none(file) && !regionStates(file).contains("manual"));
+        });
+        test("recovery replay restores hand edits cleared over a deleted line or unchanged text", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(test_support::choiceFile()));
+            const auto revision = [&] { return model.file("choices")->current().id; };
+            const auto edit = [&](ResultEdit value) {
+                CHECK(model.editResult("choices", revision(), std::move(value)) == Transition::Applied);
+            };
+            const auto replayed = [&] {
+                const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+                CHECK(replay.succeeded && replay.files.size() == 1);
+                CHECK(replay.files.front().current().draft == model.file("choices")->current().draft);
+                RegionView live(*model.file("choices"));
+                RegionView restored(replay.files.front());
+                CHECK(handEdits(restored.file()) == handEdits(live.file()));
+                CHECK(regionStates(restored.file()) == regionStates(live.file()));
+                return handEdits(restored.file());
+            };
+            const auto cleared = std::vector<bool>(handEdits(RegionView(test_support::choiceFile()).file()).size(), false);
+
+            const auto at = model.file("choices")->current().draft.text.find("left first\n");
+            edit({{at, at + 11}, ""});
+            const auto deleted = replayed();
+            const auto section = test_support::choiceTarget(
+                *model.file("choices"), SourceSide::Stage2, ChoiceScope::Section).source.contributionId;
+            CHECK(model.applyChoice("choices", previewChoice(*model.file("choices"), revision(), section,
+                ChoiceAction::Accept), true) == Transition::Applied);
+            CHECK(replayed() == cleared);
+            CHECK(model.undo("choices", revision()) == Transition::Applied);
+            CHECK(replayed() == deleted);
+            CHECK(model.redo("choices", revision()) == Transition::Applied);
+            CHECK(replayed() == cleared);
+
+            const auto wholeLeft = [&] {
+                return model.applyWholeFile("choices",
+                    previewWholeFile(*model.file("choices"), revision(), SourceSide::Stage2), true);
+            };
+            CHECK(wholeLeft() == Transition::Applied);
+            const auto typed = model.file("choices")->current().draft.text.find("left first") + 5;
+            edit({{typed, typed}, "X"});
+            edit({{typed, typed + 1}, ""});
+            const auto manual = replayed();
+            CHECK(manual != cleared);
+            // This record repeats the previous draft and differs only in its hand edits.
+            CHECK(wholeLeft() == Transition::Applied);
+            CHECK(replayed() == cleared);
+            CHECK(model.undo("choices", revision()) == Transition::Applied);
+            CHECK(replayed() == manual);
+            CHECK(model.redo("choices", revision()) == Transition::Applied);
+            CHECK(replayed() == cleared);
         });
         test("recovery replay restores each region's hand-edit flag with the text and decisions", [] {
             QTemporaryDir directory;
