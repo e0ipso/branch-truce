@@ -2,8 +2,8 @@
 type: practice
 title: Keep the qmllint target at zero warnings
 description: >-
-  branch_truce_ui_qmllint exits 0 while it prints warnings; read the output,
-  type QML properties concretely, anchor at use sites.
+  src/ui/.qmllint.ini makes branch_truce_ui_qmllint fail on any warning; type
+  QML properties concretely, anchor at use sites.
 tags:
   - qml
   - lint
@@ -17,7 +17,7 @@ kk_relates_to:
 kk_depends_on: []
 kk_confidence: high
 ---
-`cmake --build build/desktop --target branch_truce_ui_qmllint` (see [docs/build.md](../../../docs/build.md)) exits 0 even when qmllint prints `Warning:` lines, so a green exit status does not mean the QML is clean. Read the output and keep the warning count at 0.
+`cmake --build build/desktop --target branch_truce_ui_qmllint` (see [docs/build.md](../../../docs/build.md)) fails on any qmllint warning. The target that `qt_add_qml_module` generates takes no extra arguments, so [src/ui/.qmllint.ini](../../../src/ui/.qmllint.ini) sets the policy with `MaxWarnings=0` and disables no warning category. The ctest `ui.qmllint` (label `ui`) runs the target.
 
 Type QML properties with the concrete type the code uses. The whitespace overlay in [ComparisonView.qml](../../../src/ui/ComparisonView.qml) declares `required property TextEdit editor`; as `Item`, qmllint cannot resolve `color`, `text`, `positionAt` or `positionToRectangle` and reports `missing-property`.
 

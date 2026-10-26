@@ -29,6 +29,8 @@ When the result is Git's raw conflict output, Accept and Resolve using one side 
 
 The window-fit journey resizes the window to 1280x720 and 960x540, the logical sizes of 1920x1080 at 150% and 200%. Its `checkFits` scrolls each control and text pane into view and checks that it lies inside the window, and the journey requires each pane to be at least eight lines high. `checkFits` scrolls again on every poll while it waits, because right after a resize the page can still be laid out at the previous size and the first scroll position can be stale. Another pass repeats the eight-line check with the source choices shown, from 1500x1040 down to 960x540. At 1280x800 the journey checks that file list rows and handoff entries break lines only between words. Those texts use `Text.Wrap` in [Main.qml](../../../src/ui/Main.qml), which breaks inside a word only when the word is wider than the line. `Text.WrapAnywhere` stays on paths, pane titles and source excerpts.
 
+Tests locate a control by `objectName`, never by its visible text, so give every control a test clicks an `objectName`; per-row delegates append the row ID, as in `choiceAccept-<id>`. `namedButton` in [tests/fixtures/QuickScene.h](../../../tests/fixtures/QuickScene.h) falls back to the accessible name only for controls the scene cannot name, such as a dialog's standard buttons. `accessibleName` returns `Accessible.name` or else the control's text. Assert state through properties such as `checked`, not labels.
+
 Uncovered PRD examples and environment-dependent gaps are listed in [tests/acceptance/README.md](../../../tests/acceptance/README.md). The write-failure journey relies on a read-only directory and fails when the suite runs as root.
 
 <!-- kk:related:start -->

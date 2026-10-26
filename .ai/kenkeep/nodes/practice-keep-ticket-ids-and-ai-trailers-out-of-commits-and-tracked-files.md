@@ -3,7 +3,7 @@ type: practice
 title: Keep ticket IDs and AI trailers out of commits and tracked files
 description: >-
   Conventional Commits headers carry no TRUCE IDs or co-author/AI trailers;
-  check:tracker-refs bans ticket IDs outside agent paths.
+  check:tracker-refs bans ticket IDs outside agent paths and tests/.
 tags:
   - git
   - commits

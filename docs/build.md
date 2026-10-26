@@ -60,6 +60,10 @@ ctest --test-dir build/sanitize --output-on-failure
 /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /bin/bash tools/check-shell-syntax.sh
 ```
 
+The QML lint target fails on any qmllint warning, because
+`src/ui/.qmllint.ini` sets `MaxWarnings=0`. The desktop CTest run includes it
+as `ui.qmllint`.
+
 Preparation enables `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion`
 and `-Werror` for project C++ targets. Direct CMake users can set
 `BRANCH_TRUCE_WARNINGS_AS_ERRORS`, `BRANCH_TRUCE_SANITIZERS`,

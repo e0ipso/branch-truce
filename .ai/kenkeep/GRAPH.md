@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:2e6aab6c5889bb32a4d3c9de89cb9b747567ddde46f56a7ebef1f335ed6d4a42'
-node_count: 29
+nodes_hash: 'sha256:9c21b9177a6f736ba7868d62a291732b54f8fbfffb030000eef95ecf21b0f4fd'
+node_count: 31
 ---
 # kenkeep Graph
 
-Total nodes: 29
+Total nodes: 31
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -89,6 +89,14 @@ Total nodes: 29
 - **tags:** comparison, editing, revisions, failures
 - **relates_to:** practice-keep-session-captures-immutable-across-revisions, practice-make-conflict-choices-explicit-and-reversible, practice-keep-failed-work-outstanding
 
+## map-startup-style-colour-scheme-and-icon-theme
+
+- **kind:** map
+- **title:** Startup style, colour scheme and icon theme
+- **path:** map-startup-style-colour-scheme-and-icon-theme.md
+- **tags:** ui, startup, kde, icons, testing, preview
+- **relates_to:** map-branch-truce-desktop-implementation-baseline, map-per-base-debian-artifacts-and-container-inspection, map-recovery-journal-and-acknowledgment-boundary, map-installed-artifact-validation-in-base-containers
+
 ## practice-bound-each-converted-representation-independently
 
 - **kind:** practice
@@ -120,6 +128,14 @@ Total nodes: 29
 - **path:** practice-fence-session-work-and-serialize-worktree-mutations.md
 - **tags:** architecture, concurrency, cancellation, git, desktop
 - **relates_to:** map-branch-truce-desktop-implementation-baseline, practice-keep-failed-work-outstanding
+
+## practice-follow-the-ui-design-brief-for-the-kde-native-window
+
+- **kind:** practice
+- **title:** Follow the UI design brief for the KDE-native window
+- **path:** practice-follow-the-ui-design-brief-for-the-kde-native-window.md
+- **tags:** ui, design, kde, kirigami, qml
+- **relates_to:** practice-design-desktop-apps-around-screens-and-components, practice-separate-save-from-mark-resolved, map-startup-style-colour-scheme-and-icon-theme
 
 ## practice-hold-a-git-call-to-test-racing-repository-changes
 
