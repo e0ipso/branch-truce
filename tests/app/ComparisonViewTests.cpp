@@ -1239,6 +1239,37 @@ public:
             CHECK(editor->property("cursorPosition").toInt() == fixture.text().indexOf(QStringLiteral("shared 120\n")));
             CHECK(cursorInView(fixture));
         });
+        suite.run("TRUCE-0142 two separate changes keep the result cursor on the unchanged text between them", [] {
+            // The sources differ on lines 20 and 350, and the result holds the right source.
+            const auto first = numberedLines("shared", 1, 19);
+            const auto middle = numberedLines("shared", 21, 329);
+            const auto last = numberedLines("shared", 351, 50);
+            const auto left = first + "left first\n" + middle + "left last\n" + last;
+            const auto right = first + "right first\n" + middle + "right last\n" + last;
+            Fixture fixture(test_support::choiceFile(left, right, right));
+            auto *editor = fixture.item("resultText");
+            auto *result = fixture.item("resultViewport");
+            const auto line = paneLineHeight(editor);
+            const auto marker = QStringLiteral("shared 150\n");
+            placeResultCursor(fixture, marker, 140 * line);
+            const auto revision = [&] { return QString::number(fixture.file().current().id); };
+            const auto kept = [&] {
+                settleReplacement();
+                CHECK(editor->property("cursorPosition").toInt() == fixture.text().indexOf(marker));
+                CHECK(editor->property("selectionStart").toInt() == editor->property("selectionEnd").toInt());
+                CHECK(std::abs(contentY(result) - 140 * line) < 1);
+            };
+            CHECK(fixture.controller.previewWholeFile("choices", revision(), QStringLiteral("left")));
+            CHECK(fixture.controller.applyWholeFile());
+            CHECK(fixture.text().contains(QStringLiteral("left first\n")) && fixture.text().contains(QStringLiteral("left last\n")));
+            kept();
+            CHECK(fixture.controller.undo("choices", revision()));
+            CHECK(fixture.text().contains(QStringLiteral("right first\n")) && fixture.text().contains(QStringLiteral("right last\n")));
+            kept();
+            CHECK(fixture.controller.redo("choices", revision()));
+            CHECK(fixture.text().contains(QStringLiteral("left first\n")) && fixture.text().contains(QStringLiteral("left last\n")));
+            kept();
+        });
         suite.run("TRUCE-0060 a failed Discard shows the restored result and retry finishes it", [] {
             Fixture fixture;
             auto saved = fixture.file().current().draft;

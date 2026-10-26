@@ -1,5 +1,6 @@
 #include "ApplicationController.h"
 #include "RecoveryRestore.h"
+#include "core/Correspondence.h"
 #include "core/ResourceLimits.h"
 #include <QCryptographicHash>
 #include <QDir>
@@ -21,7 +22,10 @@
 #include <QClipboard>
 #include <QScopedValueRollback>
 #include <algorithm>
+#include <exception>
 #include <limits>
+#include <string_view>
+#include <vector>
 
 namespace branch_truce {
 namespace {
@@ -115,13 +119,57 @@ TextChange changedRange(const QString &old, const QString &next)
     return change;
 }
 
-// An offset before the change keeps its place and one after it moves with the
-// text. An offset inside a replaced range, or at an insertion, goes to its end.
-int changedOffset(const TextChange &change, int offset)
+// The separate ranges in which two texts differ, in order. Lines that the line
+// correspondence keeps equal split the one outer range, so text between two
+// changes is not part of either. Each part is narrowed to its own changed range.
+std::vector<TextChange> changedRanges(const QString &old, const QString &next)
 {
-    if (offset < change.begin || (offset == change.begin && change.oldEnd > change.begin)) return offset;
-    if (offset >= change.oldEnd) return static_cast<int>(offset + change.newEnd - change.oldEnd);
-    return static_cast<int>(change.newEnd);
+    const auto outer = changedRange(old, next);
+    const auto before = old.mid(outer.begin, outer.oldEnd - outer.begin).toUtf8();
+    const auto after = next.mid(outer.begin, outer.newEnd - outer.begin).toUtf8();
+    const auto view = [](const QByteArray &bytes) {
+        return std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size()));
+    };
+    std::vector<Passage> passages;
+    try {
+        passages = ExactLineCorrespondence().compare(view(before), view(after));
+    } catch (const std::exception &) {
+        return {outer};
+    }
+    // Passages split at line ends, so each one decodes on its own. Their lengths
+    // locate the parts of the original texts.
+    const auto length = [](const QByteArray &bytes, ByteRange range) {
+        return QString::fromUtf8(bytes.constData() + range.begin, static_cast<qsizetype>(range.end - range.begin)).size();
+    };
+    std::vector<TextChange> changes;
+    auto oldAt = outer.begin;
+    auto newAt = outer.begin;
+    for (const auto &passage : passages) {
+        const auto oldPart = old.mid(oldAt, length(before, passage.source));
+        const auto newPart = next.mid(newAt, length(after, passage.result));
+        if (oldPart != newPart) {
+            const auto change = changedRange(oldPart, newPart);
+            changes.push_back({oldAt + change.begin, oldAt + change.oldEnd, newAt + change.newEnd});
+        }
+        oldAt += oldPart.size();
+        newAt += newPart.size();
+    }
+    return changes;
+}
+
+// An offset before a change keeps its place and one after it moves with the
+// text. An offset inside a replaced range, or at an insertion, goes to its end.
+// A change's begin and old end are in the old text and its new end in the new
+// text, so the shift after it is its new end less its old end.
+int changedOffset(const std::vector<TextChange> &changes, int offset)
+{
+    qsizetype shift = 0;
+    for (const auto &change : changes) {
+        if (offset < change.begin || (offset == change.begin && change.oldEnd > change.begin)) break;
+        if (offset < change.oldEnd) return static_cast<int>(change.newEnd);
+        shift = change.newEnd - change.oldEnd;
+    }
+    return static_cast<int>(offset + shift);
 }
 
 Support supportFor(const git::Conflict &file)
@@ -1368,10 +1416,10 @@ void ApplicationController::keepEditorPlace(const EditorLocation &place, const Q
         viewport->setProperty("contentX", place.contentX);
         viewport->setProperty("contentY", place.contentY);
     }
-    const auto change = changedRange(before, after);
+    const auto changes = changedRanges(before, after);
     const int anchor = place.cursor == place.selectionStart ? place.selectionEnd : place.selectionStart;
     (void)QMetaObject::invokeMethod(resultEditor_, "select", Qt::DirectConnection,
-        Q_ARG(int, changedOffset(change, anchor)), Q_ARG(int, changedOffset(change, place.cursor)));
+        Q_ARG(int, changedOffset(changes, anchor)), Q_ARG(int, changedOffset(changes, place.cursor)));
 }
 
 // Replacing the document text leaves the cursor at its end, and the result

@@ -206,10 +206,12 @@ operations, and does not persist reopened undo history.
 
 Undo, redo and choices replace the whole document text. For the file already
 shown, the controller keeps the cursor, the selection and the result scroll
-position across that replacement. Offsets before the changed range stay, offsets
-after it move with the text, and offsets inside it go to the end of the new text.
-An offset at an insertion point moves past the inserted text, as it does when
-typing. The viewport moves only when the cursor would otherwise leave the view.
+position across that replacement. Lines the line correspondence keeps equal split
+the replacement into separate changed ranges, so text between two changes is part
+of neither. Offsets before a changed range stay, offsets after it move with the
+text, and offsets inside it go to the end of its new text. An offset at an
+insertion point moves past the inserted text, as it does when typing. The
+viewport moves only when the cursor would otherwise leave the view.
 A newly selected file still opens at its first undecided region.
 
 ### Reading aids
