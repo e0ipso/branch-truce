@@ -53,7 +53,7 @@ expected_deps="git hicolor-icon-theme kde-style-breeze kf6-breeze-icon-theme
     qml6-module-qtqml-workerscript qml6-module-qtquick
     qml6-module-qtquick-controls qml6-module-qtquick-layouts
     qml6-module-qtquick-templates qml6-module-qtquick-window
-    qt6-wayland"
+    qt6-svg-plugins qt6-wayland"
 
 expected_files="$binary_file
 $desktop_file

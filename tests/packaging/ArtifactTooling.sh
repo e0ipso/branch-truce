@@ -6,8 +6,9 @@
 #
 # The in-container half of tools/inspect-artifact.sh (--in-container) is not run:
 # it reads /inspect and writes /tmp at fixed paths, so it needs the target container.
-# Its private Qt ABI decision is tested on its own by sourcing the script and
-# feeding synthetic objdump -T output and Depends fields to its functions.
+# Its private Qt ABI and document-save icon decisions are tested on their own by
+# sourcing the script and feeding synthetic objdump -T output, Depends fields and
+# appearance records to its functions.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 work=$(mktemp -d "${TMPDIR:-/tmp}/bt-artifact-tooling.XXXXXXXX")
@@ -53,7 +54,8 @@ engine_line() { sed -n "${1}p" "$work/state/engine.log"; }
 engine_calls() { wc -l < "$work/state/engine.log"; }
 
 # Stub engine: logs each argv, answers image queries, and for `run` either plays
-# dpkg-buildpackage (a /work volume) or the inspection container (an /inspect volume).
+# dpkg-buildpackage (a /work volume), the appearance probe build (a /probe/lib
+# volume) or the inspection container (an /inspect volume).
 cat > "$work/bin/engine" <<'ENGINE'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -71,13 +73,14 @@ case "$1 ${2:-}" in
         esac ;;
     build\ *) ;;
     run\ *)
-        work_volume= inspect_volume= workdir=
+        work_volume= inspect_volume= probe_volume= workdir=
         while (($# > 0)); do
             case "$1" in
                 --volume)
                     case "$2" in
                         *:/work) work_volume=${2%:/work} ;;
                         *:/inspect:ro) inspect_volume=${2%:/inspect:ro} ;;
+                        *:/probe/lib) probe_volume=${2%:/probe/lib} ;;
                     esac
                     shift 2 ;;
                 --workdir) workdir=$2; shift 2 ;;
@@ -94,6 +97,11 @@ case "$1 ${2:-}" in
             printf 'stub deb\n' > "$work_volume/branch-truce_${version}_amd64.deb"
             printf 'stub buildinfo\n' > "$work_volume/branch-truce_${version}_amd64.buildinfo"
             printf 'os\tStub OS\tstub\n' > "$work_volume/baseline.txt"
+        elif [[ -n "$probe_volume" ]]; then
+            cp -a -- "$probe_volume/../src" "$state/probe-src"
+            echo 'stub probe build output'
+            [[ "${STUB_PROBE_STATUS:-0}" == 0 ]] || exit "$STUB_PROBE_STATUS"
+            printf 'stub probe\n' > "$probe_volume/libappearance_probe.so"
         elif [[ -n "$inspect_volume" ]]; then
             printf '%s\n' "$inspect_volume" > "$state/inspect-volume"
             cp -a -- "$inspect_volume" "$state/inspect"
@@ -258,10 +266,27 @@ expect_no_fixture
 fixture=$(cat "$work/state/inspect-volume")
 [[ "$fixture" == "$TMPDIR"/bt-inspect.* ]] || fail "inspection fixture $fixture is outside TMPDIR"
 pass
-[[ "$(engine_line 2)" == "$(quoted run --rm --volume "$work/debs/$deb_name.deb:/artifact/$deb_name.deb:ro" \
+[[ "$(engine_calls)" == 3 ]] || fail "expected 3 engine calls: $(cat "$work/state/engine.log")"
+pass
+# The appearance probe is built in the -build image of the base, offline, from this checkout's source.
+[[ "$(engine_line 2)" == "$(quoted run --rm --network none \
+    --volume "$fixture/probe/src:/probe/src:ro" --volume "$fixture/probe/lib:/probe/lib" \
+    branch-truce-artifact:tuxedo-24.04-build /bin/bash -c \
+    'cmake -S /probe/src -B /tmp/probe-build && cmake --build /tmp/probe-build \
+            && cp /tmp/probe-build/libappearance_probe.so /probe/lib/')" ]] \
+    || fail "probe build container: $(engine_line 2)"
+pass
+cmp -s -- "$root/tests/fixtures/AppearanceProbe.cpp" "$work/state/probe-src/AppearanceProbe.cpp" || fail "probe source differs"
+pass
+grep -q 'add_library(appearance_probe MODULE AppearanceProbe.cpp)' "$work/state/probe-src/CMakeLists.txt" || fail "probe CMakeLists lacks the module"
+pass
+# The container gets the built probe at the path container_main preloads.
+[[ -f "$work/state/inspect/probe/lib/libappearance_probe.so" ]] || fail "inspection volume lacks probe/lib/libappearance_probe.so"
+pass
+[[ "$(engine_line 3)" == "$(quoted run --rm --volume "$work/debs/$deb_name.deb:/artifact/$deb_name.deb:ro" \
     --volume "$fixture:/inspect:ro" branch-truce-artifact:tuxedo-24.04-target \
     /bin/bash /inspect/inspect-artifact.sh --in-container tuxedo24.04 "/artifact/$deb_name.deb")" ]] \
-    || fail "inspection container: $(engine_line 2)"
+    || fail "inspection container: $(engine_line 3)"
 pass
 [[ "$output" == "$report"$'\n'"Report: $work/reports/$deb_name.inspection"$'\n'"Inspection exit status: 0" ]] \
     || fail "inspection output"
@@ -289,8 +314,17 @@ STUB_REPORT=$report STUB_RUN_STATUS=1 invoke "$inspect" --target kubuntu --packa
 expect_status 1
 [[ "$output" == "$report"$'\n'"Inspection exit status: 1" ]] || fail "failed inspection output"
 pass
-[[ "$(engine_line 2)" == *" branch-truce-artifact:kubuntu-26.04-target /bin/bash /inspect/inspect-artifact.sh --in-container kubuntu26.04 "* ]] \
-    || fail "kubuntu inspection container: $(engine_line 2)"
+[[ "$(engine_line 3)" == *" branch-truce-artifact:kubuntu-26.04-target /bin/bash /inspect/inspect-artifact.sh --in-container kubuntu26.04 "* ]] \
+    || fail "kubuntu inspection container: $(engine_line 3)"
+pass
+expect_no_fixture
+
+# A failed probe build stops before the inspection container and says how to get the -build image.
+STUB_PROBE_STATUS=125 invoke "$inspect" --target kubuntu --package "$work/debs/$deb_name.deb"
+expect_status 1
+expect_output 'stub probe build output'
+expect_output 'Could not build the appearance probe in branch-truce-artifact:kubuntu-26.04-build; run tools/build-artifact.sh --target kubuntu first'
+[[ "$(engine_calls)" == 2 ]] || fail "failed probe build engine calls: $(cat "$work/state/engine.log")"
 pass
 expect_no_fixture
 
@@ -311,7 +345,7 @@ expect_only_output() {
 
 # Sourcing defines the functions and runs neither host_main nor container_main.
 expect_sourced_only() {
-    sourced 'declare -F host_main container_main symbol_tags check_private_abi >/dev/null; echo sourced' "$@"
+    sourced 'declare -F host_main container_main symbol_tags check_private_abi check_icon_resolves build_appearance_probe >/dev/null; echo sourced' "$@"
     expect_status 0
     expect_only_output sourced
     [[ ! -s "$work/state/engine.log" ]] || fail "sourcing with $(quoted "$@") ran the container engine"
@@ -325,6 +359,8 @@ sourced 'declare -f container_main'
 expect_status 0
 expect_output 'tags=$(objdump -T "$binary" | symbol_tags)'
 expect_output 'check_private_abi "$tags" "$depends"'
+expect_output 'check_icon_resolves "$appearance"'
+expect_output 'LD_PRELOAD=/inspect/probe/lib/libappearance_probe.so'
 
 objdump_head=$'\n/usr/bin/branch-truce:     file format elf64-x86-64\n\nDYNAMIC SYMBOL TABLE:'
 undefined() { printf '0000000000000000      DF *UND*\t0000000000000000 (%s) %s\n' "$1" "$2"; }
@@ -378,6 +414,22 @@ for depends in "$no_pin" 'libc6 (>= 2.34), qt6-base-private-abi, libqt6core6t64 
     expect_status 0
     expect_only_output $'FAIL Qt_6_PRIVATE_API symbols without an exact Qt private ABI pin in Depends\nfailures=1'
 done
+
+# check_icon_resolves on the appearance record the preloaded probe prints. Only a
+# resolved document-save passes; a null icon, a missing key and no record fail.
+icon_check() { sourced 'check_icon_resolves "$1"; echo "failures=$failures"' "$@"; }
+icon_check '{"displayName":"Branch Truce","documentSave":true,"fallbackTheme":"hicolor","style":"org.kde.desktop","theme":"breeze"}'
+expect_status 0
+expect_only_output $'PASS QIcon::fromTheme(document-save) resolves in the installed application\nfailures=0'
+icon_check '{"displayName":"Branch Truce","documentSave":false,"fallbackTheme":"hicolor","style":"org.kde.desktop","theme":"breeze"}'
+expect_status 0
+expect_only_output $'FAIL QIcon::fromTheme(document-save) is null in the installed application; does Depends name the Qt SVG icon engine package?\nfailures=1'
+icon_check '{"style":"Basic"}'
+expect_status 0
+expect_only_output $'FAIL QIcon::fromTheme(document-save) is null in the installed application; does Depends name the Qt SVG icon engine package?\nfailures=1'
+icon_check ''
+expect_status 0
+expect_only_output $'FAIL no BRANCH_TRUCE_APPEARANCE record from the installed application\nfailures=1'
 expect_no_fixture
 
 printf '%s artifact tooling assertions passed\n' "$assertions"

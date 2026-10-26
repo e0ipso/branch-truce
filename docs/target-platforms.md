@@ -120,7 +120,9 @@ modules [src/ui](../src/ui) imports, with the API floors: `qml6-module-qtquick`,
 which those modules load. The application runs the installed Git, so it also depends on
 `git (>= 1:2.43~)`. The desktop styling is in `Depends` too:
 `qml6-module-org-kde-desktop`, `kde-style-breeze`, `kf6-breeze-icon-theme` and
-`hicolor-icon-theme`. So is `qt6-wayland`, which ships the Wayland shell
+`hicolor-icon-theme`. Breeze icons are SVG, so `qt6-svg-plugins (>= 6.6~)`,
+Qt's SVG icon engine, is listed too; without it every Breeze icon is null.
+`qt6-wayland` ships the Wayland shell
 integrations; without it the app aborts on a Wayland session that does not
 bring the package some other way. There is no `Recommends`. This list is the
 one the CI release packages use; `packaging/scripts/check-package.sh` checks
@@ -208,7 +210,13 @@ which needs network access for the package lists, and checks:
 6. The installed `branch-truce --version` and `--smoke-test` on a disposable
    merge conflict, offscreen with software rendering. This loads the compiled
    QML, Qt Quick Controls and Kirigami from the installed closure only.
-7. `apt-get remove` leaves none of the program files.
+7. The installed application resolves the Breeze icon `document-save`. The
+   inspection builds `tests/fixtures/AppearanceProbe.cpp` in the `-build` image
+   of the base, preloads it into `branch-truce --smoke-test` with
+   `XDG_CURRENT_DESKTOP=GNOME` and reads the `documentSave` field of its
+   record. A null icon fails, which is what a closure without
+   `qt6-svg-plugins` gives.
+8. `apt-get remove` leaves none of the program files.
 
 ## Results on 2026-10-25
 

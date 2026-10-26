@@ -24,9 +24,14 @@
 #   6. The installed branch-truce runs --version and --smoke-test on a
 #      disposable merge conflict, offscreen. This loads the embedded QML,
 #      Kirigami and Qt Quick Controls from the installed closure.
-#   7. Removal leaves none of the package's files.
+#   7. The installed application resolves the Breeze icon document-save, read
+#      by tests/fixtures/AppearanceProbe.cpp preloaded into the real binary.
+#      Without the SVG icon engine in the closure the icon is null. The run
+#      names GNOME as the desktop; see the comment at that step.
+#   8. Removal leaves none of the package's files.
 # binutils, desktop-file-utils and appstream are installed after step 2 for
-# steps 3 and 5 only; they are not part of the closure.
+# steps 3 and 5 only; they are not part of the closure. The probe is built
+# from the sources in the matching -build image, which must exist.
 #
 # With --output, the report is also written to DIR/<package>.inspection.
 # CONTAINER_ENGINE defaults to docker.
@@ -71,6 +76,8 @@ host_main() {
     # The QML modules the application imports, from the sources it was built from.
     sed -n 's/^import \([A-Za-z][A-Za-z0-9.]*\).*/\1/p' "$root"/src/ui/*.qml | LC_ALL=C sort -u > "$fixture/imports.txt"
     cp -- "$root/tools/inspect-artifact.sh" "$root/tools/artifact-baseline.sh" "$fixture/"
+    build_appearance_probe "$engine" "${image%-target}-build" "$root" "$fixture/probe" \
+        || { echo "Could not build the appearance probe in ${image%-target}-build; run tools/build-artifact.sh --target $target first" >&2; exit 1; }
 
     status=0
     "$engine" run --rm --volume "$package:/artifact/$name.deb:ro" --volume "$fixture:/inspect:ro" \
@@ -84,6 +91,42 @@ host_main() {
     fi
     echo "Inspection exit status: $status"
     return "$status"
+}
+
+# Builds tests/fixtures/AppearanceProbe.cpp into DIR/lib/libappearance_probe.so
+# in the -build image of the same base, so it links the Qt the package runs on.
+# The container has no network and sees the source read-only.
+build_appearance_probe() {
+    local engine=$1 image=$2 root=$3 dir=$4 log
+    mkdir -p -- "$dir/src" "$dir/lib"
+    cp -- "$root/tests/fixtures/AppearanceProbe.cpp" "$dir/src/"
+    cat > "$dir/src/CMakeLists.txt" <<'CMAKE'
+cmake_minimum_required(VERSION 3.22)
+project(appearance_probe CXX)
+find_package(Qt6 REQUIRED COMPONENTS Gui QuickControls2)
+add_library(appearance_probe MODULE AppearanceProbe.cpp)
+target_link_libraries(appearance_probe PRIVATE Qt6::Gui Qt6::QuickControls2)
+CMAKE
+    log=$dir/build.log
+    "$engine" run --rm --network none \
+        --volume "$dir/src:/probe/src:ro" --volume "$dir/lib:/probe/lib" "$image" /bin/bash -c \
+        'cmake -S /probe/src -B /tmp/probe-build && cmake --build /tmp/probe-build \
+            && cp /tmp/probe-build/libappearance_probe.so /probe/lib/' \
+        > "$log" 2>&1 || { tail -n 20 -- "$log" >&2; return 1; }
+    [[ -f "$dir/lib/libappearance_probe.so" ]]
+}
+
+# The icon decision: the appearance record the preloaded probe printed must say
+# the Breeze icon document-save resolved to an icon. An unset record fails too.
+check_icon_resolves() {
+    local record=$1
+    if [[ -z "$record" ]]; then
+        fail "no BRANCH_TRUCE_APPEARANCE record from the installed application"
+    elif [[ "$record" == *'"documentSave":true'* ]]; then
+        pass "QIcon::fromTheme(document-save) resolves in the installed application"
+    else
+        fail "QIcon::fromTheme(document-save) is null in the installed application; does Depends name the Qt SVG icon engine package?"
+    fi
 }
 
 # Everything below runs as root inside the disposable target container.
@@ -248,6 +291,18 @@ container_main() {
     else
         fail "smoke test did not open the merge session"
     fi
+
+    step "Icon theme in the installed application"
+    local appearance
+    # A named desktop keeps this step on the packaged SVG engine. With none
+    # named, Kirigami swaps in an icon theme that does not resolve, which the
+    # app's own startup test covers.
+    appearance=$(isolated env XDG_CURRENT_DESKTOP=GNOME LD_PRELOAD=/inspect/probe/lib/libappearance_probe.so \
+        branch-truce --smoke-test "$repo" 2>&1) || fail "smoke test with the probe exited $?"
+    appearance=$(printf '%s\n' "$appearance" | sed -n 's/^BRANCH_TRUCE_APPEARANCE=//p')
+    echo "Appearance: ${appearance:-none}"
+    echo "SVG icon engine: $(find /usr/lib -path '*/qt6/plugins/iconengines/*svg*' | head -1)"
+    check_icon_resolves "$appearance"
 
     step "Removal"
     apt-get remove -y -q branch-truce >/dev/null 2>&1 || fail "apt remove"
