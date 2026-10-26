@@ -8,6 +8,7 @@
 #include "app/MergetoolProtocol.h"
 #include "TestHarness.h"
 #include "fixtures/QuickScene.h"
+#include <QAccessible>
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
@@ -598,6 +599,14 @@ qreal checkFits(Scene &scene, int width, int height, const std::vector<const cha
             throw std::runtime_error("unreachable at " + std::to_string(width) + "x" + std::to_string(height)
                                      + ": " + geometry(item));
     }
+    // Each pane header is one line high.
+    for (const auto *name : {"stage2Label", "resultLabel", "stage3Label"}) {
+        auto *label = scene.item(name);
+        const auto line = QFontMetricsF(label->property("font").value<QFont>()).lineSpacing();
+        if (label->height() > line * 1.5)
+            throw std::runtime_error(std::string(name) + " is taller than one line at " + std::to_string(width) + "x"
+                                     + std::to_string(height) + ": " + geometry(label));
+    }
     qreal smallest = height;
     for (const auto *name : textPanes) smallest = std::min(smallest, scene.item(name)->height());
     return smallest;
@@ -720,10 +729,27 @@ void expectSourcesAround(Scene &scene, const Repository &repo, const char *path,
 {
     clickFile(scene, path);
     expectText(scene.text("selectedPath"), QString::fromLatin1(path), "selected path");
-    expectText(scene.text("stage2Label"), "Left source\n" + leftLabel, "left identity");
-    expectText(scene.text("stage3Label"), "Right source\n" + rightLabel, "right identity");
-    expectText(scene.text("stage2Identity"), "Captured blob: " + utf8(repo.stageObject(2, path)), "left blob");
-    expectText(scene.text("stage3Identity"), "Captured blob: " + utf8(repo.stageObject(3, path)), "right blob");
+    // Each header is one line: the role, then the label with its commit id cut to 10 characters.
+    const auto cut = [](QString label, const QByteArray &commit) {
+        return label.replace(utf8(commit), utf8(commit).left(10));
+    };
+    expectText(scene.text("stage2Label"), "Left source · " + cut(leftLabel, repo.leftCommit), "left identity");
+    expectText(scene.text("stage3Label"), "Right source · " + cut(rightLabel, repo.rightCommit), "right identity");
+    expectText(scene.text("stage2Identity"), "Captured blob: " + utf8(repo.stageObject(2, path)).left(10), "left blob");
+    expectText(scene.text("stage3Identity"), "Captured blob: " + utf8(repo.stageObject(3, path)).left(10), "right blob");
+    // The full commit and blob ids stay reachable as accessible text.
+    const auto described = [&](const char *name) {
+        const auto *face = QAccessible::queryAccessibleInterface(scene.item(name));
+        return face ? face->text(QAccessible::Description) : QString();
+    };
+    for (const auto *name : {"stage2Label", "stage2Identity"}) {
+        expectContains(described(name), utf8(repo.leftCommit), "left commit description");
+        expectContains(described(name), utf8(repo.stageObject(2, path)), "left blob description");
+    }
+    for (const auto *name : {"stage3Label", "stage3Identity"}) {
+        expectContains(described(name), utf8(repo.rightCommit), "right commit description");
+        expectContains(described(name), utf8(repo.stageObject(3, path)), "right blob description");
+    }
     expectText(scene.text("stage2Text"), utf8(repo.stageText(2, path)), "left source text");
     expectText(scene.text("stage3Text"), utf8(repo.stageText(3, path)), "right source text");
     // The editable center starts from the launch file exactly as it was on disk.

@@ -752,29 +752,46 @@ ColumnLayout {
         property alias blocks: sourceBlocks
         property bool alignHeader: true
         property int minimumLines: comparison.minimumPaneLines
-        readonly property real headerImplicitHeight: sourceHeader.implicitHeight
-        Label {
-            id: sourceHeader
-            objectName: sourcePane.paneName + "Label"
+        readonly property real headerImplicitHeight: sourceHeaderRow.implicitHeight
+        // The commit id is cut to 10 characters on the line; the tooltip keeps the full ids.
+        readonly property string commitId: sourcePane.source.commitId || ""
+        readonly property string fullIdentity: qsTr("Verified commit: %1\nCaptured blob: %2")
+            .arg(sourcePane.commitId || qsTr("unavailable"))
+            .arg(sourcePane.source.objectId || qsTr("unavailable"))
+        function shortCommit(label: string): string {
+            return sourcePane.commitId.length > 10
+                ? label.replace(sourcePane.commitId, sourcePane.commitId.slice(0, 10)) : label
+        }
+        RowLayout {
+            id: sourceHeaderRow
             Layout.fillWidth: true
             Layout.preferredHeight: sourcePane.alignHeader ? comparison.headerHeight : implicitHeight
-            text: sourcePane.paneRole + "\n"
-                + (sourcePane.source.label || qsTr("Source identity unavailable"))
-            textFormat: Text.PlainText
-            wrapMode: Text.WrapAnywhere
-        }
-        Label {
-            objectName: sourcePane.paneName + "Identity"
-            Layout.fillWidth: true
-            text: qsTr("Captured blob: %1").arg(sourcePane.source.objectId || qsTr("unavailable"))
-            textFormat: Text.PlainText
-            elide: Text.ElideRight
+            Layout.rightMargin: Kirigami.Units.largeSpacing
+            spacing: Kirigami.Units.largeSpacing
+            Label {
+                id: sourceHeader
+                objectName: sourcePane.paneName + "Label"
+                Layout.fillWidth: true
+                text: sourcePane.paneRole + " · "
+                    + sourcePane.shortCommit(sourcePane.source.label || qsTr("Source identity unavailable"))
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                Accessible.description: sourcePane.fullIdentity
+            }
+            Label {
+                objectName: sourcePane.paneName + "Identity"
+                Layout.maximumWidth: sourceHeaderRow.width / 2
+                text: qsTr("Captured blob: %1").arg(sourcePane.source.objectId
+                    ? sourcePane.source.objectId.slice(0, 10) : qsTr("unavailable"))
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                color: Kirigami.Theme.disabledTextColor
+                Accessible.description: sourcePane.fullIdentity
+            }
             HoverHandler { id: identityHover }
             ToolTip.visible: identityHover.hovered
-            ToolTip.text: qsTr("Verified commit: %1\nCaptured blob: %2")
-                .arg(sourcePane.source.commitId || qsTr("unavailable"))
-                .arg(sourcePane.source.objectId || qsTr("unavailable"))
-            Accessible.description: ToolTip.text
+            ToolTip.text: sourcePane.fullIdentity
+            ToolTip.delay: Kirigami.Units.toolTipDelay
         }
         Item {
             Layout.fillWidth: true
@@ -920,14 +937,14 @@ ColumnLayout {
                 objectName: "resultLabel"
                 Layout.fillWidth: true
                 Layout.preferredHeight: comparison.headerHeight
-                text: qsTr("Editable result\nApp draft")
+                text: qsTr("Editable result · App draft")
                 textFormat: Text.PlainText
-                wrapMode: Text.Wrap
-            }
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("Initial content and your edits are kept")
                 elide: Text.ElideRight
+                HoverHandler { id: resultHeaderHover }
+                ToolTip.visible: resultHeaderHover.hovered
+                ToolTip.text: qsTr("Initial content and your edits are kept")
+                ToolTip.delay: Kirigami.Units.toolTipDelay
+                Accessible.description: ToolTip.text
             }
             Item {
                 Layout.fillWidth: true

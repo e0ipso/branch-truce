@@ -404,14 +404,14 @@ public:
                 CHECK(fixture.item((std::string(prefix) + "Text").c_str())->property("readOnly").toBool());
                 CHECK(fixture.item((std::string(prefix) + "Text").c_str())->property("text").toString().toStdString() == source->worktree.utf8);
                 const auto label = fixture.item((std::string(prefix) + "Label").c_str())->property("text").toString();
-                CHECK(label.startsWith(side == SourceSide::Stage2 ? "Left source\n" : "Right source\n"));
+                CHECK(label.startsWith(side == SourceSide::Stage2 ? "Left source · " : "Right source · "));
                 CHECK(label.contains(QString::fromStdString(source->label)));
-                CHECK(fixture.item((std::string(prefix) + "Identity").c_str())->property("text").toString().contains(QString::fromStdString(source->objectId)));
+                CHECK(fixture.item((std::string(prefix) + "Identity").c_str())->property("text").toString().contains(QString::fromStdString(source->objectId).left(10)));
                 const auto projected = fixture.controller.selectedFile().value(prefix).toMap();
                 CHECK(projected.value("commitId").toString().toStdString() == *source->commitId);
             }
             CHECK(!fixture.item("resultText")->property("readOnly").toBool());
-            CHECK(fixture.item("resultLabel")->property("text").toString().startsWith("Editable result\n"));
+            CHECK(fixture.item("resultLabel")->property("text").toString().startsWith("Editable result · "));
             const auto x = [&](const char *name) { return fixture.item(name)->mapToScene({0, 0}).x(); };
             CHECK(x("stage2Text") < x("resultText") && x("resultText") < x("stage3Text"));
             CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
@@ -434,7 +434,7 @@ public:
             settle([&] { return fixture.item("scopedChoices")->isVisible(); });
             CHECK(fixture.item("showSourceChoices")->setProperty("checked", false));
             CHECK(fixture.item("showEarlier")->setProperty("checked", false));
-            auto *pane = fixture.item("stage2Label")->parentItem();
+            auto *pane = fixture.item("stage2Label")->parentItem()->parentItem();
             const auto width = pane->width();
             QQmlExpression resize(qmlContext(pane), pane,
                 QStringLiteral("SplitView.preferredWidth = %1").arg(width + 80));
