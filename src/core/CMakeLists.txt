@@ -1,4 +1,4 @@
-add_library(branch_truce_core STATIC BuildInfo.cpp SessionState.cpp Correspondence.cpp EditingCommands.cpp)
+add_library(branch_truce_core STATIC BuildInfo.cpp SessionState.cpp ConflictMarkers.cpp Correspondence.cpp EditingCommands.cpp)
 target_include_directories(branch_truce_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_compile_features(branch_truce_core PUBLIC cxx_std_20)
 target_compile_definitions(branch_truce_core PRIVATE BRANCH_TRUCE_VERSION_STRING="${BRANCH_TRUCE_RESOLVED_VERSION}")

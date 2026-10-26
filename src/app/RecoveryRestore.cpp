@@ -61,7 +61,10 @@ public:
     Draft draft(const QJsonValue &value) const
     {
         const auto object = value.toObject();
-        Draft result{bytes(object.value("text")), {}, number(object.value("unresolvedMarkers"))};
+        // The recorded marker count is advisory. FileSession scans the text
+        // again, and the replayed state must encode the same count.
+        number(object.value("unresolvedMarkers"));
+        Draft result{bytes(object.value("text")), {}, 0};
         require(validUtf8(result.text) && object.value("decisions").isArray(), "Invalid recovered draft.");
         for (const auto &entry : object.value("decisions").toArray()) {
             const auto decision = entry.toObject();

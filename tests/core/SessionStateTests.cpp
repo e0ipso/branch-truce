@@ -744,10 +744,10 @@ public:
             CHECK(file.discardToStaged(1) == Transition::StaleRevision);
             CHECK(file.beginMarkResolved(1) == Transition::StaleRevision);
             CHECK(file.current().id == current && file.current().draft == decisions);
+            // The marker count comes from the text, so a supplied count changes nothing.
             decisions.unresolvedMarkers = 1;
-            CHECK(file.replaceDraft(current, decisions) == Transition::Applied);
-            CHECK(file.current().result == textRevision.result);
-            CHECK(file.current().decisions == file.current().id);
+            CHECK(file.replaceDraft(current, decisions) == Transition::NoChange);
+            CHECK(file.current().id == current && file.current().draft.unresolvedMarkers == 0);
         });
         suite.run("Save checkpoints only and keeps command history", [] {
             FileSession file("id", "file", draft());
@@ -791,8 +791,9 @@ public:
             CHECK(file.current().draft == undecided && !file.reviewed());
             CHECK(file.beginMarkResolved(1, true) == Transition::Applied);
             CHECK(file.reviewed()->confirmedUndecided && !has(file, Blocker::Undecided));
-            undecided.unresolvedMarkers = 1;
+            undecided.text = "<<<<<<< ours\nresult\n=======\nother\n>>>>>>> theirs\n";
             CHECK(file.replaceDraft(1, undecided) == Transition::Applied);
+            CHECK(file.current().draft.unresolvedMarkers == 1);
             CHECK(file.beginMarkResolved(file.current().id, true) == Transition::Blocked);
             CHECK(has(file, Blocker::UnresolvedMarkers) && has(file, Blocker::Undecided));
             for (const auto support : {Support::OutsideApp, Support::Unreadable}) {
@@ -809,6 +810,88 @@ public:
                 CHECK(file.facts().blockers == std::vector<Blocker>{expected});
                 CHECK(file.facts().status == (support == Support::OutsideApp ? FileStatus::OutsideApp : FileStatus::Unreadable));
             }
+        });
+        suite.run("TRUCE-0172 a complete block is one typed range with line and byte bounds", [] {
+            const std::string text = "a\n<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\nz\n";
+            const auto scan = scanMarkers(text);
+            CHECK(scan.orphans.empty() && scan.blocks.size() == 1 && scan.count() == 1);
+            const auto &block = scan.blocks.front();
+            CHECK(block.begin == (MarkerLine{MarkerKind::Begin, 1, {2, 15}}));
+            CHECK(!block.base);
+            CHECK(block.separator == (MarkerLine{MarkerKind::Separator, 3, {20, 28}}));
+            CHECK(block.end == (MarkerLine{MarkerKind::End, 5, {34, 49}}));
+            CHECK(text.substr(block.end.bytes.begin, block.end.bytes.end - block.end.bytes.begin) == ">>>>>>> theirs\n");
+            CHECK(scan.first() == block.begin);
+        });
+        suite.run("TRUCE-0172 a block with a base section keeps the base line", [] {
+            const std::string text = "<<<<<<< ours\nleft\n||||||| base\nbase\n=======\nright\n>>>>>>> theirs";
+            const auto scan = scanMarkers(text);
+            CHECK(scan.orphans.empty() && scan.blocks.size() == 1);
+            const auto &block = scan.blocks.front();
+            CHECK(block.base == (MarkerLine{MarkerKind::Base, 2, {18, 31}}));
+            CHECK(block.separator.line == 4 && block.end.line == 6);
+            // The last line has no line ending.
+            CHECK(block.end.bytes == (ByteRange{50, text.size()}));
+        });
+        suite.run("TRUCE-0172 each marker line alone is an orphan", [] {
+            const std::array<std::pair<std::string, MarkerKind>, 4> lines{{
+                {"<<<<<<< ours", MarkerKind::Begin}, {"||||||| base", MarkerKind::Base},
+                {"=======", MarkerKind::Separator}, {">>>>>>> theirs", MarkerKind::End}}};
+            for (const auto &[line, kind] : lines) {
+                const auto text = "before\n" + line + "\nafter\n";
+                const auto scan = scanMarkers(text);
+                CHECK(scan.blocks.empty() && scan.count() == 1);
+                CHECK(scan.orphans == (std::vector<MarkerLine>{{kind, 1, {7, 8 + line.size()}}}));
+                FileSession file("id", "file", {text, {}, 0});
+                CHECK(file.current().draft.unresolvedMarkers == 1);
+                CHECK(file.beginMarkResolved(1) == Transition::Blocked && has(file, Blocker::UnresolvedMarkers));
+            }
+        });
+        suite.run("TRUCE-0172 marker-like text that is not a whole marker is ignored", [] {
+            const std::string text = "x <<<<<<< ours\n  =======\n<<<<<<<< eight\n======== heading\n"
+                                     ">>>>>>>theirs\n|||||| six\nend >>>>>>> theirs\n";
+            CHECK(scanMarkers(text) == MarkerScan{});
+            FileSession file("id", "file", {text, {}, 7});
+            CHECK(file.current().draft.unresolvedMarkers == 0);
+            CHECK(file.beginMarkResolved(1) == Transition::Applied);
+        });
+        suite.run("TRUCE-0172 CRLF line endings keep the carriage return inside the marker line", [] {
+            const std::string text = "<<<<<<< ours\r\nleft\r\n=======\r\nright\r\n>>>>>>> theirs\r\n";
+            const auto scan = scanMarkers(text);
+            CHECK(scan.orphans.empty() && scan.blocks.size() == 1);
+            const auto &block = scan.blocks.front();
+            CHECK(block.begin.bytes == (ByteRange{0, 14}));
+            CHECK(block.separator == (MarkerLine{MarkerKind::Separator, 2, {20, 29}}));
+            CHECK(block.end == (MarkerLine{MarkerKind::End, 4, {36, text.size()}}));
+        });
+        suite.run("TRUCE-0172 broken and nested blocks leave every marker line counted", [] {
+            const std::string text = "<<<<<<< a\n<<<<<<< b\nleft\n=======\nright\n>>>>>>> b\n"
+                                     "=======\n>>>>>>> a\n||||||| late\n";
+            const auto scan = scanMarkers(text);
+            CHECK(scan.blocks.size() == 1 && scan.blocks.front().begin.line == 1);
+            std::vector<std::size_t> orphanLines;
+            for (const auto &line : scan.orphans) orphanLines.push_back(line.line);
+            CHECK(orphanLines == (std::vector<std::size_t>{0, 6, 7, 8}));
+            CHECK(scan.count() == 5 && scan.first()->line == 0);
+        });
+        suite.run("TRUCE-0172 deleting one marker line keeps the publish blocker", [] {
+            const std::string text = "a\n<<<<<<< ours\nleft\n||||||| base\nbase\n=======\nright\n>>>>>>> theirs\nz\n";
+            const auto block = scanMarkers(text).blocks.at(0);
+            for (const auto &line : {block.begin, *block.base, block.separator, block.end}) {
+                FileSession file("id", "file", {text, {}, 0});
+                CHECK(file.beginMarkResolved(1) == Transition::Blocked);
+                CHECK(file.editResult(1, {line.bytes, ""}) == Transition::Applied);
+                const auto remaining = file.markers();
+                CHECK(remaining.blocks.size() == (line.kind == MarkerKind::Base ? 1u : 0u));
+                CHECK(file.current().draft.unresolvedMarkers == remaining.count());
+                CHECK(file.current().draft.unresolvedMarkers != 0);
+                CHECK(file.beginMarkResolved(file.current().id, true) == Transition::Blocked);
+                CHECK(has(file, Blocker::UnresolvedMarkers) && !file.reviewed());
+            }
+            FileSession cleared("id", "file", {text, {}, 0});
+            CHECK(cleared.replaceDraft(1, {"a\nleft\nz\n", {}, 3}) == Transition::Applied);
+            CHECK(cleared.current().draft.unresolvedMarkers == 0 && !has(cleared, Blocker::UnresolvedMarkers));
+            CHECK(cleared.beginMarkResolved(cleared.current().id) == Transition::Applied);
         });
         suite.run("TRUCE-0098 an outside-app file keeps its support blocker and recorded failures only", [] {
             FileSession file("id", "file", draft());

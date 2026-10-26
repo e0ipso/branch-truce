@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ConflictMarkers.h"
 #include "Correspondence.h"
 #include <map>
 #include <memory>
@@ -21,6 +22,8 @@ struct Decision {
 struct Draft {
     std::string text;
     std::map<std::string, Decision> decisions;
+    // scanMarkers(text).count(). FileSession recomputes it for every revision
+    // it stores and ignores a supplied value.
     std::size_t unresolvedMarkers = 0;
     bool operator==(const Draft &) const = default;
 };
@@ -112,6 +115,8 @@ public:
     [[nodiscard]] const CorrespondenceMap *correspondence() const noexcept {
         return current().correspondence.get();
     }
+    // Conflict-marker blocks and orphan marker lines in the current result.
+    [[nodiscard]] MarkerScan markers() const { return scanMarkers(current().draft.text); }
     [[nodiscard]] const std::vector<ChoiceTarget> &choices() const noexcept;
     [[nodiscard]] const std::vector<NonConflictingTarget> &nonConflictingTargets() const noexcept;
     [[nodiscard]] const std::optional<Revision> &checkpoint() const noexcept { return checkpoint_; }

@@ -15,6 +15,7 @@
 #include <QSet>
 #include <QTemporaryDir>
 #include <QUuid>
+#include <algorithm>
 #include <limits>
 #include <cstdlib>
 
@@ -117,7 +118,7 @@ Draft savedDraft()
 Draft unsavedDraft()
 {
     auto value = savedDraft();
-    value.text += "acknowledged unsaved \xf0\x9f\x98\x80\n";
+    value.text += "<<<<<<< ours\nacknowledged unsaved \xf0\x9f\x98\x80\n=======\nother\n>>>>>>> theirs\n";
     value.decisions["right"] = {DecisionValue::Accepted, 2};
     value.unresolvedMarkers = 1;
     return value;
@@ -843,6 +844,44 @@ public:
             CHECK(model.recordCheckpoint("id", 4, Outcome::Failed) == Transition::StaleRevision);
             CHECK(model.canFinish());
         });
+        suite.run("TRUCE-0172 replay recomputes markers from the restored text", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            storage::RecoveryStore store(directory.path() + "/recovery");
+            auto file = recoverableFile();
+            CHECK(store.commit(recoveryTransaction(file, "open", QUuid::createUuid().toString())).succeeded);
+            auto stripped = savedDraft();
+            stripped.text += "left\n=======\nright\n>>>>>>> theirs\n";
+            CHECK(file.replaceDraft(1, stripped) == Transition::Applied);
+            CHECK(file.current().draft.unresolvedMarkers == 2);
+            const auto transaction = recoveryTransaction(file, "replace-draft", QUuid::createUuid().toString());
+            CHECK(transaction.state.value("current").toObject().value("draft").toObject()
+                .value("unresolvedMarkers").toString() == "2");
+            // A count of 0 for this text is what a scan of only <<<<<<< lines recorded.
+            auto stale = transaction;
+            auto current = stale.state.value("current").toObject();
+            auto draft = current.value("draft").toObject();
+            draft.insert("unresolvedMarkers", "0");
+            current.insert("draft", draft);
+            stale.state.insert("current", current);
+            {
+                QTemporaryDir copy;
+                CHECK(copy.isValid());
+                storage::RecoveryStore staleStore(copy.path() + "/recovery");
+                CHECK(staleStore.commit(recoveryTransaction(recoverableFile(), "open", QUuid::createUuid().toString())).succeeded);
+                CHECK(staleStore.commit(stale).succeeded);
+                const auto replay = replayRecovery(staleStore);
+                CHECK(!replay.succeeded && replay.files.empty() && replay.error.contains("does not match"));
+            }
+            CHECK(store.commit(transaction).succeeded);
+            const auto replay = replayRecovery(store);
+            CHECK(replay.succeeded && replay.files.size() == 1);
+            const auto &restored = replay.files.front();
+            CHECK(restored.current().draft.text == stripped.text && restored.current().draft.unresolvedMarkers == 2);
+            CHECK(restored.markers().orphans.size() == 2 && restored.markers().blocks.empty());
+            const auto blockers = restored.facts().blockers;
+            CHECK(std::find(blockers.begin(), blockers.end(), Blocker::UnresolvedMarkers) != blockers.end());
+        });
         suite.run("unconfirmed choices and marker blockers are visible without mutation", [] {
             SessionModel model;
             auto undecided = draft();
@@ -855,7 +894,7 @@ public:
             CHECK(role(model, SessionModel::UndecidedRole).toULongLong() == 1);
             CHECK(model.beginMarkResolved("id", 1, true) == Transition::Applied);
             CHECK(role(model, SessionModel::ReviewedRole).toMap().value("confirmedUndecided").toBool());
-            undecided.unresolvedMarkers = 1;
+            undecided.text = "=======\n";
             CHECK(model.replaceDraft("id", 1, undecided) == Transition::Applied);
             CHECK(model.beginMarkResolved("id", 2, true) == Transition::Blocked);
             CHECK(changes == 2);

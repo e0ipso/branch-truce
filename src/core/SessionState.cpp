@@ -26,16 +26,10 @@ bool exceedsEnvelope(const std::string &text)
     return !withinTextEnvelope(text);
 }
 
-std::size_t markerCount(const std::string &text)
+Draft withMarkers(Draft draft)
 {
-    std::size_t count = 0;
-    for (std::size_t begin = 0; begin < text.size();) {
-        if (text.compare(begin, 7, "<<<<<<<") == 0) ++count;
-        const auto newline = text.find('\n', begin);
-        if (newline == std::string::npos) break;
-        begin = newline + 1;
-    }
-    return count;
+    draft.unresolvedMarkers = scanMarkers(draft.text).count();
+    return draft;
 }
 }
 
@@ -89,7 +83,7 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
             supportDetail_ = "Load error: could not build correspondence for " + path_ + ": " + error.what();
         }
     }
-    revisions_.emplace(1, Revision{1, 1, 1, std::move(initial), std::move(correspondence)});
+    revisions_.emplace(1, Revision{1, 1, 1, withMarkers(std::move(initial)), std::move(correspondence)});
 }
 
 const std::vector<ChoiceTarget> &FileSession::choices() const noexcept
@@ -104,9 +98,10 @@ const std::vector<NonConflictingTarget> &FileSession::nonConflictingTargets() co
     return nonConflictingTargets_ ? *nonConflictingTargets_ : empty;
 }
 
-RevisionId FileSession::advance(const Draft &draft,
+RevisionId FileSession::advance(const Draft &edited,
                                 std::shared_ptr<const CorrespondenceMap> correspondence)
 {
+    const auto draft = withMarkers(edited);
     if (next_ == std::numeric_limits<RevisionId>::max()) {
         throw std::overflow_error("Session revision space exhausted");
     }
@@ -152,6 +147,7 @@ Transition FileSession::replaceDraft(RevisionId expected, Draft draft,
     if (expected != current_) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
     if (exceedsEnvelope(draft.text)) return Transition::Blocked;
+    draft = withMarkers(std::move(draft));
     const bool unchanged = draft == current().draft;
     std::shared_ptr<const CorrespondenceMap> mapping;
     if (handEdited && correspondence()) {
@@ -191,7 +187,6 @@ Transition FileSession::editResult(RevisionId expected, ResultEdit edit)
     auto draft = current().draft;
     draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
     if (exceedsEnvelope(draft.text)) return Transition::Blocked;
-    draft.unresolvedMarkers = markerCount(draft.text);
     if (draft == current().draft) return Transition::NoChange;
     auto mapping = correspondence()
         ? std::make_shared<const CorrespondenceMap>(correspondence()->edited(next_, edit)) : nullptr;
@@ -251,8 +246,6 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
             [&](const auto &anchor) { return anchor.result == edit.range; });
         *updated = updated->edited(next_, edit, false, target->source.contributionId);
     }
-    // Match the launch-time marker convention after every text command.
-    if (!edits.empty()) draft.unresolvedMarkers = markerCount(draft.text);
     // Choosing the text a hand edit left unchanged still replaces that edit.
     if (draft == current().draft && updated->handEditedAnchors() == mapping->handEditedAnchors())
         return Transition::NoChange;

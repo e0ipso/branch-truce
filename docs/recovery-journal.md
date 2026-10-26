@@ -33,7 +33,9 @@ State schema 1 contains a stable transaction UUID, action name, file identity
 and exact path references, support status, immutable snapshots and the complete
 current revision. A revision contains transaction, text and decision revision
 IDs, its text payload, every decision and optional combination order, and its
-unresolved-marker count. A revision with hand-edited anchors lists their
+unresolved-marker count. Replay scans the restored text again instead of
+trusting that count, so a record whose count differs from the scan does not
+match. A revision with hand-edited anchors lists their
 contribution IDs in `handEdited`. A revision without the field has none, which
 covers records written before the field existed. It also records the separate
 manual Save checkpoint, review declaration, written/staged revisions and

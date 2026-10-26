@@ -2002,10 +2002,8 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
                 auto snapshots = captureFile(file, repository, sessionId);
                 if (snapshots) {
                     support = Support::Supported;
+                    // FileSession counts the markers in this text.
                     draft.text = file.result->utf8.toStdString();
-                    const auto lines = file.result->utf8.split('\n');
-                    draft.unresolvedMarkers = static_cast<std::size_t>(std::count_if(
-                        lines.cbegin(), lines.cend(), [](const auto &line) { return line.startsWith("<<<<<<<"); }));
                 } else if (detail.isEmpty()) {
                     support = Support::Unreadable;
                     detail = QStringLiteral("Load error: conflict inspection did not provide complete source and result snapshots; reopen the session.");
