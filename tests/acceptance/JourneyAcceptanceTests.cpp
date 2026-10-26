@@ -302,6 +302,24 @@ QVariantMap choiceRow(Scene &scene, const QString &label)
     throw std::runtime_error("missing choice row " + label.toStdString());
 }
 
+// The region that shares its ID with one scoped-choice row.
+QVariantMap regionFor(Scene &scene, const QString &label)
+{
+    const auto id = choiceRow(scene, label).value(QStringLiteral("id"));
+    for (const auto &value : scene.controller->selectedFile().value(QStringLiteral("regions")).toList())
+        if (value.toMap().value(QStringLiteral("id")) == id) return value.toMap();
+    throw std::runtime_error("missing region for " + label.toStdString());
+}
+
+// The displayed result text inside a region's UTF-16 result range.
+QString regionResult(Scene &scene, const QVariantMap &region)
+{
+    const auto begin = region.value(QStringLiteral("resultUtf16Begin")).toInt();
+    const auto end = region.value(QStringLiteral("resultUtf16End")).toInt();
+    if (begin < 0 || end < begin) throw std::runtime_error("region result range is unmapped");
+    return scene.text("resultText").mid(begin, end - begin);
+}
+
 // Scroll the scoped-choice list to one row and click one of its buttons. kind is the part of
 // the button's objectName before the choice ID: Accept, Ignore, Resolve, PreviewLeftFirst or
 // PreviewRightFirst.
@@ -884,6 +902,64 @@ public:
             CHECK(work(scene, "story.txt") == typed && !scene.file("story.txt").canRedo());
             // Other files are untouched.
             CHECK(scene.file("notes.txt").current().id == notes.id && scene.file("notes.txt").current().draft == notes.draft);
+            checkOffline(scene);
+        });
+        suite.run("PRD.md:41 PRD.md:49 typing in an accepted line marks its region manual until a choice replaces it", [] {
+            Repository repo("merge", journeyPaths());
+            Scene scene(repo);
+            clickFile(scene, "story.txt");
+            scene.click("showSourceChoices");
+            CHECK(scene.controller->selectedFile().value(QStringLiteral("fileName")).toString() == QStringLiteral("story.txt"));
+            const auto region = [&](const char *label) { return regionFor(scene, QString::fromUtf8(label)); };
+            const auto edited = [&](const char *label) {
+                return region(label).value(QStringLiteral("handEdited")).toBool();
+            };
+
+            // The launch result differs from both sides, but nobody has typed in it yet.
+            const auto launched = scene.controller->selectedFile().value(QStringLiteral("regions")).toList();
+            CHECK(!launched.isEmpty());
+            for (const auto &value : launched) {
+                CHECK(!value.toMap().value(QStringLiteral("handEdited")).toBool());
+                CHECK(value.toMap().value(QStringLiteral("state")).toString() != QStringLiteral("manual"));
+            }
+
+            clickChoice(scene, "Left line 2", "Accept");
+            clickDialogButton(scene, "replacementDialog", "OK");
+            CHECK(region("Left line 2").value(QStringLiteral("state")).toString() == QStringLiteral("accepted"));
+            CHECK(!edited("Left line 2"));
+            expectText(regionResult(scene, region("Left line 2")), "left first\n", "accepted range");
+
+            // Typing inside the accepted line in the editor marks only that region.
+            auto *editor = scene.item("resultText");
+            clickText(scene, editor);
+            CHECK(editor->hasActiveFocus());
+            keyClick(scene, Qt::Key_Home, Qt::ControlModifier);
+            keyClick(scene, Qt::Key_Down);
+            for (int step = 0; step < 4; ++step) keyClick(scene, Qt::Key_Right);
+            typeText(scene, " hand");
+            expectText(scene.text("resultText"), "header\nleft hand first\nbridge one\nbridge two\nbridge three\nbase later\ntail\n", "typed");
+            const auto typed = work(scene, "story.txt");
+            CHECK(region("Left line 2").value(QStringLiteral("state")).toString() == QStringLiteral("manual"));
+            CHECK(edited("Left line 2"));
+            expectText(regionResult(scene, region("Left line 2")), "left hand first\n", "edited range");
+            CHECK(!edited("Left line 6") && !edited("Right line 6"));
+            CHECK(region("Left line 6").value(QStringLiteral("state")).toString() == QStringLiteral("undecided"));
+
+            // An ordered combination over that line replaces the typed text and clears the mark.
+            clickChoice(scene, QString::fromUtf8("Right section, lines 2–2"), "PreviewLeftFirst");
+            CHECK(scene.item("manualReplacementNotice")->isVisible());
+            expectText(scene.text("replacementBeforeText"), "left hand first\n", "replaced edit");
+            clickDialogButton(scene, "replacementDialog", "OK");
+            expectText(scene.text("resultText"), "header\nleft first\nright first\nbridge one\nbridge two\nbridge three\nbase later\ntail\n", "combined");
+            CHECK(!edited("Left line 2") && !edited("Right line 2"));
+            CHECK(region("Left line 2").value(QStringLiteral("state")).toString() == QStringLiteral("accepted"));
+            CHECK(region("Right line 2").value(QStringLiteral("state")).toString() == QStringLiteral("accepted"));
+
+            // Undo brings back the typed text together with its mark.
+            scene.click("undoCommand");
+            CHECK(work(scene, "story.txt") == typed);
+            CHECK(edited("Left line 2"));
+            CHECK(region("Left line 2").value(QStringLiteral("state")).toString() == QStringLiteral("manual"));
             checkOffline(scene);
         });
         suite.run("PRD.md:135 PRD.md:153 Save keeps an app-only draft and Mark resolved without a prior Save confirms, writes and resolves", [] {
