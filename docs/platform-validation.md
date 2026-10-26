@@ -209,7 +209,8 @@ style. Otherwise the app looks for `org/kde/desktop/qmldir` in the QML import
 paths. When it finds one it selects `org.kde.desktop`, with Fusion for any
 control that style lacks, and when it does not it selects Fusion. It also
 sets `breeze` as the fallback icon theme, because outside Plasma no platform
-theme names one.
+theme names one. When the platform names no icon theme at all, it names
+`hicolor`, as Qt does on xcb and Wayland. The icon notes below say why.
 
 This was checked on 2026-10-26 on the development host (Tuxedo OS,
 `qml6-module-org-kde-desktop` 6.24.0) outside Plasma: headless sway, no
@@ -242,9 +243,43 @@ scheme picker. Branch Truce has none, so its colours come from `kdeglobals`.
 With the `hicolor` theme sway gives Qt, `QIcon::fromTheme("document-save")`
 returned a null icon without the fallback and a real one with `breeze`. A
 small Qt program making the same calls checked this, not the app itself.
-Under `offscreen` Qt reports no icon theme at all, so the fallback does not
-apply there. A real Plasma session and the Kubuntu base were not part of
-this check.
+A real Plasma session and the Kubuntu base were not part of this check.
+
+The `offscreen`, `minimal` and `vnc` platforms name no icon theme. When
+`XDG_CURRENT_DESKTOP` is also unset, Kirigami's controls plugin (6.24,
+`src/controls/kirigamicontrolsplugin.cpp`) sets the theme to
+`breeze-internal` and replaces the search path with its own QML directory
+and `:/../icons`. The host's Kirigami packages install no `breeze-internal`
+theme, and the system icon directories are no longer on the path, so the
+`breeze` fallback finds nothing and `QIcon::fromTheme("document-save")` is
+null. Kirigami does this only while the theme name is empty, so the app
+names `hicolor` before it loads the window. Kirigami then only adds its own
+directory to the fallback path, and lookups go through `hicolor` to
+`breeze`, as they already did on xcb and Wayland. Two other routes were
+rejected. Making `breeze-internal` resolvable would take a resource theme that
+inherits Breeze plus a link to KF6BreezeIcons, because the replaced search
+path holds no system directory. Setting `XDG_CURRENT_DESKTOP` would claim a
+desktop that is not running.
+
+This was checked on 2026-10-26 on the development host with the real binary
+and the appearance probe from `tests/fixtures/AppearanceProbe.cpp`, private
+XDG directories and no inherited environment:
+
+| Platform, `XDG_CURRENT_DESKTOP` | Theme before | `document-save` before | Theme after | `document-save` after |
+| --- | --- | --- | --- | --- |
+| `offscreen`, unset | `breeze-internal` | null | `hicolor` | resolves |
+| `minimal`, unset | `breeze-internal` | null | `hicolor` | resolves |
+| `vnc`, unset | `breeze-internal` | null | `hicolor` | resolves |
+| `offscreen`, `GNOME` | empty | resolves | `hicolor` | resolves |
+| `wayland` (headless sway), unset | `hicolor` | resolves | `hicolor` | resolves |
+| `xcb` (Xwayland), unset | `hicolor` | resolves | `hicolor` | resolves |
+
+`ctest -R '^app\.startup-appearance$'` covers the unset `offscreen` case and
+fails with the `hicolor` line removed from `src/app/main.cpp`.
+
+A theme the platform names stays: on Wayland the app kept `breeze` with
+`QT_QPA_PLATFORMTHEME=kde` and `XDG_CURRENT_DESKTOP=KDE`, and `Adwaita` with
+`QT_QPA_PLATFORMTHEME=gtk3`. `document-save` resolved in both.
 
 At `QT_SCALE_FACTOR=2` the text and controls doubled, but the 1920x1080
 output is only 960x540 logical pixels. That was smaller than the window's

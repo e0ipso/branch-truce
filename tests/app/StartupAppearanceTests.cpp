@@ -149,8 +149,8 @@ int main(int argc, char **argv)
         CHECK(launch.appearance(hidden.binary).value("style") == "org.kde.desktop");
     });
     suite.run("TRUCE-0103 in a GNOME session Breeze action icons resolve through the fallback theme", [&] {
-        // Kirigami swaps in its own icon theme and search path when no desktop
-        // is named, so this names one, as display managers do.
+        // A display manager names the desktop, so Kirigami keeps the app's icon
+        // theme and only adds its own fallback path.
         Launch launch(probe);
         launch.environment.insert("XDG_CURRENT_DESKTOP", "GNOME");
         const auto state = launch.appearance(binary);
@@ -158,6 +158,16 @@ int main(int argc, char **argv)
         CHECK(state.value("theme").toString() != "breeze");
         CHECK(state.value("fallbackTheme") == "breeze");
         CHECK(state.value("documentSave").toBool());
+    });
+    suite.run("with no desktop named Breeze action icons still resolve through the fallback theme", [&] {
+        // Offscreen names no icon theme, which is when Kirigami swaps in its own
+        // theme and search path unless XDG_CURRENT_DESKTOP is set.
+        Launch launch(probe);
+        CHECK(!launch.environment.contains("XDG_CURRENT_DESKTOP"));
+        const auto state = launch.appearance(binary);
+        CHECK(state.value("documentSave").toBool());
+        CHECK(state.value("theme") == "hicolor");
+        CHECK(state.value("fallbackTheme") == "breeze");
     });
     return suite.report();
 }

@@ -69,6 +69,11 @@ int main(int argc, char *argv[])
     QGuiApplication::setDesktopFileName(QStringLiteral(BRANCH_TRUCE_APP_ID));
     // Off Plasma the icon theme is hicolor or none, so icon.name falls back to Breeze.
     QIcon::setFallbackThemeName(QStringLiteral("breeze"));
+    // Platforms such as offscreen or vnc name no icon theme. With no desktop
+    // named either, Kirigami then swaps in a bundled theme and search path that
+    // distro builds lack. Naming hicolor, as Qt does on xcb and Wayland, keeps
+    // the system path, so the Breeze fallback still applies.
+    if (QIcon::themeName().isEmpty()) QIcon::setThemeName(QStringLiteral("hicolor"));
     QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral(BRANCH_TRUCE_APP_ID)));
     branch_truce::ApplicationController controller;
     QCoreApplication::setApplicationVersion(controller.version());
