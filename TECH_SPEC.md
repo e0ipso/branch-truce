@@ -73,6 +73,8 @@ These are proposed implementation directories, not existing code.
 
 These are logical surfaces, not a requirement for five separate windows or a sequence of startup pages. Launch directly into the session. The UI follows KDE theme, focus, dialog and scaling conventions. It includes mouse controls and basic editing shortcuts; the design does not promote second-iteration keyboard navigation into first-release scope.
 
+The [UI design brief](docs/ui-design.md) sets the layout, components, icons and colour roles for these surfaces.
+
 ### Editor boundary
 
 Expose an editor adapter for loading read-only sources, applying result edits, mapping positions, rendering difference ranges, navigation, search and selection. Display alignment and whitespace markers must never become saved text.
