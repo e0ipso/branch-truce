@@ -64,6 +64,16 @@ The QML lint target fails on any qmllint warning, because
 `src/ui/.qmllint.ini` sets `MaxWarnings=0`. The desktop CTest run includes it
 as `ui.qmllint`.
 
+CTest entries that start the real binary or load Qt Quick outside the unit harness run through
+`tests/with-private-xdg.sh`. It gives them a private `HOME` and XDG directories, removes
+them afterwards, and fails the entry if the run created anything under
+`<data home>/Branch Truce/recovery` of the invoking user, so a test run never adds
+sessions to the recovery list of the developer's installed app. The data home is
+`XDG_DATA_HOME` when it is absolute, otherwise `$HOME/.local/share`. An entry that
+reports that failure while the app is open elsewhere may be seeing a session the
+developer started; rerun it with the app closed. `lifecycle.private-xdg-isolation`
+checks the wrapper against a stand-in data directory.
+
 Preparation enables `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion`
 and `-Werror` for project C++ targets. Direct CMake users can set
 `BRANCH_TRUCE_WARNINGS_AS_ERRORS`, `BRANCH_TRUCE_SANITIZERS`,

@@ -26,6 +26,13 @@ find_program(BASH_EXECUTABLE bash REQUIRED)
 add_test(NAME lifecycle.cli-guards
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/SetupGuards.sh")
 set_tests_properties(lifecycle.cli-guards PROPERTIES TIMEOUT 30)
+# Entries that start the real binary or Qt Quick run through this wrapper. It gives them a private
+# HOME and XDG directories, removes those afterwards and fails the run when it created anything
+# under the recovery root of the invoking user's real data directory.
+set(private_xdg "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/with-private-xdg.sh")
+add_test(NAME lifecycle.private-xdg-isolation
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/PrivateXdgIsolation.sh")
+set_tests_properties(lifecycle.private-xdg-isolation PROPERTIES TIMEOUT 30)
 # Host side of the .deb build and inspection scripts against a stub container engine (about 1 s).
 add_test(NAME packaging.artifact-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ArtifactTooling.sh")
@@ -99,7 +106,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=${correspondence_constructor}")
     target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=fsync")
     add_dependencies(branch_truce_startup_route_tests branch-truce)
-    add_test(NAME app.startup-routes COMMAND branch_truce_startup_route_tests $<TARGET_FILE:branch-truce>)
+    add_test(NAME app.startup-routes COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_route_tests> $<TARGET_FILE:branch-truce>)
     # Real merge fixtures include restart and recovery fault matrices.
     set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 90)
 
@@ -110,7 +117,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_include_directories(branch_truce_startup_appearance_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_startup_appearance_tests PRIVATE Qt6::Core branch_truce_build_options)
     add_dependencies(branch_truce_startup_appearance_tests branch-truce branch_truce_appearance_probe)
-    add_test(NAME app.startup-appearance COMMAND branch_truce_startup_appearance_tests
+    add_test(NAME app.startup-appearance COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_appearance_tests>
         $<TARGET_FILE:branch-truce> $<TARGET_FILE:branch_truce_appearance_probe>)
     set_tests_properties(app.startup-appearance PROPERTIES TIMEOUT 90)
 
@@ -127,7 +134,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # Its --foreign-peer-launcher child reports another uid for SO_PEERCRED.
     target_link_options(branch_truce_mergetool_tests PRIVATE "LINKER:--wrap=getsockopt")
     add_dependencies(branch_truce_mergetool_tests branch-truce)
-    add_test(NAME app.mergetool-launcher COMMAND branch_truce_mergetool_tests $<TARGET_FILE:branch-truce>)
+    add_test(NAME app.mergetool-launcher COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_tests> $<TARGET_FILE:branch-truce>)
     set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 120)
 
     # Installed /usr/bin/git runs `git mergetool` against the launcher and an in-process session.
@@ -135,7 +142,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_include_directories(branch_truce_mergetool_parent_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_mergetool_parent_tests PRIVATE branch_truce_controller branch_truce_build_options)
     add_dependencies(branch_truce_mergetool_parent_tests branch-truce)
-    add_test(NAME git.mergetool-parent COMMAND branch_truce_mergetool_parent_tests $<TARGET_FILE:branch-truce>)
+    add_test(NAME git.mergetool-parent COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_parent_tests> $<TARGET_FILE:branch-truce>)
     set_tests_properties(git.mergetool-parent PROPERTIES TIMEOUT 120)
 
     add_executable(branch_truce_coordinator_tests app/SessionCoordinatorTests.cpp)
@@ -159,8 +166,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_libraries(branch_truce_editor_tests PRIVATE Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
     qt_add_resources(branch_truce_editor_tests editor_scene PREFIX "/" BASE "${editor_fixture}"
         FILES "${editor_fixture}/Editor.qml")
-    add_test(NAME editor.baseline COMMAND branch_truce_editor_tests --baseline)
-    add_test(NAME editor.regression COMMAND branch_truce_editor_tests)
+    add_test(NAME editor.baseline COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_editor_tests> --baseline)
+    add_test(NAME editor.regression COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_editor_tests>)
     set_tests_properties(editor.baseline editor.regression PROPERTIES TIMEOUT 30
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
@@ -172,13 +179,13 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         "BRANCH_TRUCE_MEASUREMENT_BUILD=\"${CMAKE_BUILD_TYPE}\"")
     qt_add_resources(branch_truce_workload_measurements workload_editor PREFIX "/" BASE "${editor_fixture}"
         FILES "${editor_fixture}/Editor.qml")
-    add_test(NAME performance.workloads COMMAND branch_truce_workload_measurements --profile gate)
+    add_test(NAME performance.workloads COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_workload_measurements> --profile gate)
     set_tests_properties(performance.workloads PROPERTIES TIMEOUT 180
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     # Rebuilds a Release copy in a fixture under ${TMPDIR:-/tmp}, installs it, launches only the
     # installed files and removes the fixture (about 100 s on the development host).
-    add_test(NAME install.prefix COMMAND "${BASH_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/verify-install-prefix.sh"
+    add_test(NAME install.prefix COMMAND ${private_xdg} "${BASH_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/verify-install-prefix.sh"
         --mergetool-tests $<TARGET_FILE:branch_truce_mergetool_tests>)
     # Serial, so its Release build does not slow the wall-clock deadlines of other tests.
     set_tests_properties(install.prefix PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
@@ -188,7 +195,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target branch_truce_ui_qmllint)
     set_tests_properties(ui.qmllint PROPERTIES TIMEOUT 120 LABELS ui)
 
-    add_test(NAME desktop.startup COMMAND branch-truce --smoke-test)
+    add_test(NAME desktop.startup COMMAND ${private_xdg} $<TARGET_FILE:branch-truce> --smoke-test)
     set_tests_properties(desktop.startup PROPERTIES TIMEOUT 30
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 endif()
