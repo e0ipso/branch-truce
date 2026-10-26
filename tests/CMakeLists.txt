@@ -84,7 +84,10 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         Qt6::Widgets Qt6::QuickControls2 Qt6::Network Qt6::Test branch_truce_build_options)
     target_link_options(branch_truce_comparison_tests PRIVATE "LINKER:--wrap=fsync")
     # The executable takes "scenes" or "boundary"; with no argument it runs both groups.
-    # "boundary" is the two Backspace and Delete fixtures that edit 262144-byte lines and an
+    # "display" reruns the result viewport cases on a real display and is not a ctest entry:
+    #   QT_QPA_PLATFORM=wayland tests/with-private-xdg.sh build/desktop/tests/branch_truce_comparison_tests display
+    # with WAYLAND_DISPLAY naming the compositor socket by absolute path, because the wrapper
+    # replaces XDG_RUNTIME_DIR. "boundary" is the two Backspace and Delete fixtures that edit 262144-byte lines and an
     # 8388608-byte buffer in the real editor. Each timeout is at least twice the slowest of nine runs
     # on the development host, one of them under load from another build: scenes 33.0 to 50.1 s,
     # boundary 17.8 to 23.8 s. The single entry this replaced took 53.7 to 57.5 s against 60 s.

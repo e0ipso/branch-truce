@@ -10,6 +10,7 @@
 #include <QClipboard>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFont>
 #include <QHostAddress>
 #include <QInputMethodEvent>
 #include <QKeyEvent>
@@ -29,6 +30,7 @@
 #include <QTextLayout>
 #include <QWheelEvent>
 #include <QtQml/qqml.h>
+#include <tuple>
 
 using namespace branch_truce;
 
@@ -389,9 +391,72 @@ bool cursorInView(Fixture &fixture)
     return top >= 0 && top + cursor.height() <= result->height();
 }
 
+// Evaluates a QML expression on item, such as one of its attached properties.
+QVariant qmlValue(QQuickItem *item, const QString &expression)
+{
+    QQmlExpression evaluated(qmlContext(item), item, expression);
+    const auto value = evaluated.evaluate();
+    if (evaluated.hasError()) throw std::runtime_error(evaluated.error().toString().toStdString());
+    return value;
+}
+
+// Where the editor draws the character at position, in scene coordinates.
+QRectF sceneRectangle(QQuickItem *editor, int position)
+{
+    QRectF rect;
+    CHECK(QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, rect), Q_ARG(int, position)));
+    return {editor->mapToScene(rect.topLeft()), rect.size()};
+}
+
+// The line numbers a pane's gutter shows, each with its scene y.
+QMap<int, qreal> gutterNumbers(QQuickItem *gutter)
+{
+    QMap<int, qreal> shown;
+    for (auto *child : gutter->childItems()) {
+        bool number = false;
+        const auto value = child->property("text").toString().toInt(&number);
+        if (number && child->isVisible()) shown.insert(value, child->mapToScene(QPointF()).y());
+    }
+    return shown;
+}
+
+// The first line in the pane's view whose number is missing or not on the
+// line's first row, or empty when every line in view has its number there.
+std::string gutterMisalignment(Fixture &fixture, const std::string &pane)
+{
+    auto *editor = fixture.item((pane + "Text").c_str());
+    auto *viewport = fixture.item((pane + "Viewport").c_str());
+    const auto shown = gutterNumbers(fixture.item((pane + "Gutter").c_str()));
+    const auto top = viewport->mapToScene(QPointF()).y();
+    const auto bottom = top + viewport->height();
+    const auto *document = editor->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+    int inView = 0;
+    for (auto block = document->begin(); block.isValid(); block = block.next()) {
+        const auto row = sceneRectangle(editor, block.position());
+        if (row.bottom() <= top || row.top() >= bottom) continue;
+        ++inView;
+        const auto number = block.blockNumber() + 1;
+        if (!shown.contains(number)) return pane + " shows no number " + std::to_string(number);
+        if (std::abs(shown.value(number) - row.top()) > 0.5)
+            return pane + " shows number " + std::to_string(number) + " at y " + std::to_string(shown.value(number))
+                + " for a line at y " + std::to_string(row.top());
+    }
+    return inView > 0 ? std::string() : pane + " has no line in view";
+}
+
+// How far right of the start of the editor's line holding text the character at column is drawn.
+qreal columnOffset(QQuickItem *editor, const QString &text, int column)
+{
+    const auto start = static_cast<int>(editor->property("text").toString().indexOf(text));
+    CHECK(start >= 0);
+    return sceneRectangle(editor, start + column).x() - sceneRectangle(editor, start).x();
+}
+
 // Which cases one run executes. The deletion-at-limit cases edit multi-megabyte buffers in the
-// real editor, so ctest runs them as their own entry with a timeout sized for them.
-enum class Selection { All, Scenes, Boundary };
+// real editor, so ctest runs them as their own entry with a timeout sized for them. Display
+// runs the viewport cases that a real display can draw differently, on any platform; ctest
+// does not run it, because ctest has no display.
+enum class Selection { All, Scenes, Boundary, Display };
 
 // Forwards a case to the suite only when its selection includes it.
 class Group {
@@ -413,8 +478,9 @@ public:
     int run(Selection selection)
     {
         test_support::Suite results("ComparisonViewTests");
-        Group suite(results, selection != Selection::Boundary);
-        Group boundary(results, selection != Selection::Scenes);
+        Group suite(results, selection == Selection::All || selection == Selection::Scenes);
+        Group boundary(results, selection == Selection::All || selection == Selection::Boundary);
+        Group display(results, selection == Selection::Display);
         suite.run("TRUCE-0020 actual comparison keeps verified sources around the editable launch result", [] {
             const std::string launch = "manual launch UTF-8 \xc3\xa9 \xf0\x9f\x98\x80\n";
             Fixture fixture(test_support::choiceFile("left capture\n", "right capture\n", launch));
@@ -784,6 +850,90 @@ public:
             CHECK(editor->property("wrapMode").toInt() == unwrappedMode);
             checkUnchanged(fixture, before);
         });
+        suite.run("TRUCE-0112 each line number stays on the first row of its line while wrapped and scrolled", [] {
+            // Every seventh line is long enough to wrap onto several rows.
+            std::string result;
+            for (int line = 1; line <= 300; ++line)
+                result += line % 7 == 0 ? std::string(400, 'w') + "\n" : "line " + std::to_string(line) + "\n";
+            Fixture fixture(test_support::choiceFile("left\n", result, result));
+            auto *editor = fixture.item("resultText");
+            auto *viewport = fixture.item("resultViewport");
+            settle([&] { return editor->property("lineCount").toInt() >= 300; });
+            settlePanes(fixture);
+            const auto aligned = [&](const char *what) {
+                for (const std::string pane : {"result", "stage3"}) {
+                    settleFor(pane + " line numbers " + what, [&] { return gutterMisalignment(fixture, pane).empty(); });
+                    CHECK(gutterMisalignment(fixture, pane).empty());
+                }
+            };
+            aligned("unwrapped");
+            CHECK(fixture.item("wrapLines")->setProperty("checked", true));
+            settle([&] { return visualLines(editor, 6) > 1; });
+            aligned("wrapped");
+            // Halfway down, a wrapped line is in view and the numbers follow the scroll.
+            const auto half = (viewport->property("contentHeight").toReal() - viewport->height()) / 2;
+            CHECK(viewport->setProperty("contentY", half));
+            aligned("wrapped and scrolled");
+            const auto top = viewport->mapToScene(QPointF()).y();
+            bool wrappedInView = false;
+            const auto *document = editor->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+            for (auto block = document->begin(); block.isValid(); block = block.next()) {
+                const auto row = sceneRectangle(editor, block.position());
+                wrappedInView = wrappedInView || (row.top() >= top && row.top() < top + viewport->height()
+                    && visualLines(editor, block.blockNumber()) > 1);
+            }
+            CHECK(wrappedInView);
+            CHECK(fixture.item("wrapLines")->setProperty("checked", false));
+            settle([&] { return visualLines(editor, 6) == 1; });
+            aligned("unwrapped again");
+        });
+        suite.run("TRUCE-0112 tabs stop every four characters at the same column in every pane", [] {
+            const std::string shared = "abcde\n\tone\nabc\ttwo\nabcde\tthree\n\t\tfour\n";
+            Fixture fixture(test_support::choiceFile(shared + "left\n", shared + "right\n", shared + "right\n"));
+            settlePanes(fixture);
+            // The text after the tabs, its column in the line, and the tab stops it sits on.
+            const std::array<std::tuple<QString, int, int>, 4> lines{{
+                {"\tone", 1, 1}, {"abc\ttwo", 4, 1}, {"abcde\tthree", 6, 2}, {"\t\tfour", 2, 2}}};
+            // Four characters as drawn in the result.
+            const auto four = columnOffset(fixture.item("resultText"), QStringLiteral("abcde\n"), 4);
+            CHECK(four > 0);
+            for (const auto *name : {"stage2Text", "resultText", "stage3Text"}) {
+                auto *editor = fixture.item(name);
+                CHECK(std::abs(columnOffset(editor, QStringLiteral("abcde\n"), 4) - four) < 0.01);
+                for (const auto &[text, column, stops] : lines) {
+                    const auto offset = columnOffset(editor, text, column);
+                    if (std::abs(offset - stops * four) > 0.5)
+                        throw std::runtime_error(std::string(name) + ": text after the tab in " + text.toStdString()
+                            + " starts at " + std::to_string(offset) + ", not " + std::to_string(stops * four));
+                }
+            }
+        });
+        suite.run("TRUCE-0112 code and line numbers use the theme's fixed-width font", [] {
+            auto sources = *test_support::choiceFile().snapshots();
+            const auto earlier = sources.stage2->worktree.utf8;
+            sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
+                test_support::choiceText(earlier), "earlier-commit", "Common earlier version"};
+            const auto launch = sources.launchResult.text.utf8;
+            Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
+            fixture.click("showEarlier");
+            settle([&] { return fixture.item("earlierText")->isVisible(); });
+            settlePanes(fixture);
+            for (const std::string pane : {"stage2", "result", "stage3", "earlier"}) {
+                auto *editor = fixture.item((pane + "Text").c_str());
+                const auto fixed = qmlValue(editor, QStringLiteral("Kirigami.Theme.fixedWidthFont")).value<QFont>();
+                const auto font = editor->property("font").value<QFont>();
+                if (font != fixed)
+                    throw std::runtime_error(pane + " uses " + font.toString().toStdString() + ", not the fixed-width "
+                        + fixed.toString().toStdString());
+                auto *gutter = fixture.item((pane + "Gutter").c_str());
+                settleFor(pane + " line numbers", [&] { return !gutterNumbers(gutter).isEmpty(); });
+                for (auto *child : gutter->childItems()) {
+                    bool number = false;
+                    child->property("text").toString().toInt(&number);
+                    if (number) CHECK(child->property("font").value<QFont>() == fixed);
+                }
+            }
+        });
         suite.run("TRUCE-0113 every coloured line has a gutter glyph of its kind", [] {
             Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
                 "header\nright first\nshared\nright extra\ntail\n"));
@@ -1042,6 +1192,55 @@ public:
             CHECK(viewport->property("contentY").toReal() == 600.0);
             CHECK(viewport->property("contentX").toReal() == 40.0);
         });
+        suite.run("TRUCE-0109 dragging the split handle resizes the file list within its limits and the toggle collapses it", [] {
+            Fixture fixture;
+            auto *sidebar = test_support::waitForLayout(fixture.window, QStringLiteral("fileList"), 60)->parentItem();
+            auto *split = sidebar->parentItem();
+            while (split && !QByteArray(split->metaObject()->className()).contains("SplitView")) split = split->parentItem();
+            CHECK(split);
+            const auto minimum = qmlValue(sidebar, QStringLiteral("SplitView.minimumWidth")).toReal();
+            const auto maximum = [&] { return qmlValue(sidebar, QStringLiteral("SplitView.maximumWidth")).toReal(); };
+            // The split puts its handles beside the items, as its own children.
+            const auto handle = [&]() -> QQuickItem * {
+                const auto edge = sidebar->mapToScene(QPointF(sidebar->width(), 0)).x();
+                for (auto *child : split->childItems()) {
+                    if (child->isVisible() && child->width() > 0 && child->width() < 40
+                            && std::abs(child->mapToScene(QPointF()).x() - edge) < 2)
+                        return child;
+                }
+                throw std::runtime_error("no split handle beside the file list");
+            };
+            // Drags the handle by a distance, kept inside the window, a few pixels at a time.
+            const auto drag = [&](int by) {
+                auto *grip = handle();
+                const auto from = grip->mapToScene(QPointF(grip->width() / 2, grip->height() / 2)).toPoint();
+                const auto to = std::clamp(from.x() + by, 5, fixture.window->width() - 5);
+                QTest::mousePress(fixture.window, Qt::LeftButton, Qt::NoModifier, from);
+                for (int step = 1; step <= 10; ++step)
+                    QTest::mouseMove(fixture.window, QPoint(from.x() + (to - from.x()) * step / 10, from.y()));
+                QTest::mouseRelease(fixture.window, Qt::LeftButton, Qt::NoModifier, QPoint(to, from.y()));
+                for (int turn = 0; turn < 10; ++turn) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            };
+            const auto start = sidebar->width();
+            CHECK(start >= minimum && start + 80 < maximum());
+            drag(80);
+            CHECK(std::abs(sidebar->width() - (start + 80)) < 2);
+            // It stops at half the work area, and at its minimum.
+            drag(fixture.window->width());
+            CHECK(std::abs(sidebar->width() - maximum()) < 1);
+            drag(-fixture.window->width());
+            CHECK(std::abs(sidebar->width() - minimum) < 1);
+            drag(120);
+            const auto chosen = sidebar->width();
+            CHECK(std::abs(chosen - (minimum + 120)) < 2);
+            fixture.click("toggleFileList");
+            CHECK(!fixture.controller.fileListVisible());
+            settle([&] { return !sidebar->isVisible(); });
+            fixture.click("toggleFileList");
+            CHECK(fixture.controller.fileListVisible());
+            settle([&] { return sidebar->isVisible() && sidebar->width() > 0; });
+            CHECK(std::abs(sidebar->width() - chosen) < 2);
+        });
         suite.run("TRUCE-0115 scrolling the left source moves the result and the right source to the mapped lines", [] {
             Fixture fixture(insertionFile());
             auto *left = fixture.item("stage2Viewport");
@@ -1155,7 +1354,56 @@ public:
             // The earlier version equals the left source, so it shows the same lines.
             CHECK(std::abs(contentY(earlierView) - contentY(left)) < 1);
         });
-        suite.run("TRUCE-0137 undo and redo keep the result cursor and scroll position, and the sources stay", [] {
+        suite.run("TRUCE-0115 Find in a source scrolls the result and the other source to the passage", [] {
+            Fixture fixture(insertionFile());
+            auto *left = fixture.item("stage2Viewport");
+            auto *result = fixture.item("resultViewport");
+            auto *right = fixture.item("stage3Viewport");
+            auto *editor = fixture.item("resultText");
+            settle([&] { return editor->property("lineCount").toInt() > 400 && left->height() > 0; });
+            settlePanes(fixture);
+            const auto line = paneLineHeight(editor);
+            CHECK(contentY(left) < 200 * line);
+            CHECK(fixture.item("searchScope")->property("currentText").toString() == "Left source");
+            CHECK(fixture.item("searchQuery")->setProperty("text", "shared 300"));
+            fixture.click("findPassage");
+            auto *found = fixture.item("stage2Text");
+            CHECK(found->property("selectedText").toString() == "shared 300");
+            settleReplacement();
+            // The left source shows the passage, and the others the lines mapped to it.
+            const auto cursor = found->property("cursorRectangle").toRectF();
+            const auto shown = found->y() + cursor.top() - contentY(left);
+            CHECK(shown >= 0 && shown + cursor.height() <= left->height());
+            CHECK(contentY(left) > 200 * line);
+            CHECK(std::abs(contentY(result) - (contentY(left) + 30 * line)) < 1);
+            CHECK(std::abs(contentY(right) - contentY(result)) < 1);
+        });
+        suite.run("TRUCE-0115 within-file navigation scrolls both sources to the result's difference", [] {
+            const auto left = numberedLines("shared", 1, 400);
+            const auto right = numberedLines("shared", 1, 50) + numberedLines("right only", 1, 30)
+                + numberedLines("shared", 51, 249) + "right late\n" + numberedLines("shared", 301, 100);
+            Fixture fixture(test_support::choiceFile(left, right, right));
+            auto *leftView = fixture.item("stage2Viewport");
+            auto *result = fixture.item("resultViewport");
+            auto *rightView = fixture.item("stage3Viewport");
+            auto *editor = fixture.item("resultText");
+            settle([&] { return editor->property("lineCount").toInt() > 400 && leftView->height() > 0; });
+            settlePanes(fixture);
+            const auto line = paneLineHeight(editor);
+            const auto late = static_cast<int>(fixture.text().indexOf("right late"));
+            CHECK(late > 0);
+            fixture.select(0, 0);
+            for (int click = 0; click < 5 && editor->property("selectionStart").toInt() != late; ++click)
+                fixture.click("nextDifference");
+            CHECK(editor->property("selectionStart").toInt() == late);
+            settleReplacement();
+            CHECK(cursorInView(fixture));
+            CHECK(contentY(result) > 250 * line);
+            // Past the insertion the left source is 30 lines behind; the right source equals the result.
+            CHECK(std::abs(contentY(leftView) - (contentY(result) - 30 * line)) < 1);
+            CHECK(std::abs(contentY(rightView) - contentY(result)) < 1);
+        });
+        const auto undoRedoKeepViewport = [] {
             Fixture fixture(insertionFile());
             auto *editor = fixture.item("resultText");
             auto *left = fixture.item("stage2Viewport");
@@ -1186,7 +1434,45 @@ public:
             // The cursor follows the restored insertion, as it did when the character was typed.
             CHECK(editor->property("cursorPosition").toInt() == offset + 1);
             for (std::size_t pane = 0; pane < panes.size(); ++pane) CHECK(std::abs(contentY(panes[pane]) - typed[pane]) < 1);
-        });
+        };
+        // The view restores the result viewport once, with no reapply after the next frame, so
+        // let the window draw frames after the undo before reading the panes.
+        const auto undoKeepsViewportAfterFrames = [] {
+            Fixture fixture(insertionFile());
+            auto *editor = fixture.item("resultText");
+            auto *result = fixture.item("resultViewport");
+            const auto line = paneLineHeight(editor);
+            placeResultCursor(fixture, QStringLiteral("shared 200\n"), 220 * line);
+            const auto offset = editor->property("cursorPosition").toInt();
+            CHECK(cursorInView(fixture));
+            fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+            settle([&] { return fixture.file().current().draft.text.find("xshared 200\n") != std::string::npos; });
+            settleReplacement();
+            const auto typed = contentY(result);
+            CHECK(std::abs(typed - 220 * line) < 1);
+            int frames = 0;
+            const auto counter = QObject::connect(fixture.window, &QQuickWindow::frameSwapped, fixture.window,
+                [&frames] { ++frames; });
+            fixture.key(Qt::Key_Z, Qt::ControlModifier);
+            CHECK(fixture.file().current().draft.text.find("xshared") == std::string::npos);
+            settleFor("three frames after the undo", [&] {
+                if (frames < 3) fixture.window->update();
+                return frames >= 3;
+            });
+            QObject::disconnect(counter);
+            settleReplacement();
+            CHECK(editor->property("cursorPosition").toInt() == offset);
+            CHECK(cursorInView(fixture));
+            if (std::abs(contentY(result) - typed) >= 1)
+                throw std::runtime_error("result viewport moved from " + std::to_string(typed) + " to "
+                    + std::to_string(contentY(result)) + " after " + std::to_string(frames) + " frames");
+        };
+        const std::string undoRedoName = "TRUCE-0137 undo and redo keep the result cursor and scroll position, and the sources stay";
+        const std::string framesName = "TRUCE-0137 undo keeps the result viewport after the window draws";
+        suite.run(undoRedoName, undoRedoKeepViewport);
+        suite.run(framesName, undoKeepsViewportAfterFrames);
+        display.run(undoRedoName, undoRedoKeepViewport);
+        display.run(framesName, undoKeepsViewportAfterFrames);
         suite.run("TRUCE-0137 undo keeps a result selection on the same text", [] {
             Fixture fixture(insertionFile());
             auto *editor = fixture.item("resultText");
@@ -1573,15 +1859,21 @@ int main(int argc, char **argv)
     qputenv("XDG_CACHE_HOME", (data.path() + "/cache").toUtf8());
     QApplication application(argc, argv);
     QCoreApplication::setApplicationName("BranchTruceComparisonTests");
-    // Synthetic offscreen integration owns its own clipboard. Physical desktop
-    // input and window-manager behavior remain a separate verification layer.
-    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
     // No argument runs every case; "scenes" and "boundary" select one ctest entry's share.
+    // "display" runs the viewport cases on whatever platform Qt was given, such as a real
+    // Wayland session.
     const auto arguments = QCoreApplication::arguments();
     auto selection = Selection::All;
     if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("scenes")) selection = Selection::Scenes;
     else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("boundary")) selection = Selection::Boundary;
+    else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("display")) selection = Selection::Display;
     else if (arguments.size() != 1) return 2;
+    // Synthetic offscreen integration owns its own clipboard. Physical desktop
+    // input and window-manager behavior remain a separate verification layer.
+    // The display cases use neither the clipboard nor real input, and leave the
+    // session's clipboard alone.
+    if (selection == Selection::Display) return ComparisonViewTests{}.run(selection);
+    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
     const auto result = ComparisonViewTests{}.run(selection);
     QGuiApplication::clipboard()->clear();
     return result;
