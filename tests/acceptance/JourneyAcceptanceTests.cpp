@@ -614,6 +614,37 @@ qreal checkFits(Scene &scene, int width, int height, const std::vector<const cha
     return smallest;
 }
 
+std::string pageExtent(QObject *page)
+{
+    return "content " + std::to_string(int(page->property("contentHeight").toReal())) + " px in a "
+        + std::to_string(int(page->property("height").toReal())) + " px page";
+}
+
+// Turns the mouse wheel over the named label at the top of the page. The page moves only when
+// its content is taller than the window. Returns whether it was.
+bool checkWheelScroll(Scene &scene, const char *over)
+{
+    auto *page = scene.object("pageScroll");
+    page->setProperty("contentY", 0);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    const auto overflowing = page->property("overflowing").toBool();
+    auto *label = scene.item(over);
+    const auto point = label->mapToScene(QPointF(label->width() / 2, label->height() / 2));
+    QWheelEvent wheel(point, scene.window->mapToGlobal(point), QPoint(), QPoint(0, -120), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QCoreApplication::sendEvent(scene.window, &wheel);
+    if (overflowing) {
+        settleFor("page scrolled by the wheel", [&] { return page->property("contentY").toReal() > 0; });
+    } else {
+        QElapsedTimer settled;
+        settled.start();
+        while (settled.elapsed() < 300) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        if (page->property("contentY").toReal() != 0)
+            throw std::runtime_error("the wheel scrolled a page that fits the window: " + pageExtent(page));
+    }
+    return overflowing;
+}
+
 // Lays a wrapped text out as Text does, with its font, wrap mode and width inside its padding,
 // and returns the first line break between two letters or digits of a word that would fit on
 // a line of its own. The layout must give the item's own line count, or the check is not valid.
@@ -1573,16 +1604,9 @@ public:
                                              + std::to_string(screen.width()) + "x" + std::to_string(screen.height())
                                              + ", less than eight " + std::to_string(lineHeight) + " px lines");
             }
-            // At 960x540 the page is taller than the window, and the mouse wheel over its labels scrolls it.
-            auto *page = scene.object("pageScroll");
-            CHECK(page->property("overflowing").toBool());
-            page->setProperty("contentY", 0);
-            auto *status = scene.item("selectedStatus");
-            const auto point = status->mapToScene(QPointF(status->width() / 2, status->height() / 2));
-            QWheelEvent wheel(point, scene.window->mapToGlobal(point), QPoint(), QPoint(0, -120), Qt::NoButton,
-                              Qt::NoModifier, Qt::NoScrollPhase, false);
-            QCoreApplication::sendEvent(scene.window, &wheel);
-            settleFor("page scrolled by the wheel", [&] { return page->property("contentY").toReal() > 0; });
+            // Whether this page is taller than a 960x540 window depends on the fonts. It fits with
+            // DejaVu Sans 9 pt, as in the CI images. Either way the wheel moves it only when it does not fit.
+            checkWheelScroll(scene, "selectedStatus");
 
             // TRUCE-0084: at 1280x800 the handoff dialog wraps between words. File rows elide one
             // line each instead of wrapping, so nothing in the file list wraps at all.
@@ -1614,6 +1638,11 @@ public:
                                              + std::to_string(screen.width()) + "x" + std::to_string(screen.height())
                                              + ", less than eight " + std::to_string(lineHeight) + " px lines");
             }
+            // The choices below the eight-line panes make the page taller than a 960x540 window, by
+            // 170 px in the CI images, so the mouse wheel over its labels scrolls it.
+            if (!checkWheelScroll(scene, "selectedStatus"))
+                throw std::runtime_error("with source choices the page fits 960x540: "
+                                         + pageExtent(scene.object("pageScroll")));
             checkOffline(scene);
         });
         suite.run("TRUCE-0115 selecting a file shows its first undecided region in all three panes", [] {
