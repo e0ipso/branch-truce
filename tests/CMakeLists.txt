@@ -81,7 +81,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_comparison_tests app/ComparisonViewTests.cpp)
     target_include_directories(branch_truce_comparison_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_comparison_tests PRIVATE branch_truce_controller branch_truce_uiplugin
-        Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
+        Qt6::Widgets Qt6::QuickControls2 Qt6::Network Qt6::Test branch_truce_build_options)
     target_link_options(branch_truce_comparison_tests PRIVATE "LINKER:--wrap=fsync")
     # The executable takes "scenes" or "boundary"; with no argument it runs both groups.
     # "boundary" is the two Backspace and Delete fixtures that edit 262144-byte lines and an

@@ -116,13 +116,17 @@ Kirigami.ApplicationWindow {
         default: return qsTr("No conflicted files")
         }
     }
-    // A PlaceholderMessage explanation is auto-detected text, and a reason can carry a path or
-    // filter name from the repository. Escape it so markup in it shows as typed and loads nothing.
-    function plainExplanation(text: string): string {
-        if (text.length === 0)
-            return ""
-        return "<p>" + text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-            .replace(/\n/g, "<br>") + "</p>"
+    // Kirigami notices and the shared tooltip detect rich text, and their text can carry a path,
+    // a label or Git output from the repository. They offer no text format, so set plain text on
+    // the item and every label inside it: markup then shows as typed and loads nothing.
+    function showPlainText(item: Item): void {
+        const pending = [item];
+        while (pending.length > 0) {
+            const next = pending.pop();
+            if (next["textFormat"] !== undefined)
+                next["textFormat"] = Text.PlainText;
+            pending.push(...next.children);
+        }
     }
     // Retries every file's pending recovery, then closes again if none is left.
     function retryPendingRecoveryAndClose(): void {
@@ -182,7 +186,7 @@ Kirigami.ApplicationWindow {
             }
         }
         DialogBody {
-            Kirigami.InlineMessage {
+            PlainInlineMessage {
                 objectName: "handoffOutcome"
                 Layout.fillWidth: true
                 visible: true
@@ -392,11 +396,13 @@ Kirigami.ApplicationWindow {
             Label {
                 Layout.fillWidth: true
                 text: window.controller.nonConflictingPreview.summary || ""
+                textFormat: Text.PlainText
                 wrapMode: Text.Wrap
             }
             Label {
                 Layout.fillWidth: true
                 text: window.controller.nonConflictingPreview.detail || ""
+                textFormat: Text.PlainText
                 wrapMode: Text.Wrap
             }
             ListView {
@@ -628,6 +634,12 @@ Kirigami.ApplicationWindow {
             }
         }
     }
+    component PlainInlineMessage: Kirigami.InlineMessage {
+        Component.onCompleted: window.showPlainText(this)
+    }
+    component PlainPlaceholderMessage: Kirigami.PlaceholderMessage {
+        Component.onCompleted: window.showPlainText(this)
+    }
     // A dialog body that sizes the dialog to its rows. Kirigami.Dialog keeps the content
     // height it measured at creation when that was zero, and the handoff has no rows until
     // the session loads, so the body never measures zero.
@@ -777,6 +789,8 @@ Kirigami.ApplicationWindow {
     title: qsTr("Branch Truce")
     pageStack.initialPage: Kirigami.Page {
         title: window.controller.operation || qsTr("Open conflict session")
+        // Every attached tooltip uses one shared popup, and some name a path or a branch.
+        Component.onCompleted: window.showPlainText(ToolTip.toolTip.contentItem)
         // The header names the repository once a root is known; the operation and the
         // file counts become its subtitle.
         titleDelegate: ColumnLayout {
@@ -851,7 +865,7 @@ Kirigami.ApplicationWindow {
                     Layout.fillHeight: true
                     Layout.minimumHeight: sessionPlaceholder.implicitHeight
                     visible: window.controller.opening || window.controller.files.totalFiles === 0
-                    Kirigami.PlaceholderMessage {
+                    PlainPlaceholderMessage {
                         id: sessionPlaceholder
                         objectName: "sessionPlaceholder"
                         anchors.centerIn: parent
@@ -859,7 +873,7 @@ Kirigami.ApplicationWindow {
                         icon.name: window.controller.opening ? "" : window.sessionPlaceholderIcon(window.controller.startupState)
                         text: window.controller.opening ? qsTr("Opening the repository")
                             : window.sessionPlaceholderText(window.controller.startupState)
-                        explanation: window.plainExplanation(window.controller.detail)
+                        explanation: window.controller.detail
                         BusyIndicator {
                             Layout.alignment: Qt.AlignHCenter
                             running: window.controller.opening
@@ -904,7 +918,7 @@ Kirigami.ApplicationWindow {
                         }
                     }
                 }
-                Kirigami.InlineMessage {
+                PlainInlineMessage {
                     objectName: "inventoryWarning"
                     Accessible.name: qsTr("Session warning")
                     Layout.fillWidth: true
@@ -1093,15 +1107,15 @@ Kirigami.ApplicationWindow {
                             Layout.fillHeight: true
                             Layout.minimumHeight: selectedProblem.implicitHeight
                             visible: window.controller.selectedFileId.length > 0 && !window.supportedSelection
-                            Kirigami.PlaceholderMessage {
+                            PlainPlaceholderMessage {
                                 id: selectedProblem
                                 objectName: "selectedProblem"
                                 anchors.centerIn: parent
                                 width: parent.width - Kirigami.Units.gridUnit * 2
                                 icon.name: window.rowIcon(window.selectedFile.support || "", false, null)
                                 text: window.selectedFile.support === "unreadable" ? qsTr("Load error") : qsTr("Outside app")
-                                explanation: window.plainExplanation((window.selectedFile.supportDetail || "") + "\n\n"
-                                    + qsTr("This file remains outstanding until it is handled outside Branch Truce."))
+                                explanation: (window.selectedFile.supportDetail || "") + "\n\n"
+                                    + qsTr("This file remains outstanding until it is handled outside Branch Truce.")
                                 helpfulAction: Kirigami.Action {
                                     text: qsTr("Review handoff…")
                                     icon.name: "merge"
@@ -1109,14 +1123,14 @@ Kirigami.ApplicationWindow {
                                 }
                             }
                         }
-                        Kirigami.InlineMessage {
+                        PlainInlineMessage {
                             objectName: "recoveryProblem"
                             Layout.fillWidth: true
                             visible: !!window.selectedFile.recoveryError
                             type: Kirigami.MessageType.Error
                             text: window.selectedFile.recoveryError || ""
                         }
-                        Kirigami.InlineMessage {
+                        PlainInlineMessage {
                             objectName: "commandMessage"
                             type: Kirigami.MessageType.Information
                             icon.name: "dialog-information"
@@ -1124,7 +1138,7 @@ Kirigami.ApplicationWindow {
                             visible: window.controller.commandMessage.length > 0
                             text: window.controller.commandMessage
                         }
-                        Kirigami.InlineMessage {
+                        PlainInlineMessage {
                             objectName: "parentStagingState"
                             type: Kirigami.MessageType.Warning
                             icon.name: "vcs-locally-modified"
@@ -1139,7 +1153,7 @@ Kirigami.ApplicationWindow {
                             enabled: !window.controller.resolutionBusy
                             onClicked: window.controller.recheckParentAcknowledgment()
                         }
-                        Kirigami.InlineMessage {
+                        PlainInlineMessage {
                             objectName: "mergetoolHolding"
                             type: Kirigami.MessageType.Information
                             icon.name: "vcs-conflicting"
@@ -1155,7 +1169,7 @@ Kirigami.ApplicationWindow {
                             onClicked: window.controller.leaveMergetool()
                         }
                         // A path whose result Git already staged is not waiting for a launch.
-                        Kirigami.InlineMessage {
+                        PlainInlineMessage {
                             objectName: "mergetoolWait"
                             type: Kirigami.MessageType.Warning
                             icon.name: "chronometer"
@@ -1410,7 +1424,7 @@ Kirigami.ApplicationWindow {
                             }
                             ScrollBar.vertical: ScrollBar {}
                         }
-                        Kirigami.InlineMessage {
+                        PlainInlineMessage {
                             objectName: "choiceNotice"
                             Layout.fillWidth: true
                             type: Kirigami.MessageType.Information
