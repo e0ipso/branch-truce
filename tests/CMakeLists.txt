@@ -103,6 +103,17 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # Real merge fixtures include restart and recovery fault matrices.
     set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 90)
 
+    # Preloaded into the real binary to report its style and icon theme state.
+    add_library(branch_truce_appearance_probe MODULE fixtures/AppearanceProbe.cpp)
+    target_link_libraries(branch_truce_appearance_probe PRIVATE Qt6::Gui Qt6::QuickControls2 branch_truce_build_options)
+    add_executable(branch_truce_startup_appearance_tests app/StartupAppearanceTests.cpp)
+    target_include_directories(branch_truce_startup_appearance_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_startup_appearance_tests PRIVATE Qt6::Core branch_truce_build_options)
+    add_dependencies(branch_truce_startup_appearance_tests branch-truce branch_truce_appearance_probe)
+    add_test(NAME app.startup-appearance COMMAND branch_truce_startup_appearance_tests
+        $<TARGET_FILE:branch-truce> $<TARGET_FILE:branch_truce_appearance_probe>)
+    set_tests_properties(app.startup-appearance PROPERTIES TIMEOUT 90)
+
     add_executable(branch_truce_resolution_tests app/ResolutionPublisherTests.cpp)
     target_include_directories(branch_truce_resolution_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_resolution_tests PRIVATE branch_truce_controller branch_truce_build_options)
