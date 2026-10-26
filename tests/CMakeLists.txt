@@ -114,9 +114,20 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_include_directories(branch_truce_journey_acceptance_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_journey_acceptance_tests PRIVATE branch_truce_controller branch_truce_uiplugin
         Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
-    add_test(NAME acceptance.journeys COMMAND branch_truce_journey_acceptance_tests)
-    set_tests_properties(acceptance.journeys PROPERTIES TIMEOUT 120 LABELS acceptance
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    # The executable takes "review", "handoff" or "window"; with no argument it runs every journey.
+    # "review" is the six journeys on the three panes, choices, editing, search and Save. "handoff" is the five
+    # on the handoff, startup recovery and mergetool. "window" is the four on window fit, first undecided region,
+    # hand edits and the close guard. Each timeout is at least twice the slowest of four runs on the development
+    # host, one of them with the three groups running together: review 23.5 to 26.6 s (36.5 s together),
+    # handoff 21.9 to 23.1 s (39.2 s), window 15.5 to 15.9 s (26.8 s). The single entry these replaced took
+    # 85 to 108 s against 120 s.
+    add_test(NAME acceptance.journeys-review COMMAND branch_truce_journey_acceptance_tests review)
+    add_test(NAME acceptance.journeys-handoff COMMAND branch_truce_journey_acceptance_tests handoff)
+    add_test(NAME acceptance.journeys-window COMMAND branch_truce_journey_acceptance_tests window)
+    foreach(journey_group review handoff window)
+        set_tests_properties(acceptance.journeys-${journey_group} PROPERTIES TIMEOUT 120 LABELS acceptance
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    endforeach()
 
     add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp)
     target_include_directories(branch_truce_startup_route_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

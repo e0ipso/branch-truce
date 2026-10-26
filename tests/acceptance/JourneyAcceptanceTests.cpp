@@ -842,14 +842,35 @@ std::string firstUndecidedInView(Scene &scene)
     }
     return failures;
 }
+
+// Which journeys one run executes. Real merges and rebases make the journeys slow, so ctest
+// registers each group as its own entry with a timeout sized for it.
+enum class Selection { All, Review, Handoff, Window };
+
+// Forwards a journey to the suite only when its group is selected.
+class Group {
+public:
+    Group(test_support::Suite &suite, bool selected) : suite_(suite), selected_(selected) {}
+    template<typename Test>
+    void run(const std::string &name, Test test)
+    {
+        if (selected_) suite_.run(name, std::move(test));
+    }
+private:
+    test_support::Suite &suite_;
+    bool selected_;
+};
 }
 
 class JourneyAcceptanceTests {
 public:
-    int run()
+    int run(Selection selection)
     {
-        test_support::Suite suite("JourneyAcceptanceTests");
-        suite.run("PRD.md:127 PRD.md:139 PRD.md:157 the full inventory keeps truthful sources around the preserved editable result", [] {
+        test_support::Suite results("JourneyAcceptanceTests");
+        Group review(results, selection == Selection::All || selection == Selection::Review);
+        Group handoff(results, selection == Selection::All || selection == Selection::Handoff);
+        Group window(results, selection == Selection::All || selection == Selection::Window);
+        review.run("PRD.md:127 PRD.md:139 PRD.md:157 the full inventory keeps truthful sources around the preserved editable result", [] {
             Repository repo("merge", journeyPaths());
             const auto launched = repo.snapshot();
             Scene scene(repo);
@@ -915,7 +936,7 @@ public:
             CHECK(repo.snapshot() == launched);
             checkOffline(scene);
         });
-        suite.run("PRD.md:139 rebasing keeps the arrangement with replay identities and explains missing earlier context", [] {
+        review.run("PRD.md:139 rebasing keeps the arrangement with replay identities and explains missing earlier context", [] {
             Repository repo("rebase", {
                 {"story.txt", storyBase, storyLeft, storyRight, std::nullopt},
                 {"added.txt", std::nullopt, QByteArray("added on the left\n"), QByteArray("added on the right\n"), std::nullopt},
@@ -935,7 +956,7 @@ public:
             CHECK(work(scene, "added.txt") == before);
             checkOffline(scene);
         });
-        suite.run("PRD.md:157 scoped choices and ordered combinations over pre-launch edits share one undo history with typing", [] {
+        review.run("PRD.md:157 scoped choices and ordered combinations over pre-launch edits share one undo history with typing", [] {
             Repository repo("merge", journeyPaths());
             Scene scene(repo);
             clickFile(scene, "notes.txt");
@@ -1017,7 +1038,7 @@ public:
             CHECK(scene.file("notes.txt").current().id == notes.id && scene.file("notes.txt").current().draft == notes.draft);
             checkOffline(scene);
         });
-        suite.run("PRD.md:41 PRD.md:49 typing in an accepted line marks its region manual until a choice replaces it", [] {
+        review.run("PRD.md:41 PRD.md:49 typing in an accepted line marks its region manual until a choice replaces it", [] {
             Repository repo("merge", journeyPaths());
             Scene scene(repo);
             clickFile(scene, "story.txt");
@@ -1075,7 +1096,7 @@ public:
             CHECK(region("Left line 2").value(QStringLiteral("state")).toString() == QStringLiteral("manual"));
             checkOffline(scene);
         });
-        suite.run("PRD.md:135 PRD.md:153 Save keeps an app-only draft and Mark resolved without a prior Save confirms, writes and resolves", [] {
+        review.run("PRD.md:135 PRD.md:153 Save keeps an app-only draft and Mark resolved without a prior Save confirms, writes and resolves", [] {
             Repository repo("merge", journeyPaths());
             const auto launched = repo.snapshot();
             Scene scene(repo);
@@ -1132,7 +1153,7 @@ public:
             CHECK(readFile(repo.path("story.txt")) == edited.shown.toUtf8());
             checkOffline(scene);
         });
-        suite.run("PRD.md:137 PRD.md:141 scoped search, wrapping, whitespace, mouse inspection and clipboard shortcuts keep the work", [] {
+        review.run("PRD.md:137 PRD.md:141 scoped search, wrapping, whitespace, mouse inspection and clipboard shortcuts keep the work", [] {
             Repository repo("merge", journeyPaths());
             const auto launched = repo.snapshot();
             Scene scene(repo);
@@ -1242,7 +1263,7 @@ public:
             QGuiApplication::clipboard()->clear();
             checkOffline(scene);
         });
-        suite.run("PRD.md:143 PRD.md:145 the handoff separates resolved, saved, unsaved, newer, failed and outside-app work and leaving keeps it outstanding", [] {
+        handoff.run("PRD.md:143 PRD.md:145 the handoff separates resolved, saved, unsaved, newer, failed and outside-app work and leaving keeps it outstanding", [] {
             Repository repo("merge", handoffPaths());
             Scene scene(repo);
             CHECK(scene.controller->files()->totalFiles() == 7);
@@ -1360,7 +1381,7 @@ public:
             expectContains(scene.controller->workflow(), "only the work opened at launch", "session scope");
             checkOffline(scene);
         });
-        suite.run("PRD.md:149 offline startup without an account resumes saved and unsaved drafts after closing", [] {
+        handoff.run("PRD.md:149 offline startup without an account resumes saved and unsaved drafts after closing", [] {
             Repository repo("merge", {
                 {"saved.txt", QByteArray("saved base\n"), QByteArray("saved left\n"), QByteArray("saved right\n"), QByteArray("saved by hand\n")},
                 {"typed.txt", QByteArray("typed base\n"), QByteArray("typed left\n"), QByteArray("typed right\n"), QByteArray("typed by hand\n")},
@@ -1403,7 +1424,7 @@ public:
             CHECK(!repo.unmerged("saved.txt").isEmpty() && !repo.unmerged("typed.txt").isEmpty());
             checkOffline(reopened);
         });
-        suite.run("TRUCE-0097 a blocked startup lists each recovery session and restores the chosen one in the window", [] {
+        handoff.run("TRUCE-0097 a blocked startup lists each recovery session and restores the chosen one in the window", [] {
             Repository repo("merge", {{"shared.txt", QByteArray("shared base\n"), QByteArray("shared left\n"),
                                        QByteArray("shared right\n"), QByteArray("shared chosen by hand\n")}});
             const auto id = fileId("shared.txt").toStdString();
@@ -1452,7 +1473,7 @@ public:
             CHECK(repo.snapshot() == repository && !repo.unmerged("shared.txt").isEmpty());
             checkOffline(scene);
         });
-        suite.run("TRUCE-0087 a resolved mergetool handoff drops the waiting text and a path Git has not launched keeps it", [] {
+        handoff.run("TRUCE-0087 a resolved mergetool handoff drops the waiting text and a path Git has not launched keeps it", [] {
             Repository repo("merge", {
                 {"launched.txt", QByteArray("launched base\n"), QByteArray("launched left\n"),
                  QByteArray("launched right\n"), QByteArray("launched chosen by hand\n")},
@@ -1513,7 +1534,7 @@ public:
             CHECK(scene.item("endParentSession")->isVisible());
             checkOffline(scene);
         });
-        suite.run("TRUCE-0082 clicking the launched path again after Git attached shows the waiting state and Leave unresolved", [] {
+        handoff.run("TRUCE-0082 clicking the launched path again after Git attached shows the waiting state and Leave unresolved", [] {
             Repository repo("merge", {
                 {"launched.txt", QByteArray("launched base\n"), QByteArray("launched left\n"),
                  QByteArray("launched right\n"), QByteArray("launched chosen by hand\n")},
@@ -1561,7 +1582,7 @@ public:
             settleFor("leave control gone after leaving", [&] { return !scene.item("leaveMergetool")->isVisible(); });
             checkOffline(scene);
         });
-        suite.run("TRUCE-0088 a 1280x720 logical screen fits the window with every control and text pane reachable", [] {
+        window.run("TRUCE-0088 a 1280x720 logical screen fits the window with every control and text pane reachable", [] {
             Repository repo("merge", journeyPaths());
             Scene scene(repo);
             CHECK(scene.item("inventoryWarning")->isVisible());
@@ -1645,7 +1666,7 @@ public:
                                          + pageExtent(scene.object("pageScroll")));
             checkOffline(scene);
         });
-        suite.run("TRUCE-0115 selecting a file shows its first undecided region in all three panes", [] {
+        window.run("TRUCE-0115 selecting a file shows its first undecided region in all three panes", [] {
             QByteArray before;
             QByteArray after;
             for (int line = 1; line <= 120; ++line) before += "shared before " + QByteArray::number(line) + "\n";
@@ -1678,7 +1699,7 @@ public:
             }
             checkOffline(scene);
         });
-        suite.run("TRUCE-0126 a choice clears hand edits on a line deleted in the editor and on text an edit left unchanged", [] {
+        window.run("TRUCE-0126 a choice clears hand edits on a line deleted in the editor and on text an edit left unchanged", [] {
             // The left side changes two lines in one section, and the user set the result to it before launch.
             const QByteArray left = "header\nleft first\nleft second\nbridge\nleft later\ntail\n";
             Repository repo("merge", {{"pair.txt", QByteArray("header\nbase first\nbase second\nbridge\nbase later\ntail\n"),
@@ -1754,7 +1775,7 @@ public:
             CHECK(noneEdited());
             checkOffline(scene);
         });
-        suite.run("TRUCE-0116 closing with input recovery could not keep asks to retry, and cancel keeps the window open", [] {
+        window.run("TRUCE-0116 closing with input recovery could not keep asks to retry, and cancel keeps the window open", [] {
             Repository repo("merge", {{"kept.txt", QByteArray("kept base\n"), QByteArray("kept left\n"),
                                        QByteArray("kept right\n"), QByteArray("kept by hand\n")}});
             const auto launched = repo.snapshot();
@@ -1803,7 +1824,7 @@ public:
             expectText(reopened.text("resultText"), "kept by hand\n!", "restored input");
             checkOffline(reopened);
         });
-        return suite.report();
+        return results.report();
     }
 };
 
@@ -1855,7 +1876,14 @@ int main(int argc, char **argv)
     QCoreApplication::setApplicationName("BranchTruceJourneyAcceptance");
     // The suite owns its clipboard and window system; physical desktop input is out of scope.
     if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
-    const auto result = JourneyAcceptanceTests{}.run();
+    // No argument runs every journey; "review", "handoff" and "window" select one ctest entry's share.
+    const auto arguments = QCoreApplication::arguments();
+    auto selection = Selection::All;
+    if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("review")) selection = Selection::Review;
+    else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("handoff")) selection = Selection::Handoff;
+    else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("window")) selection = Selection::Window;
+    else if (arguments.size() != 1) return 2;
+    const auto result = JourneyAcceptanceTests{}.run(selection);
     QGuiApplication::clipboard()->clear();
     return result;
 }
