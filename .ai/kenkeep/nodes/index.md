@@ -27,6 +27,7 @@ _None._
 - Open [**Reconcile uncertain destination publication**](practice-reconcile-uncertain-destination-publication.md) to learn about: Use captured destination identities, fail closed on unsupported metadata, and inspect uncertain exchanges before retrying. #publication #storage #concurrency #git
 - Open [**Separate Save from Mark resolved**](practice-separate-save-from-mark-resolved.md) to learn about: Save keeps app-only drafts; Mark resolved writes the reviewed result and resolves the file in Git. #product #saving #resolution #review
 - Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) to learn about: In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles. #testing #qml #ui #offscreen
+- Open [**Keep the qmllint target at zero warnings**](practice-keep-the-qmllint-target-at-zero-warnings.md) to learn about: branch_truce_ui_qmllint exits 0 while it prints warnings; read the output, type QML properties concretely, anchor at use sites. #qml #lint #ui #ci
 - Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) to learn about: Conventional Commits headers carry no TRUCE IDs or co-author/AI trailers; check:tracker-refs bans ticket IDs outside agent paths. #git #commits #ci #conventions #release
 
 ## Components (what exists)
@@ -59,6 +60,10 @@ _None._
 - Open [**Treat mergetool file state as live evidence**](practice-treat-mergetool-file-state-as-live-evidence.md) — Check live MERGED bytes before trusting a recorded write, shrink restores after flushing, and wait for the socket on a wall-clock deadline.
 - Open [**Bound each converted representation independently**](practice-bound-each-converted-representation-independently.md) — Reject cleaned canonical objects over 4194304 bytes before reading; give each Git phase its own 4194304-byte budget.
 - Open [**Recovery journal and acknowledgment boundary**](map-recovery-journal-and-acknowledgment-boundary.md) — Persist complete text-and-decision transactions before acknowledgment; retain failed input and loaded captures for retry.
+### #qml
+- Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
+- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard.
+- Open [**Keep the qmllint target at zero warnings**](practice-keep-the-qmllint-target-at-zero-warnings.md) — branch_truce_ui_qmllint exits 0 while it prints warnings; read the output, type QML properties concretely, anchor at use sites.
 ### #scope
 - Open [**Branch Truce first-release scope**](map-branch-truce-first-release-scope.md) — PRD.md defines a standalone, offline Linux app for text conflicts during merges and rebases.
 - Open [**Keep unsupported and unfinished work visible**](practice-keep-unsupported-and-unfinished-work-visible.md) — Show all current files, prominent outside-app warnings, and an honest handoff that directs users to outstanding work.
@@ -83,10 +88,9 @@ _None._
 - Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base.
 - Open [**Installed-artifact validation in base containers**](map-installed-artifact-validation-in-base-containers.md) — validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE.
 - Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) — Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation.
-### #qml
-- Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
-- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard.
-- Open [**Compile QML to bytecode to avoid private Qt ABI pins**](practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins.md) — Keep qmlcachegen --only-bytecode; QML compiled to C++ links Qt_6_PRIVATE_API and pins the package to one exact Qt release.
+### #ci
+- Open [**Keep the qmllint target at zero warnings**](practice-keep-the-qmllint-target-at-zero-warnings.md) — branch_truce_ui_qmllint exits 0 while it prints warnings; read the output, type QML properties concretely, anchor at use sites.
+- Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) — Conventional Commits headers carry no TRUCE IDs or co-author/AI trailers; check:tracker-refs bans ticket IDs outside agent paths.
 ### #comparison
 - Open [**Keep sources identifiable and the result editable**](practice-keep-sources-identifiable-and-the-result-editable.md) — Require truthful source identities, an editable center result, earlier context, and reading aids that preserve text.
 - Open [**Revision-bound passage correspondence**](map-revision-bound-passage-correspondence.md) — Map immutable source ranges to one result revision; reject uncertain targets and keep alignment memory linear.
@@ -138,6 +142,9 @@ _None._
 ### #testing
 - Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard.
 - Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
+### #ui
+- Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
+- Open [**Keep the qmllint target at zero warnings**](practice-keep-the-qmllint-target-at-zero-warnings.md) — branch_truce_ui_qmllint exits 0 while it prints warnings; read the output, type QML properties concretely, anchor at use sites.
 ### #abi
 - Open [**Compile QML to bytecode to avoid private Qt ABI pins**](practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins.md) — Keep qmlcachegen --only-bytecode; QML compiled to C++ links Qt_6_PRIVATE_API and pins the package to one exact Qt release.
 ### #acceptance
@@ -148,8 +155,6 @@ _None._
 - Open [**Fence session work and serialize worktree mutations**](practice-fence-session-work-and-serialize-worktree-mutations.md) — Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation.
 ### #choices
 - Open [**Make conflict choices explicit and reversible**](practice-make-conflict-choices-explicit-and-reversible.md) — Keep accept, ignore, combine, and broader choices distinct, inspectable, and reversible with their decision states.
-### #ci
-- Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) — Conventional Commits headers carry no TRUCE IDs or co-author/AI trailers; check:tracker-refs bans ticket IDs outside agent paths.
 ### #classification
 - Open [**Conflict admission and offline startup**](map-conflict-admission-and-offline-startup.md) — ConflictClassifier admits editable merge/rebase files; startup preserves excluded reasons and existing manual edits.
 ### #commits
@@ -166,6 +171,8 @@ _None._
 - Open [**Keep unsupported and unfinished work visible**](practice-keep-unsupported-and-unfinished-work-visible.md) — Show all current files, prominent outside-app warnings, and an honest handoff that directs users to outstanding work.
 ### #limits
 - Open [**Bound each converted representation independently**](practice-bound-each-converted-representation-independently.md) — Reject cleaned canonical objects over 4194304 bytes before reading; give each Git phase its own 4194304-byte budget.
+### #lint
+- Open [**Keep the qmllint target at zero warnings**](practice-keep-the-qmllint-target-at-zero-warnings.md) — branch_truce_ui_qmllint exits 0 while it prints warnings; read the output, type QML properties concretely, anchor at use sites.
 ### #qt
 - Open [**Compile QML to bytecode to avoid private Qt ABI pins**](practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins.md) — Keep qmlcachegen --only-bytecode; QML compiled to C++ links Qt_6_PRIVATE_API and pins the package to one exact Qt release.
 ### #release
@@ -182,8 +189,6 @@ _None._
 - Open [**Conflict admission and offline startup**](map-conflict-admission-and-offline-startup.md) — ConflictClassifier admits editable merge/rebase files; startup preserves excluded reasons and existing manual edits.
 ### #transport
 - Open [**Mergetool session socket and real Git parent**](map-mergetool-session-socket-and-real-git-parent.md) — The session socket sits under XDG_RUNTIME_DIR or /tmp/branch-truce-<uid>; real Git 2.43 parent tests bound the compatibility claim.
-### #ui
-- Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
 ### #undo
 - Open [**Make conflict choices explicit and reversible**](practice-make-conflict-choices-explicit-and-reversible.md) — Keep accept, ignore, combine, and broader choices distinct, inspectable, and reversible with their decision states.
 ### #validation

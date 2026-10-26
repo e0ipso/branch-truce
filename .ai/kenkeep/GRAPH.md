@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:c8d14967b10ba67702334d3bc9bbfe03d66daeecabbf72d02f99a5faac3c4a0f'
-node_count: 27
+nodes_hash: 'sha256:6679c4c6545d391c6739abd5f1c8c97ad86d3f849f1b78661f27c49a02746203'
+node_count: 28
 ---
 # kenkeep Graph
 
-Total nodes: 27
+Total nodes: 28
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -71,7 +71,7 @@ Total nodes: 27
 - **path:** map-recovery-journal-and-acknowledgment-boundary.md
 - **tags:** recovery, storage, editing, failures
 - **relates_to:** practice-recover-unfinished-work-without-changing-its-status, practice-keep-session-captures-immutable-across-revisions, practice-keep-failed-work-outstanding
-- **derived_from:** docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md, src/storage/RecoveryStore.cpp, src/app/ApplicationController.cpp
+- **derived_from:** docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md, src/storage/RecoveryStore.cpp, src/app/ApplicationController.cpp, src/app/main.cpp, src/ui/Main.qml
 
 ## map-repository-discovery-and-verified-source-identities
 
@@ -159,6 +159,14 @@ Total nodes: 27
 - **path:** practice-keep-techspecs-and-prds-independent.md
 - **tags:** documentation, techspec, prd
 - **relates_to:** practice-keep-prd-focused-on-user-needs
+
+## practice-keep-the-qmllint-target-at-zero-warnings
+
+- **kind:** practice
+- **title:** Keep the qmllint target at zero warnings
+- **path:** practice-keep-the-qmllint-target-at-zero-warnings.md
+- **tags:** qml, lint, ui, ci
+- **relates_to:** map-journey-acceptance-suite
 
 ## practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files
 

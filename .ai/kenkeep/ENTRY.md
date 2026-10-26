@@ -1,7 +1,7 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:c8d14967b10ba67702334d3bc9bbfe03d66daeecabbf72d02f99a5faac3c4a0f'
-node_count: 27
+nodes_hash: 'sha256:6679c4c6545d391c6739abd5f1c8c97ad86d3f849f1b78661f27c49a02746203'
+node_count: 28
 ---
 # kenkeep
 
@@ -27,6 +27,7 @@ _None._
 - Open [**Reconcile uncertain destination publication**](nodes/practice-reconcile-uncertain-destination-publication.md) to learn about: Use captured destination identities, fail closed on unsupported metadata, and inspect uncertain exchanges before retrying. #publication #storage #concurrency #git
 - Open [**Separate Save from Mark resolved**](nodes/practice-separate-save-from-mark-resolved.md) to learn about: Save keeps app-only drafts; Mark resolved writes the reviewed result and resolves the file in Git. #product #saving #resolution #review
 - Open [**Wait for layout before clicking offscreen dialog items**](nodes/practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) to learn about: In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles. #testing #qml #ui #offscreen
+- Open [**Keep the qmllint target at zero warnings**](nodes/practice-keep-the-qmllint-target-at-zero-warnings.md) to learn about: branch_truce_ui_qmllint exits 0 while it prints warnings; read the output, type QML properties concretely, anchor at use sites. #qml #lint #ui #ci
 - Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](nodes/practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) to learn about: Conventional Commits headers carry no TRUCE IDs or co-author/AI trailers; check:tracker-refs bans ticket IDs outside agent paths. #git #commits #ci #conventions #release
 
 ## Components (what exists)
