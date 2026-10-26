@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
+import org.kde.kirigami.delegates as KirigamiDelegates
 
 Kirigami.ApplicationWindow {
     id: window
@@ -46,6 +47,28 @@ Kirigami.ApplicationWindow {
             lines.push(unsaved ? qsTr("Unsaved draft") : qsTr("Manual Save checkpoint retained"))
         lines.push(progressSummary(progress))
         return lines.join("\n")
+    }
+    // A file row shows the first line only: the outside-app reason or the undecided count,
+    // otherwise the status. The rest stays in the text for the tooltip.
+    function rowStatus(status: string, support: string, supportDetail: string, unsaved: bool, progress): string {
+        let summary = status
+        if (support !== "supported")
+            summary = supportDetail || status
+        else if (progress && progress.undecided > 0 && !progress.resolved)
+            summary = qsTr("%1 undecided").arg(progress.undecided)
+        const lines = statusLines(status, support, unsaved, progress).split("\n")
+        return [summary].concat(lines.filter(line => line !== summary)).join("\n")
+    }
+    function rowIcon(support: string, unsaved: bool, progress): string {
+        if (support === "unreadable")
+            return "dialog-error"
+        if (support !== "supported")
+            return "unknown"
+        if (progress && progress.resolved)
+            return "checkmark"
+        if (progress && progress.undecided > 0)
+            return "vcs-conflicting"
+        return unsaved ? "vcs-locally-modified" : "document-save"
     }
     // Closing the window is an ordinary finish action: with work outstanding it
     // opens the handoff instead, where leaving is a deliberate choice.
@@ -427,7 +450,7 @@ Kirigami.ApplicationWindow {
             }
         }
     }
-    component ConflictRow: ItemDelegate {
+    component ConflictRow: KirigamiDelegates.SubtitleDelegate {
         id: row
         required property int index
         required property string fileId
@@ -436,31 +459,73 @@ Kirigami.ApplicationWindow {
         required property string status
         required property bool unsaved
         required property var progress
+        readonly property bool current: fileId === window.controller.selectedFileId
+        readonly property string chip: support === "unreadable" ? qsTr("Load error")
+            : support === "supported" ? "" : qsTr("Outside app")
         width: ListView.view.width
-        text: window.controller.displayPath(fileId) + (support === "supported" ? ""
-            : support === "unreadable" ? qsTr(" · load error · outside app") : qsTr(" · outside app"))
-        highlighted: fileId === window.controller.selectedFileId
-        contentItem: ColumnLayout {
-            // Wrap between words; only a word wider than the list breaks inside.
-            Label {
+        // The path alone names the row, so a screen reader reads it as the list item's name.
+        text: window.controller.displayPath(fileId)
+        subtitle: window.rowStatus(status, support, supportDetail, unsaved, progress)
+        Accessible.description: subtitle
+        icon.name: window.rowIcon(support, unsaved, progress)
+        highlighted: current
+        ToolTip.visible: hovered && (titleLabel.truncated || subtitleLabel.truncated)
+        Keys.onReturnPressed: row.clicked()
+        Keys.onEnterPressed: row.clicked()
+        // One line each, so a path or a status never breaks inside a word.
+        contentItem: RowLayout {
+            spacing: Kirigami.Units.smallSpacing
+            Kirigami.Icon {
+                Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                source: row.icon.name
+                selected: row.highlighted
+            }
+            ColumnLayout {
                 Layout.fillWidth: true
-                text: row.text
-                textFormat: Text.PlainText
-                wrapMode: Text.Wrap
+                spacing: 0
+                Label {
+                    id: titleLabel
+                    Layout.fillWidth: true
+                    text: row.text
+                    textFormat: Text.PlainText
+                    elide: Text.ElideMiddle
+                    font.bold: row.current
+                    color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                }
+                // Holds every status line for the tooltip and shows only the first.
+                Label {
+                    id: subtitleLabel
+                    Layout.fillWidth: true
+                    text: row.subtitle
+                    textFormat: Text.PlainText
+                    maximumLineCount: 1
+                    elide: Text.ElideRight
+                    font: Kirigami.Theme.smallFont
+                    color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                }
             }
             Label {
-                Layout.fillWidth: true
-                visible: row.support !== "supported"
-                text: row.supportDetail
+                Layout.alignment: Qt.AlignVCenter
+                visible: row.chip.length > 0
+                text: row.chip
                 textFormat: Text.PlainText
-                wrapMode: Text.Wrap
+                font: Kirigami.Theme.smallFont
+                leftPadding: Kirigami.Units.smallSpacing
+                rightPadding: Kirigami.Units.smallSpacing
+                color: Kirigami.Theme.neutralTextColor
+                background: Rectangle {
+                    color: Kirigami.Theme.neutralBackgroundColor
+                    radius: Kirigami.Units.cornerRadius
+                }
             }
-            Label {
-                Layout.fillWidth: true
-                text: window.statusLines(row.status, row.support, row.unsaved, row.progress)
-                textFormat: Text.PlainText
-                wrapMode: Text.Wrap
-            }
+        }
+        Kirigami.Separator {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            visible: row.index < row.ListView.view.count - 1
         }
     }
     component SnapshotPane: ColumnLayout {
@@ -603,11 +668,16 @@ Kirigami.ApplicationWindow {
                         text: qsTr("Review handoff…")
                         onClicked: handoffDialog.open()
                     }
-                    Button {
+                    ToolButton {
                         objectName: "toggleFileList"
                         text: window.controller.fileListVisible ? qsTr("Hide file list") : qsTr("Show file list")
+                        icon.name: "sidebar-expand-left"
+                        display: AbstractButton.IconOnly
                         checked: window.controller.fileListVisible
                         Accessible.name: qsTr("Show file list")
+                        ToolTip.text: text
+                        ToolTip.visible: hovered
+                        ToolTip.delay: Kirigami.Units.toolTipDelay
                         onClicked: window.controller.toggleFileList()
                     }
                     Button {
@@ -659,46 +729,65 @@ Kirigami.ApplicationWindow {
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
-                RowLayout {
+                SplitView {
+                    id: workSplit
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    // A SplitView has no minimum of its own; the page scrolls once the work area reaches its minimum.
+                    Layout.minimumHeight: workArea.Layout.minimumHeight
                     visible: !window.controller.opening && window.controller.files.totalFiles > 0
-                    ListView {
-                        id: fileList
-                        objectName: "fileList"
-                        Accessible.name: qsTr("File list")
+                    Rectangle {
                         visible: window.controller.fileListVisible
-                        Layout.preferredWidth: 220
-                        Layout.fillHeight: true
-                        clip: true
-                        model: window.controller.files
-                        currentIndex: 0
-                        function revealSelection(): void {
-                            const row = window.controller.selectedRow()
-                            if (row < 0 || row >= count)
-                                return
-                            currentIndex = row
-                            positionViewAtIndex(row, ListView.Contain)
-                        }
-                        Component.onCompleted: revealSelection()
-                        Connections {
-                            target: window.controller
-                            function onSelectedFileChanged(): void {
-                                fileList.revealSelection()
+                        SplitView.preferredWidth: Kirigami.Units.gridUnit * 14
+                        SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
+                        SplitView.maximumWidth: Math.max(SplitView.minimumWidth, workSplit.width / 2)
+                        Kirigami.Theme.colorSet: Kirigami.Theme.View
+                        Kirigami.Theme.inherit: false
+                        color: Kirigami.Theme.backgroundColor
+                        ListView {
+                            id: fileList
+                            objectName: "fileList"
+                            Accessible.name: qsTr("File list")
+                            anchors.fill: parent
+                            activeFocusOnTab: true
+                            keyNavigationEnabled: true
+                            clip: true
+                            model: window.controller.files
+                            currentIndex: 0
+                            function revealSelection(): void {
+                                const row = window.controller.selectedRow()
+                                if (row < 0 || row >= count)
+                                    return
+                                currentIndex = row
+                                positionViewAtIndex(row, ListView.Contain)
                             }
-                        }
-                        delegate: ConflictRow {
-                            id: fileDelegate
-                            onClicked: {
-                                fileList.currentIndex = fileDelegate.index;
-                                window.controller.selectFile(fileDelegate.fileId);
+                            Component.onCompleted: revealSelection()
+                            Connections {
+                                target: window.controller
+                                function onSelectedFileChanged(): void {
+                                    fileList.revealSelection()
+                                }
                             }
+                            delegate: ConflictRow {
+                                id: fileDelegate
+                                onClicked: {
+                                    fileList.currentIndex = fileDelegate.index;
+                                    window.controller.selectFile(fileDelegate.fileId);
+                                }
+                            }
+                            ScrollBar.vertical: ScrollBar {}
                         }
-                        ScrollBar.vertical: ScrollBar {}
+                        Kirigami.PlaceholderMessage {
+                            anchors.centerIn: parent
+                            width: parent.width - Kirigami.Units.gridUnit * 2
+                            visible: fileList.count === 0
+                            icon.name: "checkmark"
+                            text: qsTr("No conflicted files")
+                        }
                     }
                     ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        id: workArea
+                        SplitView.fillWidth: true
                         Label {
                             Layout.fillWidth: true
                             objectName: "selectedPath"

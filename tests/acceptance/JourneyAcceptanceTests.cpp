@@ -749,7 +749,7 @@ public:
             expectContains(scene.text("inventoryWarning"), "1 outside app", "inventory warning");
             for (const auto *path : {"story.txt", "notes.txt", "reading.txt", "removed.txt"})
                 expectContains(rowText(scene, path), QString::fromLatin1(path), "file row");
-            expectContains(rowText(scene, "removed.txt"), "outside app", "outside-app row");
+            expectContains(rowText(scene, "removed.txt"), "Outside app", "outside-app row");
             const auto left = "Current checkout: " + utf8(repo.leftCommit);
             const auto right = "Merged commit: " + utf8(repo.rightCommit);
             for (const auto *path : {"story.txt", "notes.txt", "reading.txt"})
@@ -1481,11 +1481,12 @@ public:
             QCoreApplication::sendEvent(scene.window, &wheel);
             settleFor("page scrolled by the wheel", [&] { return page->property("contentY").toReal() > 0; });
 
-            // TRUCE-0084: at 1280x800 the file list and the handoff dialog wrap between words.
+            // TRUCE-0084: at 1280x800 the handoff dialog wraps between words. File rows elide one
+            // line each instead of wrapping, so nothing in the file list wraps at all.
             scene.window->resize(1280, 800);
             settleFor("window at 1280x800", [&] { return scene.window->width() == 1280 && scene.window->height() == 800; });
             QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-            CHECK(expectWholeWords(scene.item("fileList"), "the file list at 1280x800") > 0);
+            CHECK(expectWholeWords(scene.item("fileList"), "the file list at 1280x800") == 0);
             auto *dialog = scene.object("handoffDialog");
             scene.click("openHandoff");
             settleFor("handoff opened", [&] { return dialog->property("opened").toBool(); });
