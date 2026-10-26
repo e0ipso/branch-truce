@@ -1515,6 +1515,9 @@ public:
                 ready(repo, state, "Merge");
                 CHECK(state.value("stage2").toString().startsWith("Current checkout:"));
                 CHECK(state.value("stage3").toString().startsWith("Merged commit:"));
+                // The label names its commit once; the controller used to append the id again.
+                CHECK(state.value("stage2").toString().count(QString::fromLatin1(repo.main)) == 1);
+                CHECK(state.value("stage3").toString().count(QString::fromLatin1(repo.side)) == 1);
                 CHECK(file(state, "excluded.txt").value("support") == "supported");
             }
         });

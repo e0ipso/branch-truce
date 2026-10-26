@@ -259,7 +259,7 @@ void expectProgress(Fixture &fixture, bool saved, bool reviewed, bool resolved, 
     summary += resolved ? QStringLiteral("Resolved") : QStringLiteral("Not resolved");
     if (earlier) summary += QStringLiteral(" · Earlier result staged; current draft not applied");
     QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    const auto status = fixture.item("selectedStatus")->property("text").toString();
+    const auto status = test_support::shownText(fixture.item("selectedStatus"));
     if (!status.contains(summary))
         throw std::runtime_error(("status: " + status + " summary: " + summary).toStdString());
     CHECK(status.contains(summary));
@@ -512,9 +512,9 @@ public:
             settle([&] { return fixture.controller.selectedFile().value("unsaved").toBool(); });
             fixture.click("saveDraft");
             CHECK(fixture.controller.commandMessage() == "Draft saved in Branch Truce; repository file unchanged.");
-            CHECK(fixture.item("selectedStatus")->property("text").toString()
+            CHECK(test_support::shownText(fixture.item("selectedStatus"))
                   .contains("Draft saved in Branch Truce; repository file unchanged"));
-            CHECK(fixture.item("selectedStatus")->property("text").toString().contains("Manual Save checkpoint retained"));
+            CHECK(test_support::shownText(fixture.item("selectedStatus")).contains("Manual Save checkpoint retained"));
             CHECK(fixture.file().checkpoint() && fixture.file().checkpoint()->draft == saved);
             CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
             const auto savedStore = storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()).read();
@@ -552,8 +552,8 @@ public:
             CHECK(fixture.file().current().draft == edited && fixture.file().facts().unsaved);
             CHECK(fixture.file().checkpoint()->draft == saved);
             CHECK(fixture.text().toStdString() == edited.text);
-            CHECK(fixture.item("selectedStatus")->property("text").toString().contains("Draft save failed"));
-            CHECK(fixture.item("selectedStatus")->property("text").toString().contains("Unsaved draft"));
+            CHECK(test_support::shownText(fixture.item("selectedStatus")).contains("Draft save failed"));
+            CHECK(test_support::shownText(fixture.item("selectedStatus")).contains("Unsaved draft"));
             CHECK(fixture.controller.commandMessage() == "Draft save failed. The edited result is still available.");
             CHECK(fixture.item("retrySave")->isVisible());
             CHECK(!fixture.item("saveDraft")->isEnabled() && !fixture.item("discardUnsaved")->isEnabled());
@@ -1008,7 +1008,7 @@ public:
             CHECK(fixture.text() == text);
             CHECK(fixture.file().reviewed() && fixture.file().checkpoint() && !fixture.file().written());
             CHECK(!fixture.file().facts().resolved && !fixture.file().staged());
-            CHECK(fixture.item("selectedStatus")->property("text").toString().contains(QStringLiteral("Repository write failed")));
+            CHECK(test_support::shownText(fixture.item("selectedStatus")).contains(QStringLiteral("Repository write failed")));
             CHECK(!fixture.item("parentStagingState")->isVisible());
         });
         suite.run("TRUCE-0028 closing with work outstanding opens the handoff and each route returns to its file", [] {

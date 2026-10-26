@@ -396,13 +396,25 @@ QString ApplicationController::version() const
 QString ApplicationController::stage2() const
 {
     if (!repository_.supported) return {};
-    return repository_.stage2.label + QStringLiteral(" · ") + QString::fromLatin1(repository_.stage2.commitId);
+    return repository_.stage2.label;
 }
 
 QString ApplicationController::stage3() const
 {
     if (!repository_.supported) return {};
-    return repository_.stage3.label + QStringLiteral(" · ") + QString::fromLatin1(repository_.stage3.commitId);
+    return repository_.stage3.label;
+}
+
+QString ApplicationController::stage2CommitId() const
+{
+    if (!repository_.supported) return {};
+    return QString::fromLatin1(repository_.stage2.commitId);
+}
+
+QString ApplicationController::stage3CommitId() const
+{
+    if (!repository_.supported) return {};
+    return QString::fromLatin1(repository_.stage3.commitId);
 }
 
 QString ApplicationController::workflow() const

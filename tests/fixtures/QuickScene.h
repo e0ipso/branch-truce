@@ -11,6 +11,7 @@
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
+#include <QStringList>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -48,6 +49,21 @@ inline QQuickItem *visualItem(QQuickItem *root, const QString &name)
     for (auto *child : root->childItems())
         if (auto *found = visualItem(child, name)) return found;
     return nullptr;
+}
+
+// The texts of the visible labels under root, in item order, joined with " · ": what a row
+// of status chips reads as one line.
+inline QString shownText(QQuickItem *root)
+{
+    QStringList texts;
+    const std::function<void(QQuickItem *)> visit = [&](QQuickItem *item) {
+        if (!item->isVisible()) return;
+        if (item->inherits("QQuickText") && !item->property("text").toString().isEmpty())
+            texts.append(item->property("text").toString());
+        for (auto *child : item->childItems()) visit(child);
+    };
+    visit(root);
+    return texts.join(QStringLiteral(" · "));
 }
 
 // The name assistive technology reads: Accessible.name, or else the text of a button or

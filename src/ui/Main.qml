@@ -27,26 +27,44 @@ Kirigami.ApplicationWindow {
         if (controller.previewWholeFile(controller.selectedFileId, selectedFile.currentRevision, side))
             wholeFileDialog.open();
     }
-    function progressSummary(progress): string {
+    // One chip per progress fact: undecided count, save, review and resolution state.
+    function progressChips(progress): var {
         if (!progress)
-            return ""
-        const parts = [
-            qsTr("Undecided: %1").arg(progress.undecided),
-            progress.saved ? qsTr("Saved") : qsTr("Not saved"),
-            progress.reviewed ? qsTr("Reviewed") : qsTr("Not reviewed"),
-            progress.resolved ? qsTr("Resolved") : qsTr("Not resolved")
+            return []
+        const chips = [
+            {icon: progress.undecided > 0 ? "dialog-question" : "checkmark",
+             text: qsTr("Undecided: %1").arg(progress.undecided)},
+            progress.saved ? {icon: "document-save", text: qsTr("Saved")}
+                           : {icon: "vcs-locally-modified", text: qsTr("Not saved")},
+            progress.reviewed ? {icon: "view-visible", text: qsTr("Reviewed")}
+                              : {icon: "view-hidden", text: qsTr("Not reviewed")},
+            progress.resolved ? {icon: "checkmark", text: qsTr("Resolved")}
+                              : {icon: "vcs-conflicting", text: qsTr("Not resolved")}
         ]
         if (progress.earlierResolved)
-            parts.push(qsTr("Earlier result staged; current draft not applied"))
-        return parts.join(" · ")
+            chips.push({icon: "vcs-update-required", text: qsTr("Earlier result staged; current draft not applied")})
+        return chips
     }
-    function statusLines(status: string, support: string, unsaved: bool, progress): string {
-        const lines = [status]
+    function progressSummary(progress): string {
+        return progressChips(progress).map(chip => chip.text).join(" · ")
+    }
+    // The status sentence, the draft state, then the progress chips.
+    function statusChips(status: string, support: string, unsaved: bool, progress): var {
+        const chips = [{icon: "", text: status}]
         // Outside-app and unreadable files have no app draft to describe.
         if (support === "supported")
-            lines.push(unsaved ? qsTr("Unsaved draft") : qsTr("Manual Save checkpoint retained"))
+            chips.push(unsaved ? {icon: "document-edit", text: qsTr("Unsaved draft")}
+                               : {icon: "document-save", text: qsTr("Manual Save checkpoint retained")})
+        return chips.concat(progressChips(progress))
+    }
+    function statusLines(status: string, support: string, unsaved: bool, progress): string {
+        const lines = statusChips(status, support, unsaved, null).map(chip => chip.text)
         lines.push(progressSummary(progress))
         return lines.join("\n")
+    }
+    // A source label with its commit id cut to 10 characters; the full id stays in the tooltip.
+    function shortCommit(label: string, commitId: string): string {
+        return commitId.length > 10 ? label.replace(commitId, commitId.slice(0, 10)) : label
     }
     // A file row shows the first line only: the outside-app reason or the undecided count,
     // otherwise the status. The rest stays in the text for the tooltip.
@@ -557,6 +575,38 @@ Kirigami.ApplicationWindow {
             }
         }
     }
+    // One status fact as an icon and its text. A chip without an icon is the status sentence
+    // and has no background.
+    component StatusChip: Rectangle {
+        id: chip
+        required property var modelData
+        // A long status sentence wraps inside the chip instead of overflowing the row.
+        property real maximumWidth: Infinity
+        readonly property bool framed: (modelData.icon || "").length > 0
+        readonly property real padding: framed ? Kirigami.Units.largeSpacing : 0
+        implicitWidth: chipRow.implicitWidth + padding
+        implicitHeight: chipRow.implicitHeight + (framed ? Kirigami.Units.smallSpacing : 0)
+        radius: Kirigami.Units.cornerRadius
+        color: framed ? Kirigami.Theme.alternateBackgroundColor : "transparent"
+        RowLayout {
+            id: chipRow
+            anchors.centerIn: parent
+            spacing: Kirigami.Units.smallSpacing
+            Kirigami.Icon {
+                visible: chip.framed
+                source: chip.modelData.icon || ""
+                Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                Layout.preferredHeight: Kirigami.Units.iconSizes.small
+            }
+            Label {
+                Layout.maximumWidth: chip.maximumWidth - chip.padding
+                    - (chip.framed ? Kirigami.Units.iconSizes.small + chipRow.spacing : 0)
+                text: chip.modelData.text || ""
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+            }
+        }
+    }
     // A toolbar action whose button keeps an objectName, so tests find it by name and not
     // by its text. While the action fits, the toolbar shows this button instead of its own.
     // iconOnly hides the text here: Kirigami.DisplayHint.IconOnly would make the toolbar show
@@ -619,6 +669,40 @@ Kirigami.ApplicationWindow {
     title: qsTr("Branch Truce")
     pageStack.initialPage: Kirigami.Page {
         title: window.controller.operation || qsTr("Open conflict session")
+        // The header names the repository once a root is known; the operation and the
+        // file counts become its subtitle.
+        titleDelegate: ColumnLayout {
+            spacing: 0
+            Layout.fillWidth: true
+            Kirigami.Heading {
+                objectName: "repositoryHeading"
+                Layout.fillWidth: true
+                level: 1
+                text: window.controller.repositoryRoot || (window.controller.operation || qsTr("Open conflict session"))
+                textFormat: Text.PlainText
+                elide: Text.ElideMiddle
+                HoverHandler { id: headingHover }
+                ToolTip.text: window.controller.repositoryRoot
+                ToolTip.visible: headingHover.hovered && truncated
+                ToolTip.delay: Kirigami.Units.toolTipDelay
+            }
+            Label {
+                objectName: "repositorySubtitle"
+                Layout.fillWidth: true
+                visible: text.length > 0 && window.controller.repositoryRoot.length > 0
+                text: {
+                    const parts = [window.controller.operation]
+                    if (!window.controller.opening && window.controller.files.totalFiles > 0)
+                        parts.push(qsTr("%1 files in this session · %2 resolved")
+                            .arg(window.controller.files.totalFiles).arg(window.controller.files.resolvedFiles))
+                    return parts.filter(part => part.length > 0).join(" · ")
+                }
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                font: Kirigami.Theme.smallFont
+                opacity: 0.7
+            }
+        }
         // On a short screen, such as 1080p at 150% or 200%, the content keeps its minimum
         // height and scrolls, so the text panes keep a usable height and nothing is cut off.
         Flickable {
@@ -644,12 +728,6 @@ Kirigami.ApplicationWindow {
                 width: pageScroll.width - (pageScroll.overflowing ? pageScrollBar.width : 0)
                 height: pageScroll.contentHeight
                 spacing: Kirigami.Units.largeSpacing
-                Label {
-                    Layout.fillWidth: true
-                    text: window.controller.repositoryRoot
-                    textFormat: Text.PlainText
-                    wrapMode: Text.WrapAnywhere
-                }
                 RowLayout {
                     BusyIndicator { running: window.controller.opening; visible: running }
                     Label {
@@ -695,12 +773,6 @@ Kirigami.ApplicationWindow {
                             }
                         }
                     }
-                }
-                Label {
-                    Layout.fillWidth: true
-                    text: qsTr("%1 files in this session · %2 resolved")
-                        .arg(window.controller.files.totalFiles).arg(window.controller.files.resolvedFiles)
-                    visible: !window.controller.opening && window.controller.files.totalFiles > 0
                 }
                 Kirigami.InlineMessage {
                     objectName: "inventoryWarning"
@@ -862,13 +934,35 @@ Kirigami.ApplicationWindow {
                     ColumnLayout {
                         id: workArea
                         SplitView.fillWidth: true
-                        Label {
+                        // The selected file's name, its status sentence and one chip per state;
+                        // read in order, the chip texts form the sidebar's status lines.
+                        RowLayout {
                             Layout.fillWidth: true
-                            objectName: "selectedPath"
-                            text: window.selectedFile.path || ""
-                            textFormat: Text.PlainText
-                            wrapMode: Text.WrapAnywhere
-                            font.bold: true
+                            spacing: Kirigami.Units.largeSpacing
+                            Label {
+                                objectName: "selectedPath"
+                                Layout.maximumWidth: workArea.width / 3
+                                text: window.selectedFile.path || ""
+                                textFormat: Text.PlainText
+                                wrapMode: Text.WrapAnywhere
+                                font.bold: true
+                            }
+                            Flow {
+                                id: selectedStatus
+                                objectName: "selectedStatus"
+                                Accessible.role: Accessible.Grouping
+                                Accessible.name: qsTr("File status")
+                                Layout.fillWidth: true
+                                visible: window.controller.selectedFileId.length > 0
+                                spacing: Kirigami.Units.smallSpacing
+                                Repeater {
+                                    model: window.statusChips(window.selectedFile.status || "", window.selectedFile.support || "",
+                                        !!window.selectedFile.unsaved, window.selectedFile.progress)
+                                    delegate: StatusChip {
+                                        maximumWidth: selectedStatus.width
+                                    }
+                                }
+                            }
                         }
                         Label {
                             Layout.fillWidth: true
@@ -880,15 +974,6 @@ Kirigami.ApplicationWindow {
                             textFormat: Text.PlainText
                             wrapMode: Text.Wrap
                         }
-                        Label {
-                            objectName: "selectedStatus"
-                            Layout.fillWidth: true
-                            visible: window.controller.selectedFileId.length > 0
-                            text: window.statusLines(window.selectedFile.status || "", window.selectedFile.support || "",
-                                !!window.selectedFile.unsaved, window.selectedFile.progress)
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
-                        }
                         Kirigami.InlineMessage {
                             objectName: "recoveryProblem"
                             Layout.fillWidth: true
@@ -896,21 +981,21 @@ Kirigami.ApplicationWindow {
                             type: Kirigami.MessageType.Error
                             text: window.selectedFile.recoveryError || ""
                         }
-                        Label {
+                        Kirigami.InlineMessage {
                             objectName: "commandMessage"
+                            type: Kirigami.MessageType.Information
+                            icon.name: "dialog-information"
                             Layout.fillWidth: true
                             visible: window.controller.commandMessage.length > 0
                             text: window.controller.commandMessage
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
                         }
-                        Label {
+                        Kirigami.InlineMessage {
                             objectName: "parentStagingState"
+                            type: Kirigami.MessageType.Warning
+                            icon.name: "vcs-locally-modified"
                             Layout.fillWidth: true
                             visible: window.controller.parentStagingPath.length > 0
                             text: qsTr("Written, unresolved. Waiting for Git to stage %1.").arg(window.controller.parentStagingPath)
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
                         }
                         Button {
                             objectName: "recheckParentStaging"
@@ -919,13 +1004,13 @@ Kirigami.ApplicationWindow {
                             enabled: !window.controller.resolutionBusy
                             onClicked: window.controller.recheckParentAcknowledgment()
                         }
-                        Label {
+                        Kirigami.InlineMessage {
                             objectName: "mergetoolHolding"
+                            type: Kirigami.MessageType.Information
+                            icon.name: "vcs-conflicting"
                             Layout.fillWidth: true
                             visible: window.controller.mergetoolWaiting
                             text: qsTr("Git is waiting on this path. Mark resolved hands it back. Leave keeps the draft and returns the original file.")
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
                         }
                         Button {
                             objectName: "leaveMergetool"
@@ -935,16 +1020,16 @@ Kirigami.ApplicationWindow {
                             onClicked: window.controller.leaveMergetool()
                         }
                         // A path whose result Git already staged is not waiting for a launch.
-                        Label {
+                        Kirigami.InlineMessage {
                             objectName: "mergetoolWait"
+                            type: Kirigami.MessageType.Warning
+                            icon.name: "chronometer"
                             Layout.fillWidth: true
                             visible: window.controller.parentSessionActive && !window.controller.mergetoolWaiting
                                      && window.controller.parentStagingPath.length === 0 && window.supportedSelection
                                      && !window.selectedFile.resolved
                                      && !(window.selectedFile.progress && window.selectedFile.progress.earlierResolved)
                             text: qsTr("Waiting for Git to launch this path. It is not resolved.")
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
                         }
                         Button {
                             objectName: "endParentSession"
@@ -1190,27 +1275,44 @@ Kirigami.ApplicationWindow {
                             }
                             ScrollBar.vertical: ScrollBar {}
                         }
-                        Label {
+                        Kirigami.InlineMessage {
+                            objectName: "choiceNotice"
                             Layout.fillWidth: true
+                            type: Kirigami.MessageType.Information
                             visible: sourceChoices.checked && !!window.selectedFile.choiceNotice
                             text: window.selectedFile.choiceNotice || ""
-                            wrapMode: Text.Wrap
                         }
 
                     }
                 }
-                Label {
+                // The footer is one line once files load: the two source commits, shortened,
+                // and where the work continues.
+                RowLayout {
                     Layout.fillWidth: true
-                    visible: window.controller.stage2.length > 0
-                    text: window.controller.stage2 + "\n" + window.controller.stage3
-                    textFormat: Text.PlainText
-                    wrapMode: Text.WrapAnywhere
-                }
-                Label {
-                    objectName: "workflowStatus"
-                    Layout.fillWidth: true
-                    text: window.controller.workflow
-                    wrapMode: Text.Wrap
+                    spacing: Kirigami.Units.largeSpacing
+                    visible: !window.controller.opening && window.controller.files.totalFiles > 0
+                    Label {
+                        objectName: "sourceCommits"
+                        visible: window.controller.stage2.length > 0
+                        text: window.shortCommit(window.controller.stage2, window.controller.stage2CommitId) + " · "
+                            + window.shortCommit(window.controller.stage3, window.controller.stage3CommitId)
+                        textFormat: Text.PlainText
+                        HoverHandler { id: sourceCommitsHover }
+                        ToolTip.text: window.controller.stage2 + "\n" + window.controller.stage3
+                        ToolTip.visible: sourceCommitsHover.hovered
+                        ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
+                    Label {
+                        objectName: "workflowStatus"
+                        Layout.fillWidth: true
+                        text: window.controller.workflow
+                        textFormat: Text.PlainText
+                        elide: Text.ElideRight
+                        HoverHandler { id: workflowHover }
+                        ToolTip.text: text
+                        ToolTip.visible: workflowHover.hovered && truncated
+                        ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
                 }
             }
         }

@@ -237,7 +237,12 @@ public:
         if (!found) throw std::runtime_error(std::string("missing scene object: ") + name);
         return found;
     }
-    QString text(const char *name) const { return item(name)->property("text").toString(); }
+    // A label's text, or for a row of labels such as the status chips, their visible texts.
+    QString text(const char *name) const
+    {
+        const auto value = item(name)->property("text");
+        return value.isValid() ? value.toString() : test_support::shownText(item(name));
+    }
     void click(const char *name)
     {
         auto *target = test_support::waitForLayout(window, QString::fromLatin1(name), settleMs);
@@ -755,6 +760,9 @@ public:
             expectContains(rowText(scene, "removed.txt"), "Outside app", "outside-app row");
             const auto left = "Current checkout: " + utf8(repo.leftCommit);
             const auto right = "Merged commit: " + utf8(repo.rightCommit);
+            // The footer names each commit once, cut to 10 characters.
+            expectText(scene.text("sourceCommits"), "Current checkout: " + utf8(repo.leftCommit).left(10)
+                       + " · Merged commit: " + utf8(repo.rightCommit).left(10), "source footer");
             for (const auto *path : {"story.txt", "notes.txt", "reading.txt"})
                 expectSourcesAround(scene, repo, path, left, right);
             // A file edited before launch keeps that content exactly.

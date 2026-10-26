@@ -27,6 +27,8 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QVariantList recoveryChoices READ recoveryChoices NOTIFY launchChanged)
     Q_PROPERTY(QString stage2 READ stage2 NOTIFY launchChanged)
     Q_PROPERTY(QString stage3 READ stage3 NOTIFY launchChanged)
+    Q_PROPERTY(QString stage2CommitId READ stage2CommitId NOTIFY launchChanged)
+    Q_PROPERTY(QString stage3CommitId READ stage3CommitId NOTIFY launchChanged)
     Q_PROPERTY(QString workflow READ workflow CONSTANT)
     Q_PROPERTY(QString selectedFileId READ selectedFileId NOTIFY selectedFileChanged)
     Q_PROPERTY(QVariantMap selectedFile READ selectedFile NOTIFY selectedFileChanged)
@@ -61,8 +63,11 @@ public:
     // Matching recovery sessions with app edits that blocked restoration at
     // this load: session, lastChanged and the display paths it edited.
     [[nodiscard]] QVariantList recoveryChoices() const;
+    // Each source's label, which already names its commit.
     [[nodiscard]] QString stage2() const;
     [[nodiscard]] QString stage3() const;
+    [[nodiscard]] QString stage2CommitId() const;
+    [[nodiscard]] QString stage3CommitId() const;
     [[nodiscard]] QString workflow() const;
     [[nodiscard]] QString selectedFileId() const { return selectedFileId_; }
     [[nodiscard]] QVariantMap selectedFile() const;
