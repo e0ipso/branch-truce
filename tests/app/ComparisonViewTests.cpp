@@ -5,6 +5,7 @@
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/QuickScene.h"
 #include "fixtures/RecoveryFaults.h"
+#include <QAccessible>
 #include <QApplication>
 #include <algorithm>
 #include <QClipboard>
@@ -504,6 +505,38 @@ public:
             CHECK(x("stage2Text") < x("resultText") && x("resultText") < x("stage3Text"));
             CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
             fixture.checkRecovered(before.draft);
+        });
+        suite.run("TRUCE-0163 toolbar commands report a button role and only the toggles are checkable", [] {
+            Fixture fixture;
+            // One line per control, so a failure names every control that reports the wrong role.
+            const auto describe = [&](const char *name) {
+                auto *item = fixture.item(name);
+                auto *iface = QAccessible::queryAccessibleInterface(item);
+                return QStringLiteral("%1 checkable=%2 role=%3").arg(QLatin1String(name))
+                    .arg(item->property("checkable").toBool())
+                    .arg(iface ? static_cast<int>(iface->role()) : -1);
+            };
+            QStringList commands;
+            QStringList expectedCommands;
+            for (const auto *name : {"saveDraft", "markResolved", "discardUnsaved", "undoCommand", "redoCommand",
+                     "copyResult", "pasteResult", "openHandoff", "previousDifference", "nextDifference",
+                     "previousUndecided", "nextUndecided"}) {
+                commands << describe(name);
+                expectedCommands << QStringLiteral("%1 checkable=0 role=%2").arg(QLatin1String(name)).arg(static_cast<int>(QAccessible::Button));
+            }
+            for (const auto *name : {"navigateMenu", "sourceChoicesMenu"}) {
+                commands << describe(name);
+                expectedCommands << QStringLiteral("%1 checkable=0 role=%2").arg(QLatin1String(name)).arg(static_cast<int>(QAccessible::ButtonMenu));
+            }
+            QStringList toggles;
+            QStringList expectedToggles;
+            for (const auto *name : {"toggleFileList", "showSourceChoices"}) {
+                toggles << describe(name);
+                expectedToggles << QStringLiteral("%1 checkable=1 role=%2").arg(QLatin1String(name)).arg(static_cast<int>(QAccessible::CheckBox));
+            }
+            if (commands != expectedCommands || toggles != expectedToggles)
+                throw std::runtime_error(("commands:\n" + commands.join('\n') + "\ntoggles:\n" + toggles.join('\n')).toStdString());
+            CHECK(commands == expectedCommands && toggles == expectedToggles);
         });
         suite.run("TRUCE-0020 resizing earlier context and collapsed choices preserve current sources and manual work", [] {
             Fixture fixture;

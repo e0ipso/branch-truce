@@ -731,14 +731,25 @@ Kirigami.ApplicationWindow {
     // by its text. While the action fits, the toolbar shows this button instead of its own.
     // iconOnly hides the text here: Kirigami.DisplayHint.IconOnly would make the toolbar show
     // its own unnamed icon button instead.
+    // A command button mirrors its action instead of taking it as its `action`. The toolbar keeps
+    // its own checkable button on the same action and that button makes the action checkable, so
+    // a button bound to the action would report a check box to assistive technology and keep the
+    // checked look of a command that was clicked. Only a toggle binds its action, and is checkable.
     component NamedAction: Kirigami.Action {
         id: namedAction
         required property string controlName
         property string accessibleName: text
         property bool iconOnly: false
+        property bool toggle: false
+        checkable: toggle
         displayComponent: ToolButton {
             objectName: namedAction.controlName
-            action: namedAction
+            action: namedAction.toggle ? namedAction : null
+            text: namedAction.text
+            icon.name: namedAction.icon.name
+            enabled: namedAction.enabled
+            checkable: namedAction.toggle
+            onClicked: if (!namedAction.toggle) namedAction.trigger()
             display: namedAction.iconOnly ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon
             Accessible.name: namedAction.accessibleName
             ToolTip.text: namedAction.tooltip || (display === AbstractButton.IconOnly ? namedAction.text : "")
@@ -757,7 +768,9 @@ Kirigami.ApplicationWindow {
         displayComponent: ToolButton {
             id: menuButton
             objectName: menuAction.controlName
-            action: menuAction
+            text: menuAction.text
+            icon.name: menuAction.icon.name
+            enabled: menuAction.enabled
             down: pressed || entries.visible
             Accessible.role: Accessible.ButtonMenu
             Accessible.name: menuAction.accessibleName
@@ -1006,6 +1019,7 @@ Kirigami.ApplicationWindow {
                             icon.name: "sidebar-expand-left"
                             iconOnly: true
                             displayHint: Kirigami.DisplayHint.KeepVisible
+                            toggle: true
                             checked: window.controller.fileListVisible
                             onTriggered: window.controller.toggleFileList()
                         }
@@ -1334,7 +1348,7 @@ Kirigami.ApplicationWindow {
                                         text: checked ? qsTr("Hide source choices") : qsTr("Show source choices")
                                         icon.name: "view-list-details"
                                         iconOnly: true
-                                        checkable: true
+                                        toggle: true
                                     }
                                 ]
                             }
