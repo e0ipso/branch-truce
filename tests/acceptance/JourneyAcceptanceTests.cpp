@@ -740,6 +740,49 @@ void expectSourcesAround(Scene &scene, const Repository &repo, const char *path,
     CHECK(sceneOrigin(result).x() + result->width() <= sceneOrigin(right).x() + 1);
     CHECK(left->width() > 50 && result->width() > 50 && right->width() > 50);
 }
+
+// Empty when the first line of the earliest undecided region on each side lies
+// inside its pane's viewport, else where each pane stands.
+std::string firstUndecidedInView(Scene &scene)
+{
+    struct Pane {
+        const char *side;
+        const char *viewport;
+        const char *text;
+        int line = 0;
+        int position = -1;
+    };
+    Pane panes[] = {{"stage2", "stage2Viewport", "stage2Text"}, {"result", "resultViewport", "resultText"},
+                    {"stage3", "stage3Viewport", "stage3Text"}};
+    for (const auto &value : scene.controller->selectedFile().value(QStringLiteral("regions")).toList()) {
+        const auto region = value.toMap();
+        if (region.value(QStringLiteral("state")).toString() != QStringLiteral("undecided")) continue;
+        for (auto &pane : panes) {
+            const bool result = std::strcmp(pane.side, "result") == 0;
+            if (result && !region.value(QStringLiteral("mapped")).toBool()) continue;
+            if (!result && region.value(QStringLiteral("side")).toString() != QLatin1String(pane.side)) continue;
+            const auto prefix = QString::fromLatin1(result ? "result" : "source");
+            const auto line = region.value(prefix + QStringLiteral("LineBegin")).toInt();
+            if (pane.position >= 0 && line >= pane.line) continue;
+            pane.line = line;
+            pane.position = region.value(prefix + QStringLiteral("Utf16Begin")).toInt();
+        }
+    }
+    std::string failures;
+    for (const auto &pane : panes) {
+        auto *view = scene.item(pane.viewport);
+        auto *editor = scene.item(pane.text);
+        QRectF rect;
+        if (pane.position >= 0)
+            CHECK(QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, rect),
+                                            Q_ARG(int, pane.position)));
+        const auto top = editor->y() + rect.top() - view->property("contentY").toReal();
+        if (pane.position < 0 || top < 0 || top + rect.height() > view->height())
+            failures += std::string(failures.empty() ? "" : "; ") + pane.side + " line " + std::to_string(pane.line)
+                + " at " + std::to_string(top) + " of " + std::to_string(view->height());
+    }
+    return failures;
+}
 }
 
 class JourneyAcceptanceTests {
@@ -1542,6 +1585,39 @@ public:
                     throw std::runtime_error("with source choices, text panes " + std::to_string(pane) + " px high at "
                                              + std::to_string(screen.width()) + "x" + std::to_string(screen.height())
                                              + ", less than eight " + std::to_string(lineHeight) + " px lines");
+            }
+            checkOffline(scene);
+        });
+        suite.run("TRUCE-0115 selecting a file shows its first undecided region in all three panes", [] {
+            QByteArray before;
+            QByteArray after;
+            for (int line = 1; line <= 120; ++line) before += "shared before " + QByteArray::number(line) + "\n";
+            for (int line = 1; line <= 80; ++line) after += "shared after " + QByteArray::number(line) + "\n";
+            // Git's conflict output stays the launch result, so the conflict starts at line 121.
+            Repository repo("merge", {{"long.txt", before + "base value\n" + after, before + "left value\n" + after,
+                                       before + "right value\n" + after, std::nullopt},
+                                      {"short.txt", QByteArray("short base\n"), QByteArray("short left\n"),
+                                       QByteArray("short right\n"), std::nullopt}});
+            Scene scene(repo);
+            clickFile(scene, "long.txt");
+            waitFor("the first undecided region in every pane at launch", [&] { return firstUndecidedInView(scene).empty(); },
+                    [&] { return firstUndecidedInView(scene); });
+            auto *editor = scene.item("resultText");
+            const auto lineHeight = editor->property("contentHeight").toReal() / editor->property("lineCount").toInt();
+            CHECK(lineHeight > 0);
+            for (const auto &screen : {QSize(1280, 720), QSize(960, 540)}) {
+                const auto size = std::to_string(screen.width()) + "x" + std::to_string(screen.height());
+                const auto pane = checkFits(scene, screen.width(), screen.height(),
+                                            {"fileList", "stage2Viewport", "resultViewport", "stage3Viewport"});
+                if (pane < 8 * lineHeight)
+                    throw std::runtime_error("text panes " + std::to_string(pane) + " px high at " + size
+                                             + ", less than eight " + std::to_string(lineHeight) + " px lines");
+                // The file rows sit at the top of the page.
+                scene.object("pageScroll")->setProperty("contentY", 0);
+                clickFile(scene, "short.txt");
+                clickFile(scene, "long.txt");
+                waitFor("the first undecided region in every pane at " + size,
+                        [&] { return firstUndecidedInView(scene).empty(); }, [&] { return firstUndecidedInView(scene); });
             }
             checkOffline(scene);
         });

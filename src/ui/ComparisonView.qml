@@ -73,6 +73,7 @@ ColumnLayout {
             return
         }
         editor.select(found, found + query.length)
+        followScroll(name, "")
         searchDetail = qsTr("Passage in %1.").arg(scope)
     }
     // Line marks for one pane, keyed by 1-based line. lines holds the kind of
@@ -178,6 +179,164 @@ ColumnLayout {
         }
         return ranges
     }
+
+    // Scroll synchronisation. The panes share a reference row a few lines below
+    // their tops. The line on the leading pane's row maps through its side's
+    // passages to the result, and from there through each other side's
+    // passages, and each other pane scrolls to put its line on that row. An
+    // equal passage maps line by line; any other passage maps proportionally
+    // between its boundaries, so an ambiguous one scrolls without a jump. A
+    // side without passages maps proportionally over the whole text.
+    property bool syncingScroll: false
+    readonly property var scrollMaps: scrollMapsFor(file)
+    function scrollMapsFor(file: var): var {
+        const maps = {stage2: [], stage3: [], earlier: []}
+        const passages = file.passages || []
+        for (let i = 0; i < passages.length; ++i) {
+            const passage = passages[i]
+            if (maps[passage.side])
+                maps[passage.side].push([passage.sourceLineBegin, passage.sourceLineEnd,
+                    passage.resultLineBegin, passage.resultLineEnd])
+        }
+        return maps
+    }
+    // Maps a fractional line through one side's passages, from the source to
+    // the result when toResult is set and back otherwise.
+    function mapLine(map: var, line: real, toResult: bool, fromLines: int, toLines: int): real {
+        if (map.length === 0)
+            return fromLines > 0 ? 1 + (line - 1) * toLines / fromLines : 1
+        const from = toResult ? 0 : 2
+        const to = toResult ? 2 : 0
+        // The first passage that ends below the line. Both sides are in order.
+        let low = 0
+        let high = map.length
+        while (low < high) {
+            const middle = (low + high) >> 1
+            if (map[middle][from + 1] > line)
+                high = middle
+            else
+                low = middle + 1
+        }
+        if (low === map.length) {
+            const last = map[map.length - 1]
+            return last[to + 1] + line - last[from + 1]
+        }
+        const passage = map[low]
+        if (line <= passage[from])
+            return passage[to]
+        return passage[to] + (line - passage[from]) * (passage[to + 1] - passage[to])
+            / (passage[from + 1] - passage[from])
+    }
+    function scrollPanes(): var {
+        const panes = [
+            {name: "stage2", viewport: leftPane.viewport, editor: leftPane.editor, blocks: leftPane.blocks},
+            {name: "result", viewport: resultViewport, editor: resultEditor, blocks: resultBlocks},
+            {name: "stage3", viewport: rightPane.viewport, editor: rightPane.editor, blocks: rightPane.blocks}]
+        if (earlierPane.visible)
+            panes.push({name: "earlier", viewport: earlierPane.viewport, editor: earlierPane.editor,
+                blocks: earlierPane.blocks})
+        return panes
+    }
+    // Up to three lines of context above the row, and at most a quarter of the shortest pane.
+    function scrollRow(panes: var): real {
+        let shortest = Infinity
+        for (let i = 0; i < panes.length; ++i)
+            shortest = Math.min(shortest, panes[i].viewport.height)
+        return Math.max(0, Math.min(3 * paneFont.lineSpacing, shortest / 4))
+    }
+    function lineOnRow(pane: var, row: real): real {
+        return pane.blocks.lineAtY(pane.viewport.contentY + row - pane.editor.y - pane.editor.topPadding)
+    }
+    function putLineOnRow(pane: var, line: real, row: real): void {
+        const y = pane.editor.y + pane.editor.topPadding + pane.blocks.yAtLine(line) - row
+        const bottom = Math.max(0, pane.viewport.contentHeight - pane.viewport.height)
+        pane.viewport.contentY = Math.max(0, Math.min(bottom, y))
+    }
+    // Scrolls the other panes, or only the one named only, to follow leader.
+    function followScroll(leader: string, only: string): void {
+        const panes = scrollPanes()
+        let lead = null
+        for (let i = 0; i < panes.length; ++i) {
+            if (panes[i].name === leader)
+                lead = panes[i]
+        }
+        if (!lead || syncingScroll)
+            return
+        const row = scrollRow(panes)
+        const resultLines = resultBlocks.blockCount
+        const line = lineOnRow(lead, row)
+        const resultLine = leader === "result" ? line
+            : mapLine(scrollMaps[leader], line, true, lead.blocks.blockCount, resultLines)
+        // Moving the other panes must not make them lead in turn.
+        syncingScroll = true
+        try {
+            for (let i = 0; i < panes.length; ++i) {
+                const pane = panes[i]
+                if (pane === lead || (only.length > 0 && pane.name !== only))
+                    continue
+                putLineOnRow(pane, pane.name === "result" ? resultLine
+                    : mapLine(scrollMaps[pane.name], resultLine, false, resultLines, pane.blocks.blockCount), row)
+            }
+        } finally {
+            syncingScroll = false
+        }
+    }
+    // A pane leads only when the user scrolls it: dragging, flicking or the
+    // wheel, its scroll bar, or keyboard focus in its text. A relayout that
+    // moves a pane the user is not scrolling leaves the others alone.
+    function paneScrolled(name: string, byUser: bool): void {
+        if (byUser)
+            followScroll(name, "")
+    }
+    function followEarlier(): void {
+        followScroll("result", "earlier")
+    }
+    // A newly selected file opens with the region the editor put its cursor on
+    // at the reference row of every pane, or at the top without one. A
+    // navigation in the file since then keeps its own position.
+    function placePanes(): void {
+        const target = controller.editorPlacement
+        if (!target || target.fileId !== controller.selectedFileId)
+            return
+        const navigation = controller.navigationTarget
+        if (navigation.fileId === target.fileId
+                && (navigation.scope === "result" || navigation.scope === "unmapped-source"))
+            return
+        const panes = scrollPanes()
+        let lead = panes[1]
+        let line = 1
+        // The result first, then a source for a region the result does not map.
+        const order = [1, 0, 2]
+        for (let i = 0; i < order.length; ++i) {
+            const ranges = currentFor(panes[order[i]].name, target, file)
+            if (ranges.length > 0) {
+                lead = panes[order[i]]
+                line = ranges[0][0]
+                break
+            }
+        }
+        const row = scrollRow(panes)
+        putLineOnRow(lead, line, row)
+        followScroll(lead.name, "")
+        // A relayout scrolls a pane to keep its cursor in view, so keep each
+        // source's cursor on the line it now shows rather than at the top. A
+        // selection stays where the user made it.
+        for (let i = 0; i < panes.length; ++i) {
+            const editor = panes[i].editor
+            if (panes[i].name !== "result" && editor.selectionStart === editor.selectionEnd)
+                editor.cursorPosition = panes[i].blocks.positionOf(Math.floor(lineOnRow(panes[i], row)))
+        }
+    }
+    function followNavigation(): void {
+        const target = controller.navigationTarget
+        if (target.fileId === controller.selectedFileId && target.scope === "result")
+            followScroll("result", "")
+    }
+    Connections {
+        target: comparison.controller
+        function onEditorPlaced(): void { Qt.callLater(comparison.placePanes) }
+        function onNavigationChanged(): void { Qt.callLater(comparison.followNavigation) }
+    }
     TextBlocks {
         id: resultBlocks
         document: resultEditor.textDocument
@@ -186,6 +345,7 @@ ColumnLayout {
         refreshSearchScopes()
         applyWhitespace()
         whitespaceReady = true
+        Qt.callLater(placePanes)
     }
 
     // Qt Quick ignores QTextOption.ShowTabsAndSpaces, so the markers are drawn
@@ -588,6 +748,8 @@ ColumnLayout {
         required property string paneRole
         required property var source
         property alias editor: sourceText
+        property alias viewport: sourceViewport
+        property alias blocks: sourceBlocks
         property bool alignHeader: true
         property int minimumLines: comparison.minimumPaneLines
         readonly property real headerImplicitHeight: sourceHeader.implicitHeight
@@ -625,7 +787,11 @@ ColumnLayout {
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.horizontal: ScrollBar {}
-                ScrollBar.vertical: ScrollBar {}
+                ScrollBar.vertical: ScrollBar {
+                    id: sourceBar
+                }
+                onContentYChanged: comparison.paneScrolled(sourcePane.paneName,
+                    moving || !!sourceBar && sourceBar.pressed || sourceText.activeFocus)
                 TextArea.flickable: TextArea {
                     id: sourceText
                     objectName: sourcePane.paneName + "Text"
@@ -671,6 +837,10 @@ ColumnLayout {
                 active: comparison.showWhitespace
                 wrapped: comparison.wrapLines
             }
+        }
+        TextBlocks {
+            id: sourceBlocks
+            document: sourceText.textDocument
         }
     }
 
@@ -770,7 +940,11 @@ ColumnLayout {
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.horizontal: ScrollBar {}
-                    ScrollBar.vertical: ScrollBar {}
+                    ScrollBar.vertical: ScrollBar {
+                        id: resultBar
+                    }
+                    onContentYChanged: comparison.paneScrolled("result",
+                        moving || !!resultBar && resultBar.pressed || resultEditor.activeFocus)
                     TextArea.flickable: TextArea {
                         id: resultEditor
                         objectName: "resultText"
@@ -881,5 +1055,7 @@ ColumnLayout {
         paneName: "earlier"
         paneRole: qsTr("Earlier-version context · read-only")
         source: comparison.file.earlier || ({})
+        onVisibleChanged: if (visible)
+            Qt.callLater(comparison.followEarlier)
     }
 }

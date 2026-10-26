@@ -27,6 +27,14 @@ public:
     // The 1-based number of the block holding the character at position, or 0
     // without a document.
     Q_INVOKABLE int lineAt(int position) const;
+    // The line at y in document coordinates as a fractional 1-based number:
+    // the block's number plus the part of its height above y. It is 1 above
+    // the text and one past the last block below it.
+    Q_INVOKABLE qreal lineAtY(qreal y) const;
+    // The document y of a fractional line from lineAtY.
+    Q_INVOKABLE qreal yAtLine(qreal line) const;
+    // The position of the first character of a 1-based line, or 0 without a document.
+    Q_INVOKABLE int positionOf(int line) const;
 
 Q_SIGNALS:
     void documentChanged();

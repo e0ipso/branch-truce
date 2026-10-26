@@ -44,6 +44,32 @@ navigation target in all panes with `highlightColor`. Source lines come from the
 target's region, or else from mapping its result lines through that source's
 passages. The highlight stays when the result selection changes.
 
+Selecting a file opens it at its first undecided region. Replacing the document
+text leaves the editor's cursor at the end of the file, which would scroll the
+result there. The controller moves the cursor to the start of the first
+undecided region instead, or to the start of the file when there is none, and
+publishes that region as `editorPlacement`. The view puts the region's first
+line on a reference row that every pane shares. The row sits three lines below
+the top, or a quarter of the shortest pane if that is less. Each file opens as
+an unsupported placeholder while its captures load, so the controller places it
+again once the loaded file replaces the placeholder.
+
+Scrolling one pane scrolls the others. The view takes the line on the reference
+row of the pane the user scrolls and maps it through that side's passages to the
+result, then from the result through each other side's passages. Each other pane
+scrolls to put its line on the same row. An equal passage maps line by line. Any
+other passage maps proportionally between its boundaries, so an ambiguous one
+scrolls smoothly instead of jumping. When the leading pane passes lines another
+pane lacks, that pane holds still. When the other pane has the extra lines, it
+skips them. A side without passages maps proportionally over the whole text, and
+the earlier version scrolls with the rest while it is shown. A pane leads only
+while the user drags, flicks or wheels it, drags its scroll bar, or has keyboard
+focus in its text. A relayout that moves some other pane does not lead. A guard
+keeps the panes being moved from leading in turn, so every pane settles in the
+same event-loop turn. Find and within-file navigation bring the other panes
+along. Rows are not padded to line up, so below the reference row the panes
+drift apart wherever one side has extra lines.
+
 The result supports pointer selection, native copy/paste shortcuts, toolbar
 copy/paste and a context menu. Undo and redo use the shared text-and-decision
 history. The adapter observes completed native key, IME and clipboard operations
@@ -172,8 +198,9 @@ of a repeated passage, selection preservation when earlier context is hidden,
 word highlighting with both background and underline, and QTextOption space/tab
 markers. Text and decisions remain unchanged and no history command is added.
 Action labels illustrate gutter placement; they are not wired product controls.
-Aligned rows, real correspondence, scrolling synchronization and earlier source
-content still require product work. Search here uses the selected document only.
+The experiment has no aligned rows, real correspondence, scrolling synchronization
+or earlier source content. The product comparison view has all of them except
+aligned rows. Search here uses the selected document only.
 
 ### Recovery acknowledgment
 

@@ -25,6 +25,7 @@
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
+#include <QWheelEvent>
 #include <QtQml/qqml.h>
 
 using namespace branch_truce;
@@ -294,6 +295,63 @@ void expectNavigation(Fixture &fixture, const QString &mode, const QString &file
         throw std::runtime_error("selection " + std::to_string(selectionStart) + "-" + std::to_string(selectionEnd));
     CHECK(selectionStart == begin && selectionEnd == end);
     CHECK(editor->property("selectedText").toString() == fixture.text().mid(begin, end - begin));
+}
+
+// count lines "<prefix> <n>", numbered from first.
+std::string numberedLines(const std::string &prefix, int first, int count)
+{
+    std::string lines;
+    for (int line = first; line < first + count; ++line) lines += prefix + ' ' + std::to_string(line) + '\n';
+    return lines;
+}
+
+qreal paneLineHeight(QQuickItem *editor)
+{
+    const auto lines = editor->property("lineCount").toInt();
+    CHECK(lines > 0);
+    return editor->property("contentHeight").toReal() / lines;
+}
+
+qreal contentY(QQuickItem *viewport)
+{
+    return viewport->property("contentY").toReal();
+}
+
+// Waits until the panes keep their place, so the window has finished its
+// layout and the view has placed the panes for the selected file.
+void settlePanes(Fixture &fixture)
+{
+    for (const auto *name : {"stage2Viewport", "resultViewport", "stage3Viewport"})
+        test_support::waitForLayout(fixture.window, QString::fromLatin1(name), 60);
+}
+
+// Turns the mouse wheel down over the named viewport, a notch at a time, until
+// it has scrolled to at least target, and waits for each movement to end. A
+// Flickable does not scroll for a wheel event stamped with the previous time.
+void wheelTo(Fixture &fixture, const char *name, qreal target)
+{
+    static quint64 timestamp = 0;
+    auto *viewport = test_support::waitForLayout(fixture.window, QString::fromLatin1(name), 60);
+    for (int notch = 0; notch < 400 && contentY(viewport) < target; ++notch) {
+        const auto point = viewport->mapToScene(QPointF(viewport->width() / 2, viewport->height() / 2));
+        QWheelEvent wheel(point, fixture.window->mapToGlobal(point), QPoint(), QPoint(0, -120), Qt::NoButton,
+            Qt::NoModifier, Qt::NoScrollPhase, false);
+        timestamp += 250;
+        wheel.setTimestamp(timestamp);
+        QCoreApplication::sendEvent(fixture.window, &wheel);
+        settle([&] { return !viewport->property("moving").toBool(); });
+    }
+    CHECK(contentY(viewport) >= target);
+}
+
+// For the scroll tests: the right source and the result hold 30 lines after
+// line 50 that the left source lacks.
+FileSession insertionFile()
+{
+    const auto left = numberedLines("shared", 1, 400);
+    const auto right = numberedLines("shared", 1, 50) + numberedLines("right only", 1, 30)
+        + numberedLines("shared", 51, 350);
+    return test_support::choiceFile(left, right, right);
 }
 }
 
@@ -928,6 +986,119 @@ public:
             settle([&] { return fixture.item("resultText")->width() > 0; });
             CHECK(viewport->property("contentY").toReal() == 600.0);
             CHECK(viewport->property("contentX").toReal() == 40.0);
+        });
+        suite.run("TRUCE-0115 scrolling the left source moves the result and the right source to the mapped lines", [] {
+            Fixture fixture(insertionFile());
+            auto *left = fixture.item("stage2Viewport");
+            auto *result = fixture.item("resultViewport");
+            auto *right = fixture.item("stage3Viewport");
+            auto *editor = fixture.item("resultText");
+            settle([&] { return editor->property("lineCount").toInt() > 400 && left->height() > 0; });
+            settlePanes(fixture);
+            const auto line = paneLineHeight(editor);
+            // With every visible left line past the insertion, the result and the
+            // right source show the same lines 30 lines further down.
+            wheelTo(fixture, "stage2Viewport", 80 * line);
+            CHECK(std::abs(contentY(result) - (contentY(left) + 30 * line)) < 1);
+            CHECK(std::abs(contentY(right) - contentY(result)) < 1);
+            // Nothing scrolls on once the movement has ended.
+            const std::array<qreal, 3> settled{contentY(left), contentY(result), contentY(right)};
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            CHECK((std::array<qreal, 3>{contentY(left), contentY(result), contentY(right)}) == settled);
+
+            // Five new lines at the top of the result move the mapping with them.
+            fixture.select(0, 0);
+            for (int typed = 0; typed < 5; ++typed)
+                fixture.key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+            settle([&] { return fixture.file().current().draft.text.starts_with("\n\n\n\n\nshared 1\n"); });
+            wheelTo(fixture, "stage2Viewport", 120 * line);
+            CHECK(std::abs(contentY(result) - (contentY(left) + 35 * line)) < 1);
+            CHECK(std::abs(contentY(right) - (contentY(left) + 30 * line)) < 1);
+        });
+        suite.run("TRUCE-0115 a synchronised scroll settles in the same event-loop turn without feedback", [] {
+            Fixture fixture(insertionFile());
+            auto *left = fixture.item("stage2Viewport");
+            auto *result = fixture.item("resultViewport");
+            auto *right = fixture.item("stage3Viewport");
+            auto *editor = fixture.item("resultText");
+            settle([&] { return editor->property("lineCount").toInt() > 400 && left->height() > 0; });
+            settlePanes(fixture);
+            const auto line = paneLineHeight(editor);
+            // The left source has keyboard focus, so its own scrolling leads.
+            fixture.item("stage2Text")->forceActiveFocus();
+            for (const qreal top : {100 * line, 140 * line, 90 * line}) {
+                CHECK(left->setProperty("contentY", top));
+                // Read before any event is processed: the other panes moved in the same turn.
+                CHECK(std::abs(contentY(result) - (top + 30 * line)) < 1);
+                CHECK(std::abs(contentY(right) - (top + 30 * line)) < 1);
+                for (int turn = 0; turn < 10; ++turn) QCoreApplication::processEvents();
+                CHECK(contentY(left) == top);
+                CHECK(std::abs(contentY(result) - (top + 30 * line)) < 1);
+                CHECK(std::abs(contentY(right) - (top + 30 * line)) < 1);
+            }
+            // A pane the user is not scrolling does not lead the others.
+            const auto held = contentY(left);
+            CHECK(right->setProperty("contentY", contentY(right) + 10 * line));
+            for (int turn = 0; turn < 10; ++turn) QCoreApplication::processEvents();
+            CHECK(contentY(left) == held);
+            CHECK(std::abs(contentY(result) - (held + 30 * line)) < 1);
+        });
+        suite.run("TRUCE-0115 an ambiguous passage scrolls the other panes proportionally without jumping", [] {
+            // 40 equal lines on the left against 20 in the result cannot be aligned line by line.
+            const auto before = numberedLines("before", 1, 80);
+            const auto after = numberedLines("after", 1, 200);
+            std::string left = before;
+            std::string result = before;
+            for (int line = 0; line < 40; ++line) left += "same\n";
+            for (int line = 0; line < 20; ++line) result += "same\n";
+            left += after;
+            result += after;
+            Fixture fixture(test_support::choiceFile(left, result, result));
+            bool ambiguous = false;
+            for (const auto &value : fixture.controller.selectedFile().value("passages").toList()) {
+                const auto passage = value.toMap();
+                ambiguous = ambiguous || (passage.value("side") == "stage2" && passage.value("kind") == "ambiguous"
+                    && passage.value("sourceLineBegin").toInt() <= 81 && passage.value("sourceLineEnd").toInt() >= 121);
+            }
+            CHECK(ambiguous);
+            auto *leftView = fixture.item("stage2Viewport");
+            auto *resultView = fixture.item("resultViewport");
+            auto *editor = fixture.item("resultText");
+            settle([&] { return editor->property("lineCount").toInt() > 300 && leftView->height() > 0; });
+            settlePanes(fixture);
+            const auto line = paneLineHeight(editor);
+            fixture.item("stage2Text")->forceActiveFocus();
+            CHECK(leftView->setProperty("contentY", 30 * line));
+            CHECK(std::abs(contentY(resultView) - 30 * line) < 1);
+            qreal previous = contentY(resultView);
+            for (qreal top = 30 * line + 4; top <= 170 * line; top += 4) {
+                CHECK(leftView->setProperty("contentY", top));
+                const auto now = contentY(resultView);
+                // The result never runs backwards or ahead of the left.
+                if (now < previous - 0.01 || now - previous > 4.01)
+                    throw std::runtime_error("result jumped from " + std::to_string(previous) + " to "
+                                             + std::to_string(now) + " at left " + std::to_string(top));
+                previous = now;
+            }
+            // Past the passage the result is 20 lines behind the left.
+            CHECK(std::abs(contentY(resultView) - (contentY(leftView) - 20 * line)) < 1);
+        });
+        suite.run("TRUCE-0115 the shown earlier version scrolls with the other panes", [] {
+            auto sources = *insertionFile().snapshots();
+            const auto earlier = sources.stage2->worktree.utf8;
+            sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
+                test_support::choiceText(earlier), "earlier-commit", "Common earlier version"};
+            const auto launch = sources.launchResult.text.utf8;
+            Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
+            fixture.click("showEarlier");
+            auto *left = fixture.item("stage2Viewport");
+            auto *earlierView = fixture.item("earlierViewport");
+            auto *editor = fixture.item("resultText");
+            settle([&] { return earlierView->height() > 0 && editor->property("lineCount").toInt() > 400; });
+            const auto line = paneLineHeight(editor);
+            wheelTo(fixture, "stage2Viewport", 80 * line);
+            // The earlier version equals the left source, so it shows the same lines.
+            CHECK(std::abs(contentY(earlierView) - contentY(left)) < 1);
         });
         suite.run("TRUCE-0060 a failed Discard shows the restored result and retry finishes it", [] {
             Fixture fixture;

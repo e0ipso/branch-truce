@@ -59,4 +59,43 @@ int TextBlocks::lineAt(int position) const
     const auto block = text->findBlock(std::clamp(position, 0, std::max(0, text->characterCount() - 1)));
     return block.isValid() ? block.blockNumber() + 1 : 0;
 }
+
+qreal TextBlocks::lineAtY(qreal y) const
+{
+    auto *text = document_ ? document_->textDocument() : nullptr;
+    auto *layout = text ? text->documentLayout() : nullptr;
+    if (!layout || y <= 0) return 1;
+    auto block = text->findBlock(std::max(0, layout->hitTest(QPointF(0, y), Qt::FuzzyHit)));
+    if (!block.isValid()) block = text->lastBlock();
+    auto rect = layout->blockBoundingRect(block);
+    // A fuzzy hit can land on a neighbouring block at a boundary.
+    while (y < rect.top() && block.previous().isValid()) {
+        block = block.previous();
+        rect = layout->blockBoundingRect(block);
+    }
+    while (y >= rect.bottom() && block.next().isValid()) {
+        block = block.next();
+        rect = layout->blockBoundingRect(block);
+    }
+    const auto part = rect.height() > 0 ? (y - rect.top()) / rect.height() : 0;
+    return block.blockNumber() + 1 + std::clamp<qreal>(part, 0, 1);
+}
+
+qreal TextBlocks::yAtLine(qreal line) const
+{
+    auto *text = document_ ? document_->textDocument() : nullptr;
+    auto *layout = text ? text->documentLayout() : nullptr;
+    if (!layout) return 0;
+    const auto clamped = std::clamp<qreal>(line, 1, text->blockCount() + 1);
+    const int number = std::min(static_cast<int>(clamped), text->blockCount());
+    const auto rect = layout->blockBoundingRect(text->findBlockByNumber(number - 1));
+    return rect.top() + (clamped - number) * rect.height();
+}
+
+int TextBlocks::positionOf(int line) const
+{
+    const auto *text = document_ ? document_->textDocument() : nullptr;
+    if (!text) return 0;
+    return text->findBlockByNumber(std::clamp(line, 1, text->blockCount()) - 1).position();
+}
 }

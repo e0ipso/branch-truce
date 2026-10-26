@@ -48,6 +48,7 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QVariantMap wholeFilePreview READ wholeFilePreview NOTIFY commandChanged)
     Q_PROPERTY(bool fileListVisible READ fileListVisible NOTIFY fileListChanged)
     Q_PROPERTY(QVariantMap navigationTarget READ navigationTarget NOTIFY navigationChanged)
+    Q_PROPERTY(QVariantMap editorPlacement READ editorPlacement NOTIFY editorPlaced)
     Q_PROPERTY(QVariantMap handoff READ handoff NOTIFY handoffChanged)
     Q_PROPERTY(QString sessionOutcome READ sessionOutcome NOTIFY handoffChanged)
 public:
@@ -89,6 +90,9 @@ public:
     [[nodiscard]] QVariantMap wholeFilePreview() const;
     [[nodiscard]] bool fileListVisible() const { return fileListVisible_; }
     [[nodiscard]] QVariantMap navigationTarget() const { return navigationTarget_; }
+    // Where the editor put a newly selected file: its first undecided region,
+    // in the keys of navigationTarget, with count 0 when it has none.
+    [[nodiscard]] QVariantMap editorPlacement() const { return editorPlacement_; }
     Q_INVOKABLE bool previewWholeFile(const QString &fileId, const QString &revision, const QString &side);
     Q_INVOKABLE bool applyWholeFile();
     Q_INVOKABLE bool previewChoice(const QString &fileId, const QString &revision,
@@ -169,6 +173,9 @@ Q_SIGNALS:
     void commandChanged();
     void fileListChanged();
     void navigationChanged();
+    // The editor loaded a newly selected file and moved its cursor to the start
+    // of editorPlacement, so the view can scroll the panes there.
+    void editorPlaced();
     void handoffChanged();
     // Emitted once by finishSession or leaveSession; the outcome text is final.
     void sessionEnded(const QString &outcome, bool clean);
@@ -187,6 +194,7 @@ private:
     bool commandResult(Transition result);
     void captureResultEdit();
     void syncResultEditor();
+    void placeEditor(const FileSession *file, const QString &loaded);
     void applyVisibleWhitespace(QTextDocument *document);
     void noteEditorLocation();
     void restoreEditorLocation();
@@ -220,6 +228,11 @@ private:
     QPointer<QTextDocument> resultDocument_;
     QMetaObject::Connection editorConnection_;
     QString editorText_;
+    // The file the editor last placed, and whether it was supported then. A
+    // file opens as an unsupported placeholder until its captures load.
+    QString editorFileId_;
+    bool editorSupported_ = false;
+    QVariantMap editorPlacement_;
     bool syncingEditor_ = false;
     bool processingEditorEvent_ = false;
     bool showWhitespace_ = false;

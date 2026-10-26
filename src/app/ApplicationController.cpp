@@ -1289,6 +1289,7 @@ void ApplicationController::syncResultEditor()
             commandMessage_ = rejection;
             Q_EMIT commandChanged();
         }
+        if (editorFileId_ != selectedFileId_) placeEditor(nullptr, {});
         return;
     }
     const auto desired = file ? text(stored) : QString{};
@@ -1305,6 +1306,38 @@ void ApplicationController::syncResultEditor()
         Q_EMIT commandChanged();
     }
     syncingEditor_ = false;
+    // A new selection, or a loading placeholder replaced by its supported file.
+    const bool supported = file && file->support() == Support::Supported;
+    if (editorFileId_ != selectedFileId_ || editorSupported_ != supported) placeEditor(file, desired);
+}
+
+// Replacing the document text leaves the cursor at its end, and the result
+// viewport scrolls to keep the cursor in view. A newly selected file instead
+// puts the cursor at its first undecided region, or at the start without one.
+void ApplicationController::placeEditor(const FileSession *file, const QString &loaded)
+{
+    editorFileId_ = selectedFileId_;
+    editorSupported_ = file && file->support() == Support::Supported;
+    int cursor = 0;
+    QVariantMap placement{{QStringLiteral("fileId"), selectedFileId_}, {QStringLiteral("count"), 0}};
+    const auto targets = editorSupported_ ? undecidedTargets(*file) : std::vector<ScopeTarget>{};
+    // The offsets belong to the current revision, not to a pending draft in the editor.
+    if (!targets.empty() && loaded == text(file->current().draft.text)) {
+        const auto &first = targets.front();
+        const auto &result = file->current().draft.text;
+        const int begin = first.resultRange ? utf16Offset(result, first.byteBegin) : -1;
+        const int end = first.resultRange ? utf16Offset(result, first.byteEnd) : -1;
+        if (begin >= 0) cursor = begin;
+        placement = {{QStringLiteral("fileId"), selectedFileId_},
+            {QStringLiteral("scope"), first.resultRange ? QStringLiteral("result") : QStringLiteral("unmapped-source")},
+            {QStringLiteral("utf16Begin"), begin},
+            {QStringLiteral("utf16End"), end},
+            {QStringLiteral("contributionId"), text(first.contributionId)},
+            {QStringLiteral("count"), static_cast<int>(targets.size())}};
+    }
+    resultEditor_->setProperty("cursorPosition", cursor);
+    editorPlacement_ = placement;
+    Q_EMIT editorPlaced();
 }
 
 void ApplicationController::clearNavigation()
