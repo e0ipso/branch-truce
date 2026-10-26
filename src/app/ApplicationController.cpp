@@ -161,6 +161,96 @@ int utf16Offset(const std::string &utf8, std::size_t bytes)
     return static_cast<int>(prefix.size());
 }
 
+// Line numbers and editor offsets for one valid UTF-8 text. One pass records
+// each line start, so a lookup scans at most one line. Lines are 1-based, as in
+// the scope labels, and a range covers lines [LineBegin, LineEnd).
+class TextPositions {
+public:
+    explicit TextPositions(std::string_view text) : text_(text)
+    {
+        int units = 0;
+        for (std::size_t i = 0; i < text_.size(); ++i) {
+            units += utf16Units(text_[i]);
+            if (text_[i] == '\n') starts_.push_back({i + 1, units});
+        }
+    }
+    [[nodiscard]] bool contains(ByteRange range) const noexcept
+    {
+        return range.begin <= range.end && range.end <= text_.size();
+    }
+    [[nodiscard]] int line(std::size_t offset) const
+    {
+        return static_cast<int>(std::distance(starts_.begin(), lineAt(offset))) + 1;
+    }
+    [[nodiscard]] int utf16(std::size_t offset) const
+    {
+        const auto start = lineAt(offset);
+        auto units = start->utf16;
+        for (auto i = start->byte; i < offset; ++i) units += utf16Units(text_[i]);
+        return units;
+    }
+    void insert(QVariantMap &map, const QString &prefix, ByteRange range) const
+    {
+        const auto first = line(range.begin);
+        map.insert(prefix + QStringLiteral("LineBegin"), first);
+        map.insert(prefix + QStringLiteral("LineEnd"), range.end > range.begin ? line(range.end - 1) + 1 : first);
+        map.insert(prefix + QStringLiteral("Utf16Begin"), utf16(range.begin));
+        map.insert(prefix + QStringLiteral("Utf16End"), utf16(range.end));
+    }
+
+private:
+    struct Start {
+        std::size_t byte;
+        int utf16;
+    };
+    static int utf16Units(char byte) noexcept
+    {
+        const auto value = static_cast<unsigned char>(byte);
+        return (value & 0xC0) == 0x80 ? 0 : value >= 0xF0 ? 2 : 1;
+    }
+    [[nodiscard]] std::vector<Start>::const_iterator lineAt(std::size_t offset) const
+    {
+        return std::prev(std::upper_bound(starts_.begin(), starts_.end(), offset,
+            [](std::size_t value, const Start &start) { return value < start.byte; }));
+    }
+    std::string_view text_;
+    std::vector<Start> starts_{{0, 0}};
+};
+
+void insertUnmapped(QVariantMap &map, const QString &prefix)
+{
+    for (const auto *key : {"LineBegin", "LineEnd", "Utf16Begin", "Utf16End"})
+        map.insert(prefix + QLatin1String(key), -1);
+}
+
+QString sideName(SourceSide side)
+{
+    switch (side) {
+    case SourceSide::Earlier: return QStringLiteral("earlier");
+    case SourceSide::Stage2: return QStringLiteral("stage2");
+    case SourceSide::Stage3: return QStringLiteral("stage3");
+    }
+    return {};
+}
+
+QString kindName(PassageKind kind)
+{
+    switch (kind) {
+    case PassageKind::Equal: return QStringLiteral("equal");
+    case PassageKind::Changed: return QStringLiteral("changed");
+    case PassageKind::SourceOnly: return QStringLiteral("source-only");
+    case PassageKind::ResultOnly: return QStringLiteral("result-only");
+    case PassageKind::Ambiguous: return QStringLiteral("ambiguous");
+    }
+    return {};
+}
+
+const std::optional<SourceSnapshot> &snapshotFor(const FileSnapshots &snapshots, SourceSide side)
+{
+    return side == SourceSide::Earlier ? snapshots.earlier
+        : side == SourceSide::Stage2 ? snapshots.stage2 : snapshots.stage3;
+}
+
 bool undecidedChoice(const FileSession &file, const ChoiceTarget &target)
 {
     if (target.decisions.empty()) return false;
@@ -338,9 +428,13 @@ QVariantMap ApplicationController::selectedFile() const
     case Support::OutsideApp: support = QStringLiteral("outside-app"); break;
     case Support::Unreadable: support = QStringLiteral("unreadable"); break;
     }
+    const auto &path = file->path();
+    // The undecorated last path component, for syntax definition lookup.
+    const auto fileName = path.substr(path.rfind('/') + 1);
     QVariantMap result{{QStringLiteral("fileId"), selectedFileId_},
         {QStringLiteral("path"), displayPath(selectedFileId_)},
-        {QStringLiteral("pathBytes"), QByteArray(file->path().data(), static_cast<qsizetype>(file->path().size()))},
+        {QStringLiteral("pathBytes"), QByteArray(path.data(), static_cast<qsizetype>(path.size()))},
+        {QStringLiteral("fileName"), text(fileName)},
         {QStringLiteral("support"), support}, {QStringLiteral("supportDetail"), text(file->supportDetail())},
         {QStringLiteral("resultText"), text(file->current().draft.text)}};
     for (int row = 0; row < files_.totalFiles(); ++row) {
@@ -350,7 +444,7 @@ QVariantMap ApplicationController::selectedFile() const
              SessionModel::ResolvedRole, SessionModel::UndecidedRole, SessionModel::PendingInputRole,
              SessionModel::PendingTextRole, SessionModel::RecoveryStateRole, SessionModel::RecoveryErrorRole,
              SessionModel::FinishBlockersRole, SessionModel::CurrentRevisionRole, SessionModel::CanUndoRole,
-             SessionModel::CanRedoRole, SessionModel::ProgressRole})
+             SessionModel::CanRedoRole, SessionModel::ProgressRole, SessionModel::DecisionsRole})
             result.insert(QString::fromLatin1(files_.roleNames().value(role)), files_.data(index, role));
         break;
     }
@@ -363,18 +457,34 @@ QVariantMap ApplicationController::selectedFile() const
     }
     result.insert(QStringLiteral("canEdit"), file->support() == Support::Supported
         && !files_.hasPendingRecovery() && !files_.hasRecoveryFailure(file->id()));
-    QVariantList choices;
-    std::map<SourceSide, std::vector<std::size_t>> lineStarts;
+    // Sources and the result revision the correspondence was computed for.
+    // Each passage and mapped anchor range is an offset into these texts.
+    std::map<SourceSide, TextPositions> sources;
     if (file->snapshots()) {
-        for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
-            const auto &source = side == SourceSide::Stage2 ? file->snapshots()->stage2 : file->snapshots()->stage3;
-            if (!source) continue;
-            auto &starts = lineStarts[side];
-            starts.push_back(0);
-            for (std::size_t i = 0; i < source->worktree.utf8.size(); ++i)
-                if (source->worktree.utf8[i] == '\n') starts.push_back(i + 1);
+        for (const auto side : {SourceSide::Stage2, SourceSide::Stage3, SourceSide::Earlier})
+            if (const auto &source = snapshotFor(*file->snapshots(), side))
+                sources.emplace(side, TextPositions(source->worktree.utf8));
+    }
+    const auto *mapping = file->correspondence();
+    const auto resultPositions = mapping ? std::optional<TextPositions>(std::in_place, mapping->text()) : std::nullopt;
+    QVariantList passages;
+    if (mapping && file->support() == Support::Supported) {
+        for (const auto side : {SourceSide::Stage2, SourceSide::Stage3, SourceSide::Earlier}) {
+            const auto *list = mapping->passages(side);
+            const auto positions = sources.find(side);
+            if (!list || positions == sources.end()) continue;
+            for (const auto &passage : *list) {
+                if (!positions->second.contains(passage.source) || !resultPositions->contains(passage.result)) continue;
+                QVariantMap entry{{QStringLiteral("side"), sideName(side)}, {QStringLiteral("kind"), kindName(passage.kind)}};
+                positions->second.insert(entry, QStringLiteral("source"), passage.source);
+                resultPositions->insert(entry, QStringLiteral("result"), passage.result);
+                passages.push_back(entry);
+            }
         }
     }
+    result.insert(QStringLiteral("passages"), passages);
+    QVariantList choices;
+    QVariantList regions;
     for (const auto &target : file->choices()) {
         // Older recovery records retain their exact decision vocabulary and
         // status. Do not invent new undecided judgments while restoring them.
@@ -383,26 +493,55 @@ QVariantMap ApplicationController::selectedFile() const
         })) continue;
         const auto &source = target.source.side == SourceSide::Stage2 ? file->snapshots()->stage2 : file->snapshots()->stage3;
         const auto &sourceText = source->worktree.utf8;
-        const auto &starts = lineStarts.at(target.source.side);
-        const auto lineNumber = [&](std::size_t offset) {
-            return std::distance(starts.begin(), std::upper_bound(starts.begin(), starts.end(), offset));
-        };
-        const auto line = lineNumber(target.source.range.begin);
-        const auto last = lineNumber(target.source.range.end > target.source.range.begin
+        const auto &positions = sources.at(target.source.side);
+        const auto line = positions.line(target.source.range.begin);
+        const auto last = positions.line(target.source.range.end > target.source.range.begin
             ? target.source.range.end - 1 : target.source.range.end);
         QStringList states;
+        QStringList decisionIds;
         bool undecided = true;
+        bool anyUndecided = target.decisions.empty();
+        bool accepted = !target.decisions.empty();
+        bool ignored = accepted;
+        bool combined = false;
         for (const auto &id : target.decisions) {
             const auto found = file->current().draft.decisions.find(id);
             const auto state = found == file->current().draft.decisions.end() ? DecisionValue::Undecided : found->second.value;
             undecided = undecided && state == DecisionValue::Undecided;
+            anyUndecided = anyUndecided || state == DecisionValue::Undecided;
+            accepted = accepted && state == DecisionValue::Accepted;
+            ignored = ignored && state == DecisionValue::Ignored;
+            combined = combined || (found != file->current().draft.decisions.end() && found->second.order);
             states.push_back(state == DecisionValue::Accepted ? tr("accepted")
                 : state == DecisionValue::Ignored ? tr("ignored") : tr("undecided"));
+            decisionIds.push_back(text(id));
         }
         states.removeDuplicates();
         const auto *anchor = file->correspondence() ? file->correspondence()->anchor(target.source.contributionId) : nullptr;
         const bool mapped = anchor && anchor->state == AnchorState::Mapped && anchor->result;
         const bool available = undecided && mapped;
+        const bool resultMapped = mapped && resultPositions->contains(*anchor->result);
+        const auto sourceRange = std::string_view(sourceText).substr(target.source.range.begin,
+            target.source.range.end - target.source.range.begin);
+        // The anchor's manual-overlap flag also covers pre-existing launch
+        // text, so it cannot show a hand edit. Accepted content that no longer
+        // matches its source can only have been edited after the choice.
+        const bool manual = accepted && !combined && resultMapped
+            && std::string_view(mapping->text()).substr(anchor->result->begin,
+                anchor->result->end - anchor->result->begin) != sourceRange;
+        // Any undecided line keeps the region undecided, so outstanding work stays visible.
+        QVariantMap region{{QStringLiteral("id"), text(target.source.contributionId)},
+            {QStringLiteral("side"), sideName(target.source.side)},
+            {QStringLiteral("scope"), target.scope == ChoiceScope::Section ? QStringLiteral("section") : QStringLiteral("line")},
+            {QStringLiteral("section"), text(target.section)},
+            {QStringLiteral("decisionIds"), decisionIds},
+            {QStringLiteral("state"), anyUndecided ? QStringLiteral("undecided") : manual ? QStringLiteral("manual")
+                : ignored ? QStringLiteral("ignored") : QStringLiteral("accepted")},
+            {QStringLiteral("mapped"), resultMapped}};
+        positions.insert(region, QStringLiteral("source"), target.source.range);
+        if (resultMapped) resultPositions->insert(region, QStringLiteral("result"), *anchor->result);
+        else insertUnmapped(region, QStringLiteral("result"));
+        regions.push_back(region);
         choices.push_back(QVariantMap{{QStringLiteral("id"), text(target.source.contributionId)},
             {QStringLiteral("label"), (target.source.side == SourceSide::Stage2 ? tr("Left") : tr("Right"))
                 + (target.scope == ChoiceScope::Section ? tr(" section, lines %1–%2").arg(line).arg(last) : tr(" line %1").arg(line))},
@@ -414,6 +553,7 @@ QVariantMap ApplicationController::selectedFile() const
                 : !mapped ? tr("This scope cannot be mapped safely. Edit the result directly.") : QString{}}});
     }
     result.insert(QStringLiteral("choices"), choices);
+    result.insert(QStringLiteral("regions"), regions);
     result.insert(QStringLiteral("choiceNotice"), choices.empty() && !file->choices().empty()
         ? tr("Scoped choices are unavailable for this earlier draft. Direct editing remains available.") : QString{});
     return result;

@@ -1,5 +1,7 @@
+#include "app/ApplicationController.h"
 #include "app/SessionCoordinator.h"
 #include "TestHarness.h"
+#include "fixtures/ChoiceFile.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -71,6 +73,122 @@ TaskResult writeResult(const TaskInput &input, const TaskControl &control, const
 }
 
 MutationObservation changed(const TaskInput &) { return MutationObservation::ObservedChanged; }
+
+// One line added by the left side, one earlier line removed by the right side
+// and one line both sides changed. The result starts as the earlier version.
+// The multibyte first line keeps UTF-16 offsets apart from byte offsets.
+FileSession viewFile()
+{
+    const std::string earlier = "héader \U0001F600\nbridge one\nbase removed\nbridge two\nbase conflict\ntail\n";
+    auto sources = *test_support::choiceFile(
+        "héader \U0001F600\nleft added\nbridge one\nbase removed\nbridge two\nleft conflict\ntail\n",
+        "héader \U0001F600\nbridge one\nbridge two\nright conflict\ntail\n").snapshots();
+    sources.path = "src/view/choices.cpp";
+    sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
+        test_support::choiceText(earlier), "earlier-commit", "Common earlier version"};
+    sources.launchResult.text = test_support::choiceText(earlier);
+    return FileSession("choices", sources.path, {earlier, {}, 0}, Support::Supported, {}, sources, true);
+}
+
+// The UTF-16 offset where a 1-based line starts, found without the controller.
+int lineOffset(const QString &text, int line)
+{
+    int offset = 0;
+    for (int current = 1; current < line; ++current) {
+        const auto next = text.indexOf(QLatin1Char('\n'), offset);
+        if (next < 0) throw std::runtime_error("fixture text has no such line");
+        offset = static_cast<int>(next) + 1;
+    }
+    return offset;
+}
+
+// Line ranges are 1-based and half-open; UTF-16 offsets are editor positions.
+void checkRange(const QVariantMap &entry, const QString &prefix, const QString &text, int begin, int end)
+{
+    for (const auto *key : {"LineBegin", "LineEnd", "Utf16Begin", "Utf16End"})
+        CHECK(entry.value(prefix + QLatin1String(key)).typeId() == QMetaType::Int);
+    CHECK(entry.value(prefix + "LineBegin").toInt() == begin && entry.value(prefix + "LineEnd").toInt() == end);
+    CHECK(entry.value(prefix + "Utf16Begin").toInt() == lineOffset(text, begin));
+    CHECK(entry.value(prefix + "Utf16End").toInt() == lineOffset(text, end));
+}
+
+struct ExpectedPassage {
+    const char *side;
+    const char *kind;
+    int sourceBegin, sourceEnd, resultBegin, resultEnd;
+};
+
+// Every differing passage, in order, after checking that each side's passages
+// partition both its source and the result from line 1 to the end.
+void checkPassages(const QVariantMap &file, const std::vector<ExpectedPassage> &expected)
+{
+    const auto result = file.value("resultText").toString();
+    std::vector<QVariantMap> differing;
+    for (const auto *side : {"stage2", "stage3", "earlier"}) {
+        const auto source = file.value(side).toMap().value("text").toString();
+        int sourceLine = 1;
+        int resultLine = 1;
+        for (const auto &value : file.value("passages").toList()) {
+            const auto passage = value.toMap();
+            if (passage.value("side").toString() != QLatin1String(side)) continue;
+            CHECK(passage.value("sourceLineBegin").toInt() == sourceLine);
+            CHECK(passage.value("resultLineBegin").toInt() == resultLine);
+            sourceLine = passage.value("sourceLineEnd").toInt();
+            resultLine = passage.value("resultLineEnd").toInt();
+            checkRange(passage, "source", source, passage.value("sourceLineBegin").toInt(), sourceLine);
+            checkRange(passage, "result", result, passage.value("resultLineBegin").toInt(), resultLine);
+            if (passage.value("kind").toString() != "equal") differing.push_back(passage);
+        }
+        CHECK(sourceLine == static_cast<int>(source.count(QLatin1Char('\n'))) + 1);
+        CHECK(resultLine == static_cast<int>(result.count(QLatin1Char('\n'))) + 1);
+    }
+    CHECK(differing.size() == expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        CHECK(differing[i].value("side").toString() == QLatin1String(expected[i].side));
+        CHECK(differing[i].value("kind").toString() == QLatin1String(expected[i].kind));
+        CHECK(differing[i].value("sourceLineBegin").toInt() == expected[i].sourceBegin);
+        CHECK(differing[i].value("sourceLineEnd").toInt() == expected[i].sourceEnd);
+        CHECK(differing[i].value("resultLineBegin").toInt() == expected[i].resultBegin);
+        CHECK(differing[i].value("resultLineEnd").toInt() == expected[i].resultEnd);
+    }
+}
+
+struct ExpectedRegion {
+    const char *side;
+    const char *scope;
+    const char *state;
+    int sourceBegin, sourceEnd, resultBegin, resultEnd;
+};
+
+// Regions follow the scoped choices one for one, in the same order.
+void checkRegions(const QVariantMap &file, const std::vector<ExpectedRegion> &expected)
+{
+    const auto regions = file.value("regions").toList();
+    const auto choices = file.value("choices").toList();
+    CHECK(regions.size() == static_cast<qsizetype>(expected.size()) && choices.size() == regions.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        const auto region = regions[static_cast<qsizetype>(i)].toMap();
+        const auto &want = expected[i];
+        CHECK(region.value("id") == choices[static_cast<qsizetype>(i)].toMap().value("id"));
+        CHECK(region.value("side").toString() == QLatin1String(want.side));
+        CHECK(region.value("scope").toString() == QLatin1String(want.scope));
+        CHECK(region.value("state").toString() == QLatin1String(want.state));
+        CHECK(region.value("mapped").toBool() && !region.value("section").toString().isEmpty());
+        CHECK(region.value("decisionIds").toStringList().size() == 1);
+        checkRange(region, "source", file.value(want.side).toMap().value("text").toString(), want.sourceBegin, want.sourceEnd);
+        checkRange(region, "result", file.value("resultText").toString(), want.resultBegin, want.resultEnd);
+    }
+}
+
+QString regionId(const QVariantMap &file, const char *side, const char *scope, int sourceLine)
+{
+    for (const auto &value : file.value("regions").toList()) {
+        const auto region = value.toMap();
+        if (region.value("side").toString() == QLatin1String(side) && region.value("scope").toString() == QLatin1String(scope)
+            && region.value("sourceLineBegin").toInt() == sourceLine) return region.value("id").toString();
+    }
+    throw std::runtime_error("fixture has no such region");
+}
 
 class Fixture {
 public:
@@ -149,6 +267,85 @@ public:
         const auto test = [&](const char *name, auto body) {
             suite.run(name, [&] { DrainWorkers drain; body(); });
         };
+        test("the selected file exposes passage kinds, region ranges, decisions and the file name", [] {
+            ApplicationController controller;
+            CHECK(controller.files()->appendFile(viewFile()));
+            CHECK(controller.selectFile("choices"));
+            const auto file = controller.selectedFile();
+            CHECK(file.value("fileName").toString() == "choices.cpp" && file.value("path").toString() == "src/view/choices.cpp");
+            CHECK(file.value("pathBytes").toByteArray() == "src/view/choices.cpp" && file.value("currentRevision").toString() == "1");
+            CHECK(file.value("decisions") == controller.files()->data(controller.files()->index(0), SessionModel::DecisionsRole));
+            CHECK(file.value("decisions").toList().size() == 6);
+            checkPassages(file, {{"stage2", "source-only", 2, 3, 2, 2}, {"stage2", "changed", 6, 7, 5, 6},
+                {"stage3", "result-only", 3, 3, 3, 4}, {"stage3", "changed", 4, 5, 5, 6}});
+            checkRegions(file, {{"stage2", "section", "undecided", 2, 3, 2, 2}, {"stage2", "line", "undecided", 2, 3, 2, 2},
+                {"stage3", "section", "undecided", 2, 2, 2, 2},
+                {"stage2", "section", "undecided", 4, 5, 3, 4}, {"stage2", "line", "undecided", 4, 5, 3, 4},
+                {"stage3", "section", "undecided", 3, 3, 4, 4},
+                {"stage2", "section", "undecided", 6, 7, 5, 6}, {"stage2", "line", "undecided", 6, 7, 5, 6},
+                {"stage3", "section", "undecided", 4, 5, 5, 6}, {"stage3", "line", "undecided", 4, 5, 5, 6}});
+            const auto choices = file.value("choices").toList();
+            CHECK(choices[6].toMap().value("label").toString() == QString::fromUtf8("Left section, lines 6–6"));
+            CHECK(choices[6].toMap().value("state").toString() == "undecided");
+        });
+        test("selected file ranges, kinds and region states follow each new revision", [] {
+            ApplicationController controller;
+            CHECK(controller.files()->appendFile(viewFile()));
+            CHECK(controller.selectFile("choices"));
+            int changes = 0;
+            QObject::connect(&controller, &ApplicationController::selectedFileChanged, [&] { ++changes; });
+            const auto revision = [&] { return controller.files()->file("choices")->current().id; };
+
+            CHECK(controller.files()->editResult("choices", revision(), {{0, 0}, "inserted é\U0001F600\n"}) == Transition::Applied);
+            auto file = controller.selectedFile();
+            CHECK(changes > 0 && file.value("currentRevision").toString() == "2");
+            checkPassages(file, {{"stage2", "result-only", 1, 1, 1, 2}, {"stage2", "source-only", 2, 3, 3, 3},
+                {"stage2", "changed", 6, 7, 6, 7}, {"stage3", "result-only", 1, 1, 1, 2},
+                {"stage3", "result-only", 3, 3, 4, 5}, {"stage3", "changed", 4, 5, 6, 7},
+                {"earlier", "result-only", 1, 1, 1, 2}});
+            checkRegions(file, {{"stage2", "section", "undecided", 2, 3, 3, 3}, {"stage2", "line", "undecided", 2, 3, 3, 3},
+                {"stage3", "section", "undecided", 2, 2, 3, 3},
+                {"stage2", "section", "undecided", 4, 5, 4, 5}, {"stage2", "line", "undecided", 4, 5, 4, 5},
+                {"stage3", "section", "undecided", 3, 3, 5, 5},
+                {"stage2", "section", "undecided", 6, 7, 6, 7}, {"stage2", "line", "undecided", 6, 7, 6, 7},
+                {"stage3", "section", "undecided", 4, 5, 6, 7}, {"stage3", "line", "undecided", 4, 5, 6, 7}});
+
+            const auto choose = [&](const QString &id, ChoiceAction action) {
+                const auto preview = previewChoice(*controller.files()->file("choices"), revision(), id.toStdString(), action);
+                CHECK(controller.files()->applyChoice("choices", preview, true) == Transition::Applied);
+            };
+            changes = 0;
+            choose(regionId(file, "stage2", "line", 6), ChoiceAction::Accept);
+            choose(regionId(file, "stage2", "line", 2), ChoiceAction::Ignore);
+            file = controller.selectedFile();
+            CHECK(changes > 0 && file.value("currentRevision").toString() == "4");
+            CHECK(file.value("decisions") == controller.files()->data(controller.files()->index(0), SessionModel::DecisionsRole));
+            // The accepted left line now equals the result, so only the right side still differs there.
+            checkPassages(file, {{"stage2", "result-only", 1, 1, 1, 2}, {"stage2", "source-only", 2, 3, 3, 3},
+                {"stage3", "result-only", 1, 1, 1, 2}, {"stage3", "result-only", 3, 3, 4, 5},
+                {"stage3", "changed", 4, 5, 6, 7}, {"earlier", "result-only", 1, 1, 1, 2},
+                {"earlier", "changed", 5, 6, 6, 7}});
+            checkRegions(file, {{"stage2", "section", "ignored", 2, 3, 3, 3}, {"stage2", "line", "ignored", 2, 3, 3, 3},
+                {"stage3", "section", "undecided", 2, 2, 3, 3},
+                {"stage2", "section", "undecided", 4, 5, 4, 5}, {"stage2", "line", "undecided", 4, 5, 4, 5},
+                {"stage3", "section", "undecided", 3, 3, 5, 5},
+                {"stage2", "section", "accepted", 6, 7, 6, 7}, {"stage2", "line", "accepted", 6, 7, 6, 7},
+                {"stage3", "section", "undecided", 4, 5, 6, 7}, {"stage3", "line", "undecided", 4, 5, 6, 7}});
+
+            // A hand edit inside accepted text marks it manual and leaves the undecided competitor alone.
+            const auto at = controller.files()->file("choices")->current().draft.text.find("left conflict") + 5;
+            CHECK(controller.files()->editResult("choices", revision(), {{at, at}, "hand "}) == Transition::Applied);
+            file = controller.selectedFile();
+            CHECK(file.value("currentRevision").toString() == "5");
+            const auto regions = file.value("regions").toList();
+            CHECK(regions[6].toMap().value("state").toString() == "manual" && regions[7].toMap().value("state").toString() == "manual");
+            CHECK(regions[8].toMap().value("state").toString() == "undecided" && regions[9].toMap().value("state").toString() == "undecided");
+            checkRange(regions[6].toMap(), "result", file.value("resultText").toString(), 6, 7);
+            CHECK(controller.files()->undo("choices", revision()) == Transition::Applied);
+            file = controller.selectedFile();
+            CHECK(file.value("regions").toList()[6].toMap().value("state").toString() == "accepted");
+            CHECK(file.value("resultText").toString().contains("\nleft conflict\n"));
+        });
         test("background snapshots leave the event loop responsive and complete on its thread", [] {
             Fixture f;
             Gate gate;
