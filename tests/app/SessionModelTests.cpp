@@ -7,7 +7,10 @@
 #include <QCoreApplication>
 #include <QJsonArray>
 #include <QMap>
+#include <QDir>
+#include <QFileInfo>
 #include <QProcess>
+#include <QStandardPaths>
 #include <QPersistentModelIndex>
 #include <QSet>
 #include <QTemporaryDir>
@@ -604,6 +607,34 @@ public:
             SessionModel other;
             CHECK(other.appendFile(FileSession("other", "path", draft())));
             CHECK(!model.data(other.index(0), SessionModel::PathRole).isValid());
+        });
+        suite.run("recovery root ignores the organization name and finds earlier stores", [] {
+            const auto application = QCoreApplication::applicationName();
+            const auto organization = QCoreApplication::organizationName();
+            QCoreApplication::setApplicationName("Branch Truce");
+            QCoreApplication::setOrganizationName({});
+            const auto root = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
+                + "/Branch Truce/recovery/v1";
+            // The earlier build's root: AppLocalDataLocation with no organization name.
+            const auto earlier = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
+                + "/recovery/v1";
+            CHECK(earlier == root && SessionModel::recoveryRoot() == root);
+            const auto stored = root + "/" + QUuid::createUuid().toString(QUuid::WithoutBraces);
+            {
+                SessionModel written(stored);
+                CHECK(written.appendFile(recoverableFile()));
+                CHECK(written.replaceDraft("recoverable", 1, unsavedDraft()) == Transition::Applied);
+            }
+            QCoreApplication::setOrganizationName("Example Organization");
+            CHECK(SessionModel::recoveryRoot() == root);
+            SessionModel model;
+            CHECK(QFileInfo(model.recoveryDirectory()).absolutePath() == root);
+            CHECK(QDir(root).entryList(QDir::Dirs | QDir::NoDotAndDotDot).contains(QFileInfo(stored).fileName()));
+            const auto replay = replayRecovery(storage::RecoveryStore(stored));
+            CHECK(replay.succeeded && replay.userWork && replay.files.size() == 1
+                  && replay.files.front().current().draft == unsavedDraft());
+            QCoreApplication::setApplicationName(application);
+            QCoreApplication::setOrganizationName(organization);
         });
         suite.run("named roles preserve byte paths, Unicode and 64-bit decision order", [] {
             SessionModel model;

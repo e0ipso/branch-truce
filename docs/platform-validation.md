@@ -363,6 +363,23 @@ hidden once Git has staged a result for the selected file, and paths Git has
 not launched still show it. The acceptance suite checks both cases offscreen
 with real `git mergetool`. The container run has not been repeated since.
 
+### Organization name
+
+The app sets an organization domain (`branch-truce.local`) and no organization
+name. `KAboutData::setApplicationData` sets the domain only, and KDE
+applications that use it keep their data under `~/.local/share/<app>`. The
+name would add nothing: the desktop entry, the application ID and the
+mergetool intake path do not use it. On Linux Qt does put it into
+`QStandardPaths::AppLocalDataLocation`, so setting one moves that directory,
+and with it the recovery journals of earlier runs.
+
+`SessionModel::recoveryRoot()` no longer reads `AppLocalDataLocation`. It is
+`GenericDataLocation` plus `/Branch Truce/recovery/v1`, which is the path the
+app already used with no organization name, so stores written by earlier
+builds are found where they are and nothing is moved. A later change that sets
+an organization name leaves the root alone. `app.session-model` pins both: the
+root, and a store written at the earlier path with an organization name set.
+
 ## What would close the real-desktop rows
 
 On each real desktop: install the artifact with `apt` from the file, record

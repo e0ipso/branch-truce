@@ -1,7 +1,9 @@
 # Recovery journal version 1
 
 `SessionModel` keeps automatic recovery under
-`QStandardPaths::AppLocalDataLocation/recovery/v1/<session-uuid>/`. Each model
+`<GenericDataLocation>/Branch Truce/recovery/v1/<session-uuid>/`, normally
+`~/.local/share/Branch Truce/recovery/v1/<session-uuid>/`. The root does not
+depend on the organization or application name. Each model
 starts with a new store. Startup adopts a validated inactive store for the same
 operation when exactly one matches, or when exactly one of several matches holds
 app edits. Tests and adapters can supply an absolute store directory.
@@ -118,7 +120,7 @@ detail without blocking edits to the current conflict files. Only failures
 belonging to files in an adopted store become those files' recovery errors.
 An aborted or older operation's store is retained for inspection. To retire
 one, close all Branch Truce windows and move its complete `<session-uuid>`
-directory outside `QStandardPaths::AppLocalDataLocation/recovery/v1/`.
+directory outside `<GenericDataLocation>/Branch Truce/recovery/v1/`.
 Keep its journal and payloads together; moving the directory back makes it
 available for inspection again.
 

@@ -39,6 +39,9 @@ public:
 
     explicit SessionModel(QObject *parent = nullptr);
     explicit SessionModel(QString recoveryDirectory, QObject *parent = nullptr);
+    // Holds every session's store. Built from GenericDataLocation and a fixed
+    // segment, so setting an organization or application name never moves it.
+    [[nodiscard]] static QString recoveryRoot();
     [[nodiscard]] int rowCount(const QModelIndex &parent = {}) const override;
     [[nodiscard]] QVariant data(const QModelIndex &index, int role) const override;
     [[nodiscard]] QHash<int, QByteArray> roleNames() const override;

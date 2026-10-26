@@ -91,8 +91,13 @@ QVariantMap progressData(const FileSession &file, bool pendingInput, bool recove
 }
 
 SessionModel::SessionModel(QObject *parent)
-    : SessionModel(QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation)
-        + QStringLiteral("/recovery/v1/") + QUuid::createUuid().toString(QUuid::WithoutBraces), parent) {}
+    : SessionModel(recoveryRoot() + QLatin1Char('/') + QUuid::createUuid().toString(QUuid::WithoutBraces), parent) {}
+
+QString SessionModel::recoveryRoot()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
+        + QStringLiteral("/Branch Truce/recovery/v1");
+}
 
 SessionModel::SessionModel(QString recoveryDirectory, QObject *parent)
     : QAbstractListModel(parent), recovery_(std::move(recoveryDirectory)) {}
