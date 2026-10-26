@@ -83,9 +83,16 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_libraries(branch_truce_comparison_tests PRIVATE branch_truce_controller branch_truce_uiplugin
         Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
     target_link_options(branch_truce_comparison_tests PRIVATE "LINKER:--wrap=fsync")
-    add_test(NAME app.comparison-view COMMAND branch_truce_comparison_tests)
-    # The TRUCE-0063 boundary fixtures edit an 8388608-byte buffer in the real editor.
-    set_tests_properties(app.comparison-view PROPERTIES TIMEOUT 60
+    # The executable takes "scenes" or "boundary"; with no argument it runs both groups.
+    # "boundary" is the two Backspace and Delete fixtures that edit 262144-byte lines and an
+    # 8388608-byte buffer in the real editor. Each timeout is at least twice the slowest of nine runs
+    # on the development host, one of them under load from another build: scenes 33.0 to 50.1 s,
+    # boundary 17.8 to 23.8 s. The single entry this replaced took 53.7 to 57.5 s against 60 s.
+    add_test(NAME app.comparison-view COMMAND branch_truce_comparison_tests scenes)
+    add_test(NAME app.comparison-view-boundary COMMAND branch_truce_comparison_tests boundary)
+    set_tests_properties(app.comparison-view PROPERTIES TIMEOUT 120
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    set_tests_properties(app.comparison-view-boundary PROPERTIES TIMEOUT 60
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     if(BRANCH_TRUCE_SYNTAX_HIGHLIGHTING)

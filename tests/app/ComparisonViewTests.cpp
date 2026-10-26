@@ -386,13 +386,33 @@ bool cursorInView(Fixture &fixture)
     const auto top = editor->y() + cursor.top() - contentY(result);
     return top >= 0 && top + cursor.height() <= result->height();
 }
+
+// Which cases one run executes. The deletion-at-limit cases edit multi-megabyte buffers in the
+// real editor, so ctest runs them as their own entry with a timeout sized for them.
+enum class Selection { All, Scenes, Boundary };
+
+// Forwards a case to the suite only when its selection includes it.
+class Group {
+public:
+    Group(test_support::Suite &suite, bool selected) : suite_(suite), selected_(selected) {}
+    template<typename Test>
+    void run(const std::string &name, Test test)
+    {
+        if (selected_) suite_.run(name, std::move(test));
+    }
+private:
+    test_support::Suite &suite_;
+    bool selected_;
+};
 }
 
 class ComparisonViewTests {
 public:
-    int run()
+    int run(Selection selection)
     {
-        test_support::Suite suite("ComparisonViewTests");
+        test_support::Suite results("ComparisonViewTests");
+        Group suite(results, selection != Selection::Boundary);
+        Group boundary(results, selection != Selection::Scenes);
         suite.run("TRUCE-0020 actual comparison keeps verified sources around the editable launch result", [] {
             const std::string launch = "manual launch UTF-8 \xc3\xa9 \xf0\x9f\x98\x80\n";
             Fixture fixture(test_support::choiceFile("left capture\n", "right capture\n", launch));
@@ -1426,12 +1446,12 @@ public:
             fixture.checkRecovered(edited.draft);
             QGuiApplication::clipboard()->clear();
         });
-        suite.run("TRUCE-0063 Backspace and Delete shorten an exact 262144-byte line", [] {
+        boundary.run("TRUCE-0063 Backspace and Delete shorten an exact 262144-byte line", [] {
             deletionAtLimit(std::string(262144, 'a'), QStringLiteral(
                 "Line of 262145 bytes exceeds the supported 262144 byte line limit. "
                 "The existing edit was kept and this change was not acknowledged."));
         });
-        suite.run("TRUCE-0063 Backspace and Delete shorten an exact 8388608-byte buffer", [] {
+        boundary.run("TRUCE-0063 Backspace and Delete shorten an exact 8388608-byte buffer", [] {
             // Lines stay below the line limit so only the buffer limit applies.
             std::string atLimit;
             atLimit.reserve(8388608);
@@ -1442,7 +1462,7 @@ public:
                 "Text of 8388609 bytes exceeds the supported 8388608 byte recovery payload limit. "
                 "The existing edit was kept and this change was not acknowledged."));
         });
-        return suite.report();
+        return results.report();
     }
 };
 
@@ -1458,7 +1478,13 @@ int main(int argc, char **argv)
     // Synthetic offscreen integration owns its own clipboard. Physical desktop
     // input and window-manager behavior remain a separate verification layer.
     if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
-    const auto result = ComparisonViewTests{}.run();
+    // No argument runs every case; "scenes" and "boundary" select one ctest entry's share.
+    const auto arguments = QCoreApplication::arguments();
+    auto selection = Selection::All;
+    if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("scenes")) selection = Selection::Scenes;
+    else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("boundary")) selection = Selection::Boundary;
+    else if (arguments.size() != 1) return 2;
+    const auto result = ComparisonViewTests{}.run(selection);
     QGuiApplication::clipboard()->clear();
     return result;
 }
