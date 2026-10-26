@@ -557,6 +557,59 @@ Kirigami.ApplicationWindow {
             }
         }
     }
+    // A toolbar action whose button keeps an objectName, so tests find it by name and not
+    // by its text. While the action fits, the toolbar shows this button instead of its own.
+    // iconOnly hides the text here: Kirigami.DisplayHint.IconOnly would make the toolbar show
+    // its own unnamed icon button instead.
+    component NamedAction: Kirigami.Action {
+        id: namedAction
+        required property string controlName
+        property string accessibleName: text
+        property bool iconOnly: false
+        displayComponent: ToolButton {
+            objectName: namedAction.controlName
+            action: namedAction
+            display: namedAction.iconOnly ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon
+            Accessible.name: namedAction.accessibleName
+            ToolTip.text: namedAction.tooltip || (display === AbstractButton.IconOnly ? namedAction.text : "")
+            ToolTip.visible: hovered && ToolTip.text.length > 0
+            ToolTip.delay: Kirigami.Units.toolTipDelay
+        }
+    }
+    // An entry of a MenuAction, named like a toolbar button.
+    component MenuEntry: Kirigami.Action {
+        required property string controlName
+    }
+    // A toolbar button that opens a menu of its child entries. Each menu item takes its
+    // entry's objectName, so a test opens the menu and clicks the entry by name.
+    component MenuAction: NamedAction {
+        id: menuAction
+        displayComponent: ToolButton {
+            id: menuButton
+            objectName: menuAction.controlName
+            action: menuAction
+            down: pressed || entries.visible
+            Accessible.role: Accessible.ButtonMenu
+            Accessible.name: menuAction.accessibleName
+            ToolTip.text: menuAction.tooltip
+            ToolTip.visible: hovered && !entries.visible && ToolTip.text.length > 0
+            ToolTip.delay: Kirigami.Units.toolTipDelay
+            onClicked: entries.popup(menuButton, 0, menuButton.height)
+            Menu {
+                id: entries
+                Instantiator {
+                    model: menuAction.children
+                    delegate: MenuItem {
+                        required property MenuEntry modelData
+                        objectName: modelData.controlName
+                        action: modelData
+                    }
+                    onObjectAdded: (index, entry) => entries.insertItem(index, entry as MenuItem)
+                    onObjectRemoved: (index, entry) => entries.removeItem(entry as MenuItem)
+                }
+            }
+        }
+    }
     width: 1200
     height: 850
     // Fits 1920x1080 at 200% scaling (960x540 logical pixels); the page scrolls below its content height.
@@ -659,67 +712,88 @@ Kirigami.ApplicationWindow {
                     text: qsTr("%1 outside app · %2 load errors. These files remain outstanding. Select a file for its reason and handle it outside Branch Truce.")
                         .arg(window.controller.outsideAppFiles).arg(window.controller.loadErrorFiles)
                 }
-                Flow {
+                Kirigami.ActionToolBar {
+                    objectName: "mainToolBar"
                     Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing
                     visible: !window.controller.opening && window.controller.files.totalFiles > 0
-                    Button {
-                        objectName: "openHandoff"
-                        text: qsTr("Review handoff…")
-                        onClicked: handoffDialog.open()
-                    }
-                    ToolButton {
-                        objectName: "toggleFileList"
-                        text: window.controller.fileListVisible ? qsTr("Hide file list") : qsTr("Show file list")
-                        icon.name: "sidebar-expand-left"
-                        display: AbstractButton.IconOnly
-                        checked: window.controller.fileListVisible
-                        Accessible.name: qsTr("Show file list")
-                        ToolTip.text: text
-                        ToolTip.visible: hovered
-                        ToolTip.delay: Kirigami.Units.toolTipDelay
-                        onClicked: window.controller.toggleFileList()
-                    }
-                    Button {
-                        objectName: "previousDifference"
-                        text: qsTr("Previous difference")
-                        onClicked: window.controller.navigate("difference", -1)
-                    }
-                    Button {
-                        objectName: "nextDifference"
-                        text: qsTr("Next difference")
-                        onClicked: window.controller.navigate("difference", 1)
-                    }
-                    Button {
-                        objectName: "previousUndecided"
-                        text: qsTr("Previous undecided")
-                        onClicked: window.controller.navigate("undecided", -1)
-                    }
-                    Button {
-                        objectName: "nextUndecided"
-                        text: qsTr("Next undecided")
-                        onClicked: window.controller.navigate("undecided", 1)
-                    }
-                    Button {
-                        objectName: "previousUnfinished"
-                        text: qsTr("Previous unfinished file")
-                        onClicked: window.controller.navigate("unfinished", -1)
-                    }
-                    Button {
-                        objectName: "nextUnfinished"
-                        text: qsTr("Next unfinished file")
-                        onClicked: window.controller.navigate("unfinished", 1)
-                    }
-                    Button {
-                        objectName: "previousSavedOrReviewed"
-                        text: qsTr("Previous saved or reviewed")
-                        onClicked: window.controller.navigate("saved-or-reviewed", -1)
-                    }
-                    Button {
-                        objectName: "nextSavedOrReviewed"
-                        text: qsTr("Next saved or reviewed")
-                        onClicked: window.controller.navigate("saved-or-reviewed", 1)
-                    }
+                    actions: [
+                        NamedAction {
+                            controlName: "openHandoff"
+                            text: qsTr("Review handoff…")
+                            icon.name: "merge"
+                            displayHint: Kirigami.DisplayHint.KeepVisible
+                            onTriggered: handoffDialog.open()
+                        },
+                        NamedAction {
+                            controlName: "previousDifference"
+                            text: qsTr("Previous difference")
+                            icon.name: "go-previous"
+                            iconOnly: true
+                            onTriggered: window.controller.navigate("difference", -1)
+                        },
+                        NamedAction {
+                            controlName: "nextDifference"
+                            text: qsTr("Next difference")
+                            icon.name: "go-next"
+                            iconOnly: true
+                            onTriggered: window.controller.navigate("difference", 1)
+                        },
+                        NamedAction {
+                            controlName: "previousUndecided"
+                            text: qsTr("Previous undecided")
+                            icon.name: "arrow-up"
+                            iconOnly: true
+                            onTriggered: window.controller.navigate("undecided", -1)
+                        },
+                        NamedAction {
+                            controlName: "nextUndecided"
+                            text: qsTr("Next undecided")
+                            icon.name: "arrow-down"
+                            iconOnly: true
+                            onTriggered: window.controller.navigate("undecided", 1)
+                        },
+                        MenuAction {
+                            controlName: "navigateMenu"
+                            text: qsTr("Navigate")
+                            tooltip: qsTr("Move between unfinished, saved or reviewed files")
+                            icon.name: "go-jump"
+                            MenuEntry {
+                                controlName: "previousUnfinished"
+                                text: qsTr("Previous unfinished file")
+                                icon.name: "go-previous-skip"
+                                onTriggered: window.controller.navigate("unfinished", -1)
+                            }
+                            MenuEntry {
+                                controlName: "nextUnfinished"
+                                text: qsTr("Next unfinished file")
+                                icon.name: "go-next-skip"
+                                onTriggered: window.controller.navigate("unfinished", 1)
+                            }
+                            MenuEntry {
+                                controlName: "previousSavedOrReviewed"
+                                text: qsTr("Previous saved or reviewed")
+                                icon.name: "go-up"
+                                onTriggered: window.controller.navigate("saved-or-reviewed", -1)
+                            }
+                            MenuEntry {
+                                controlName: "nextSavedOrReviewed"
+                                text: qsTr("Next saved or reviewed")
+                                icon.name: "go-down"
+                                onTriggered: window.controller.navigate("saved-or-reviewed", 1)
+                            }
+                        },
+                        // Checked while the list shows; the name stays "Show file list" as the text changes.
+                        NamedAction {
+                            controlName: "toggleFileList"
+                            text: window.controller.fileListVisible ? qsTr("Hide file list") : qsTr("Show file list")
+                            accessibleName: qsTr("Show file list")
+                            icon.name: "sidebar-expand-left"
+                            iconOnly: true
+                            displayHint: Kirigami.DisplayHint.KeepVisible
+                            checked: window.controller.fileListVisible
+                            onTriggered: window.controller.toggleFileList()
+                        }
+                    ]
                 }
                 Label {
                     objectName: "navigationTarget"
@@ -912,104 +986,128 @@ Kirigami.ApplicationWindow {
                             paneTitle: qsTr("Pending input · not acknowledged")
                             paneText: window.selectedFile.pendingText || ""
                         }
-                        // Wraps on a narrow window instead of pushing the panes past its right edge.
-                        Flow {
+                        RowLayout {
                             Layout.fillWidth: true
-                            spacing: Kirigami.Units.smallSpacing
                             visible: window.supportedSelection
-                            Button {
-                                objectName: "saveDraft"
-                                text: qsTr("Save")
-                                enabled: !!window.selectedFile.canEdit && !!window.selectedFile.unsaved && !comparison.inputMethodComposing
-                                onClicked: window.controller.saveDraft(window.controller.selectedFileId, window.selectedFile.currentRevision)
-                            }
-                            Button {
-                                objectName: "markResolved"
-                                text: qsTr("Mark resolved")
-                                enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing && !window.controller.resolutionBusy
-                                onClicked: window.controller.markResolved(window.controller.selectedFileId, window.selectedFile.currentRevision, false)
-                            }
-                            Button {
-                                objectName: "discardUnsaved"
-                                text: qsTr("Discard")
-                                enabled: !!window.selectedFile.canEdit && !!window.selectedFile.unsaved && !comparison.inputMethodComposing
-                                onClicked: window.controller.discardUnsaved(window.controller.selectedFileId, window.selectedFile.currentRevision)
-                            }
-                            Button {
-                                objectName: "undoCommand"
-                                text: qsTr("Undo")
-                                enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canUndo && !comparison.inputMethodComposing
-                                onClicked: window.controller.undo(window.controller.selectedFileId, window.selectedFile.currentRevision)
-                            }
-                            Button {
-                                objectName: "redoCommand"
-                                text: qsTr("Redo")
-                                enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canRedo && !comparison.inputMethodComposing
-                                onClicked: window.controller.redo(window.controller.selectedFileId, window.selectedFile.currentRevision)
-                            }
-                            Button {
-                                objectName: "copyResult"
-                                text: qsTr("Copy")
-                                onClicked: window.controller.resultClipboard("copy")
-                            }
-                            Button {
-                                objectName: "pasteResult"
-                                text: qsTr("Paste")
-                                enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
-                                onClicked: window.controller.resultClipboard("paste")
-                            }
-                            Button {
-                                id: sourceChoices
-                                objectName: "showSourceChoices"
-                                text: checked ? qsTr("Hide source choices") : qsTr("Show source choices")
-                                checkable: true
+                            Kirigami.ActionToolBar {
+                                objectName: "fileToolBar"
+                                Layout.fillWidth: true
+                                actions: [
+                                    NamedAction {
+                                        controlName: "saveDraft"
+                                        text: qsTr("Save")
+                                        icon.name: "document-save"
+                                        displayHint: Kirigami.DisplayHint.KeepVisible
+                                        enabled: !!window.selectedFile.canEdit && !!window.selectedFile.unsaved && !comparison.inputMethodComposing
+                                        onTriggered: window.controller.saveDraft(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                                    },
+                                    NamedAction {
+                                        controlName: "markResolved"
+                                        text: qsTr("Mark resolved")
+                                        icon.name: "dialog-ok-apply"
+                                        displayHint: Kirigami.DisplayHint.KeepVisible
+                                        enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing && !window.controller.resolutionBusy
+                                        onTriggered: window.controller.markResolved(window.controller.selectedFileId, window.selectedFile.currentRevision, false)
+                                    },
+                                    NamedAction {
+                                        controlName: "discardUnsaved"
+                                        text: qsTr("Discard")
+                                        tooltip: qsTr("Discard unsaved edits")
+                                        icon.name: "document-revert"
+                                        enabled: !!window.selectedFile.canEdit && !!window.selectedFile.unsaved && !comparison.inputMethodComposing
+                                        onTriggered: window.controller.discardUnsaved(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                                    },
+                                    NamedAction {
+                                        controlName: "undoCommand"
+                                        text: qsTr("Undo")
+                                        tooltip: qsTr("Undo the last edit or choice. Typing and choices share one history.")
+                                        icon.name: "edit-undo"
+                                        iconOnly: true
+                                        enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canUndo && !comparison.inputMethodComposing
+                                        onTriggered: window.controller.undo(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                                    },
+                                    NamedAction {
+                                        controlName: "redoCommand"
+                                        text: qsTr("Redo")
+                                        tooltip: qsTr("Redo the last undone edit or choice. Typing and choices share one history.")
+                                        icon.name: "edit-redo"
+                                        iconOnly: true
+                                        enabled: !!window.selectedFile.canEdit && !!window.selectedFile.canRedo && !comparison.inputMethodComposing
+                                        onTriggered: window.controller.redo(window.controller.selectedFileId, window.selectedFile.currentRevision)
+                                    },
+                                    NamedAction {
+                                        controlName: "copyResult"
+                                        text: qsTr("Copy")
+                                        icon.name: "edit-copy"
+                                        iconOnly: true
+                                        onTriggered: window.controller.resultClipboard("copy")
+                                    },
+                                    NamedAction {
+                                        controlName: "pasteResult"
+                                        text: qsTr("Paste")
+                                        icon.name: "edit-paste"
+                                        iconOnly: true
+                                        enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
+                                        onTriggered: window.controller.resultClipboard("paste")
+                                    },
+                                    MenuAction {
+                                        id: fileChoices
+                                        controlName: "sourceChoicesMenu"
+                                        text: qsTr("Source choices")
+                                        tooltip: qsTr("Preview non-conflicting changes or a whole side of %1 before applying")
+                                            .arg(window.selectedFile.path || "")
+                                        icon.name: "document-import"
+                                        enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
+                                        MenuEntry {
+                                            controlName: "nonConflictingLeft"
+                                            text: qsTr("Preview non-conflicting Left")
+                                            icon.name: "arrow-left"
+                                            enabled: fileChoices.enabled
+                                            onTriggered: window.chooseNonConflicting("left")
+                                        }
+                                        MenuEntry {
+                                            controlName: "nonConflictingRight"
+                                            text: qsTr("Preview non-conflicting Right")
+                                            icon.name: "arrow-right"
+                                            enabled: fileChoices.enabled
+                                            onTriggered: window.chooseNonConflicting("right")
+                                        }
+                                        MenuEntry {
+                                            controlName: "nonConflictingBoth"
+                                            text: qsTr("Preview non-conflicting Both")
+                                            icon.name: "merge"
+                                            enabled: fileChoices.enabled
+                                            onTriggered: window.chooseNonConflicting("both")
+                                        }
+                                        MenuEntry {
+                                            controlName: "wholeFileLeft"
+                                            text: qsTr("Preview whole file from Left")
+                                            icon.name: "arrow-left-double"
+                                            enabled: fileChoices.enabled
+                                            onTriggered: window.chooseWholeFile("left")
+                                        }
+                                        MenuEntry {
+                                            controlName: "wholeFileRight"
+                                            text: qsTr("Preview whole file from Right")
+                                            icon.name: "arrow-right-double"
+                                            enabled: fileChoices.enabled
+                                            onTriggered: window.chooseWholeFile("right")
+                                        }
+                                    },
+                                    NamedAction {
+                                        id: sourceChoices
+                                        controlName: "showSourceChoices"
+                                        text: checked ? qsTr("Hide source choices") : qsTr("Show source choices")
+                                        icon.name: "view-list-details"
+                                        iconOnly: true
+                                        checkable: true
+                                    }
+                                ]
                             }
                             Label {
-                                height: sourceChoices.height
-                                verticalAlignment: Text.AlignVCenter
-                                text: comparison.inputMethodComposing ? qsTr("Composing input · not acknowledged") : qsTr("Shared undo/redo")
-                            }
-                        }
-                        Label {
-                            objectName: "nonConflictingScope"
-                            Layout.fillWidth: true
-                            visible: window.supportedSelection && sourceChoices.checked
-                            text: qsTr("Non-conflicting changes in %1. Preview the eligible changes before applying.")
-                                .arg(window.selectedFile.path || "")
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
-                        }
-                        RowLayout {
-                            visible: window.supportedSelection && sourceChoices.checked
-                            enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
-                            Button {
-                                objectName: "nonConflictingLeft"
-                                text: qsTr("Preview non-conflicting Left")
-                                onClicked: window.chooseNonConflicting("left")
-                            }
-                            Button {
-                                objectName: "nonConflictingRight"
-                                text: qsTr("Preview non-conflicting Right")
-                                onClicked: window.chooseNonConflicting("right")
-                            }
-                            Button {
-                                objectName: "nonConflictingBoth"
-                                text: qsTr("Preview non-conflicting Both")
-                                onClicked: window.chooseNonConflicting("both")
-                            }
-                        }
-                        RowLayout {
-                            visible: window.supportedSelection && sourceChoices.checked
-                            enabled: !!window.selectedFile.canEdit && !comparison.inputMethodComposing
-                            Button {
-                                objectName: "wholeFileLeft"
-                                text: qsTr("Preview whole file from Left")
-                                onClicked: window.chooseWholeFile("left")
-                            }
-                            Button {
-                                objectName: "wholeFileRight"
-                                text: qsTr("Preview whole file from Right")
-                                onClicked: window.chooseWholeFile("right")
+                                visible: comparison.inputMethodComposing
+                                text: qsTr("Composing input · not acknowledged")
+                                textFormat: Text.PlainText
                             }
                         }
                         ComparisonView {

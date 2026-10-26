@@ -29,6 +29,7 @@
 #include <cstring>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 using namespace branch_truce;
@@ -225,6 +226,8 @@ public:
     QQuickItem *item(const char *name) const
     {
         auto *found = window->findChild<QQuickItem *>(QString::fromLatin1(name));
+        // A toolbar creates its buttons outside the QObject tree, so look in the item tree too.
+        if (!found) found = test_support::visualItem(window->contentItem(), QString::fromLatin1(name));
         if (!found) throw std::runtime_error(std::string("missing scene item: ") + name);
         return found;
     }
@@ -535,10 +538,10 @@ std::unique_ptr<QProcess> startMergetool(const Repository &repo, const QStringLi
 
 // Every named control of the main view, in reading order.
 const char *const mainControls[] = {
-    "inventoryWarning", "openHandoff", "toggleFileList", "previousDifference", "nextDifference",
-    "previousUndecided", "nextUndecided", "previousUnfinished", "nextUnfinished", "previousSavedOrReviewed",
-    "nextSavedOrReviewed", "fileList", "selectedPath", "selectedStatus", "saveDraft", "markResolved",
-    "discardUnsaved", "undoCommand", "redoCommand", "copyResult", "pasteResult", "showSourceChoices",
+    "inventoryWarning", "openHandoff", "previousDifference", "nextDifference", "previousUndecided",
+    "nextUndecided", "navigateMenu", "toggleFileList", "fileList", "selectedPath", "selectedStatus", "saveDraft",
+    "markResolved", "discardUnsaved", "undoCommand", "redoCommand", "copyResult", "pasteResult",
+    "sourceChoicesMenu", "showSourceChoices",
     "searchScope", "searchQuery", "findPassage", "wrapLines", "showWhitespace", "stage2Label", "resultLabel",
     "stage3Label", "showEarlier", "workflowStatus",
 };
@@ -1457,6 +1460,26 @@ public:
                     throw std::runtime_error(std::string("no accessible name: ") + name);
                 CHECK(!test_support::accessibleName(scene.item(name)).isEmpty());
             }
+            // Moving between files and the file-wide choices sit in toolbar menus. Once a menu
+            // opens, each entry is a visible item with an accessible name.
+            const std::pair<const char *, std::vector<const char *>> menus[] = {
+                {"navigateMenu", {"previousUnfinished", "nextUnfinished", "previousSavedOrReviewed", "nextSavedOrReviewed"}},
+                {"sourceChoicesMenu", {"nonConflictingLeft", "nonConflictingRight", "nonConflictingBoth", "wholeFileLeft",
+                                       "wholeFileRight"}},
+            };
+            for (const auto &[menu, entries] : menus) {
+                scene.click(menu);
+                for (const auto *entry : entries) {
+                    auto *item = test_support::waitForLayout(scene.window, QString::fromLatin1(entry), Scene::settleMs);
+                    if (test_support::accessibleName(item).isEmpty())
+                        throw std::runtime_error(std::string("no accessible name: ") + entry);
+                }
+                keyClick(scene, Qt::Key_Escape);
+                settleFor(std::string(menu) + " closed", [&] {
+                    auto *first = test_support::visualItem(scene.window->contentItem(), QString::fromLatin1(entries.front()));
+                    return !first || !first->isVisible();
+                });
+            }
             // A roomy window lays out as before, without scrolling the page.
             CHECK(!scene.object("pageScroll")->property("overflowing").toBool());
             auto *editor = scene.item("resultText");
@@ -1501,9 +1524,9 @@ public:
             // list beside them is taller than the window, so it is left out.
             scene.click("showSourceChoices");
             settleFor("source choices shown", [&] { return scene.item("scopedChoices")->isVisible(); });
-            const std::vector<const char *> withChoices{"showSourceChoices", "nonConflictingLeft", "nonConflictingBoth",
-                "wholeFileLeft", "wholeFileRight", "stage2Label", "resultLabel", "stage3Label", "stage2Viewport",
-                "resultViewport", "stage3Viewport", "scopedChoices", "workflowStatus"};
+            const std::vector<const char *> withChoices{"showSourceChoices", "sourceChoicesMenu", "stage2Label",
+                "resultLabel", "stage3Label", "stage2Viewport", "resultViewport", "stage3Viewport", "scopedChoices",
+                "workflowStatus"};
             for (const auto &screen : {QSize(1500, 1040), QSize(1280, 800), QSize(1280, 720), QSize(960, 540)}) {
                 const auto pane = checkFits(scene, screen.width(), screen.height(), withChoices);
                 if (pane < 8 * lineHeight)

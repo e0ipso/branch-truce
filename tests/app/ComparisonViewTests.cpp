@@ -53,6 +53,8 @@ public:
     QQuickItem *item(const char *name) const
     {
         auto *found = window->findChild<QQuickItem *>(QString::fromLatin1(name));
+        // A toolbar creates its buttons outside the QObject tree, so look in the item tree too.
+        if (!found) found = test_support::visualItem(window->contentItem(), QString::fromLatin1(name));
         if (!found) throw std::runtime_error(std::string("missing comparison item: ") + name);
         return found;
     }
@@ -82,6 +84,12 @@ public:
         const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    // Open a toolbar menu and click one of its entries once the menu has laid out.
+    void clickMenuEntry(const char *menu, const char *entry)
+    {
+        click(menu);
+        test_support::clickItem(window, test_support::waitForLayout(window, QString::fromLatin1(entry), 60));
     }
     void checkRecovered(const Draft &expected)
     {
@@ -773,7 +781,7 @@ public:
                 FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
             CHECK(fixture.controller.outsideAppFiles() == 1);
             CHECK(fixture.file().facts().resolved);
-            fixture.click("nextUnfinished");
+            fixture.clickMenuEntry("navigateMenu", "nextUnfinished");
             expectNavigation(fixture, QStringLiteral("unfinished"), QStringLiteral("outside"),
                 QStringLiteral("outside-editor"), 0, 1, 0, 0,
                 QStringLiteral("Unfinished file · outside the editor · diagram.png"));
@@ -789,7 +797,7 @@ public:
             CHECK(outside && outside->support() == Support::OutsideApp);
             CHECK(outside->supportDetail() == "image content");
             CHECK(outside->current().draft.text.empty() && !outside->facts().resolved);
-            fixture.click("previousUnfinished");
+            fixture.clickMenuEntry("navigateMenu", "previousUnfinished");
             expectNavigation(fixture, QStringLiteral("unfinished"), QStringLiteral("outside"),
                 QStringLiteral("outside-editor"), 0, 1, 0, 0,
                 QStringLiteral("Unfinished file · outside the editor · diagram.png"));
