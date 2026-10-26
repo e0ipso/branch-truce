@@ -1561,7 +1561,8 @@ public:
             const auto excluded = file(state, "excluded.txt");
             CHECK(excluded.value("support") == "outside-app" && excluded.value("text").toString().isEmpty());
             CHECK(excluded.value("detail").toString()
-                  == "Outside app: stage 1 cannot be edited: Outside app: unsupported or contradictory text/eol/ident attributes");
+                  == "Outside app: stage 1 cannot be edited: unsupported or contradictory text/eol/ident attributes");
+            CHECK(excluded.value("detail").toString().count(QStringLiteral("Outside app:")) == 1);
             CHECK(state.value("detail").toString().contains("outside app remain outstanding"));
         });
         suite.run("a repository without an operation reports no session and no source identities", [&] {

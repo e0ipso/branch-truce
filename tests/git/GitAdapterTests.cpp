@@ -1222,6 +1222,7 @@ public:
             for (const auto &conflict : classified.conflicts) {
                 CHECK(names.contains(conflict.path) && conflict.stages.size() == 3 && !conflict.editable());
                 CHECK(conflict.support == ConflictSupport::UnsupportedOperation && !conflict.reason.isEmpty());
+                CHECK(conflict.reason.count(QStringLiteral("Outside app:")) == 1);
             }
             for (const auto &name : names) {
                 unsigned int stages = 0;

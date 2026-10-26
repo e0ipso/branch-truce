@@ -808,7 +808,7 @@ public:
             }
             CHECK(scene.item("inventoryWarning")->isVisible());
             clickFile(scene, "removed.txt");
-            expectContains(scene.text("selectedProblem"), "outstanding", "outside-app notice");
+            expectContains(scene.item("selectedProblem")->property("explanation").toString(), "outstanding", "outside-app notice");
             CHECK(scene.controller->files()->resolvedFiles() == 0);
             CHECK(repo.snapshot() == launched);
             checkOffline(scene);

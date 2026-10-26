@@ -834,9 +834,10 @@ public:
             CHECK(unfinished.value(QStringLiteral("support")).toString() == QStringLiteral("outside-app"));
             CHECK(!unfinished.value(QStringLiteral("resolved")).toBool());
             CHECK(unfinished.value(QStringLiteral("path")).toString() == QStringLiteral("diagram.png"));
-            CHECK(fixture.item("selectedProblem")->property("text").toString().contains(
-                QStringLiteral("Outside app · outstanding")));
-            CHECK(fixture.item("selectedProblem")->property("text").toString().contains(
+            CHECK(fixture.item("selectedProblem")->property("text").toString() == QStringLiteral("Outside app"));
+            CHECK(fixture.item("selectedProblem")->property("explanation").toString().contains(
+                QStringLiteral("outstanding")));
+            CHECK(fixture.item("selectedProblem")->property("explanation").toString().contains(
                 QStringLiteral("image content")));
             const auto *outside = fixture.controller.files()->file("outside");
             CHECK(outside && outside->support() == Support::OutsideApp);
@@ -1062,7 +1063,7 @@ public:
                     throw std::runtime_error(("route " + id + " selected " + fixture.controller.selectedFileId()).toStdString());
                 CHECK(fixture.controller.selectedFileId() == id);
             }
-            CHECK(fixture.item("selectedProblem")->property("text").toString().contains(QStringLiteral("image content")));
+            CHECK(fixture.item("selectedProblem")->property("explanation").toString().contains(QStringLiteral("image content")));
 
             int ended = 0;
             bool clean = true;

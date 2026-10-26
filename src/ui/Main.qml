@@ -100,6 +100,30 @@ Kirigami.ApplicationWindow {
         default: return "document-edit"
         }
     }
+    // The placeholder for a session with nothing to list: an empty session, an unsupported
+    // operation and a failed open are three different messages.
+    function sessionPlaceholderIcon(state: string): string {
+        switch (state) {
+        case "error": return "dialog-error"
+        case "unsupported": return "unknown"
+        default: return "checkmark"
+        }
+    }
+    function sessionPlaceholderText(state: string): string {
+        switch (state) {
+        case "error": return qsTr("Could not open the conflicts")
+        case "unsupported": return qsTr("This operation is outside Branch Truce")
+        default: return qsTr("No conflicted files")
+        }
+    }
+    // A PlaceholderMessage explanation is auto-detected text, and a reason can carry a path or
+    // filter name from the repository. Escape it so markup in it shows as typed and loads nothing.
+    function plainExplanation(text: string): string {
+        if (text.length === 0)
+            return ""
+        return "<p>" + text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/\n/g, "<br>") + "</p>"
+    }
     // Retries every file's pending recovery, then closes again if none is left.
     function retryPendingRecoveryAndClose(): void {
         for (const group of controller.handoff.groups || [])
@@ -812,13 +836,35 @@ Kirigami.ApplicationWindow {
                 width: pageScroll.width - (pageScroll.overflowing ? pageScrollBar.width : 0)
                 height: pageScroll.contentHeight
                 spacing: Kirigami.Units.largeSpacing
-                RowLayout {
-                    BusyIndicator { running: window.controller.opening; visible: running }
-                    Label {
-                        Layout.fillWidth: true
-                        text: window.controller.detail
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
+                Label {
+                    objectName: "sessionDetail"
+                    Layout.fillWidth: true
+                    visible: !window.controller.opening && window.controller.files.totalFiles > 0
+                    text: window.controller.detail
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                }
+                // While the repository opens, and while the session has no files to show. A failed
+                // or unsupported open names itself; it never reads as an empty session.
+                Item {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: sessionPlaceholder.implicitHeight
+                    visible: window.controller.opening || window.controller.files.totalFiles === 0
+                    Kirigami.PlaceholderMessage {
+                        id: sessionPlaceholder
+                        objectName: "sessionPlaceholder"
+                        anchors.centerIn: parent
+                        width: parent.width - Kirigami.Units.gridUnit * 2
+                        icon.name: window.controller.opening ? "" : window.sessionPlaceholderIcon(window.controller.startupState)
+                        text: window.controller.opening ? qsTr("Opening the repository")
+                            : window.sessionPlaceholderText(window.controller.startupState)
+                        explanation: window.plainExplanation(window.controller.detail)
+                        BusyIndicator {
+                            Layout.alignment: Qt.AlignHCenter
+                            running: window.controller.opening
+                            visible: running
+                        }
                     }
                 }
                 // Several recovery sessions with app edits match: nothing is
@@ -1007,13 +1053,6 @@ Kirigami.ApplicationWindow {
                             }
                             ScrollBar.vertical: ScrollBar {}
                         }
-                        Kirigami.PlaceholderMessage {
-                            anchors.centerIn: parent
-                            width: parent.width - Kirigami.Units.gridUnit * 2
-                            visible: fileList.count === 0
-                            icon.name: "checkmark"
-                            text: qsTr("No conflicted files")
-                        }
                     }
                     ColumnLayout {
                         id: workArea
@@ -1048,15 +1087,27 @@ Kirigami.ApplicationWindow {
                                 }
                             }
                         }
-                        Label {
+                        // The reason is shown whole; it stays outstanding until it is handled outside the app.
+                        Item {
                             Layout.fillWidth: true
-                            objectName: "selectedProblem"
+                            Layout.fillHeight: true
+                            Layout.minimumHeight: selectedProblem.implicitHeight
                             visible: window.controller.selectedFileId.length > 0 && !window.supportedSelection
-                            text: (window.selectedFile.support === "unreadable"
-                                ? qsTr("Load error · outside app · outstanding\n") : qsTr("Outside app · outstanding\n"))
-                                + (window.selectedFile.supportDetail || "")
-                            textFormat: Text.PlainText
-                            wrapMode: Text.Wrap
+                            Kirigami.PlaceholderMessage {
+                                id: selectedProblem
+                                objectName: "selectedProblem"
+                                anchors.centerIn: parent
+                                width: parent.width - Kirigami.Units.gridUnit * 2
+                                icon.name: window.rowIcon(window.selectedFile.support || "", false, null)
+                                text: window.selectedFile.support === "unreadable" ? qsTr("Load error") : qsTr("Outside app")
+                                explanation: window.plainExplanation((window.selectedFile.supportDetail || "") + "\n\n"
+                                    + qsTr("This file remains outstanding until it is handled outside Branch Truce."))
+                                helpfulAction: Kirigami.Action {
+                                    text: qsTr("Review handoff…")
+                                    icon.name: "merge"
+                                    onTriggered: handoffDialog.open()
+                                }
+                            }
                         }
                         Kirigami.InlineMessage {
                             objectName: "recoveryProblem"

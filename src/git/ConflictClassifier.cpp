@@ -14,6 +14,12 @@
 
 namespace branch_truce::git {
 namespace {
+// A reason already carries the "Outside app: " prefix; wrapping it in another reason keeps one.
+QString withoutOutsideAppPrefix(const QString &reason)
+{
+    const auto prefix = QStringLiteral("Outside app: ");
+    return reason.startsWith(prefix) ? reason.mid(prefix.size()) : reason;
+}
 void exclude(Conflict &conflict, ConflictSupport support, const QString &reason)
 {
     conflict.support = support;
@@ -203,7 +209,7 @@ public:
             else if (stages[2]->mode != stages[3]->mode) exclude(conflict, ConflictSupport::ModeConflict, QStringLiteral("Outside app: stages 2 and 3 disagree on the executable mode"));
             else if (ambiguous.contains(conflict.path)) exclude(conflict, ConflictSupport::TopologyConflict, QStringLiteral("Outside app: conflicting file and directory paths require a topology decision"));
             else if (result.repository.unsupportedPaths.contains(conflict.path)) exclude(conflict, ConflictSupport::UnverifiedSource, result.repository.unsupportedPaths.value(conflict.path));
-            else if (!result.repository.supported) exclude(conflict, ConflictSupport::UnsupportedOperation, QStringLiteral("Outside app: ") + result.repository.diagnostic);
+            else if (!result.repository.supported) exclude(conflict, ConflictSupport::UnsupportedOperation, QStringLiteral("Outside app: ") + withoutOutsideAppPrefix(result.repository.diagnostic));
             else {
                 conflict.mode = stages[2]->mode;
                 conflict.support = ConflictSupport::SupportedText;
@@ -255,7 +261,7 @@ public:
             const auto support = observed.outcome != Outcome::Rejected ? ConflictSupport::InspectionFailure
                 : observed.failure == TextConversionFailure::UnsupportedText ? ConflictSupport::UnsupportedText
                 : ConflictSupport::UnsupportedConversion;
-            exclude(conflict, support, QStringLiteral("Outside app: stage %1 cannot be edited: %2").arg(conflict.stages[source].stage).arg(observed.diagnostic));
+            exclude(conflict, support, QStringLiteral("Outside app: stage %1 cannot be edited: %2").arg(conflict.stages[source].stage).arg(withoutOutsideAppPrefix(observed.diagnostic)));
         } else if (!conflict.sources.isEmpty() && conflict.sources.front().policy != observed.text->policy) {
             exclude(conflict, ConflictSupport::UnsupportedConversion, QStringLiteral("Outside app: source conversion policies changed during classification"));
         } else {
