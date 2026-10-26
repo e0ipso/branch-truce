@@ -46,8 +46,17 @@ QVariantList TextBlocks::between(qreal top, qreal bottom) const
         if (rect.top() >= bottom) break;
         if (rect.bottom() <= top) continue;
         blocks.append(QVariantMap{{QStringLiteral("number"), block.blockNumber() + 1},
-            {QStringLiteral("position"), block.position()}});
+            {QStringLiteral("position"), block.position()},
+            {QStringLiteral("top"), rect.top()}, {QStringLiteral("height"), rect.height()}});
     }
     return blocks;
+}
+
+int TextBlocks::lineAt(int position) const
+{
+    const auto *text = document_ ? document_->textDocument() : nullptr;
+    if (!text) return 0;
+    const auto block = text->findBlock(std::clamp(position, 0, std::max(0, text->characterCount() - 1)));
+    return block.isValid() ? block.blockNumber() + 1 : 0;
 }
 }

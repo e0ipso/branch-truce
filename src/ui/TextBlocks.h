@@ -21,8 +21,12 @@ public:
     void setDocument(QQuickTextDocument *document);
     int blockCount() const;
     // The blocks whose layout meets [top, bottom) in document coordinates, in
-    // order. Each entry has number (1-based) and position (its first character).
+    // order. Each entry has number (1-based), position (its first character),
+    // and top and height, the block's extent in document coordinates.
     Q_INVOKABLE QVariantList between(qreal top, qreal bottom) const;
+    // The 1-based number of the block holding the character at position, or 0
+    // without a document.
+    Q_INVOKABLE int lineAt(int position) const;
 
 Q_SIGNALS:
     void documentChanged();

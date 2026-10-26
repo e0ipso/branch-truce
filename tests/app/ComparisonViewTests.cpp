@@ -13,6 +13,7 @@
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QMap>
+#include <QSet>
 #include <QQmlApplicationEngine>
 #include <QQmlExpression>
 #include <QQuickItem>
@@ -669,6 +670,50 @@ public:
             settle([&] { return visualLines(editor, 0) == 1; });
             CHECK(editor->property("wrapMode").toInt() == unwrappedMode);
             checkUnchanged(fixture, before);
+        });
+        suite.run("TRUCE-0113 every coloured line has a gutter glyph of its kind", [] {
+            Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
+                "header\nright first\nshared\nright extra\ntail\n"));
+            const QMap<QString, QString> glyphs{{"added", "+"}, {"changed", "~"}, {"conflict", "!"},
+                {"manual", "m"}, {"removed", QString(QChar(0x2212))}};
+            // The kinds of the line backgrounds and gap rules painted in a pane,
+            // and how many of them lack a visible glyph of that kind on their line.
+            struct Painted { QSet<QString> kinds; int unmarked = 0; };
+            const auto painted = [&](const std::string &pane) {
+                Painted found;
+                QMap<QPair<int, QString>, QString> shown;
+                for (auto *glyph : fixture.item((pane + "GutterMarkerSlot").c_str())->childItems()) {
+                    if (glyph->isVisible() && glyph->property("kind").isValid())
+                        shown.insert({glyph->property("line").toInt(), glyph->property("kind").toString()},
+                            glyph->property("text").toString());
+                }
+                for (auto *fill : fixture.item((pane + "Backgrounds").c_str())->childItems()) {
+                    const auto part = fill->property("part").toString();
+                    if (!fill->isVisible() || (part != "line" && part != "gap")) continue;
+                    const auto kind = fill->property("kind").toString();
+                    found.kinds.insert(kind);
+                    const auto glyph = shown.value({fill->property("line").toInt(), kind});
+                    if (glyph.isEmpty() || glyph != glyphs.value(kind)) ++found.unmarked;
+                }
+                return found;
+            };
+            const auto expect = [&](const std::string &pane, const QSet<QString> &kinds) {
+                settleFor(pane + " diff colours", [&] { return painted(pane).kinds == kinds; });
+                CHECK(painted(pane).unmarked == 0);
+            };
+            // At launch every region is undecided; the right source's extra line is a gap in the result.
+            expect("stage2", {"conflict"});
+            expect("result", {"conflict", "removed"});
+            expect("stage3", {"conflict"});
+            // Taking the left side decides every region, and typing in an accepted line marks it manual.
+            const auto revision = [&] { return QString::number(fixture.file().current().id); };
+            CHECK(fixture.controller.previewWholeFile("choices", revision(), "left"));
+            CHECK(fixture.controller.applyWholeFile());
+            const auto at = static_cast<int>(fixture.text().indexOf("left first"));
+            CHECK(fixture.controller.editResult("choices", revision(), at, at + 4, "LEFT"));
+            expect("stage2", {"changed"});
+            expect("result", {"manual", "removed"});
+            expect("stage3", {"added", "changed"});
         });
         suite.run("TRUCE-0058 whitespace markers paint spaces and tabs", [] {
             const std::string result = "aa bb\tcc\n";

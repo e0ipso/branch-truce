@@ -23,11 +23,26 @@ the Flickable's content child, and the TextArea pads its text by the gutter's
 width. `TextBlocks` (`src/ui/TextBlocks.h`) reads block positions from the
 QQuickTextDocument, so each line of the file gets one number and wrapped
 continuation lines get none. Between the numbers and the text the gutter keeps
-an empty column, `markerSlot`, for per-line glyphs and per-region actions. Its
+a column, `markerSlot`, for per-line glyphs and per-region actions. Its
 y coordinates are the editor's: place an item at the y of
 `editor.positionToRectangle(position)`, using the gutter's `rows` for the blocks
 near the view. Code and numbers use `Kirigami.Theme.fixedWidthFont`, and tab
 stops are four average character widths.
+
+Diff colours come from the selected file's `passages` and `regions`. Each line
+gets one kind. It is added when the compared text lacks it, changed, conflict
+when an undecided region covers it, or manual when a hand-edited result region
+covers it. Where the compared text has lines this pane lacks, the line boundary
+gets a gap rule. A
+`LineBackgrounds` layer under each TextArea paints them with the
+`Kirigami.Theme` roles in `docs/ui-design.md`, spanning whole blocks so wrapped
+lines stay covered. It never sets character formats. The `markerSlot` shows the
+matching glyph (`+`, `~`, `!`, `m`, and `−` for a gap), and the result gutter
+adds a provenance letter: `L`, `R` or `B` for a line equal to the left, right or
+both sources, `m` for a hand edit. The same layer highlights the lines of the
+navigation target in all panes with `highlightColor`. Source lines come from the
+target's region, or else from mapping its result lines through that source's
+passages. The highlight stays when the result selection changes.
 
 The result supports pointer selection, native copy/paste shortcuts, toolbar
 copy/paste and a context menu. Undo and redo use the shared text-and-decision

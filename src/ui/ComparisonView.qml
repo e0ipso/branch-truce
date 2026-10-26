@@ -75,6 +75,113 @@ ColumnLayout {
         editor.select(found, found + query.length)
         searchDetail = qsTr("Passage in %1.").arg(scope)
     }
+    // Line marks for one pane, keyed by 1-based line. lines holds the kind of
+    // each coloured line: "added" when the compared text lacks it, "changed",
+    // "conflict" inside an undecided region, or "manual" inside a hand-edited
+    // result region. gaps holds the lines above which the compared text has
+    // lines this pane lacks. letters holds the result's provenance: L, R or B
+    // for a line equal to the left, right or both sources, m for a hand edit.
+    function marksFor(pane: string, file: var): var {
+        const lines = {}
+        const gaps = {}
+        const letters = {}
+        const rank = {added: 1, changed: 2, manual: 3, conflict: 4}
+        const mark = function(first, end, kind) {
+            for (let line = first; line < end; ++line) {
+                if (!lines[line] || rank[lines[line]] < rank[kind])
+                    lines[line] = kind
+            }
+        }
+        const result = pane === "result"
+        const from = {}
+        const passages = file.passages || []
+        for (let i = 0; i < passages.length; ++i) {
+            const passage = passages[i]
+            if (result ? passage.side === "earlier" : passage.side !== pane)
+                continue
+            const first = result ? passage.resultLineBegin : passage.sourceLineBegin
+            const end = result ? passage.resultLineEnd : passage.sourceLineEnd
+            if (passage.kind === "equal") {
+                for (let line = first; result && line < end; ++line)
+                    from[line] = (from[line] || 0) | (passage.side === "stage2" ? 1 : 2)
+            } else if (passage.kind === (result ? "source-only" : "result-only")) {
+                gaps[first] = true
+            } else {
+                mark(first, end, passage.kind === "changed" || passage.kind === "ambiguous" ? "changed" : "added")
+            }
+        }
+        const regions = file.regions || []
+        for (let i = 0; i < regions.length; ++i) {
+            const region = regions[i]
+            if (result && region.mapped) {
+                if (region.state === "undecided")
+                    mark(region.resultLineBegin, region.resultLineEnd, "conflict")
+                else if (region.state === "manual")
+                    mark(region.resultLineBegin, region.resultLineEnd, "manual")
+                for (let line = region.resultLineBegin; region.handEdited && line < region.resultLineEnd; ++line)
+                    from[line] = 4
+            } else if (!result && region.side === pane && region.state === "undecided") {
+                mark(region.sourceLineBegin, region.sourceLineEnd, "conflict")
+            }
+        }
+        for (const line in from)
+            letters[line] = ["", "L", "R", "B", "m"][from[line]]
+        return {lines: lines, gaps: gaps, letters: letters}
+    }
+    // The lines of one pane that the navigation target covers, as [first, end)
+    // ranges. An empty range marks the line boundary at first.
+    function currentFor(pane: string, target: var, file: var): var {
+        const ranges = []
+        if (!target || target.fileId !== comparison.controller.selectedFileId || !(target.count > 0))
+            return ranges
+        let first = -1
+        let end = -1
+        if (target.scope === "result" && target.utf16Begin >= 0) {
+            first = resultBlocks.lineAt(target.utf16Begin)
+            end = target.utf16End > target.utf16Begin ? resultBlocks.lineAt(target.utf16End - 1) + 1 : first
+        }
+        if (pane === "result") {
+            if (first > 0)
+                ranges.push([first, end])
+            return ranges
+        }
+        const regions = file.regions || []
+        for (let i = 0; i < regions.length; ++i) {
+            if (regions[i].id === target.contributionId && regions[i].side === pane) {
+                ranges.push([regions[i].sourceLineBegin, regions[i].sourceLineEnd])
+                return ranges
+            }
+        }
+        if (first <= 0)
+            return ranges
+        // Map the result lines through this source's passages: equal lines
+        // one to one, any other passage the range meets as a whole.
+        const passages = file.passages || []
+        for (let i = 0; i < passages.length; ++i) {
+            const passage = passages[i]
+            if (passage.side !== pane)
+                continue
+            const begin = passage.resultLineBegin
+            const stop = passage.resultLineEnd
+            const meets = stop > begin
+                ? begin < Math.max(end, first + 1) && first < stop
+                : begin >= first && begin <= end
+            if (!meets)
+                continue
+            if (passage.kind === "equal") {
+                const low = Math.max(first, begin)
+                const high = Math.min(end, stop)
+                ranges.push([passage.sourceLineBegin + low - begin, passage.sourceLineBegin + high - begin])
+            } else {
+                ranges.push([passage.sourceLineBegin, passage.sourceLineEnd])
+            }
+        }
+        return ranges
+    }
+    TextBlocks {
+        id: resultBlocks
+        document: resultEditor.textDocument
+    }
     Component.onCompleted: {
         refreshSearchScopes()
         applyWhitespace()
@@ -91,7 +198,7 @@ ColumnLayout {
         property bool wrapped: false
         property var spots: []
         readonly property int markerCount: spots.length
-        readonly property color ink: editor.color.a > 0 ? editor.color : "#202020"
+        readonly property color ink: editor.color.a > 0 ? editor.color : Kirigami.Theme.textColor
         readonly property real stroke: Kirigami.Units.smallSpacing / 2
         readonly property real inset: Kirigami.Units.smallSpacing / 4
         z: 2
@@ -218,23 +325,30 @@ ColumnLayout {
     // the text. Where it is used, x follows contentX to keep it at the left edge,
     // width is implicitWidth and the editor pads its text by that width.
     //
-    // markerSlot is a column between the numbers and the text, kept free for
-    // per-line glyphs and per-region actions. Place an item in it at the y of
-    // editor.positionToRectangle(position); rows lists the blocks near the view
-    // as {number, position, y, height}.
+    // markerSlot is a column between the numbers and the text. It shows the
+    // glyph of each line in marks.lines, and the gaps in marks.gaps on its
+    // right edge; per-region actions go there too. Place an item in it at the
+    // y of editor.positionToRectangle(position); rows lists the blocks near
+    // the view as {number, position, y, height, top, extent}, where top and
+    // extent span the whole block. With provenance set, a column before the
+    // slot shows the letter in marks.letters.
     component LineGutter: Item {
         id: gutter
         required property TextArea editor
         required property Flickable viewport
         property var rows: []
+        property var marks: ({lines: {}, gaps: {}, letters: {}})
+        property bool provenance: false
         readonly property alias markerSlot: slot
         readonly property int digits: Math.max(2, String(blocks.blockCount).length)
         readonly property real numberWidth: Math.ceil(digits * gutterFont.averageCharacterWidth)
+        readonly property real letterWidth: provenance
+            ? Math.ceil(gutterFont.averageCharacterWidth) + Kirigami.Units.smallSpacing : 0
         // The editor range, with one view height either side, that rows covers.
         property real coveredTop: 0
         property real coveredBottom: -1
         z: 1
-        implicitWidth: Kirigami.Units.smallSpacing * 2 + numberWidth + slot.width + separator.width
+        implicitWidth: Kirigami.Units.smallSpacing * 2 + numberWidth + letterWidth + slot.width + separator.width
         Kirigami.Theme.colorSet: Kirigami.Theme.View
         Kirigami.Theme.inherit: false
         Accessible.ignored: true
@@ -266,9 +380,11 @@ ColumnLayout {
             for (let i = 0; i < found.length; ++i) {
                 const rect = editor.positionToRectangle(found[i].position)
                 const row = {number: found[i].number, position: found[i].position,
-                    y: editor.y + rect.y, height: rect.height}
+                    y: editor.y + rect.y, height: rect.height,
+                    top: editor.y + editor.topPadding + found[i].top, extent: found[i].height}
                 same = same && rows[i].number === row.number && rows[i].position === row.position
                     && rows[i].y === row.y && rows[i].height === row.height
+                    && rows[i].top === row.top && rows[i].extent === row.extent
                 next.push(row)
             }
             coveredTop = top
@@ -317,18 +433,142 @@ ColumnLayout {
                 horizontalAlignment: Text.AlignRight
             }
         }
+        Repeater {
+            model: gutter.provenance ? gutter.rows : []
+            delegate: Text {
+                required property var modelData
+                x: Kirigami.Units.smallSpacing * 2 + gutter.numberWidth
+                y: modelData.y
+                width: gutter.letterWidth
+                height: modelData.height
+                text: gutter.marks.letters[modelData.number] || ""
+                visible: text.length > 0
+                textFormat: Text.PlainText
+                font: gutter.editor.font
+                color: Kirigami.Theme.disabledTextColor
+            }
+        }
         Item {
             id: slot
             objectName: gutter.objectName + "MarkerSlot"
-            x: Kirigami.Units.smallSpacing * 2 + gutter.numberWidth
+            x: Kirigami.Units.smallSpacing * 2 + gutter.numberWidth + gutter.letterWidth
             width: Kirigami.Units.gridUnit
             height: gutter.height
+            Repeater {
+                model: gutter.rows
+                delegate: Text {
+                    required property var modelData
+                    readonly property int line: modelData.number
+                    readonly property string kind: gutter.marks.lines[line] || ""
+                    y: modelData.y
+                    height: modelData.height
+                    text: ({added: "+", changed: "~", conflict: "!", manual: "m"})[kind] || ""
+                    visible: text.length > 0
+                    textFormat: Text.PlainText
+                    font: gutter.editor.font
+                    color: kind === "added" ? Kirigami.Theme.positiveTextColor
+                        : kind === "changed" ? Kirigami.Theme.activeTextColor
+                        : kind === "conflict" ? Kirigami.Theme.negativeTextColor
+                        : Kirigami.Theme.neutralTextColor
+                }
+            }
+            Repeater {
+                model: gutter.rows
+                delegate: Text {
+                    required property var modelData
+                    readonly property int line: modelData.number
+                    readonly property string kind: gutter.marks.gaps[line] ? "removed" : ""
+                    anchors.right: parent.right
+                    y: modelData.top - height / 2
+                    text: kind.length > 0 ? "\u2212" : ""
+                    visible: text.length > 0
+                    textFormat: Text.PlainText
+                    font: gutter.editor.font
+                    color: Kirigami.Theme.disabledTextColor
+                }
+            }
         }
         Kirigami.Separator {
             id: separator
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             anchors.right: parent.right
+        }
+    }
+
+    // Diff colours for one pane, painted under its text rather than as
+    // character formats. The layer sits in the pane's Flickable below the
+    // TextArea, takes its rows and marks from the pane's gutter and scrolls
+    // with the text. A gap is a thin rule on a line boundary. current lists
+    // the [first, end) line ranges of the navigation target, drawn on top.
+    component LineBackgrounds: Item {
+        id: backgrounds
+        required property LineGutter gutter
+        property var current: []
+        readonly property real rule: Kirigami.Units.smallSpacing / 2
+        z: -1
+        enabled: false
+        Kirigami.Theme.colorSet: Kirigami.Theme.View
+        Kirigami.Theme.inherit: false
+        function isCurrent(line: int): bool {
+            for (let i = 0; i < current.length; ++i) {
+                if (line >= current[i][0] && line < current[i][1])
+                    return true
+            }
+            return false
+        }
+        function isCurrentGap(line: int): bool {
+            for (let i = 0; i < current.length; ++i) {
+                if (current[i][0] === line && current[i][1] === line)
+                    return true
+            }
+            return false
+        }
+        Repeater {
+            model: backgrounds.gutter.rows
+            delegate: Rectangle {
+                required property var modelData
+                readonly property string part: "line"
+                readonly property int line: modelData.number
+                readonly property string kind: backgrounds.gutter.marks.lines[line] || ""
+                visible: kind.length > 0
+                y: modelData.top
+                width: backgrounds.width
+                height: modelData.extent
+                color: kind === "added" ? Kirigami.Theme.positiveBackgroundColor
+                    : kind === "changed" ? Kirigami.Theme.activeBackgroundColor
+                    : kind === "conflict" ? Kirigami.Theme.negativeBackgroundColor
+                    : Kirigami.Theme.neutralBackgroundColor
+            }
+        }
+        Repeater {
+            model: backgrounds.gutter.rows
+            delegate: Rectangle {
+                required property var modelData
+                readonly property string part: "gap"
+                readonly property int line: modelData.number
+                readonly property string kind: backgrounds.gutter.marks.gaps[line] ? "removed" : ""
+                visible: kind.length > 0
+                y: modelData.top - height / 2
+                width: backgrounds.width
+                height: backgrounds.rule
+                color: Kirigami.Theme.disabledTextColor
+            }
+        }
+        Repeater {
+            model: backgrounds.gutter.rows
+            delegate: Rectangle {
+                required property var modelData
+                readonly property string part: "current"
+                readonly property int line: modelData.number
+                readonly property bool gap: backgrounds.isCurrentGap(line)
+                visible: gap || backgrounds.isCurrent(line)
+                y: gap ? modelData.top - height / 2 : modelData.top
+                width: backgrounds.width
+                height: gap ? backgrounds.rule * 2 : modelData.extent
+                color: Kirigami.Theme.highlightColor
+                opacity: 0.3
+            }
         }
     }
 
@@ -411,6 +651,15 @@ ColumnLayout {
                     height: Math.max(sourceText.height, sourceViewport.height)
                     editor: sourceText
                     viewport: sourceViewport
+                    marks: comparison.marksFor(sourcePane.paneName, comparison.file)
+                }
+                LineBackgrounds {
+                    objectName: sourcePane.paneName + "Backgrounds"
+                    width: Math.max(sourceText.width, sourceViewport.width)
+                    height: sourceGutter.height
+                    gutter: sourceGutter
+                    current: comparison.currentFor(sourcePane.paneName, comparison.controller.navigationTarget,
+                        comparison.file)
                 }
             }
             WhitespaceMarkers {
@@ -583,6 +832,16 @@ ColumnLayout {
                         height: Math.max(resultEditor.height, resultViewport.height)
                         editor: resultEditor
                         viewport: resultViewport
+                        provenance: true
+                        marks: comparison.marksFor("result", comparison.file)
+                    }
+                    LineBackgrounds {
+                        objectName: "resultBackgrounds"
+                        width: Math.max(resultEditor.width, resultViewport.width)
+                        height: resultGutter.height
+                        gutter: resultGutter
+                        current: comparison.currentFor("result", comparison.controller.navigationTarget,
+                            comparison.file)
                     }
                 }
                 WhitespaceMarkers {
