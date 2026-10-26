@@ -17,6 +17,18 @@ initialized with the launch-time working file. Showing earlier-version context,
 resizing panes and revealing choices preserve the result and selection. An absent
 earlier source is explained; a present empty earlier source remains available.
 
+Every pane has a line-number gutter. The `LineGutter` component sits inside the
+pane's Flickable as a sibling of the TextArea, so the result TextArea is still
+the Flickable's content child, and the TextArea pads its text by the gutter's
+width. `TextBlocks` (`src/ui/TextBlocks.h`) reads block positions from the
+QQuickTextDocument, so each line of the file gets one number and wrapped
+continuation lines get none. Between the numbers and the text the gutter keeps
+an empty column, `markerSlot`, for per-line glyphs and per-region actions. Its
+y coordinates are the editor's: place an item at the y of
+`editor.positionToRectangle(position)`, using the gutter's `rows` for the blocks
+near the view. Code and numbers use `Kirigami.Theme.fixedWidthFont`, and tab
+stops are four average character widths.
+
 The result supports pointer selection, native copy/paste shortcuts, toolbar
 copy/paste and a context menu. Undo and redo use the shared text-and-decision
 history. The adapter observes completed native key, IME and clipboard operations

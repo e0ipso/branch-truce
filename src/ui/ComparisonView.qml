@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: comparison
@@ -91,6 +92,8 @@ ColumnLayout {
         property var spots: []
         readonly property int markerCount: spots.length
         readonly property color ink: editor.color.a > 0 ? editor.color : "#202020"
+        readonly property real stroke: Kirigami.Units.smallSpacing / 2
+        readonly property real inset: Kirigami.Units.smallSpacing / 4
         z: 2
         enabled: false
         clip: true
@@ -104,7 +107,7 @@ ColumnLayout {
         }
         function refresh(): void {
             refreshQueued = false
-            if (!active || width < 1 || height < 1) {
+            if (!active || width <= 0 || height <= 0) {
                 spots = []
                 return
             }
@@ -136,14 +139,14 @@ ColumnLayout {
                 if (pos + 1 <= text.length) {
                     const next = editor.positionToRectangle(pos + 1)
                     const mappedNext = editor.mapToItem(markers, next.x, next.y)
-                    if (Math.abs(mappedNext.y - mapped.y) < 1)
+                    if (Math.abs(mappedNext.y - mapped.y) < rect.height / 2)
                         span = mappedNext.x - mapped.x
                 }
-                if (span < 2)
-                    span = ch === "\t" ? 8 : 2
+                if (span < markers.stroke)
+                    span = ch === "\t" ? Kirigami.Units.largeSpacing : markers.stroke
                 if ((ch === " " || ch === "\t") && mapped.y + rect.height >= 0
                         && mapped.x < width && mapped.x + span > 0)
-                    found.push({x: mapped.x, y: mapped.y, w: span, h: Math.max(rect.height, 2), tab: ch === "\t"})
+                    found.push({x: mapped.x, y: mapped.y, w: span, h: Math.max(rect.height, markers.stroke), tab: ch === "\t"})
                 if (mapped.x > width && !wrapped) {
                     const newline = text.indexOf("\n", pos)
                     if (newline < 0)
@@ -177,11 +180,11 @@ ColumnLayout {
                 required property var modelData
                 x: modelData.x
                 y: modelData.y
-                width: Math.max(2, modelData.w)
-                height: Math.max(2, modelData.h)
+                width: Math.max(markers.stroke, modelData.w)
+                height: Math.max(markers.stroke, modelData.h)
                 Rectangle {
                     visible: !spot.modelData.tab
-                    width: Math.min(4, Math.max(2, spot.height * 0.22))
+                    width: Math.min(Kirigami.Units.smallSpacing, Math.max(markers.stroke, spot.height * 0.22))
                     height: width
                     radius: width / 2
                     color: markers.ink
@@ -189,23 +192,143 @@ ColumnLayout {
                 }
                 Rectangle {
                     visible: spot.modelData.tab
-                    x: 1
-                    height: 2
-                    width: Math.max(1, parent.width - 8)
+                    x: markers.inset
+                    height: markers.stroke
+                    width: Math.max(markers.inset, parent.width - Kirigami.Units.largeSpacing)
                     anchors.verticalCenter: parent.verticalCenter
                     color: markers.ink
                 }
                 Rectangle {
                     visible: spot.modelData.tab
-                    width: 5
-                    height: 5
-                    radius: 1
+                    width: Kirigami.Units.smallSpacing + markers.inset
+                    height: width
+                    radius: markers.inset
                     anchors.right: parent.right
-                    anchors.rightMargin: 1
+                    anchors.rightMargin: markers.inset
                     anchors.verticalCenter: parent.verticalCenter
                     color: markers.ink
                 }
             }
+        }
+    }
+
+    // Line numbers for one pane, one per document block, so a wrapped line keeps
+    // a single number. The gutter sits in the pane's Flickable beside the
+    // TextArea: its y coordinates are the editor's and it scrolls vertically with
+    // the text. Where it is used, x follows contentX to keep it at the left edge,
+    // width is implicitWidth and the editor pads its text by that width.
+    //
+    // markerSlot is a column between the numbers and the text, kept free for
+    // per-line glyphs and per-region actions. Place an item in it at the y of
+    // editor.positionToRectangle(position); rows lists the blocks near the view
+    // as {number, position, y, height}.
+    component LineGutter: Item {
+        id: gutter
+        required property TextArea editor
+        required property Flickable viewport
+        property var rows: []
+        readonly property alias markerSlot: slot
+        readonly property int digits: Math.max(2, String(blocks.blockCount).length)
+        readonly property real numberWidth: Math.ceil(digits * gutterFont.averageCharacterWidth)
+        // The editor range, with one view height either side, that rows covers.
+        property real coveredTop: 0
+        property real coveredBottom: -1
+        z: 1
+        implicitWidth: Kirigami.Units.smallSpacing * 2 + numberWidth + slot.width + separator.width
+        Kirigami.Theme.colorSet: Kirigami.Theme.View
+        Kirigami.Theme.inherit: false
+        Accessible.ignored: true
+
+        property bool refreshQueued: false
+        function schedule(): void {
+            if (refreshQueued)
+                return
+            refreshQueued = true
+            Qt.callLater(gutter.refresh)
+        }
+        function invalidate(): void {
+            coveredBottom = -1
+            schedule()
+        }
+        function follow(): void {
+            const top = viewport.contentY - editor.y
+            if (top < coveredTop || top + viewport.height > coveredBottom)
+                schedule()
+        }
+        function refresh(): void {
+            refreshQueued = false
+            const span = viewport.height
+            const top = Math.max(0, viewport.contentY - editor.y - span)
+            const bottom = viewport.contentY - editor.y + 2 * span
+            const found = blocks.between(top - editor.topPadding, bottom - editor.topPadding)
+            const next = []
+            let same = found.length === rows.length
+            for (let i = 0; i < found.length; ++i) {
+                const rect = editor.positionToRectangle(found[i].position)
+                const row = {number: found[i].number, position: found[i].position,
+                    y: editor.y + rect.y, height: rect.height}
+                same = same && rows[i].number === row.number && rows[i].position === row.position
+                    && rows[i].y === row.y && rows[i].height === row.height
+                next.push(row)
+            }
+            coveredTop = top
+            coveredBottom = bottom
+            if (!same)
+                rows = next
+        }
+        Component.onCompleted: schedule()
+
+        TextBlocks {
+            id: blocks
+            document: gutter.editor.textDocument
+            onLayoutChanged: gutter.invalidate()
+        }
+        FontMetrics {
+            id: gutterFont
+            font: gutter.editor.font
+        }
+        Connections {
+            target: gutter.editor
+            function onWidthChanged(): void { gutter.invalidate() }
+            function onFontChanged(): void { gutter.invalidate() }
+            function onTopPaddingChanged(): void { gutter.invalidate() }
+        }
+        Connections {
+            target: gutter.viewport
+            function onContentYChanged(): void { gutter.follow() }
+            function onHeightChanged(): void { gutter.invalidate() }
+        }
+        Rectangle {
+            anchors.fill: parent
+            color: Kirigami.Theme.backgroundColor
+        }
+        Repeater {
+            model: gutter.rows
+            delegate: Text {
+                required property var modelData
+                x: Kirigami.Units.smallSpacing
+                y: modelData.y
+                width: gutter.numberWidth
+                height: modelData.height
+                text: String(modelData.number)
+                textFormat: Text.PlainText
+                font: gutter.editor.font
+                color: Kirigami.Theme.disabledTextColor
+                horizontalAlignment: Text.AlignRight
+            }
+        }
+        Item {
+            id: slot
+            objectName: gutter.objectName + "MarkerSlot"
+            x: Kirigami.Units.smallSpacing * 2 + gutter.numberWidth
+            width: Kirigami.Units.gridUnit
+            height: gutter.height
+        }
+        Kirigami.Separator {
+            id: separator
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: parent.right
         }
     }
 
@@ -216,6 +339,8 @@ ColumnLayout {
         id: paneFont
         font: resultEditor.font
     }
+    // Four characters, so tab-indented text lines up the same in every pane.
+    readonly property real tabStop: 4 * paneFont.averageCharacterWidth
 
     component CapturedSource: ColumnLayout {
         id: sourcePane
@@ -269,17 +394,29 @@ ColumnLayout {
                     selectByMouse: true
                     persistentSelection: true
                     textFormat: TextEdit.PlainText
-                    font.family: "monospace"
+                    font: Kirigami.Theme.fixedWidthFont
+                    tabStopDistance: comparison.tabStop
+                    leftPadding: sourceGutter.width + Kirigami.Units.smallSpacing
                     width: comparison.wrapLines ? sourceViewport.width : implicitWidth
                     wrapMode: comparison.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                     Accessible.name: sourcePane.paneRole + " · " + (sourcePane.source.label || "")
                     onTextChanged: if (comparison.whitespaceReady)
                         comparison.applyWhitespace()
                 }
+                LineGutter {
+                    id: sourceGutter
+                    objectName: sourcePane.paneName + "Gutter"
+                    x: sourceViewport.contentX
+                    width: implicitWidth
+                    height: Math.max(sourceText.height, sourceViewport.height)
+                    editor: sourceText
+                    viewport: sourceViewport
+                }
             }
             WhitespaceMarkers {
                 objectName: sourcePane.paneName + "Whitespace"
                 anchors.fill: parent
+                anchors.leftMargin: sourceGutter.width
                 editor: sourceText
                 viewport: sourceViewport
                 active: comparison.showWhitespace
@@ -291,7 +428,7 @@ ColumnLayout {
     ColumnLayout {
         objectName: "readingControls"
         Layout.fillWidth: true
-        spacing: 4
+        spacing: Kirigami.Units.smallSpacing
         RowLayout {
             Layout.fillWidth: true
             ComboBox {
@@ -299,7 +436,7 @@ ColumnLayout {
                 objectName: "searchScope"
                 model: [qsTr("Left source"), qsTr("Editable result"), qsTr("Right source")]
                 Accessible.name: qsTr("Search scope")
-                Layout.preferredWidth: Math.max(implicitWidth, 180)
+                Layout.preferredWidth: Math.max(implicitWidth, Kirigami.Units.gridUnit * 10)
                 onCurrentIndexChanged: comparison.searchDetail = ""
             }
             TextField {
@@ -349,7 +486,7 @@ ColumnLayout {
         orientation: Qt.Horizontal
         CapturedSource {
             id: leftPane
-            SplitView.minimumWidth: 140
+            SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
             SplitView.preferredWidth: panes.width / 3
             paneName: "stage2"
             paneRole: qsTr("Left source")
@@ -357,7 +494,7 @@ ColumnLayout {
         }
         ColumnLayout {
             id: resultColumn
-            SplitView.minimumWidth: 180
+            SplitView.minimumWidth: Kirigami.Units.gridUnit * 10
             SplitView.preferredWidth: panes.width / 3
             Label {
                 id: resultHeader
@@ -393,7 +530,9 @@ ColumnLayout {
                         selectByMouse: true
                         persistentSelection: true
                         textFormat: TextEdit.PlainText
-                        font.family: "monospace"
+                        font: Kirigami.Theme.fixedWidthFont
+                        tabStopDistance: comparison.tabStop
+                        leftPadding: resultGutter.width + Kirigami.Units.smallSpacing
                         width: comparison.wrapLines ? resultViewport.width : implicitWidth
                         wrapMode: comparison.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                         Accessible.name: qsTr("Editable result")
@@ -436,10 +575,20 @@ ColumnLayout {
                             }
                         }
                     }
+                    LineGutter {
+                        id: resultGutter
+                        objectName: "resultGutter"
+                        x: resultViewport.contentX
+                        width: implicitWidth
+                        height: Math.max(resultEditor.height, resultViewport.height)
+                        editor: resultEditor
+                        viewport: resultViewport
+                    }
                 }
                 WhitespaceMarkers {
                     objectName: "resultWhitespace"
                     anchors.fill: parent
+                    anchors.leftMargin: resultGutter.width
                     editor: resultEditor
                     viewport: resultViewport
                     active: comparison.showWhitespace
@@ -449,7 +598,7 @@ ColumnLayout {
         }
         CapturedSource {
             id: rightPane
-            SplitView.minimumWidth: 140
+            SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
             SplitView.preferredWidth: panes.width / 3
             paneName: "stage3"
             paneRole: qsTr("Right source")
@@ -466,7 +615,7 @@ ColumnLayout {
     CapturedSource {
         id: earlierPane
         Layout.fillWidth: true
-        Layout.preferredHeight: Math.min(comparison.height / 3, 180)
+        Layout.preferredHeight: Math.min(comparison.height / 3, Kirigami.Units.gridUnit * 10)
         visible: showEarlier.enabled && showEarlier.checked
         alignHeader: false
         minimumLines: 3
