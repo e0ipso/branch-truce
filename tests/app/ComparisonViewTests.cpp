@@ -852,6 +852,37 @@ public:
             CHECK(stillOutside && stillOutside->support() == Support::OutsideApp);
             CHECK(stillOutside->supportDetail() == "image content" && stillOutside->current().draft.text.empty());
         });
+        suite.run("TRUCE-0132 toggling the file list restores the result viewport scroll position", [] {
+            std::string result;
+            for (int line = 0; line < 200; ++line) result += std::string(240, static_cast<char>('a' + line % 26)) + "\n";
+            Fixture fixture(test_support::choiceFile("left\n", result, result));
+            auto *viewport = fixture.item("resultViewport");
+            settle([&] { return viewport->property("contentHeight").toReal() > viewport->height() * 2
+                && viewport->property("contentWidth").toReal() > viewport->width() * 2; });
+            // Keep the cursor at the top so that scrolling away leaves it out of view.
+            fixture.select(0, 0);
+            CHECK(viewport->setProperty("contentY", 600.0));
+            CHECK(viewport->setProperty("contentX", 40.0));
+            settle([&] { return viewport->property("contentY").toReal() == 600.0
+                && viewport->property("contentX").toReal() == 40.0; });
+            // Move the viewport between the note and the restore, as the relayout does.
+            const auto moved = QObject::connect(&fixture.controller, &ApplicationController::fileListChanged, viewport,
+                [viewport] {
+                    viewport->setProperty("contentY", 0.0);
+                    viewport->setProperty("contentX", 0.0);
+                }, Qt::DirectConnection);
+            fixture.click("toggleFileList");
+            QObject::disconnect(moved);
+            CHECK(!fixture.controller.fileListVisible());
+            settle([&] { return fixture.item("resultText")->width() > 0; });
+            CHECK(viewport->property("contentY").toReal() == 600.0);
+            CHECK(viewport->property("contentX").toReal() == 40.0);
+            fixture.click("toggleFileList");
+            CHECK(fixture.controller.fileListVisible());
+            settle([&] { return fixture.item("resultText")->width() > 0; });
+            CHECK(viewport->property("contentY").toReal() == 600.0);
+            CHECK(viewport->property("contentX").toReal() == 40.0);
+        });
         suite.run("TRUCE-0060 a failed Discard shows the restored result and retry finishes it", [] {
             Fixture fixture;
             auto saved = fixture.file().current().draft;

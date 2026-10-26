@@ -10,6 +10,7 @@
 #include <QUuid>
 #include <QQuickTextDocument>
 #include <QQuickItem>
+#include <QQuickWindow>
 #include <QTextDocument>
 #include <QTextOption>
 #include <QKeyEvent>
@@ -50,6 +51,16 @@ bool scalarBoundary(const QString &value, int offset)
     return offset >= 0 && offset <= value.size()
         && !(offset > 0 && offset < value.size() && value.at(offset).isLowSurrogate()
              && value.at(offset - 1).isHighSurrogate());
+}
+
+// A TextArea attached with TextArea.flickable sits in the Flickable's contentItem,
+// so the scrolling item is an ancestor rather than the direct parent.
+QQuickItem *scrollViewport(QObject *editor)
+{
+    auto *item = qobject_cast<QQuickItem *>(editor);
+    for (auto *parent = item ? item->parentItem() : nullptr; parent; parent = parent->parentItem())
+        if (parent->property("contentX").isValid() && parent->property("contentY").isValid()) return parent;
+    return nullptr;
 }
 
 QString documentText(const QTextDocument &document)
@@ -1312,16 +1323,10 @@ void ApplicationController::noteEditorLocation()
     heldLocation_.cursor = resultEditor_->property("cursorPosition").toInt();
     heldLocation_.selectionStart = resultEditor_->property("selectionStart").toInt();
     heldLocation_.selectionEnd = resultEditor_->property("selectionEnd").toInt();
-    if (auto *item = qobject_cast<QQuickItem *>(resultEditor_.data())) {
-        if (auto *viewport = item->parentItem()) {
-            const auto x = viewport->property("contentX");
-            const auto y = viewport->property("contentY");
-            heldLocation_.hasViewport = x.isValid() && y.isValid();
-            if (heldLocation_.hasViewport) {
-                heldLocation_.contentX = x.toReal();
-                heldLocation_.contentY = y.toReal();
-            }
-        }
+    if (auto *viewport = scrollViewport(resultEditor_.data())) {
+        heldLocation_.hasViewport = true;
+        heldLocation_.contentX = viewport->property("contentX").toReal();
+        heldLocation_.contentY = viewport->property("contentY").toReal();
     }
 }
 
@@ -1339,11 +1344,17 @@ void ApplicationController::restoreEditorLocation()
     (void)QMetaObject::invokeMethod(resultEditor_, "select", Qt::DirectConnection,
         Q_ARG(int, anchor), Q_ARG(int, heldLocation_.cursor));
     if (!heldLocation_.hasViewport) return;
-    if (auto *item = qobject_cast<QQuickItem *>(resultEditor_.data())) {
-        if (auto *viewport = item->parentItem()) {
-            viewport->setProperty("contentX", heldLocation_.contentX);
-            viewport->setProperty("contentY", heldLocation_.contentY);
-        }
+    if (auto *viewport = scrollViewport(resultEditor_.data())) {
+        const auto x = heldLocation_.contentX;
+        const auto y = heldLocation_.contentY;
+        const auto apply = [viewport, x, y] {
+            viewport->setProperty("contentX", x);
+            viewport->setProperty("contentY", y);
+        };
+        apply();
+        // The relayout after the toggle can clamp the viewport again, so reapply once it has been polished.
+        if (auto *window = viewport->window())
+            connect(window, &QQuickWindow::afterAnimating, viewport, apply, Qt::SingleShotConnection);
     }
 }
 
