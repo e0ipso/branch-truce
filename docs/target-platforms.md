@@ -212,10 +212,9 @@ which needs network access for the package lists, and checks:
    QML, Qt Quick Controls and Kirigami from the installed closure only.
 7. The installed application resolves the Breeze icon `document-save`. The
    inspection builds `tests/fixtures/AppearanceProbe.cpp` in the `-build` image
-   of the base, preloads it into `branch-truce --smoke-test` with
-   `XDG_CURRENT_DESKTOP=GNOME` and reads the `documentSave` field of its
-   record. A null icon fails, which is what a closure without
-   `qt6-svg-plugins` gives.
+   of the base, preloads it into `branch-truce --smoke-test` with no desktop
+   named and reads the `documentSave` field of its record. A null icon fails,
+   which is what a closure without `qt6-svg-plugins` gives.
 8. `apt-get remove` leaves none of the program files.
 
 ## Results on 2026-10-25

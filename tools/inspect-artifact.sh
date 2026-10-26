@@ -27,7 +27,7 @@
 #   7. The installed application resolves the Breeze icon document-save, read
 #      by tests/fixtures/AppearanceProbe.cpp preloaded into the real binary.
 #      Without the SVG icon engine in the closure the icon is null. The run
-#      names GNOME as the desktop; see the comment at that step.
+#      names no desktop, so it also covers the app naming its own icon theme.
 #   8. Removal leaves none of the package's files.
 # binutils, desktop-file-utils and appstream are installed after step 2 for
 # steps 3 and 5 only; they are not part of the closure. The probe is built
@@ -294,10 +294,10 @@ container_main() {
 
     step "Icon theme in the installed application"
     local appearance
-    # A named desktop keeps this step on the packaged SVG engine. With none
-    # named, Kirigami swaps in an icon theme that does not resolve, which the
-    # app's own startup test covers.
-    appearance=$(isolated env XDG_CURRENT_DESKTOP=GNOME LD_PRELOAD=/inspect/probe/lib/libappearance_probe.so \
+    # The isolated environment names no desktop, as on a bare session. The
+    # app has to name its own icon theme there, or Kirigami swaps in one that
+    # does not resolve and the icon is null.
+    appearance=$(isolated env LD_PRELOAD=/inspect/probe/lib/libappearance_probe.so \
         branch-truce --smoke-test "$repo" 2>&1) || fail "smoke test with the probe exited $?"
     appearance=$(printf '%s\n' "$appearance" | sed -n 's/^BRANCH_TRUCE_APPEARANCE=//p')
     echo "Appearance: ${appearance:-none}"
