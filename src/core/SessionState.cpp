@@ -146,13 +146,20 @@ void FileSession::appendHistory(RevisionId revision)
     cursor_ = history_.size() - 1;
 }
 
-Transition FileSession::replaceDraft(RevisionId expected, Draft draft)
+Transition FileSession::replaceDraft(RevisionId expected, Draft draft,
+                                     const std::optional<std::set<std::string>> &handEdited)
 {
     if (expected != current_) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
     if (exceedsEnvelope(draft.text)) return Transition::Blocked;
     if (draft == current().draft) return Transition::NoChange;
-    appendHistory(advance(draft));
+    std::shared_ptr<const CorrespondenceMap> mapping;
+    if (handEdited && correspondence()) {
+        auto replayed = correspondence()->recomputed(next_, draft.text);
+        if (!replayed.restoreHandEdits(*handEdited)) return Transition::InvalidAnchor;
+        mapping = std::make_shared<const CorrespondenceMap>(std::move(replayed));
+    } else if (handEdited && !handEdited->empty()) return Transition::InvalidAnchor;
+    appendHistory(advance(draft, std::move(mapping)));
     return Transition::Applied;
 }
 
@@ -233,7 +240,7 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
         draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
         if (exceedsEnvelope(draft.text)) return Transition::Blocked;
         if (wholeFile) {
-            *updated = updated->recomputed(next_, draft.text);
+            *updated = updated->recomputed(next_, draft.text, false);
             continue;
         }
         const auto target = std::find_if(command.targets.begin(), command.targets.end(),

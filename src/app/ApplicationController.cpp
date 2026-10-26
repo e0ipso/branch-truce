@@ -501,17 +501,13 @@ QVariantMap ApplicationController::selectedFile() const
         QStringList decisionIds;
         bool undecided = true;
         bool anyUndecided = target.decisions.empty();
-        bool accepted = !target.decisions.empty();
-        bool ignored = accepted;
-        bool combined = false;
+        bool ignored = !target.decisions.empty();
         for (const auto &id : target.decisions) {
             const auto found = file->current().draft.decisions.find(id);
             const auto state = found == file->current().draft.decisions.end() ? DecisionValue::Undecided : found->second.value;
             undecided = undecided && state == DecisionValue::Undecided;
             anyUndecided = anyUndecided || state == DecisionValue::Undecided;
-            accepted = accepted && state == DecisionValue::Accepted;
             ignored = ignored && state == DecisionValue::Ignored;
-            combined = combined || (found != file->current().draft.decisions.end() && found->second.order);
             states.push_back(state == DecisionValue::Accepted ? tr("accepted")
                 : state == DecisionValue::Ignored ? tr("ignored") : tr("undecided"));
             decisionIds.push_back(text(id));
@@ -521,22 +517,17 @@ QVariantMap ApplicationController::selectedFile() const
         const bool mapped = anchor && anchor->state == AnchorState::Mapped && anchor->result;
         const bool available = undecided && mapped;
         const bool resultMapped = mapped && resultPositions->contains(*anchor->result);
-        const auto sourceRange = std::string_view(sourceText).substr(target.source.range.begin,
-            target.source.range.end - target.source.range.begin);
-        // The anchor's manual-overlap flag also covers pre-existing launch
-        // text, so it cannot show a hand edit. Accepted content that no longer
-        // matches its source can only have been edited after the choice.
-        const bool manual = accepted && !combined && resultMapped
-            && std::string_view(mapping->text()).substr(anchor->result->begin,
-                anchor->result->end - anchor->result->begin) != sourceRange;
+        // Only editor changes set this, never text that differed at launch.
+        const bool handEdited = anchor && anchor->handEdited;
         // Any undecided line keeps the region undecided, so outstanding work stays visible.
         QVariantMap region{{QStringLiteral("id"), text(target.source.contributionId)},
             {QStringLiteral("side"), sideName(target.source.side)},
             {QStringLiteral("scope"), target.scope == ChoiceScope::Section ? QStringLiteral("section") : QStringLiteral("line")},
             {QStringLiteral("section"), text(target.section)},
             {QStringLiteral("decisionIds"), decisionIds},
-            {QStringLiteral("state"), anyUndecided ? QStringLiteral("undecided") : manual ? QStringLiteral("manual")
+            {QStringLiteral("state"), anyUndecided ? QStringLiteral("undecided") : handEdited ? QStringLiteral("manual")
                 : ignored ? QStringLiteral("ignored") : QStringLiteral("accepted")},
+            {QStringLiteral("handEdited"), handEdited},
             {QStringLiteral("mapped"), resultMapped}};
         positions.insert(region, QStringLiteral("source"), target.source.range);
         if (resultMapped) resultPositions->insert(region, QStringLiteral("result"), *anchor->result);

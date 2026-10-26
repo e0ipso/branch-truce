@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -70,7 +71,12 @@ struct ResultAnchor {
     AnchorState state;
     // Absent when unsafe. The immutable source range remains navigable.
     std::optional<ByteRange> result;
+    // The range may hold work other than its source, from launch or a later
+    // edit, so replacing it needs confirmation.
     bool manualOverlap = false;
+    // Only editor changes inside the range set this. A choice that replaces
+    // the whole range clears it.
+    bool handEdited = false;
     bool operator==(const ResultAnchor &) const = default;
 };
 
@@ -102,7 +108,13 @@ public:
                                          const std::string &selectedAnchor = {}) const;
     // Whole-buffer editor updates lack an edit location. Transform only where
     // every optimal old-to-new alignment agrees, otherwise retain ambiguity.
-    [[nodiscard]] CorrespondenceMap recomputed(RevisionId revision, std::string result) const;
+    // A whole-file command passes manual false and clears every hand edit.
+    [[nodiscard]] CorrespondenceMap recomputed(RevisionId revision, std::string result,
+                                             bool manual = true) const;
+    [[nodiscard]] std::set<std::string> handEditedAnchors() const;
+    // Recovery replays whole drafts, which cannot tell typing from a choice,
+    // so it restores the recorded flags. False if an anchor is unknown.
+    [[nodiscard]] bool restoreHandEdits(const std::set<std::string> &anchors);
 
 private:
     void align();

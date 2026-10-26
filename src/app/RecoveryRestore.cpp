@@ -10,6 +10,7 @@
 #include <QUuid>
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <unistd.h>
 
@@ -69,6 +70,16 @@ public:
             if (decision.contains("order")) state.order = number(decision.value("order"));
             require(result.decisions.emplace(id, state).second, "Duplicate recovered decision.");
         }
+        return result;
+    }
+    // Records written before hand edits were journaled have none.
+    std::set<std::string> handEdited(const QJsonValue &value) const
+    {
+        std::set<std::string> result;
+        if (value.isUndefined()) return result;
+        require(value.isArray(), "Invalid recovered hand edits.");
+        for (const auto &entry : value.toArray())
+            require(result.insert(bytes(entry)).second, "Duplicate recovered hand edit.");
         return result;
     }
     TextSnapshot text(const QJsonValue &value) const
@@ -441,9 +452,11 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
                 result.editedFiles.insert(id);
                 auto &file = found->second;
                 Transition transition = Transition::InvalidOutcome;
-                if (action == QLatin1String("replace-draft"))
-                    transition = file.replaceDraft(file.current().id, decoder.draft(state.value("current").toObject().value("draft")));
-                else if (action == QLatin1String("undo")) transition = file.undo(file.current().id);
+                if (action == QLatin1String("replace-draft")) {
+                    const auto current = state.value("current").toObject();
+                    transition = file.replaceDraft(file.current().id, decoder.draft(current.value("draft")),
+                        decoder.handEdited(current.value("handEdited")));
+                } else if (action == QLatin1String("undo")) transition = file.undo(file.current().id);
                 else if (action == QLatin1String("redo")) transition = file.redo(file.current().id);
                 else if (action == QLatin1String("discard-to-checkpoint")) transition = file.discardToCheckpoint(file.current().id);
                 else if (action == QLatin1String("discard-to-staged")) transition = file.discardToStaged(file.current().id);

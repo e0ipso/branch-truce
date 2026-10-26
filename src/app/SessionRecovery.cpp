@@ -28,10 +28,17 @@ public:
     }
     QJsonObject revision(const Revision &value)
     {
-        return {{QStringLiteral("id"), QString::number(value.id)},
+        QJsonObject result{{QStringLiteral("id"), QString::number(value.id)},
             {QStringLiteral("result"), QString::number(value.result)},
             {QStringLiteral("decisions"), QString::number(value.decisions)},
             {QStringLiteral("draft"), draft(value.draft)}};
+        // Written only when present, so records without hand edits keep the
+        // encoding they had before this field existed.
+        QJsonArray handEdited;
+        if (value.correspondence)
+            for (const auto &id : value.correspondence->handEditedAnchors()) handEdited.push_back(bytes(id));
+        if (!handEdited.isEmpty()) result.insert(QStringLiteral("handEdited"), handEdited);
+        return result;
     }
     QJsonValue outcome(const std::optional<OperationOutcome> &value)
     {

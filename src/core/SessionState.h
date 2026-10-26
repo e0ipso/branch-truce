@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -125,8 +126,10 @@ public:
     [[nodiscard]] FileFacts facts() const;
 
     // Each editing transaction carries text and decisions together. Stale
-    // editor commands cannot overwrite a later revision.
-    Transition replaceDraft(RevisionId expected, Draft draft);
+    // editor commands cannot overwrite a later revision. Changed ranges count
+    // as hand edits unless recovery replay supplies its recorded anchors.
+    Transition replaceDraft(RevisionId expected, Draft draft,
+                            const std::optional<std::set<std::string>> &handEdited = std::nullopt);
     // Binding records a stable source contribution without changing decisions.
     // Inspect the returned current anchor's state before offering a choice.
     Transition bindSourceAnchor(RevisionId expected, SourceAnchor source);

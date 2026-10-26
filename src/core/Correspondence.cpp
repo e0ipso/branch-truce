@@ -162,6 +162,7 @@ void transform(ResultAnchor &anchor, const ResultEdit &edit, bool manual, bool s
     if (selected || (!manual && range == edit.range)) {
         anchor.result = ByteRange{edit.range.begin, edit.range.begin + inserted};
         if (selected) anchor.manualOverlap = false;
+        anchor.handEdited = false;
         return;
     }
     if (range.begin == range.end) {
@@ -185,11 +186,16 @@ void transform(ResultAnchor &anchor, const ResultEdit &edit, bool manual, bool s
     } else if (edit.range.begin >= range.begin && edit.range.end <= range.end) {
         range.end = shift(range.end);
         anchor.manualOverlap = anchor.manualOverlap || manual;
+        anchor.handEdited = anchor.handEdited || manual;
         if (manual && range.begin == range.end) {
             invalidate(anchor, AnchorState::Invalidated);
             return;
         }
     } else {
+        // Typing across a boundary still changes this range by hand. A command
+        // that replaces all of it leaves no hand edit behind.
+        if (manual) anchor.handEdited = true;
+        else if (edit.range.begin <= range.begin && range.end <= edit.range.end) anchor.handEdited = false;
         invalidate(anchor, AnchorState::Invalidated);
         return;
     }
@@ -326,8 +332,11 @@ bool CorrespondenceMap::bind(SourceAnchor source)
     const auto projected = project(passages_.at(source.side), source.range, source.affinity);
     const auto id = source.contributionId;
     const AnchorOrigin origin{sessionId_, path_, sourceObjectIds_.at(source.side)};
+    // Launch text that differs from its source needs confirmation to replace,
+    // but nobody has edited it by hand yet.
     anchors_.emplace(id, ResultAnchor{origin, std::move(source), revision_, projected.state,
-        projected.range, projected.changed && projected.range && projected.range->begin != projected.range->end});
+        projected.range, projected.changed && projected.range && projected.range->begin != projected.range->end,
+        false});
     return true;
 }
 
@@ -354,11 +363,17 @@ CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdi
     return result;
 }
 
-CorrespondenceMap CorrespondenceMap::recomputed(RevisionId revision, std::string text) const
+CorrespondenceMap CorrespondenceMap::recomputed(RevisionId revision, std::string text, bool manual) const
 {
-    if (text_ == text) return atRevision(revision);
-    const auto changes = algorithm_->compare(text_, text);
     auto result = atRevision(revision);
+    if (!manual) {
+        for (auto &[id, anchor] : result.anchors_) {
+            (void)id;
+            anchor.handEdited = false;
+        }
+    }
+    if (text_ == text) return result;
+    const auto changes = algorithm_->compare(text_, text);
     for (auto &[id, anchor] : result.anchors_) {
         (void)id;
         if (anchor.state != AnchorState::Mapped || !anchor.result) continue;
@@ -367,12 +382,29 @@ CorrespondenceMap CorrespondenceMap::recomputed(RevisionId revision, std::string
         anchor.state = projected.state;
         anchor.result = projected.range;
         anchor.manualOverlap = anchor.manualOverlap || projected.changed;
+        anchor.handEdited = anchor.handEdited || (manual && projected.changed);
         if (old.begin != old.end && projected.range && projected.range->begin == projected.range->end)
             invalidate(anchor, AnchorState::Invalidated);
     }
     result.text_ = std::move(text);
     result.align();
     return result;
+}
+
+std::set<std::string> CorrespondenceMap::handEditedAnchors() const
+{
+    std::set<std::string> result;
+    for (const auto &[id, anchor] : anchors_)
+        if (anchor.handEdited) result.insert(id);
+    return result;
+}
+
+bool CorrespondenceMap::restoreHandEdits(const std::set<std::string> &anchors)
+{
+    if (std::any_of(anchors.begin(), anchors.end(), [&](const auto &id) { return !anchors_.contains(id); }))
+        return false;
+    for (auto &[id, anchor] : anchors_) anchor.handEdited = anchors.contains(id);
+    return true;
 }
 
 }

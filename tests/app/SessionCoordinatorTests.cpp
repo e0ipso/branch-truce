@@ -1,12 +1,15 @@
 #include "app/ApplicationController.h"
+#include "app/RecoveryRestore.h"
 #include "app/SessionCoordinator.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
+#include "fixtures/RecoveryJournal.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
+#include <QJsonArray>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSemaphore>
@@ -190,6 +193,70 @@ QString regionId(const QVariantMap &file, const char *side, const char *scope, i
     throw std::runtime_error("fixture has no such region");
 }
 
+// The hand-edit flag of each region, in region order.
+std::vector<bool> handEdits(const QVariantMap &file)
+{
+    std::vector<bool> result;
+    for (const auto &value : file.value("regions").toList()) {
+        const auto flag = value.toMap().value("handEdited");
+        CHECK(flag.typeId() == QMetaType::Bool);
+        result.push_back(flag.toBool());
+    }
+    return result;
+}
+
+QStringList regionStates(const QVariantMap &file)
+{
+    QStringList result;
+    for (const auto &value : file.value("regions").toList()) result.push_back(value.toMap().value("state").toString());
+    return result;
+}
+
+// viewFile() regions 6 to 9 cover the line both sides changed.
+const std::vector<bool> noHandEdits(10, false);
+const std::vector<bool> conflictLineEdited{false, false, false, false, false, false, true, true, true, true};
+
+// One file in a controller, edited through its model and read back as the view sees it.
+struct RegionView {
+    explicit RegionView(FileSession file = viewFile())
+    {
+        CHECK(controller.files()->appendFile(std::move(file)));
+        CHECK(controller.selectFile("choices"));
+    }
+    RevisionId revision() { return controller.files()->file("choices")->current().id; }
+    const std::string &text() { return controller.files()->file("choices")->current().draft.text; }
+    QVariantMap file() const { return controller.selectedFile(); }
+    QVariantMap edit(ResultEdit edit)
+    {
+        CHECK(controller.files()->editResult("choices", revision(), std::move(edit)) == Transition::Applied);
+        return file();
+    }
+    // Types at an offset into the first occurrence of some result text.
+    QVariantMap type(const std::string &near, std::size_t offset, std::string typed)
+    {
+        const auto at = text().find(near);
+        CHECK(at != std::string::npos);
+        return edit({{at + offset, at + offset}, std::move(typed)});
+    }
+    QVariantMap choose(const QString &id, ChoiceAction action)
+    {
+        const auto preview = previewChoice(*controller.files()->file("choices"), revision(), id.toStdString(), action);
+        CHECK(controller.files()->applyChoice("choices", preview, true) == Transition::Applied);
+        return file();
+    }
+    QVariantMap undo()
+    {
+        CHECK(controller.files()->undo("choices", revision()) == Transition::Applied);
+        return file();
+    }
+    QVariantMap redo()
+    {
+        CHECK(controller.files()->redo("choices", revision()) == Transition::Applied);
+        return file();
+    }
+    ApplicationController controller;
+};
+
 class Fixture {
 public:
     Fixture()
@@ -345,6 +412,184 @@ public:
             file = controller.selectedFile();
             CHECK(file.value("regions").toList()[6].toMap().value("state").toString() == "accepted");
             CHECK(file.value("resultText").toString().contains("\nleft conflict\n"));
+        });
+        test("no region reports a hand edit at launch, even where the result already differs", [] {
+            // The earlier version, the left side, and conflict markers around both sides.
+            const auto marked = test_support::choiceFile(
+                "header\nleft first\nleft second\nbridge\nleft later\ntail\n",
+                "header\nright first\nright second\nbridge\nright later\ntail\n",
+                "header\n<<<<<<< ours\nleft first\nleft second\n=======\nright first\nright second\n>>>>>>> theirs\n"
+                "bridge\n<<<<<<< ours\nleft later\n=======\nright later\n>>>>>>> theirs\ntail\n");
+            std::size_t overlapping = 0;
+            for (const auto &session : {viewFile(), test_support::choiceFile(), marked}) {
+                RegionView view(session);
+                const auto file = view.file();
+                const auto edits = handEdits(file);
+                CHECK(!edits.empty() && std::none_of(edits.begin(), edits.end(), [](bool edited) { return edited; }));
+                CHECK(!regionStates(file).contains("manual"));
+                // Replacing launch text that differs from its source still needs confirmation.
+                for (const auto &value : file.value("regions").toList()) {
+                    const auto *anchor = view.controller.files()->file("choices")->correspondence()
+                        ->anchor(value.toMap().value("id").toString().toStdString());
+                    if (anchor && anchor->manualOverlap) ++overlapping;
+                }
+            }
+            CHECK(overlapping > 0);
+        });
+        test("a hand edit marks the regions containing it in every decision state until a choice replaces it", [] {
+            RegionView view;
+            auto file = view.file();
+            const auto leftConflict = regionId(file, "stage2", "line", 6);
+            const auto rightConflict = regionId(file, "stage3", "line", 4);
+            const auto removed = regionId(file, "stage2", "line", 4);
+            const auto deletion = regionId(file, "stage3", "section", 3);
+            auto expected = QStringList(10, "undecided");
+
+            // Undecided regions report the edit and stay undecided.
+            file = view.type("base conflict", 5, "hand ");
+            CHECK(handEdits(file) == conflictLineEdited && regionStates(file) == expected);
+            file = view.choose(leftConflict, ChoiceAction::Accept);
+            expected[6] = expected[7] = "accepted";
+            CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
+
+            // Accepted.
+            file = view.type("left conflict", 5, "hand ");
+            expected[6] = expected[7] = "manual";
+            CHECK(handEdits(file) == conflictLineEdited && regionStates(file) == expected);
+            file = view.choose(rightConflict, ChoiceAction::CombineLeftFirst);
+            for (const int i : {6, 7, 8, 9}) expected[i] = "accepted";
+            CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
+            CHECK(file.value("resultText").toString().contains("\nleft conflict\nright conflict\n"));
+
+            // Combined.
+            file = view.type("right conflict", 6, "hand ");
+            for (const int i : {6, 7, 8, 9}) expected[i] = "manual";
+            CHECK(handEdits(file) == conflictLineEdited && regionStates(file) == expected);
+            file = view.choose(leftConflict, ChoiceAction::CombineRightFirst);
+            for (const int i : {6, 7, 8, 9}) expected[i] = "accepted";
+            CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
+            CHECK(file.value("resultText").toString().contains("\nright conflict\nleft conflict\n"));
+
+            // Ignored. Ignoring keeps the text, so only accepting the deletion replaces the edit.
+            file = view.choose(removed, ChoiceAction::Ignore);
+            expected[3] = expected[4] = "ignored";
+            CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
+            file = view.type("base removed", 5, "hand ");
+            expected[3] = expected[4] = "manual";
+            CHECK(handEdits(file) == std::vector<bool>{false, false, false, true, true, false, false, false, false, false});
+            CHECK(regionStates(file) == expected);
+            file = view.choose(deletion, ChoiceAction::Accept);
+            expected[3] = expected[4] = "ignored";
+            expected[5] = "accepted";
+            CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
+            CHECK(!file.value("resultText").toString().contains("removed"));
+        });
+        test("typing across a region boundary marks it and a whole-file choice clears every hand edit", [] {
+            RegionView crossing;
+            auto file = crossing.choose(regionId(crossing.file(), "stage2", "line", 6), ChoiceAction::Accept);
+            const auto at = crossing.text().find("two\nleft conflict");
+            CHECK(at != std::string::npos);
+            file = crossing.edit({{at, at + 8}, "2\nright"});
+            const auto regions = file.value("regions").toList();
+            CHECK(handEdits(file) == conflictLineEdited && !regions[6].toMap().value("mapped").toBool());
+            CHECK(regionStates(file)[6] == "manual" && regionStates(file)[8] == "undecided");
+
+            RegionView view;
+            view.type("base conflict", 5, "hand ");
+            file = view.type("base removed", 5, "hand ");
+            CHECK(handEdits(file) == std::vector<bool>{false, false, false, true, true, false, true, true, true, true});
+            auto &files = *view.controller.files();
+            const auto preview = previewWholeFile(*files.file("choices"), view.revision(), SourceSide::Stage2);
+            CHECK(files.applyWholeFile("choices", preview, true) == Transition::Applied);
+            file = view.file();
+            CHECK(handEdits(file) == noHandEdits);
+            CHECK(!regionStates(file).contains("manual") && !regionStates(file).contains("undecided"));
+        });
+        test("undo and redo restore each region's hand-edit flag with the text and decisions", [] {
+            RegionView view;
+            const auto leftConflict = regionId(view.file(), "stage2", "line", 6);
+            auto file = view.type("base conflict", 5, "hand ");
+            CHECK(handEdits(file) == conflictLineEdited);
+            file = view.choose(leftConflict, ChoiceAction::Accept);
+            CHECK(handEdits(file) == noHandEdits && regionStates(file)[6] == "accepted");
+            file = view.undo();
+            CHECK(handEdits(file) == conflictLineEdited && regionStates(file)[6] == "undecided");
+            CHECK(file.value("resultText").toString().contains("\nbase hand conflict\n"));
+            file = view.undo();
+            CHECK(handEdits(file) == noHandEdits && file.value("resultText").toString().contains("\nbase conflict\n"));
+            file = view.redo();
+            CHECK(handEdits(file) == conflictLineEdited && file.value("resultText").toString().contains("\nbase hand conflict\n"));
+            file = view.redo();
+            CHECK(handEdits(file) == noHandEdits && regionStates(file)[6] == "accepted");
+            CHECK(file.value("resultText").toString().contains("\nleft conflict\n"));
+        });
+        test("recovery replay restores each region's hand-edit flag with the text and decisions", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(viewFile()));
+            const auto revision = [&] { return model.file("choices")->current().id; };
+            const auto type = [&](const std::string &near, const std::string &typed) {
+                const auto at = model.file("choices")->current().draft.text.find(near) + 5;
+                CHECK(model.editResult("choices", revision(), {{at, at}, typed}) == Transition::Applied);
+            };
+            // A fresh replay of the journal shows the same regions as the live model.
+            const auto replayed = [&] {
+                const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+                CHECK(replay.succeeded && replay.files.size() == 1);
+                CHECK(replay.files.front().current().draft == model.file("choices")->current().draft);
+                RegionView live(*model.file("choices"));
+                RegionView restored(replay.files.front());
+                const auto file = restored.file();
+                CHECK(handEdits(file) == handEdits(live.file()) && regionStates(file) == regionStates(live.file()));
+                return file;
+            };
+            type("base conflict", "hand ");
+            CHECK(handEdits(replayed()) == conflictLineEdited);
+            const auto leftConflict = test_support::choiceTarget(
+                *model.file("choices"), SourceSide::Stage2, ChoiceScope::Line, 2).source.contributionId;
+            CHECK(model.applyChoice("choices", previewChoice(*model.file("choices"), revision(), leftConflict,
+                ChoiceAction::Accept), true) == Transition::Applied);
+            // Replay applies the choice as a whole-draft replacement, which must not count as typing.
+            auto file = replayed();
+            CHECK(handEdits(file) == noHandEdits && regionStates(file)[6] == "accepted");
+            type("left conflict", "hand ");
+            type("base removed", "hand ");
+            CHECK(model.undo("choices", revision()) == Transition::Applied);
+            file = replayed();
+            CHECK(handEdits(file) == conflictLineEdited && regionStates(file)[6] == "manual");
+            CHECK(model.redo("choices", revision()) == Transition::Applied);
+            file = replayed();
+            CHECK(handEdits(file) == std::vector<bool>{false, false, false, true, true, false, true, true, true, true});
+        });
+        test("journals without recorded hand edits replay with none and unknown anchors are rejected", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(viewFile()));
+            const auto at = model.file("choices")->current().draft.text.find("base conflict") + 5;
+            CHECK(model.editResult("choices", 1, {{at, at}, "hand "}) == Transition::Applied);
+            const auto recorded = model.file("choices")->correspondence()->handEditedAnchors();
+            CHECK(recorded.size() == 4);
+            // A writer from before the field existed recorded the same draft without it.
+            test_support::rewriteLastRecoveryState(model.recoveryDirectory(), [&](QJsonObject &state) {
+                auto current = state.value("current").toObject();
+                CHECK(current.value("handEdited").toArray().size() == static_cast<qsizetype>(recorded.size()));
+                current.remove("handEdited");
+                state.insert("current", current);
+            });
+            auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            CHECK(replay.succeeded && replay.files.size() == 1);
+            CHECK(replay.files.front().current().draft == model.file("choices")->current().draft);
+            CHECK(replay.files.front().correspondence()->handEditedAnchors().empty());
+            // Every recorded hand edit must name an anchor of the replayed draft.
+            test_support::rewriteLastRecoveryState(model.recoveryDirectory(), [](QJsonObject &state) {
+                auto current = state.value("current").toObject();
+                current.insert("handEdited", QJsonArray{state.value("path")});
+                state.insert("current", current);
+            });
+            replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            CHECK(!replay.succeeded && replay.files.empty());
         });
         test("background snapshots leave the event loop responsive and complete on its thread", [] {
             Fixture f;

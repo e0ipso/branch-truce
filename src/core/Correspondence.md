@@ -36,19 +36,28 @@ limits are unchanged.
 
 `SourceAnchor` carries the caller's stable contribution ID, immutable source
 side/range and insertion affinity. `ResultAnchor` adds captured session, path and
-source-object identities, the exact transaction revision, mapping safety and
-manual-overlap state. Contribution IDs cannot be rebound to different source
-ranges. `FileSession::replaceMapped` checks the current registered anchor and
-revision before changing either text or the contribution's decision. It changes
-only that result range, leaving neighboring edits and other decisions intact.
+source-object identities, the exact transaction revision, mapping safety,
+manual-overlap state and a hand-edit flag. Contribution IDs cannot be rebound
+to different source ranges. `FileSession::replaceMapped` checks the current
+registered anchor and revision before changing either text or the
+contribution's decision. It changes only that result range, leaving
+neighboring edits and other decisions intact.
 An overlapping manual change requires confirmation for that exact preview.
 An ambiguous or invalidated anchor remains unavailable even with confirmation.
 
 `editResult` takes an exact half-open UTF-8 byte edit. Insertions at either edge
 of a nonempty anchor stay outside it; an empty anchor explicitly chooses before
-or after. Interior edits transform the range and retain a manual-overlap flag.
-Deleting a complete target or crossing its boundary invalidates it. Automated
-replacements retain their selected anchor, including a resulting empty range.
+or after. Interior edits transform the range and set both flags. Deleting a
+complete target or crossing its boundary invalidates it. Automated replacements
+retain their selected anchor, including a resulting empty range.
+
+The two flags answer different questions. Manual overlap means a choice would
+replace work other than the source, so replacing the range needs confirmation.
+Binding sets it where the launch text already differs. The hand-edit flag
+records editor changes only. A manual edit sets it on every anchor whose range
+contains the edit or that the edit crosses, and `replaceDraft` sets it wherever
+its comparison changed a range. A choice clears it on each anchor whose whole
+range it replaces. A whole-file command clears it on all.
 
 The existing whole-buffer `replaceDraft` API has no editor edit location. Its
 old-to-new comparison transforms only ranges with unambiguous correspondence.

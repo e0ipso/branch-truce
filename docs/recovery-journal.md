@@ -31,10 +31,13 @@ State schema 1 contains a stable transaction UUID, action name, file identity
 and exact path references, support status, immutable snapshots and the complete
 current revision. A revision contains transaction, text and decision revision
 IDs, its text payload, every decision and optional combination order, and its
-unresolved-marker count. It also records the separate manual Save checkpoint,
-review declaration, written/staged revisions and operation outcomes. All
-64-bit integers are decimal strings. Decision values, outcomes and source
-format enums use the values declared by the version 1 domain types.
+unresolved-marker count. A revision with hand-edited anchors lists their
+contribution IDs in `handEdited`. A revision without the field has none, which
+covers records written before the field existed. It also records the separate
+manual Save checkpoint, review declaration, written/staged revisions and
+operation outcomes. All 64-bit integers are decimal strings. Decision values,
+outcomes and source format enums use the values declared by the version 1
+domain types.
 
 Snapshots retain all `FileSnapshots` fields, including provenance, conversion
 attributes/configuration, per-source raw and converted bytes, source labels
@@ -71,7 +74,9 @@ For every applied model command:
 No editor mutation is acknowledged through this model before step 3 succeeds.
 Exact manual edits, scoped choices and mapped editing commands serialize their
 complete resulting draft as `replace-draft` records. Replay therefore rebuilds
-the same action order before applying durable undo and redo records.
+the same action order before applying durable undo and redo records. A draft
+replacement cannot tell typing from a choice, so replay takes each revision's
+hand-edit flags from its record.
 Committed IME input uses that same acknowledgment boundary. Composition/pre-edit
 stays in the editor as visibly pending input until it becomes a command.
 Undo grouping cannot defer persistence. The desktop editor routes document
