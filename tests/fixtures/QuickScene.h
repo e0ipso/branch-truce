@@ -3,6 +3,7 @@
 // Offscreen Qt Quick helpers shared by the comparison view tests and the
 // journey acceptance suite. Both load the real BranchTruce Main scene.
 #include "TestHarness.h"
+#include <QAccessible>
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -47,6 +48,45 @@ inline QQuickItem *visualItem(QQuickItem *root, const QString &name)
     for (auto *child : root->childItems())
         if (auto *found = visualItem(child, name)) return found;
     return nullptr;
+}
+
+// The name assistive technology reads: Accessible.name, or else the text of a button or
+// label. Qt derives that second name only while an assistive technology is attached, which
+// never happens offscreen, so derive it here the same way.
+inline QString accessibleName(QQuickItem *item)
+{
+    auto *iface = QAccessible::queryAccessibleInterface(item);
+    const auto name = iface ? iface->text(QAccessible::Name) : QString();
+    if (!name.isEmpty() || !(item->inherits("QQuickAbstractButton") || item->inherits("QQuickText")))
+        return name;
+    return item->property("text").toString();
+}
+
+inline QQuickItem *visualButton(QQuickItem *root, const std::function<bool(QQuickItem *)> &match)
+{
+    if (!root || !root->isVisible()) return nullptr;
+    if (root->inherits("QQuickAbstractButton") && match(root)) return root;
+    for (auto *child : root->childItems())
+        if (auto *found = visualButton(child, match)) return found;
+    return nullptr;
+}
+
+// Find a button by objectName. Only a button the scene cannot name, such as a dialog's
+// standard button or a combo box entry, falls back to its accessible name. Never match text.
+inline QQuickItem *namedButton(QQuickItem *root, const QString &name)
+{
+    if (auto *found = visualButton(root, [&](QQuickItem *button) { return button->objectName() == name; }))
+        return found;
+    return visualButton(root, [&](QQuickItem *button) { return accessibleName(button) == name; });
+}
+
+// A popup's root item, under the window overlay, holds its header, content and footer.
+inline QQuickItem *popupRoot(QObject *popup)
+{
+    auto *item = popup->property("contentItem").value<QQuickItem *>();
+    if (!item) throw std::runtime_error("popup without content: " + popup->objectName().toStdString());
+    while (item->parentItem() && !item->parentItem()->inherits("QQuickOverlay")) item = item->parentItem();
+    return item;
 }
 
 inline void clickItem(QQuickWindow *window, QQuickItem *target)

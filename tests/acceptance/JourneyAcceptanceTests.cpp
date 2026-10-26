@@ -290,13 +290,6 @@ QQuickItem *descendant(QQuickItem *root, const std::function<bool(QQuickItem *)>
     return nullptr;
 }
 
-QQuickItem *buttonLabelled(QQuickItem *root, const QString &label)
-{
-    return descendant(root, [&](QQuickItem *candidate) {
-        return candidate->inherits("QQuickAbstractButton") && candidate->property("text").toString() == label;
-    });
-}
-
 QVariantList choiceRows(Scene &scene)
 {
     return scene.controller->selectedFile().value(QStringLiteral("choices")).toList();
@@ -309,8 +302,10 @@ QVariantMap choiceRow(Scene &scene, const QString &label)
     throw std::runtime_error("missing choice row " + label.toStdString());
 }
 
-// Scroll the scoped-choice list to one row and click one of its buttons.
-void clickChoice(Scene &scene, const QString &label, const QString &button)
+// Scroll the scoped-choice list to one row and click one of its buttons. kind is the part of
+// the button's objectName before the choice ID: Accept, Ignore, Resolve, PreviewLeftFirst or
+// PreviewRightFirst.
+void clickChoice(Scene &scene, const QString &label, const char *kind)
 {
     auto *list = scene.item("scopedChoices");
     const auto rows = choiceRows(scene);
@@ -321,23 +316,21 @@ void clickChoice(Scene &scene, const QString &label, const QString &button)
     const auto id = rows[index].toMap().value(QStringLiteral("id")).toString();
     constexpr int contain = 4; // ListView.Contain
     CHECK(QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, index), Q_ARG(int, contain)));
-    auto *target = stable(scene, (label + " " + button).toStdString(), [&]() -> QQuickItem * {
-        auto *row = descendant(list, [&](QQuickItem *candidate) {
-            return candidate->property("modelData").toMap().value(QStringLiteral("id")).toString() == id;
-        });
-        return buttonLabelled(row, button);
-    });
+    const auto name = QStringLiteral("choice") + QLatin1String(kind) + QLatin1Char('-') + id;
+    auto *target = stable(scene, (label + " " + name).toStdString(),
+                          [&] { return test_support::namedButton(list, name); });
     test_support::clickItem(scene.window, target);
 }
 
-// Click a standard dialog button such as OK, Cancel or Apply.
+// Click a dialog button by objectName, or a standard button such as OK, Cancel or Apply by
+// its accessible name. The whole dialog is searched, so a Kirigami.Dialog footer works too.
 void clickDialogButton(Scene &scene, const char *dialog, const QString &button)
 {
     auto *popup = scene.object(dialog);
     settleFor(std::string(dialog) + " opened", [&] { return popup->property("opened").toBool(); });
-    auto *footer = popup->property("footer").value<QQuickItem *>();
+    auto *root = test_support::popupRoot(popup);
     auto *target = stable(scene, std::string(dialog) + " " + button.toStdString(),
-                                               [&] { return buttonLabelled(footer, button); });
+                          [&] { return test_support::namedButton(root, button); });
     test_support::clickItem(scene.window, target);
     settleFor(std::string(dialog) + " closed", [&] { return !popup->property("visible").toBool(); });
 }
@@ -823,7 +816,7 @@ public:
                 return choiceRow(scene, QString::fromUtf8(label)).value(QStringLiteral("state")).toString();
             };
             // Replacing pre-launch content asks first; cancelling changes nothing.
-            clickChoice(scene, "Left line 2", QString::fromUtf8("Accept →"));
+            clickChoice(scene, "Left line 2", "Accept");
             CHECK(scene.item("manualReplacementNotice")->isVisible());
             expectText(scene.text("replacementBeforeText"), "base first\n", "replaced scope");
             expectText(scene.text("replacementAfterText"), "left first\n", "replacement");
@@ -832,7 +825,7 @@ public:
             CHECK(state("Left line 2") == QStringLiteral("undecided"));
 
             // A line choice decides only its side; the competitor stays available.
-            clickChoice(scene, "Left line 2", QString::fromUtf8("Accept →"));
+            clickChoice(scene, "Left line 2", "Accept");
             clickDialogButton(scene, "replacementDialog", "OK");
             expectText(scene.text("resultText"), "header\nleft first\nbridge one\nbridge two\nbridge three\nbase later\ntail\n", "accept left");
             CHECK(state("Left line 2") == QStringLiteral("accepted") && state("Right line 2") == QStringLiteral("undecided"));
@@ -841,7 +834,7 @@ public:
             history.push_back(work(scene, "story.txt"));
 
             // Resolving the other region with one side explicitly rejects its competitor.
-            clickChoice(scene, QString::fromUtf8("Right section, lines 6–6"), "Resolve using this side");
+            clickChoice(scene, QString::fromUtf8("Right section, lines 6–6"), "Resolve");
             clickDialogButton(scene, "replacementDialog", "OK");
             expectText(scene.text("resultText"), "header\nleft first\nbridge one\nbridge two\nbridge three\nright later\ntail\n", "resolve right");
             CHECK(state("Right line 6") == QStringLiteral("accepted") && state("Left line 6") == QStringLiteral("ignored"));
@@ -849,7 +842,7 @@ public:
             history.push_back(work(scene, "story.txt"));
 
             // Ignore decides against a contribution without changing the result.
-            clickChoice(scene, "Right line 2", QString::fromUtf8("\u00d7 Ignore"));
+            clickChoice(scene, "Right line 2", "Ignore");
             CHECK(!scene.object("replacementDialog")->property("visible").toBool());
             CHECK(work(scene, "story.txt").shown == history.back().shown);
             CHECK(state("Right line 2") == QStringLiteral("ignored") && state("Left line 2") == QStringLiteral("accepted"));
@@ -857,7 +850,7 @@ public:
             CHECK(!(history.back() == history[history.size() - 2]));
 
             // An inspectable order: preview Right then Left before applying it.
-            clickChoice(scene, QString::fromUtf8("Right section, lines 2–2"), "Preview Right then Left");
+            clickChoice(scene, QString::fromUtf8("Right section, lines 2–2"), "PreviewRightFirst");
             expectText(scene.object("replacementDialog")->property("title").toString(), "Preview Right then Left", "order title");
             expectText(scene.text("replacementAfterText"), "right first\nleft first\n", "ordered preview");
             clickDialogButton(scene, "replacementDialog", "OK");
@@ -987,7 +980,7 @@ public:
             CHECK(scopePopup);
             settleFor("search scope list", [&] { return scopePopup->property("opened").toBool(); });
             auto *option = stable(scene, "Editable result option", [&] {
-                return buttonLabelled(scene.window->contentItem(), QStringLiteral("Editable result"));
+                return test_support::namedButton(test_support::popupRoot(scopePopup), QStringLiteral("Editable result"));
             });
             test_support::clickItem(scene.window, option);
             settleFor("result scope", [&] {
@@ -1383,6 +1376,11 @@ public:
             Scene scene(repo);
             CHECK(scene.item("inventoryWarning")->isVisible());
             clickFile(scene, "story.txt");
+            for (const auto *name : mainControls) {
+                if (test_support::accessibleName(scene.item(name)).isEmpty())
+                    throw std::runtime_error(std::string("no accessible name: ") + name);
+                CHECK(!test_support::accessibleName(scene.item(name)).isEmpty());
+            }
             // A roomy window lays out as before, without scrolling the page.
             CHECK(!scene.object("pageScroll")->property("overflowing").toBool());
             auto *editor = scene.item("resultText");

@@ -819,10 +819,12 @@ public:
                     + "-" + std::to_string(selectionEnd) + " cursor " + std::to_string(cursor));
             CHECK(cursor == 6 && selectionStart == 1 && selectionEnd == 6);
             CHECK(fixture.controller.fileListVisible() && fixture.item("fileList")->isVisible());
-            CHECK(fixture.item("toggleFileList")->property("text").toString() == QStringLiteral("Hide file list"));
+            CHECK(fixture.item("toggleFileList")->property("checked").toBool());
+            CHECK(test_support::accessibleName(fixture.item("toggleFileList")) == QStringLiteral("Show file list"));
             fixture.click("toggleFileList");
             CHECK(!fixture.controller.fileListVisible() && !fixture.item("fileList")->isVisible());
-            CHECK(fixture.item("toggleFileList")->property("text").toString() == QStringLiteral("Show file list"));
+            CHECK(!fixture.item("toggleFileList")->property("checked").toBool());
+            CHECK(test_support::accessibleName(fixture.item("toggleFileList")) == QStringLiteral("Show file list"));
             CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
             CHECK(fixture.file().current().id == heldRevision && fixture.file().facts().unsaved);
             CHECK(fixture.text() == heldText && fixture.text().toStdString() == newer.text);
@@ -831,7 +833,8 @@ public:
             CHECK(editor->property("selectionEnd").toInt() == selectionEnd);
             fixture.click("toggleFileList");
             CHECK(fixture.controller.fileListVisible() && fixture.item("fileList")->isVisible());
-            CHECK(fixture.item("toggleFileList")->property("text").toString() == QStringLiteral("Hide file list"));
+            CHECK(fixture.item("toggleFileList")->property("checked").toBool());
+            CHECK(test_support::accessibleName(fixture.item("toggleFileList")) == QStringLiteral("Show file list"));
             CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
             CHECK(fixture.file().current().id == heldRevision && fixture.text() == heldText && fixture.file().facts().unsaved);
             CHECK(editor->property("cursorPosition").toInt() == cursor);

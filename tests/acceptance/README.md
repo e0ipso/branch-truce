@@ -15,7 +15,15 @@ The CTest name is `acceptance.journeys`, with the label `acceptance`. CTest sets
 
 The process sets up its own environment before Qt starts. It uses a private `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME` and an owner-only `XDG_RUNTIME_DIR` under one temporary directory, so the recovery store and the mergetool socket never touch the real ones. `PATH` starts with a `git` wrapper that logs every argument the app passes and refuses `fetch`, `pull`, `push`, `clone`, `ls-remote`, `remote`, `submodule` and `credential`. Each fixture repository has an unreachable `origin` remote, and the HTTP proxy variables point at a closed local port. The fixtures call `/usr/bin/git` directly, so the log holds only the app's commands.
 
-`tests/fixtures/QuickScene.h` holds the offscreen helpers that this suite shares with `tests/app/ComparisonViewTests.cpp`. They are `settle`, `visualItem`, `waitForStable`, `waitForLayout`, `clickItem` and the wrap and whitespace probes.
+`tests/fixtures/QuickScene.h` holds the offscreen helpers that this suite shares with `tests/app/ComparisonViewTests.cpp`. They are `settle`, `visualItem`, `accessibleName`, `namedButton`, `popupRoot`, `waitForStable`, `waitForLayout`, `clickItem` and the wrap and whitespace probes.
+
+## Locating controls
+
+Tests find a control by its `objectName`, never by the text on it, so a new label or an icon-only button does not break them. Give every control a test clicks an `objectName`. A delegate that repeats per row puts the row's ID in it: the scoped-choice buttons are `choiceAccept-<id>`, `choiceIgnore-<id>`, `choiceResolve-<id>`, `choicePreviewLeftFirst-<id>` and `choicePreviewRightFirst-<id>`.
+
+A button the scene cannot name, such as a dialog's standard OK, Cancel or Apply button or a combo box entry, is found by its accessible name instead. `namedButton` tries the `objectName` first and the accessible name second. `accessibleName` returns `Accessible.name`, or else the button's or label's text, which is the name Qt gives assistive technology when none is set. `clickDialogButton` searches the dialog's whole item tree from `popupRoot`, so a footer that is not a plain `DialogButtonBox` works too.
+
+Assert state through properties, not labels. The file list toggle exposes `checked` and keeps the accessible name "Show file list" while its text changes. The 1280x720 journey requires a non-empty accessible name on every control in `mainControls`.
 
 ## PRD coverage
 

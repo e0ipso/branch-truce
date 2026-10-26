@@ -586,6 +586,7 @@ Kirigami.ApplicationWindow {
                 }
                 Kirigami.InlineMessage {
                     objectName: "inventoryWarning"
+                    Accessible.name: qsTr("Session warning")
                     Layout.fillWidth: true
                     visible: !window.controller.opening
                         && window.controller.outsideAppFiles + window.controller.loadErrorFiles > 0
@@ -605,6 +606,8 @@ Kirigami.ApplicationWindow {
                     Button {
                         objectName: "toggleFileList"
                         text: window.controller.fileListVisible ? qsTr("Hide file list") : qsTr("Show file list")
+                        checked: window.controller.fileListVisible
+                        Accessible.name: qsTr("Show file list")
                         onClicked: window.controller.toggleFileList()
                     }
                     Button {
@@ -663,6 +666,7 @@ Kirigami.ApplicationWindow {
                     ListView {
                         id: fileList
                         objectName: "fileList"
+                        Accessible.name: qsTr("File list")
                         visible: window.controller.fileListVisible
                         Layout.preferredWidth: 220
                         Layout.fillHeight: true
@@ -956,16 +960,19 @@ Kirigami.ApplicationWindow {
                                 RowLayout {
                                     enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.available && !comparison.inputMethodComposing
                                     Button {
+                                        objectName: "choiceAccept-" + choiceRow.modelData.id
                                         text: qsTr("Accept →")
                                         Accessible.name: qsTr("Accept %1").arg(choiceRow.modelData.label)
                                         onClicked: window.choose(choiceRow.modelData.id, "accept")
                                     }
                                     Button {
+                                        objectName: "choiceIgnore-" + choiceRow.modelData.id
                                         text: qsTr("× Ignore")
                                         Accessible.name: qsTr("Ignore %1").arg(choiceRow.modelData.label)
                                         onClicked: window.choose(choiceRow.modelData.id, "ignore")
                                     }
                                     Button {
+                                        objectName: "choiceResolve-" + choiceRow.modelData.id
                                         text: qsTr("Resolve using this side")
                                         Accessible.name: qsTr("Resolve %1 using this side and ignore its competitor").arg(choiceRow.modelData.label)
                                         onClicked: window.choose(choiceRow.modelData.id, "resolve")
@@ -974,11 +981,13 @@ Kirigami.ApplicationWindow {
                                 RowLayout {
                                     enabled: !!window.selectedFile.canEdit && !!choiceRow.modelData.combinationAvailable && !comparison.inputMethodComposing
                                     Button {
+                                        objectName: "choicePreviewLeftFirst-" + choiceRow.modelData.id
                                         text: qsTr("Preview Left then Right")
                                         Accessible.name: qsTr("Preview both for %1, Left then Right").arg(choiceRow.modelData.label)
                                         onClicked: window.choose(choiceRow.modelData.id, "left-first")
                                     }
                                     Button {
+                                        objectName: "choicePreviewRightFirst-" + choiceRow.modelData.id
                                         text: qsTr("Preview Right then Left")
                                         Accessible.name: qsTr("Preview both for %1, Right then Left").arg(choiceRow.modelData.label)
                                         onClicked: window.choose(choiceRow.modelData.id, "right-first")
