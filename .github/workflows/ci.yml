@@ -51,10 +51,12 @@ jobs:
           ctest --test-dir build/sanitize --output-on-failure -V
 
   # Branch Truce on each supported KDE desktop target (Kubuntu 26.04 and Tuxedo
-  # OS 24.04 noble), in the pinned images of packaging/ci: CTest (including
-  # qmllint and install.prefix), then the DEB with installation, smoke-test
-  # loading, upgrade and removal checks. The version is the one in package.json;
-  # the kde-release jobs build the release packages.
+  # OS 24.04 noble), in the pinned images of packaging/ci: the build, the
+  # branch_truce_ui_qmllint target (it fails on any warning) and CTest (which
+  # repeats the lint as ui.qmllint and includes install.prefix), then the DEB
+  # with installation, smoke-test loading, upgrade and removal checks. The
+  # version is the one in package.json; the kde-release jobs build the release
+  # packages.
   kde:
     name: kde (${{ matrix.target }})
     runs-on: ubuntu-latest

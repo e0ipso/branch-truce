@@ -172,6 +172,11 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # Serial, so its Release build does not slow the wall-clock deadlines of other tests.
     set_tests_properties(install.prefix PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
 
+    # qmllint exits nonzero on any warning (src/ui/.qmllint.ini), so the generated lint target is the check.
+    add_test(NAME ui.qmllint
+        COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target branch_truce_ui_qmllint)
+    set_tests_properties(ui.qmllint PROPERTIES TIMEOUT 120 LABELS ui)
+
     add_test(NAME desktop.startup COMMAND branch-truce --smoke-test)
     set_tests_properties(desktop.startup PROPERTIES TIMEOUT 30
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
