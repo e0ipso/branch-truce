@@ -55,6 +55,9 @@ public:
     [[nodiscard]] bool hasPendingRecovery() const { return !pending_.empty(); }
     [[nodiscard]] bool hasRecoveryFailures() const { return !recoveryFailures_.empty(); }
     [[nodiscard]] bool hasRecoveryFailure(const std::string &id) const { return recoveryFailures_.contains(id); }
+    // Replaces a file's recovery error only while it is still exactly
+    // expected; an empty replacement clears it. Returns whether it changed.
+    bool settleRecoveryFailure(const std::string &id, const QString &expected, const QString &replacement = {});
     [[nodiscard]] const QString &recoveryDirectory() const { return recovery_.directory(); }
     // Moves recovery to a new store beside the current one and releases the
     // current store's lease, so a repeated load never records over captures

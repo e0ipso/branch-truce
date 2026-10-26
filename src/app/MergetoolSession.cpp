@@ -76,6 +76,12 @@ bool MergetoolSession::hasWaiter(const QByteArray &path) const
     return indexOfPath(path, true) >= 0;
 }
 
+QByteArray MergetoolSession::waitingMergedSha256(const QByteArray &path) const
+{
+    const auto index = indexOfPath(path, true);
+    return index < 0 ? QByteArray{} : waiters_.at(index).mergedSha256;
+}
+
 bool MergetoolSession::leave(const QByteArray &path)
 {
     if (controller_->resolutionBusy() || offerHeld_) return false;
@@ -247,6 +253,7 @@ void MergetoolSession::readSocket(QLocalSocket *socket)
     waiter.invocation = invocation;
     waiter.path = attached->path;
     waiter.intake = QFileInfo(message.value(QStringLiteral("intake")).toString()).canonicalFilePath();
+    waiter.mergedSha256 = attached->mergedSha256;
     waiter.socket = socket;
     waiters_.append(waiter);
     intakes_.append(waiter.intake);
@@ -257,6 +264,7 @@ void MergetoolSession::readSocket(QLocalSocket *socket)
         waiters_.last().released = true;
         return;
     }
+    controller_->acceptCopiedLaunches();
     tryAssign();
     Q_EMIT notice(tr("Git is waiting. Mark resolved hands this path back, or leave it unresolved."));
     Q_EMIT changed();

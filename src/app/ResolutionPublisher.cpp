@@ -161,6 +161,18 @@ void ResolutionPublisher::captureBaselines(const git::RepositoryContext &reposit
     }
 }
 
+bool ResolutionPublisher::adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity)
+{
+    const auto *session = file(fileId);
+    if ((attempt_ && attempt_->fileId == fileId) || !session || session->support() != Support::Supported
+        || !session->snapshots()) return false;
+    const auto captured = storage::captureDestination(repository_.worktreeRoot, QByteArray::fromStdString(session->path()));
+    if (!captured.destination || captured.destination->identity() != identity
+        || captured.destination->bytes().toStdString() != session->snapshots()->launchResult.text.bytes) return false;
+    baselines_.insert_or_assign(fileId, Baseline{captured.destination, QString{}});
+    return true;
+}
+
 bool ResolutionPublisher::assignParentStaging(const QByteArray &path)
 {
     if (attempt_) return false;

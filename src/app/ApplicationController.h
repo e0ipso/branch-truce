@@ -103,6 +103,10 @@ public:
     // The launcher assigns one parent-owned path. Repository mode leaves this empty.
     bool assignParentStaging(const QByteArray &path);
     bool verifyParentAcknowledgment(const QString &fileId, const QString &revision);
+    // Clears the recovery error of a restored file that git mergetool replaced
+    // by a same-byte copy, once a launcher waits on its path with a MERGED copy
+    // of the launch bytes and the file still has the identity recovery saw.
+    void acceptCopiedLaunches();
     [[nodiscard]] std::optional<ResolutionPublisher::Offer> parentStagingOffer(const QString &fileId) const;
     [[nodiscard]] bool mergetoolListening() const;
     [[nodiscard]] QByteArray mergetoolWaitingPath() const;
@@ -194,6 +198,8 @@ private:
     QString preferredFileId_;
     QString recoverySession_;
     std::vector<RecoveryChoice> recoveryChoices_;
+    // Restored files that only a waiting launcher can clear; see RecoveryRestore.
+    std::map<std::string, SnapshotFileIdentity> copiedLaunches_;
     std::optional<ChoicePreview> preview_;
     std::optional<NonConflictingPreview> nonConflictingPreview_;
     std::optional<WholeFilePreview> wholeFilePreview_;

@@ -247,10 +247,21 @@ void completeMutations(std::vector<RecoveryMutation> &mutations, const std::stri
     }
 }
 
+// Git mergetool replaces MERGED with a copy of the same file: a new inode and
+// new timestamps, nothing else.
+bool sameFileCopy(const SnapshotFileIdentity &launch, const SnapshotFileIdentity &live)
+{
+    return live.device == launch.device && live.mode == launch.mode && live.size == launch.size;
+}
+
+// copied receives the live identity when the only change is such a copy. The
+// file still fails; the caller decides whether a waiting launcher proves it.
 QString reconcile(FileSession &file, std::vector<RecoveryMutation> &mutations,
                   const std::vector<FileSession> &observed, const git::RepositoryContext &repository,
-                  const QString &executable, const QString &directory)
+                  const QString &executable, const QString &directory,
+                  std::optional<SnapshotFileIdentity> &copied)
 {
+    copied.reset();
     const auto *captured = file.snapshots();
     if (!captured) return file.support() == Support::Supported
         ? QStringLiteral("Recovery has no admitted source and result captures; file remains outstanding.") : QString{};
@@ -289,15 +300,22 @@ QString reconcile(FileSession &file, std::vector<RecoveryMutation> &mutations,
     }
 
     const auto live = std::find_if(observed.begin(), observed.end(), [&](const auto &entry) { return entry.id() == file.id(); });
-    const bool launchMatches = live != observed.end() && live->snapshots()
-        && live->snapshots()->launchResult == captured->launchResult
+    const bool sourcesMatch = live != observed.end() && live->snapshots()
         && live->snapshots()->conversion == captured->conversion
         && live->snapshots()->earlier == captured->earlier && live->snapshots()->stage2 == captured->stage2
         && live->snapshots()->stage3 == captured->stage3;
+    const bool launchMatches = sourcesMatch && live->snapshots()->launchResult == captured->launchResult;
     bool policyMatches = live != observed.end() && live->snapshots()
         && live->snapshots()->conversion == captured->conversion;
-    bool diskMatches = launchMatches && disk.destination->identity() == captured->launchResult.identity
-        && disk.destination->bytes() == QByteArray::fromStdString(captured->launchResult.text.bytes);
+    const auto &launch = captured->launchResult;
+    const bool launchBytes = disk.destination->bytes() == QByteArray::fromStdString(launch.text.bytes);
+    bool diskMatches = launchMatches && disk.destination->identity() == launch.identity && launchBytes;
+    // The loaded capture must already show the copy, so nothing changed it
+    // between that capture and this one.
+    const bool copiedLaunch = !diskMatches && !file.written() && sourcesMatch && launchBytes
+        && live->snapshots()->launchResult.text == launch.text
+        && live->snapshots()->launchResult.identity == disk.destination->identity()
+        && sameFileCopy(launch.identity, disk.destination->identity());
     if (file.written()) {
         const auto bytes = serialized(file, *file.written());
         diskMatches = bytes && *bytes == disk.destination->bytes();
@@ -325,10 +343,20 @@ QString reconcile(FileSession &file, std::vector<RecoveryMutation> &mutations,
         || finalDisk.destination->bytes() != disk.destination->bytes() || finalIndex.outcome != git::Outcome::Success
         || finalIndex.standardOutput != index.standardOutput)
         return QStringLiteral("Disk/index changed during recovery validation; work remains outstanding.");
+    if (copiedLaunch && indexMatches && policyMatches && modeMatches) {
+        copied = disk.destination->identity();
+        return copiedLaunchFailure();
+    }
     if (!diskMatches || !indexMatches || !policyMatches || !modeMatches)
         return QStringLiteral("Recovered draft retained, but the repository file, index or conversion policy changed. Work remains outstanding; no publication is authorized.");
     return {};
 }
+}
+
+QString copiedLaunchFailure()
+{
+    return QStringLiteral("Recovered draft retained, but the repository file was replaced by a copy with the same bytes. "
+        "Work remains outstanding unless git mergetool is waiting on this path with those bytes.");
 }
 
 storage::RecoveryTransaction mutationRecoveryTransaction(const FileSession &file, const QString &kind,
@@ -607,8 +635,10 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         if (replay.incompleteTail)
             result.diagnostics.push_back(QStringLiteral("An interrupted final recovery record was ignored. Pending input may need repeating."));
         for (auto &file : replay.files) {
-            const auto failure = reconcile(file, replay.mutations, observed, repository, executable, adopted->directory);
+            std::optional<SnapshotFileIdentity> copied;
+            const auto failure = reconcile(file, replay.mutations, observed, repository, executable, adopted->directory, copied);
             if (!failure.isEmpty()) result.failures.emplace(file.id(), failure);
+            if (copied) result.copiedLaunches.emplace(file.id(), *copied);
             result.files.push_back(std::move(file));
         }
         for (const auto &file : observed) {
@@ -629,8 +659,10 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         for (const auto &file : result.files) {
             if (!file.snapshots()) continue;
             if (fresh.outcome != git::Outcome::Success || !fresh.repository.supported
-                || !sameOperation(file.snapshots()->provenance, fresh.repository))
+                || !sameOperation(file.snapshots()->provenance, fresh.repository)) {
                 result.failures.insert_or_assign(file.id(), QStringLiteral("Operation identity changed during recovery validation; work remains outstanding."));
+                result.copiedLaunches.erase(file.id());
+            }
         }
     }
     return result;

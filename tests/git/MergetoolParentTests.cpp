@@ -12,6 +12,7 @@
 #include <QTextStream>
 
 #include <csignal>
+#include <sys/stat.h>
 
 using namespace branch_truce;
 using namespace mergetool_fixture;
@@ -158,6 +159,13 @@ void checkIntakeMatchesGit(const ParentRepository &repo, const QString &intake, 
     CHECK(readFile(intake + "/merged") == readFile(repo.path(path)));
 }
 
+ino_t inodeOf(const QString &path)
+{
+    struct stat status {};
+    CHECK(::stat(QFile::encodeName(path).constData(), &status) == 0);
+    return status.st_ino;
+}
+
 // Leaves two recovery stores that both edited other.txt, so the next session's
 // restore stays blocked on a choice. Returns the session of the "chosen" store.
 QString twoEditedStores(const ParentRepository &repo)
@@ -260,12 +268,48 @@ int main(int argc, char **argv)
         CHECK(!controller.parentStagingOffer(id));
     });
 
-    // TRUCE-0100: the in-window recovery choice reloads the files while Git waits.
-    // The chosen store captured tracked.txt before Git moved MERGED aside and
-    // copied it back, so the restore cannot validate the launched path and it
-    // stays blocked. tests/app/MergetoolLauncherTests.cpp covers the handoff
-    // after a choice with a launcher whose MERGED keeps its captured identity.
-    suite.run("a recovery choice made while Git waits stages nothing, and leave keeps the repository, the index and the app unresolved", [] {
+    // TRUCE-0100, TRUCE-0101: the in-window recovery choice reloads the files while
+    // Git waits. The chosen store captured tracked.txt before Git moved MERGED
+    // aside and copied it back, so only the inode and timestamps changed. The
+    // waiting launcher's MERGED copy holds the captured launch bytes, so the
+    // restore accepts the copy and Mark resolved hands the path back to Git.
+    suite.run("a recovery choice made while Git waits keeps the launched path editable and Mark resolved hands it back to Git", [] {
+        ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
+                                               conflict("other.txt", "other launch bytes\n")});
+        ScopedEnvironment environment(repo.environment);
+        const auto session = twoEditedStores(repo);
+        ApplicationController controller;
+        openController(controller, repo);
+        const auto launchInode = inodeOf(repo.path("tracked.txt"));
+        auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
+        waitForWaiter(controller, "tracked.txt");
+        // Git's copy is a new file with the same bytes.
+        CHECK(inodeOf(repo.path("tracked.txt")) != launchInode);
+        CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+        CHECK(readFile(controller.mergetoolIntakes().front() + "/merged") == "launch bytes\n");
+        CHECK(controller.chooseRecoverySession(session));
+        pump([&] { return !controller.opening(); }, controller.detail());
+        CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
+        CHECK(draftOf(controller, "other.txt").starts_with("chosen\n"));
+        CHECK(opened(controller, "tracked.txt").snapshots()->launchResult.text.bytes == "launch bytes\n");
+        waitForWaiter(controller, "tracked.txt");
+        const auto id = select(controller, "tracked.txt");
+        CHECK(!controller.files()->hasRecoveryFailure(id.toStdString()));
+        CHECK(controller.mergetoolWaiting());
+        editDraft(controller, "tracked.txt", QStringLiteral("reviewed after the choice\n"));
+        const auto expected = QByteArray::fromStdString(draftOf(controller, "tracked.txt"));
+        CHECK(controller.markResolved(id, revisionOf(controller, "tracked.txt"), true));
+        waitParent(*parent, 0, controller.commandMessage());
+        pump([&] { return opened(controller, "tracked.txt").facts().resolved; }, controller.commandMessage());
+        CHECK(!repo.unmerged("tracked.txt"));
+        CHECK(repo.git({"show", ":tracked.txt"}) == expected);
+        CHECK(readFile(repo.path("tracked.txt")) == expected);
+        CHECK(repo.unmerged("other.txt"));
+        CHECK(repo.stagedObject("notes.txt") == repo.notesObject);
+        CHECK(!controller.mergetoolHasWaiter("tracked.txt"));
+    });
+
+    suite.run("an outside edit of the launched path before a recovery choice keeps its recovery error and stages nothing", [] {
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
                                                conflict("other.txt", "other launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
@@ -275,11 +319,10 @@ int main(int argc, char **argv)
         openController(controller, repo);
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
-        CHECK(controller.recoveryChoices().size() == 2);
+        writeFile(repo.path("tracked.txt"), "written by another editor\n");
         CHECK(controller.chooseRecoverySession(session));
         pump([&] { return !controller.opening(); }, controller.detail());
         CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
-        CHECK(draftOf(controller, "other.txt").starts_with("chosen\n"));
         waitForWaiter(controller, "tracked.txt");
         const auto id = select(controller, "tracked.txt");
         CHECK(controller.files()->hasRecoveryFailure(id.toStdString()));
@@ -288,7 +331,7 @@ int main(int argc, char **argv)
             return parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexBefore
                 && !opened(controller, "tracked.txt").facts().resolved;
         }, controller.commandMessage() + QStringLiteral(" | the path was staged or the parent released"));
-        CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+        CHECK(readFile(repo.path("tracked.txt")) == "written by another editor\n");
         const auto draft = draftOf(controller, "tracked.txt");
         CHECK(controller.leaveMergetool());
         waitParent(*parent, 1, controller.commandMessage());

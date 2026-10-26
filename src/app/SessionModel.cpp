@@ -128,6 +128,17 @@ void SessionModel::recordRecoveryFailure(const std::string &id, const QString &e
         if (files_[row].id() == id) { notifyRow(row); return; }
 }
 
+bool SessionModel::settleRecoveryFailure(const std::string &id, const QString &expected, const QString &replacement)
+{
+    const auto failure = recoveryFailures_.find(id);
+    if (failure == recoveryFailures_.end() || failure->second != expected) return false;
+    if (replacement.isEmpty()) recoveryFailures_.erase(failure);
+    else failure->second = replacement;
+    for (std::size_t row = 0; row < files_.size(); ++row)
+        if (files_[row].id() == id) { notifyRow(row); break; }
+    return true;
+}
+
 bool SessionModel::commitCandidate(std::size_t row, FileSession candidate, const QString &action)
 {
     const auto transactionId = QUuid::createUuid().toString(QUuid::WithoutBraces);

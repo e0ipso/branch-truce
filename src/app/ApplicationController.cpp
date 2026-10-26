@@ -1,6 +1,7 @@
 #include "ApplicationController.h"
 #include "RecoveryRestore.h"
 #include "core/ResourceLimits.h"
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
 #include <QLockFile>
@@ -1502,6 +1503,33 @@ QVariantList ApplicationController::recoveryChoices() const
     return result;
 }
 
+void ApplicationController::acceptCopiedLaunches()
+{
+    bool settled = false;
+    for (auto entry = copiedLaunches_.begin(); entry != copiedLaunches_.end();) {
+        const auto *file = files_.file(entry->first);
+        if (!file || !file->snapshots() || !files_.hasRecoveryFailure(entry->first)) {
+            entry = copiedLaunches_.erase(entry);
+            continue;
+        }
+        const auto launch = QCryptographicHash::hash(QByteArray::fromStdString(file->snapshots()->launchResult.text.bytes),
+            QCryptographicHash::Sha256).toHex();
+        if (mergetool_.waitingMergedSha256(QByteArray::fromStdString(file->path())) != launch) {
+            ++entry;
+            continue;
+        }
+        // Git launched this path with the launch bytes. The copy must still be
+        // the file recovery validated; any later change keeps the path failed.
+        settled |= publisher_.adoptCopiedLaunch(entry->first, entry->second)
+            ? files_.settleRecoveryFailure(entry->first, copiedLaunchFailure())
+            : files_.settleRecoveryFailure(entry->first, copiedLaunchFailure(),
+                tr("Recovered draft retained, but the repository file changed after recovery validation. "
+                   "Work remains outstanding; no publication is authorized."));
+        entry = copiedLaunches_.erase(entry);
+    }
+    if (settled) Q_EMIT commandChanged();
+}
+
 bool ApplicationController::chooseRecoverySession(const QString &session)
 {
     const auto refuse = [this](const QString &message) {
@@ -1645,6 +1673,8 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
             const auto diagnostics = recovery->diagnostics.join(QLatin1Char('\n'));
             const bool recovered = recovery->found;
             auto choices = recovery->choices;
+            copiedLaunches_.clear();
+            auto copiedLaunches = recovery->copiedLaunches;
             const bool replaced = completion.result.status == TaskStatus::Succeeded
                 && coordinator_.completeRecoveryLoad(completion.stamp, std::move(*loaded), std::move(*recovery));
             // A recovery choice reloads while Git may still wait on a launched path.
@@ -1668,6 +1698,9 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
             QString listenError;
             if (repository_.supported) {
                 publisher_.captureBaselines(repository_);
+                copiedLaunches_ = std::move(copiedLaunches);
+                // A launcher can already wait here after an in-window recovery choice.
+                acceptCopiedLaunches();
                 listen = mergetool_.listen(repository_, &listenError);
             }
             auto detail = recovered ? tr("Recovered app drafts and decisions. Manual Save, review and Git resolution keep their recorded status.")

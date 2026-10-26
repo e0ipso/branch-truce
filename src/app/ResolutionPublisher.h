@@ -37,6 +37,10 @@ public:
                         QString gitExecutable, QObject *parent = nullptr);
 
     void captureBaselines(const git::RepositoryContext &repository);
+    // Uses the current repository file as the launch destination of a
+    // recovered file that git mergetool replaced by a copy. The file must
+    // still have the identity recovery validated and the launch bytes.
+    bool adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity);
     // Empty path clears the assignment. The assigned path is never passed to git add.
     bool assignParentStaging(const QByteArray &path);
     [[nodiscard]] bool busy() const;

@@ -152,10 +152,21 @@ locks before the reload, so another window can still take the chosen session
 in between; the reload then stays blocked as described above. A `git mergetool`
 launcher that waits during the choice stays attached. After the reload its path
 is handed to Git again, so Mark resolved releases the launcher instead of
-staging the path in the app. A store captured before Git launched the path
-fails validation for it: Git moves `MERGED` aside and copies it back, which
-gives the file a new identity. Mark resolved then refuses that path, and
-leaving it returns it to Git unresolved.
+staging the path in the app.
+
+A store can capture a path before Git launches it. Git then moves `MERGED`
+aside and copies it back, so the file gets a new inode and new timestamps with
+the same bytes. The restore treats only that change as a copy: bytes, mode,
+size, device, index entries and conversion policy must all still match the
+launch capture, and the files loaded for the restore must already show the
+copy. The path keeps a recovery error until a launcher waits on it whose
+`MERGED` copy holds the captured launch bytes, and the file still has the
+identity the restore validated. Then the error clears, the copy becomes the
+launch destination, and Mark resolved hands the path back to Git. This happens
+right after an in-window choice, or when the launcher attaches to a window it
+started. Any other change keeps the error: different bytes, mode or index
+entries, a changed conversion policy, or a file that changed after validation.
+Leaving such a path returns it to Git unresolved.
 
 The restore adapter replays the existing domain transitions and compares every
 complete state with its canonical encoding. This validates the state schema,

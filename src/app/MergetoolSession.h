@@ -30,6 +30,9 @@ public:
     [[nodiscard]] bool waitingOn(const QByteArray &path) const;
     [[nodiscard]] QByteArray waitingPath() const;
     [[nodiscard]] bool hasWaiter(const QByteArray &path) const;
+    // SHA-256 hex of the MERGED copy the waiting launcher for path kept at
+    // launch. Empty when no unreleased launcher waits on path.
+    [[nodiscard]] QByteArray waitingMergedSha256(const QByteArray &path) const;
     [[nodiscard]] bool canEndParentSession() const;
     [[nodiscard]] QStringList intakes() const { return intakes_; }
     bool leave(const QByteArray &path);
@@ -53,6 +56,7 @@ private:
         QString invocation;
         QByteArray path;
         QString intake;
+        QByteArray mergedSha256;
         QLocalSocket *socket = nullptr;
         bool assigned = false;
         bool released = false;

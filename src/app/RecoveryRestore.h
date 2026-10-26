@@ -53,8 +53,18 @@ struct RecoveryRestore {
     QStringList diagnostics;
     // Filled only when several stores with app edits block restoration.
     std::vector<RecoveryChoice> choices;
+    // Files whose repository file was replaced by a copy: bytes, mode, size,
+    // device, index entries and conversion policy still match the launch
+    // capture, only the inode and timestamps changed, as when git mergetool
+    // moves MERGED aside and copies it back. Each keeps its entry in failures
+    // (copiedLaunchFailure) with the identity validation observed; only a
+    // waiting launcher whose MERGED copy holds the launch bytes may clear it.
+    std::map<std::string, SnapshotFileIdentity> copiedLaunches;
     std::shared_ptr<QLockFile> lease;
 };
+
+// The recovery error of a copiedLaunches entry.
+[[nodiscard]] QString copiedLaunchFailure();
 
 // Worker-only, read-only repository inspection. Ambiguous inventories and
 // mismatched identities fail closed; no worktree/index mutation is retried.
