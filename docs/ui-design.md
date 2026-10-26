@@ -31,6 +31,24 @@ The window is a `Kirigami.ApplicationWindow` holding one `Kirigami.Page`. The ap
 - **Footer.** One line: the selected file's state and the session's progress. It never wraps and never holds actions.
 - **Choice controls.** Whole-file and "all non-conflicting" choices live in menus on the toolbars, not as always-visible rows of buttons. Line and region choices live in the gutters.
 
+### Connector bands
+
+Each non-equal passage gets one band between a source pane and the result. The band sits in a custom `SplitView` handle that is `Kirigami.Units.gridUnit` wide, so it takes no extra row or column from the vertical budget below.
+
+- **Fill.** The band uses the passage's own background role from section 4: positive for added, active for changed, negative for conflicting, neutral for hand-edited text. Removed text has no background fill in the panes, so its band is a `disabledTextColor` tint.
+- **Ends.** Each end of a band follows the top and bottom of its passage in that pane and moves with the pane's scroll. A band whose passage is off-screen is clipped, not repositioned.
+- **Redraw.** Bands are redrawn whenever passages or decisions change, including after undo and redo.
+- **Not a control.** A band only shows which passages correspond. Choices stay on the gutter buttons (section 6). A band never carries meaning by colour alone; the passage's gutter glyph (section 4) is the non-colour cue.
+
+### Conflict markers
+
+The result buffer keeps the Git marker lines (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`) as text until the user decides them (TECH_SPEC.md:90, TECH_SPEC.md:182). This section covers only how the view presents them.
+
+- The view collapses each marker block behind the conflict band as a reading aid. The collapsed block carries the `!` glyph on `negativeBackgroundColor`, so a conflict that still has markers stays visible and red marks only ranges that need a decision.
+- A view toggle in the file toolbar's overflow menu shows the raw marker lines. Toggling changes presentation only; it never edits the buffer.
+- Markers leave the buffer only when their section is fully decided, by a confirmed source choice that replaces the mapped range (TECH_SPEC.md:90). Collapsing, expanding and scrolling never remove them.
+- Reading aids never alter serialisation (TECH_SPEC.md:182). Save and Mark resolved write the buffer as it is, whether the markers are collapsed or shown.
+
 ### Vertical budget
 
 At 1280x720 the three panes keep at least eight visible lines of text, with the source choices shown. The acceptance test at `tests/acceptance/JourneyAcceptanceTests.cpp:1383-1437` pins this, and also checks 960x540 and 1280x800. The chrome above and below the panes therefore has a fixed allowance:
@@ -107,6 +125,9 @@ Colour comes from `Kirigami.Theme` only. No hex values, no `Qt.rgba` tints, no `
 | Conflicting | `negativeBackgroundColor` | `negativeTextColor` |
 | Hand-edited | `neutralBackgroundColor` | `neutralTextColor` |
 | Selected row | `highlightColor` | `highlightedTextColor` |
+| Accepted side | `positiveBackgroundColor` | `positiveTextColor` |
+| Ignored side | `disabledTextColor` tint on the text, no background fill | `disabledTextColor` |
+| Conflict markers remain | `negativeBackgroundColor` | `negativeTextColor` |
 
 A removed range gets only a `disabledTextColor` tint. The negative roles are reserved for conflicts, so red marks only ranges that need a decision.
 
@@ -119,6 +140,11 @@ Colour never carries meaning alone (PRD.md:35, PRD.md:73). Every coloured range 
 | Changed | `~` |
 | Conflicting | `!` |
 | Hand-edited | `m` |
+| Accepted side | `✓` |
+| Ignored side | `×` |
+| Conflict markers remain | `!` |
+
+**Decided regions.** When a region is decided, its gutter buttons are replaced by the decision glyph: `✓` for the accepted side, `×` for the ignored side. Undo is the way back (PRD.md:43); the buttons return when the decision is undone. The ignored side keeps its text, only tinted, so the user can still read what was declined.
 
 Within a changed line, word-level highlights use the same role as the line at a stronger weight, and carry no separate control (PRD.md:35).
 
@@ -134,6 +160,7 @@ Within a changed line, word-level highlights use the same role as the line at a 
 | Pattern | Source |
 | --- | --- |
 | Gutter arrow and X per side; "apply all non-conflicting" | [JetBrains: resolve conflicts](https://www.jetbrains.com/help/idea/resolve-conflicts.html) |
+| Connector graphic between a source pane and the result; conflict markers hidden from the merged text | [JetBrains: resolve conflicts](https://www.jetbrains.com/help/idea/resolve-conflicts.html) |
 | Conflict counter that doubles as next-conflict | [VS Code: merge conflicts](https://code.visualstudio.com/docs/sourcecontrol/merge-conflicts) |
 | Order-aware take-both; Mark resolved tied to the number of conflicts remaining | [KDiff3: merging](https://docs.kde.org/stable_kf6/en/kdiff3/kdiff3/merging.html) |
 | Two terminal actions only | [Sublime Merge: getting started](https://www.sublimemerge.com/docs/getting_started) |
@@ -149,6 +176,16 @@ How they apply here:
 - "Take both" respects the order of the sources and never reorders text silently.
 - Mark resolved is always available, as PRD.md:103 requires. While source choices remain undecided it opens a confirmation that names how many, instead of being disabled. Once none remain, it acts at once.
 - The terminal actions are Save (keep an app-only draft) and Mark resolved (write the result and resolve the file in Git). Nothing else ends work on a file.
+
+### Reconciliations with the gutter-controls work
+
+The open work item "Attach accept, ignore and combine controls to regions in the gutter with a conflict counter" (kde-native-look milestone) words three points differently from this brief. This brief is normative; the work item follows it.
+
+- **Mark resolved stays available.** It is never disabled for undecided choices; it opens the confirmation described above. The work item's "stays disabled" wording is superseded. This matches the current binding in `src/ui/Main.qml:1257`, which depends only on `canEdit`, composing and busy.
+- **The undecided counter lives in the main toolbar**, not in the result pane header.
+- **`edit-delete-remove` is the Ignore icon beside a gutter arrow**, not `dialog-cancel`. `dialog-cancel` stays for labelled buttons (section 3).
+
+The open documentation refresh "Refresh the UI documentation and validation notes after the redesign" (kde-native-look milestone) must not repeat the connector bands, decided-region rows, conflict-marker presentation or the JetBrains citation above. It updates the rest of the documentation after the redesign lands.
 
 ## 7. Test contract
 
