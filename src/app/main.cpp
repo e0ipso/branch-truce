@@ -3,16 +3,32 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
+#include <QFileInfo>
 #include <QIcon>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QQmlApplicationEngine>
+#include <QQuickStyle>
 #include <QTextStream>
 #include <QTimer>
+#include <algorithm>
 
 namespace {
+// The KDE style takes its colours from the user's KDE colour scheme. Fusion
+// stands in where that style is not installed. QT_QUICK_CONTROLS_STYLE wins.
+void selectControlsStyle(const QQmlEngine &engine)
+{
+    if (!qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) return;
+    const auto paths = engine.importPathList();
+    const bool kdeStyle = std::any_of(paths.cbegin(), paths.cend(), [](const QString &path) {
+        return QFileInfo::exists(path + QStringLiteral("/org/kde/desktop/qmldir"));
+    });
+    QQuickStyle::setStyle(kdeStyle ? QStringLiteral("org.kde.desktop") : QStringLiteral("Fusion"));
+    if (kdeStyle) QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
+}
+
 class RecoveryCloseGuard final : public QObject {
 public:
     explicit RecoveryCloseGuard(branch_truce::SessionModel &model) : model_(model) {}
@@ -47,9 +63,12 @@ int main(int argc, char *argv[])
     }
     QApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
+    QGuiApplication::setApplicationDisplayName(QStringLiteral("Branch Truce"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("branch-truce.local"));
     // Matches the installed desktop entry so Plasma shows its name and icon.
     QGuiApplication::setDesktopFileName(QStringLiteral(BRANCH_TRUCE_APP_ID));
+    // Off Plasma the icon theme is hicolor or none, so icon.name falls back to Breeze.
+    QIcon::setFallbackThemeName(QStringLiteral("breeze"));
     QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral(BRANCH_TRUCE_APP_ID)));
     branch_truce::ApplicationController controller;
     QCoreApplication::setApplicationVersion(controller.version());
@@ -77,6 +96,7 @@ int main(int argc, char *argv[])
     if (paths.size() > 1) parser.showHelp(2);
 
     QQmlApplicationEngine engine;
+    selectControlsStyle(engine);
     engine.setInitialProperties({{QStringLiteral("controller"), QVariant::fromValue(&controller)}});
     engine.loadFromModule(QStringLiteral("BranchTruce"), QStringLiteral("Main"));
     if (engine.rootObjects().isEmpty()) {

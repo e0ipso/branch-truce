@@ -151,8 +151,9 @@ directory. With `QML_IMPORT_TRACE=1` and `QT_DEBUG_PLUGINS=1`, the smoke
 test loaded the `BranchTruce` module from the binary's `qrc:/qt/qml/`
 resources. It loaded 23 `qmldir` files and 30 plugins from the file system,
 all under `/usr/lib/x86_64-linux-gnu/qt6`, and `dpkg-query -S` found an
-installed package for each. The offscreen runs have no platform theme, so
-they load the Fusion Qt Quick Controls style.
+installed package for each. These runs predate the app's own style
+selection, described under "Wayland, scaling and theme", so with no platform
+theme they loaded the Fusion Qt Quick Controls style.
 
 The desktop entry's `Exec=branch-truce %f`, started by `gio launch` with the
 repository as its argument, ran `/usr/bin/branch-truce /tmp/bt-repo`, which
@@ -201,6 +202,49 @@ Breeze-styled controls in the light and the dark palette; this was checked by
 looking at the screenshots, not by tracing which style plugin loaded. The colour
 scheme was set before launch; switching it while the app runs was not
 tested.
+
+Since then `src/app/main.cpp` picks the Qt Quick Controls style itself,
+before it loads the window. If `QT_QUICK_CONTROLS_STYLE` is set, Qt uses that
+style. Otherwise the app looks for `org/kde/desktop/qmldir` in the QML import
+paths. When it finds one it selects `org.kde.desktop`, with Fusion for any
+control that style lacks, and when it does not it selects Fusion. It also
+sets `breeze` as the fallback icon theme, because outside Plasma no platform
+theme names one.
+
+This was checked on 2026-10-26 on the development host (Tuxedo OS,
+`qml6-module-org-kde-desktop` 6.24.0) outside Plasma: headless sway, no
+`QT_QPA_PLATFORMTHEME`, private XDG directories and a merge with one
+conflicted file. `QML_IMPORT_TRACE=1` during `--smoke-test` showed which style
+module loaded:
+
+| Condition | Style loaded |
+| --- | --- |
+| `QT_QUICK_CONTROLS_STYLE` unset | `org.kde.desktop` |
+| `QT_QUICK_CONTROLS_STYLE=Material` | Material |
+| `org.kde.desktop` left out of the import path through a `qt.conf` | Fusion |
+
+Every run reached the `ready` state. Before the change, the unset case loaded
+Fusion.
+
+The KDE style reads its colours through KColorScheme, and the
+`org.kde.desktop` plugin links `libKF6ColorScheme.so.6` itself, so the app
+does not link `KF6::ColorScheme`. With a `kdeglobals` copied from
+`BreezeDark.colors` into the private `XDG_CONFIG_HOME`, a grim capture of the
+Wayland window has a dark background, RGB 32,35,38 against 239,240,241
+without it.
+
+Setting `KDE_COLOR_SCHEME_PATH` in the environment does nothing, before or
+after the change. The capture with it pointing at `BreezeDark.colors` matched
+the light capture pixel for pixel. KF6 reads that name only as an application
+property, which `KColorSchemeManager` sets for apps that offer their own
+scheme picker. Branch Truce has none, so its colours come from `kdeglobals`.
+
+With the `hicolor` theme sway gives Qt, `QIcon::fromTheme("document-save")`
+returned a null icon without the fallback and a real one with `breeze`. A
+small Qt program making the same calls checked this, not the app itself.
+Under `offscreen` Qt reports no icon theme at all, so the fallback does not
+apply there. A real Plasma session and the Kubuntu base were not part of
+this check.
 
 At `QT_SCALE_FACTOR=2` the text and controls doubled, but the 1920x1080
 output is only 960x540 logical pixels. That was smaller than the window's
