@@ -99,15 +99,20 @@ tools/validate-installed-artifact.sh --target tuxedo --wayland \
 
 Run them one after the other: both look for the same window on the
 compositor. Without `--wayland` the script runs only the offscreen steps.
-Each run writes `<package>.validation` (the report), seven screenshots and
-`<package>.atspi` (the accessible tree) to the output directory, and removes
-its container on exit. The script header in
+With `--wayland` it opens the window six times, at `QT_SCALE_FACTOR` 1, 1.5
+and 2 in Breeze Light and Breeze Dark, and saves each as
+`<package>-scale<factor>-<scheme>.png`. Each run writes
+`<package>.validation` (the report), eight screenshots (those six, editor
+input and the resolved mergetool) and `<package>.atspi` (the accessible
+tree) to the output directory, and removes its container on exit. The
+script header in
 [tools/validate-installed-artifact.sh](../tools/validate-installed-artifact.sh)
 lists the steps. [tools/atspi-probe.py](../tools/atspi-probe.py) is the AT-SPI
 client it runs inside the container.
 
-Each run took three to four minutes on this host. While it runs, the
-app's windows appear on the compositor and take keyboard focus.
+Each run took three to four minutes on this host when the script opened
+four windows. The two 1.5 windows add to that. While it runs, the app's
+windows appear on the compositor and take keyboard focus.
 
 ## Results
 
@@ -225,11 +230,12 @@ the window once the page has scrolled to them. It also checks that each pane
 is at least eight lines high and that the mouse wheel scrolls the page. It
 passes with the default offscreen style and with `org.kde.desktop`. In the
 container the 200% screenshot shows only the top of the page. Scrolling
-there was not exercised. The 150% runs used a copy of
-`tools/validate-installed-artifact.sh` with its scale list changed from `1 2`
-to `1.5 2`, before the package depended on `qt6-wayland`. The other checks
-in those runs gave 36 passed, 0 failed and 1 warning on each base; the
-warning was the closure-only Wayland check. Plasma's own output scaling, which KWin
+there was not exercised. The script now opens the 1.5 windows itself, so the
+steps in "How to reproduce" write `scale1.5-BreezeLight` and
+`scale1.5-BreezeDark` screenshots. The 150% results above were taken before
+that, and before the package depended on `qt6-wayland`. The other checks in those runs
+gave 36 passed, 0 failed and 1 warning on each base; the warning was the
+closure-only Wayland check. Plasma's own output scaling, which KWin
 applies rather than `QT_SCALE_FACTOR`, was not available, and 125% was not
 measured.
 

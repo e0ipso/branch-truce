@@ -30,9 +30,11 @@
 #   wayland-minimal the installed closure alone, which has qt6-wayland, starts
 #                   on the Wayland platform
 #   session         installs plasma-integration, as Plasma has
-#   window LABEL    one desktop-entry launch per scale and Breeze scheme: the
-#                   window's app_id and size from sway, an AT-SPI readiness
-#                   check and a grim screenshot DIR/<package>-LABEL.png
+#   window LABEL    one desktop-entry launch per QT_SCALE_FACTOR (1, 1.5 and
+#                   2) and Breeze scheme (BreezeLight, BreezeDark), labelled
+#                   scale<factor>-<scheme>: the window's app_id and size from
+#                   sway, an AT-SPI readiness check and a grim screenshot
+#                   DIR/<package>-LABEL.png
 #   editor-input    AT-SPI focus on the editable result, then text typed
 #                   through the Wayland virtual keyboard (wtype), read back
 #                   over AT-SPI; DIR/<package>.atspi has the accessible tree
@@ -173,7 +175,7 @@ wayland_steps() {
     inside wayland-minimal
     inside session
     local scale scheme
-    for scale in 1 2; do
+    for scale in 1 1.5 2; do
         for scheme in BreezeLight BreezeDark; do
             window_run "scale$scale-$scheme" "$scale" "$scheme"
         done

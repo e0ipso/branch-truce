@@ -358,11 +358,13 @@ if [[ -n "$python" && -n "$jq_path" ]]; then
     invoke "${wayland_env[@]}" -- "$script" "${args[@]}"
     expect_status 0
     report=$work/reports/wayland/$deb_name.validation
+    # A plain run covers QT_SCALE_FACTOR 1, 1.5 and 2 with both Breeze schemes.
     expect_files "$work/reports/wayland" "$deb_name-editor-input.png $deb_name-mergetool-resolved.png \
-$deb_name-scale1-BreezeDark.png $deb_name-scale1-BreezeLight.png $deb_name-scale2-BreezeDark.png \
-$deb_name-scale2-BreezeLight.png $deb_name.atspi $deb_name.validation "
+$deb_name-scale1-BreezeDark.png $deb_name-scale1-BreezeLight.png $deb_name-scale1.5-BreezeDark.png \
+$deb_name-scale1.5-BreezeLight.png $deb_name-scale2-BreezeDark.png $deb_name-scale2-BreezeLight.png \
+$deb_name.atspi $deb_name.validation "
     expected_steps="install kubuntu26.04 /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;wayland-minimal;session;"
-    for window in '1 BreezeLight' '1 BreezeDark' '2 BreezeLight' '2 BreezeDark'; do
+    for window in '1 BreezeLight' '1 BreezeDark' '1.5 BreezeLight' '1.5 BreezeDark' '2 BreezeLight' '2 BreezeDark'; do
         expected_steps+="gui-start $window desktop;wait-ready;gui-stop;"
     done
     expected_steps+="gui-start 1 BreezeLight desktop;wait-ready;atspi-dump;atspi-check;editor-input;gui-stop;"
@@ -378,7 +380,10 @@ $deb_name-scale2-BreezeLight.png $deb_name.atspi $deb_name.validation "
     pass
     for line in "socket $work/xdg/wayland-0" 'compositor sway 1.10-stub' 'output HEADLESS-1 1920x1080 scale 1.5' \
         'PASS scale1-BreezeLight: desktop-entry launch shows the merge session' \
+        'PASS scale1.5-BreezeLight: desktop-entry launch shows the merge session' \
+        'PASS scale1.5-BreezeDark: desktop-entry launch shows the merge session' \
         'PASS scale2-BreezeDark: desktop-entry launch shows the merge session' \
+        "screenshot $work/reports/wayland/$deb_name-scale1.5-BreezeLight.png (10,20 900x500)" \
         "screenshot $work/reports/wayland/$deb_name-scale2-BreezeDark.png (10,20 900x500)" \
         "AT-SPI tree: $work/reports/wayland/$deb_name.atspi (2 lines)" \
         "screenshot $work/reports/wayland/$deb_name-mergetool-resolved.png (10,20 900x500)" '== Result'; do
@@ -393,7 +398,7 @@ $deb_name-scale2-BreezeLight.png $deb_name.atspi $deb_name.validation "
     [[ "$(cat "$work/reports/wayland/$deb_name.atspi")" == "application 'Branch Truce'"$'\n'"  push-button | Mark resolved | focusable,enabled,showing" ]] \
         || fail "AT-SPI tree file"
     pass
-    [[ "$(wc -l < "$work/state/grim.log")" == 6 ]] && grep -qx -- "-g 10,20 900x500 $work/reports/wayland/$deb_name-editor-input.png" \
+    [[ "$(wc -l < "$work/state/grim.log")" == 8 ]] && grep -qx -- "-g 10,20 900x500 $work/reports/wayland/$deb_name-editor-input.png" \
         "$work/state/grim.log" || fail "grim calls"
     pass
     expect_no_fixture
@@ -404,14 +409,15 @@ $deb_name-scale2-BreezeLight.png $deb_name.atspi $deb_name.validation "
     expect_status 1
     report=$work/reports/unready/$deb_name.validation
     expect_files "$work/reports/unready" "$deb_name-mergetool-resolved.png $deb_name.validation "
-    for line in 'FAIL scale1-BreezeLight: session not ready' 'FAIL scale2-BreezeDark: session not ready' \
+    for line in 'FAIL scale1-BreezeLight: session not ready' 'FAIL scale1.5-BreezeDark: session not ready' \
+        'FAIL scale2-BreezeDark: session not ready' \
         'FAIL window for editor input did not become ready'; do
         grep -qxF -- "$line" "$report" || fail "report lacks: $line"
         pass
     done
     [[ "$(steps)" != *atspi-dump* && "$(steps)" != *editor-input* ]] || fail "AT-SPI steps without a ready session"
     pass
-    [[ "$(tail -n 1 "$report")" == 'Validation failed: 10 failed checks' ]] || fail "failure count: $(tail -n 1 "$report")"
+    [[ "$(tail -n 1 "$report")" == 'Validation failed: 14 failed checks' ]] || fail "failure count: $(tail -n 1 "$report")"
     pass
     expect_no_fixture
 
@@ -421,10 +427,11 @@ $deb_name-scale2-BreezeLight.png $deb_name.atspi $deb_name.validation "
     expect_status 1
     report=$work/reports/grim/$deb_name.validation
     expect_files "$work/reports/grim" "$deb_name.atspi $deb_name.validation "
-    grep -qx 'FAIL screenshot scale1-BreezeLight' "$report" && grep -qx 'FAIL screenshot mergetool-resolved' "$report" \
+    grep -qx 'FAIL screenshot scale1-BreezeLight' "$report" && grep -qx 'FAIL screenshot scale1.5-BreezeDark' "$report" \
+        && grep -qx 'FAIL screenshot mergetool-resolved' "$report" \
         || fail "screenshot failures"
     pass
-    [[ "$(tail -n 1 "$report")" == 'Validation failed: 6 failed checks' ]] || fail "failure count: $(tail -n 1 "$report")"
+    [[ "$(tail -n 1 "$report")" == 'Validation failed: 8 failed checks' ]] || fail "failure count: $(tail -n 1 "$report")"
     pass
     expect_no_fixture
 fi
