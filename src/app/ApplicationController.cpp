@@ -30,6 +30,12 @@ QString text(const std::string &value)
     return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size()));
 }
 
+// The undecorated last path component, for syntax definition lookup.
+QString fileName(const std::string &path)
+{
+    return text(path.substr(path.rfind('/') + 1));
+}
+
 QVariantMap sourceData(const std::optional<SourceSnapshot> &source)
 {
     if (!source) return {};
@@ -417,6 +423,10 @@ ApplicationController::ApplicationController(QObject *parent)
         Q_EMIT inventoryChanged();
         Q_EMIT selectedFileChanged();
     });
+    connect(this, &ApplicationController::selectedFileChanged, this, [this] {
+        const auto *file = files_.file(selectedFileId_.toStdString());
+        syntax_.setFileName(file ? fileName(file->path()) : QString{});
+    });
     connect(this, &ApplicationController::selectedFileChanged, this, &ApplicationController::syncResultEditor);
     // The mergetool waiting state and the parent staging path follow the selection.
     connect(this, &ApplicationController::selectedFileChanged, this, &ApplicationController::commandChanged);
@@ -488,12 +498,10 @@ QVariantMap ApplicationController::selectedFile() const
     case Support::Unreadable: support = QStringLiteral("unreadable"); break;
     }
     const auto &path = file->path();
-    // The undecorated last path component, for syntax definition lookup.
-    const auto fileName = path.substr(path.rfind('/') + 1);
     QVariantMap result{{QStringLiteral("fileId"), selectedFileId_},
         {QStringLiteral("path"), displayPath(selectedFileId_)},
         {QStringLiteral("pathBytes"), QByteArray(path.data(), static_cast<qsizetype>(path.size()))},
-        {QStringLiteral("fileName"), text(fileName)},
+        {QStringLiteral("fileName"), fileName(path)},
         {QStringLiteral("support"), support}, {QStringLiteral("supportDetail"), text(file->supportDetail())},
         {QStringLiteral("resultText"), text(file->current().draft.text)}};
     for (int row = 0; row < files_.totalFiles(); ++row) {
@@ -1147,9 +1155,21 @@ void ApplicationController::attachResultEditor(QObject *editor)
     resultDocument_ = quick ? quick->textDocument() : nullptr;
     if (!resultDocument_) return;
     resultDocument_->setUndoRedoEnabled(false);
+    syntax_.attach(resultDocument_);
     editorConnection_ = connect(resultDocument_, &QTextDocument::contentsChange,
         this, &ApplicationController::captureResultEdit);
     syncResultEditor();
+}
+
+void ApplicationController::attachSourceEditor(QObject *editor)
+{
+    auto *quick = editor ? editor->property("textDocument").value<QQuickTextDocument *>() : nullptr;
+    syntax_.attach(quick ? quick->textDocument() : nullptr);
+}
+
+void ApplicationController::setSyntaxBackground(const QColor &background)
+{
+    syntax_.setBackground(background);
 }
 
 void ApplicationController::setVisibleWhitespace(QObject *editor, bool visible)

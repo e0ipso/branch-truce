@@ -4,6 +4,7 @@
 #include "ResolutionPublisher.h"
 #include "SessionModel.h"
 #include "SessionCoordinator.h"
+#include "SyntaxHighlighting.h"
 #include "git/ConflictClassifier.h"
 #include <QObject>
 #include <QString>
@@ -128,6 +129,10 @@ public:
     // Discard restores the manual checkpoint, or the initial result, only after that decision is durable.
     Q_INVOKABLE bool discardUnsaved(const QString &fileId, const QString &revision);
     Q_INVOKABLE void attachResultEditor(QObject *editor);
+    // Highlights a read-only source pane with the selected file's syntax.
+    Q_INVOKABLE void attachSourceEditor(QObject *editor);
+    // The Kirigami colour scheme background; its lightness picks the syntax theme.
+    Q_INVOKABLE void setSyntaxBackground(const QColor &background);
     // Space and tab markers are paint options. They never enter the draft, history or progress.
     Q_INVOKABLE void setVisibleWhitespace(QObject *editor, bool visible);
     Q_INVOKABLE bool resultClipboard(const QString &action);
@@ -206,6 +211,7 @@ private:
     ResolutionPublisher publisher_;
     git::ConflictClassifier classifier_;
     MergetoolSession mergetool_;
+    SyntaxHighlighting syntax_;
     git::RepositoryContext repository_;
     QString state_ = QStringLiteral("idle");
     QString operation_;

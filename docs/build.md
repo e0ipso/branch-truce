@@ -32,9 +32,10 @@ system changes must report missing packages to the environment owner.
 
 CMake >= 3.28, a GCC 13.3-compatible C++20 compiler, Make and Git >= 2.43
 are required. Desktop configuration checks ECM, Qt Core/Gui/Widgets/Network/Qml/Quick/
-QuickControls2 and KF6 Kirigami. Qt Widgets supplies the QApplication bootstrap
-for desktop controls; the interface is Qt Quick/Kirigami. The current API floor
-is Qt 6.6 and KF6 6.0, below the selected reference stack Qt 6.10.2/KF6 6.24.
+QuickControls2, KF6 Kirigami and KF6 SyntaxHighlighting. Qt Widgets supplies the
+QApplication bootstrap for desktop controls; the interface is Qt Quick/Kirigami.
+The current API floor is Qt 6.6 and KF6 6.0, below the selected reference stack
+Qt 6.10.2/KF6 6.24.
 Stock Ubuntu noble's Qt 6.4 cannot build the desktop target. Do not substitute
 stock packages for Tuxedo's vendor packages.
 
@@ -83,6 +84,12 @@ sanitizer preparation tests the core without Qt, and CI runs it as
 `./tools/prepare-worktree.sh sanitize` followed by the build and CTest above.
 Desktop sanitizers can be configured separately with both desktop and
 sanitizer options ON; no preparation mode or CI job runs that configuration.
+
+`BRANCH_TRUCE_SYNTAX_HIGHLIGHTING` defaults to ON. A desktop configuration then
+requires KF6SyntaxHighlighting 6.0 or later (`libkf6syntaxhighlighting-dev`) and
+stops with an error naming that package when it is missing. Set the option OFF to
+build the desktop app without syntax highlighting; the panes then show plain
+text, and the `app.syntax-highlighting` test is not built.
 
 CTest includes the core build canary, revisioned session tests, correspondence
 command fixtures and CLI guards. Desktop builds also test the Qt session model,

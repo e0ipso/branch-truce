@@ -26,6 +26,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(BRANCH_TRUCE_BUILD_DESKTOP "Build Qt/Kirigami desktop targets" ON)
 option(BRANCH_TRUCE_WARNINGS_AS_ERRORS "Treat project warnings as errors" OFF)
 option(BRANCH_TRUCE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(BRANCH_TRUCE_SYNTAX_HIGHLIGHTING "Highlight syntax in the comparison panes with KF6 SyntaxHighlighting" ON)
 
 include(CTest)
 include(cmake/CompilerOptions.cmake)
@@ -36,6 +37,18 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     include(KDEInstallDirs6)
     find_package(Qt6 6.6 REQUIRED COMPONENTS Core Gui Widgets Qml Quick QuickControls2 Network)
     find_package(KF6Kirigami 6.0 REQUIRED)
+    if(BRANCH_TRUCE_SYNTAX_HIGHLIGHTING)
+        find_package(KF6SyntaxHighlighting 6.0 QUIET)
+        if(NOT KF6SyntaxHighlighting_FOUND)
+            message(FATAL_ERROR "KF6SyntaxHighlighting >= 6.0 was not found. The comparison panes need it "
+                "for syntax highlighting. Install libkf6syntaxhighlighting-dev "
+                "(tools/provision-debian.sh lists it), or configure with "
+                "-DBRANCH_TRUCE_SYNTAX_HIGHLIGHTING=OFF to build without highlighting.")
+        endif()
+        message(STATUS "Syntax highlighting: KF6SyntaxHighlighting ${KF6SyntaxHighlighting_VERSION}")
+    else()
+        message(STATUS "Syntax highlighting: OFF")
+    endif()
     qt_standard_project_setup(REQUIRES 6.6)
     message(STATUS "Desktop dependencies: Qt ${Qt6_VERSION}, ECM ${ECM_VERSION}, Kirigami ${KF6Kirigami_VERSION}")
     # Reverse-DNS form of the organization domain branch-truce.local. It names

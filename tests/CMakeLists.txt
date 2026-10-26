@@ -88,6 +88,16 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     set_tests_properties(app.comparison-view PROPERTIES TIMEOUT 60
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
+    if(BRANCH_TRUCE_SYNTAX_HIGHLIGHTING)
+        add_executable(branch_truce_syntax_highlighting_tests app/SyntaxHighlightingTests.cpp)
+        target_include_directories(branch_truce_syntax_highlighting_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(branch_truce_syntax_highlighting_tests PRIVATE branch_truce_controller
+            branch_truce_uiplugin Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
+        add_test(NAME app.syntax-highlighting COMMAND branch_truce_syntax_highlighting_tests)
+        set_tests_properties(app.syntax-highlighting PROPERTIES TIMEOUT 60
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    endif()
+
     # PRD observable acceptance examples, driven through the real Main scene and a real Git merge.
     # Entry point and coverage notes: tests/acceptance/README.md.
     add_executable(branch_truce_journey_acceptance_tests acceptance/JourneyAcceptanceTests.cpp)

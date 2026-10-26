@@ -44,6 +44,21 @@ navigation target in all panes with `highlightColor`. Source lines come from the
 target's region, or else from mapping its result lines through that source's
 passages. The highlight stays when the result selection changes.
 
+The panes highlight syntax with KF6 SyntaxHighlighting. The controller gives
+the documents of the left, right, earlier and result panes one `PaneHighlighter`
+each (`src/app/PaneHighlighter.h`). It is the only code that sets character
+formats on those documents. Their own QML layers draw the line backgrounds and
+whitespace markers. The selected file's `fileName` picks the definition through
+`Repository::definitionForFileName`, so `app.py` gets Python and `README.md`
+Markdown. A name with no definition, such as a `.txt` file, detaches the
+highlighters and the panes stay plain. The view passes
+`Kirigami.Theme.backgroundColor` to `setSyntaxBackground` when it loads and
+whenever the colour scheme changes. A background with HSL lightness below one
+half selects Breeze Dark, any other Breeze Light. A highlight pass changes
+formats only. The result's edit capture compares the document text with the
+text it last loaded or captured, so the pass adds no revision and no recovery
+transaction (`app.syntax-highlighting`).
+
 Selecting a file opens it at its first undecided region. Replacing the document
 text leaves the editor's cursor at the end of the file, which would scroll the
 result there. The controller moves the cursor to the start of the first

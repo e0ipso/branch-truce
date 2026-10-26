@@ -2,10 +2,16 @@ add_library(branch_truce_controller STATIC ApplicationController.cpp Application
     SessionModel.cpp SessionModel.h SessionRecovery.cpp SessionRecovery.h RecoveryRestore.cpp RecoveryRestore.h
     SessionCoordinator.cpp SessionCoordinator.h ResolutionPublisher.cpp ResolutionPublisher.h
     MergetoolProtocol.cpp MergetoolProtocol.h MergetoolSession.cpp MergetoolSession.h
-    MergetoolLauncher.cpp MergetoolLauncher.h)
+    MergetoolLauncher.cpp MergetoolLauncher.h SyntaxHighlighting.h)
 target_include_directories(branch_truce_controller PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(branch_truce_controller PUBLIC Qt6::Core Qt6::Network Qt6::Quick branch_truce_core branch_truce_git
     PRIVATE branch_truce_storage branch_truce_build_options)
+if(BRANCH_TRUCE_SYNTAX_HIGHLIGHTING)
+    target_sources(branch_truce_controller PRIVATE SyntaxHighlighting.cpp PaneHighlighter.cpp PaneHighlighter.h)
+    target_link_libraries(branch_truce_controller PUBLIC KF6::SyntaxHighlighting)
+else()
+    target_sources(branch_truce_controller PRIVATE SyntaxHighlightingDisabled.cpp)
+endif()
 qt_add_executable(branch-truce main.cpp)
 # Widgets for QApplication, which the org.kde.desktop style draws through.
 target_link_libraries(branch-truce PRIVATE branch_truce_controller Qt6::Widgets

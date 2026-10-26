@@ -19,6 +19,8 @@ ColumnLayout {
     // Text panes never get shorter than this many lines; on a short window the page scrolls instead.
     property int minimumPaneLines: 8
     property bool whitespaceReady: false
+    // The controller picks Breeze Light or Breeze Dark syntax colours from its lightness.
+    readonly property color schemeBackground: Kirigami.Theme.backgroundColor
     readonly property string searchStatusText: searchDetail.length > 0
         ? searchDetail
         : qsTr("Search scope: %1.").arg(searchScope.currentText || qsTr("Editable result"))
@@ -342,11 +344,13 @@ ColumnLayout {
         document: resultEditor.textDocument
     }
     Component.onCompleted: {
+        controller.setSyntaxBackground(schemeBackground)
         refreshSearchScopes()
         applyWhitespace()
         whitespaceReady = true
         Qt.callLater(placePanes)
     }
+    onSchemeBackgroundChanged: controller.setSyntaxBackground(schemeBackground)
 
     // Qt Quick ignores QTextOption.ShowTabsAndSpaces, so the markers are drawn
     // over the text. They are not document characters.
@@ -825,6 +829,7 @@ ColumnLayout {
                     Accessible.name: sourcePane.paneRole + " · " + (sourcePane.source.label || "")
                     onTextChanged: if (comparison.whitespaceReady)
                         comparison.applyWhitespace()
+                    Component.onCompleted: comparison.controller.attachSourceEditor(sourceText)
                 }
                 LineGutter {
                     id: sourceGutter

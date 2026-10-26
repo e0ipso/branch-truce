@@ -10,7 +10,7 @@ case "${ID:-}:${VERSION_ID:-}" in
 esac
 # Tuxedo needs its vendor Qt/KDE repository enabled. Stock noble has Qt 6.4.
 packages=(g++ cmake make git extra-cmake-modules qt6-base-dev qt6-declarative-dev
-    libkirigami-dev qml6-module-org-kde-kirigami qml6-module-org-kde-desktop
+    libkirigami-dev libkf6syntaxhighlighting-dev qml6-module-org-kde-kirigami qml6-module-org-kde-desktop
     qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts
     qml6-module-qtquick-templates qml6-module-qtquick-window qml6-module-qtqml-workerscript
     kf6-breeze-icon-theme kde-style-breeze libasan8 libubsan1)
