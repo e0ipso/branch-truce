@@ -39,6 +39,9 @@ public:
     // restores its original file and exits unresolved. Returns how many were told.
     int leaveAll();
     bool endParentSession();
+    // Replacing the session's files drops the publisher's parent staging.
+    // Assigns the waiting launcher's path to the reloaded files again.
+    void reassign();
     void onPublisherChanged();
 
 Q_SIGNALS:

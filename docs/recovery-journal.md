@@ -149,7 +149,13 @@ window holds one of the listed sessions, and while this window's own store
 already holds app edits, pending input or a running resolution, because the
 reload would leave that work in a store nobody chose. The check releases its
 locks before the reload, so another window can still take the chosen session
-in between; the reload then stays blocked as described above.
+in between; the reload then stays blocked as described above. A `git mergetool`
+launcher that waits during the choice stays attached. After the reload its path
+is handed to Git again, so Mark resolved releases the launcher instead of
+staging the path in the app. A store captured before Git launched the path
+fails validation for it: Git moves `MERGED` aside and copies it back, which
+gives the file a new identity. Mark resolved then refuses that path, and
+leaving it returns it to Git unresolved.
 
 The restore adapter replays the existing domain transitions and compares every
 complete state with its canonical encoding. This validates the state schema,

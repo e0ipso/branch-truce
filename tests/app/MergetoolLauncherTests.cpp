@@ -595,6 +595,55 @@ int main(int argc, char **argv)
         CHECK(!seen.isEmpty() && seen.last().staging == QStringLiteral("tracked.txt"));
         CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
     });
+    // The reload replaces the publisher's files, which used to drop the parent's
+    // staging assignment while the waiter stayed assigned. Mark resolved then
+    // staged the path in the app and the launcher never got a decision.
+    suite.run("TRUCE-0100 a recovery choice made while a launcher waits hands the launched path back to it", [] {
+        Repository repo("launch bytes\n", "excluded stays conflicted\n");
+        ScopedEnvironment environment(repo.environment);
+        QString chosen;
+        {
+            ApplicationController one;
+            openController(one, repo);
+            ApplicationController two;
+            startController(two, repo);
+            for (auto *controller : {&one, &two}) {
+                const auto revision = opened(*controller, "tracked.txt").current().id;
+                CHECK(controller->files()->editResult(QByteArray("tracked.txt").toHex().toStdString(), revision,
+                    {{0, 0}, controller == &one ? "chosen\n" : "other\n"}) == Transition::Applied);
+            }
+            chosen = QFileInfo(one.files()->recoveryDirectory()).fileName();
+        }
+        ApplicationController controller;
+        openController(controller, repo);
+        CHECK(controller.recoveryChoices().size() == 2);
+        // A direct launcher has no Git parent, so MERGED keeps the identity the stores captured.
+        QTemporaryDir sides;
+        QProcess launcher;
+        launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
+        launcher.setWorkingDirectory(repo.root);
+        launcher.start(launcherBinary, {"--mergetool"});
+        CHECK(launcher.waitForStarted(5000));
+        pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; }, controller.commandMessage());
+        CHECK(controller.chooseRecoverySession(chosen));
+        pump([&] { return !controller.opening(); }, controller.detail());
+        CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
+        CHECK(controller.mergetoolWaitingPath() == "tracked.txt");
+        const auto id = select(controller, "tracked.txt");
+        CHECK(controller.mergetoolWaiting());
+        const auto expected = opened(controller, "tracked.txt").current().draft.text;
+        CHECK(expected.starts_with("chosen\n"));
+        CHECK(controller.markResolved(id, revisionOf(opened(controller, "tracked.txt")), true));
+        waitFinished(launcher, 0, controller);
+        pump([&] { return controller.parentStagingPath() == QStringLiteral("tracked.txt"); },
+             controller.commandMessage());
+        const auto offer = controller.parentStagingOffer(id);
+        CHECK(offer && offer->path == "tracked.txt");
+        CHECK(readFile(repo.path("tracked.txt")) == QByteArray::fromStdString(expected));
+        // Only the parent stages the path, and the app waits for that acknowledgment.
+        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+        CHECK(!opened(controller, "tracked.txt").facts().resolved);
+    });
     suite.run("TRUCE-0065 a session that listens after the GUI start is attached within the deadline", [] {
         Repository repo("attached after the spawn\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);

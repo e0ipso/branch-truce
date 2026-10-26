@@ -157,6 +157,28 @@ void checkIntakeMatchesGit(const ParentRepository &repo, const QString &intake, 
     CHECK(readFile(intake + "/base") == "base\n");
     CHECK(readFile(intake + "/merged") == readFile(repo.path(path)));
 }
+
+// Leaves two recovery stores that both edited other.txt, so the next session's
+// restore stays blocked on a choice. Returns the session of the "chosen" store.
+QString twoEditedStores(const ParentRepository &repo)
+{
+    ApplicationController chosen;
+    openController(chosen, repo);
+    // A second window on the operation finds the socket taken and does not listen.
+    ApplicationController other;
+    QEventLoop loop;
+    QObject::connect(&other, &ApplicationController::launchChanged, &loop, [&] {
+        if (!other.opening()) loop.quit();
+    });
+    QTimer::singleShot(15000, &loop, &QEventLoop::quit);
+    CHECK(other.openRepository(repo.root));
+    if (other.opening()) loop.exec();
+    CHECK(other.startupState() == "ready" && !other.mergetoolListening());
+    editDraft(chosen, "other.txt", QStringLiteral("chosen\n"));
+    editDraft(other, "other.txt", QStringLiteral("other\n"));
+    return QFileInfo(chosen.files()->recoveryDirectory()).fileName();
+}
+
 }
 
 int main(int argc, char **argv)
@@ -236,6 +258,46 @@ int main(int argc, char **argv)
         CHECK(repo.unmerged("other.txt"));
         CHECK(repo.stagedObject("notes.txt") == repo.notesObject);
         CHECK(!controller.parentStagingOffer(id));
+    });
+
+    // TRUCE-0100: the in-window recovery choice reloads the files while Git waits.
+    // The chosen store captured tracked.txt before Git moved MERGED aside and
+    // copied it back, so the restore cannot validate the launched path and it
+    // stays blocked. tests/app/MergetoolLauncherTests.cpp covers the handoff
+    // after a choice with a launcher whose MERGED keeps its captured identity.
+    suite.run("a recovery choice made while Git waits stages nothing, and leave keeps the repository, the index and the app unresolved", [] {
+        ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
+                                               conflict("other.txt", "other launch bytes\n")});
+        ScopedEnvironment environment(repo.environment);
+        const auto session = twoEditedStores(repo);
+        const auto indexBefore = repo.index();
+        ApplicationController controller;
+        openController(controller, repo);
+        auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
+        waitForWaiter(controller, "tracked.txt");
+        CHECK(controller.recoveryChoices().size() == 2);
+        CHECK(controller.chooseRecoverySession(session));
+        pump([&] { return !controller.opening(); }, controller.detail());
+        CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
+        CHECK(draftOf(controller, "other.txt").starts_with("chosen\n"));
+        waitForWaiter(controller, "tracked.txt");
+        const auto id = select(controller, "tracked.txt");
+        CHECK(controller.files()->hasRecoveryFailure(id.toStdString()));
+        CHECK(!controller.markResolved(id, revisionOf(controller, "tracked.txt"), true));
+        holdFor(800, [&] {
+            return parentBlocked(*parent, controller, "tracked.txt") && repo.index() == indexBefore
+                && !opened(controller, "tracked.txt").facts().resolved;
+        }, controller.commandMessage() + QStringLiteral(" | the path was staged or the parent released"));
+        CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+        const auto draft = draftOf(controller, "tracked.txt");
+        CHECK(controller.leaveMergetool());
+        waitParent(*parent, 1, controller.commandMessage());
+        CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
+        CHECK(repo.index() == indexBefore);
+        CHECK(repo.unmerged("tracked.txt") && repo.unmerged("other.txt"));
+        CHECK(!opened(controller, "tracked.txt").facts().resolved);
+        CHECK(draftOf(controller, "tracked.txt") == draft);
+        CHECK(!controller.mergetoolHasWaiter("tracked.txt"));
     });
 
     suite.run("bytes the parent stages after the launcher are not acknowledged as the reviewed result", [] {

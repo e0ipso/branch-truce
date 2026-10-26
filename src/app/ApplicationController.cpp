@@ -1645,8 +1645,11 @@ void ApplicationController::loadWorkingFiles(QList<git::Conflict> conflicts)
             const auto diagnostics = recovery->diagnostics.join(QLatin1Char('\n'));
             const bool recovered = recovery->found;
             auto choices = recovery->choices;
-            if (completion.result.status != TaskStatus::Succeeded
-                || !coordinator_.completeRecoveryLoad(completion.stamp, std::move(*loaded), std::move(*recovery))) {
+            const bool replaced = completion.result.status == TaskStatus::Succeeded
+                && coordinator_.completeRecoveryLoad(completion.stamp, std::move(*loaded), std::move(*recovery));
+            // A recovery choice reloads while Git may still wait on a launched path.
+            mergetool_.reassign();
+            if (!replaced) {
                 setState(QStringLiteral("error"), tr("Could not load the current conflict files."));
                 return;
             }

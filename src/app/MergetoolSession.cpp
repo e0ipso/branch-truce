@@ -149,6 +149,23 @@ bool MergetoolSession::endParentSession()
     return true;
 }
 
+void MergetoolSession::reassign()
+{
+    // A held offer already went to its launcher; its acknowledgment poll
+    // assigns the next waiter once the offer is gone.
+    if (offerHeld_) return;
+    bool dropped = false;
+    for (auto &waiter : waiters_) {
+        if (waiter.released || !waiter.assigned) continue;
+        waiter.assigned = false;
+        dropped = true;
+    }
+    // A path the reloaded files cannot stage stays unassigned, so Mark
+    // resolved waits instead of staging it in the app.
+    tryAssign();
+    if (dropped) Q_EMIT changed();
+}
+
 void MergetoolSession::onPublisherChanged()
 {
     if (assigning_) return;

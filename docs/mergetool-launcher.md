@@ -148,6 +148,12 @@ These behaviours pass and are the compatibility declaration:
   third path never launched. A new session on the same repository restores
   every saved draft, including one for a path Git never launched. The
   window-close handoff dialog is not covered by a real parent.
+- Choosing a blocked recovery session in the window while Git waits keeps
+  the launcher attached. The chosen store captured the launched path before
+  Git's backup copy, so the restore marks that path with a recovery error and
+  Mark resolved refuses it. Git stays blocked and nothing is staged. Leave then
+  makes the launcher exit 1, `MERGED` holds the launch bytes and `git ls-files
+  --stage` does not change.
 - Each invocation gets its own intake. Its copies match Git's LOCAL, REMOTE
   and BASE files while the tool runs, and stay after Git deletes those files.
 - Running `git mergetool` with no paths visits unmerged paths in name order.
