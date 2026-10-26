@@ -1387,6 +1387,32 @@ public:
             // The earlier version equals the left source, so it shows the same lines.
             CHECK(std::abs(contentY(earlierView) - contentY(left)) < 1);
         });
+        suite.run("TRUCE-0164 the earlier version catches up with the other panes when it is first shown", [] {
+            auto sources = *insertionFile().snapshots();
+            const auto earlier = sources.stage2->worktree.utf8;
+            sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
+                test_support::choiceText(earlier), "earlier-commit", "Common earlier version"};
+            const auto launch = sources.launchResult.text.utf8;
+            Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
+            auto *left = fixture.item("stage2Viewport");
+            auto *earlierView = fixture.item("earlierViewport");
+            auto *editor = fixture.item("resultText");
+            settle([&] { return editor->property("lineCount").toInt() > 400 && left->height() > 0; });
+            settlePanes(fixture);
+            CHECK(!earlierView->isVisible());
+            const auto line = paneLineHeight(editor);
+            // The panes scroll while the earlier version is hidden, so it is still at the top.
+            wheelTo(fixture, "stage2Viewport", 80 * line);
+            CHECK(contentY(earlierView) == 0);
+            fixture.click("showEarlier");
+            settleFor("the earlier version to catch up", [&] {
+                return earlierView->isVisible() && earlierView->height() > 0
+                    && std::abs(contentY(earlierView) - contentY(left)) < 1;
+            });
+            // It equals the left source, so it shows the left source's lines.
+            CHECK(contentY(earlierView) > 70 * line);
+            CHECK(std::abs(contentY(earlierView) - contentY(left)) < 1);
+        });
         suite.run("TRUCE-0115 Find in a source scrolls the result and the other source to the passage", [] {
             Fixture fixture(insertionFile());
             auto *left = fixture.item("stage2Viewport");

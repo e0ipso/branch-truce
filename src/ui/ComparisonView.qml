@@ -290,8 +290,24 @@ ColumnLayout {
         if (byUser)
             followScroll(name, "")
     }
+    // A relayout scrolls a source to keep its cursor in view, so keep the
+    // cursor on a line the source now shows rather than at the top. A
+    // selection stays where the user made it.
+    function keepCursorOnLine(pane: var, line: real): void {
+        const editor = pane.editor
+        if (editor.selectionStart === editor.selectionEnd)
+            editor.cursorPosition = pane.blocks.positionOf(line)
+    }
+    // Showing the earlier version lays it out again, which would scroll it
+    // back to the cursor it had while hidden. Following can leave a line cut
+    // at the row, so the cursor goes to the first whole line below it.
     function followEarlier(): void {
+        const panes = scrollPanes()
+        const earlier = panes.find(pane => pane.name === "earlier")
+        if (!earlier)
+            return
         followScroll("result", "earlier")
+        keepCursorOnLine(earlier, Math.ceil(lineOnRow(earlier, scrollRow(panes))))
     }
     // A newly selected file opens with the region the editor put its cursor on
     // at the reference row of every pane, or at the top without one. A
@@ -320,13 +336,9 @@ ColumnLayout {
         const row = scrollRow(panes)
         putLineOnRow(lead, line, row)
         followScroll(lead.name, "")
-        // A relayout scrolls a pane to keep its cursor in view, so keep each
-        // source's cursor on the line it now shows rather than at the top. A
-        // selection stays where the user made it.
         for (let i = 0; i < panes.length; ++i) {
-            const editor = panes[i].editor
-            if (panes[i].name !== "result" && editor.selectionStart === editor.selectionEnd)
-                editor.cursorPosition = panes[i].blocks.positionOf(Math.floor(lineOnRow(panes[i], row)))
+            if (panes[i].name !== "result")
+                keepCursorOnLine(panes[i], Math.floor(lineOnRow(panes[i], row)))
         }
     }
     function followNavigation(): void {
