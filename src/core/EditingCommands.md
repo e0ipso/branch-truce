@@ -36,6 +36,9 @@ an empty region. The preview says when a choice removes the markers.
 A source deletion uses the mapped competing section as its replacement range
 and validates both anchors. It cannot infer a deletion range from neighboring
 text. Accept never silently replaces an accepted competing contribution.
+A section choice unmaps the line anchors inside it, so an accepted line of
+another section is located by its side's section anchor instead. The accept
+is refused when neither anchor is mapped or the located range overlaps.
 Undo the intervening actions before changing an earlier accepted decision.
 
 Overlapping manual work requires an exact before/replacement preview and

@@ -453,6 +453,50 @@ public:
             CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
             CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
         });
+        suite.run("TRUCE-0188 each section can be decided with a different side", [] {
+            for (const bool marked : {false, true}) {
+                for (const auto action : {ChoiceAction::ResolveUsingSide, ChoiceAction::Accept}) {
+                    for (const auto first : {SourceSide::Stage2, SourceSide::Stage3}) {
+                        auto file = marked ? test_support::markedFile() : test_support::choiceFile();
+                        const auto second = first == SourceSide::Stage2 ? SourceSide::Stage3 : SourceSide::Stage2;
+                        CHECK(choose(file, first, ChoiceAction::ResolveUsingSide) == Transition::Applied);
+                        const auto before = file.current().draft;
+                        CHECK(choose(file, second, action, ChoiceScope::Section, 1) == Transition::Applied);
+                        const auto later = second == SourceSide::Stage2 ? "left later\n" : "right later\n";
+                        const auto chosen = file.current().draft;
+                        if (marked && action == ChoiceAction::Accept) {
+                            CHECK(chosen.text == before.text && chosen.unresolvedMarkers == 1);
+                        } else {
+                            CHECK(chosen.text == (first == SourceSide::Stage2 ? "header\nleft first\nleft second\nbridge\n"
+                                : "header\nright first\nright second\nbridge\n") + std::string(later) + "tail\n");
+                            CHECK(chosen.unresolvedMarkers == 0);
+                        }
+                        const auto &picked = test_support::choiceTarget(file, second, ChoiceScope::Section, 1);
+                        for (const auto &id : picked.decisions) CHECK(chosen.decisions.at(id).value == DecisionValue::Accepted);
+                        CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
+                    }
+                }
+            }
+        });
+        suite.run("TRUCE-0188 an accept still refuses accepted text it may replace", [] {
+            // The competing side of the same section holds the accepted text.
+            auto same = test_support::choiceFile();
+            CHECK(choose(same, SourceSide::Stage2, ChoiceAction::Accept) == Transition::Applied);
+            for (const auto action : {ChoiceAction::Accept, ChoiceAction::ResolveUsingSide}) {
+                const auto &right = test_support::choiceTarget(same, SourceSide::Stage3, ChoiceScope::Section);
+                CHECK(previewChoice(same, same.current().id, right.source.contributionId, action).state == Transition::Blocked);
+            }
+            // Typing across the start of the accepted section leaves neither
+            // its lines nor the section locatable.
+            auto typed = test_support::choiceFile();
+            CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::Accept) == Transition::Applied);
+            const auto at = typed.current().draft.text.find("\nleft first");
+            CHECK(typed.editResult(typed.current().id, {{at, at + 2}, "\nL"}) == Transition::Applied);
+            const auto &later = test_support::choiceTarget(typed, SourceSide::Stage3, ChoiceScope::Section, 1);
+            const auto refused = previewChoice(typed, typed.current().id, later.source.contributionId, ChoiceAction::Accept);
+            CHECK(refused.state == Transition::Blocked);
+            CHECK(refused.detail == "Accepted text may overlap this choice. Preview an ordered combination or undo its acceptance.");
+        });
         suite.run("TRUCE-0012 correspondence is deterministic and partitions repeated inserted deleted and changed text", [] {
             const std::array cases{
                 std::pair{"repeat\nrepeat\n", "repeat\nrepeat\n"},
@@ -960,8 +1004,8 @@ public:
             }
             auto file = test_support::markedFile();
             CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
-            CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
-            CHECK(file.current().draft.text == "header\nleft first\nleft second\nbridge\nleft later\ntail\n");
+            CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
+            CHECK(file.current().draft.text == "header\nleft first\nleft second\nbridge\nright later\ntail\n");
             CHECK(file.current().draft.unresolvedMarkers == 0 && file.markerSections().empty());
             CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
         });

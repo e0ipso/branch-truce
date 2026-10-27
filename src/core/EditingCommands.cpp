@@ -242,10 +242,20 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected,
             found->source.range.end - found->source.range.begin);
         preview.command.edits.push_back({*replacementAnchor->result, preview.replacement});
         // An accept cannot silently replace any previously accepted contribution.
+        // A section choice unmaps the line anchors inside it, so a line of
+        // another section falls back to its own side's section anchor.
         for (const auto &target : targets) {
             if (target.scope != ChoiceScope::Line || target.source.side == found->source.side
                 || decision(file, target.source.contributionId).value != DecisionValue::Accepted) continue;
             const auto *other = file.correspondence()->anchor(target.source.contributionId);
+            if ((!other || !other->result) && target.section != found->section) {
+                const auto section = std::find_if(targets.begin(), targets.end(), [&](const auto &candidate) {
+                    return candidate.scope == ChoiceScope::Section && candidate.section == target.section
+                        && candidate.source.side == target.source.side;
+                });
+                if (section != targets.end()) other = file.correspondence()->anchor(section->source.contributionId);
+                if (other && other->state != AnchorState::Mapped) other = nullptr;
+            }
             if (!other || !other->result || overlaps(*replacementAnchor->result, *other->result))
                 return fail(Transition::Blocked, "Accepted text may overlap this choice. Preview an ordered combination or undo its acceptance.");
         }
