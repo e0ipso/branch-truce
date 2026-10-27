@@ -119,7 +119,8 @@ interaction was not measured.
 
 `dpkg-shlibdeps` cannot see QML imports, so `Depends` also lists the QML
 modules [src/ui](../src/ui) imports, with the API floors: `qml6-module-qtquick`,
-`qml6-module-qtquick-controls`, `qml6-module-qtquick-layouts` (>= 6.6~) and
+`qml6-module-qtquick-controls`, `qml6-module-qtquick-layouts`,
+`qml6-module-qtquick-shapes` (>= 6.6~) and
 `qml6-module-org-kde-kirigami` (>= 6.0~), plus `qml6-module-qtquick-templates`,
 `qml6-module-qtquick-window` and `qml6-module-qtqml-workerscript` (>= 6.6~),
 which those modules load. The application runs the installed Git, so it also depends on

@@ -52,8 +52,8 @@ expected_deps="git hicolor-icon-theme kde-style-breeze kf6-breeze-icon-theme
     qml6-module-org-kde-desktop qml6-module-org-kde-kirigami
     qml6-module-qtqml-workerscript qml6-module-qtquick
     qml6-module-qtquick-controls qml6-module-qtquick-layouts
-    qml6-module-qtquick-templates qml6-module-qtquick-window
-    qt6-svg-plugins qt6-wayland"
+    qml6-module-qtquick-shapes qml6-module-qtquick-templates
+    qml6-module-qtquick-window qt6-svg-plugins qt6-wayland"
 expected_recommends="plasma-integration"
 
 expected_files="$binary_file

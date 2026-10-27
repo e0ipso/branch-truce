@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Shapes
 import org.kde.kirigami as Kirigami
 
 ColumnLayout {
@@ -132,6 +133,51 @@ ColumnLayout {
         for (const line in from)
             letters[line] = ["", "L", "R", "B", "m"][from[line]]
         return {lines: lines, gaps: gaps, letters: letters}
+    }
+    // The connector bands between one source and the result: one per
+    // non-equal passage of that side, in order, with its source and result
+    // lines as [begin, end) ranges. The kind follows the passage: the result
+    // changes the lines, adds a result-only passage's or drops a source-only
+    // one's. The state of a region of that side on the source lines, or on
+    // the boundary of an empty passage, outranks it as it does in the panes.
+    function bandsFor(side: string, file: var): var {
+        const rank = {removed: 0, added: 1, changed: 2, accepted: 3, ignored: 3, manual: 3, conflict: 4}
+        const lines = {}
+        const boundaries = {}
+        const decide = function(states, line, kind) {
+            if (!states[line] || rank[states[line]] < rank[kind])
+                states[line] = kind
+        }
+        const regions = file.regions || []
+        for (let i = 0; i < regions.length; ++i) {
+            const region = regions[i]
+            if (region.side !== side)
+                continue
+            const kind = region.state === "undecided" ? "conflict" : region.state
+            if (region.sourceLineBegin === region.sourceLineEnd)
+                decide(boundaries, region.sourceLineBegin, kind)
+            for (let line = region.sourceLineBegin; line < region.sourceLineEnd; ++line)
+                decide(lines, line, kind)
+        }
+        const bands = []
+        const passages = file.passages || []
+        for (let i = 0; i < passages.length; ++i) {
+            const passage = passages[i]
+            if (passage.side !== side || passage.kind === "equal")
+                continue
+            const begin = passage.sourceLineBegin
+            const end = passage.sourceLineEnd
+            const states = begin === end ? boundaries : lines
+            let kind = passage.kind === "result-only" ? "added" : passage.kind === "source-only" ? "removed" : "changed"
+            for (let line = begin; line < Math.max(end, begin + 1); ++line) {
+                const state = states[line]
+                if (state && rank[state] > rank[kind])
+                    kind = state
+            }
+            bands.push({kind: kind, sourceBegin: begin, sourceEnd: end,
+                resultBegin: passage.resultLineBegin, resultEnd: passage.resultLineEnd})
+        }
+        return bands
     }
     // The lines of one pane that the navigation target covers, as [first, end)
     // ranges. An empty range marks the line boundary at first.
@@ -949,6 +995,127 @@ ColumnLayout {
         Layout.minimumHeight: Math.max(leftPane.Layout.minimumHeight, resultColumn.Layout.minimumHeight,
             rightPane.Layout.minimumHeight)
         orientation: Qt.Horizontal
+        // Each handle sits between a source and the result and holds that
+        // source's connector bands. A band joins a passage's lines on the
+        // source's edge to its lines on the result's edge, each at the line's
+        // y in its pane less the pane's scroll. An empty range ends in a thin
+        // wedge on its line boundary, where the pane draws its gap rule. The
+        // bands cover the panes' viewports and clip what they scroll out of
+        // view, and only those that cross it are made. They take no input or
+        // focus, so the split still drags the handle.
+        handle: Item {
+            id: connector
+            // A handle starts at x 0, before the split places it, and the right
+            // source may not exist yet, so it counts as the left one until placed.
+            readonly property bool leftSide: x <= resultColumn.x
+            readonly property CapturedSource source: leftSide ? leftPane : rightPane
+            readonly property var bands: comparison.bandsFor(source.paneName, comparison.file)
+            // Counts relayouts of either pane's text, so the band ends follow them.
+            property int layoutRevision: 0
+            readonly property real rule: Kirigami.Units.smallSpacing / 2
+            readonly property int firstShown: shownIndex(false, layoutRevision)
+            readonly property int endShown: shownIndex(true, layoutRevision)
+            // The y in the bands of the top, or the bottom, of lines [begin, end)
+            // of the source or of the result. revision is layoutRevision, so a
+            // binding follows relayouts.
+            function edge(inSource: bool, begin: int, end: int, bottom: bool, revision: int): real {
+                const viewport = inSource ? source.viewport : resultViewport
+                const editor = inSource ? source.editor : resultEditor
+                const blocks = inSource ? source.blocks : resultBlocks
+                const y = viewport.parent.y - source.viewport.parent.y + editor.y + editor.topPadding
+                    + blocks.yAtLine(bottom ? end : begin) - viewport.contentY
+                return begin < end ? y : y + (bottom ? rule : -rule) / 2
+            }
+            // The index of the first band not wholly above the view, or with
+            // below set, of the first band wholly below it. Both ends of the
+            // bands are in order, so each of those is a run at one end.
+            function shownIndex(below: bool, revision: int): int {
+                const extent = below ? source.viewport.height : 0
+                const sourceLine = source.blocks.lineAtY(source.viewport.contentY + extent
+                    - source.editor.y - source.editor.topPadding)
+                const resultLine = resultBlocks.lineAtY(resultViewport.contentY + extent
+                    - resultEditor.y - resultEditor.topPadding)
+                let low = 0
+                let high = bands.length
+                while (low < high) {
+                    const middle = (low + high) >> 1
+                    const band = bands[middle]
+                    const found = below ? band.sourceBegin > sourceLine && band.resultBegin > resultLine
+                        : band.sourceEnd >= sourceLine || band.resultEnd >= resultLine
+                    if (found)
+                        high = middle
+                    else
+                        low = middle + 1
+                }
+                return low
+            }
+            objectName: source.paneName + "Connector"
+            implicitWidth: Kirigami.Units.gridUnit
+            Kirigami.Theme.colorSet: Kirigami.Theme.View
+            Kirigami.Theme.inherit: false
+            Accessible.ignored: true
+            Connections {
+                target: connector.source.blocks
+                function onLayoutChanged(): void { ++connector.layoutRevision }
+            }
+            Connections {
+                target: resultBlocks
+                function onLayoutChanged(): void { ++connector.layoutRevision }
+            }
+            Rectangle {
+                anchors.fill: parent
+                color: Kirigami.Theme.highlightColor
+                opacity: connector.SplitHandle.pressed ? 0.3 : connector.SplitHandle.hovered ? 0.15 : 0
+            }
+            Item {
+                id: bandLayer
+                objectName: connector.source.paneName + "Bands"
+                y: connector.source.viewport.parent.y
+                width: connector.width
+                height: connector.source.viewport.height
+                clip: true
+                enabled: false
+                Repeater {
+                    model: connector.bands.slice(connector.firstShown, connector.endShown)
+                    delegate: Shape {
+                        id: band
+                        required property var modelData
+                        readonly property string kind: modelData.kind
+                        readonly property real sourceTop: connector.edge(true, modelData.sourceBegin,
+                            modelData.sourceEnd, false, connector.layoutRevision)
+                        readonly property real sourceBottom: connector.edge(true, modelData.sourceBegin,
+                            modelData.sourceEnd, true, connector.layoutRevision)
+                        readonly property real resultTop: connector.edge(false, modelData.resultBegin,
+                            modelData.resultEnd, false, connector.layoutRevision)
+                        readonly property real resultBottom: connector.edge(false, modelData.resultBegin,
+                            modelData.resultEnd, true, connector.layoutRevision)
+                        readonly property real sourceX: connector.leftSide ? 0 : width
+                        readonly property real resultX: width - sourceX
+                        // The passage's background role; removed and ignored lines get a faint tint.
+                        readonly property color fill: kind === "added" || kind === "accepted"
+                            ? Kirigami.Theme.positiveBackgroundColor
+                            : kind === "changed" ? Kirigami.Theme.activeBackgroundColor
+                            : kind === "conflict" ? Kirigami.Theme.negativeBackgroundColor
+                            : kind === "manual" ? Kirigami.Theme.neutralBackgroundColor
+                            : Kirigami.Theme.disabledTextColor
+                        width: bandLayer.width
+                        height: bandLayer.height
+                        opacity: kind === "removed" || kind === "ignored" ? 0.15 : 1
+                        preferredRendererType: Shape.CurveRenderer
+                        ShapePath {
+                            strokeWidth: -1
+                            fillColor: band.fill
+                            startX: band.sourceX
+                            startY: band.sourceTop
+                            PathLine { x: band.resultX; y: band.resultTop }
+                            PathLine { x: band.resultX; y: band.resultBottom }
+                            PathLine { x: band.sourceX; y: band.sourceBottom }
+                            PathLine { x: band.sourceX; y: band.sourceTop }
+                        }
+                    }
+                }
+            }
+        }
         CapturedSource {
             id: leftPane
             SplitView.minimumWidth: Kirigami.Units.gridUnit * 8

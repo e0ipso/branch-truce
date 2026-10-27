@@ -8,6 +8,7 @@
 #include <QAccessible>
 #include <QApplication>
 #include <algorithm>
+#include <optional>
 #include <QClipboard>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -519,6 +520,97 @@ PaneMarks regionMarks(const QString &second, const QString &fourth, const QStrin
         if (!kind.isEmpty()) lines.insert(line, kind);
     }
     return {lines, lines, letters};
+}
+
+// A connector band as its handle draws it: its kind, the source and result
+// lines it joins as [begin, end), and the scene y of the top and bottom of
+// each end.
+struct Band {
+    QString kind;
+    int sourceBegin = 0;
+    int sourceEnd = 0;
+    int resultBegin = 0;
+    int resultEnd = 0;
+    qreal sourceTop = 0;
+    qreal sourceBottom = 0;
+    qreal resultTop = 0;
+    qreal resultBottom = 0;
+};
+
+std::vector<Band> paintedBands(Fixture &fixture, const std::string &side)
+{
+    std::vector<Band> bands;
+    for (auto *band : fixture.item((side + "Bands").c_str())->childItems()) {
+        if (!band->property("kind").isValid()) continue;
+        const auto line = [&](const char *name) {
+            return qmlValue(band, QStringLiteral("modelData.") + QLatin1String(name)).toInt();
+        };
+        const auto y = [&](const char *name) { return band->mapToScene(QPointF(0, band->property(name).toReal())).y(); };
+        bands.push_back({band->property("kind").toString(), line("sourceBegin"), line("sourceEnd"),
+            line("resultBegin"), line("resultEnd"), y("sourceTop"), y("sourceBottom"), y("resultTop"), y("resultBottom")});
+    }
+    std::sort(bands.begin(), bands.end(), [](const Band &a, const Band &b) { return a.sourceBegin < b.sourceBegin; });
+    return bands;
+}
+
+// Each band as "kind source begin-end > result begin-end", such as "conflict 2-3>2-3".
+std::vector<std::string> bandLines(Fixture &fixture, const std::string &side)
+{
+    std::vector<std::string> lines;
+    for (const auto &band : paintedBands(fixture, side)) {
+        lines.push_back(band.kind.toStdString() + " " + std::to_string(band.sourceBegin) + "-"
+            + std::to_string(band.sourceEnd) + ">" + std::to_string(band.resultBegin) + "-" + std::to_string(band.resultEnd));
+    }
+    return lines;
+}
+
+// The scene top and bottom of what a pane's backgrounds paint for lines
+// [begin, end): their fills, or for an empty range the gap rule on its boundary.
+std::pair<qreal, qreal> paintedSpan(Fixture &fixture, const std::string &pane, int begin, int end)
+{
+    std::optional<qreal> top;
+    std::optional<qreal> bottom;
+    for (auto *fill : fixture.item((pane + "Backgrounds").c_str())->childItems()) {
+        if (!fill->isVisible() || fill->property("part").toString() != (begin == end ? "gap" : "line")) continue;
+        const auto line = fill->property("line").toInt();
+        const auto y = fill->mapToScene(QPointF()).y();
+        if (line == begin) top = y;
+        if (line == std::max(begin, end - 1)) bottom = y + fill->height();
+    }
+    if (!top || !bottom)
+        throw std::runtime_error(pane + " paints nothing for lines " + std::to_string(begin) + "-" + std::to_string(end));
+    return {*top, *bottom};
+}
+
+// Waits until one side's handle draws the expected bands, each with its ends
+// on the lines that the source pane and the result paint for its passage.
+void expectBands(Fixture &fixture, const std::string &when, const std::string &side,
+    const std::vector<std::string> &expected)
+{
+    const auto misplaced = [&]() -> std::string {
+        if (bandLines(fixture, side) != expected) return "the wrong bands";
+        for (const auto &band : paintedBands(fixture, side)) {
+            const auto source = paintedSpan(fixture, side, band.sourceBegin, band.sourceEnd);
+            const auto result = paintedSpan(fixture, "result", band.resultBegin, band.resultEnd);
+            const auto off = [](qreal a, qreal b) { return std::abs(a - b) > 0.5; };
+            if (off(band.sourceTop, source.first) || off(band.sourceBottom, source.second)
+                    || off(band.resultTop, result.first) || off(band.resultBottom, result.second))
+                return "a band at " + std::to_string(band.sourceTop) + "-" + std::to_string(band.sourceBottom) + ">"
+                    + std::to_string(band.resultTop) + "-" + std::to_string(band.resultBottom) + " over lines at "
+                    + std::to_string(source.first) + "-" + std::to_string(source.second) + ">"
+                    + std::to_string(result.first) + "-" + std::to_string(result.second);
+        }
+        return {};
+    };
+    QElapsedTimer deadline;
+    deadline.start();
+    while (!misplaced().empty() && deadline.elapsed() < 5000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    if (const auto problem = misplaced(); !problem.empty()) {
+        std::string drawn;
+        for (const auto &line : bandLines(fixture, side)) drawn += " " + line;
+        throw std::runtime_error(when + ", the " + side + " handle draws " + problem + ":" + drawn);
+    }
 }
 
 // Which cases one run executes. The deletion-at-limit cases edit multi-megabyte buffers in the
@@ -1159,6 +1251,100 @@ public:
                 });
             }
         }
+        suite.run("TRUCE-0178 each non-equal passage gets a band from its source lines to its result lines", [] {
+            // In the batch fixture the left source differs from the result on lines 2
+            // and 6 and the right source on lines 4 and 6, and every region is undecided.
+            Fixture fixture;
+            settlePanes(fixture);
+            const std::vector<std::string> left{"conflict 2-3>2-3", "conflict 6-7>6-7"};
+            const std::vector<std::string> right{"conflict 4-5>4-5", "conflict 6-7>6-7"};
+            expectBands(fixture, "at launch", "stage2", left);
+            expectBands(fixture, "at launch", "stage3", right);
+            // A scoped choice on the left region at line 2 redraws the bands with the
+            // passages, and undo restores them. Accepting makes the left line equal to
+            // the result, so its band goes, and the right line now differs from it.
+            struct Choice {
+                QString action;
+                std::vector<std::string> left;
+                std::vector<std::string> right;
+            };
+            const std::array<Choice, 2> choices{{
+                {"accept", {"conflict 6-7>6-7"}, {"conflict 2-3>2-3", "conflict 4-5>4-5", "conflict 6-7>6-7"}},
+                {"ignore", {"ignored 2-3>2-3", "conflict 6-7>6-7"}, right},
+            }};
+            for (const auto &choice : choices) {
+                const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+                CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
+                    QString::fromStdString(target.source.contributionId), choice.action));
+                CHECK(fixture.controller.applyChoice(true));
+                const auto when = "after " + choice.action.toStdString();
+                expectBands(fixture, when, "stage2", choice.left);
+                expectBands(fixture, when, "stage3", choice.right);
+                CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
+                const auto undone = "after undoing " + choice.action.toStdString();
+                expectBands(fixture, undone, "stage2", left);
+                expectBands(fixture, undone, "stage3", right);
+            }
+        });
+        suite.run("TRUCE-0178 band ends move with the scroll of either pane", [] {
+            // The result holds 30 lines after line 50 that the left source lacks, so the
+            // left handle draws one band, a wedge on the left source's line boundary.
+            Fixture fixture(insertionFile());
+            auto *left = fixture.item("stage2Viewport");
+            auto *result = fixture.item("resultViewport");
+            auto *editor = fixture.item("resultText");
+            settle([&] { return editor->property("lineCount").toInt() > 400 && left->height() > 0; });
+            settlePanes(fixture);
+            const auto line = paneLineHeight(editor);
+            wheelTo(fixture, "stage2Viewport", 40 * line);
+            const std::vector<std::string> band{"conflict 51-51>51-81"};
+            expectBands(fixture, "at the insertion", "stage2", band);
+            CHECK(bandLines(fixture, "stage3").empty());
+            const auto before = paintedBands(fixture, "stage2").front();
+            // Scrolling one pane without leading the others moves only that pane's end.
+            left->setProperty("contentY", contentY(left) + 3 * line);
+            expectBands(fixture, "with the left source scrolled", "stage2", band);
+            const auto moved = paintedBands(fixture, "stage2").front();
+            CHECK(std::abs(moved.sourceTop - (before.sourceTop - 3 * line)) < 1);
+            CHECK(std::abs(moved.resultTop - before.resultTop) < 0.5);
+            result->setProperty("contentY", contentY(result) + 2 * line);
+            expectBands(fixture, "with the result scrolled", "stage2", band);
+            const auto after = paintedBands(fixture, "stage2").front();
+            CHECK(std::abs(after.sourceTop - moved.sourceTop) < 0.5);
+            CHECK(std::abs(after.resultTop - (moved.resultTop - 2 * line)) < 1);
+        });
+        suite.run("TRUCE-0178 the band handles drag to resize the panes and stay out of the focus chain", [] {
+            Fixture fixture;
+            settlePanes(fixture);
+            auto *handle = fixture.item("stage2Connector");
+            auto *left = fixture.item("stage2Viewport");
+            auto *result = fixture.item("resultViewport");
+            auto *other = fixture.item("stage3Connector");
+            CHECK(handle != other && handle->width() > 0 && !handle->activeFocusOnTab());
+            // Tabbing through the window reaches neither handle nor any of its bands.
+            auto *first = fixture.window->contentItem()->nextItemInFocusChain();
+            auto *item = first;
+            for (int step = 0; item && step < 1000; ++step) {
+                CHECK(item != handle && item != other && !handle->isAncestorOf(item) && !other->isAncestorOf(item));
+                item = item->nextItemInFocusChain();
+                if (item == first) break;
+            }
+            CHECK(item == first);
+            // Dragging the handle widens the left source at the expense of the right
+            // source, which fills the split, and leaves the result as it was.
+            auto *right = fixture.item("stage3Viewport");
+            const auto leftWidth = left->width();
+            const auto resultWidth = result->width();
+            const auto rightWidth = right->width();
+            const auto from = handle->mapToScene(QPointF(handle->width() / 2, handle->height() / 2)).toPoint();
+            QTest::mousePress(fixture.window, Qt::LeftButton, Qt::NoModifier, from);
+            for (int step = 1; step <= 10; ++step)
+                QTest::mouseMove(fixture.window, QPoint(from.x() + 8 * step, from.y()));
+            QTest::mouseRelease(fixture.window, Qt::LeftButton, Qt::NoModifier, QPoint(from.x() + 80, from.y()));
+            settle([&] { return std::abs(left->width() - (leftWidth + 80)) < 2; });
+            CHECK(std::abs(result->width() - resultWidth) < 1 && std::abs(right->width() - (rightWidth - 80)) < 2);
+            expectBands(fixture, "after the drag", "stage2", {"conflict 2-3>2-3", "conflict 6-7>6-7"});
+        });
         suite.run("TRUCE-0058 whitespace markers paint spaces and tabs", [] {
             const std::string result = "aa bb\tcc\n";
             Fixture fixture(test_support::choiceFile("left\n", "right\n", result));
