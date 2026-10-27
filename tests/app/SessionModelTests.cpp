@@ -915,6 +915,24 @@ public:
             CHECK(reopened.undo(reopened.current().id) == Transition::Applied);
             CHECK(reopened.current().draft.text == test_support::markedText(true) && reopened.current().draft.unresolvedMarkers == 2);
         });
+        suite.run("TRUCE-0187 replay derives the marker count against the captured sources", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(test_support::headingFile()));
+            CHECK(model.file("choices")->current().draft.unresolvedMarkers == 1);
+            auto launch = replayedFile(model.recoveryDirectory());
+            CHECK(launch.current().draft.unresolvedMarkers == 1 && launch.markers() == model.file("choices")->markers());
+            auto resolved = model.file("choices")->current().draft;
+            resolved.text = "Changes\n=======\nintro\nleft line\ntail\n";
+            CHECK(model.replaceDraft("choices", 1, resolved) == Transition::Applied);
+            const auto &live = *model.file("choices");
+            CHECK(live.current().draft.unresolvedMarkers == 0);
+            auto replay = replayedFile(model.recoveryDirectory());
+            CHECK(replay.current().draft == live.current().draft && replay.markers() == live.markers());
+            CHECK(replay.current().draft.unresolvedMarkers == 0);
+            CHECK(replay.beginMarkResolved(replay.current().id, true) == Transition::Applied);
+        });
         suite.run("unconfirmed choices and marker blockers are visible without mutation", [] {
             SessionModel model;
             auto undecided = draft();

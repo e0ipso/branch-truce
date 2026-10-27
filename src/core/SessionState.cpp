@@ -26,9 +26,28 @@ bool exceedsEnvelope(const std::string &text)
     return !withinTextEnvelope(text);
 }
 
-Draft withMarkers(Draft draft)
+// Result passages equal to a captured side. Git copies both sides' text into
+// the result and adds only the marker lines, so marker-like lines here are
+// content. The earlier version reaches the result only in base sections, and
+// an unambiguous match against it could take Git's separator for content, so
+// it is left out. Files without a correspondence keep the plain scan.
+MarkerScan resultMarkers(std::string_view text, const CorrespondenceMap *mapping)
 {
-    draft.unresolvedMarkers = scanMarkers(draft.text).count();
+    std::vector<ByteRange> content;
+    if (mapping) {
+        for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
+            const auto *passages = mapping->passages(side);
+            if (!passages) continue;
+            for (const auto &passage : *passages)
+                if (passage.kind == PassageKind::Equal) content.push_back(passage.result);
+        }
+    }
+    return scanMarkers(text, std::move(content));
+}
+
+Draft withMarkers(Draft draft, const CorrespondenceMap *mapping)
+{
+    draft.unresolvedMarkers = resultMarkers(draft.text, mapping).count();
     return draft;
 }
 
@@ -82,9 +101,6 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
             throw std::invalid_argument("Captured sources and launch result must belong to this file session");
         }
         snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
-        std::set<std::vector<std::string>> launch;
-        for (const auto &block : scanMarkers(initial.text).blocks) launch.insert(frame(block, initial.text));
-        launchBlocks_ = std::make_shared<const std::set<std::vector<std::string>>>(std::move(launch));
     }
     std::shared_ptr<const CorrespondenceMap> correspondence;
     const auto resultBudget = assessText(initial.text);
@@ -121,7 +137,14 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
             supportDetail_ = "Load error: could not build correspondence for " + path_ + ": " + error.what();
         }
     }
-    revisions_.emplace(1, Revision{1, 1, 1, withMarkers(std::move(initial)), std::move(correspondence)});
+    if (snapshots_) {
+        std::set<std::vector<std::string>> launch;
+        for (const auto &block : resultMarkers(initial.text, correspondence.get()).blocks)
+            launch.insert(frame(block, initial.text));
+        launchBlocks_ = std::make_shared<const std::set<std::vector<std::string>>>(std::move(launch));
+    }
+    auto draft = withMarkers(std::move(initial), correspondence.get());
+    revisions_.emplace(1, Revision{1, 1, 1, std::move(draft), std::move(correspondence)});
 }
 
 const std::vector<ChoiceTarget> &FileSession::choices() const noexcept
@@ -136,6 +159,11 @@ const std::vector<NonConflictingTarget> &FileSession::nonConflictingTargets() co
     return nonConflictingTargets_ ? *nonConflictingTargets_ : empty;
 }
 
+MarkerScan FileSession::markers() const
+{
+    return resultMarkers(current().draft.text, correspondence());
+}
+
 std::vector<MarkerSection> FileSession::markerSections() const
 {
     const auto *mapping = correspondence();
@@ -147,7 +175,7 @@ std::vector<MarkerSection> FileSession::markerSections(const std::string &text,
 {
     std::vector<MarkerSection> result;
     if (!launchBlocks_ || !choices_) return result;
-    for (const auto &block : scanMarkers(text).blocks) {
+    for (const auto &block : resultMarkers(text, &mapping).blocks) {
         if (!launchBlocks_->contains(frame(block, text))) continue;
         for (const auto &left : *choices_) {
             if (left.scope != ChoiceScope::Section || left.source.side != SourceSide::Stage2
@@ -219,7 +247,6 @@ bool FileSession::completesMarkers(const EditingCommand &command) const
 RevisionId FileSession::advance(const Draft &edited,
                                 std::shared_ptr<const CorrespondenceMap> correspondence)
 {
-    const auto draft = withMarkers(edited);
     if (next_ == std::numeric_limits<RevisionId>::max()) {
         throw std::overflow_error("Session revision space exhausted");
     }
@@ -227,8 +254,10 @@ RevisionId FileSession::advance(const Draft &edited,
     const auto id = next_;
     if (!correspondence && previous.correspondence) {
         correspondence = std::make_shared<const CorrespondenceMap>(
-            previous.correspondence->recomputed(id, draft.text));
+            previous.correspondence->recomputed(id, edited.text));
     }
+    // Counted against this revision's own passages, so replay derives the same count.
+    const auto draft = withMarkers(edited, correspondence.get());
     const auto result = draft.text == previous.draft.text ? previous.result : id;
     const auto decisions = draft.decisions == previous.draft.decisions
             && draft.unresolvedMarkers == previous.draft.unresolvedMarkers
@@ -265,8 +294,8 @@ Transition FileSession::replaceDraft(RevisionId expected, Draft draft,
     if (expected != current_) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
     if (exceedsEnvelope(draft.text)) return Transition::Blocked;
-    draft = withMarkers(std::move(draft));
-    const bool unchanged = draft == current().draft;
+    // The marker count follows from the text, so a supplied count changes nothing.
+    const bool unchanged = draft.text == current().draft.text && draft.decisions == current().draft.decisions;
     std::shared_ptr<const CorrespondenceMap> mapping;
     if (handEdited && correspondence()) {
         auto replayed = correspondence()->recomputed(next_, draft.text);

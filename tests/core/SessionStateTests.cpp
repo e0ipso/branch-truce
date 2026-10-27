@@ -1007,6 +1007,58 @@ public:
             CHECK(typed.current().draft.text.find("<<<<<<< ours\nleft first\nleft second\n=======\nright typed first\n") != std::string::npos);
             CHECK(typed.current().draft.unresolvedMarkers == 2);
         });
+        suite.run("TRUCE-0187 scanMarkers skips marker-like lines inside known source text", [] {
+            const std::string text = "Title\n=======\n<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\n";
+            const auto plain = scanMarkers(text);
+            CHECK(plain.blocks.size() == 1 && plain.orphans.size() == 1 && plain.orphans.front().line == 1);
+            // Unordered, overlapping ranges merge, and the heading underline inside them is content.
+            const auto filtered = scanMarkers(text, {{6, 14}, {0, 10}});
+            CHECK(filtered.orphans.empty() && filtered.blocks == plain.blocks);
+            // Only a range covering the whole line makes it content.
+            CHECK(scanMarkers(text, {{6, 13}}) == plain);
+            // Blocks are assembled from the lines left over.
+            const std::string inside = "<<<<<<< ours\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
+            CHECK(scanMarkers(inside).orphans.size() == 1 && scanMarkers(inside).blocks.front().separator.line == 2);
+            const auto assembled = scanMarkers(inside, {{13, 27}});
+            CHECK(assembled.orphans.empty() && assembled.blocks.size() == 1 && assembled.blocks.front().separator.line == 3);
+        });
+        suite.run("TRUCE-0187 a heading underline both sides keep does not block Mark resolved", [] {
+            auto chosen = test_support::headingFile();
+            // Only the conflict block counts at launch.
+            CHECK(chosen.current().draft.unresolvedMarkers == 1 && chosen.markers().orphans.empty());
+            CHECK(chosen.markers().blocks.size() == 1 && chosen.markers().first()->line == 3);
+            CHECK(chosen.markerSections().size() == 1);
+            CHECK(choose(chosen, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
+            CHECK(chosen.current().draft.text == "Changes\n=======\nintro\nleft line\ntail\n");
+            CHECK(chosen.current().draft.unresolvedMarkers == 0 && !has(chosen, Blocker::UnresolvedMarkers));
+            CHECK(chosen.beginMarkResolved(chosen.current().id) == Transition::Applied);
+            // Resolving the block by hand clears the blocker too, and the heading stays.
+            auto edited = test_support::headingFile();
+            auto draft = edited.current().draft;
+            draft.text = "Changes\n=======\nintro\nright line\ntail\n";
+            CHECK(edited.replaceDraft(1, draft) == Transition::Applied);
+            CHECK(edited.current().draft.unresolvedMarkers == 0 && edited.markers().count() == 0);
+            CHECK(edited.beginMarkResolved(edited.current().id, true) == Transition::Applied);
+            // Without captured sources the plain scan still counts the underline.
+            FileSession plain("id", "file", {test_support::headingFile().current().draft.text, {}, 0});
+            CHECK(plain.current().draft.unresolvedMarkers == 2 && plain.markers().orphans.front().line == 1);
+        });
+        suite.run("TRUCE-0187 marker lines Git inserted still block, whole or orphaned", [] {
+            for (const auto kind : {MarkerKind::Begin, MarkerKind::Separator, MarkerKind::End}) {
+                auto file = test_support::headingFile();
+                const auto block = file.markers().blocks.front();
+                const auto line = kind == MarkerKind::Begin ? block.begin
+                    : kind == MarkerKind::Separator ? block.separator : block.end;
+                CHECK(file.editResult(1, {line.bytes, ""}) == Transition::Applied);
+                const auto remaining = file.markers();
+                CHECK(remaining.blocks.empty() && remaining.orphans.size() == 2);
+                CHECK(std::none_of(remaining.orphans.begin(), remaining.orphans.end(),
+                                   [](const auto &orphan) { return orphan.line == 1; }));
+                CHECK(file.current().draft.unresolvedMarkers == 2);
+                CHECK(file.beginMarkResolved(file.current().id, true) == Transition::Blocked);
+                CHECK(has(file, Blocker::UnresolvedMarkers) && !file.reviewed());
+            }
+        });
         suite.run("TRUCE-0098 an outside-app file keeps its support blocker and recorded failures only", [] {
             FileSession file("id", "file", draft());
             CHECK(file.beginMarkResolved(1) == Transition::Applied);

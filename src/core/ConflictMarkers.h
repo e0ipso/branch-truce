@@ -40,7 +40,9 @@ struct MarkerScan {
 
 // The only marker recognizer. A marker line starts with exactly seven of the
 // same marker character, followed by whitespace or the end of the text, as
-// Git writes them by default. Text elsewhere in a line is never a marker.
-[[nodiscard]] MarkerScan scanMarkers(std::string_view text);
+// Git writes them by default. Text elsewhere in a line is never a marker, and
+// neither is a line inside one of the `content` ranges, which hold known
+// source text. Blocks are assembled from the remaining marker lines.
+[[nodiscard]] MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content = {});
 
 }

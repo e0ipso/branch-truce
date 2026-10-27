@@ -23,8 +23,8 @@ struct Decision {
 struct Draft {
     std::string text;
     std::map<std::string, Decision> decisions;
-    // scanMarkers(text).count(). FileSession recomputes it for every revision
-    // it stores and ignores a supplied value.
+    // FileSession::markers().count() for this text. FileSession recomputes it
+    // for every revision it stores and ignores a supplied value.
     std::size_t unresolvedMarkers = 0;
     bool operator==(const Draft &) const = default;
 };
@@ -125,7 +125,9 @@ public:
         return current().correspondence.get();
     }
     // Conflict-marker blocks and orphan marker lines in the current result.
-    [[nodiscard]] MarkerScan markers() const { return scanMarkers(current().draft.text); }
+    // A marker-like line the correspondence maps to identical text in a
+    // captured side is source content, not a marker.
+    [[nodiscard]] MarkerScan markers() const;
     // Blocks in the current result tied to a choice section, in text order. A
     // block whose marker lines or base text no launch block has is orphaned.
     [[nodiscard]] std::vector<MarkerSection> markerSections() const;

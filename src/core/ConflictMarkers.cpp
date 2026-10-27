@@ -1,6 +1,7 @@
 #include "ConflictMarkers.h"
 
 #include <algorithm>
+#include <iterator>
 
 namespace branch_truce {
 namespace {
@@ -49,8 +50,20 @@ std::optional<MarkerLine> MarkerScan::first() const
     return result;
 }
 
-MarkerScan scanMarkers(std::string_view text)
+MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content)
 {
+    std::sort(content.begin(), content.end(), [](const auto &a, const auto &b) { return a.begin < b.begin; });
+    // Merged into disjoint ranges, so one search finds the only candidate.
+    std::vector<ByteRange> known;
+    for (const auto &range : content) {
+        if (!known.empty() && range.begin <= known.back().end) known.back().end = std::max(known.back().end, range.end);
+        else known.push_back(range);
+    }
+    const auto isContent = [&](ByteRange line) {
+        auto after = std::upper_bound(known.begin(), known.end(), line.begin,
+                                      [](std::size_t offset, const auto &range) { return offset < range.begin; });
+        return after != known.begin() && line.end <= std::prev(after)->end;
+    };
     MarkerScan result;
     std::optional<OpenBlock> open;
     std::size_t number = 0;
@@ -58,7 +71,7 @@ MarkerScan scanMarkers(std::string_view text)
         const auto newline = text.find('\n', begin);
         const auto end = newline == std::string_view::npos ? text.size() : newline + 1;
         const auto kind = markerKind(text.substr(begin, end - begin));
-        if (kind) {
+        if (kind && !isContent({begin, end})) {
             const MarkerLine line{*kind, number, {begin, end}};
             switch (*kind) {
             case MarkerKind::Begin:

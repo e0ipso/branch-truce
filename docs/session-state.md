@@ -12,9 +12,11 @@ does not make the startup window a working conflict resolver.
 A file has a stable session ID and repository-relative byte path. Each draft
 transaction contains the complete result text, decisions keyed by stable
 contribution ID, explicit combination order and the count of known remaining
-conflict-marker ranges, which the model counts by scanning the text. It never
-infers source choices from text. It removes marker lines only inside a choice
-that decides a whole marker section, as `src/core/EditingCommands.md` describes.
+conflict-marker ranges, which the model counts by scanning the text. A
+marker-like line that the correspondence maps to identical text in a captured
+side is source content and does not count. The model never infers source
+choices from text. It removes marker lines only inside a choice that decides a
+whole marker section, as `src/core/EditingCommands.md` describes.
 
 `current().id` identifies a transaction. `result` and `decisions` identify its
 text and decision content separately. Every command includes its expected

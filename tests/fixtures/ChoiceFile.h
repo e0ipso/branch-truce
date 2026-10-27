@@ -65,6 +65,15 @@ inline branch_truce::FileSession markedFile(bool base = false)
         "header\nright first\nright second\nbridge\nright later\ntail\n", markedText(base));
 }
 
+// Both sides keep a Markdown heading underlined with exactly seven '=', and
+// the file conflicts two lines below it.
+inline branch_truce::FileSession headingFile()
+{
+    return choiceFile("Changes\n=======\nintro\nleft line\ntail\n",
+        "Changes\n=======\nintro\nright line\ntail\n",
+        "Changes\n=======\nintro\n<<<<<<< ours\nleft line\n=======\nright line\n>>>>>>> theirs\ntail\n");
+}
+
 // The user set the result to the common earlier version before launch, so
 // choices change text that matches neither side. By default one conflict
 // changes three lines on each side.
