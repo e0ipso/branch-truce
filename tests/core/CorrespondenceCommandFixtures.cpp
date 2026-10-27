@@ -339,6 +339,171 @@ public:
             replay(file, steps);
             CHECK(*file.snapshots() == sources);
         });
+        suite.run("TRUCE-0171 lines inside a multi-line conflict pair by index and keep lines from both sides", [] {
+            auto file = test_support::commonVersionFile();
+            const auto sources = *file.snapshots();
+            const auto line = [&](SourceSide side, std::string_view text) {
+                return targetFor(file, side, ChoiceScope::Line, text);
+            };
+            const auto leftOne = line(SourceSide::Stage2, "left one\n");
+            const auto leftTwo = line(SourceSide::Stage2, "left two\n");
+            const auto leftThree = line(SourceSide::Stage2, "left three\n");
+            const auto rightOne = line(SourceSide::Stage3, "right one\n");
+            const auto rightTwo = line(SourceSide::Stage3, "right two\n");
+            const auto rightThree = line(SourceSide::Stage3, "right three\n");
+            const auto mapped = [&](const ChoiceTarget &target) {
+                const auto found = anchor(file, target.source.contributionId);
+                CHECK(found.state == AnchorState::Mapped && found.result.has_value());
+                return file.current().draft.text.substr(found.result->begin, found.result->end - found.result->begin);
+            };
+            // Each line maps to the result line at its own index, and replacing
+            // that launch text needs confirmation. The section keeps the whole block.
+            for (const auto &[target, expected] : {std::pair{leftOne, "base one\n"}, {leftTwo, "base two\n"},
+                     {leftThree, "base three\n"}, {rightOne, "base one\n"}, {rightTwo, "base two\n"},
+                     {rightThree, "base three\n"}}) {
+                CHECK(mapped(target) == expected);
+                CHECK(anchor(file, target.source.contributionId).manualOverlap);
+            }
+            CHECK(mapped(targetFor(file, SourceSide::Stage2, ChoiceScope::Section, "left one\nleft two\nleft three\n"))
+                == "base one\nbase two\nbase three\n");
+            std::vector<Draft> steps{file.current().draft};
+
+            const auto acceptLeft = previewChoice(file, file.current().id, leftTwo.source.contributionId, ChoiceAction::Accept);
+            CHECK(acceptLeft.state == Transition::ConfirmationRequired);
+            CHECK(acceptLeft.before == "base two\n" && acceptLeft.replacement == "left two\n");
+            CHECK(applyChoice(file, acceptLeft) == Transition::ConfirmationRequired);
+            expectCurrent(file, steps.back());
+            CHECK(applyChoice(file, acceptLeft, true) == Transition::Applied);
+            CHECK(file.current().draft.text == "header\nbase one\nleft two\nbase three\ntail\n");
+            expectDecision(file, leftTwo, Decision{DecisionValue::Accepted, {}});
+            for (const auto &other : {leftOne, leftThree, rightOne, rightTwo, rightThree}) expectDecision(file, other, undecided);
+            // The competing line follows the text that replaced its own.
+            CHECK(mapped(rightTwo) == "left two\n");
+            steps.push_back(file.current().draft);
+
+            const auto acceptRight = previewChoice(file, file.current().id, rightThree.source.contributionId, ChoiceAction::Accept);
+            CHECK(acceptRight.state == Transition::ConfirmationRequired);
+            CHECK(acceptRight.before == "base three\n" && acceptRight.replacement == "right three\n");
+            CHECK(applyChoice(file, acceptRight, true) == Transition::Applied);
+            CHECK(file.current().draft.text == "header\nbase one\nleft two\nright three\ntail\n");
+            expectDecision(file, leftTwo, Decision{DecisionValue::Accepted, {}});
+            expectDecision(file, rightThree, Decision{DecisionValue::Accepted, {}});
+            for (const auto &other : {leftOne, leftThree, rightOne, rightTwo}) expectDecision(file, other, undecided);
+            steps.push_back(file.current().draft);
+
+            const auto ignore = previewChoice(file, file.current().id, leftOne.source.contributionId, ChoiceAction::Ignore);
+            CHECK(ignore.state == Transition::Applied);
+            CHECK(applyChoice(file, ignore) == Transition::Applied);
+            CHECK(file.current().draft.text == steps.back().text);
+            expectDecision(file, leftOne, ignored);
+            expectDecision(file, rightOne, undecided);
+            steps.push_back(file.current().draft);
+            // The block now holds a line from each side and matches neither source.
+            CHECK(file.current().draft.text != sources.stage2->worktree.utf8);
+            CHECK(file.current().draft.text != sources.stage3->worktree.utf8);
+            replay(file, steps);
+            CHECK(*file.snapshots() == sources);
+        });
+        suite.run("TRUCE-0171 surplus lines insert at the end of an uneven block and the last line keeps extra result lines", [] {
+            auto file = test_support::commonVersionFile("header\nl1\nl2\nl3\nl4\ntail\n", "header\nr1\nr2\ntail\n",
+                "header\nb1\nb2\nb3\ntail\n");
+            const auto sources = *file.snapshots();
+            const auto l1 = targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "l1\n");
+            const auto l2 = targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "l2\n");
+            const auto l3 = targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "l3\n");
+            const auto l4 = targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "l4\n");
+            const auto r1 = targetFor(file, SourceSide::Stage3, ChoiceScope::Line, "r1\n");
+            const auto r2 = targetFor(file, SourceSide::Stage3, ChoiceScope::Line, "r2\n");
+            const auto range = [&](const ChoiceTarget &target) {
+                const auto found = anchor(file, target.source.contributionId);
+                CHECK(found.state == AnchorState::Mapped && found.result.has_value());
+                return *found.result;
+            };
+            const auto at = [&](std::string_view text) {
+                const auto found = file.current().draft.text.find(text);
+                CHECK(found != std::string::npos);
+                return found;
+            };
+            // Four left lines against three result lines: the fourth inserts at the end.
+            CHECK(range(l1) == ByteRange{at("b1\n"), at("b2\n")});
+            CHECK(range(l2) == ByteRange{at("b2\n"), at("b3\n")});
+            CHECK(range(l3) == ByteRange{at("b3\n"), at("tail\n")});
+            CHECK(range(l4) == ByteRange{at("tail\n"), at("tail\n")});
+            CHECK(!anchor(file, l4.source.contributionId).manualOverlap);
+            // Two right lines against three: the last one keeps the extra result line.
+            CHECK(range(r1) == ByteRange{at("b1\n"), at("b2\n")});
+            CHECK(range(r2) == ByteRange{at("b2\n"), at("tail\n")});
+            std::vector<Draft> steps{file.current().draft};
+
+            for (const auto *target : {&l1, &r2}) {
+                const auto preview = previewChoice(file, file.current().id, target->source.contributionId, ChoiceAction::Accept);
+                CHECK(preview.state == Transition::ConfirmationRequired);
+                CHECK(applyChoice(file, preview, true) == Transition::Applied);
+                steps.push_back(file.current().draft);
+            }
+            CHECK(file.current().draft.text == "header\nl1\nr2\ntail\n");
+            // Accepting the right line replaced the result lines the second and
+            // third left lines held, but the insertion point stays at the end.
+            CHECK(anchor(file, l2.source.contributionId).state == AnchorState::Invalidated);
+            CHECK(range(l4) == ByteRange{at("tail\n"), at("tail\n")});
+            const auto insert = previewChoice(file, file.current().id, l4.source.contributionId, ChoiceAction::Accept);
+            CHECK(insert.state == Transition::Applied && insert.before.empty() && insert.replacement == "l4\n");
+            CHECK(applyChoice(file, insert) == Transition::Applied);
+            CHECK(file.current().draft.text == "header\nl1\nr2\nl4\ntail\n");
+            for (const auto &chosen : {l1, r2, l4}) expectDecision(file, chosen, Decision{DecisionValue::Accepted, {}});
+            for (const auto &other : {l2, l3, r1}) expectDecision(file, other, undecided);
+            steps.push_back(file.current().draft);
+            replay(file, steps);
+            CHECK(*file.snapshots() == sources);
+
+            // Several surplus lines accepted in source order keep that order.
+            auto surplus = test_support::commonVersionFile("header\nl1\nl2\nl3\ntail\n", "header\nr1\ntail\n", "header\nb1\ntail\n");
+            for (const auto *text : {"l2\n", "l3\n"}) {
+                const auto target = targetFor(surplus, SourceSide::Stage2, ChoiceScope::Line, text);
+                const auto preview = previewChoice(surplus, surplus.current().id, target.source.contributionId, ChoiceAction::Accept);
+                CHECK(preview.state == Transition::Applied);
+                CHECK(applyChoice(surplus, preview) == Transition::Applied);
+            }
+            CHECK(surplus.current().draft.text == "header\nb1\nl2\nl3\ntail\n");
+        });
+        suite.run("TRUCE-0171 repeated identical lines in a multi-line conflict stay unmapped with the existing reason", [] {
+            auto file = test_support::commonVersionFile("head\nrepeat\nrepeat\nmid\nleft one\nleft two\ntail\n",
+                "head\nright\ntail\n", "head\nrepeat\nmid\nbase one\nbase two\ntail\n");
+            const auto sources = *file.snapshots();
+            const auto text = std::string_view(file.snapshots()->stage2->worktree.utf8);
+            const ChoiceTarget *section = nullptr;
+            int repeats = 0;
+            for (const auto &target : file.choices()) {
+                if (target.source.side != SourceSide::Stage2) continue;
+                if (target.scope == ChoiceScope::Section) { section = &target; continue; }
+                if (text.substr(target.source.range.begin, target.source.range.end - target.source.range.begin) != "repeat\n")
+                    continue;
+                ++repeats;
+                CHECK(anchor(file, target.source.contributionId).state == AnchorState::Ambiguous);
+                for (const auto action : {ChoiceAction::Accept, ChoiceAction::Ignore}) {
+                    const auto before = observe(file);
+                    const auto rejected = previewChoice(file, before.id, target.source.contributionId, action);
+                    CHECK(rejected.state == Transition::AmbiguousTarget);
+                    CHECK(rejected.detail == "This scope cannot be mapped safely. Edit the result directly.");
+                    CHECK(applyChoice(file, rejected, true) == Transition::AmbiguousTarget);
+                    expectUnchanged(file, before);
+                }
+            }
+            CHECK(repeats == 2);
+            // Every other line of the same section still has its own target.
+            CHECK(section != nullptr && section->decisions.size() == 5);
+            const auto mid = targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "mid\n");
+            CHECK(anchor(file, mid.source.contributionId).state == AnchorState::Mapped);
+            CHECK(anchor(file, targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "left one\n").source.contributionId).state
+                == AnchorState::Mapped);
+            const auto leftTwo = targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "left two\n");
+            const auto accept = previewChoice(file, file.current().id, leftTwo.source.contributionId, ChoiceAction::Accept);
+            CHECK(accept.state == Transition::ConfirmationRequired && accept.before == "base two\n");
+            CHECK(applyChoice(file, accept, true) == Transition::Applied);
+            CHECK(file.current().draft.text == "head\nrepeat\nmid\nbase one\nleft two\ntail\n");
+            expectDecision(file, leftTwo, Decision{DecisionValue::Accepted, {}});
+            CHECK(*file.snapshots() == sources);
+        });
         suite.run("TRUCE-0030 ordered partial combinations preserve unrelated content and manual edits", [] {
             const std::string prefix = "manual prefix\n";
             auto file = test_support::combinationFile(ChoiceScope::Line);

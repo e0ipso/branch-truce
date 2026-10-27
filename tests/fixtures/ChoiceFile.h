@@ -48,18 +48,29 @@ inline const branch_truce::ChoiceTarget &choiceTarget(const branch_truce::FileSe
     throw std::runtime_error("fixture has no requested choice scope");
 }
 
-inline branch_truce::FileSession batchFile()
+// The user set the result to the common earlier version before launch, so
+// choices change text that matches neither side. By default one conflict
+// changes three lines on each side.
+inline branch_truce::FileSession commonVersionFile(
+    std::string left = "header\nleft one\nleft two\nleft three\ntail\n",
+    std::string right = "header\nright one\nright two\nright three\ntail\n",
+    const std::string &earlier = "header\nbase one\nbase two\nbase three\ntail\n")
 {
     using namespace branch_truce;
-    const std::string earlier = "header\nbase left\nbridge one\nbase right\nbridge two\nbase conflict\ntail\n";
-    auto sources = *choiceFile(
-        "header\nleft only\nbridge one\nbase right\nbridge two\nleft conflict\ntail\n",
-        "header\nbase left\nbridge one\nright only\nbridge two\nright conflict\ntail\n").snapshots();
+    auto sources = *choiceFile(std::move(left), std::move(right)).snapshots();
     sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
         choiceText(earlier), "earlier-commit", "Common earlier version"};
     sources.launchResult.text = choiceText(earlier);
     return FileSession("choices", sources.path, {earlier, {}, 0},
         Support::Supported, {}, sources, true);
+}
+
+inline branch_truce::FileSession batchFile()
+{
+    return commonVersionFile(
+        "header\nleft only\nbridge one\nbase right\nbridge two\nleft conflict\ntail\n",
+        "header\nbase left\nbridge one\nright only\nbridge two\nright conflict\ntail\n",
+        "header\nbase left\nbridge one\nbase right\nbridge two\nbase conflict\ntail\n");
 }
 
 inline branch_truce::FileSession combinationFile(branch_truce::ChoiceScope scope)

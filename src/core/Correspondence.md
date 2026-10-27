@@ -15,15 +15,33 @@ sources.
 
 This choice avoids a leftmost/rightmost tie-break that silently redirects a
 choice after one of several equal passages disappears. Verified equal passages
-support character-boundary byte ranges. A changed passage supports only its
-established outer boundaries. Selecting a smaller part of a changed line needs
-manual editing rather than a substring search. The policy can reject useful
-choices, but it does not invent certainty. Identical buffers take a direct path,
-so repeated text with identical positions remains individually addressable.
+support character-boundary byte ranges. The policy can reject useful choices,
+but it does not invent certainty. Identical buffers take a direct path, so
+repeated text with identical positions remains individually addressable.
+
+A changed passage maps its outer boundaries. Binding an anchor also maps each
+line start inside a changed passage by index, so a single line inside a
+multi-line conflict has its own target. With N source lines against M result
+lines, source line k pairs with result line k up to min(N, M). When N > M, the
+surplus source lines map to an empty range at the end of the result block.
+Accepting one inserts it there, after anything accepted there before, so
+accepting them in source order keeps that order. A choice moves a competing
+anchor on exactly the replaced range onto the new text, but another line from
+the chosen side keeps its own insertion point after it. When M > N, the surplus
+result lines stay with the last source line, because the passage end still maps
+to the block end. The whole passage therefore still covers the whole block. A
+source-only passage is the N:0 case. A changed passage holds no line equal to
+one across from it, since that pair would lengthen the optimal alignment, so the
+pairing never chooses between occurrences. Ambiguous passages, including
+repeated identical lines, stay unmapped. Empty insertion anchors, mid-line
+offsets and whole-buffer recomputation keep the edge-only rule. Selecting a
+smaller part of a changed line needs manual editing rather than a substring
+search.
 
 The algorithm uses O(source lines * result lines) time and O(source lines +
 result lines) memory for different buffers, including line, match and passage
-records. Each split releases its length rows before recursing. Lines are
+records. Each split releases its length rows before recursing. Binding keeps one
+line-start index per text and finds a paired line by binary search. Lines are
 interned, so long-line bytes are compared during interning rather than at each
 length calculation. Initial correspondence failure marks only that file session
 unreadable with a path-specific diagnostic, retaining its captured sources and
@@ -59,6 +77,9 @@ contains the edit or that the edit crosses, and `replaceDraft` sets it wherever
 its comparison changed a range. A choice clears it on each anchor whose whole
 range it replaces. That includes an invalidated or ambiguous anchor whose source
 range lies inside the chosen one, since it has no result range left to compare.
+It also includes such an anchor whose source, aligned against the text before
+the choice, lies inside the replaced range. A competing line loses its range
+that way when the user deletes the result line it pairs with.
 A whole-file command clears it on all. A choice that only clears flags, with
 text and decisions unchanged, still records a revision, so undo and recovery
 replay bring the flags back.

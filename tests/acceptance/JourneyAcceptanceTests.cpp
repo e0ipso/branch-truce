@@ -1775,6 +1775,76 @@ public:
             CHECK(noneEdited());
             checkOffline(scene);
         });
+        window.run("TRUCE-0171 lines from both sides of one multi-line conflict keep their text, decisions and undo", [] {
+            // Both sides change the same three lines, and the user set the result to the common version before launch.
+            const QByteArray base = "header\nbase one\nbase two\nbase three\ntail\n";
+            Repository repo("merge", {{"lines.txt", base, QByteArray("header\nleft one\nleft two\nleft three\ntail\n"),
+                                       QByteArray("header\nright one\nright two\nright three\ntail\n"), base}});
+            Scene scene(repo);
+            clickFile(scene, "lines.txt");
+            scene.click("showSourceChoices");
+            const auto state = [&](const char *label) {
+                return choiceRow(scene, QString::fromUtf8(label)).value(QStringLiteral("state")).toString();
+            };
+            const auto states = [&](const char *expected) {
+                QStringList actual;
+                for (const auto *label : {"Left line 2", "Left line 3", "Left line 4", "Right line 2", "Right line 3", "Right line 4"})
+                    actual.push_back(state(label));
+                expectText(actual.join(QLatin1Char(' ')), QString::fromUtf8(expected), "line decisions");
+            };
+
+            // Every line inside the conflict can be chosen, at the result line with the same index.
+            for (const auto *label : {"Left line 2", "Left line 3", "Left line 4", "Right line 2", "Right line 3", "Right line 4"}) {
+                const auto row = choiceRow(scene, QString::fromUtf8(label));
+                CHECK(row.value(QStringLiteral("available")).toBool());
+                CHECK(row.value(QStringLiteral("detail")).toString().isEmpty());
+            }
+            expectText(regionResult(scene, regionFor(scene, QStringLiteral("Left line 3"))), "base two\n", "left line 3 target");
+            expectText(regionResult(scene, regionFor(scene, QStringLiteral("Right line 4"))), "base three\n", "right line 4 target");
+            states("undecided undecided undecided undecided undecided undecided");
+            std::vector<Work> history{work(scene, "lines.txt")};
+
+            // The middle line from the left replaces only the launch line at its position.
+            clickChoice(scene, "Left line 3", "Accept");
+            CHECK(scene.item("manualReplacementNotice")->isVisible());
+            expectText(scene.text("replacementBeforeText"), "base two\n", "replaced left target");
+            expectText(scene.text("replacementAfterText"), "left two\n", "left replacement");
+            clickDialogButton(scene, "replacementDialog", "OK");
+            expectText(scene.text("resultText"), "header\nbase one\nleft two\nbase three\ntail\n", "accept left line 3");
+            states("undecided accepted undecided undecided undecided undecided");
+            history.push_back(work(scene, "lines.txt"));
+
+            // The last line from the right goes beside it in the same conflict.
+            clickChoice(scene, "Right line 4", "Accept");
+            expectText(scene.text("replacementBeforeText"), "base three\n", "replaced right target");
+            expectText(scene.text("replacementAfterText"), "right three\n", "right replacement");
+            clickDialogButton(scene, "replacementDialog", "OK");
+            expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n", "accept right line 4");
+            states("undecided accepted undecided undecided undecided accepted");
+            history.push_back(work(scene, "lines.txt"));
+
+            // Ignore decides against the first left line and keeps the text.
+            clickChoice(scene, "Left line 2", "Ignore");
+            CHECK(!scene.object("replacementDialog")->property("visible").toBool());
+            expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n", "ignore left line 2");
+            states("ignored accepted undecided undecided undecided accepted");
+            history.push_back(work(scene, "lines.txt"));
+
+            // Undo walks back through text and decisions together, and redo replays them.
+            for (std::size_t step = history.size() - 1; step-- > 0;) {
+                scene.click("undoCommand");
+                CHECK(work(scene, "lines.txt") == history[step]);
+            }
+            states("undecided undecided undecided undecided undecided undecided");
+            CHECK(!scene.file("lines.txt").canUndo() && !scene.item("undoCommand")->isEnabled());
+            for (std::size_t step = 1; step < history.size(); ++step) {
+                scene.click("redoCommand");
+                CHECK(work(scene, "lines.txt") == history[step]);
+            }
+            expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n", "redone");
+            states("ignored accepted undecided undecided undecided accepted");
+            checkOffline(scene);
+        });
         window.run("TRUCE-0116 closing with input recovery could not keep asks to retry, and cancel keeps the window open", [] {
             Repository repo("merge", {{"kept.txt", QByteArray("kept base\n"), QByteArray("kept left\n"),
                                        QByteArray("kept right\n"), QByteArray("kept by hand\n")}});

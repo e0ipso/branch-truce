@@ -97,6 +97,47 @@ void boundaryAlignment(std::span<const Line> source, std::span<const Line> resul
                       resultOffset + split, last, matches);
 }
 
+std::vector<std::size_t> lineStarts(std::string_view text)
+{
+    std::vector<std::size_t> starts;
+    for (std::size_t begin = 0; begin < text.size();) {
+        starts.push_back(begin);
+        const auto newline = text.find('\n', begin);
+        begin = newline == std::string_view::npos ? text.size() : newline + 1;
+    }
+    return starts;
+}
+
+std::optional<std::size_t> lineIndex(const std::vector<std::size_t> &starts, std::size_t offset)
+{
+    const auto found = std::lower_bound(starts.begin(), starts.end(), offset);
+    if (found == starts.end() || *found != offset) return {};
+    return static_cast<std::size_t>(found - starts.begin());
+}
+
+// Line starts of the two compared texts. Binding pairs the lines inside a
+// changed passage by index; whole-buffer edits pass none and keep only the
+// passage edges.
+struct LinePairing {
+    const std::vector<std::size_t> &source;
+    const std::vector<std::size_t> &result;
+
+    // The result position of a line start strictly inside a changed passage.
+    // Source line k pairs with result line k. Source lines beyond the result
+    // block's line count map to its end, where they insert.
+    [[nodiscard]] std::optional<std::size_t> position(const Passage &passage, std::size_t offset) const
+    {
+        const auto line = lineIndex(source, offset);
+        const auto first = lineIndex(source, passage.source.begin);
+        if (!line || !first) return {};
+        if (passage.result.begin == passage.result.end) return passage.result.end;
+        const auto start = lineIndex(result, passage.result.begin);
+        if (!start) return {};
+        const auto paired = *start + *line - *first;
+        return paired < result.size() && result[paired] < passage.result.end ? result[paired] : passage.result.end;
+    }
+};
+
 struct Projection {
     AnchorState state = AnchorState::Ambiguous;
     std::optional<ByteRange> range;
@@ -104,7 +145,7 @@ struct Projection {
 };
 
 Projection project(const std::vector<Passage> &passages, ByteRange range,
-                   InsertionAffinity affinity)
+                   InsertionAffinity affinity, const LinePairing *pairing = nullptr)
 {
     Projection projection;
     for (const auto &passage : passages) {
@@ -119,6 +160,7 @@ Projection project(const std::vector<Passage> &passages, ByteRange range,
         if ((overlap || interiorInsertion) && passage.kind != PassageKind::Equal)
             projection.changed = true;
     }
+    const bool empty = range.begin == range.end;
     const auto position = [&](std::size_t offset, InsertionAffinity insertion) -> std::optional<std::size_t> {
         std::optional<std::size_t> low;
         std::optional<std::size_t> high;
@@ -133,11 +175,15 @@ Projection project(const std::vector<Passage> &passages, ByteRange range,
             } else {
                 if (offset == passage.source.begin) add(passage.result.begin);
                 if (offset == passage.source.end) add(passage.result.end);
+                // Only lines pair. An empty insertion anchor inside a changed
+                // passage still has no verified position.
+                if (pairing && !empty && passage.source.begin < offset && offset < passage.source.end
+                    && (passage.kind == PassageKind::Changed || passage.kind == PassageKind::SourceOnly))
+                    if (const auto paired = pairing->position(passage, offset)) add(*paired);
             }
         }
         return insertion == InsertionAffinity::Before ? low : high;
     };
-    const bool empty = range.begin == range.end;
     const auto begin = position(range.begin, empty ? affinity : InsertionAffinity::After);
     const auto end = position(range.end, empty ? affinity : InsertionAffinity::Before);
     if (!begin || !end || *begin > *end) return projection;
@@ -161,14 +207,25 @@ bool within(const SourceAnchor &outer, const SourceAnchor &inner)
         : a.begin <= b.begin && b.end <= a.end);
 }
 
-void transform(ResultAnchor &anchor, const ResultEdit &edit, bool manual, bool selected)
+// Another nonempty contribution from the chosen side, such as the next surplus
+// line at the same insertion point, keeps its own place beside the choice.
+bool sibling(const SourceAnchor &chosen, const SourceAnchor &other)
+{
+    const auto &a = chosen.range;
+    const auto &b = other.range;
+    return chosen.side == other.side && a.begin != a.end && b.begin != b.end
+        && (a.end <= b.begin || b.end <= a.begin);
+}
+
+void transform(ResultAnchor &anchor, const ResultEdit &edit, bool manual, bool selected, bool beside)
 {
     if (anchor.state != AnchorState::Mapped || !anchor.result) return;
     auto range = *anchor.result;
     const auto removed = edit.range.end - edit.range.begin;
     const auto inserted = edit.replacement.size();
     const auto shift = [&](std::size_t offset) { return offset - removed + inserted; };
-    if (selected || (!manual && range == edit.range)) {
+    // A competing anchor on the replaced range follows the chosen text.
+    if (selected || (!manual && !beside && range == edit.range)) {
         anchor.result = ByteRange{edit.range.begin, edit.range.begin + inserted};
         if (selected) anchor.manualOverlap = false;
         anchor.handEdited = false;
@@ -312,12 +369,16 @@ CorrespondenceMap::CorrespondenceMap(RevisionId revision, const FileSnapshots &s
     capture(SourceSide::Earlier, sources.earlier);
     capture(SourceSide::Stage2, sources.stage2);
     capture(SourceSide::Stage3, sources.stage3);
+    std::map<SourceSide, std::vector<std::size_t>> starts;
+    for (const auto &[side, text] : texts) starts.emplace(side, lineStarts(text));
     sources_ = std::make_shared<const std::map<SourceSide, std::string>>(std::move(texts));
+    sourceLines_ = std::make_shared<const std::map<SourceSide, std::vector<std::size_t>>>(std::move(starts));
     align();
 }
 
 void CorrespondenceMap::align()
 {
+    resultLines_.reset();
     for (const auto &[side, source] : *sources_) passages_[side] = algorithm_->compare(source, text_);
 }
 
@@ -338,7 +399,9 @@ bool CorrespondenceMap::bind(SourceAnchor source)
     const auto text = sources_->find(source.side);
     if (source.contributionId.empty() || text == sources_->end()
         || !validByteRange(text->second, source.range) || anchors_.contains(source.contributionId)) return false;
-    const auto projected = project(passages_.at(source.side), source.range, source.affinity);
+    if (!resultLines_) resultLines_ = std::make_shared<const std::vector<std::size_t>>(lineStarts(text_));
+    const LinePairing pairing{sourceLines_->at(source.side), *resultLines_};
+    const auto projected = project(passages_.at(source.side), source.range, source.affinity, &pairing);
     const auto id = source.contributionId;
     const AnchorOrigin origin{sessionId_, path_, sourceObjectIds_.at(source.side)};
     // Launch text that differs from its source needs confirmation to replace,
@@ -368,12 +431,24 @@ CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdi
     auto result = atRevision(revision);
     result.text_.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
     const auto *selected = manual ? nullptr : anchor(selectedAnchor);
+    std::optional<std::vector<std::size_t>> lines;
+    // A competing line loses its range when the result line it pairs with is
+    // deleted by hand. Where its source pairs in the text before this choice
+    // tells whether the choice replaced that place.
+    const auto replaced = [&](const SourceAnchor &source) {
+        if (edit.range.begin == edit.range.end) return false;
+        if (!resultLines_ && !lines) lines = lineStarts(text_);
+        const LinePairing pairing{sourceLines_->at(source.side), resultLines_ ? *resultLines_ : *lines};
+        const auto projected = project(passages_.at(source.side), source.range, source.affinity, &pairing);
+        return projected.range && edit.range.begin <= projected.range->begin && projected.range->end <= edit.range.end;
+    };
     for (auto &[id, value] : result.anchors_) {
         // An unmapped anchor has no result range to compare, but a source range
         // inside the selected one means the choice replaced its text too.
-        if (selected && value.state != AnchorState::Mapped && within(selected->source, value.source))
+        if (selected && value.state != AnchorState::Mapped && value.handEdited
+            && (within(selected->source, value.source) || replaced(value.source)))
             value.handEdited = false;
-        transform(value, edit, manual, id == selectedAnchor);
+        transform(value, edit, manual, id == selectedAnchor, selected && sibling(selected->source, value.source));
     }
     result.align();
     return result;

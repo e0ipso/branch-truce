@@ -126,6 +126,10 @@ private:
     std::shared_ptr<const CorrespondenceAlgorithm> algorithm_;
     std::string text_;
     std::map<SourceSide, std::vector<Passage>> passages_;
+    // Line starts that pair lines inside changed passages when binding. The
+    // result's are built by the first bind at a text and dropped by align().
+    std::shared_ptr<const std::map<SourceSide, std::vector<std::size_t>>> sourceLines_;
+    std::shared_ptr<const std::vector<std::size_t>> resultLines_;
     std::map<std::string, ResultAnchor> anchors_;
 };
 
