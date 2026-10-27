@@ -31,6 +31,8 @@ public:
     struct StartResult {
         Transition transition = Transition::Blocked;
         QString detail;
+        // The refused revision's markers, when conflict markers blocked it.
+        std::optional<MarkerScan> markers;
     };
 
     ResolutionPublisher(SessionModel &files, SessionCoordinator &coordinator,

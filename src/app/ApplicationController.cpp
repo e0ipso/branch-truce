@@ -1041,8 +1041,38 @@ bool ApplicationController::markResolved(const QString &fileId, const QString &r
     }
     const auto started = publisher_.start(fileId.toStdString(), expected, confirmUndecided);
     commandMessage_ = started.detail;
+    markerBlocker_.clear();
+    if (started.markers && started.markers->first())
+        markerBlocker_ = {{QStringLiteral("fileId"), fileId}, {QStringLiteral("revision"), revision},
+            {QStringLiteral("message"), started.detail},
+            {QStringLiteral("count"), QVariant::fromValue(static_cast<qulonglong>(started.markers->count()))},
+            {QStringLiteral("line"), QVariant::fromValue(static_cast<qulonglong>(started.markers->first()->line + 1))}};
     Q_EMIT commandChanged();
     return started.transition == Transition::Applied || started.transition == Transition::NoChange;
+}
+
+QVariantMap ApplicationController::markerBlocker() const
+{
+    const auto *file = files_.file(selectedFileId_.toStdString());
+    if (markerBlocker_.isEmpty() || !file || markerBlocker_.value(QStringLiteral("fileId")).toString() != selectedFileId_
+        || markerBlocker_.value(QStringLiteral("message")).toString() != commandMessage_
+        || revisionId(markerBlocker_.value(QStringLiteral("revision")).toString()) != file->current().id)
+        return {};
+    auto result = markerBlocker_;
+    result.remove(QStringLiteral("message"));
+    return result;
+}
+
+bool ApplicationController::showFirstMarker()
+{
+    const auto *file = files_.file(selectedFileId_.toStdString());
+    // A pending draft in the editor has other offsets than the current revision.
+    if (markerBlocker().isEmpty() || !resultEditor_ || files_.pendingDraft(file->id())) return false;
+    const auto first = file->markers().first();
+    const int cursor = first ? utf16Offset(file->current().draft.text, first->bytes.begin) : -1;
+    if (cursor < 0) return false;
+    resultEditor_->setProperty("cursorPosition", cursor);
+    return true;
 }
 
 void ApplicationController::cancelResolution()

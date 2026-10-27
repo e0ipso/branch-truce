@@ -13,6 +13,7 @@
 #include <QSet>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -761,6 +762,54 @@ int main(int argc, char **argv)
         CHECK(!controller.handoff().value("canLeave").toBool());
         CHECK(!controller.finishSession() && !controller.leaveSession());
         CHECK(end.count == 1 && controller.sessionOutcome() == end.outcome);
+    });
+    suite.run("TRUCE-0175 a marker refusal names the markers and the first line and moves the cursor there", [] {
+        Session session;
+        const auto before = session.repo.snapshot();
+        const auto replace = [&](std::string text) {
+            auto draft = openedFile(session.controller).current().draft;
+            draft.text = std::move(text);
+            CHECK(session.controller.files()->replaceDraft(session.id.toStdString(),
+                openedFile(session.controller).current().id, draft) == Transition::Applied);
+        };
+        // "caf\xc3\xa9 \xf0\x9f\x98\x80\n" is 8 UTF-16 code units and "kept\n" 5 more.
+        replace("caf\xc3\xa9 \xf0\x9f\x98\x80\nkept\n<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\n=======\n");
+        QObject editor;
+        editor.setProperty("cursorPosition", 0);
+        session.controller.attachResultEditor(&editor);
+        CHECK(session.controller.markerBlocker().isEmpty() && !session.controller.showFirstMarker());
+        CHECK(!session.controller.markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.commandMessage() == QStringLiteral(
+            "Mark resolved is blocked: 1 conflict-marker block and 1 stray conflict-marker line remain; "
+            "first at line 3. The repository file is unchanged."));
+        auto blocker = session.controller.markerBlocker();
+        CHECK(blocker.value("fileId").toString() == session.id && blocker.value("revision").toString() == session.revision());
+        CHECK(blocker.value("count").toULongLong() == 2 && blocker.value("line").toULongLong() == 3);
+        CHECK(session.controller.showFirstMarker());
+        CHECK(editor.property("cursorPosition").toInt() == 13);
+        CHECK(!openedFile(session.controller).reviewed() && !openedFile(session.controller).facts().resolved);
+        replace("top\n<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\nmid\n<<<<<<< ours\nc\n=======\nd\n>>>>>>> theirs\n");
+        // A newer revision retires the action until Mark resolved is refused again.
+        CHECK(session.controller.markerBlocker().isEmpty() && !session.controller.showFirstMarker());
+        CHECK(!session.controller.markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.commandMessage() == QStringLiteral(
+            "Mark resolved is blocked: 2 conflict-marker blocks remain; first at line 2. The repository file is unchanged."));
+        blocker = session.controller.markerBlocker();
+        CHECK(blocker.value("count").toULongLong() == 2 && blocker.value("line").toULongLong() == 2);
+        editor.setProperty("cursorPosition", 0);
+        CHECK(session.controller.showFirstMarker() && editor.property("cursorPosition").toInt() == 4);
+        replace("only\n>>>>>>> theirs\n");
+        CHECK(!session.controller.markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.commandMessage() == QStringLiteral(
+            "Mark resolved is blocked: 1 stray conflict-marker line remains; first at line 2. The repository file is unchanged."));
+        // The handoff keeps its label for the same blocker.
+        CHECK(std::string(blockerText(Blocker::UnresolvedMarkers)) == "Known conflict markers remain");
+        const auto blockers = openedFile(session.controller).facts().blockers;
+        CHECK(std::find(blockers.begin(), blockers.end(), Blocker::UnresolvedMarkers) != blockers.end());
+        session.controller.attachResultEditor(nullptr);
+        CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
+        CHECK(unmerged(session.repo).contains("tracked.txt"));
+        expectUnchanged(session.repo, before);
     });
     return suite.report();
 }

@@ -36,6 +36,21 @@ std::optional<QByteArray> writtenRevisionBytes(const FileSession &session)
     return serialized.document->originalBytes;
 }
 
+QString remainingMarkers(const MarkerScan &markers)
+{
+    const auto blocks = static_cast<qulonglong>(markers.blocks.size());
+    const auto stray = static_cast<qulonglong>(markers.orphans.size());
+    const auto blockText = blocks == 1 ? ResolutionPublisher::tr("1 conflict-marker block")
+                                       : ResolutionPublisher::tr("%1 conflict-marker blocks").arg(blocks);
+    const auto strayText = stray == 1 ? ResolutionPublisher::tr("1 stray conflict-marker line")
+                                      : ResolutionPublisher::tr("%1 stray conflict-marker lines").arg(stray);
+    if (stray == 0) return blocks == 1 ? ResolutionPublisher::tr("%1 remains").arg(blockText)
+                                       : ResolutionPublisher::tr("%1 remain").arg(blockText);
+    if (blocks == 0) return stray == 1 ? ResolutionPublisher::tr("%1 remains").arg(strayText)
+                                       : ResolutionPublisher::tr("%1 remain").arg(strayText);
+    return ResolutionPublisher::tr("%1 and %2 remain").arg(blockText, strayText);
+}
+
 bool samePairs(const std::map<std::string, std::string> &expected, const QHash<QByteArray, QByteArray> &live)
 {
     if (expected.size() != static_cast<std::size_t>(live.size())) return false;
@@ -228,7 +243,7 @@ bool ResolutionPublisher::preserveWrite() const
 
 ResolutionPublisher::StartResult ResolutionPublisher::refuse(Transition transition, const QString &detail)
 {
-    return {transition, detail};
+    return {transition, detail, {}};
 }
 
 ResolutionPublisher::StartResult ResolutionPublisher::recordWrite(const std::string &fileId, RevisionId revision,
@@ -326,6 +341,14 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
         confirmation_ = std::make_pair(fileId, expected);
         return refuse(Transition::ConfirmationRequired,
             tr("Confirm that this result is intentional. Some source choices are still undecided."));
+    }
+    session = file(fileId);
+    if (review == Transition::Blocked && session && session->current().draft.unresolvedMarkers != 0) {
+        auto markers = session->markers();
+        auto refused = refuse(review, tr("Mark resolved is blocked: %1; first at line %2. The repository file is unchanged.")
+            .arg(remainingMarkers(markers)).arg(static_cast<qulonglong>(markers.first()->line + 1)));
+        refused.markers = std::move(markers);
+        return refused;
     }
     if (review != Transition::Applied)
         return refuse(review, tr("Mark resolved is blocked. The repository file is unchanged."));

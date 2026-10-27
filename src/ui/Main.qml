@@ -1151,6 +1151,18 @@ Kirigami.ApplicationWindow {
                             Layout.fillWidth: true
                             visible: window.controller.commandMessage.length > 0
                             text: window.controller.commandMessage
+                            actions: [
+                                Kirigami.Action {
+                                    objectName: "showFirstMarker"
+                                    text: qsTr("Go to line %1").arg(window.controller.markerBlocker.line || 0)
+                                    icon.name: "go-jump"
+                                    visible: !!window.controller.markerBlocker.line
+                                    onTriggered: {
+                                        if (window.controller.showFirstMarker())
+                                            comparison.editorNamed("result").forceActiveFocus()
+                                    }
+                                }
+                            ]
                         }
                         PlainInlineMessage {
                             objectName: "parentStagingState"

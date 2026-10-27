@@ -37,6 +37,7 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(int loadErrorFiles READ loadErrorFiles NOTIFY inventoryChanged)
     Q_PROPERTY(QVariantMap commandPreview READ commandPreview NOTIFY commandChanged)
     Q_PROPERTY(QString commandMessage READ commandMessage NOTIFY commandChanged)
+    Q_PROPERTY(QVariantMap markerBlocker READ markerBlocker NOTIFY commandChanged)
     Q_PROPERTY(bool resolutionConfirmation READ resolutionConfirmation NOTIFY commandChanged)
     Q_PROPERTY(QString resolutionFileId READ resolutionFileId NOTIFY commandChanged)
     Q_PROPERTY(QString resolutionRevision READ resolutionRevision NOTIFY commandChanged)
@@ -77,6 +78,10 @@ public:
     [[nodiscard]] int loadErrorFiles() const;
     [[nodiscard]] QVariantMap commandPreview() const;
     [[nodiscard]] QString commandMessage() const { return commandMessage_; }
+    // The markers that refused Mark resolved, while that message is shown for
+    // the selected file's current revision: fileId, revision, count and the
+    // one-based line of the first marker. Empty otherwise.
+    [[nodiscard]] QVariantMap markerBlocker() const;
     [[nodiscard]] bool resolutionConfirmation() const { return publisher_.confirmationPending(); }
     [[nodiscard]] QString resolutionFileId() const { return publisher_.confirmationFileId(); }
     [[nodiscard]] QString resolutionRevision() const { return publisher_.confirmationRevision(); }
@@ -110,6 +115,8 @@ public:
     // Review, checkpoint and publish one exact revision. Confirmation is required while source choices remain undecided.
     Q_INVOKABLE bool markResolved(const QString &fileId, const QString &revision, bool confirmUndecided = false);
     Q_INVOKABLE void cancelResolution();
+    // Moves the result cursor to the first marker named by markerBlocker.
+    Q_INVOKABLE bool showFirstMarker();
     // The launcher assigns one parent-owned path. Repository mode leaves this empty.
     bool assignParentStaging(const QByteArray &path);
     bool verifyParentAcknowledgment(const QString &fileId, const QString &revision);
@@ -229,6 +236,7 @@ private:
     std::optional<WholeFilePreview> wholeFilePreview_;
     QString previewFileId_;
     QString commandMessage_;
+    QVariantMap markerBlocker_;
     bool discardPending_ = false;
     QPointer<QObject> resultEditor_;
     QPointer<QTextDocument> resultDocument_;
