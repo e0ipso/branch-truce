@@ -453,6 +453,74 @@ qreal columnOffset(QQuickItem *editor, const QString &text, int column)
     return sceneRectangle(editor, start + column).x() - sceneRectangle(editor, start).x();
 }
 
+// What one pane paints, keyed by line: the kind of each line background, the
+// kind of each gutter glyph, and in the result the provenance letter. A line
+// with no mark is absent.
+struct PaneMarks {
+    QMap<int, QString> backgrounds;
+    QMap<int, QString> glyphs;
+    QMap<int, QString> letters;
+    bool operator==(const PaneMarks &) const = default;
+};
+
+PaneMarks paintedMarks(Fixture &fixture, const std::string &pane)
+{
+    PaneMarks found;
+    for (auto *fill : fixture.item((pane + "Backgrounds").c_str())->childItems()) {
+        if (fill->isVisible() && fill->property("part").toString() == "line")
+            found.backgrounds.insert(fill->property("line").toInt(), fill->property("kind").toString());
+    }
+    for (auto *glyph : fixture.item((pane + "GutterMarkerSlot").c_str())->childItems()) {
+        const auto kind = glyph->property("kind").toString();
+        if (glyph->isVisible() && !kind.isEmpty() && kind != "removed")
+            found.glyphs.insert(glyph->property("line").toInt(), kind);
+    }
+    // The gutter's other text is the line numbers.
+    for (auto *child : fixture.item((pane + "Gutter").c_str())->childItems()) {
+        const auto text = child->property("text").toString();
+        bool number = false;
+        text.toInt(&number);
+        if (child->isVisible() && !text.isEmpty() && !number)
+            found.letters.insert(qmlValue(child, QStringLiteral("modelData.number")).toInt(), text);
+    }
+    return found;
+}
+
+std::string describeMarks(const PaneMarks &marks)
+{
+    const auto list = [](const QMap<int, QString> &lines) {
+        std::string shown;
+        for (auto it = lines.begin(); it != lines.end(); ++it)
+            shown += " " + std::to_string(it.key()) + "=" + it.value().toStdString();
+        return shown;
+    };
+    return "backgrounds" + list(marks.backgrounds) + "; glyphs" + list(marks.glyphs) + "; letters" + list(marks.letters);
+}
+
+void expectMarks(Fixture &fixture, const std::string &when, const std::string &pane, const PaneMarks &expected)
+{
+    QElapsedTimer deadline;
+    deadline.start();
+    while (paintedMarks(fixture, pane) != expected && deadline.elapsed() < 5000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    const auto painted = paintedMarks(fixture, pane);
+    if (painted != expected)
+        throw std::runtime_error(when + ", " + pane + " paints " + describeMarks(painted)
+            + ", not " + describeMarks(expected));
+}
+
+// The marks of a pane whose regions on lines 2, 4 and 6 have the given kinds;
+// the backgrounds and glyphs agree, and the other lines carry no mark.
+PaneMarks regionMarks(const QString &second, const QString &fourth, const QString &sixth,
+    const QMap<int, QString> &letters = {})
+{
+    QMap<int, QString> lines;
+    for (const auto &[line, kind] : {std::pair{2, second}, std::pair{4, fourth}, std::pair{6, sixth}}) {
+        if (!kind.isEmpty()) lines.insert(line, kind);
+    }
+    return {lines, lines, letters};
+}
+
 // Which cases one run executes. The deletion-at-limit cases edit multi-megabyte buffers in the
 // real editor, so ctest runs them as their own entry with a timeout sized for them. Display
 // runs the viewport cases that a real display can draw differently, on any platform; ctest
@@ -1011,6 +1079,76 @@ public:
             expect("result", {"manual", "removed"});
             expect("stage3", {"added", "changed"});
         });
+        {
+            // The batch fixture has a left and a right region on lines 2, 4 and 6, and
+            // its result is the common earlier version. The result's letters name the
+            // sources each line equals; line 6 equals neither.
+            const QMap<int, QString> launchLetters{{1, "B"}, {2, "R"}, {3, "B"}, {4, "L"}, {5, "B"}, {7, "B"}};
+            auto leftLetters = launchLetters;
+            leftLetters.insert(2, "L");
+            // One scoped choice on the left region at line 2: the action, the states the
+            // left and right regions there end in, and what each pane then paints. The
+            // regions on lines 4 and 6 stay undecided and keep their conflict marks.
+            struct Choice {
+                QString action;
+                QString leftState;
+                QString rightState;
+                bool resultChanges;
+                PaneMarks stage2;
+                PaneMarks result;
+                PaneMarks stage3;
+            };
+            const std::array<Choice, 3> choices{{
+                // The left line now matches the result. The result line stays a
+                // conflict while the right contribution is undecided.
+                {"accept", "accepted", "undecided", true, regionMarks({}, "conflict", "conflict"),
+                    regionMarks("conflict", "conflict", "conflict", leftLetters),
+                    regionMarks("conflict", "conflict", "conflict")},
+                // Ignore leaves the result alone, so the left line still differs from it.
+                {"ignore", "ignored", "undecided", false, regionMarks("changed", "conflict", "conflict"),
+                    regionMarks("conflict", "conflict", "conflict", launchLetters),
+                    regionMarks("conflict", "conflict", "conflict")},
+                // Resolving using the left side decides both contributions, so the
+                // result line is only a change against the right source.
+                {"resolve", "accepted", "ignored", true, regionMarks({}, "conflict", "conflict"),
+                    regionMarks("changed", "conflict", "conflict", leftLetters),
+                    regionMarks("changed", "conflict", "conflict")},
+            }};
+            for (const auto &choice : choices) {
+                suite.run("TRUCE-0174 a scoped " + choice.action.toStdString()
+                    + " repaints all three panes and the provenance letters", [choice, launchLetters] {
+                    Fixture fixture;
+                    settlePanes(fixture);
+                    expectMarks(fixture, "at launch", "stage2", regionMarks("conflict", "conflict", "conflict"));
+                    expectMarks(fixture, "at launch", "result", regionMarks("conflict", "conflict", "conflict", launchLetters));
+                    expectMarks(fixture, "at launch", "stage3", regionMarks("conflict", "conflict", "conflict"));
+                    const auto before = fixture.text();
+                    const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+                    CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
+                        QString::fromStdString(target.source.contributionId), choice.action));
+                    CHECK(fixture.controller.applyChoice(true));
+                    CHECK((fixture.text() != before) == choice.resultChanges);
+                    if (choice.resultChanges) CHECK(fixture.text().contains(QStringLiteral("\nleft only\n")));
+                    // Both scopes of a region share its decisions, so they end in the same state.
+                    int chosen = 0;
+                    for (const auto &entry : fixture.controller.selectedFile().value("regions").toList()) {
+                        const auto region = entry.toMap();
+                        const bool left = region.value("side").toString() == "stage2";
+                        const bool here = region.value("sourceLineBegin").toInt() == 2;
+                        chosen += left && here;
+                        const auto expected = !here ? QStringLiteral("undecided") : left ? choice.leftState : choice.rightState;
+                        if (region.value("state").toString() != expected)
+                            throw std::runtime_error(region.value("id").toString().toStdString() + " is "
+                                + region.value("state").toString().toStdString() + ", not " + expected.toStdString());
+                    }
+                    CHECK(chosen == 2);
+                    const auto when = "after " + choice.action.toStdString();
+                    expectMarks(fixture, when, "stage2", choice.stage2);
+                    expectMarks(fixture, when, "result", choice.result);
+                    expectMarks(fixture, when, "stage3", choice.stage3);
+                });
+            }
+        }
         suite.run("TRUCE-0058 whitespace markers paint spaces and tabs", [] {
             const std::string result = "aa bb\tcc\n";
             Fixture fixture(test_support::choiceFile("left\n", "right\n", result));
