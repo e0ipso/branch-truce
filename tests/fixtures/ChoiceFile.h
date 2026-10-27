@@ -65,6 +65,14 @@ inline branch_truce::FileSession markedFile(bool base = false)
         "header\nright first\nright second\nbridge\nright later\ntail\n", markedText(base));
 }
 
+// The left side has no line where the right side has one, so Git writes an
+// empty left region between the conflict markers.
+inline branch_truce::FileSession deletionFile()
+{
+    return choiceFile("header\nbridge\ntail\n", "header\nright first\nbridge\ntail\n",
+        "header\n<<<<<<< ours\n=======\nright first\n>>>>>>> theirs\nbridge\ntail\n");
+}
+
 // Both sides keep a Markdown heading underlined with exactly seven '=', and
 // the file conflicts two lines below it.
 inline branch_truce::FileSession headingFile()

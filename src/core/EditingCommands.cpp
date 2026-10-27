@@ -219,6 +219,8 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected,
     if (action != ChoiceAction::Ignore) {
         // A source deletion has an empty insertion anchor. Its replacement
         // range must come from the captured competitor, never nearby text.
+        // In a marker section the insertion point lies past the end marker,
+        // but the competitor's anchor is exactly its region inside the block.
         const ResultAnchor *replacementAnchor = anchor;
         if (found->source.range.begin == found->source.range.end) {
             const auto opposite = std::find_if(targets.begin(), targets.end(), [&](const auto &target) {
@@ -227,8 +229,12 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected,
             });
             replacementAnchor = opposite == targets.end() ? nullptr
                 : file.correspondence()->anchor(opposite->source.contributionId);
+            const auto sections = file.markerSections();
+            const bool marked = std::any_of(sections.begin(), sections.end(), [&](const auto &section) {
+                return section.section == found->section;
+            });
             if (!replacementAnchor || replacementAnchor->state != AnchorState::Mapped || !replacementAnchor->result
-                || (anchor->result->begin != replacementAnchor->result->begin
+                || (!marked && anchor->result->begin != replacementAnchor->result->begin
                     && anchor->result->begin != replacementAnchor->result->end))
                 return fail(Transition::AmbiguousTarget, "The deletion scope is uncertain. Edit the result directly.");
             preview.command.targets.push_back(*replacementAnchor);

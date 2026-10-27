@@ -1051,6 +1051,63 @@ public:
             CHECK(typed.current().draft.text.find("<<<<<<< ours\nleft first\nleft second\n=======\nright typed first\n") != std::string::npos);
             CHECK(typed.current().draft.unresolvedMarkers == 2);
         });
+        suite.run("TRUCE-0189 the deleting side of a marker section can be accepted and resolved", [] {
+            const auto launch = test_support::deletionFile().current().draft.text;
+            const std::string accepted = "header\n<<<<<<< ours\n=======\n>>>>>>> theirs\nbridge\ntail\n";
+            enum class Path { Resolve, AcceptThenIgnore, IgnoreThenAccept };
+            for (const auto path : {Path::Resolve, Path::AcceptThenIgnore, Path::IgnoreThenAccept}) {
+                auto file = test_support::deletionFile();
+                CHECK(file.markerSections().size() == 1);
+                const auto &left = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section);
+                CHECK(left.source.range.begin == left.source.range.end);
+                std::string before = launch;
+                switch (path) {
+                case Path::Resolve: {
+                    const auto preview = previewChoice(file, 1, left.source.contributionId, ChoiceAction::ResolveUsingSide);
+                    CHECK(preview.state == Transition::Applied && preview.before == "right first\n" && preview.replacement.empty());
+                    CHECK(applyChoice(file, preview) == Transition::Applied);
+                    break;
+                }
+                case Path::AcceptThenIgnore:
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept) == Transition::Applied);
+                    CHECK(file.current().draft.text == accepted && file.current().draft.unresolvedMarkers == 1);
+                    CHECK(file.markerSections().size() == 1);
+                    before = accepted;
+                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Ignore) == Transition::Applied);
+                    break;
+                case Path::IgnoreThenAccept:
+                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Ignore) == Transition::Applied);
+                    CHECK(file.current().draft.text == launch);
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept) == Transition::Applied);
+                    break;
+                }
+                const auto chosen = file.current().draft;
+                CHECK(chosen.text == "header\nbridge\ntail\n" && chosen.unresolvedMarkers == 0);
+                CHECK(file.markerSections().empty() && !has(file, Blocker::UnresolvedMarkers));
+                for (const auto &id : left.decisions) CHECK(chosen.decisions.at(id).value == DecisionValue::Accepted);
+                for (const auto &id : left.competitors) CHECK(chosen.decisions.at(id).value == DecisionValue::Ignored);
+                CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft.text == before);
+                CHECK(file.markerSections().size() == 1);
+                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+            }
+        });
+        suite.run("TRUCE-0189 a deletion outside a marker section keeps the scope check", [] {
+            // A hand-edited end marker orphans the block, so the deletion
+            // anchor after it no longer identifies the competing range.
+            auto file = test_support::deletionFile();
+            const auto at = file.current().draft.text.find(">>>>>>> theirs") + 7;
+            CHECK(file.editResult(1, {{at, at}, " edited"}) == Transition::Applied);
+            CHECK(file.markerSections().empty());
+            const auto edited = file.current();
+            const auto &left = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section);
+            for (const auto action : {ChoiceAction::Accept, ChoiceAction::ResolveUsingSide}) {
+                const auto refused = previewChoice(file, edited.id, left.source.contributionId, action);
+                CHECK(refused.state == Transition::AmbiguousTarget);
+                CHECK(refused.detail == "The deletion scope is uncertain. Edit the result directly.");
+                CHECK(applyChoice(file, refused, true) == Transition::AmbiguousTarget);
+                CHECK(file.current().id == edited.id && file.current().draft == edited.draft);
+            }
+        });
         suite.run("TRUCE-0187 scanMarkers skips marker-like lines inside known source text", [] {
             const std::string text = "Title\n=======\n<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\n";
             const auto plain = scanMarkers(text);
