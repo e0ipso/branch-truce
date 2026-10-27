@@ -43,6 +43,7 @@ public:
     {
         CHECK(controller.files()->appendFile(pythonFile("app", "src/app.py")));
         CHECK(controller.files()->appendFile(pythonFile("unknown", "src/app.unknownext")));
+        CHECK(controller.files()->appendFile(pythonFile("notes", "docs/notes.txt")));
         CHECK(controller.selectFile("app"));
         engine.setInitialProperties({{"controller", QVariant::fromValue(&controller)}});
         engine.loadFromModule("BranchTruce", "Main");
@@ -78,7 +79,7 @@ public:
     {
         return storage::RecoveryStore(controller.files()->recoveryDirectory()).read().transactions.size();
     }
-    const FileSession &file() { return *controller.files()->file("app"); }
+    const FileSession &file(const std::string &id = "app") { return *controller.files()->file(id); }
 
     ApplicationController controller;
     QQmlApplicationEngine engine;
@@ -92,6 +93,7 @@ bool hasFormats(QTextDocument *document)
     return false;
 }
 
+#ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
 // The foreground given to the first character of the first occurrence of
 // word, or an invalid colour when no format covers it.
 QColor foreground(QTextDocument *document, const QString &word)
@@ -124,6 +126,24 @@ void settleHighlighted(Fixture &fixture)
         return true;
     });
 }
+#endif
+
+// Every pane has its highlighter attached and no formats.
+void settlePlain(Fixture &fixture)
+{
+    settle([&] {
+        for (const auto *pane : panes)
+            if (hasFormats(fixture.document(pane))) return false;
+        return true;
+    });
+    for (const auto *pane : panes) {
+        auto *highlighter = fixture.highlighter(pane);
+        CHECK(highlighter->document() == fixture.document(pane));
+#ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
+        CHECK(!highlighter->definition().isValid());
+#endif
+    }
+}
 }
 
 class SyntaxHighlightingTests {
@@ -131,6 +151,7 @@ public:
     int run()
     {
         test_support::Suite suite("SyntaxHighlightingTests");
+#ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
         suite.run("TRUCE-0114 app.py gets the Python definition in every pane and an unknown extension gets none", [] {
             Fixture fixture;
             settleHighlighted(fixture);
@@ -142,16 +163,7 @@ public:
                 checkPythonColours(fixture.document(pane));
             }
             CHECK(fixture.controller.selectFile("unknown"));
-            settle([&] {
-                for (const auto *pane : panes)
-                    if (hasFormats(fixture.document(pane))) return false;
-                return true;
-            });
-            for (const auto *pane : panes) {
-                auto *highlighter = fixture.highlighter(pane);
-                CHECK(!highlighter->definition().isValid());
-                CHECK(highlighter->document() == nullptr);
-            }
+            settlePlain(fixture);
             CHECK(fixture.controller.selectFile("app"));
             settleHighlighted(fixture);
             for (const auto *pane : panes)
@@ -207,6 +219,41 @@ public:
             CHECK(fixture.transactions() == transactions + 1);
             CHECK(result->toPlainText() == QStringLiteral("x") + text);
             checkPythonColours(result);
+        });
+#endif
+        suite.run("TRUCE-0173 a .txt file keeps one highlighter attached to every pane", [] {
+            Fixture fixture;
+            CHECK(fixture.controller.selectFile("notes"));
+            settlePlain(fixture);
+        });
+        suite.run("TRUCE-0173 a decoration pass creates no revision and no recovery transaction", [] {
+            Fixture fixture;
+            CHECK(fixture.controller.selectFile("notes"));
+            settlePlain(fixture);
+            auto *result = fixture.document("resultText");
+            const auto before = fixture.file("notes").current();
+            const auto canUndo = fixture.file("notes").canUndo();
+            const auto text = result->toPlainText();
+            const auto transactions = fixture.transactions();
+            CHECK(transactions > 0);
+            QTextLayout::FormatRange range;
+            range.start = 2;
+            range.length = 4;
+            range.format.setFontUnderline(true);
+            auto *highlighter = fixture.highlighter("resultText");
+            highlighter->setDecorations({range});
+            CHECK(highlighter->decorations() == QList<QTextLayout::FormatRange>{range});
+            highlighter->setDecorations({});
+            CHECK(highlighter->decorations().isEmpty());
+            // Let a queued edit capture run, if the pass started one.
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            CHECK(fixture.file("notes").current().id == before.id);
+            CHECK(fixture.file("notes").current().draft == before.draft);
+            CHECK(fixture.file("notes").canUndo() == canUndo);
+            CHECK(fixture.transactions() == transactions);
+            CHECK(!fixture.controller.files()->hasPendingRecovery());
+            CHECK(result->toPlainText() == text);
+            CHECK(highlighter->document() == result);
         });
         return suite.report();
     }

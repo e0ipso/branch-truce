@@ -9,7 +9,8 @@ namespace branch_truce {
 // Syntax colours for the comparison panes. Each attached document gets one
 // PaneHighlighter, the only code that sets character formats on it. Line
 // backgrounds and whitespace markers are separate QML layers. A build with
-// BRANCH_TRUCE_SYNTAX_HIGHLIGHTING=OFF compiles a version that does nothing.
+// BRANCH_TRUCE_SYNTAX_HIGHLIGHTING=OFF attaches highlighters that apply no
+// syntax formats and ignores the file name and background.
 class SyntaxHighlighting {
 public:
     SyntaxHighlighting();
@@ -20,7 +21,7 @@ public:
     // document is destroyed. Attaching it again changes nothing.
     void attach(QTextDocument *document);
     // The definition comes from the file name. A name with no definition
-    // leaves every attached document without formats.
+    // leaves every attached document without syntax formats.
     void setFileName(const QString &fileName);
     // Breeze Dark on a dark scheme background, Breeze Light otherwise.
     void setBackground(const QColor &background);

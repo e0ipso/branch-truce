@@ -89,7 +89,8 @@ sanitizer options ON; no preparation mode or CI job runs that configuration.
 requires KF6SyntaxHighlighting 6.0 or later (`libkf6syntaxhighlighting-dev`) and
 stops with an error naming that package when it is missing. Set the option OFF to
 build the desktop app without syntax highlighting; the panes then show plain
-text, and the `app.syntax-highlighting` test is not built.
+text. Each pane still gets a plain `PaneHighlighter` for decorations, and the
+`app.syntax-highlighting` test checks that it stays attached.
 
 CTest includes the core build canary, revisioned session tests, correspondence
 command fixtures and CLI guards. Desktop builds also test the Qt session model,

@@ -50,8 +50,9 @@ each (`src/app/PaneHighlighter.h`). It is the only code that sets character
 formats on those documents. Their own QML layers draw the line backgrounds and
 whitespace markers. The selected file's `fileName` picks the definition through
 `Repository::definitionForFileName`, so `app.py` gets Python and `README.md`
-Markdown. A name with no definition, such as a `.txt` file, detaches the
-highlighters and the panes stay plain. The view passes
+Markdown. A name with no definition, such as a `.txt` file, gets no syntax
+formats, and its highlighters stay attached so decorations drawn through
+`PaneHighlighter::setDecorations` still apply. The view passes
 `Kirigami.Theme.backgroundColor` to `setSyntaxBackground` when it loads and
 whenever the colour scheme changes. A background with HSL lightness below one
 half selects Breeze Dark, any other Breeze Light. A highlight pass changes
