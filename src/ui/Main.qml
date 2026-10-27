@@ -1158,8 +1158,10 @@ Kirigami.ApplicationWindow {
                                     icon.name: "go-jump"
                                     visible: !!window.controller.markerBlocker.line
                                     onTriggered: {
-                                        if (window.controller.showFirstMarker())
+                                        if (window.controller.showFirstMarker()) {
+                                            comparison.revealCursorLine()
                                             comparison.editorNamed("result").forceActiveFocus()
+                                        }
                                     }
                                 }
                             ]
@@ -1361,6 +1363,18 @@ Kirigami.ApplicationWindow {
                                         icon.name: "view-list-details"
                                         iconOnly: true
                                         toggle: true
+                                    },
+                                    // A view control that folds or shows marker lines and changes no
+                                    // text, decision, history or progress. It is always in the overflow
+                                    // menu, as a checkable menu item, so the action carries the name.
+                                    Kirigami.Action {
+                                        id: markersToggle
+                                        objectName: "showConflictMarkers"
+                                        text: qsTr("Show conflict markers")
+                                        tooltip: qsTr("Show the conflict-marker lines that the result folds. The text keeps them either way.")
+                                        icon.name: "view-visible"
+                                        displayHint: Kirigami.DisplayHint.AlwaysHide
+                                        checkable: true
                                     }
                                 ]
                             }
@@ -1377,6 +1391,8 @@ Kirigami.ApplicationWindow {
                             visible: window.supportedSelection
                             controller: window.controller
                             file: window.selectedFile
+                            showMarkers: markersToggle.checked
+                            onMarkersRevealed: markersToggle.checked = true
                         }
                         ListView {
                             objectName: "scopedChoices"

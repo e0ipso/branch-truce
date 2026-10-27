@@ -613,6 +613,120 @@ void expectBands(Fixture &fixture, const std::string &when, const std::string &s
     }
 }
 
+// The result's document, whose blocks the view folds.
+const QTextDocument &resultDocument(Fixture &fixture)
+{
+    return *fixture.item("resultText")->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+}
+
+// The 1-based numbers of the result lines the view hides.
+QList<int> foldedLines(Fixture &fixture)
+{
+    QList<int> hidden;
+    const auto &document = resultDocument(fixture);
+    for (auto block = document.begin(); block.isValid(); block = block.next())
+        if (!block.isVisible()) hidden.push_back(block.blockNumber() + 1);
+    return hidden;
+}
+
+// The 1-based lines of the result's text that start with one of the given prefixes.
+QList<int> linesStarting(Fixture &fixture, const QStringList &prefixes)
+{
+    QList<int> found;
+    const auto lines = fixture.text().split(QLatin1Char('\n'));
+    for (int i = 0; i < lines.size(); ++i)
+        if (std::any_of(prefixes.begin(), prefixes.end(), [&](const QString &prefix) { return lines[i].startsWith(prefix); }))
+            found.push_back(i + 1);
+    return found;
+}
+
+// The visible items of one part of a pane layer, by line: the result gutter's
+// "chip"s or the backgrounds' "fold" rules.
+QMap<int, QQuickItem *> foldParts(QQuickItem *layer, const QString &part)
+{
+    QMap<int, QQuickItem *> found;
+    for (auto *child : layer->childItems())
+        if (child->isVisible() && child->property("part").toString() == part) found.insert(child->property("line").toInt(), child);
+    return found;
+}
+
+QList<int> numbers(int first, int end, const QList<int> &except = {})
+{
+    QList<int> list;
+    for (int line = first; line < end; ++line)
+        if (!except.contains(line)) list.push_back(line);
+    return list;
+}
+
+QString listed(const QList<int> &lines)
+{
+    QStringList shown;
+    for (const auto line : lines) shown << QString::number(line);
+    return shown.join(QLatin1Char(' '));
+}
+
+// How the result of markedFile(true) looks: the lines it hides, the lines
+// painted and marked as conflicts with markers remaining, the chips and the
+// fold rules, and the y distance from line 1 to line 3, in lines.
+struct MarkerLook {
+    QList<int> hidden;
+    QList<int> numbered;
+    QList<int> marked;
+    QList<int> chips;
+    QList<int> rules;
+    qreal rowsToThirdLine = 0;
+    bool operator==(const MarkerLook &) const = default;
+};
+
+MarkerLook markerLook(Fixture &fixture)
+{
+    MarkerLook look;
+    look.hidden = foldedLines(fixture);
+    look.numbered = gutterNumbers(fixture.item("resultGutter")).keys();
+    const auto marks = paintedMarks(fixture, "result");
+    for (auto it = marks.backgrounds.begin(); it != marks.backgrounds.end(); ++it)
+        if (it.value() == "markers" && marks.glyphs.value(it.key()) == "markers") look.marked.push_back(it.key());
+    look.chips = foldParts(fixture.item("resultGutterMarkerSlot"), "chip").keys();
+    look.rules = foldParts(fixture.item("resultBackgrounds"), "fold").keys();
+    auto *editor = fixture.item("resultText");
+    const auto first = sceneRectangle(editor, 0);
+    const auto third = sceneRectangle(editor, static_cast<int>(fixture.text().indexOf("left first")));
+    look.rowsToThirdLine = std::round((third.top() - first.top()) / first.height() * 100) / 100;
+    return look;
+}
+
+std::string describeLook(const MarkerLook &look)
+{
+    return ("hidden [" + listed(look.hidden) + "] numbered [" + listed(look.numbered) + "] marked ["
+        + listed(look.marked) + "] chips [" + listed(look.chips) + "] rules [" + listed(look.rules)
+        + "] line 3 at row " + QString::number(look.rowsToThirdLine)).toStdString();
+}
+
+void expectLook(Fixture &fixture, const std::string &when, const MarkerLook &expected)
+{
+    QElapsedTimer deadline;
+    deadline.start();
+    while (markerLook(fixture) != expected && deadline.elapsed() < 5000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    const auto look = markerLook(fixture);
+    if (look != expected)
+        throw std::runtime_error(when + ", the result shows " + describeLook(look) + ", not " + describeLook(expected));
+}
+
+// Waits for the result's cursor to come to rest at position.
+void expectCursor(Fixture &fixture, const std::string &when, int position)
+{
+    auto *editor = fixture.item("resultText");
+    QElapsedTimer deadline;
+    deadline.start();
+    while (editor->property("cursorPosition").toInt() != position && deadline.elapsed() < 2000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    for (int turn = 0; turn < 5; ++turn) QCoreApplication::processEvents();
+    const int at = editor->property("cursorPosition").toInt();
+    if (at != position)
+        throw std::runtime_error(when + ": the cursor is at " + std::to_string(at) + ", not " + std::to_string(position));
+}
+
 // Which cases one run executes. The deletion-at-limit cases edit multi-megabyte buffers in the
 // real editor, so ctest runs them as their own entry with a timeout sized for them. Display
 // runs the viewport cases that a real display can draw differently, on any platform; ctest
@@ -1344,6 +1458,214 @@ public:
             settle([&] { return std::abs(left->width() - (leftWidth + 80)) < 2; });
             CHECK(std::abs(result->width() - resultWidth) < 1 && std::abs(right->width() - (rightWidth - 80)) < 2);
             expectBands(fixture, "after the drag", "stage2", {"conflict 2-3>2-3", "conflict 6-7>6-7"});
+        });
+        suite.run("TRUCE-0179 marker lines fold behind a conflict band, keep the buffer and show on the toggle", [] {
+            // markedFile(true) writes both sections between markers with diff3 base sections:
+            // lines 2-11 and 13-19, whose marker lines are 2, 5, 8, 11, 13, 15, 17 and 19.
+            Fixture fixture(test_support::markedFile(true));
+            settlePanes(fixture);
+            const auto text = QString::fromStdString(test_support::markedText(true));
+            const auto markerLines = linesStarting(fixture, {"<<<<<<<", "|||||||", "=======", ">>>>>>>"});
+            CHECK(markerLines == QList<int>({2, 5, 8, 11, 13, 15, 17, 19}));
+            const auto lineCount = resultDocument(fixture).blockCount();
+            const auto blockLines = numbers(2, 12) + numbers(13, 20);
+            // Folded: the marker lines take no row and get no number, the lines between them are
+            // marked as conflicts with markers remaining, and a chip opens each block.
+            const MarkerLook folded{markerLines, numbers(1, lineCount + 1, markerLines),
+                numbers(2, 12, markerLines) + numbers(13, 20, markerLines), {3, 14}, {3, 6, 9, 12, 14, 16, 18, 20}, 1};
+            expectLook(fixture, "at launch", folded);
+            CHECK(fixture.text() == text && fixture.file().current().draft.text == text.toStdString());
+            CHECK(resultDocument(fixture).toPlainText() == text);
+            // The marked lines get the conflict colours and the chip says what is hidden. Each
+            // layer's own theme gives the colours, as the backgrounds layer takes no input.
+            const auto theme = [&](const char *layer, const char *role) {
+                return qmlValue(fixture.item(layer), QStringLiteral("Kirigami.Theme.") + QLatin1String(role)).value<QColor>();
+            };
+            for (auto *fill : fixture.item("resultBackgrounds")->childItems()) {
+                if (fill->isVisible() && fill->property("kind").toString() == "markers" && fill->property("part").toString() == "line")
+                    CHECK(fill->property("color").value<QColor>() == theme("resultBackgrounds", "negativeBackgroundColor"));
+            }
+            for (auto *glyph : fixture.item("resultGutterMarkerSlot")->childItems()) {
+                if (glyph->isVisible() && glyph->property("kind").toString() == "markers" && glyph->property("part").toString() != "chip") {
+                    CHECK(glyph->property("text").toString() == "!");
+                    CHECK(glyph->property("color").value<QColor>() == theme("resultGutterMarkerSlot", "negativeTextColor"));
+                }
+            }
+            const auto chips = foldParts(fixture.item("resultGutterMarkerSlot"), "chip");
+            for (auto *chip : chips) {
+                CHECK(chip->property("text").toString() == "!");
+                CHECK(chip->property("color").value<QColor>() == theme("resultGutterMarkerSlot", "negativeBackgroundColor"));
+            }
+            const auto described = qmlValue(chips.value(3), QStringLiteral("Accessible.description")).toString();
+            if (described != "Conflict markers remain: 1 marker line hidden above")
+                throw std::runtime_error("first chip described as " + described.toStdString());
+            // Every band to the result meets a block, so it is a conflict band.
+            for (const auto *side : {"stage2", "stage3"}) {
+                const auto bands = bandLines(fixture, side);
+                CHECK(!bands.empty());
+                for (const auto &band : bands)
+                    if (band.rfind("conflict ", 0) != 0) throw std::runtime_error(std::string(side) + " band " + band);
+            }
+            // The toggle shows the raw lines as conflicts and changes no work.
+            const auto before = captureWork(fixture);
+            auto *toggle = fixture.object("showConflictMarkers");
+            CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
+            CHECK(toggle->property("checked").toBool());
+            expectLook(fixture, "with the markers shown", {{}, numbers(1, lineCount + 1), blockLines, {}, {}, 2});
+            checkUnchanged(fixture, before);
+            CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
+            expectLook(fixture, "with the markers folded again", folded);
+            checkUnchanged(fixture, before);
+        });
+        suite.run("TRUCE-0179 keys and selections step over folded marker lines", [] {
+            // markedFile(): lines 2, 5 and 8 are the first block's markers.
+            Fixture fixture(test_support::markedFile());
+            settlePanes(fixture);
+            expectLook(fixture, "at launch", {{2, 5, 8, 10, 12, 14}, numbers(1, 17, {2, 5, 8, 10, 12, 14}),
+                {3, 4, 6, 7, 11, 13}, {3, 11}, {3, 6, 9, 11, 13, 15}, 1});
+            const auto text = fixture.text();
+            const auto at = [&](const char *line) { return static_cast<int>(text.indexOf(QLatin1String(line))); };
+            auto *editor = fixture.item("resultText");
+            const auto selection = [&] {
+                return std::pair{editor->property("selectionStart").toInt(), editor->property("selectionEnd").toInt()};
+            };
+            // Down from column 3 of the header passes the folded line 2 and keeps the column.
+            fixture.select(3, 3);
+            expectCursor(fixture, "after placing the cursor", 3);
+            fixture.key(Qt::Key_Down);
+            expectCursor(fixture, "down from the header", at("left first") + 3);
+            // Down and up over the folded separator keep the column; right and left cross it.
+            fixture.select(at("left second") + 5, at("left second") + 5);
+            fixture.key(Qt::Key_Down);
+            expectCursor(fixture, "down over the separator", at("right first") + 5);
+            fixture.key(Qt::Key_Up);
+            expectCursor(fixture, "up over the separator", at("left second") + 5);
+            fixture.select(at("=======") - 1, at("=======") - 1);
+            fixture.key(Qt::Key_Right);
+            expectCursor(fixture, "right over the separator", at("right first"));
+            fixture.key(Qt::Key_Left);
+            expectCursor(fixture, "left over the separator", at("=======") - 1);
+            // Shift+Down extends a selection over the folded line and keeps its anchor.
+            fixture.select(at("left second"), at("left second"));
+            fixture.key(Qt::Key_Down, Qt::ShiftModifier);
+            expectCursor(fixture, "shift+down over the separator", at("right first"));
+            CHECK(selection() == std::pair(at("left second"), at("right first")));
+            // A selection set by code that ends on a folded line ends before it instead.
+            fixture.select(at("left first"), at("======="));
+            expectCursor(fixture, "after selecting the left side", at("=======") - 1);
+            CHECK(selection() == std::pair(at("left first"), at("=======") - 1));
+            CHECK(fixture.text() == text);
+        });
+        suite.run("TRUCE-0179 a hand edit that touches a folded line shows it and undo folds it again", [] {
+            Fixture fixture(test_support::markedFile());
+            settlePanes(fixture);
+            const MarkerLook folded{{2, 5, 8, 10, 12, 14}, numbers(1, 17, {2, 5, 8, 10, 12, 14}),
+                {3, 4, 6, 7, 11, 13}, {3, 11}, {3, 6, 9, 11, 13, 15}, 1};
+            expectLook(fixture, "at launch", folded);
+            const auto launched = fixture.text();
+            // Backspace at the start of "bridge" joins it to the folded end marker above it.
+            const auto bridge = static_cast<int>(launched.indexOf("bridge"));
+            fixture.select(bridge, bridge);
+            fixture.key(Qt::Key_Backspace);
+            const auto joined = QString(launched).replace(">>>>>>> theirs\nbridge", ">>>>>>> theirsbridge");
+            CHECK(fixture.text() == joined && fixture.file().current().draft.text == joined.toStdString());
+            // The first block no longer matches the one Git wrote, so all of its lines show;
+            // the second block stays folded.
+            const MarkerLook shown{{9, 11, 13}, numbers(1, 16, {9, 11, 13}), {2, 3, 4, 5, 6, 7, 8, 10, 12},
+                {10}, {10, 12, 14}, 2};
+            expectLook(fixture, "after joining a line to the end marker", shown);
+            expectCursor(fixture, "after the join", bridge - 1);
+            fixture.checkRecovered(fixture.file().current().draft);
+            // Undo restores the text and its fold, and redo shows the edited block again.
+            CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
+            CHECK(fixture.text() == launched);
+            expectLook(fixture, "after undo", folded);
+            CHECK(fixture.controller.redo("choices", QString::number(fixture.file().current().id)));
+            CHECK(fixture.text() == joined);
+            expectLook(fixture, "after redo", shown);
+            fixture.checkRecovered(fixture.file().current().draft);
+        });
+        suite.run("TRUCE-0179 finding text on a folded line or going to a blocking marker shows the markers", [] {
+            Fixture fixture(test_support::markedFile());
+            settlePanes(fixture);
+            CHECK(foldedLines(fixture) == QList<int>({2, 5, 8, 10, 12, 14}));
+            // Find in the result selects a match on a folded end marker and shows the markers.
+            auto *toggle = fixture.object("showConflictMarkers");
+            CHECK(fixture.item("searchScope")->setProperty("currentIndex", 1));
+            CHECK(fixture.item("searchQuery")->setProperty("text", QStringLiteral("theirs")));
+            fixture.click("findPassage");
+            const auto theirs = static_cast<int>(fixture.text().indexOf("theirs"));
+            expectCursor(fixture, "after finding theirs", theirs + 6);
+            CHECK(fixture.item("resultText")->property("selectionStart").toInt() == theirs);
+            CHECK(toggle->property("checked").toBool() && foldedLines(fixture).isEmpty());
+            CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
+            settle([&] { return foldedLines(fixture) == QList<int>({2, 5, 8, 10, 12, 14}); });
+            CHECK(!fixture.controller.markResolved("choices", QString::number(fixture.file().current().id), true));
+            CHECK(fixture.controller.markerBlocker().value("line").toInt() == 2);
+            const auto before = captureWork(fixture);
+            CHECK(QMetaObject::invokeMethod(fixture.object("showFirstMarker"), "trigger"));
+            // The cursor stays on the marker it went to, which the view now shows.
+            expectCursor(fixture, "after going to the first marker", static_cast<int>(fixture.text().indexOf("<<<<<<< ours")));
+            CHECK(toggle->property("checked").toBool() && foldedLines(fixture).isEmpty());
+            checkUnchanged(fixture, before);
+        });
+        suite.run("TRUCE-0179 deciding a section removes its fold and markersRemain, and Save writes the buffer either way", [] {
+            const auto remaining = [](Fixture &fixture) {
+                QStringList found;
+                for (const auto &entry : fixture.controller.selectedFile().value("regions").toList()) {
+                    const auto region = entry.toMap();
+                    found << region.value("side").toString() + ":" + region.value("section").toString() + "="
+                        + (region.value("markersRemain").toBool() ? "remain" : "gone");
+                }
+                found.sort();
+                return found;
+            };
+            // Save with the markers folded and with them shown writes the same bytes, the buffer's.
+            std::optional<std::string> savedBytes;
+            for (const bool shown : {false, true}) {
+                Fixture fixture(test_support::markedFile());
+                settlePanes(fixture);
+                if (shown) CHECK(QMetaObject::invokeMethod(fixture.object("showConflictMarkers"), "trigger"));
+                expectLook(fixture, shown ? "shown before Save" : "folded before Save", shown
+                    ? MarkerLook{{}, numbers(1, 17), numbers(2, 9) + numbers(10, 15), {}, {}, 2}
+                    : MarkerLook{{2, 5, 8, 10, 12, 14}, numbers(1, 17, {2, 5, 8, 10, 12, 14}),
+                        {3, 4, 6, 7, 11, 13}, {3, 11}, {3, 6, 9, 11, 13, 15}, 1});
+                const auto header = static_cast<int>(fixture.text().indexOf("header"));
+                fixture.select(header, header);
+                fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+                settle([&] { return fixture.controller.selectedFile().value("unsaved").toBool(); });
+                fixture.click("saveDraft");
+                CHECK(fixture.file().checkpoint());
+                const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()));
+                CHECK(replay.succeeded && replay.files.size() == 1 && replay.files.front().checkpoint());
+                const auto bytes = replay.files.front().checkpoint()->draft.text;
+                CHECK(bytes == "x" + test_support::markedText() && bytes == fixture.file().checkpoint()->draft.text);
+                CHECK(QString::fromStdString(bytes) == fixture.text());
+                if (savedBytes) CHECK(bytes == *savedBytes);
+                savedBytes = bytes;
+            }
+            Fixture fixture(test_support::markedFile());
+            settlePanes(fixture);
+            const auto atLaunch = remaining(fixture);
+            CHECK(atLaunch.size() >= 4 && atLaunch.filter("=gone").isEmpty());
+            CHECK(fixture.controller.selectedFile().value("markerBlocks").toList().size() == 2);
+            // Resolving the first section with the left side removes its markers, so only the
+            // second block stays folded and only its regions still have markers.
+            const auto &first = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+            const auto section = QString::fromStdString(first.section);
+            CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
+                QString::fromStdString(first.source.contributionId), "resolve"));
+            CHECK(fixture.controller.applyChoice(true));
+            CHECK(!fixture.text().contains(QStringLiteral(">>>>>>> theirs\nbridge")));
+            CHECK(fixture.controller.selectedFile().value("markerBlocks").toList().size() == 1);
+            for (const auto &entry : remaining(fixture))
+                CHECK(entry.endsWith(entry.contains(":" + section + "=") ? "=gone" : "=remain"));
+            expectLook(fixture, "after resolving the first section", {{5, 7, 9}, numbers(1, 12, {5, 7, 9}),
+                {6, 8}, {6}, {6, 8, 10}, 1});
+            CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
+            CHECK(remaining(fixture) == atLaunch);
+            expectLook(fixture, "after undoing the choice", {{2, 5, 8, 10, 12, 14}, numbers(1, 17, {2, 5, 8, 10, 12, 14}),
+                {3, 4, 6, 7, 11, 13}, {3, 11}, {3, 6, 9, 11, 13, 15}, 1});
         });
         suite.run("TRUCE-0058 whitespace markers paint spaces and tabs", [] {
             const std::string result = "aa bb\tcc\n";

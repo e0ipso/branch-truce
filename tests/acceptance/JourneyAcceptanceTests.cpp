@@ -23,9 +23,12 @@
 #include <QProcessEnvironment>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
+#include <QQuickTextDocument>
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextBlock>
+#include <QTextDocument>
 #include <QTextLayout>
 #include <QWheelEvent>
 #include <algorithm>
@@ -407,6 +410,62 @@ struct Work {
 Work work(Scene &scene, const char *path)
 {
     return {scene.text("resultText"), scene.file(path).current().draft};
+}
+
+// Waits until the result folds every line that starts like a conflict marker, or shows them
+// all, with a "markers remain" chip in the gutter only while they are folded. The line
+// numbers are the buffer's, so a folded line takes its number with it.
+void expectMarkersFolded(Scene &scene, bool folded)
+{
+    const auto *document = scene.item("resultText")->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+    const auto look = [&] {
+        int markers = 0;
+        QList<int> expected;
+        for (auto block = document->begin(); block.isValid(); block = block.next()) {
+            const auto line = block.text();
+            const bool marker = line.startsWith(QStringLiteral("<<<<<<< ")) || line.startsWith(QStringLiteral("||||||| "))
+                || line == QStringLiteral("=======") || line.startsWith(QStringLiteral(">>>>>>> "));
+            markers += marker;
+            if (block.isVisible() == (marker && folded)) return false;
+            if (!marker || !folded) expected.push_back(block.blockNumber() + 1);
+        }
+        QList<int> numbered;
+        int chips = 0;
+        for (auto *child : scene.item("resultGutter")->childItems()) {
+            bool number = false;
+            const auto value = child->property("text").toString().toInt(&number);
+            if (number && child->isVisible()) numbered.push_back(value);
+        }
+        for (auto *child : scene.item("resultGutterMarkerSlot")->childItems())
+            chips += child->isVisible() && child->property("part").toString() == QStringLiteral("chip");
+        std::sort(numbered.begin(), numbered.end());
+        // The gutter numbers the lines near the view, which here is the whole file.
+        return markers > 0 && numbered == expected && (chips > 0) == folded;
+    };
+    settleFor(folded ? "folded conflict markers" : "shown conflict markers", look);
+}
+
+// Opens the file toolbar's overflow menu and clicks its Show conflict markers entry.
+void toggleConflictMarkers(Scene &scene)
+{
+    auto *toolbar = scene.item("fileToolBar");
+    test_support::clickItem(scene.window, test_support::waitForStable(scene.window, "file toolbar overflow", [&] {
+        return test_support::visualButton(toolbar, [](QQuickItem *button) {
+            return test_support::accessibleName(button) == QStringLiteral("More Actions");
+        });
+    }, Scene::settleMs));
+    auto *action = scene.object("showConflictMarkers");
+    test_support::clickItem(scene.window, test_support::waitForStable(scene.window, "Show conflict markers entry", [&] {
+        return test_support::visualButton(scene.window->contentItem(), [&](QQuickItem *entry) {
+            return entry->property("action").value<QObject *>() == action;
+        });
+    }, Scene::settleMs));
+    // A click on the overflow button while the menu is still closing closes it again.
+    settleFor("overflow menu closed", [&] {
+        return !descendant(scene.window->contentItem(), [](QQuickItem *item) {
+            return item->objectName() == QStringLiteral("ActionsMenu") && item->isVisible();
+        });
+    });
 }
 
 QPointF sceneOrigin(QQuickItem *item)
@@ -895,6 +954,18 @@ public:
             clickFile(scene, "reading.txt");
             CHECK(scene.text("resultText").startsWith(QStringLiteral("REPEAT one\n"))
                   && scene.text("resultText").contains(QStringLiteral("<<<<<<< HEAD\n")));
+            // TRUCE-0179: the view folds Git's marker lines while the buffer keeps them, and the
+            // overflow menu's toggle shows them without changing the text, decisions or history.
+            expectMarkersFolded(scene, true);
+            const auto reading = work(scene, "reading.txt");
+            const auto readingProgress = scene.progress();
+            toggleConflictMarkers(scene);
+            expectMarkersFolded(scene, false);
+            CHECK(scene.object("showConflictMarkers")->property("checked").toBool());
+            CHECK(work(scene, "reading.txt") == reading && scene.progress() == readingProgress);
+            toggleConflictMarkers(scene);
+            expectMarkersFolded(scene, true);
+            CHECK(work(scene, "reading.txt") == reading && scene.progress() == readingProgress);
 
             // Earlier context is shown on demand and hidden without touching the result.
             clickFile(scene, "notes.txt");
@@ -928,6 +999,9 @@ public:
                 clickFile(scene, path);
                 scene.click("saveDraft");
                 settleFor(std::string("save of ") + path, [&] { return scene.progress().value("saved").toBool(); });
+                // Save writes the buffer, folded marker lines included.
+                CHECK(scene.file(path).checkpoint()
+                      && QString::fromStdString(scene.file(path).checkpoint()->draft.text) == scene.text("resultText"));
             }
             CHECK(scene.item("inventoryWarning")->isVisible());
             clickFile(scene, "removed.txt");
@@ -1218,7 +1292,12 @@ public:
             auto *markers = scene.item("resultWhitespace");
             CHECK(markers->property("markerCount").toInt() == 0);
             scene.click("showWhitespace");
-            const auto shown = before.shown;
+            // TRUCE-0179: a folded marker line is not drawn, so neither are its spaces.
+            QString shown;
+            const auto *resultDocument = result->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+            for (auto block = resultDocument->begin(); block.isValid(); block = block.next())
+                if (block.isVisible()) shown += block.text() + QLatin1Char('\n');
+            CHECK(shown.count(' ') < before.shown.count(' ') && shown.count('\t') == before.shown.count('\t'));
             settleFor("whitespace markers", [&] {
                 return test_support::markerKind(markers, true) == shown.count('\t')
                     && test_support::markerKind(markers, false) == shown.count(' ')

@@ -20,6 +20,11 @@ ColumnLayout {
     // Text panes never get shorter than this many lines; on a short window the page scrolls instead.
     property int minimumPaneLines: 8
     property bool whitespaceReady: false
+    // Shows the raw lines of every conflict-marker block instead of folding them.
+    property bool showMarkers: false
+    // Asks for showMarkers, because something the user asked for is on a folded line.
+    signal markersRevealed()
+    readonly property var markerFold: foldFor(file, showMarkers)
     // The controller picks Breeze Light or Breeze Dark syntax colours from its lightness.
     readonly property color schemeBackground: Kirigami.Theme.backgroundColor
     readonly property string searchStatusText: searchDetail.length > 0
@@ -75,6 +80,8 @@ ColumnLayout {
             searchDetail = qsTr("No passage in %1.").arg(scope)
             return
         }
+        if (editor === resultEditor && resultBlocks.hiddenWithin(found, found + query.length))
+            markersRevealed()
         editor.select(found, found + query.length)
         followScroll(name, "")
         searchDetail = qsTr("Passage in %1.").arg(scope)
@@ -82,15 +89,17 @@ ColumnLayout {
     // Line marks for one pane, keyed by 1-based line. lines holds the kind of
     // each coloured line: "added" when the compared text lacks it, "changed",
     // "conflict" inside an undecided region, "manual" inside a hand-edited
-    // result region, or "accepted" and "ignored" inside a decided region of a
-    // source pane. gaps holds the lines above which the compared text has
-    // lines this pane lacks. letters holds the result's provenance: L, R or B
-    // for a line equal to the left, right or both sources, m for a hand edit.
+    // result region, "accepted" and "ignored" inside a decided region of a
+    // source pane, or "markers" on the lines of a conflict-marker block or a
+    // stray marker line of the result. gaps holds the lines above which the
+    // compared text has lines this pane lacks. letters holds the result's
+    // provenance: L, R or B for a line equal to the left, right or both
+    // sources, m for a hand edit.
     function marksFor(pane: string, file: var): var {
         const lines = {}
         const gaps = {}
         const letters = {}
-        const rank = {added: 1, changed: 2, accepted: 3, ignored: 3, manual: 3, conflict: 4}
+        const rank = {added: 1, changed: 2, accepted: 3, ignored: 3, manual: 3, conflict: 4, markers: 5}
         const mark = function(first, end, kind) {
             for (let line = first; line < end; ++line) {
                 if (!lines[line] || rank[lines[line]] < rank[kind])
@@ -130,16 +139,57 @@ ColumnLayout {
                     region.state === "undecided" ? "conflict" : region.state)
             }
         }
+        if (result) {
+            const blocks = file.markerBlocks || []
+            for (let i = 0; i < blocks.length; ++i)
+                mark(blocks[i].resultLineBegin, blocks[i].resultLineEnd, "markers")
+            const orphans = file.markerOrphans || []
+            for (let i = 0; i < orphans.length; ++i)
+                mark(orphans[i].line, orphans[i].line + 1, "markers")
+        }
         for (const line in from)
             letters[line] = ["", "L", "R", "B", "m"][from[line]]
         return {lines: lines, gaps: gaps, letters: letters}
+    }
+    // The result's folded marker lines: those of every block tied to a choice
+    // section, unless the raw markers are shown. The buffer keeps them. hidden
+    // lists them as {line, text} for TextBlocks. boundaries maps the first line
+    // below each run of hidden lines to the run's size, and sets chip on a run
+    // that opens a block, where the gutter says that markers remain.
+    function foldFor(file: var, shown: bool): var {
+        const hidden = []
+        const opening = {}
+        const blocks = shown ? [] : file.markerBlocks || []
+        for (let i = 0; i < blocks.length; ++i) {
+            const lines = blocks[i].markerLines
+            if (!blocks[i].folded || lines.length === 0)
+                continue
+            opening[lines[0].line] = true
+            for (let j = 0; j < lines.length; ++j)
+                hidden.push(lines[j])
+        }
+        hidden.sort((a, b) => a.line - b.line)
+        const boundaries = {}
+        for (let first = 0; first < hidden.length;) {
+            let last = first
+            while (last + 1 < hidden.length && hidden[last + 1].line === hidden[last].line + 1)
+                ++last
+            let chip = false
+            for (let i = first; i <= last; ++i)
+                chip = chip || !!opening[hidden[i].line]
+            boundaries[hidden[last].line + 1] = {count: last - first + 1, chip: chip}
+            first = last + 1
+        }
+        return {hidden: hidden, boundaries: boundaries}
     }
     // The connector bands between one source and the result: one per
     // non-equal passage of that side, in order, with its source and result
     // lines as [begin, end) ranges. The kind follows the passage: the result
     // changes the lines, adds a result-only passage's or drops a source-only
     // one's. The state of a region of that side on the source lines, or on
-    // the boundary of an empty passage, outranks it as it does in the panes.
+    // the boundary of an empty passage, outranks it as it does in the panes,
+    // and a passage that meets a conflict-marker block of the result is a
+    // conflict, so the band covers the block's folded marker lines.
     function bandsFor(side: string, file: var): var {
         const rank = {removed: 0, added: 1, changed: 2, accepted: 3, ignored: 3, manual: 3, conflict: 4}
         const lines = {}
@@ -159,6 +209,16 @@ ColumnLayout {
             for (let line = region.sourceLineBegin; line < region.sourceLineEnd; ++line)
                 decide(lines, line, kind)
         }
+        const marked = file.markerBlocks || []
+        const inBlock = function(begin, end) {
+            for (let i = 0; i < marked.length; ++i) {
+                const first = marked[i].resultLineBegin
+                const stop = marked[i].resultLineEnd
+                if (begin < end ? begin < stop && first < end : begin > first && begin < stop)
+                    return true
+            }
+            return false
+        }
         const bands = []
         const passages = file.passages || []
         for (let i = 0; i < passages.length; ++i) {
@@ -174,6 +234,8 @@ ColumnLayout {
                 if (state && rank[state] > rank[kind])
                     kind = state
             }
+            if (rank[kind] < rank.conflict && inBlock(passage.resultLineBegin, passage.resultLineEnd))
+                kind = "conflict"
             bands.push({kind: kind, sourceBegin: begin, sourceEnd: end,
                 resultBegin: passage.resultLineBegin, resultEnd: passage.resultLineEnd})
         }
@@ -402,6 +464,51 @@ ColumnLayout {
     TextBlocks {
         id: resultBlocks
         document: resultEditor.textDocument
+        hidden: comparison.markerFold.hidden
+        // A fold can hide the line the cursor is on.
+        onLayoutChanged: comparison.queueCursorCheck()
+    }
+    // The result's cursor never rests on a folded line. A key that moves it
+    // there takes it on in the key's direction, keeping its column for a move
+    // by lines; a selection set by other code ends on the side of its anchor;
+    // a cursor placed by other code goes to the next shown line. The check
+    // runs after the change completes, because an edit that joins a folded
+    // line to its neighbour shows that line once the result is captured.
+    property int cursorKey: 0
+    property int settledCursor: 0
+    property bool cursorCheckQueued: false
+    // Shows the markers when the cursor is on a folded line, as after going to a marker.
+    function revealCursorLine(): void {
+        if (resultBlocks.hiddenAt(resultEditor.cursorPosition))
+            markersRevealed()
+    }
+    function queueCursorCheck(): void {
+        if (cursorCheckQueued)
+            return
+        cursorCheckQueued = true
+        Qt.callLater(comparison.skipFoldedLines)
+    }
+    function skipFoldedLines(): void {
+        cursorCheckQueued = false
+        const key = cursorKey
+        cursorKey = 0
+        const editor = resultEditor
+        const position = editor.cursorPosition
+        if (resultBlocks.hiddenAt(position)) {
+            const selecting = editor.selectionStart !== editor.selectionEnd
+            const anchor = editor.selectionStart === position ? editor.selectionEnd : editor.selectionStart
+            const byLines = [Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown].indexOf(key) >= 0
+            const forward = key === Qt.Key_Down || key === Qt.Key_PageDown ? true
+                : key === Qt.Key_Up || key === Qt.Key_PageUp ? false
+                : key !== 0 ? position > settledCursor
+                : selecting ? anchor > position : true
+            const target = resultBlocks.shownPosition(position, forward, byLines ? settledCursor : -1)
+            if (selecting)
+                editor.moveCursorSelection(target, TextEdit.SelectCharacters)
+            else
+                editor.cursorPosition = target
+        }
+        settledCursor = editor.cursorPosition
     }
     Component.onCompleted: {
         controller.setSyntaxBackground(schemeBackground)
@@ -418,6 +525,8 @@ ColumnLayout {
         id: markers
         required property TextEdit editor
         required property Flickable viewport
+        // The pane's blocks when it can hide lines, which get no markers.
+        property TextBlocks blocks: null
         property bool active: false
         property bool wrapped: false
         property var spots: []
@@ -461,6 +570,13 @@ ColumnLayout {
             let guard = 0
             while (pos < text.length && guard < 200000) {
                 guard = guard + 1
+                if (markers.blocks && markers.blocks.hiddenAt(pos)) {
+                    const shown = markers.blocks.shownPosition(pos, true)
+                    if (shown <= pos)
+                        break
+                    pos = shown
+                    continue
+                }
                 const ch = text.charAt(pos)
                 const rect = editor.positionToRectangle(pos)
                 const mapped = editor.mapToItem(markers, rect.x, rect.y)
@@ -555,13 +671,17 @@ ColumnLayout {
     // y of editor.positionToRectangle(position); rows lists the blocks near
     // the view as {number, position, y, height, top, extent}, where top and
     // extent span the whole block. With provenance set, a column before the
-    // slot shows the letter in marks.letters.
+    // slot shows the letter in marks.letters. folds maps the first line below
+    // each run of folded lines to that run; on a run that opens a conflict-
+    // marker block the slot shows a chip saying that markers remain, in place
+    // of the line's glyph.
     component LineGutter: Item {
         id: gutter
         required property TextArea editor
         required property Flickable viewport
         property var rows: []
         property var marks: ({lines: {}, gaps: {}, letters: {}})
+        property var folds: ({})
         property bool provenance: false
         readonly property alias markerSlot: slot
         readonly property int digits: Math.max(2, String(blocks.blockCount).length)
@@ -687,20 +807,52 @@ ColumnLayout {
                     y: modelData.y
                     height: modelData.height
                     text: ({added: "+", changed: "~", conflict: "!", manual: "m",
-                        accepted: "✓", ignored: "×"})[kind] || ""
-                    visible: text.length > 0
+                        accepted: "✓", ignored: "×", markers: "!"})[kind] || ""
+                    visible: text.length > 0 && !(gutter.folds[line] && gutter.folds[line].chip)
                     textFormat: Text.PlainText
                     font: gutter.editor.font
                     color: kind === "added" || kind === "accepted" ? Kirigami.Theme.positiveTextColor
                         : kind === "changed" ? Kirigami.Theme.activeTextColor
-                        : kind === "conflict" ? Kirigami.Theme.negativeTextColor
+                        : kind === "conflict" || kind === "markers" ? Kirigami.Theme.negativeTextColor
                         : kind === "ignored" ? Kirigami.Theme.disabledTextColor
                         : Kirigami.Theme.neutralTextColor
                     Accessible.role: Accessible.StaticText
                     Accessible.name: text
                     Accessible.description: ({added: qsTr("Added line"), changed: qsTr("Changed line"),
                         conflict: qsTr("Undecided conflict"), manual: qsTr("Hand-edited line"),
-                        accepted: qsTr("Accepted side"), ignored: qsTr("Ignored side")})[kind] || ""
+                        accepted: qsTr("Accepted side"), ignored: qsTr("Ignored side"),
+                        markers: qsTr("Conflict markers remain")})[kind] || ""
+                }
+            }
+            Repeater {
+                model: gutter.rows
+                delegate: Rectangle {
+                    id: chip
+                    required property var modelData
+                    readonly property int line: modelData.number
+                    readonly property var fold: gutter.folds[line] || null
+                    readonly property string part: "chip"
+                    readonly property string kind: fold && fold.chip ? "markers" : ""
+                    readonly property string text: kind.length > 0 ? "!" : ""
+                    visible: kind.length > 0
+                    y: modelData.y
+                    width: Math.max(chipText.implicitWidth + Kirigami.Units.smallSpacing, height / 2)
+                    height: modelData.height
+                    radius: Kirigami.Units.cornerRadius
+                    color: Kirigami.Theme.negativeBackgroundColor
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
+                    Accessible.description: !fold ? ""
+                        : fold.count === 1 ? qsTr("Conflict markers remain: 1 marker line hidden above")
+                        : qsTr("Conflict markers remain: %1 marker lines hidden above").arg(fold.count)
+                    Text {
+                        id: chipText
+                        anchors.centerIn: parent
+                        text: chip.text
+                        textFormat: Text.PlainText
+                        font: gutter.editor.font
+                        color: Kirigami.Theme.negativeTextColor
+                    }
                 }
             }
             Repeater {
@@ -769,10 +921,25 @@ ColumnLayout {
                 // An ignored side keeps its text readable under a faint tint.
                 color: kind === "added" || kind === "accepted" ? Kirigami.Theme.positiveBackgroundColor
                     : kind === "changed" ? Kirigami.Theme.activeBackgroundColor
-                    : kind === "conflict" ? Kirigami.Theme.negativeBackgroundColor
+                    : kind === "conflict" || kind === "markers" ? Kirigami.Theme.negativeBackgroundColor
                     : kind === "ignored" ? Kirigami.Theme.disabledTextColor
                     : Kirigami.Theme.neutralBackgroundColor
                 opacity: kind === "ignored" ? 0.15 : 1
+            }
+        }
+        // A rule where folded marker lines are, so the sides of a block stay apart.
+        Repeater {
+            model: backgrounds.gutter.rows
+            delegate: Rectangle {
+                required property var modelData
+                readonly property string part: "fold"
+                readonly property int line: modelData.number
+                readonly property string kind: backgrounds.gutter.folds[line] ? "markers" : ""
+                visible: kind.length > 0
+                y: modelData.top - height / 2
+                width: backgrounds.width
+                height: backgrounds.rule
+                color: Kirigami.Theme.negativeTextColor
             }
         }
         Repeater {
@@ -1173,6 +1340,12 @@ ColumnLayout {
                         wrapMode: comparison.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                         Accessible.name: qsTr("Editable result")
                         Component.onCompleted: comparison.controller.attachResultEditor(resultEditor)
+                        onCursorPositionChanged: comparison.queueCursorCheck()
+                        Keys.onPressed: (event) => {
+                            comparison.cursorKey = event.key
+                            comparison.queueCursorCheck()
+                            event.accepted = false
+                        }
                         TapHandler {
                             acceptedButtons: Qt.RightButton
                             onTapped: resultMenu.popup()
@@ -1221,6 +1394,7 @@ ColumnLayout {
                         viewport: resultViewport
                         provenance: true
                         marks: comparison.marksFor("result", comparison.file)
+                        folds: comparison.markerFold.boundaries
                     }
                     LineBackgrounds {
                         objectName: "resultBackgrounds"
@@ -1237,6 +1411,7 @@ ColumnLayout {
                     anchors.leftMargin: resultGutter.width
                     editor: resultEditor
                     viewport: resultViewport
+                    blocks: resultBlocks
                     active: comparison.showWhitespace
                     wrapped: comparison.wrapLines
                 }

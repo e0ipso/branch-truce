@@ -100,6 +100,7 @@ All names are Breeze icon names, used through `Kirigami.Icon` or an action's `ic
 | Take both sides | `merge` |
 | Search | `edit-find` |
 | Show earlier version | `view-visible` |
+| Show conflict markers | `view-visible` |
 | Toggle sidebar | `sidebar-expand-left` |
 | File: conflicting | `vcs-conflicting` |
 | File: untouched or no conflict left | `vcs-normal` |

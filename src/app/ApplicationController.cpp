@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <exception>
 #include <limits>
+#include <set>
 #include <string_view>
 #include <vector>
 
@@ -324,6 +325,15 @@ void insertUnmapped(QVariantMap &map, const QString &prefix)
         map.insert(prefix + QLatin1String(key), -1);
 }
 
+// A marker line of the result: its 1-based line and its text without the line ending.
+QVariantMap markerLine(const MarkerLine &marker, std::string_view result, const TextPositions &positions)
+{
+    auto line = result.substr(marker.bytes.begin, marker.bytes.end - marker.bytes.begin);
+    if (line.ends_with('\n')) line.remove_suffix(1);
+    return {{QStringLiteral("line"), positions.line(marker.bytes.begin)},
+        {QStringLiteral("text"), QString::fromUtf8(line.data(), static_cast<qsizetype>(line.size()))}};
+}
+
 QString sideName(SourceSide side)
 {
     switch (side) {
@@ -600,6 +610,11 @@ QVariantMap ApplicationController::selectedFile() const
     result.insert(QStringLiteral("passages"), passages);
     QVariantList choices;
     QVariantList regions;
+    // A marker block tied to a choice section stays in the result until a
+    // confirmed choice decides that section.
+    const auto sections = file->support() == Support::Supported ? file->markerSections() : std::vector<MarkerSection>{};
+    std::set<std::string> markedSections;
+    for (const auto &section : sections) markedSections.insert(section.section);
     for (const auto &target : file->choices()) {
         // Older recovery records retain their exact decision vocabulary and
         // status. Do not invent new undecided judgments while restoring them.
@@ -643,6 +658,7 @@ QVariantMap ApplicationController::selectedFile() const
             {QStringLiteral("state"), anyUndecided ? QStringLiteral("undecided") : handEdited ? QStringLiteral("manual")
                 : ignored ? QStringLiteral("ignored") : QStringLiteral("accepted")},
             {QStringLiteral("handEdited"), handEdited},
+            {QStringLiteral("markersRemain"), markedSections.contains(target.section)},
             {QStringLiteral("mapped"), resultMapped}};
         positions.insert(region, QStringLiteral("source"), target.source.range);
         if (resultMapped) resultPositions->insert(region, QStringLiteral("result"), *anchor->result);
@@ -660,6 +676,30 @@ QVariantMap ApplicationController::selectedFile() const
     }
     result.insert(QStringLiteral("choices"), choices);
     result.insert(QStringLiteral("regions"), regions);
+    // The conflict-marker lines of the current result. The view may fold the
+    // lines of a block tied to a choice section; other marker lines stay
+    // shown. A pending draft in the editor has other lines, so it gets none.
+    QVariantList markerBlocks;
+    QVariantList markerOrphans;
+    if (file->support() == Support::Supported && !files_.pendingDraft(file->id())) {
+        const auto &draft = file->current().draft.text;
+        const TextPositions lines(draft);
+        const auto scan = file->markers();
+        for (const auto &block : scan.blocks) {
+            QVariantList markerLines{markerLine(block.begin, draft, lines)};
+            if (block.base) markerLines.push_back(markerLine(*block.base, draft, lines));
+            markerLines.push_back(markerLine(block.separator, draft, lines));
+            markerLines.push_back(markerLine(block.end, draft, lines));
+            const bool folded = std::any_of(sections.begin(), sections.end(),
+                [&](const auto &section) { return section.block == block; });
+            markerBlocks.push_back(QVariantMap{{QStringLiteral("resultLineBegin"), lines.line(block.begin.bytes.begin)},
+                {QStringLiteral("resultLineEnd"), lines.line(block.end.bytes.begin) + 1},
+                {QStringLiteral("folded"), folded}, {QStringLiteral("markerLines"), markerLines}});
+        }
+        for (const auto &orphan : scan.orphans) markerOrphans.push_back(markerLine(orphan, draft, lines));
+    }
+    result.insert(QStringLiteral("markerBlocks"), markerBlocks);
+    result.insert(QStringLiteral("markerOrphans"), markerOrphans);
     result.insert(QStringLiteral("choiceNotice"), choices.empty() && !file->choices().empty()
         ? tr("Scoped choices are unavailable for this earlier draft. Direct editing remains available.") : QString{});
     return result;

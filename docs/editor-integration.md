@@ -31,9 +31,10 @@ stops are four average character widths.
 
 Diff colours come from the selected file's `passages` and `regions`. Each line
 gets one kind. It is added when the compared text lacks it, changed, conflict
-when an undecided region covers it, or manual when a hand-edited result region
-covers it. Where the compared text has lines this pane lacks, the line boundary
-gets a gap rule. A
+when an undecided region covers it, manual when a hand-edited result region
+covers it, or, in the result, markers when it belongs to a conflict-marker
+block or is a stray marker line. Where the compared text has lines this pane
+lacks, the line boundary gets a gap rule. A
 `LineBackgrounds` layer under each TextArea paints them with the
 `Kirigami.Theme` roles in `docs/ui-design.md`, spanning whole blocks so wrapped
 lines stay covered. It never sets character formats. The `markerSlot` shows the
@@ -43,6 +44,26 @@ both sources, `m` for a hand edit. The same layer highlights the lines of the
 navigation target in all panes with `highlightColor`. Source lines come from the
 target's region, or else from mapping its result lines through that source's
 passages. The highlight stays when the result selection changes.
+
+The result folds the marker lines of each block that `markerBlocks` marks
+`folded`: a block of the current revision that `FileSession::markerSections`
+ties to a choice section, so its marker lines are still the ones Git wrote.
+`TextBlocks.hidden` hides those document blocks with `QTextBlock::setVisible`
+and then sets each block's own format, which changes no text but makes the
+TextEdit lay it out again. A line is hidden only while it holds the text the
+controller listed for it. The buffer, positions and line numbers stay the
+document's, so the gutter skips the numbers of folded lines, and Save, recovery
+and Mark resolved see the same text either way. A chip with the `!` glyph on
+`negativeBackgroundColor` opens each folded block, a rule marks each run of
+folded lines, the lines between the markers take the markers kind, and a band
+that meets a block is a conflict band. The cursor never rests on a folded line:
+a key steps over it, a move by lines keeps its column, and a selection set by
+code ends on its anchor's side. A hand edit that changes a folded line's text
+or joins it to a neighbour unties its block from the section, so the block's
+lines show; undo restores the text and the fold with it. Show conflict markers
+in the file toolbar's overflow menu shows every marker line, and Find or Go to
+line on a folded line turns it on. Each region also carries `markersRemain`,
+true while a block of its section remains.
 
 The panes highlight syntax with KF6 SyntaxHighlighting. The controller gives
 the documents of the left, right, earlier and result panes one `PaneHighlighter`
