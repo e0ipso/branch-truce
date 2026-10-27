@@ -3,6 +3,7 @@
 #include "ResourceLimits.h"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -82,11 +83,84 @@ bool fills(const CorrespondenceMap &mapping, const ChoiceTarget &target, ByteRan
     return anchor && anchor->state == AnchorState::Mapped && anchor->result == region;
 }
 
+bool inside(ByteRange range, ByteRange region)
+{
+    return region.begin <= range.begin && range.end <= region.end;
+}
+
 // Ignored text is removed only where it is still exactly what the source put there.
 bool removable(const ResultAnchor *anchor, ByteRange region)
 {
     return anchor && anchor->state == AnchorState::Mapped && anchor->result && !anchor->handEdited
-        && !anchor->manualOverlap && region.begin <= anchor->result->begin && anchor->result->end <= region.end;
+        && !anchor->manualOverlap && inside(*anchor->result, region);
+}
+
+// The section whose two source scopes fill the block's side regions.
+std::optional<std::string> filledSection(const std::vector<ChoiceTarget> &choices,
+                                         const CorrespondenceMap &mapping, const MarkerRange &block)
+{
+    for (const auto &left : choices) {
+        if (left.scope != ChoiceScope::Section || left.source.side != SourceSide::Stage2
+            || !fills(mapping, left, sideRegion(block, SourceSide::Stage2))) continue;
+        const auto right = std::find_if(choices.begin(), choices.end(), [&](const auto &target) {
+            return target.scope == ChoiceScope::Section && target.section == left.section
+                && target.source.side == SourceSide::Stage3;
+        });
+        if (right != choices.end() && fills(mapping, *right, sideRegion(block, SourceSide::Stage3))) return left.section;
+    }
+    return std::nullopt;
+}
+
+// The text before, between and after a side region's section scopes in text
+// order: n + 1 ranges for n scopes. Git copies it into both side regions.
+std::vector<ByteRange> sharedText(ByteRange region, const std::vector<ByteRange> &scopes)
+{
+    std::vector<ByteRange> result;
+    auto begin = region.begin;
+    for (const auto &scope : scopes) {
+        result.push_back({begin, scope.begin});
+        begin = scope.end;
+    }
+    result.push_back({begin, region.end});
+    return result;
+}
+
+// The sections of a block Git wrote around lines both sides share: each side
+// region holds one mapped scope of every section, in the same order on both
+// sides, and the same text around them. A deletion has no text inside a
+// block, so a section with one, or with a scope outside its region, leaves
+// the block untied.
+std::vector<std::string> enclosedSections(const std::vector<ChoiceTarget> &choices, const CorrespondenceMap &mapping,
+                                          const MarkerRange &block, std::string_view text)
+{
+    std::array<std::vector<std::pair<ByteRange, std::string>>, 2> placed;
+    for (const auto &target : choices) {
+        if (target.scope != ChoiceScope::Section || target.source.side == SourceSide::Earlier) continue;
+        const auto *anchor = mapping.anchor(target.source.contributionId);
+        if (!anchor || anchor->state != AnchorState::Mapped || !anchor->result
+            || anchor->result->begin == anchor->result->end) continue;
+        const auto index = target.source.side == SourceSide::Stage2 ? 0u : 1u;
+        if (inside(*anchor->result, sideRegion(block, target.source.side)))
+            placed[index].push_back({*anchor->result, target.section});
+    }
+    auto &[left, right] = placed;
+    if (left.empty() || left.size() != right.size()) return {};
+    for (auto &side : placed)
+        std::sort(side.begin(), side.end(), [](const auto &a, const auto &b) { return a.first.begin < b.first.begin; });
+    std::vector<std::string> sections;
+    std::array<std::vector<ByteRange>, 2> scopes;
+    for (std::size_t i = 0; i < left.size(); ++i) {
+        if (left[i].second != right[i].second) return {};
+        if (i && (left[i].first.begin < left[i - 1].first.end || right[i].first.begin < right[i - 1].first.end)) return {};
+        sections.push_back(left[i].second);
+        scopes[0].push_back(left[i].first);
+        scopes[1].push_back(right[i].first);
+    }
+    const auto leftShared = sharedText(sideRegion(block, SourceSide::Stage2), scopes[0]);
+    const auto rightShared = sharedText(sideRegion(block, SourceSide::Stage3), scopes[1]);
+    for (std::size_t i = 0; i < leftShared.size(); ++i)
+        if (slice(text, leftShared[i]) != slice(text, rightShared[i])) return {};
+    return sections;
 }
 }
 
@@ -180,25 +254,19 @@ std::vector<MarkerSection> FileSession::markerSections(const std::string &text,
     if (!launchBlocks_ || !choices_) return result;
     for (const auto &block : resultMarkers(text, &mapping).blocks) {
         if (!launchBlocks_->contains(frame(block, text))) continue;
-        for (const auto &left : *choices_) {
-            if (left.scope != ChoiceScope::Section || left.source.side != SourceSide::Stage2
-                || !fills(mapping, left, sideRegion(block, SourceSide::Stage2))) continue;
-            const auto right = std::find_if(choices_->begin(), choices_->end(), [&](const auto &target) {
-                return target.scope == ChoiceScope::Section && target.section == left.section
-                    && target.source.side == SourceSide::Stage3;
-            });
-            if (right == choices_->end() || !fills(mapping, *right, sideRegion(block, SourceSide::Stage3))) continue;
-            result.push_back({block, left.section});
-            break;
-        }
+        if (auto section = filledSection(*choices_, mapping, block)) result.push_back({block, {std::move(*section)}});
+        else if (auto sections = enclosedSections(*choices_, mapping, block, text); !sections.empty())
+            result.push_back({block, std::move(sections)});
     }
     return result;
 }
 
 // For each marker section the decided contributions touch, once all of its
-// contributions are decided and one is accepted: the marker lines, base text
-// and ignored text to delete, each with the anchor that keeps its empty range,
-// last range first. A section whose ignored text holds other work keeps all.
+// contributions are decided and each of its sections has one accepted: the
+// marker lines, base text and ignored text to delete, each with the anchor
+// that keeps its empty range, last range first. Text both sides share around
+// several sections stays once. A section whose ignored text holds other work
+// keeps all, and so does a block whose kept text deletions cannot put in order.
 std::vector<std::pair<ByteRange, std::string>> FileSession::markerRemovals(
     const Draft &draft, const CorrespondenceMap &mapping,
     const std::map<std::string, Decision> &decided) const
@@ -206,33 +274,70 @@ std::vector<std::pair<ByteRange, std::string>> FileSession::markerRemovals(
     std::vector<std::pair<ByteRange, std::string>> result;
     for (const auto &found : markerSections(draft.text, mapping)) {
         const auto &block = found.block;
+        const std::array regions{sideRegion(block, SourceSide::Stage2), sideRegion(block, SourceSide::Stage3)};
         std::vector<std::pair<ByteRange, std::string>> removals{{block.begin.bytes, {}},
             {{block.base ? block.base->bytes.begin : block.separator.bytes.begin, block.separator.bytes.end}, {}},
             {block.end.bytes, {}}};
-        bool touched = false, accepted = false, complete = true;
-        for (const auto &side : *choices_) {
-            if (side.scope != ChoiceScope::Section || side.section != found.section) continue;
-            const auto region = sideRegion(block, side.source.side);
-            std::vector<std::string> ignored;
-            for (const auto &id : side.decisions) {
-                touched = touched || decided.contains(id);
-                const auto value = draft.decisions.find(id);
-                if (value == draft.decisions.end() || value->second.value == DecisionValue::Undecided) complete = false;
-                else if (value->second.value == DecisionValue::Accepted) accepted = true;
-                else ignored.push_back(id);
+        bool touched = false, complete = true, placed = true;
+        // Per section, whether every left and every right decision is ignored.
+        std::vector<std::array<bool, 2>> dropped;
+        std::array<std::vector<ByteRange>, 2> scopes;
+        for (const auto &section : found.sections) {
+            bool accepted = false;
+            auto &sides = dropped.emplace_back();
+            for (const auto &side : *choices_) {
+                if (side.scope != ChoiceScope::Section || side.section != section) continue;
+                const auto index = side.source.side == SourceSide::Stage2 ? 0u : 1u;
+                const auto region = regions[index];
+                const auto *anchor = mapping.anchor(side.source.contributionId);
+                // A deletion's insertion point lies outside the block.
+                if (anchor && anchor->result && inside(*anchor->result, region)) scopes[index].push_back(*anchor->result);
+                else placed = false;
+                std::vector<std::string> ignored;
+                for (const auto &id : side.decisions) {
+                    touched = touched || decided.contains(id);
+                    const auto value = draft.decisions.find(id);
+                    if (value == draft.decisions.end() || value->second.value == DecisionValue::Undecided) complete = false;
+                    else if (value->second.value == DecisionValue::Accepted) accepted = true;
+                    else ignored.push_back(id);
+                }
+                sides[index] = ignored.size() == side.decisions.size();
+                if (sides[index]) {
+                    if (region.begin == region.end) continue;
+                    if (!removable(anchor, region)) complete = false;
+                    else removals.push_back({*anchor->result, side.source.contributionId});
+                    continue;
+                }
+                for (const auto &id : ignored) {
+                    if (!removable(mapping.anchor(id), region)) complete = false;
+                    else removals.push_back({*mapping.anchor(id)->result, id});
+                }
             }
-            if (ignored.size() == side.decisions.size()) {
-                if (region.begin == region.end) continue;
-                if (!removable(mapping.anchor(side.source.contributionId), region)) complete = false;
-                else removals.push_back({region, side.source.contributionId});
-                continue;
-            }
-            for (const auto &id : ignored) {
-                if (!removable(mapping.anchor(id), region)) complete = false;
-                else removals.push_back({*mapping.anchor(id)->result, id});
+            complete = complete && accepted;
+        }
+        // Deleting keeps the left text before the right text, so the kept text
+        // stays in order only around one crossing section: the sections before
+        // it keep no right text and the sections after it keep no left text.
+        const auto crossesAt = [&](std::size_t crossing) {
+            for (std::size_t i = 0; i < dropped.size(); ++i)
+                if ((i < crossing && !dropped[i][1]) || (i > crossing && !dropped[i][0])) return false;
+            return true;
+        };
+        std::size_t crossing = 0;
+        while (crossing < dropped.size() && !crossesAt(crossing)) ++crossing;
+        if (crossing == dropped.size()) complete = false;
+        if (placed && complete) {
+            // markerSections found the same shared text on both sides. The left
+            // copy stays up to the crossing section and the right copy after it.
+            const auto left = sharedText(regions[0], scopes[0]);
+            const auto right = sharedText(regions[1], scopes[1]);
+            for (std::size_t i = 0; i < left.size() && i < right.size(); ++i) {
+                const auto removed = i <= crossing ? right[i] : left[i];
+                if (removed.begin != removed.end) removals.push_back({removed, {}});
             }
         }
-        if (touched && accepted && complete) result.insert(result.end(), removals.begin(), removals.end());
+        if (!placed && found.sections.size() > 1) complete = false;
+        if (touched && complete) result.insert(result.end(), removals.begin(), removals.end());
     }
     std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) { return a.first.begin > b.first.begin; });
     return result;

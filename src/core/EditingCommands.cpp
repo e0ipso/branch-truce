@@ -63,7 +63,7 @@ ChoicePreview previewCombination(const FileSession &file, RevisionId expected,
     // The two sides of a marker section sit apart, across its separator line.
     const auto markers = file.markerSections();
     const bool marked = selected.scope == ChoiceScope::Section && std::any_of(markers.begin(), markers.end(),
-        [&](const auto &found) { return found.section == selected.section; });
+        [&](const auto &found) { return found.encloses(selected.section); });
     for (const auto &target : file.choices()) {
         if (target.section != selected.section || target.scope != selected.scope
             || target.source.side == selected.source.side) continue;
@@ -231,7 +231,7 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected,
                 : file.correspondence()->anchor(opposite->source.contributionId);
             const auto sections = file.markerSections();
             const bool marked = std::any_of(sections.begin(), sections.end(), [&](const auto &section) {
-                return section.section == found->section;
+                return section.encloses(found->section);
             });
             if (!replacementAnchor || replacementAnchor->state != AnchorState::Mapped || !replacementAnchor->result
                 || (!marked && anchor->result->begin != replacementAnchor->result->begin

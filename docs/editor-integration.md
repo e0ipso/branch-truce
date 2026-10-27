@@ -47,7 +47,8 @@ passages. The highlight stays when the result selection changes.
 
 The result folds the marker lines of each block that `markerBlocks` marks
 `folded`: a block of the current revision that `FileSession::markerSections`
-ties to a choice section, so its marker lines are still the ones Git wrote.
+ties to the choice sections it encloses, so its marker lines are still the
+ones Git wrote.
 `TextBlocks.hidden` hides those document blocks with `QTextBlock::setVisible`
 and then sets each block's own format, which changes no text but makes the
 TextEdit lay it out again. A line is hidden only while it holds the text the
@@ -59,11 +60,11 @@ folded lines, the lines between the markers take the markers kind, and a band
 that meets a block is a conflict band. The cursor never rests on a folded line:
 a key steps over it, a move by lines keeps its column, and a selection set by
 code ends on its anchor's side. A hand edit that changes a folded line's text
-or joins it to a neighbour unties its block from the section, so the block's
+or joins it to a neighbour unties its block from its sections, so the block's
 lines show; undo restores the text and the fold with it. Show conflict markers
 in the file toolbar's overflow menu shows every marker line, and Find or Go to
 line on a folded line turns it on. Each region also carries `markersRemain`,
-true while a block of its section remains.
+true while a block that encloses its section remains.
 
 The panes highlight syntax with KF6 SyntaxHighlighting. The controller gives
 the documents of the left, right, earlier and result panes one `PaneHighlighter`

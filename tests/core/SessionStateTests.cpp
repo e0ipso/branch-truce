@@ -1051,6 +1051,100 @@ public:
             CHECK(typed.current().draft.text.find("<<<<<<< ours\nleft first\nleft second\n=======\nright typed first\n") != std::string::npos);
             CHECK(typed.current().draft.unresolvedMarkers == 2);
         });
+        suite.run("TRUCE-0192 a block around two sections split by a shared line resolves when all are decided", [] {
+            enum class Path { AcceptThenIgnore, ResolveRight, LeftThenRight };
+            const auto launch = test_support::splitText();
+            for (const auto path : {Path::AcceptThenIgnore, Path::ResolveRight, Path::LeftThenRight}) {
+                auto file = test_support::splitFile();
+                const auto sections = file.markerSections();
+                const auto &first = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section, 0);
+                const auto &second = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section, 1);
+                CHECK(first.section != second.section && file.markers().blocks.size() == 1);
+                CHECK(sections.size() == 1 && sections.front().block == file.markers().blocks.front());
+                CHECK((sections.front().sections == std::vector<std::string>{first.section, second.section}));
+                const auto partly = [&] {
+                    CHECK(file.current().draft.text == launch && file.current().draft.unresolvedMarkers == 1);
+                    CHECK(file.markerSections() == sections && has(file, Blocker::UnresolvedMarkers));
+                };
+                std::string expected;
+                std::optional<ChoicePreview> last;
+                switch (path) {
+                case Path::AcceptThenIgnore:
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept, ChoiceScope::Section, 0) == Transition::Applied);
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept, ChoiceScope::Section, 1) == Transition::Applied);
+                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Section, 0) == Transition::Applied);
+                    partly();
+                    last = previewChoice(file, file.current().id, test_support::choiceTarget(
+                        file, SourceSide::Stage3, ChoiceScope::Section, 1).source.contributionId, ChoiceAction::Ignore);
+                    CHECK(last->detail == "This decides the last open side of the conflict, so its marker lines and ignored text are removed.");
+                    expected = "header\nleft one\nshared\nleft two\ntail\n";
+                    break;
+                case Path::ResolveRight:
+                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
+                    partly();
+                    last = previewChoice(file, file.current().id, test_support::choiceTarget(
+                        file, SourceSide::Stage3, ChoiceScope::Section, 0).source.contributionId, ChoiceAction::ResolveUsingSide);
+                    expected = "header\nright one\nshared\nright two\ntail\n";
+                    break;
+                case Path::LeftThenRight:
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);
+                    partly();
+                    last = previewChoice(file, file.current().id, test_support::choiceTarget(
+                        file, SourceSide::Stage3, ChoiceScope::Section, 1).source.contributionId, ChoiceAction::ResolveUsingSide);
+                    expected = "header\nleft one\nshared\nright two\ntail\n";
+                    break;
+                }
+                CHECK(applyChoice(file, *last) == Transition::Applied);
+                const auto chosen = file.current().draft;
+                CHECK(chosen.text == expected && chosen.unresolvedMarkers == 0 && file.markerSections().empty());
+                CHECK(!has(file, Blocker::UnresolvedMarkers) && !has(file, Blocker::Undecided));
+                // One undo brings back the block, its text and the earlier decisions.
+                CHECK(file.undo(file.current().id) == Transition::Applied);
+                partly();
+                CHECK(file.current().draft.decisions != chosen.decisions);
+                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+                CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
+            }
+        });
+        suite.run("TRUCE-0192 a split block keeps its markers unless deletions leave the chosen text in order", [] {
+            const auto launch = test_support::splitText();
+            // The first section keeps the right line and the second the left one, so
+            // deleting cannot put them in order.
+            auto crossed = test_support::splitFile();
+            CHECK(choose(crossed, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);
+            CHECK(choose(crossed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
+            CHECK(crossed.current().draft.text == launch && crossed.current().draft.unresolvedMarkers == 1);
+            CHECK(!has(crossed, Blocker::Undecided) && crossed.markerSections().size() == 1);
+            CHECK(crossed.beginMarkResolved(crossed.current().id) == Transition::Blocked);
+            // Ignoring both sides of one section keeps the markers, as for a single section.
+            auto ignored = test_support::splitFile();
+            CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);
+            CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::Ignore, ChoiceScope::Section, 1) == Transition::Applied);
+            CHECK(choose(ignored, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Section, 1) == Transition::Applied);
+            CHECK(ignored.current().draft.text == launch && ignored.current().draft.unresolvedMarkers == 1);
+            // Typing in one copy of the shared line unties the block, and that work stays.
+            auto typed = test_support::splitFile();
+            const auto at = launch.rfind("shared") + 6;
+            CHECK(typed.editResult(1, {{at, at}, " typed"}) == Transition::Applied);
+            const auto edited = typed.current().draft.text;
+            CHECK(typed.markers().blocks.size() == 1 && typed.markerSections().empty());
+            CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);
+            CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
+            CHECK(typed.current().draft.text == edited && typed.current().draft.unresolvedMarkers == 1);
+            // Take both cannot join one section's sides across the other section's lines, so it is
+            // refused and the text and decisions stay as they were.
+            auto both = test_support::splitFile();
+            const auto before = both.current();
+            for (const auto side : {SourceSide::Stage2, SourceSide::Stage3})
+                for (const std::size_t at : {0u, 1u})
+                    for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst}) {
+                        const auto preview = previewChoice(both, both.current().id, test_support::choiceTarget(
+                            both, side, ChoiceScope::Section, at).source.contributionId, action);
+                        CHECK(preview.state == Transition::AmbiguousTarget && preview.command.edits.empty());
+                        CHECK(applyChoice(both, preview, true) != Transition::Applied);
+                    }
+            CHECK(both.current().draft == before.draft && both.current().id == before.id);
+        });
         suite.run("TRUCE-0189 the deleting side of a marker section can be accepted and resolved", [] {
             const auto launch = test_support::deletionFile().current().draft.text;
             const std::string accepted = "header\n<<<<<<< ours\n=======\n>>>>>>> theirs\nbridge\ntail\n";

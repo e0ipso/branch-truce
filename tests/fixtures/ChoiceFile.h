@@ -73,6 +73,20 @@ inline branch_truce::FileSession deletionFile()
         "header\n<<<<<<< ours\n=======\nright first\n>>>>>>> theirs\nbridge\ntail\n");
 }
 
+// Both sides change the lines on either side of a line they share, so Git
+// writes one block holding two choice sections with `shared` in both sides.
+inline std::string splitText()
+{
+    return "header\n<<<<<<< ours\nleft one\nshared\nleft two\n=======\nright one\nshared\nright two\n"
+        ">>>>>>> theirs\ntail\n";
+}
+
+inline branch_truce::FileSession splitFile()
+{
+    return choiceFile("header\nleft one\nshared\nleft two\ntail\n",
+        "header\nright one\nshared\nright two\ntail\n", splitText());
+}
+
 // Both sides keep a Markdown heading underlined with exactly seven '=', and
 // the file conflicts two lines below it.
 inline branch_truce::FileSession headingFile()

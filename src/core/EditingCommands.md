@@ -20,18 +20,27 @@ below. ResolveUsingSide accepts the selected source and ignores competitors in
 that section. A line resolution requires exact matching competing line ranges.
 Ambiguous or invalidated mappings require direct editing.
 
-A marker section is a complete conflict-marker block whose two side regions
-hold exactly the mapped scopes of one section, and whose marker lines and base
-text match a block in the launch result. `FileSession::markerSections` lists
-them. When a command decides the last open contribution of a marker section
-and at least one contribution is accepted, the same history entry deletes the
+A marker section is a complete conflict-marker block whose marker lines and
+base text match a block in the launch result, together with the choice
+sections it encloses. Either its two side regions hold exactly the mapped
+scopes of one section, or Git wrote several sections into one block around
+lines both sides share: then each side region holds one mapped scope of every
+section, in the same order and with the same lines around them on both sides.
+A section with a deletion, or shared lines that differ, leave the block
+untied. `FileSession::markerSections` lists them. When a command
+decides the last open contribution of a marker section and each of its
+sections has an accepted contribution, the same history entry deletes the
 block's marker lines, its base text and the text of its ignored contributions.
-One undo brings back the markers, text and decisions together. Accept alone
-keeps the markers, and so does ignoring both sides. A hand edit to a marker
-line or to the base text orphans the block. Ignored text that holds a hand
-edit or pre-launch work keeps the whole block. In both cases the markers stay
-for direct editing and keep blocking Mark resolved. A deletion side fills only
-an empty region. The preview says when a choice removes the markers.
+Of the shared lines Git copied into both sides, one copy goes. One undo brings
+back the markers, text and decisions together. Accept alone keeps the markers,
+and so does ignoring both sides of any section. Deleting text cannot reorder
+it, so the left text kept must come before the right text kept: a block whose
+earlier section keeps right text and whose later section keeps left text
+keeps its markers. A hand edit to a marker line or to the base text orphans
+the block.
+Ignored text that holds a hand edit or pre-launch work keeps the whole block.
+In all these cases the markers stay for direct editing and keep blocking Mark
+resolved. A deletion side fills only an empty region. The preview says when a choice removes the markers.
 
 A source deletion uses the mapped competing section as its replacement range
 and validates both anchors. It cannot infer a deletion range from neighboring

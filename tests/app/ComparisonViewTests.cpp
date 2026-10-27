@@ -1667,6 +1667,47 @@ public:
             expectLook(fixture, "after undoing the choice", {{2, 5, 8, 10, 12, 14}, numbers(1, 17, {2, 5, 8, 10, 12, 14}),
                 {3, 4, 6, 7, 11, 13}, {3, 11}, {3, 6, 9, 11, 13, 15}, 1});
         });
+        suite.run("TRUCE-0192 a block around two sections split by a shared line folds until both are decided", [] {
+            // splitFile writes one block, lines 2-10, around two sections split by "shared";
+            // its marker lines are 2, 6 and 10.
+            Fixture fixture(test_support::splitFile());
+            settlePanes(fixture);
+            CHECK(linesStarting(fixture, {"<<<<<<<", "=======", ">>>>>>>"}) == QList<int>({2, 6, 10}));
+            // Whether each region still has markers, in the controller's order.
+            const auto remain = [&] {
+                QList<bool> found;
+                for (const auto &entry : fixture.controller.selectedFile().value("regions").toList())
+                    found.push_back(entry.toMap().value("markersRemain").toBool());
+                return found;
+            };
+            const auto folded = [&] {
+                const auto blocks = fixture.controller.selectedFile().value("markerBlocks").toList();
+                return blocks.size() == 1 && blocks.front().toMap().value("folded").toBool();
+            };
+            const auto atLaunch = remain();
+            CHECK(atLaunch.size() >= 4 && !atLaunch.contains(false) && folded());
+            settle([&] { return foldedLines(fixture) == QList<int>({2, 6, 10}); });
+            const auto resolve = [&](SourceSide side, std::size_t at) {
+                const auto &target = test_support::choiceTarget(fixture.file(), side, ChoiceScope::Section, at);
+                CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
+                    QString::fromStdString(target.source.contributionId), "resolve"));
+                CHECK(fixture.controller.applyChoice(true));
+            };
+            // Deciding the first section keeps the block, its fold and every region's markers.
+            resolve(SourceSide::Stage2, 0);
+            CHECK(fixture.text() == QString::fromStdString(test_support::splitText()) && remain() == atLaunch && folded());
+            settle([&] { return foldedLines(fixture) == QList<int>({2, 6, 10}); });
+            // Deciding the second removes the block, so nothing folds and no region has markers.
+            resolve(SourceSide::Stage3, 1);
+            CHECK(fixture.text() == QStringLiteral("header\nleft one\nshared\nright two\ntail\n"));
+            CHECK(fixture.controller.selectedFile().value("markerBlocks").toList().isEmpty());
+            CHECK(remain().size() == atLaunch.size() && !remain().contains(true));
+            settle([&] { return foldedLines(fixture).isEmpty(); });
+            // One undo brings back the block and its fold.
+            CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
+            CHECK(fixture.text() == QString::fromStdString(test_support::splitText()) && remain() == atLaunch && folded());
+            settle([&] { return foldedLines(fixture) == QList<int>({2, 6, 10}); });
+        });
         suite.run("TRUCE-0058 whitespace markers paint spaces and tabs", [] {
             const std::string result = "aa bb\tcc\n";
             Fixture fixture(test_support::choiceFile("left\n", "right\n", result));

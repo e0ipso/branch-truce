@@ -610,11 +610,11 @@ QVariantMap ApplicationController::selectedFile() const
     result.insert(QStringLiteral("passages"), passages);
     QVariantList choices;
     QVariantList regions;
-    // A marker block tied to a choice section stays in the result until a
-    // confirmed choice decides that section.
+    // A marker block tied to choice sections stays in the result until
+    // confirmed choices decide every section it encloses.
     const auto sections = file->support() == Support::Supported ? file->markerSections() : std::vector<MarkerSection>{};
     std::set<std::string> markedSections;
-    for (const auto &section : sections) markedSections.insert(section.section);
+    for (const auto &section : sections) markedSections.insert(section.sections.begin(), section.sections.end());
     for (const auto &target : file->choices()) {
         // Older recovery records retain their exact decision vocabulary and
         // status. Do not invent new undecided judgments while restoring them.

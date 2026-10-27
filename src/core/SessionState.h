@@ -2,6 +2,7 @@
 
 #include "ConflictMarkers.h"
 #include "Correspondence.h"
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <optional>
@@ -29,11 +30,17 @@ struct Draft {
     bool operator==(const Draft &) const = default;
 };
 
-// A complete conflict-marker block whose side regions hold exactly the two
-// source scopes of one choice section.
+// A complete conflict-marker block and the choice sections it encloses, in
+// text order. Either the two source scopes of one section fill its side
+// regions, or each side region holds one scope of every section, in the same
+// order, around lines both sides share.
 struct MarkerSection {
     MarkerRange block;
-    std::string section;
+    std::vector<std::string> sections;
+    [[nodiscard]] bool encloses(const std::string &section) const
+    {
+        return std::find(sections.begin(), sections.end(), section) != sections.end();
+    }
     bool operator==(const MarkerSection &) const = default;
 };
 
@@ -129,8 +136,9 @@ public:
     // captured side, or in the earlier version inside a diff3 base region, is
     // source content, not a marker.
     [[nodiscard]] MarkerScan markers() const;
-    // Blocks in the current result tied to a choice section, in text order. A
-    // block whose marker lines or base text no launch block has is orphaned.
+    // Blocks in the current result tied to the choice sections they enclose,
+    // in text order. A block whose marker lines or base text no launch block
+    // has is orphaned.
     [[nodiscard]] std::vector<MarkerSection> markerSections() const;
     // True when the command decides the last open contribution of a marker
     // section, so applying it also removes that block's marker lines.
