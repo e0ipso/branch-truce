@@ -28,21 +28,24 @@ bool exceedsEnvelope(const std::string &text)
 
 // Result passages equal to a captured side. Git copies both sides' text into
 // the result and adds only the marker lines, so marker-like lines here are
-// content. The earlier version reaches the result only in base sections, and
-// an unambiguous match against it could take Git's separator for content, so
-// it is left out. Files without a correspondence keep the plain scan.
+// content. The earlier version reaches the result only in diff3 base regions,
+// and a match against it elsewhere could take Git's separator for content, so
+// its passages count only inside a base region. Files without a
+// correspondence keep the plain scan.
 MarkerScan resultMarkers(std::string_view text, const CorrespondenceMap *mapping)
 {
     std::vector<ByteRange> content;
+    std::vector<ByteRange> earlier;
     if (mapping) {
-        for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
+        for (const auto side : {SourceSide::Stage2, SourceSide::Stage3, SourceSide::Earlier}) {
             const auto *passages = mapping->passages(side);
             if (!passages) continue;
+            auto &known = side == SourceSide::Earlier ? earlier : content;
             for (const auto &passage : *passages)
-                if (passage.kind == PassageKind::Equal) content.push_back(passage.result);
+                if (passage.kind == PassageKind::Equal) known.push_back(passage.result);
         }
     }
-    return scanMarkers(text, std::move(content));
+    return scanMarkers(text, std::move(content), std::move(earlier));
 }
 
 Draft withMarkers(Draft draft, const CorrespondenceMap *mapping)

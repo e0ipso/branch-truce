@@ -40,6 +40,25 @@ void abandon(std::optional<OpenBlock> &open, std::vector<MarkerLine> &orphans)
     if (open->separator) orphans.push_back(*open->separator);
     open.reset();
 }
+
+// Merged into disjoint ranges, so one search finds the only candidate.
+std::vector<ByteRange> disjoint(std::vector<ByteRange> ranges)
+{
+    std::sort(ranges.begin(), ranges.end(), [](const auto &a, const auto &b) { return a.begin < b.begin; });
+    std::vector<ByteRange> result;
+    for (const auto &range : ranges) {
+        if (!result.empty() && range.begin <= result.back().end) result.back().end = std::max(result.back().end, range.end);
+        else result.push_back(range);
+    }
+    return result;
+}
+
+bool covers(const std::vector<ByteRange> &known, ByteRange line)
+{
+    auto after = std::upper_bound(known.begin(), known.end(), line.begin,
+                                  [](std::size_t offset, const auto &range) { return offset < range.begin; });
+    return after != known.begin() && line.end <= std::prev(after)->end;
+}
 }
 
 std::optional<MarkerLine> MarkerScan::first() const
@@ -50,20 +69,10 @@ std::optional<MarkerLine> MarkerScan::first() const
     return result;
 }
 
-MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content)
+MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content, std::vector<ByteRange> baseContent)
 {
-    std::sort(content.begin(), content.end(), [](const auto &a, const auto &b) { return a.begin < b.begin; });
-    // Merged into disjoint ranges, so one search finds the only candidate.
-    std::vector<ByteRange> known;
-    for (const auto &range : content) {
-        if (!known.empty() && range.begin <= known.back().end) known.back().end = std::max(known.back().end, range.end);
-        else known.push_back(range);
-    }
-    const auto isContent = [&](ByteRange line) {
-        auto after = std::upper_bound(known.begin(), known.end(), line.begin,
-                                      [](std::size_t offset, const auto &range) { return offset < range.begin; });
-        return after != known.begin() && line.end <= std::prev(after)->end;
-    };
+    const auto known = disjoint(std::move(content));
+    const auto earlier = disjoint(std::move(baseContent));
     MarkerScan result;
     std::optional<OpenBlock> open;
     std::size_t number = 0;
@@ -71,7 +80,10 @@ MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content)
         const auto newline = text.find('\n', begin);
         const auto end = newline == std::string_view::npos ? text.size() : newline + 1;
         const auto kind = markerKind(text.substr(begin, end - begin));
-        if (kind && !isContent({begin, end})) {
+        // Git's separator closes a base region, so earlier text counts only
+        // between the base line and the first separator outside it.
+        const bool inBase = open && open->base && !open->separator;
+        if (kind && !covers(known, {begin, end}) && !(inBase && covers(earlier, {begin, end}))) {
             const MarkerLine line{*kind, number, {begin, end}};
             switch (*kind) {
             case MarkerKind::Begin:

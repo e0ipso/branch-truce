@@ -126,7 +126,8 @@ public:
     }
     // Conflict-marker blocks and orphan marker lines in the current result.
     // A marker-like line the correspondence maps to identical text in a
-    // captured side is source content, not a marker.
+    // captured side, or in the earlier version inside a diff3 base region, is
+    // source content, not a marker.
     [[nodiscard]] MarkerScan markers() const;
     // Blocks in the current result tied to a choice section, in text order. A
     // block whose marker lines or base text no launch block has is orphaned.

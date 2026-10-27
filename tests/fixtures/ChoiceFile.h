@@ -82,6 +82,32 @@ inline branch_truce::FileSession headingFile()
         "Changes\n=======\nintro\n<<<<<<< ours\nleft line\n=======\nright line\n>>>>>>> theirs\ntail\n");
 }
 
+// A result Git wrote with merge.conflictStyle=diff3, with the common earlier
+// version captured unless `captured` is false.
+inline branch_truce::FileSession diff3File(std::string left, std::string right,
+    const std::string &earlier, std::string result, bool captured = true)
+{
+    using namespace branch_truce;
+    auto sources = *choiceFile(std::move(left), std::move(right), result).snapshots();
+    if (captured)
+        sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
+            choiceText(earlier), "earlier-commit", "Common earlier version"};
+    return FileSession("choices", sources.path, {std::move(result), {}, 0},
+        Support::Supported, {}, sources, true);
+}
+
+// The common earlier version underlines a heading with exactly seven '='
+// inside the hunk both sides change, so Git copies that line into the base
+// region of a diff3 block, two lines above its own separator.
+inline branch_truce::FileSession underlinedBaseFile(bool captured = true)
+{
+    return diff3File("intro\nLeft title\n-----------\nleft body\ntail\n",
+        "intro\nRight title\n************\nright body\ntail\n",
+        "intro\nTitle\n=======\nbody\ntail\n",
+        "intro\n<<<<<<< ours\nLeft title\n-----------\nleft body\n||||||| base\nTitle\n=======\nbody\n"
+        "=======\nRight title\n************\nright body\n>>>>>>> theirs\ntail\n", captured);
+}
+
 // The user set the result to the common earlier version before launch, so
 // choices change text that matches neither side. By default one conflict
 // changes three lines on each side.

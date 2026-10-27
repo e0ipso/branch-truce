@@ -14,7 +14,9 @@ transaction contains the complete result text, decisions keyed by stable
 contribution ID, explicit combination order and the count of known remaining
 conflict-marker ranges, which the model counts by scanning the text. A
 marker-like line that the correspondence maps to identical text in a captured
-side is source content and does not count. The model never infers source
+side is source content and does not count. Inside a diff3 base region, before
+Git's separator, so is a line it maps to identical text in the captured
+earlier version. The model never infers source
 choices from text. It removes marker lines only inside a choice that decides a
 whole marker section, as `src/core/EditingCommands.md` describes.
 

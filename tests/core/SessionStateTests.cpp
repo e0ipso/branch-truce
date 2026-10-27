@@ -1160,6 +1160,57 @@ public:
                 CHECK(has(file, Blocker::UnresolvedMarkers) && !file.reviewed());
             }
         });
+        suite.run("TRUCE-0193 scanMarkers counts earlier text as content only inside a base region", [] {
+            const std::string text = "<<<<<<< ours\nleft\n||||||| base\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
+            const auto plain = scanMarkers(text);
+            CHECK(plain.blocks.front().separator.line == 4 && plain.orphans.size() == 1 && plain.orphans.front().line == 5);
+            // The underline lies in the earlier text, so the next separator closes the base.
+            const auto assembled = scanMarkers(text, {}, {{31, 45}});
+            CHECK(assembled.orphans.empty() && assembled.blocks.size() == 1);
+            CHECK(assembled.blocks.front().base->line == 2 && assembled.blocks.front().separator.line == 5);
+            // Earlier text before the base line or after the separator is not content.
+            const std::string heading = "Title\n=======\n<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\n";
+            CHECK(scanMarkers(heading, {}, {{0, 14}}) == scanMarkers(heading));
+            CHECK(scanMarkers(heading, {}, {{0, heading.size()}}) == scanMarkers(heading));
+            CHECK(scanMarkers(text, {}, {{0, 31}, {31, 45}, {53, text.size()}}) == assembled);
+        });
+        suite.run("TRUCE-0193 a heading underline in the diff3 base is content and the block resolves", [] {
+            auto file = test_support::underlinedBaseFile();
+            const auto launch = file.current().draft;
+            const auto scan = file.markers();
+            CHECK(scan.orphans.empty() && scan.blocks.size() == 1);
+            CHECK(scan.blocks.front().base->line == 5 && scan.blocks.front().separator.line == 9);
+            CHECK(launch.unresolvedMarkers == 1 && file.markerSections().size() == 1);
+            CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept) == Transition::Applied);
+            CHECK(file.current().draft.text == launch.text && file.markerSections().size() == 1);
+            CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Ignore) == Transition::Applied);
+            const auto chosen = file.current().draft;
+            CHECK(chosen.text == "intro\nLeft title\n-----------\nleft body\ntail\n");
+            CHECK(chosen.unresolvedMarkers == 0 && file.markerSections().empty());
+            CHECK(!has(file, Blocker::UnresolvedMarkers) && !has(file, Blocker::Undecided));
+            // One undo brings back the whole block with its base text.
+            CHECK(file.undo(file.current().id) == Transition::Applied);
+            CHECK(file.current().draft.text == launch.text && file.markers() == scan);
+            CHECK(file.current().draft.unresolvedMarkers == 1 && file.markerSections().size() == 1);
+            CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+            CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
+            // Without the earlier version the underline still takes the separator's place.
+            auto plain = test_support::underlinedBaseFile(false);
+            CHECK(plain.markers() == scanMarkers(launch.text));
+            CHECK(plain.markers().blocks.front().separator.line == 7 && plain.markers().orphans.size() == 1);
+            CHECK(plain.current().draft.unresolvedMarkers == 2 && plain.markerSections().empty());
+        });
+        suite.run("TRUCE-0193 a diff3 block without marker-like base text is assembled as before", [] {
+            const std::string left = "intro\nleft line\ntail\n";
+            const std::string launch = "intro\n<<<<<<< ours\nleft line\n||||||| base\nbase line\n=======\nright line\n>>>>>>> theirs\ntail\n";
+            auto file = test_support::diff3File(left, "intro\nright line\ntail\n", "intro\nbase line\ntail\n", launch);
+            auto plain = test_support::diff3File(left, "intro\nright line\ntail\n", "intro\nbase line\ntail\n", launch, false);
+            CHECK(file.markers() == plain.markers() && file.markers() == scanMarkers(launch));
+            CHECK(file.markerSections() == plain.markerSections() && file.markerSections().size() == 1);
+            CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
+            CHECK(file.current().draft.text == left && file.current().draft.unresolvedMarkers == 0);
+            CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
+        });
         suite.run("TRUCE-0098 an outside-app file keeps its support blocker and recorded failures only", [] {
             FileSession file("id", "file", draft());
             CHECK(file.beginMarkResolved(1) == Transition::Applied);
