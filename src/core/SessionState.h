@@ -195,7 +195,14 @@ private:
     void appendHistory(RevisionId revision);
     [[nodiscard]] std::vector<MarkerSection> markerSections(const std::string &text,
                                                             const CorrespondenceMap &mapping) const;
-    [[nodiscard]] std::vector<std::pair<ByteRange, std::string>> markerRemovals(
+    // Text a choice deletes to resolve a marker section, leaving `anchor`
+    // empty, or a whole block it rebuilds from the text its sections keep.
+    struct MarkerEdit {
+        ByteRange range;
+        std::string anchor;
+        std::optional<std::vector<KeptSpan>> rebuilt;
+    };
+    [[nodiscard]] std::vector<MarkerEdit> markerEdits(
         const Draft &draft, const CorrespondenceMap &mapping,
         const std::map<std::string, Decision> &decided) const;
     std::string id_;

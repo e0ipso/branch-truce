@@ -67,7 +67,11 @@ An ambiguous or invalidated anchor remains unavailable even with confirmation.
 of a nonempty anchor stay outside it; an empty anchor explicitly chooses before
 or after. Interior edits transform the range and set both flags. Deleting a
 complete target or crossing its boundary invalidates it. Automated replacements
-retain their selected anchor, including a resulting empty range.
+retain their selected anchor, including a resulting empty range. A choice that
+rebuilds a conflict block from the text its sections keep, in a new order, uses
+`rebuilt`: an anchor inside kept text moves with it, an anchor on exactly the
+dropped text is left empty where that text was, and the block's other anchors
+are invalidated.
 
 The two flags answer different questions. Manual overlap means a choice would
 replace work other than the source, so replacing the range needs confirmation.

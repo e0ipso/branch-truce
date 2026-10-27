@@ -454,6 +454,74 @@ CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdi
     return result;
 }
 
+CorrespondenceMap CorrespondenceMap::rebuilt(RevisionId revision, ByteRange range,
+                                            const std::vector<KeptSpan> &spans) const
+{
+    if (!validByteRange(text_, range)) throw std::invalid_argument("A rebuilt range must use UTF-8 character boundaries");
+    std::string replacement;
+    // Where each span's kept text starts in the new text.
+    std::vector<std::size_t> starts;
+    for (const auto &kept : spans) {
+        if (!validByteRange(text_, kept.span) || kept.span.begin < range.begin || range.end < kept.span.end)
+            throw std::invalid_argument("Kept text must lie inside the rebuilt range");
+        starts.push_back(range.begin + replacement.size());
+        auto from = kept.span.begin;
+        for (const auto &cut : kept.dropped) {
+            if (!validByteRange(text_, cut) || cut.begin < from || kept.span.end < cut.end)
+                throw std::invalid_argument("Dropped text must lie in order inside its span");
+            replacement.append(text_, from, cut.begin - from);
+            from = cut.end;
+        }
+        replacement.append(text_, from, kept.span.end - from);
+    }
+    // The new offset of `offset` in span `i`, which no dropped range encloses.
+    const auto place = [&](std::size_t i, std::size_t offset) {
+        auto moved = starts[i] + offset - spans[i].span.begin;
+        for (const auto &cut : spans[i].dropped)
+            if (cut.end <= offset) moved -= cut.end - cut.begin;
+        return moved;
+    };
+    const auto overlaps = [](ByteRange a, ByteRange b) { return a.begin < b.end && b.begin < a.end; };
+    // The anchor's range in the new text, empty for one on exactly a dropped range.
+    const auto relocated = [&](ByteRange old) -> std::optional<ByteRange> {
+        for (std::size_t i = 0; i < spans.size(); ++i) {
+            const auto &kept = spans[i];
+            if (old.begin < kept.span.begin || kept.span.end < old.end) continue;
+            const auto cut = std::find_if(kept.dropped.begin(), kept.dropped.end(), [&](const auto &dropped) {
+                return dropped == old || (old.begin == old.end ? dropped.begin < old.begin && old.begin < dropped.end
+                    : overlaps(dropped, old) && (dropped.begin < old.begin || old.end < dropped.end));
+            });
+            if (cut == kept.dropped.end()) return ByteRange{place(i, old.begin), place(i, old.end)};
+            if (*cut == old) return ByteRange{place(i, old.begin), place(i, old.begin)};
+            return std::nullopt;
+        }
+        return std::nullopt;
+    };
+    auto result = atRevision(revision);
+    const auto shift = [&](std::size_t offset) { return offset - (range.end - range.begin) + replacement.size(); };
+    for (auto &[id, anchor] : result.anchors_) {
+        (void)id;
+        if (anchor.state != AnchorState::Mapped || !anchor.result) continue;
+        const auto old = *anchor.result;
+        if (old.begin == old.end && old.begin == range.begin) {
+            const auto position = range.begin + (anchor.source.affinity == InsertionAffinity::After ? replacement.size() : 0);
+            anchor.result = ByteRange{position, position};
+        } else if (old.end <= range.begin && old.begin < range.begin) {
+            continue;
+        } else if (old.begin >= range.end) {
+            anchor.result = ByteRange{shift(old.begin), shift(old.end)};
+        } else if (const auto moved = relocated(old)) {
+            if (moved->begin == moved->end && old.begin != old.end) anchor.handEdited = false;
+            anchor.result = moved;
+        } else {
+            invalidate(anchor, AnchorState::Invalidated);
+        }
+    }
+    result.text_.replace(range.begin, range.end - range.begin, replacement);
+    result.align();
+    return result;
+}
+
 CorrespondenceMap CorrespondenceMap::recomputed(RevisionId revision, std::string text, bool manual) const
 {
     auto result = atRevision(revision);

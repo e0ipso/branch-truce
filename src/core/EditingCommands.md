@@ -34,9 +34,14 @@ block's marker lines, its base text and the text of its ignored contributions.
 Of the shared lines Git copied into both sides, one copy goes. One undo brings
 back the markers, text and decisions together. Accept alone keeps the markers,
 and so does ignoring both sides of any section. Deleting text cannot reorder
-it, so the left text kept must come before the right text kept: a block whose
-earlier section keeps right text and whose later section keeps left text
-keeps its markers. A hand edit to a marker line or to the base text orphans
+it, so it works only while the left text kept comes before the right text
+kept. When an earlier section keeps right text and a later section keeps left
+text, the same history entry instead replaces the whole block with each
+section's kept text in section order, left before right within a section,
+between single copies of the shared lines. `CorrespondenceMap::rebuilt` moves
+each kept scope's anchor with its text and leaves each ignored one empty
+beside its section's text, so undo, redo and recovery replay restore the same
+text and decisions. A hand edit to a marker line or to the base text orphans
 the block.
 Ignored text that holds a hand edit or pre-launch work keeps the whole block.
 In all these cases the markers stay for direct editing and keep blocking Mark

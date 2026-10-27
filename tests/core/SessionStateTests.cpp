@@ -1106,16 +1106,46 @@ public:
                 CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
             }
         });
-        suite.run("TRUCE-0192 a split block keeps its markers unless deletions leave the chosen text in order", [] {
+        suite.run("TRUCE-0195 a split block whose sections keep opposite sides out of order resolves in section order", [] {
             const auto launch = test_support::splitText();
             // The first section keeps the right line and the second the left one, so
-            // deleting cannot put them in order.
+            // deleting cannot put them in order and the block is rebuilt.
             auto crossed = test_support::splitFile();
             CHECK(choose(crossed, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);
-            CHECK(choose(crossed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
-            CHECK(crossed.current().draft.text == launch && crossed.current().draft.unresolvedMarkers == 1);
-            CHECK(!has(crossed, Blocker::Undecided) && crossed.markerSections().size() == 1);
-            CHECK(crossed.beginMarkResolved(crossed.current().id) == Transition::Blocked);
+            const auto partly = crossed.current();
+            CHECK(partly.draft.text == launch && partly.draft.unresolvedMarkers == 1);
+            const auto last = previewChoice(crossed, crossed.current().id, test_support::choiceTarget(
+                crossed, SourceSide::Stage2, ChoiceScope::Section, 1).source.contributionId, ChoiceAction::ResolveUsingSide);
+            CHECK(last.detail.find("removes the conflict's marker lines") != std::string::npos);
+            CHECK(applyChoice(crossed, last) == Transition::Applied);
+            const auto chosen = crossed.current().draft;
+            CHECK(chosen.text == "header\nright one\nshared\nleft two\ntail\n");
+            CHECK(chosen.unresolvedMarkers == 0 && crossed.markerSections().empty());
+            CHECK(!has(crossed, Blocker::UnresolvedMarkers) && !has(crossed, Blocker::Undecided));
+            // Each section's scopes are bound in the rebuilt text: the kept one to its
+            // line, the ignored one empty beside it, left before right.
+            const auto range = [&](SourceSide side, std::size_t at) {
+                return crossed.correspondence()->anchor(test_support::choiceTarget(
+                    crossed, side, ChoiceScope::Section, at).source.contributionId)->result;
+            };
+            CHECK((range(SourceSide::Stage3, 0) == ByteRange{7, 17} && range(SourceSide::Stage2, 0) == ByteRange{7, 7}));
+            CHECK((range(SourceSide::Stage2, 1) == ByteRange{24, 33} && range(SourceSide::Stage3, 1) == ByteRange{33, 33}));
+            CHECK(crossed.correspondence()->handEditedAnchors().empty());
+            // One undo brings back the block and the first section's decisions.
+            CHECK(crossed.undo(crossed.current().id) == Transition::Applied);
+            CHECK(crossed.current().draft == partly.draft && crossed.markerSections().size() == 1);
+            CHECK(crossed.redo(crossed.current().id) == Transition::Applied && crossed.current().draft == chosen);
+            CHECK(range(SourceSide::Stage2, 1) == ByteRange{24, 33});
+            CHECK(crossed.beginMarkResolved(crossed.current().id) == Transition::Applied);
+            // Recovery replays each draft with its hand-edit flags and derives the same text and count.
+            auto replay = test_support::splitFile();
+            CHECK(replay.replaceDraft(1, partly.draft, std::set<std::string>{}) == Transition::Applied);
+            CHECK(replay.replaceDraft(replay.current().id, chosen, std::set<std::string>{}) == Transition::Applied);
+            CHECK(replay.current().draft == chosen && replay.markers().count() == 0);
+            CHECK(replay.beginMarkResolved(replay.current().id) == Transition::Applied);
+        });
+        suite.run("TRUCE-0192 a split block keeps its markers while a section keeps no side or shared text is edited", [] {
+            const auto launch = test_support::splitText();
             // Ignoring both sides of one section keeps the markers, as for a single section.
             auto ignored = test_support::splitFile();
             CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);

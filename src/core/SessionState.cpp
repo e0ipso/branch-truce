@@ -273,26 +273,31 @@ std::vector<MarkerSection> FileSession::markerSections(const std::string &text,
 // contributions are decided and each of its sections has one accepted: the
 // marker lines, base text and ignored text to delete, each with the anchor
 // that keeps its empty range, last range first. Text both sides share around
-// several sections stays once. A section whose ignored text holds other work
-// keeps all, and so does a block whose kept text deletions cannot put in order.
-std::vector<std::pair<ByteRange, std::string>> FileSession::markerRemovals(
+// several sections stays once. Deleting keeps the left text before the right
+// text, so a block whose kept text it cannot put in section order is rebuilt
+// from that text and one copy of the shared lines instead. A section whose
+// ignored text holds other work keeps all.
+std::vector<FileSession::MarkerEdit> FileSession::markerEdits(
     const Draft &draft, const CorrespondenceMap &mapping,
     const std::map<std::string, Decision> &decided) const
 {
-    std::vector<std::pair<ByteRange, std::string>> result;
+    std::vector<MarkerEdit> result;
     for (const auto &found : markerSections(draft.text, mapping)) {
         const auto &block = found.block;
         const std::array regions{sideRegion(block, SourceSide::Stage2), sideRegion(block, SourceSide::Stage3)};
-        std::vector<std::pair<ByteRange, std::string>> removals{{block.begin.bytes, {}},
-            {{block.base ? block.base->bytes.begin : block.separator.bytes.begin, block.separator.bytes.end}, {}},
-            {block.end.bytes, {}}};
+        std::vector<MarkerEdit> removals{{block.begin.bytes, {}, {}},
+            {{block.base ? block.base->bytes.begin : block.separator.bytes.begin, block.separator.bytes.end}, {}, {}},
+            {block.end.bytes, {}, {}}};
         bool touched = false, complete = true, placed = true;
-        // Per section, whether every left and every right decision is ignored.
+        // Per section, whether every left and every right decision is ignored,
+        // and the ignored text of each side.
         std::vector<std::array<bool, 2>> dropped;
+        std::vector<std::array<std::vector<ByteRange>, 2>> cuts;
         std::array<std::vector<ByteRange>, 2> scopes;
         for (const auto &section : found.sections) {
             bool accepted = false;
             auto &sides = dropped.emplace_back();
+            auto &cut = cuts.emplace_back();
             for (const auto &side : *choices_) {
                 if (side.scope != ChoiceScope::Section || side.section != section) continue;
                 const auto index = side.source.side == SourceSide::Stage2 ? 0u : 1u;
@@ -310,22 +315,24 @@ std::vector<std::pair<ByteRange, std::string>> FileSession::markerRemovals(
                     else ignored.push_back(id);
                 }
                 sides[index] = ignored.size() == side.decisions.size();
-                if (sides[index]) {
-                    if (region.begin == region.end) continue;
-                    if (!removable(anchor, region)) complete = false;
-                    else removals.push_back({*anchor->result, side.source.contributionId});
-                    continue;
-                }
+                if (sides[index]) ignored = {side.source.contributionId};
                 for (const auto &id : ignored) {
-                    if (!removable(mapping.anchor(id), region)) complete = false;
-                    else removals.push_back({*mapping.anchor(id)->result, id});
+                    const auto *removed = mapping.anchor(id);
+                    if (sides[index] && region.begin == region.end) continue;
+                    if (!removable(removed, region)) complete = false;
+                    else {
+                        removals.push_back({*removed->result, id, {}});
+                        cut[index].push_back(*removed->result);
+                    }
                 }
             }
             complete = complete && accepted;
         }
-        // Deleting keeps the left text before the right text, so the kept text
-        // stays in order only around one crossing section: the sections before
-        // it keep no right text and the sections after it keep no left text.
+        if (!placed && found.sections.size() > 1) complete = false;
+        if (!touched || !complete) continue;
+        // Deleting keeps the kept text in order only around one crossing
+        // section: the sections before it keep no right text and the sections
+        // after it keep no left text.
         const auto crossesAt = [&](std::size_t crossing) {
             for (std::size_t i = 0; i < dropped.size(); ++i)
                 if ((i < crossing && !dropped[i][1]) || (i > crossing && !dropped[i][0])) return false;
@@ -333,21 +340,39 @@ std::vector<std::pair<ByteRange, std::string>> FileSession::markerRemovals(
         };
         std::size_t crossing = 0;
         while (crossing < dropped.size() && !crossesAt(crossing)) ++crossing;
-        if (crossing == dropped.size()) complete = false;
-        if (placed && complete) {
-            // markerSections found the same shared text on both sides. The left
-            // copy stays up to the crossing section and the right copy after it.
-            const auto left = sharedText(regions[0], scopes[0]);
-            const auto right = sharedText(regions[1], scopes[1]);
-            for (std::size_t i = 0; i < left.size() && i < right.size(); ++i) {
-                const auto removed = i <= crossing ? right[i] : left[i];
-                if (removed.begin != removed.end) removals.push_back({removed, {}});
-            }
+        if (!placed) {
+            result.insert(result.end(), removals.begin(), removals.end());
+            continue;
         }
-        if (!placed && found.sections.size() > 1) complete = false;
-        if (touched && complete) result.insert(result.end(), removals.begin(), removals.end());
+        // markerSections found the same shared text on both sides.
+        const auto left = sharedText(regions[0], scopes[0]);
+        const auto right = sharedText(regions[1], scopes[1]);
+        if (crossing == dropped.size()) {
+            // Each section's kept text, left before right, between the left
+            // copies of the shared lines.
+            std::vector<KeptSpan> spans;
+            for (std::size_t i = 0; i < found.sections.size(); ++i) {
+                spans.push_back({left[i], {}});
+                for (const auto index : {0u, 1u}) {
+                    auto kept = cuts[i][index];
+                    std::sort(kept.begin(), kept.end(), [](const auto &a, const auto &b) { return a.begin < b.begin; });
+                    for (std::size_t at = 0; at < kept.size(); ++at)
+                        if (!inside(kept[at], scopes[index][i]) || (at && kept[at].begin < kept[at - 1].end)) complete = false;
+                    spans.push_back({scopes[index][i], std::move(kept)});
+                }
+            }
+            spans.push_back({left.back(), {}});
+            if (complete) result.push_back({{block.begin.bytes.begin, block.end.bytes.end}, {}, std::move(spans)});
+            continue;
+        }
+        // The left copy stays up to the crossing section and the right copy after it.
+        for (std::size_t i = 0; i < left.size() && i < right.size(); ++i) {
+            const auto removed = i <= crossing ? right[i] : left[i];
+            if (removed.begin != removed.end) removals.push_back({removed, {}, {}});
+        }
+        result.insert(result.end(), removals.begin(), removals.end());
     }
-    std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) { return a.first.begin > b.first.begin; });
+    std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) { return a.range.begin > b.range.begin; });
     return result;
 }
 
@@ -357,7 +382,7 @@ bool FileSession::completesMarkers(const EditingCommand &command) const
     if (!mapping || command.scope != EditingScope::Mapped) return false;
     auto draft = current().draft;
     for (const auto &[id, value] : command.decisions) draft.decisions[id] = value;
-    return !markerRemovals(draft, *mapping, command.decisions).empty();
+    return !markerEdits(draft, *mapping, command.decisions).empty();
 }
 
 RevisionId FileSession::advance(const Draft &edited,
@@ -512,9 +537,10 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
     // Deciding a marker section's last contribution resolves its block in
     // this same history entry, so one undo brings the markers back.
     if (!wholeFile) {
-        for (const auto &[range, anchor] : markerRemovals(draft, *updated, command.decisions)) {
-            draft.text.erase(range.begin, range.end - range.begin);
-            *updated = updated->edited(next_, {range, {}}, false, anchor);
+        for (const auto &edit : markerEdits(draft, *updated, command.decisions)) {
+            *updated = edit.rebuilt ? updated->rebuilt(next_, edit.range, *edit.rebuilt)
+                : updated->edited(next_, {edit.range, {}}, false, edit.anchor);
+            draft.text = updated->text();
         }
     }
     // Choosing the text a hand edit left unchanged still replaces that edit.

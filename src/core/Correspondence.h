@@ -86,6 +86,14 @@ struct ResultEdit {
     bool operator==(const ResultEdit &) const = default;
 };
 
+// Part of a range a choice rebuilds: `span` without the `dropped` ranges inside
+// it, which are disjoint and in text order.
+struct KeptSpan {
+    ByteRange span;
+    std::vector<ByteRange> dropped;
+    bool operator==(const KeptSpan &) const = default;
+};
+
 [[nodiscard]] bool validUtf8(std::string_view text) noexcept;
 [[nodiscard]] bool validByteRange(std::string_view text, ByteRange range) noexcept;
 
@@ -106,6 +114,12 @@ public:
     [[nodiscard]] CorrespondenceMap edited(RevisionId revision, const ResultEdit &edit,
                                          bool manual = true,
                                          const std::string &selectedAnchor = {}) const;
+    // A choice that replaces `range` with the text its `spans` keep, in the
+    // given order. An anchor inside a span keeps its place in that span's text,
+    // and one on exactly a dropped range is left empty where that range was.
+    // Any other anchor inside `range` or across its edges is invalidated.
+    [[nodiscard]] CorrespondenceMap rebuilt(RevisionId revision, ByteRange range,
+                                          const std::vector<KeptSpan> &spans) const;
     // Whole-buffer editor updates lack an edit location. Transform only where
     // every optimal old-to-new alignment agrees, otherwise retain ambiguity.
     // A whole-file command passes manual false and clears every hand edit.
