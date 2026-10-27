@@ -80,15 +80,16 @@ ColumnLayout {
     }
     // Line marks for one pane, keyed by 1-based line. lines holds the kind of
     // each coloured line: "added" when the compared text lacks it, "changed",
-    // "conflict" inside an undecided region, or "manual" inside a hand-edited
-    // result region. gaps holds the lines above which the compared text has
+    // "conflict" inside an undecided region, "manual" inside a hand-edited
+    // result region, or "accepted" and "ignored" inside a decided region of a
+    // source pane. gaps holds the lines above which the compared text has
     // lines this pane lacks. letters holds the result's provenance: L, R or B
     // for a line equal to the left, right or both sources, m for a hand edit.
     function marksFor(pane: string, file: var): var {
         const lines = {}
         const gaps = {}
         const letters = {}
-        const rank = {added: 1, changed: 2, manual: 3, conflict: 4}
+        const rank = {added: 1, changed: 2, accepted: 3, ignored: 3, manual: 3, conflict: 4}
         const mark = function(first, end, kind) {
             for (let line = first; line < end; ++line) {
                 if (!lines[line] || rank[lines[line]] < rank[kind])
@@ -123,8 +124,9 @@ ColumnLayout {
                     mark(region.resultLineBegin, region.resultLineEnd, "manual")
                 for (let line = region.resultLineBegin; region.handEdited && line < region.resultLineEnd; ++line)
                     from[line] = 4
-            } else if (!result && region.side === pane && region.state === "undecided") {
-                mark(region.sourceLineBegin, region.sourceLineEnd, "conflict")
+            } else if (!result && region.side === pane && region.state !== "manual") {
+                mark(region.sourceLineBegin, region.sourceLineEnd,
+                    region.state === "undecided" ? "conflict" : region.state)
             }
         }
         for (const line in from)
@@ -638,14 +640,21 @@ ColumnLayout {
                     readonly property string kind: gutter.marks.lines[line] || ""
                     y: modelData.y
                     height: modelData.height
-                    text: ({added: "+", changed: "~", conflict: "!", manual: "m"})[kind] || ""
+                    text: ({added: "+", changed: "~", conflict: "!", manual: "m",
+                        accepted: "✓", ignored: "×"})[kind] || ""
                     visible: text.length > 0
                     textFormat: Text.PlainText
                     font: gutter.editor.font
-                    color: kind === "added" ? Kirigami.Theme.positiveTextColor
+                    color: kind === "added" || kind === "accepted" ? Kirigami.Theme.positiveTextColor
                         : kind === "changed" ? Kirigami.Theme.activeTextColor
                         : kind === "conflict" ? Kirigami.Theme.negativeTextColor
+                        : kind === "ignored" ? Kirigami.Theme.disabledTextColor
                         : Kirigami.Theme.neutralTextColor
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
+                    Accessible.description: ({added: qsTr("Added line"), changed: qsTr("Changed line"),
+                        conflict: qsTr("Undecided conflict"), manual: qsTr("Hand-edited line"),
+                        accepted: qsTr("Accepted side"), ignored: qsTr("Ignored side")})[kind] || ""
                 }
             }
             Repeater {
@@ -711,10 +720,13 @@ ColumnLayout {
                 y: modelData.top
                 width: backgrounds.width
                 height: modelData.extent
-                color: kind === "added" ? Kirigami.Theme.positiveBackgroundColor
+                // An ignored side keeps its text readable under a faint tint.
+                color: kind === "added" || kind === "accepted" ? Kirigami.Theme.positiveBackgroundColor
                     : kind === "changed" ? Kirigami.Theme.activeBackgroundColor
                     : kind === "conflict" ? Kirigami.Theme.negativeBackgroundColor
+                    : kind === "ignored" ? Kirigami.Theme.disabledTextColor
                     : Kirigami.Theme.neutralBackgroundColor
+                opacity: kind === "ignored" ? 0.15 : 1
             }
         }
         Repeater {

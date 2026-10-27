@@ -1039,7 +1039,8 @@ public:
             Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
                 "header\nright first\nshared\nright extra\ntail\n"));
             const QMap<QString, QString> glyphs{{"added", "+"}, {"changed", "~"}, {"conflict", "!"},
-                {"manual", "m"}, {"removed", QString(QChar(0x2212))}};
+                {"manual", "m"}, {"accepted", QString(QChar(0x2713))}, {"ignored", QString(QChar(0x00d7))},
+                {"removed", QString(QChar(0x2212))}};
             // The kinds of the line backgrounds and gap rules painted in a pane,
             // and how many of them lack a visible glyph of that kind on their line.
             struct Painted { QSet<QString> kinds; int unmarked = 0; };
@@ -1070,6 +1071,7 @@ public:
             expect("result", {"conflict", "removed"});
             expect("stage3", {"conflict"});
             // Taking the left side decides every region, and typing in an accepted line marks it manual.
+            // The edited region shows its passage colours again; the right's extra line stays ignored.
             const auto revision = [&] { return QString::number(fixture.file().current().id); };
             CHECK(fixture.controller.previewWholeFile("choices", revision(), "left"));
             CHECK(fixture.controller.applyWholeFile());
@@ -1077,7 +1079,7 @@ public:
             CHECK(fixture.controller.editResult("choices", revision(), at, at + 4, "LEFT"));
             expect("stage2", {"changed"});
             expect("result", {"manual", "removed"});
-            expect("stage3", {"added", "changed"});
+            expect("stage3", {"changed", "ignored"});
         });
         {
             // The batch fixture has a left and a right region on lines 2, 4 and 6, and
@@ -1088,7 +1090,8 @@ public:
             leftLetters.insert(2, "L");
             // One scoped choice on the left region at line 2: the action, the states the
             // left and right regions there end in, and what each pane then paints. The
-            // regions on lines 4 and 6 stay undecided and keep their conflict marks.
+            // regions on lines 4 and 6 stay undecided and keep their conflict marks. A
+            // decided side is marked accepted or ignored on its source lines.
             struct Choice {
                 QString action;
                 QString leftState;
@@ -1101,22 +1104,22 @@ public:
             const std::array<Choice, 3> choices{{
                 // The left line now matches the result. The result line stays a
                 // conflict while the right contribution is undecided.
-                {"accept", "accepted", "undecided", true, regionMarks({}, "conflict", "conflict"),
+                {"accept", "accepted", "undecided", true, regionMarks("accepted", "conflict", "conflict"),
                     regionMarks("conflict", "conflict", "conflict", leftLetters),
                     regionMarks("conflict", "conflict", "conflict")},
                 // Ignore leaves the result alone, so the left line still differs from it.
-                {"ignore", "ignored", "undecided", false, regionMarks("changed", "conflict", "conflict"),
+                {"ignore", "ignored", "undecided", false, regionMarks("ignored", "conflict", "conflict"),
                     regionMarks("conflict", "conflict", "conflict", launchLetters),
                     regionMarks("conflict", "conflict", "conflict")},
                 // Resolving using the left side decides both contributions, so the
                 // result line is only a change against the right source.
-                {"resolve", "accepted", "ignored", true, regionMarks({}, "conflict", "conflict"),
+                {"resolve", "accepted", "ignored", true, regionMarks("accepted", "conflict", "conflict"),
                     regionMarks("changed", "conflict", "conflict", leftLetters),
-                    regionMarks("changed", "conflict", "conflict")},
+                    regionMarks("ignored", "conflict", "conflict")},
             }};
             for (const auto &choice : choices) {
                 suite.run("TRUCE-0174 a scoped " + choice.action.toStdString()
-                    + " repaints all three panes and the provenance letters", [choice, launchLetters] {
+                    + " repaints all three panes and the provenance letters, and undo restores them", [choice, launchLetters] {
                     Fixture fixture;
                     settlePanes(fixture);
                     expectMarks(fixture, "at launch", "stage2", regionMarks("conflict", "conflict", "conflict"));
@@ -1146,6 +1149,13 @@ public:
                     expectMarks(fixture, when, "stage2", choice.stage2);
                     expectMarks(fixture, when, "result", choice.result);
                     expectMarks(fixture, when, "stage3", choice.stage3);
+                    // Undo returns every pane to the undecided look of launch.
+                    CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
+                    CHECK(fixture.text() == before);
+                    const auto undone = "after undoing " + choice.action.toStdString();
+                    expectMarks(fixture, undone, "stage2", regionMarks("conflict", "conflict", "conflict"));
+                    expectMarks(fixture, undone, "result", regionMarks("conflict", "conflict", "conflict", launchLetters));
+                    expectMarks(fixture, undone, "stage3", regionMarks("conflict", "conflict", "conflict"));
                 });
             }
         }
