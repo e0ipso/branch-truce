@@ -443,6 +443,30 @@ public:
             }
             CHECK(overlapping > 0);
         });
+        test("TRUCE-0177 deciding both sides of a marked section removes its marker lines from the shown result", [] {
+            RegionView view(test_support::markedFile());
+            auto file = view.file();
+            const auto preview = [&](const char *side, const char *action) {
+                return view.controller.previewChoice("choices", file.value("currentRevision").toString(),
+                                                     regionId(file, side, "section", 2), QString::fromLatin1(action));
+            };
+            CHECK(preview("stage2", "accept"));
+            CHECK(view.controller.commandMessage() == "Accept changes only this scope and leaves the other side undecided.");
+            CHECK(view.controller.applyChoice());
+            file = view.file();
+            CHECK(file.value("resultText").toString() == QString::fromStdString(test_support::markedText()));
+            CHECK(preview("stage3", "ignore"));
+            CHECK(view.controller.commandMessage().contains("marker lines and ignored text are removed"));
+            CHECK(view.controller.applyChoice());
+            file = view.file();
+            const auto resolved = QStringLiteral("header\nleft first\nleft second\nbridge\n"
+                "<<<<<<< ours\nleft later\n=======\nright later\n>>>>>>> theirs\ntail\n");
+            CHECK(file.value("resultText").toString() == resolved);
+            CHECK(region(file, regionId(file, "stage2", "section", 2)).value("state").toString() == "accepted");
+            CHECK(view.controller.files()->file("choices")->current().draft.unresolvedMarkers == 1);
+            CHECK(view.undo().value("resultText").toString() == QString::fromStdString(test_support::markedText()));
+            CHECK(view.redo().value("resultText").toString() == resolved);
+        });
         test("a hand edit marks the regions containing it in every decision state until a choice replaces it", [] {
             RegionView view;
             auto file = view.file();

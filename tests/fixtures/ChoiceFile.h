@@ -48,6 +48,23 @@ inline const branch_truce::ChoiceTarget &choiceTarget(const branch_truce::FileSe
     throw std::runtime_error("fixture has no requested choice scope");
 }
 
+// The result Git writes for choiceFile's default sides: each of its two
+// sections between conflict markers, with diff3 base sections on request.
+inline std::string markedText(bool base = false)
+{
+    const std::string first = base ? "||||||| base\nbase first\nbase second\n" : "";
+    const std::string later = base ? "||||||| base\nbase later\n" : "";
+    return "header\n<<<<<<< ours\nleft first\nleft second\n" + first
+        + "=======\nright first\nright second\n>>>>>>> theirs\nbridge\n<<<<<<< ours\nleft later\n" + later
+        + "=======\nright later\n>>>>>>> theirs\ntail\n";
+}
+
+inline branch_truce::FileSession markedFile(bool base = false)
+{
+    return choiceFile("header\nleft first\nleft second\nbridge\nleft later\ntail\n",
+        "header\nright first\nright second\nbridge\nright later\ntail\n", markedText(base));
+}
+
 // The user set the result to the common earlier version before launch, so
 // choices change text that matches neither side. By default one conflict
 // changes three lines on each side.

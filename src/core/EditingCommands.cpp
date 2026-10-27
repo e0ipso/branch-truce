@@ -60,12 +60,16 @@ ChoicePreview previewCombination(const FileSession &file, RevisionId expected,
     const ResultAnchor *other = nullptr;
     std::size_t matches = 0;
     bool exact = false;
+    // The two sides of a marker section sit apart, across its separator line.
+    const auto markers = file.markerSections();
+    const bool marked = selected.scope == ChoiceScope::Section && std::any_of(markers.begin(), markers.end(),
+        [&](const auto &found) { return found.section == selected.section; });
     for (const auto &target : file.choices()) {
         if (target.section != selected.section || target.scope != selected.scope
             || target.source.side == selected.source.side) continue;
         const auto *candidate = mapping->anchor(target.source.contributionId);
         if (!candidate || candidate->state != AnchorState::Mapped || !candidate->result
-            || !adjoining(*anchor->result, *candidate->result)) continue;
+            || !(marked || adjoining(*anchor->result, *candidate->result))) continue;
         const bool sameRange = *anchor->result == *candidate->result;
         // Neighboring lines are also adjacent. An exact competing range has
         // priority, so an unrelated adjacent line cannot make it ambiguous.
@@ -136,6 +140,7 @@ ChoicePreview previewCombination(const FileSession &file, RevisionId expected,
     preview.state = Transition::ConfirmationRequired;
     preview.detail = action == ChoiceAction::CombineLeftFirst ? "Take both: Left then Right. " : "Take both: Right then Left. ";
     preview.detail += "Only the displayed source scopes are combined. Review the exact text for duplication and edit it afterwards if needed.";
+    if (file.completesMarkers(preview.command)) preview.detail += " The conflict's marker lines are removed.";
     return preview;
 }
 }
@@ -276,6 +281,10 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected,
     preview.detail = action == ChoiceAction::Ignore ? "Ignore preserves result text and leaves the other side undecided."
         : action == ChoiceAction::Accept ? "Accept changes only this scope and leaves the other side undecided."
         : "Resolve using this side accepts this scope and ignores its competing contributions.";
+    if (file.completesMarkers(preview.command))
+        preview.detail = action == ChoiceAction::ResolveUsingSide
+            ? "Resolve using this side accepts this scope, ignores its competing contributions and removes the conflict's marker lines and ignored text."
+            : "This decides the last open side of the conflict, so its marker lines and ignored text are removed.";
     return preview;
 }
 

@@ -7,6 +7,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace branch_truce {
@@ -26,6 +27,14 @@ struct Draft {
     // it stores and ignores a supplied value.
     std::size_t unresolvedMarkers = 0;
     bool operator==(const Draft &) const = default;
+};
+
+// A complete conflict-marker block whose side regions hold exactly the two
+// source scopes of one choice section.
+struct MarkerSection {
+    MarkerRange block;
+    std::string section;
+    bool operator==(const MarkerSection &) const = default;
 };
 
 struct Revision {
@@ -117,6 +126,12 @@ public:
     }
     // Conflict-marker blocks and orphan marker lines in the current result.
     [[nodiscard]] MarkerScan markers() const { return scanMarkers(current().draft.text); }
+    // Blocks in the current result tied to a choice section, in text order. A
+    // block whose marker lines or base text no launch block has is orphaned.
+    [[nodiscard]] std::vector<MarkerSection> markerSections() const;
+    // True when the command decides the last open contribution of a marker
+    // section, so applying it also removes that block's marker lines.
+    [[nodiscard]] bool completesMarkers(const EditingCommand &command) const;
     [[nodiscard]] const std::vector<ChoiceTarget> &choices() const noexcept;
     [[nodiscard]] const std::vector<NonConflictingTarget> &nonConflictingTargets() const noexcept;
     [[nodiscard]] const std::optional<Revision> &checkpoint() const noexcept { return checkpoint_; }
@@ -167,6 +182,11 @@ private:
                        std::shared_ptr<const CorrespondenceMap> correspondence = {});
     RevisionId restore(const Revision &revision);
     void appendHistory(RevisionId revision);
+    [[nodiscard]] std::vector<MarkerSection> markerSections(const std::string &text,
+                                                            const CorrespondenceMap &mapping) const;
+    [[nodiscard]] std::vector<std::pair<ByteRange, std::string>> markerRemovals(
+        const Draft &draft, const CorrespondenceMap &mapping,
+        const std::map<std::string, Decision> &decided) const;
     std::string id_;
     std::string path_;
     Support support_;
@@ -174,6 +194,8 @@ private:
     std::shared_ptr<const FileSnapshots> snapshots_;
     std::shared_ptr<const std::vector<ChoiceTarget>> choices_;
     std::shared_ptr<const std::vector<NonConflictingTarget>> nonConflictingTargets_;
+    // Marker lines and base text of each complete block in the launch result.
+    std::shared_ptr<const std::set<std::vector<std::string>>> launchBlocks_;
     std::map<RevisionId, Revision> revisions_;
     RevisionId current_ = 1;
     RevisionId next_ = 2;

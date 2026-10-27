@@ -15,9 +15,23 @@ new judgments. Direct editing remains available for supported results.
 `previewChoice` binds Accept, Ignore or ResolveUsingSide to the current revision
 and registered source anchor. Accept changes only its mapped range and leaves
 the competing decision undecided. Ignore changes only undecided decisions and
-preserves every result byte. ResolveUsingSide accepts the selected source and
-ignores competitors in that section. A line resolution requires exact matching
-competing line ranges. Ambiguous or invalidated mappings require direct editing.
+preserves every result byte, unless it completes a marker section as described
+below. ResolveUsingSide accepts the selected source and ignores competitors in
+that section. A line resolution requires exact matching competing line ranges.
+Ambiguous or invalidated mappings require direct editing.
+
+A marker section is a complete conflict-marker block whose two side regions
+hold exactly the mapped scopes of one section, and whose marker lines and base
+text match a block in the launch result. `FileSession::markerSections` lists
+them. When a command decides the last open contribution of a marker section
+and at least one contribution is accepted, the same history entry deletes the
+block's marker lines, its base text and the text of its ignored contributions.
+One undo brings back the markers, text and decisions together. Accept alone
+keeps the markers, and so does ignoring both sides. A hand edit to a marker
+line or to the base text orphans the block. Ignored text that holds a hand
+edit or pre-launch work keeps the whole block. In both cases the markers stay
+for direct editing and keep blocking Mark resolved. A deletion side fills only
+an empty region. The preview says when a choice removes the markers.
 
 A source deletion uses the mapped competing section as its replacement range
 and validates both anchors. It cannot infer a deletion range from neighboring
@@ -84,7 +98,10 @@ recovery retains the whole batch candidate for retry before acknowledgment.
 in their stated order. A line pairs with exactly one mapped competing line in
 the same section; a section pairs with its competing section. A unique identical
 result range takes priority over adjacent ranges. Without an exact match, a
-unique adjacent range is required. Unequal overlapping ranges, repeated passages
+unique adjacent range is required. The two sides of a marker section sit apart,
+across its separator line, and still pair with each other: the combination
+fills the first side's region and empties the other before the markers go.
+Unequal overlapping ranges, repeated passages
 without unique correspondence, and replacements that would erase unselected
 contributions require a larger safe scope or direct editing.
 

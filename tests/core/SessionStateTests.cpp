@@ -80,6 +80,12 @@ bool has(const FileSession &file, Blocker blocker)
     const auto blockers = file.facts().blockers;
     return std::find(blockers.begin(), blockers.end(), blocker) != blockers.end();
 }
+Transition choose(FileSession &file, SourceSide side, ChoiceAction action,
+                  ChoiceScope scope = ChoiceScope::Section, std::size_t occurrence = 0)
+{
+    const auto &target = test_support::choiceTarget(file, side, scope, occurrence);
+    return applyChoice(file, previewChoice(file, file.current().id, target.source.contributionId, action), true);
+}
 void resolve(FileSession &file)
 {
     const auto revision = file.current().id;
@@ -892,6 +898,114 @@ public:
             CHECK(cleared.replaceDraft(1, {"a\nleft\nz\n", {}, 3}) == Transition::Applied);
             CHECK(cleared.current().draft.unresolvedMarkers == 0 && !has(cleared, Blocker::UnresolvedMarkers));
             CHECK(cleared.beginMarkResolved(cleared.current().id) == Transition::Applied);
+        });
+        suite.run("TRUCE-0177 each full decision removes its section's marker lines in one undoable step", [] {
+            enum class Path { ResolveLeft, ResolveRight, AcceptThenIgnore, IgnoreThenAccept, LeftFirst, RightFirst, Lines };
+            for (const bool base : {false, true}) {
+                const auto launch = test_support::markedText(base);
+                // The second block is still open, so its marker lines stay.
+                const auto later = launch.substr(launch.find("bridge\n"));
+                for (const auto path : {Path::ResolveLeft, Path::ResolveRight, Path::AcceptThenIgnore,
+                                        Path::IgnoreThenAccept, Path::LeftFirst, Path::RightFirst, Path::Lines}) {
+                    auto file = test_support::markedFile(base);
+                    CHECK(file.markerSections().size() == 2);
+                    std::string first;
+                    switch (path) {
+                    case Path::ResolveLeft:
+                        CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
+                        first = "left first\nleft second\n";
+                        break;
+                    case Path::ResolveRight:
+                        CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide) == Transition::Applied);
+                        first = "right first\nright second\n";
+                        break;
+                    case Path::AcceptThenIgnore:
+                        CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept) == Transition::Applied);
+                        CHECK(file.current().draft.text == launch);
+                        CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Ignore) == Transition::Applied);
+                        first = "left first\nleft second\n";
+                        break;
+                    case Path::IgnoreThenAccept:
+                        CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Ignore) == Transition::Applied);
+                        CHECK(file.current().draft.text == launch);
+                        CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Accept) == Transition::Applied);
+                        first = "right first\nright second\n";
+                        break;
+                    case Path::LeftFirst:
+                        CHECK(choose(file, SourceSide::Stage2, ChoiceAction::CombineLeftFirst) == Transition::Applied);
+                        first = "left first\nleft second\nright first\nright second\n";
+                        break;
+                    case Path::RightFirst:
+                        CHECK(choose(file, SourceSide::Stage3, ChoiceAction::CombineRightFirst) == Transition::Applied);
+                        first = "right first\nright second\nleft first\nleft second\n";
+                        break;
+                    case Path::Lines:
+                        CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept, ChoiceScope::Line, 0) == Transition::Applied);
+                        CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Ignore, ChoiceScope::Line, 1) == Transition::Applied);
+                        CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Line, 0) == Transition::Applied);
+                        CHECK(file.current().draft.text == launch);
+                        CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Accept, ChoiceScope::Line, 1) == Transition::Applied);
+                        first = "left first\nright second\n";
+                        break;
+                    }
+                    const auto chosen = file.current().draft;
+                    CHECK(chosen.text == "header\n" + first + later);
+                    CHECK(chosen.unresolvedMarkers == 1 && file.markers().blocks.size() == 1);
+                    CHECK(file.markerSections().size() == 1 && has(file, Blocker::UnresolvedMarkers));
+                    CHECK(file.undo(file.current().id) == Transition::Applied);
+                    CHECK(file.current().draft.text == launch && file.current().draft.unresolvedMarkers == 2);
+                    CHECK(file.current().draft.decisions != chosen.decisions && file.markerSections().size() == 2);
+                    CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+                }
+            }
+            auto file = test_support::markedFile();
+            CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
+            CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
+            CHECK(file.current().draft.text == "header\nleft first\nleft second\nbridge\nleft later\ntail\n");
+            CHECK(file.current().draft.unresolvedMarkers == 0 && file.markerSections().empty());
+            CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
+        });
+        suite.run("TRUCE-0177 accept alone or ignoring both sides keeps the marker lines", [] {
+            auto file = test_support::markedFile();
+            const auto &left = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section);
+            const auto accept = previewChoice(file, 1, left.source.contributionId, ChoiceAction::Accept);
+            CHECK(accept.detail == "Accept changes only this scope and leaves the other side undecided.");
+            CHECK(applyChoice(file, accept) == Transition::Applied);
+            CHECK(file.current().draft.text == test_support::markedText());
+            CHECK(file.current().draft.unresolvedMarkers == 2 && file.markerSections().size() == 2);
+            const auto &right = test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Section);
+            const auto ignore = previewChoice(file, file.current().id, right.source.contributionId, ChoiceAction::Ignore);
+            CHECK(ignore.detail == "This decides the last open side of the conflict, so its marker lines and ignored text are removed.");
+            auto ignored = test_support::markedFile();
+            CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::Ignore) == Transition::Applied);
+            CHECK(choose(ignored, SourceSide::Stage3, ChoiceAction::Ignore) == Transition::Applied);
+            CHECK(ignored.current().draft.text == test_support::markedText());
+            CHECK(ignored.current().draft.unresolvedMarkers == 2 && has(ignored, Blocker::UnresolvedMarkers));
+        });
+        suite.run("TRUCE-0177 a hand-edited marker line orphans its block, which is never removed", [] {
+            for (const std::string line : {"<<<<<<< ours\n", "=======\n", ">>>>>>> theirs\n"}) {
+                auto file = test_support::markedFile();
+                // Still a marker line, but no longer the one Git wrote.
+                const auto at = file.current().draft.text.find(line) + 7;
+                CHECK(file.editResult(1, {{at, at}, " edited"}) == Transition::Applied);
+                const auto edited = file.current().draft.text;
+                CHECK(file.markers().blocks.size() == 2 && file.markerSections().size() == 1);
+                CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
+                CHECK(file.current().draft.text == edited && file.current().draft.unresolvedMarkers == 2);
+            }
+            auto removed = test_support::markedFile();
+            CHECK(removed.editResult(1, {removed.markers().blocks.front().separator.bytes, ""}) == Transition::Applied);
+            const auto broken = removed.current().draft.text;
+            CHECK(removed.markers().orphans.size() == 2 && removed.markerSections().size() == 1);
+            CHECK(choose(removed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
+            CHECK(removed.current().draft.text == broken && removed.current().draft.unresolvedMarkers == 3);
+            // Typing inside the side a decision ignores keeps that work and the markers around it.
+            auto typed = test_support::markedFile();
+            const auto at = typed.current().draft.text.find("right first") + 5;
+            CHECK(typed.editResult(1, {{at, at}, " typed"}) == Transition::Applied);
+            CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
+            CHECK(typed.current().draft.text.find("<<<<<<< ours\nleft first\nleft second\n=======\nright typed first\n") != std::string::npos);
+            CHECK(typed.current().draft.unresolvedMarkers == 2);
         });
         suite.run("TRUCE-0098 an outside-app file keeps its support blocker and recorded failures only", [] {
             FileSession file("id", "file", draft());

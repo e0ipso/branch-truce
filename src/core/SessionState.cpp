@@ -31,6 +31,41 @@ Draft withMarkers(Draft draft)
     draft.unresolvedMarkers = scanMarkers(draft.text).count();
     return draft;
 }
+
+std::string slice(std::string_view text, ByteRange range)
+{
+    return std::string(text.substr(range.begin, range.end - range.begin));
+}
+
+// Everything in a block except its two side regions. A hand edit to any of it
+// leaves a frame that no launch block has.
+std::vector<std::string> frame(const MarkerRange &block, std::string_view text)
+{
+    const auto base = block.base ? block.base->bytes : ByteRange{block.separator.bytes.begin, block.separator.bytes.begin};
+    return {slice(text, block.begin.bytes), slice(text, {base.begin, block.separator.bytes.begin}),
+            slice(text, block.separator.bytes), slice(text, block.end.bytes)};
+}
+
+ByteRange sideRegion(const MarkerRange &block, SourceSide side)
+{
+    if (side == SourceSide::Stage3) return {block.separator.bytes.end, block.end.bytes.begin};
+    return {block.begin.bytes.end, block.base ? block.base->bytes.begin : block.separator.bytes.begin};
+}
+
+// A deletion scope has no text to place, so it fills only an empty region.
+bool fills(const CorrespondenceMap &mapping, const ChoiceTarget &target, ByteRange region)
+{
+    if (target.source.range.begin == target.source.range.end) return region.begin == region.end;
+    const auto *anchor = mapping.anchor(target.source.contributionId);
+    return anchor && anchor->state == AnchorState::Mapped && anchor->result == region;
+}
+
+// Ignored text is removed only where it is still exactly what the source put there.
+bool removable(const ResultAnchor *anchor, ByteRange region)
+{
+    return anchor && anchor->state == AnchorState::Mapped && anchor->result && !anchor->handEdited
+        && !anchor->manualOverlap && region.begin <= anchor->result->begin && anchor->result->end <= region.end;
+}
 }
 
 FileSession::FileSession(std::string id, std::string path, Draft initial,
@@ -47,6 +82,9 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
             throw std::invalid_argument("Captured sources and launch result must belong to this file session");
         }
         snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
+        std::set<std::vector<std::string>> launch;
+        for (const auto &block : scanMarkers(initial.text).blocks) launch.insert(frame(block, initial.text));
+        launchBlocks_ = std::make_shared<const std::set<std::vector<std::string>>>(std::move(launch));
     }
     std::shared_ptr<const CorrespondenceMap> correspondence;
     const auto resultBudget = assessText(initial.text);
@@ -96,6 +134,86 @@ const std::vector<NonConflictingTarget> &FileSession::nonConflictingTargets() co
 {
     static const std::vector<NonConflictingTarget> empty;
     return nonConflictingTargets_ ? *nonConflictingTargets_ : empty;
+}
+
+std::vector<MarkerSection> FileSession::markerSections() const
+{
+    const auto *mapping = correspondence();
+    return mapping ? markerSections(current().draft.text, *mapping) : std::vector<MarkerSection>{};
+}
+
+std::vector<MarkerSection> FileSession::markerSections(const std::string &text,
+                                                       const CorrespondenceMap &mapping) const
+{
+    std::vector<MarkerSection> result;
+    if (!launchBlocks_ || !choices_) return result;
+    for (const auto &block : scanMarkers(text).blocks) {
+        if (!launchBlocks_->contains(frame(block, text))) continue;
+        for (const auto &left : *choices_) {
+            if (left.scope != ChoiceScope::Section || left.source.side != SourceSide::Stage2
+                || !fills(mapping, left, sideRegion(block, SourceSide::Stage2))) continue;
+            const auto right = std::find_if(choices_->begin(), choices_->end(), [&](const auto &target) {
+                return target.scope == ChoiceScope::Section && target.section == left.section
+                    && target.source.side == SourceSide::Stage3;
+            });
+            if (right == choices_->end() || !fills(mapping, *right, sideRegion(block, SourceSide::Stage3))) continue;
+            result.push_back({block, left.section});
+            break;
+        }
+    }
+    return result;
+}
+
+// For each marker section the decided contributions touch, once all of its
+// contributions are decided and one is accepted: the marker lines, base text
+// and ignored text to delete, each with the anchor that keeps its empty range,
+// last range first. A section whose ignored text holds other work keeps all.
+std::vector<std::pair<ByteRange, std::string>> FileSession::markerRemovals(
+    const Draft &draft, const CorrespondenceMap &mapping,
+    const std::map<std::string, Decision> &decided) const
+{
+    std::vector<std::pair<ByteRange, std::string>> result;
+    for (const auto &found : markerSections(draft.text, mapping)) {
+        const auto &block = found.block;
+        std::vector<std::pair<ByteRange, std::string>> removals{{block.begin.bytes, {}},
+            {{block.base ? block.base->bytes.begin : block.separator.bytes.begin, block.separator.bytes.end}, {}},
+            {block.end.bytes, {}}};
+        bool touched = false, accepted = false, complete = true;
+        for (const auto &side : *choices_) {
+            if (side.scope != ChoiceScope::Section || side.section != found.section) continue;
+            const auto region = sideRegion(block, side.source.side);
+            std::vector<std::string> ignored;
+            for (const auto &id : side.decisions) {
+                touched = touched || decided.contains(id);
+                const auto value = draft.decisions.find(id);
+                if (value == draft.decisions.end() || value->second.value == DecisionValue::Undecided) complete = false;
+                else if (value->second.value == DecisionValue::Accepted) accepted = true;
+                else ignored.push_back(id);
+            }
+            if (ignored.size() == side.decisions.size()) {
+                if (region.begin == region.end) continue;
+                if (!removable(mapping.anchor(side.source.contributionId), region)) complete = false;
+                else removals.push_back({region, side.source.contributionId});
+                continue;
+            }
+            for (const auto &id : ignored) {
+                if (!removable(mapping.anchor(id), region)) complete = false;
+                else removals.push_back({*mapping.anchor(id)->result, id});
+            }
+        }
+        if (touched && accepted && complete) result.insert(result.end(), removals.begin(), removals.end());
+    }
+    std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) { return a.first.begin > b.first.begin; });
+    return result;
+}
+
+bool FileSession::completesMarkers(const EditingCommand &command) const
+{
+    const auto *mapping = correspondence();
+    if (!mapping || command.scope != EditingScope::Mapped) return false;
+    auto draft = current().draft;
+    for (const auto &[id, value] : command.decisions) draft.decisions[id] = value;
+    return !markerRemovals(draft, *mapping, command.decisions).empty();
 }
 
 RevisionId FileSession::advance(const Draft &edited,
@@ -245,6 +363,14 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
         const auto target = std::find_if(command.targets.begin(), command.targets.end(),
             [&](const auto &anchor) { return anchor.result == edit.range; });
         *updated = updated->edited(next_, edit, false, target->source.contributionId);
+    }
+    // Deciding a marker section's last contribution resolves its block in
+    // this same history entry, so one undo brings the markers back.
+    if (!wholeFile) {
+        for (const auto &[range, anchor] : markerRemovals(draft, *updated, command.decisions)) {
+            draft.text.erase(range.begin, range.end - range.begin);
+            *updated = updated->edited(next_, {range, {}}, false, anchor);
+        }
     }
     // Choosing the text a hand edit left unchanged still replaces that edit.
     if (draft == current().draft && updated->handEditedAnchors() == mapping->handEditedAnchors())

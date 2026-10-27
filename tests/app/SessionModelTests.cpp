@@ -882,6 +882,39 @@ public:
             const auto blockers = restored.facts().blockers;
             CHECK(std::find(blockers.begin(), blockers.end(), Blocker::UnresolvedMarkers) != blockers.end());
         });
+        suite.run("TRUCE-0177 replay restores the text and markers a full decision left", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(test_support::markedFile(true)));
+            const auto choose = [&](SourceSide side, ChoiceAction action) {
+                const auto &file = *model.file("choices");
+                const auto &target = test_support::choiceTarget(file, side, ChoiceScope::Section);
+                return model.applyChoice("choices", previewChoice(file, file.current().id, target.source.contributionId, action), true);
+            };
+            const auto check = [&] {
+                const auto &live = *model.file("choices");
+                const auto replay = replayedFile(model.recoveryDirectory());
+                CHECK(replay.current().draft == live.current().draft && replay.current().id == live.current().id);
+                CHECK(replay.markers() == live.markers() && replay.markerSections() == live.markerSections());
+                CHECK(!model.hasPendingRecovery());
+            };
+            CHECK(choose(SourceSide::Stage2, ChoiceAction::Accept) == Transition::Applied);
+            CHECK(choose(SourceSide::Stage3, ChoiceAction::Ignore) == Transition::Applied);
+            const auto chosen = model.file("choices")->current().draft;
+            CHECK(chosen.text.starts_with("header\nleft first\nleft second\nbridge\n<<<<<<< ours\n"));
+            CHECK(chosen.unresolvedMarkers == 1);
+            check();
+            CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+            CHECK(model.file("choices")->current().draft.text == test_support::markedText(true));
+            check();
+            CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
+            CHECK(model.file("choices")->current().draft == chosen);
+            check();
+            auto reopened = replayedFile(model.recoveryDirectory());
+            CHECK(reopened.undo(reopened.current().id) == Transition::Applied);
+            CHECK(reopened.current().draft.text == test_support::markedText(true) && reopened.current().draft.unresolvedMarkers == 2);
+        });
         suite.run("unconfirmed choices and marker blockers are visible without mutation", [] {
             SessionModel model;
             auto undecided = draft();
