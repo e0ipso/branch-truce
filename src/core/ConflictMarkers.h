@@ -44,9 +44,15 @@ struct MarkerScan {
 // neither is a line inside one of the `content` ranges, which hold known
 // source text. Inside a diff3 base region, after its ||||||| line and before
 // its separator, a line inside one of the `baseContent` ranges, which hold
-// known earlier-version text, is content too. Blocks are assembled from the
-// remaining marker lines.
+// known earlier-version text, is content too. So is a separator line inside
+// one of the `baseUncertain` ranges, where earlier-version text may lie, when
+// only separator lines follow it up to the start of the right side region:
+// text inside one of the `rightContent` ranges, which hold known right-side
+// text, or the end marker. The last of those separator lines is Git's. Blocks
+// are assembled from the remaining marker lines.
 [[nodiscard]] MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content = {},
-                                     std::vector<ByteRange> baseContent = {});
+                                     std::vector<ByteRange> baseContent = {},
+                                     std::vector<ByteRange> baseUncertain = {},
+                                     std::vector<ByteRange> rightContent = {});
 
 }

@@ -16,7 +16,11 @@ conflict-marker ranges, which the model counts by scanning the text. A
 marker-like line that the correspondence maps to identical text in a captured
 side is source content and does not count. Inside a diff3 base region, before
 Git's separator, so is a line it maps to identical text in the captured
-earlier version. The model never infers source
+earlier version. When the base text ends with a separator-like line, such as a
+heading underline, the earlier version can map it to that line or to Git's
+separator, so neither is known content. Then the separator line directly
+followed by the right side's text, or by the end marker, is Git's, and the
+lines of seven `=` before it are base text. The model never infers source
 choices from text. It removes marker lines only inside a choice that decides a
 whole marker section, as `src/core/EditingCommands.md` describes.
 

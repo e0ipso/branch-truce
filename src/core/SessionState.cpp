@@ -31,22 +31,30 @@ bool exceedsEnvelope(const std::string &text)
 // the result and adds only the marker lines, so marker-like lines here are
 // content. The earlier version reaches the result only in diff3 base regions,
 // and a match against it elsewhere could take Git's separator for content, so
-// its passages count only inside a base region. Files without a
-// correspondence keep the plain scan.
+// its passages count only inside a base region. Where the earlier version
+// aligns ambiguously, a base region can still end with a separator-like line;
+// the right side's passages show which separator line Git wrote. Files without
+// a correspondence keep the plain scan.
 MarkerScan resultMarkers(std::string_view text, const CorrespondenceMap *mapping)
 {
     std::vector<ByteRange> content;
     std::vector<ByteRange> earlier;
+    std::vector<ByteRange> uncertain;
+    std::vector<ByteRange> right;
     if (mapping) {
         for (const auto side : {SourceSide::Stage2, SourceSide::Stage3, SourceSide::Earlier}) {
             const auto *passages = mapping->passages(side);
             if (!passages) continue;
-            auto &known = side == SourceSide::Earlier ? earlier : content;
-            for (const auto &passage : *passages)
-                if (passage.kind == PassageKind::Equal) known.push_back(passage.result);
+            for (const auto &passage : *passages) {
+                if (side == SourceSide::Earlier && passage.kind == PassageKind::Ambiguous)
+                    uncertain.push_back(passage.result);
+                if (passage.kind != PassageKind::Equal) continue;
+                (side == SourceSide::Earlier ? earlier : content).push_back(passage.result);
+                if (side == SourceSide::Stage3) right.push_back(passage.result);
+            }
         }
     }
-    return scanMarkers(text, std::move(content), std::move(earlier));
+    return scanMarkers(text, std::move(content), std::move(earlier), std::move(uncertain), std::move(right));
 }
 
 Draft withMarkers(Draft draft, const CorrespondenceMap *mapping)

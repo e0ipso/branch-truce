@@ -1305,6 +1305,51 @@ public:
             CHECK(file.current().draft.text == left && file.current().draft.unresolvedMarkers == 0);
             CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
         });
+        suite.run("TRUCE-0194 scanMarkers closes a base ending in a separator line where right text follows", [] {
+            const std::string text = "<<<<<<< ours\nleft\n||||||| base\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
+            const ByteRange title{31, 37}, lines{37, 53}, right{53, 59};
+            // Without right-side text after the second line, the first one closes the base.
+            CHECK(scanMarkers(text, {}, {title}, {lines}) == scanMarkers(text));
+            CHECK(scanMarkers(text, {right}, {title}, {}, {right}) == scanMarkers(text, {right}));
+            const auto assembled = scanMarkers(text, {right}, {title}, {lines}, {right});
+            CHECK(assembled.orphans.empty() && assembled.blocks.size() == 1);
+            CHECK(assembled.blocks.front().base->line == 2 && assembled.blocks.front().separator.line == 5);
+            // The end marker shows an empty right region just as well.
+            const std::string empty = "<<<<<<< ours\nleft\n||||||| base\nTitle\n=======\n=======\n>>>>>>> theirs\n";
+            const auto closed = scanMarkers(empty, {}, {title}, {lines});
+            CHECK(closed.orphans.empty() && closed.blocks.front().separator.line == 5);
+            // A separator line the earlier text cannot hold still closes the base.
+            CHECK(scanMarkers(text, {right}, {title}, {{45, 53}}, {right}) == scanMarkers(text, {right}));
+            // Outside a base region nothing changes.
+            const std::string twoWay = "<<<<<<< ours\nleft\n=======\n=======\nright\n>>>>>>> theirs\n";
+            CHECK(scanMarkers(twoWay, {}, {}, {{18, 34}}, {{34, 40}}) == scanMarkers(twoWay));
+        });
+        suite.run("TRUCE-0194 a diff3 base ending in a heading underline is closed by Git's separator", [] {
+            for (const bool deleted : {false, true}) {
+                auto file = test_support::underlineEndedBaseFile(true, deleted);
+                const auto launch = file.current().draft;
+                const auto scan = file.markers();
+                CHECK(scan.orphans.empty() && scan.blocks.size() == 1);
+                CHECK(scan.blocks.front().base->line == 4 && scan.blocks.front().separator.line == 7);
+                CHECK(launch.unresolvedMarkers == 1 && file.markerSections().size() == 1);
+                CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept) == Transition::Applied);
+                CHECK(file.current().draft.text == launch.text && file.markerSections().size() == 1);
+                CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Ignore) == Transition::Applied);
+                const auto chosen = file.current().draft;
+                CHECK(chosen.text == "intro\nLeft\n-----\ntail\n");
+                CHECK(chosen.unresolvedMarkers == 0 && file.markerSections().empty());
+                CHECK(!has(file, Blocker::UnresolvedMarkers) && !has(file, Blocker::Undecided));
+                CHECK(file.undo(file.current().id) == Transition::Applied);
+                CHECK(file.current().draft.text == launch.text && file.markers() == scan);
+                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+                CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
+                // Without the earlier version the underline still takes the separator's place.
+                auto plain = test_support::underlineEndedBaseFile(false, deleted);
+                CHECK(plain.markers() == scanMarkers(launch.text));
+                CHECK(plain.markers().blocks.front().separator.line == 6 && plain.markers().orphans.size() == 1);
+                CHECK(plain.current().draft.unresolvedMarkers == 2 && plain.markerSections().empty());
+            }
+        });
         suite.run("TRUCE-0098 an outside-app file keeps its support blocker and recorded failures only", [] {
             FileSession file("id", "file", draft());
             CHECK(file.beginMarkResolved(1) == Transition::Applied);

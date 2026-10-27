@@ -122,6 +122,18 @@ inline branch_truce::FileSession underlinedBaseFile(bool captured = true)
         "=======\nRight title\n************\nright body\n>>>>>>> theirs\ntail\n", captured);
 }
 
+// The common earlier version ends the hunk both sides change with a heading
+// underline of exactly seven '=', so Git writes it directly above its own
+// separator, and the earlier version's underline could be either line. With
+// `deleted`, the right side removes the hunk and its region is empty.
+inline branch_truce::FileSession underlineEndedBaseFile(bool captured = true, bool deleted = false)
+{
+    return diff3File("intro\nLeft\n-----\ntail\n", deleted ? "intro\ntail\n" : "intro\nRight\n*****\ntail\n",
+        "intro\nTitle\n=======\ntail\n",
+        std::string("intro\n<<<<<<< ours\nLeft\n-----\n||||||| base\nTitle\n=======\n=======\n")
+            + (deleted ? "" : "Right\n*****\n") + ">>>>>>> theirs\ntail\n", captured);
+}
+
 // The user set the result to the common earlier version before launch, so
 // choices change text that matches neither side. By default one conflict
 // changes three lines on each side.
