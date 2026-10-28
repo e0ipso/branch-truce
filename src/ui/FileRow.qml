@@ -30,7 +30,26 @@ KirigamiDelegates.SubtitleDelegate {
     Accessible.description: subtitle
     icon.name: row.iconName
     highlighted: current
-    ToolTip.visible: hovered && (titleLabel.truncated || subtitleLabel.truncated)
+    // The style's shared tooltip fades out after the pointer leaves its row. Opened below a row
+    // near the top of the list, it covers the next rows and takes their clicks while it fades,
+    // so each row shows its own tooltip, which closes as soon as the row loses the pointer.
+    ToolTip.visible: false
+    ToolTip {
+        text: row.text + (row.subtitle.length > 0 ? "\n\n" + row.subtitle : "")
+        visible: row.hovered && (titleLabel.truncated || subtitleLabel.truncated)
+        delay: Kirigami.Units.toolTipDelay
+        exit: null
+        // A path or a status line is plain text, as the shared tooltip shows it.
+        Component.onCompleted: {
+            const pending = [contentItem];
+            while (pending.length > 0) {
+                const next = pending.pop();
+                if (next["textFormat"] !== undefined)
+                    next["textFormat"] = Text.PlainText;
+                pending.push(...next.children);
+            }
+        }
+    }
     Keys.onReturnPressed: row.clicked()
     Keys.onEnterPressed: row.clicked()
     // One line each, so a path or a status never breaks inside a word.

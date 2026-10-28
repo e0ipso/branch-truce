@@ -660,10 +660,6 @@ qreal checkFits(Scene &scene, int width, int height, const std::vector<const cha
         throw std::runtime_error("minimum size " + std::to_string(window->minimumWidth()) + "x"
                                  + std::to_string(window->minimumHeight()) + " exceeds the screen "
                                  + std::to_string(width) + "x" + std::to_string(height));
-    // A user resizes the window from its frame, so the pointer leaves the content first. A pointer
-    // left resting on a file row while the list moves under it can leave that row's tooltip open
-    // under the KDE style, over the rows below it (TRUCE-0238).
-    QTest::mouseMove(window, QPoint(-1, -1));
     window->resize(width, height);
     settleFor("window size", [&] { return window->width() == width && window->height() == height; });
     const QRectF screen(0, 0, width, height);
@@ -1880,7 +1876,9 @@ public:
                 if (pane < 8 * lineHeight)
                     throw std::runtime_error("text panes " + std::to_string(pane) + " px high at " + size
                                              + ", less than eight " + std::to_string(lineHeight) + " px lines");
-                // The file rows sit at the top of the page.
+                // The file rows sit at the top of the page. The pointer still rests on long.txt, whose
+                // tooltip opens below it over short.txt under the KDE style; clickFile moves and
+                // presses at once, so the tooltip must close before the press (TRUCE-0242).
                 scene.object("pageScroll")->setProperty("contentY", 0);
                 clickFile(scene, "short.txt");
                 clickFile(scene, "long.txt");
