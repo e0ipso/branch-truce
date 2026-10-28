@@ -197,3 +197,4 @@ The acceptance and UI tests find controls by `objectName` and read their state b
 - Status text stays in `Label`s, so tests can read `text` directly. Do not move it into painted items or images.
 - Size claims in this brief are enforced by `tests/acceptance/JourneyAcceptanceTests.cpp:1383-1437`. If a layout change needs a different budget, update the test and section 1 together.
 - `branch_truce_ui_qmllint` must stay at zero warnings.
+- A change under `src/ui` ships with before and after captures of every surface it affects, in BreezeLight and BreezeDark, attached to the resolution of its work item. Tests and `qmllint` do not show the whole window. `tools/preview-app.sh` takes the captures; set `PREVIEW_FILE` when the change shows on a text or Markdown file (see docs/build.md).

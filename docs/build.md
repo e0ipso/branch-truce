@@ -148,7 +148,8 @@ session, such as the headless one agents use here:
 
 ```sh
 tools/preview-app.sh                              # build/desktop/src/app/branch-truce
-PREVIEW_FILE=notes.md tools/preview-app.sh        # open with notes.md selected
+PREVIEW_FILE=tracked.txt tools/preview-app.sh     # the three comparison panes on a text file
+PREVIEW_FILE=notes.md tools/preview-app.sh        # the same on a Markdown file
 tools/preview-app.sh /path/to/branch-truce        # another build
 ```
 
@@ -161,8 +162,20 @@ Once the session's recovery journal appears it waits `PREVIEW_SETTLE` seconds
 path per scheme. The PNGs go to `PREVIEW_OUTPUT`, or to a new
 `/tmp/bt-preview-shots.*` directory that you remove when done. The fixture
 directory is deleted on exit. The script writes nothing to the checkout or
-`$HOME` and stops only the app it started. `PREVIEW_FILE` selects a file through
-the app's hidden `--mergetool-path` option.
+`$HOME` and stops only the app it started.
+
+Without `PREVIEW_FILE` the app selects its first file, `image.bin`, so the
+captures show the outside-app notice instead of the comparison. `PREVIEW_FILE`
+names one of the three fixture files and passes it to the app's hidden
+`--mergetool-path` option. With `tracked.txt` or `notes.md` the captures show
+that file in the left source, editable result and right source panes. Any other
+value stops the script before it launches the app, because the app would fall
+back to its first file.
+
+Each launch gets `PREVIEW_TIMEOUT` seconds (default 180) to show its window and
+load its files. On an idle host that takes under 15 seconds, but the app renders
+in software on the headless session and a host busy with builds can stretch it
+past a minute. On timeout the script prints the end of the app's log.
 
 `tools/merge-fixture.sh` builds the fixture. The installed-artifact validator
 uses the same function inside its container for its single `tracked.txt`

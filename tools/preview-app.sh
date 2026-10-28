@@ -12,15 +12,21 @@
 # scheme file. Its window goes fullscreen, so other windows on the workspace do
 # not change its size. The capture waits for the session's recovery journal,
 # which the app writes once the files have loaded, then PREVIEW_SETTLE seconds
-# more. The script prints one PNG path per scheme on stdout.
+# more. The script prints one PNG path per scheme on stdout. Without
+# PREVIEW_FILE the app selects its first file, image.bin.
 #
 # Environment:
-#   PREVIEW_FILE    repository path to select at launch, passed hex-encoded
-#                   through the app's --mergetool-path option
+#   PREVIEW_FILE    fixture file to select at launch: tracked.txt, notes.md or
+#                   image.bin, passed hex-encoded through the app's
+#                   --mergetool-path option
 #   PREVIEW_OUTPUT  directory for the PNGs; default a new
 #                   ${TMPDIR:-/tmp}/bt-preview-shots.* directory, which is kept
 #   PREVIEW_SETTLE  seconds between the journal appearing and the capture;
 #                   default 1
+#   PREVIEW_TIMEOUT seconds each launch may take to show its window and load
+#                   its files; default 180. An idle host needs under 15, but
+#                   the app renders in software here and a busy host slows it
+#                   several times over.
 #
 # Needs WAYLAND_DISPLAY and XDG_RUNTIME_DIR from a sway session (SWAYSOCK or
 # $XDG_RUNTIME_DIR/sway-ipc.*.sock), plus git, swaymsg, jq and grim. The
@@ -30,6 +36,7 @@
 set -euo pipefail
 
 schemes=(BreezeLight BreezeDark)
+fixture_files=(tracked.txt notes.md image.bin)
 
 usage() { echo "Usage: $0 [APP]" >&2; exit 2; }
 die() { echo "preview-app: $*" >&2; exit 1; }
@@ -42,6 +49,8 @@ app=${1:-$root/build/desktop/src/app/branch-truce}
 app=$(cd -- "$(dirname -- "$app")" && pwd -P)/$(basename -- "$app")
 settle=${PREVIEW_SETTLE:-1}
 [[ "$settle" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "PREVIEW_SETTLE must be a number of seconds"
+timeout=${PREVIEW_TIMEOUT:-180}
+[[ "$timeout" =~ ^[1-9][0-9]*$ ]] || die "PREVIEW_TIMEOUT must be a whole number of seconds"
 
 for tool in git swaymsg jq grim od; do
     command -v "$tool" >/dev/null || die "needs $tool"
@@ -61,6 +70,10 @@ for scheme in "${schemes[@]}"; do
 done
 select_args=()
 if [[ -n "${PREVIEW_FILE:-}" ]]; then
+    # The app falls back to its first file when the path is not in the session,
+    # which would label a capture of the wrong file.
+    [[ " ${fixture_files[*]} " == *" $PREVIEW_FILE "* ]] \
+        || die "PREVIEW_FILE must be one of: ${fixture_files[*]}"
     select_args=(--mergetool-path "$(printf '%s' "$PREVIEW_FILE" | od -An -v -tx1 | tr -d ' \n')")
 fi
 
@@ -125,9 +138,12 @@ wait_for() {
     until "$2"; do
         if ! kill -0 "$app_pid" 2>/dev/null; then
             tail -n 20 -- "$log" >&2
-            die "$scheme: the app exited before $1"
+            die "$scheme: the app exited while waiting for $1"
         fi
-        ((SECONDS < $3)) || die "$scheme: no $1 after 60 s"
+        if ((SECONDS >= $3)); then
+            tail -n 20 -- "$log" >&2
+            die "$scheme: waited $timeout s for $1; raise PREVIEW_TIMEOUT on a busy host"
+        fi
         sleep 0.2
     done
 }
@@ -142,17 +158,18 @@ capture() {
     scheme=$1
     local colors=/usr/share/color-schemes/$scheme.colors file=$output/branch-truce-$scheme.png
     log=$work/$scheme.log
-    local deadline=$((SECONDS + 60)) rect=
-    make_merge_fixture "$app" tracked.txt notes.md image.bin || die "the fixture merge did not stop on a conflict"
+    local deadline rect=
+    make_merge_fixture "$app" "${fixture_files[@]}" || die "the fixture merge did not stop on a conflict"
     { cat "$colors"; printf '\n[General]\nColorScheme=%s\n' "$scheme"; } > "$home/config/kdeglobals"
     env -i "${base_env[@]}" "WAYLAND_DISPLAY=$socket" "QT_QPA_PLATFORM=wayland" \
         "XDG_SESSION_TYPE=wayland" "XDG_CURRENT_DESKTOP=KDE" "KDE_SESSION_VERSION=6" \
         "KDE_FULL_SESSION=true" "KDE_COLOR_SCHEME_PATH=$colors" \
         "$app" "${select_args[@]}" "$repo" > "$log" 2>&1 < /dev/null &
     app_pid=$!
+    deadline=$((SECONDS + timeout))
     wait_for "its window" has_window "$deadline"
     swaymsg "[pid=$app_pid] fullscreen enable, focus" >/dev/null
-    wait_for "a loaded session" has_journal "$deadline"
+    wait_for "the loaded session" has_journal "$deadline"
     sleep "$settle"
     rect=$(window_rect)
     [[ -n "$rect" ]] || die "$scheme: the window is not visible"
