@@ -209,7 +209,7 @@ Kirigami.ApplicationWindow {
     visible: true
     title: qsTr("Branch Truce")
     pageStack.initialPage: Kirigami.Page {
-        title: window.controller.operation || qsTr("Open conflict session")
+        title: window.controller.loader.operation || qsTr("Open conflict session")
         // Every attached tooltip uses one shared popup, and some name a path or a branch.
         Component.onCompleted: window.showPlainText(ToolTip.toolTip.contentItem)
         // The header names the repository once a root is known; the operation and the
@@ -221,21 +221,21 @@ Kirigami.ApplicationWindow {
                 objectName: "repositoryHeading"
                 Layout.fillWidth: true
                 level: 1
-                text: window.controller.repositoryRoot || (window.controller.operation || qsTr("Open conflict session"))
+                text: window.controller.loader.repositoryRoot || (window.controller.loader.operation || qsTr("Open conflict session"))
                 textFormat: Text.PlainText
                 elide: Text.ElideMiddle
                 HoverHandler { id: headingHover }
-                ToolTip.text: window.controller.repositoryRoot
+                ToolTip.text: window.controller.loader.repositoryRoot
                 ToolTip.visible: headingHover.hovered && truncated
                 ToolTip.delay: Kirigami.Units.toolTipDelay
             }
             Label {
                 objectName: "repositorySubtitle"
                 Layout.fillWidth: true
-                visible: text.length > 0 && window.controller.repositoryRoot.length > 0
+                visible: text.length > 0 && window.controller.loader.repositoryRoot.length > 0
                 text: {
-                    const parts = [window.controller.operation]
-                    if (!window.controller.opening && window.controller.files.totalFiles > 0)
+                    const parts = [window.controller.loader.operation]
+                    if (!window.controller.loader.opening && window.controller.files.totalFiles > 0)
                         parts.push(qsTr("%1 files in this session · %2 resolved")
                             .arg(window.controller.files.totalFiles).arg(window.controller.files.resolvedFiles))
                     return parts.filter(part => part.length > 0).join(" · ")
@@ -274,24 +274,24 @@ Kirigami.ApplicationWindow {
                 Label {
                     objectName: "sessionDetail"
                     Layout.fillWidth: true
-                    visible: !window.controller.opening && window.controller.files.totalFiles > 0
-                    text: window.controller.detail
+                    visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
+                    text: window.controller.loader.detail
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
                 // While the repository opens, and while the session has no files to show. A failed
                 // or unsupported open names itself; it never reads as an empty session.
                 CenteredPlaceholder {
-                    visible: window.controller.opening || window.controller.files.totalFiles === 0
+                    visible: window.controller.loader.opening || window.controller.files.totalFiles === 0
                     messageName: "sessionPlaceholder"
                     onPlainTextRequested: item => window.showPlainText(item)
-                    iconName: window.controller.opening ? "" : window.sessionPlaceholderIcon(window.controller.startupState)
-                    text: window.controller.opening ? qsTr("Opening the repository")
-                        : window.sessionPlaceholderText(window.controller.startupState)
-                    explanation: window.controller.detail
+                    iconName: window.controller.loader.opening ? "" : window.sessionPlaceholderIcon(window.controller.loader.startupState)
+                    text: window.controller.loader.opening ? qsTr("Opening the repository")
+                        : window.sessionPlaceholderText(window.controller.loader.startupState)
+                    explanation: window.controller.loader.detail
                     BusyIndicator {
                         Layout.alignment: Qt.AlignHCenter
-                        running: window.controller.opening
+                        running: window.controller.loader.opening
                         visible: running
                     }
                 }
@@ -301,7 +301,7 @@ Kirigami.ApplicationWindow {
                     objectName: "recoveryChoices"
                     Layout.fillWidth: true
                     spacing: Kirigami.Units.smallSpacing
-                    visible: !window.controller.opening && window.controller.recoveryChoices.length > 0
+                    visible: !window.controller.loader.opening && window.controller.loader.recoveryChoices.length > 0
                     Label {
                         Layout.fillWidth: true
                         text: qsTr("Choose the recovery session to restore. The other sessions are set aside, not deleted.")
@@ -310,7 +310,7 @@ Kirigami.ApplicationWindow {
                         font.bold: true
                     }
                     Repeater {
-                        model: window.controller.recoveryChoices
+                        model: window.controller.loader.recoveryChoices
                         delegate: RowLayout {
                             id: recoveryChoice
                             required property var modelData
@@ -327,7 +327,7 @@ Kirigami.ApplicationWindow {
                             Button {
                                 objectName: "recoveryChoice-" + recoveryChoice.modelData.session
                                 text: qsTr("Restore this session")
-                                onClicked: window.controller.chooseRecoverySession(recoveryChoice.modelData.session)
+                                onClicked: window.controller.loader.chooseRecoverySession(recoveryChoice.modelData.session)
                             }
                         }
                     }
@@ -337,7 +337,7 @@ Kirigami.ApplicationWindow {
                     onPlainTextRequested: item => window.showPlainText(item)
                     Accessible.name: qsTr("Session warning")
                     Layout.fillWidth: true
-                    visible: !window.controller.opening
+                    visible: !window.controller.loader.opening
                         && window.controller.outsideAppFiles + window.controller.loadErrorFiles > 0
                     type: Kirigami.MessageType.Warning
                     text: qsTr("%1 outside app · %2 load errors. These files remain outstanding. Select a file for its reason and handle it outside Branch Truce.")
@@ -345,14 +345,14 @@ Kirigami.ApplicationWindow {
                 }
                 MainToolBar {
                     Layout.fillWidth: true
-                    visible: !window.controller.opening && window.controller.files.totalFiles > 0
+                    visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
                     controller: window.controller
                     onHandoffRequested: handoffDialog.open()
                 }
                 Label {
                     objectName: "navigationTarget"
                     Layout.fillWidth: true
-                    visible: !window.controller.opening && (window.controller.navigationTarget.label || "").length > 0
+                    visible: !window.controller.loader.opening && (window.controller.navigationTarget.label || "").length > 0
                     text: window.controller.navigationTarget.label || ""
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
@@ -363,7 +363,7 @@ Kirigami.ApplicationWindow {
                     Layout.fillHeight: true
                     // A SplitView has no minimum of its own; the page scrolls once the work area reaches its minimum.
                     Layout.minimumHeight: workArea.Layout.minimumHeight
-                    visible: !window.controller.opening && window.controller.files.totalFiles > 0
+                    visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
                     FileList {
                         id: fileListPane
                         visible: window.controller.fileListVisible
@@ -476,7 +476,7 @@ Kirigami.ApplicationWindow {
                     }
                 }
                 SessionFooter {
-                    visible: !window.controller.opening && window.controller.files.totalFiles > 0
+                    visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
                     controller: window.controller
                 }
             }

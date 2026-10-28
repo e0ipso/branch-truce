@@ -138,7 +138,7 @@ set-aside store unless the user names it.
 When two or more matching stores hold app edits, restoration stays blocked
 rather than guessing. The current files still open in a new store, and the
 diagnostic lists each session UUID with its journal's last change time. The
-controller's `recoveryChoices` lists the same sessions with the paths each one
+session loader's `recoveryChoices` lists the same sessions with the paths each one
 edited, and the window shows a Restore button for each. To clear the block,
 choose a session there, or close every Branch Truce window and start Branch
 Truce with `--recovery-session <session-uuid>`. Either way startup adopts that

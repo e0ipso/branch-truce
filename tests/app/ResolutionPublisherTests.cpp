@@ -166,15 +166,15 @@ void openController(ApplicationController &controller, const Repository &repo)
     QTimer timeout;
     timeout.setSingleShot(true);
     QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(&controller, &ApplicationController::launchChanged, &loop, [&] {
-        if (!controller.opening()) loop.quit();
+    QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
+        if (!controller.loader()->opening()) loop.quit();
     });
-    CHECK(controller.openRepository(repo.root));
+    CHECK(controller.loader()->openRepository(repo.root));
     timeout.start(15000);
-    if (controller.opening()) loop.exec();
-    CHECK(!controller.opening());
-    if (controller.startupState() != "ready")
-        throw std::runtime_error("controller startup: " + controller.detail().toStdString());
+    if (controller.loader()->opening()) loop.exec();
+    CHECK(!controller.loader()->opening());
+    if (controller.loader()->startupState() != "ready")
+        throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(repo.snapshot() == before);
 }
 

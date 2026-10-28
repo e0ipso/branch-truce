@@ -43,15 +43,15 @@ void openController(ApplicationController &controller, const ParentRepository &r
     QTimer timeout;
     timeout.setSingleShot(true);
     QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(&controller, &ApplicationController::launchChanged, &loop, [&] {
-        if (!controller.opening()) loop.quit();
+    QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
+        if (!controller.loader()->opening()) loop.quit();
     });
-    CHECK(controller.openRepository(repo.root));
+    CHECK(controller.loader()->openRepository(repo.root));
     timeout.start(15000);
-    if (controller.opening()) loop.exec();
-    CHECK(!controller.opening());
-    if (controller.startupState() != "ready")
-        throw std::runtime_error("controller startup: " + controller.detail().toStdString());
+    if (controller.loader()->opening()) loop.exec();
+    CHECK(!controller.loader()->opening());
+    if (controller.loader()->startupState() != "ready")
+        throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(controller.mergetoolListening());
     CHECK(QFileInfo(checkSocketDirectory(repo)).isDir());
 }
@@ -176,13 +176,13 @@ QString twoEditedStores(const ParentRepository &repo)
     // A second window on the operation finds the socket taken and does not listen.
     ApplicationController other;
     QEventLoop loop;
-    QObject::connect(&other, &ApplicationController::launchChanged, &loop, [&] {
-        if (!other.opening()) loop.quit();
+    QObject::connect(other.loader(), &SessionLoader::launchChanged, &loop, [&] {
+        if (!other.loader()->opening()) loop.quit();
     });
     QTimer::singleShot(15000, &loop, &QEventLoop::quit);
-    CHECK(other.openRepository(repo.root));
-    if (other.opening()) loop.exec();
-    CHECK(other.startupState() == "ready" && !other.mergetoolListening());
+    CHECK(other.loader()->openRepository(repo.root));
+    if (other.loader()->opening()) loop.exec();
+    CHECK(other.loader()->startupState() == "ready" && !other.mergetoolListening());
     editDraft(chosen, "other.txt", QStringLiteral("chosen\n"));
     editDraft(other, "other.txt", QStringLiteral("other\n"));
     return QFileInfo(chosen.files()->recoveryDirectory()).fileName();
@@ -288,9 +288,9 @@ int main(int argc, char **argv)
         CHECK(inodeOf(repo.path("tracked.txt")) != launchInode);
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(readFile(controller.mergetoolIntakes().front() + "/merged") == "launch bytes\n");
-        CHECK(controller.chooseRecoverySession(session));
-        pump([&] { return !controller.opening(); }, controller.detail());
-        CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
+        CHECK(controller.loader()->chooseRecoverySession(session));
+        pump([&] { return !controller.loader()->opening(); }, controller.loader()->detail());
+        CHECK(controller.loader()->startupState() == "ready" && controller.loader()->recoveryChoices().isEmpty());
         CHECK(draftOf(controller, "other.txt").starts_with("chosen\n"));
         CHECK(opened(controller, "tracked.txt").snapshots()->launchResult.text.bytes == "launch bytes\n");
         waitForWaiter(controller, "tracked.txt");
@@ -322,9 +322,9 @@ int main(int argc, char **argv)
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
         writeFile(repo.path("tracked.txt"), "written by another editor\n");
-        CHECK(controller.chooseRecoverySession(session));
-        pump([&] { return !controller.opening(); }, controller.detail());
-        CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
+        CHECK(controller.loader()->chooseRecoverySession(session));
+        pump([&] { return !controller.loader()->opening(); }, controller.loader()->detail());
+        CHECK(controller.loader()->startupState() == "ready" && controller.loader()->recoveryChoices().isEmpty());
         waitForWaiter(controller, "tracked.txt");
         const auto id = select(controller, "tracked.txt");
         CHECK(controller.files()->hasRecoveryFailure(id.toStdString()));
@@ -362,9 +362,9 @@ int main(int argc, char **argv)
             if (change == "staged") repo.git({"add", "--", "tracked.txt"});
             else repo.git({"config", "core.autocrlf", "true"});
             const auto indexChanged = repo.index();
-            CHECK(controller.chooseRecoverySession(session));
-            pump([&] { return !controller.opening(); }, controller.detail());
-            CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
+            CHECK(controller.loader()->chooseRecoverySession(session));
+            pump([&] { return !controller.loader()->opening(); }, controller.loader()->detail());
+            CHECK(controller.loader()->startupState() == "ready" && controller.loader()->recoveryChoices().isEmpty());
             waitForWaiter(controller, "tracked.txt");
             const auto id = select(controller, "tracked.txt");
             holdFor(800, [&] {
@@ -399,25 +399,25 @@ int main(int argc, char **argv)
             waitForWaiter(controller, "tracked.txt");
             GitGate gate("tracked.txt");
             gate.close(QStringLiteral("ls-files"));
-            CHECK(controller.chooseRecoverySession(session));
+            CHECK(controller.loader()->chooseRecoverySession(session));
             // Calls held while the load runs are the restore's. The load
             // completes on this thread, so a call held after it is the
             // revalidation's.
             QString revalidation;
             pump([&] {
                 for (const auto &call : gate.held()) {
-                    if (!controller.opening()) {
+                    if (!controller.loader()->opening()) {
                         revalidation = call;
                         return true;
                     }
                     gate.release(call);
                 }
                 return false;
-            }, QString::fromLatin1(change) + QStringLiteral(": no revalidation after the choice | ") + controller.detail());
+            }, QString::fromLatin1(change) + QStringLiteral(": no revalidation after the choice | ") + controller.loader()->detail());
             CHECK(gate.held() == QStringList{revalidation});
             CHECK(gate.arguments(revalidation).contains("ls-files --stage -z -- tracked.txt"));
             gate.open();
-            CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
+            CHECK(controller.loader()->startupState() == "ready" && controller.loader()->recoveryChoices().isEmpty());
             const auto id = select(controller, "tracked.txt");
             CHECK(controller.files()->hasRecoveryFailure(id.toStdString()));
             if (change == "staged") repo.git({"add", "--", "tracked.txt"});

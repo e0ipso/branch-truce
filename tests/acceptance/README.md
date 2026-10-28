@@ -1,6 +1,6 @@
 # Journey acceptance checks
 
-`JourneyAcceptanceTests.cpp` checks the observable acceptance examples in `PRD.md` through the real application. Each journey creates a disposable Git repository, stops a real merge or rebase on conflicts, opens it with `ApplicationController::openRepository` and loads the real `BranchTruce` `Main` scene. The test then drives that scene with mouse clicks and key events and compares what it shows with the repository and the Git index.
+`JourneyAcceptanceTests.cpp` checks the observable acceptance examples in `PRD.md` through the real application. Each journey creates a disposable Git repository, stops a real merge or rebase on conflicts, opens it with `SessionLoader::openRepository` and loads the real `BranchTruce` `Main` scene. The test then drives that scene with mouse clicks and key events and compares what it shows with the repository and the Git index.
 
 ## Running it
 

@@ -448,14 +448,14 @@ private:
         QTimer timeout;
         timeout.setSingleShot(true);
         QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-        QObject::connect(controller.get(), &ApplicationController::launchChanged, &loop, [&] {
-            if (!controller->opening()) loop.quit();
+        QObject::connect(controller->loader(), &SessionLoader::launchChanged, &loop, [&] {
+            if (!controller->loader()->opening()) loop.quit();
         });
-        CHECK(controller->openRepository(root));
+        CHECK(controller->loader()->openRepository(root));
         timeout.start(15000);
-        if (controller->opening()) loop.exec();
-        if (controller->opening() || controller->startupState() != QLatin1String("ready"))
-            throw std::runtime_error("controller startup: " + controller->detail().toStdString());
+        if (controller->loader()->opening()) loop.exec();
+        if (controller->loader()->opening() || controller->loader()->startupState() != QLatin1String("ready"))
+            throw std::runtime_error("controller startup: " + controller->loader()->detail().toStdString());
     }
 };
 

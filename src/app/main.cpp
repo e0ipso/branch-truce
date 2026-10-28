@@ -92,8 +92,9 @@ int main(int argc, char *argv[])
         QTimer::singleShot(0, &application, &QCoreApplication::quit);
     });
     if (parser.isSet(QStringLiteral("smoke-test"))) {
-        QObject::connect(&controller, &branch_truce::ApplicationController::launchChanged, &application, [&] {
-            if (controller.opening()) return;
+        auto *loader = controller.loader();
+        QObject::connect(loader, &branch_truce::SessionLoader::launchChanged, &application, [&controller, &application, loader] {
+            if (loader->opening()) return;
             QJsonArray files;
             for (int row = 0; row < controller.files()->totalFiles(); ++row) {
                 const auto index = controller.files()->index(row, 0);
@@ -104,12 +105,12 @@ int main(int argc, char *argv[])
                     {QStringLiteral("detail"), controller.files()->data(index, Model::SupportDetailRole).toString()},
                     {QStringLiteral("text"), controller.files()->data(index, Model::ResultTextRole).toString()}});
             }
-            const QJsonObject state{{QStringLiteral("state"), controller.startupState()},
-                {QStringLiteral("repository"), controller.repositoryRoot()},
-                {QStringLiteral("operation"), controller.operation()},
-                {QStringLiteral("detail"), controller.detail()},
-                {QStringLiteral("stage2"), controller.stage2()}, {QStringLiteral("stage3"), controller.stage3()},
-                {QStringLiteral("workflow"), controller.workflow()},
+            const QJsonObject state{{QStringLiteral("state"), loader->startupState()},
+                {QStringLiteral("repository"), loader->repositoryRoot()},
+                {QStringLiteral("operation"), loader->operation()},
+                {QStringLiteral("detail"), loader->detail()},
+                {QStringLiteral("stage2"), loader->stage2()}, {QStringLiteral("stage3"), loader->stage3()},
+                {QStringLiteral("workflow"), loader->workflow()},
                 {QStringLiteral("resolved"), controller.files()->resolvedFiles()}, {QStringLiteral("files"), files}};
             QTextStream(stdout) << "BRANCH_TRUCE_SESSION=" << QJsonDocument(state).toJson(QJsonDocument::Compact) << Qt::endl;
             QTimer::singleShot(0, &application, &QCoreApplication::quit);
@@ -119,7 +120,7 @@ int main(int argc, char *argv[])
     const auto preferredFileId = parser.value(launchedPath);
     const auto chosenRecovery = parser.value(recoverySession);
     QTimer::singleShot(0, &controller, [&controller, directory, preferredFileId, chosenRecovery] {
-        controller.openRepository(directory, preferredFileId, chosenRecovery);
+        controller.loader()->openRepository(directory, preferredFileId, chosenRecovery);
     });
     return application.exec();
 }

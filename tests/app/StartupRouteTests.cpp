@@ -269,17 +269,17 @@ void openController(ApplicationController &controller, const Repository &repo, c
     QTimer timeout;
     timeout.setSingleShot(true);
     QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(&controller, &ApplicationController::launchChanged, &loop, [&] {
-        if (!controller.opening()) loop.quit();
+    QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
+        if (!controller.loader()->opening()) loop.quit();
     });
     repo.checkSocketDirectory();
     CHECK(mergetoolSocketDirectory() == repo.socketDirectory());
-    CHECK(controller.openRepository(repo.root, {}, recoverySession));
+    CHECK(controller.loader()->openRepository(repo.root, {}, recoverySession));
     timeout.start(10000);
-    if (controller.opening()) loop.exec();
-    CHECK(!controller.opening());
-    if (controller.startupState() != "ready")
-        throw std::runtime_error("controller startup: " + controller.detail().toStdString());
+    if (controller.loader()->opening()) loop.exec();
+    CHECK(!controller.loader()->opening());
+    if (controller.loader()->startupState() != "ready")
+        throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(QFileInfo(repo.socketDirectory()).isDir());
     CHECK(repo.snapshot() == before);
 }
@@ -581,7 +581,7 @@ public:
             openController(controller, repo);
             const auto &restored = openedFile(controller);
             CHECK(restored.current().draft == acknowledged && restored.facts().unsaved);
-            CHECK(controller.detail().contains("Pending input may need repeating"));
+            CHECK(controller.loader()->detail().contains("Pending input may need repeating"));
             CHECK(!controller.files()->hasPendingRecovery() && !controller.files()->hasRecoveryFailures());
             CHECK(fileRole(controller, restored, SessionModel::RecoveryStateRole).toString() == "restored");
         });
@@ -630,7 +630,7 @@ public:
                 }
                 ApplicationController controller;
                 openController(controller, repo);
-                const auto detail = controller.detail();
+                const auto detail = controller.loader()->detail();
                 CHECK(detail.contains(diagnostic) && controller.files()->recoveryDirectory() != abandoned);
                 CHECK(!controller.files()->hasRecoveryFailures() && !controller.files()->hasPendingRecovery());
                 CHECK(openedFile(controller).current().draft.text != oldDraft.toStdString());
@@ -642,7 +642,7 @@ public:
                     CHECK(controller.editResult(id, QString::number(selected.current().id), 0, 0, "live manual edit\n"));
                     CHECK(controller.undo(id, QString::number(selected.current().id)));
                     CHECK(controller.redo(id, QString::number(selected.current().id)));
-                    CHECK(controller.detail() == detail && !controller.files()->hasPendingRecovery());
+                    CHECK(controller.loader()->detail() == detail && !controller.files()->hasPendingRecovery());
                 }
             });
         }
@@ -668,14 +668,14 @@ public:
             {
                 ApplicationController controller;
                 openController(controller, repo);
-                CHECK(!controller.detail().contains("rejected") && !controller.files()->hasRecoveryFailures());
+                CHECK(!controller.loader()->detail().contains("rejected") && !controller.files()->hasRecoveryFailures());
                 const auto &selected = openedFile(controller);
                 CHECK(controller.files()->editResult(selected.id(), selected.current().id, {{0, 0}, "live edit\n"}) == Transition::Applied);
             }
             CHECK(QDir().rename(retired, abandoned) && storeContents(abandoned) == retained);
             ApplicationController controller;
             openController(controller, repo);
-            CHECK(controller.detail().contains("integrity") && !controller.files()->hasRecoveryFailures());
+            CHECK(controller.loader()->detail().contains("integrity") && !controller.files()->hasRecoveryFailures());
             CHECK(openedFile(controller).current().draft.text.starts_with("live edit\n"));
         });
         suite.run("TRUCE-0083 two windows closed before any edit leave later launches able to recover", [] {
@@ -690,14 +690,14 @@ public:
                 openController(second, repo);
                 untouched = {first.files()->recoveryDirectory(), second.files()->recoveryDirectory()};
                 CHECK(untouched.front() != untouched.back());
-                CHECK(second.detail().contains("active or unavailable"));
+                CHECK(second.loader()->detail().contains("active or unavailable"));
             }
             QString location;
             {
                 ApplicationController controller;
                 openController(controller, repo);
-                CHECK(!controller.detail().contains("Multiple recovery sessions"));
-                CHECK(controller.detail().contains("without app edits that were set aside: 2"));
+                CHECK(!controller.loader()->detail().contains("Multiple recovery sessions"));
+                CHECK(controller.loader()->detail().contains("without app edits that were set aside: 2"));
                 CHECK(!untouched.contains(controller.files()->recoveryDirectory()));
                 // Set aside, never deleted: each store keeps its journal next to the marker.
                 for (const auto &store : untouched)
@@ -710,8 +710,8 @@ public:
             for (int restart = 0; restart < 2; ++restart) {
                 ApplicationController controller;
                 openController(controller, repo);
-                CHECK(!controller.detail().contains("Multiple recovery sessions"));
-                CHECK(controller.detail().contains("Recovered app drafts"));
+                CHECK(!controller.loader()->detail().contains("Multiple recovery sessions"));
+                CHECK(controller.loader()->detail().contains("Recovered app drafts"));
                 CHECK(controller.files()->recoveryDirectory() == location);
                 CHECK(openedFile(controller).current().draft.text.starts_with("after two windows\n"));
             }
@@ -742,7 +742,7 @@ public:
             for (int restart = 0; restart < 2; ++restart) {
                 ApplicationController controller;
                 openController(controller, repo);
-                const auto detail = controller.detail();
+                const auto detail = controller.loader()->detail();
                 CHECK(detail.contains("restoration is blocked rather than guessing") && detail.contains("--recovery-session"));
                 CHECK(detail.contains(firstName) && detail.contains(secondName));
                 const auto location = controller.files()->recoveryDirectory();
@@ -754,8 +754,8 @@ public:
                 ApplicationController controller;
                 openController(controller, repo, firstName);
                 CHECK(controller.files()->recoveryDirectory() == first);
-                CHECK(controller.detail().contains("Recovered app drafts"));
-                CHECK(controller.detail().contains(secondName + " was set aside, not deleted"));
+                CHECK(controller.loader()->detail().contains("Recovered app drafts"));
+                CHECK(controller.loader()->detail().contains(secondName + " was set aside, not deleted"));
                 CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
             }
             auto setAside = storeContents(second);
@@ -765,7 +765,7 @@ public:
             {
                 ApplicationController controller;
                 openController(controller, repo);
-                CHECK(controller.files()->recoveryDirectory() == first && !controller.detail().contains("blocked"));
+                CHECK(controller.files()->recoveryDirectory() == first && !controller.loader()->detail().contains("blocked"));
                 CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
             }
             // Choosing the set-aside session brings it back and sets the other one aside.
@@ -773,7 +773,7 @@ public:
                 ApplicationController controller;
                 openController(controller, repo, secondName);
                 CHECK(controller.files()->recoveryDirectory() == second);
-                CHECK(controller.detail().contains(firstName + " was set aside, not deleted"));
+                CHECK(controller.loader()->detail().contains(firstName + " was set aside, not deleted"));
                 CHECK(openedFile(controller).current().draft.text.starts_with("second window\n"));
             }
             CHECK(!QFileInfo::exists(second + "/set-aside") && QFileInfo::exists(first + "/set-aside"));
@@ -805,13 +805,13 @@ public:
                 QTimer timeout;
                 timeout.setSingleShot(true);
                 QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-                QObject::connect(&controller, &ApplicationController::launchChanged, &loop, [&] {
-                    if (!controller.opening()) loop.quit();
+                QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
+                    if (!controller.loader()->opening()) loop.quit();
                 });
-                if (!controller.chooseRecoverySession(session)) return false;
+                if (!controller.loader()->chooseRecoverySession(session)) return false;
                 timeout.start(10000);
-                if (controller.opening()) loop.exec();
-                CHECK(!controller.opening() && controller.startupState() == "ready");
+                if (controller.loader()->opening()) loop.exec();
+                CHECK(!controller.loader()->opening() && controller.loader()->startupState() == "ready");
                 return true;
             };
 
@@ -820,13 +820,13 @@ public:
             {
                 ApplicationController controller;
                 openController(controller, repo);
-                CHECK(controller.recoveryChoices().size() == 2);
+                CHECK(controller.loader()->recoveryChoices().size() == 2);
                 const auto &live = openedFile(controller);
                 CHECK(controller.files()->editResult(live.id(), live.current().id, {{0, 0}, "third window\n"}) == Transition::Applied);
                 third = controller.files()->recoveryDirectory();
-                CHECK(!controller.chooseRecoverySession(firstName));
+                CHECK(!controller.loader()->chooseRecoverySession(firstName));
                 CHECK(controller.commandMessage().contains("already holds app edits"));
-                CHECK(controller.files()->recoveryDirectory() == third && controller.recoveryChoices().size() == 2);
+                CHECK(controller.files()->recoveryDirectory() == third && controller.loader()->recoveryChoices().size() == 2);
                 CHECK(!QFileInfo::exists(first + "/set-aside") && !QFileInfo::exists(second + "/set-aside"));
             }
             // Retire the third store outside v1 so the remaining checks see two choices again.
@@ -834,7 +834,7 @@ public:
 
             ApplicationController controller;
             openController(controller, repo);
-            const auto choices = controller.recoveryChoices();
+            const auto choices = controller.loader()->recoveryChoices();
             CHECK(choices.size() == 2);
             QStringList sessions;
             for (const auto &entry : choices) {
@@ -850,22 +850,22 @@ public:
             const auto own = controller.files()->recoveryDirectory();
 
             // Unknown sessions and sessions another window holds are refused without changes.
-            CHECK(!controller.chooseRecoverySession(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+            CHECK(!controller.loader()->chooseRecoverySession(QUuid::createUuid().toString(QUuid::WithoutBraces)));
             CHECK(controller.commandMessage().contains("not one of the choices"));
             {
                 QLockFile held(second + "/session.lock");
                 CHECK(held.tryLock(0));
-                CHECK(!controller.chooseRecoverySession(firstName));
+                CHECK(!controller.loader()->chooseRecoverySession(firstName));
                 CHECK(controller.commandMessage().contains(secondName + " is open in another Branch Truce window"));
             }
-            CHECK(controller.files()->recoveryDirectory() == own && controller.recoveryChoices().size() == 2);
+            CHECK(controller.files()->recoveryDirectory() == own && controller.loader()->recoveryChoices().size() == 2);
             CHECK(!QFileInfo::exists(first + "/set-aside") && !QFileInfo::exists(second + "/set-aside"));
 
             // The choice reloads through the startup restore: adopted, the other set aside, nothing deleted.
             CHECK(reload(controller, firstName));
-            CHECK(controller.files()->recoveryDirectory() == first && controller.recoveryChoices().isEmpty());
-            CHECK(controller.detail().contains("Recovered app drafts"));
-            CHECK(controller.detail().contains(secondName + " was set aside, not deleted"));
+            CHECK(controller.files()->recoveryDirectory() == first && controller.loader()->recoveryChoices().isEmpty());
+            CHECK(controller.loader()->detail().contains("Recovered app drafts"));
+            CHECK(controller.loader()->detail().contains(secondName + " was set aside, not deleted"));
             CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
             auto setAside = storeContents(second);
             CHECK(setAside.contains("set-aside"));
@@ -909,32 +909,32 @@ public:
             {
                 ApplicationController controller;
                 openController(controller, repo);
-                CHECK(controller.recoveryChoices().size() == 2);
+                CHECK(controller.loader()->recoveryChoices().size() == 2);
                 const auto own = controller.files()->recoveryDirectory();
                 QEventLoop loop;
                 QTimer timeout;
                 timeout.setSingleShot(true);
                 QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-                QObject::connect(&controller, &ApplicationController::launchChanged, &loop, [&] {
-                    if (!controller.opening()) loop.quit();
+                QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
+                    if (!controller.loader()->opening()) loop.quit();
                 });
-                CHECK(controller.chooseRecoverySession(firstName));
+                CHECK(controller.loader()->chooseRecoverySession(firstName));
                 {
                     // Another window takes the chosen session after the choice
                     // was checked and before the background restore runs.
                     QLockFile held(first + "/session.lock");
                     CHECK(held.tryLock(0));
                     timeout.start(10000);
-                    if (controller.opening()) loop.exec();
-                    CHECK(!controller.opening() && controller.startupState() == "ready");
+                    if (controller.loader()->opening()) loop.exec();
+                    CHECK(!controller.loader()->opening() && controller.loader()->startupState() == "ready");
                 }
                 const auto location = controller.files()->recoveryDirectory();
                 CHECK(location != first && location != second && location != own);
-                const auto detail = controller.detail();
+                const auto detail = controller.loader()->detail();
                 CHECK(detail.contains(firstName + " is active or unavailable"));
                 CHECK(!detail.contains(firstName + " does not match"));
                 CHECK(detail.contains("restoration is blocked rather than guessing") && !detail.contains("Recovered app drafts"));
-                const auto choices = controller.recoveryChoices();
+                const auto choices = controller.loader()->recoveryChoices();
                 CHECK(choices.size() == 1 && choices.front().toMap().value("session").toString() == secondName);
                 CHECK(!openedFile(controller).current().draft.text.starts_with("second window"));
                 CHECK(!controller.files()->hasRecoveryFailures());
@@ -947,7 +947,7 @@ public:
             ApplicationController controller;
             openController(controller, repo, firstName);
             CHECK(controller.files()->recoveryDirectory() == first);
-            CHECK(controller.detail().contains(secondName + " was set aside, not deleted"));
+            CHECK(controller.loader()->detail().contains(secondName + " was set aside, not deleted"));
             CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
         });
         suite.run("TRUCE-0099 a recovery-session name that does not match restores no edited session in its place", [] {
@@ -967,8 +967,8 @@ public:
                 ApplicationController controller;
                 openController(controller, repo, unknown);
                 CHECK(controller.files()->recoveryDirectory() == store);
-                CHECK(controller.detail().contains("Recovery session " + unknown + " does not match this operation"));
-                CHECK(!controller.detail().contains("blocked") && controller.recoveryChoices().isEmpty());
+                CHECK(controller.loader()->detail().contains("Recovery session " + unknown + " does not match this operation"));
+                CHECK(!controller.loader()->detail().contains("blocked") && controller.loader()->recoveryChoices().isEmpty());
                 const auto &selected = openedFile(controller);
                 CHECK(controller.files()->editResult(selected.id(), selected.current().id, {{0, 0}, "edited\n"})
                       == Transition::Applied);
@@ -979,10 +979,10 @@ public:
                 ApplicationController controller;
                 openController(controller, repo, unknown);
                 CHECK(controller.files()->recoveryDirectory() != store);
-                CHECK(controller.detail().contains("Recovery session " + unknown + " does not match this operation"));
-                CHECK(controller.detail().contains("restoration is blocked rather than guessing")
-                      && !controller.detail().contains("Recovered app drafts"));
-                const auto choices = controller.recoveryChoices();
+                CHECK(controller.loader()->detail().contains("Recovery session " + unknown + " does not match this operation"));
+                CHECK(controller.loader()->detail().contains("restoration is blocked rather than guessing")
+                      && !controller.loader()->detail().contains("Recovered app drafts"));
+                const auto choices = controller.loader()->recoveryChoices();
                 CHECK(choices.size() == 1 && choices.front().toMap().value("session").toString() == storeName);
                 CHECK(!openedFile(controller).current().draft.text.starts_with("edited\n"));
                 CHECK(storeContents(store) == retained);
@@ -1221,7 +1221,7 @@ public:
             }
             CHECK(model->resolvedFiles() == 4 && !model->canFinish() && model->finishBlockers().size() == 2);
             CHECK(controller.outsideAppFiles() == 1 && controller.loadErrorFiles() == 1);
-            CHECK(controller.detail().contains("outside app remain outstanding"));
+            CHECK(controller.loader()->detail().contains("outside app remain outstanding"));
             for (const auto path : {"binary.dat", "missing.txt"}) {
                 const auto &outstanding = openedFile(controller, path);
                 CHECK(!outstanding.supportDetail().empty() && !outstanding.facts().resolved);
@@ -1326,7 +1326,7 @@ public:
                     CHECK(!store.payload(encodedText, &error).isEmpty() && error.isEmpty());
                 }
                 CHECK(model->replaceDraft(openedFile(controller).id(), 1, {"editable after recovery\n", {}, 0}) == Transition::Applied);
-                CHECK(controller.startupState() == "ready" && repo.snapshot() == before);
+                CHECK(controller.loader()->startupState() == "ready" && repo.snapshot() == before);
             }
         });
         suite.run("merge and rebase captures retain verified sources provenance and the manual launch result", [] {

@@ -208,14 +208,14 @@ public:
         window->resize(1600, 1200);
         window->show();
         const auto before = repo.snapshot();
-        CHECK(controller->openRepository(repo.root));
+        CHECK(controller->loader()->openRepository(repo.root));
         QElapsedTimer deadline;
         deadline.start();
-        while (controller->opening() && deadline.elapsed() < 20000)
+        while (controller->loader()->opening() && deadline.elapsed() < 20000)
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-        if (controller->startupState() != QStringLiteral("ready"))
-            throw std::runtime_error("startup " + controller->startupState().toStdString() + ": "
-                                     + controller->detail().toStdString());
+        if (controller->loader()->startupState() != QStringLiteral("ready"))
+            throw std::runtime_error("startup " + controller->loader()->startupState().toStdString() + ": "
+                                     + controller->loader()->detail().toStdString());
         // Opening a session inspects Git and never mutates the repository.
         CHECK(repo.snapshot() == before);
         // The session listens in the sandbox's private runtime directory, not a fallback.
@@ -947,7 +947,7 @@ public:
             Repository repo("merge", journeyPaths());
             const auto launched = repo.snapshot();
             Scene scene(repo);
-            CHECK(scene.controller->operation() == QStringLiteral("Merge"));
+            CHECK(scene.controller->loader()->operation() == QStringLiteral("Merge"));
             CHECK(scene.controller->files()->totalFiles() == 4 && scene.controller->outsideAppFiles() == 1);
             CHECK(scene.item("inventoryWarning")->isVisible());
             expectContains(scene.text("inventoryWarning"), "1 outside app", "inventory warning");
@@ -1030,7 +1030,7 @@ public:
                 {"added.txt", std::nullopt, QByteArray("added on the left\n"), QByteArray("added on the right\n"), std::nullopt},
             });
             Scene scene(repo);
-            CHECK(scene.controller->operation() == QStringLiteral("Rebase"));
+            CHECK(scene.controller->loader()->operation() == QStringLiteral("Rebase"));
             CHECK(scene.controller->files()->totalFiles() == 2 && scene.controller->outsideAppFiles() == 0);
             const auto left = "Current rebased state: " + utf8(repo.leftCommit);
             const auto right = "Commit being replayed: " + utf8(repo.rightCommit);
@@ -1471,7 +1471,7 @@ public:
                 CHECK(!repo.unmerged(path).isEmpty());
             CHECK(repo.unmerged("done.txt").isEmpty() && repo.unmerged("newer.txt").isEmpty());
             // The summary speaks only for this session.
-            expectContains(scene.controller->workflow(), "only the work opened at launch", "session scope");
+            expectContains(scene.controller->loader()->workflow(), "only the work opened at launch", "session scope");
             checkOffline(scene);
         });
         handoff.run("TRUCE-0201 a newer draft goes back to the staged result from the file toolbar and the handoff", [] {
@@ -1586,7 +1586,7 @@ public:
             }
             CHECK(repo.snapshot() == launched);
             Scene reopened(repo);
-            expectContains(reopened.controller->detail(), "Recovered app drafts", "recovery detail");
+            expectContains(reopened.controller->loader()->detail(), "Recovered app drafts", "recovery detail");
             clickFile(reopened, "saved.txt");
             expectText(reopened.text("resultText"), savedText, "restored saved draft");
             CHECK(reopened.progress().value("saved").toBool() && !reopened.progress().value("resolved").toBool());
@@ -1613,9 +1613,9 @@ public:
                 // Two windows on one merge each keep their own edits.
                 Scene one(repo);
                 ApplicationController two;
-                CHECK(two.openRepository(repo.root));
-                settleFor("second window", [&] { return !two.opening(); });
-                CHECK(two.startupState() == QStringLiteral("ready"));
+                CHECK(two.loader()->openRepository(repo.root));
+                settleFor("second window", [&] { return !two.loader()->opening(); });
+                CHECK(two.loader()->startupState() == QStringLiteral("ready"));
                 edit(*one.controller, "first window\n");
                 edit(two, "second window\n");
                 first = one.controller->files()->recoveryDirectory();
@@ -1624,7 +1624,7 @@ public:
             const auto firstName = QFileInfo(first).fileName();
             const auto secondName = QFileInfo(second).fileName();
             Scene scene(repo);
-            expectContains(scene.controller->detail(), "restoration is blocked rather than guessing", "blocked detail");
+            expectContains(scene.controller->loader()->detail(), "restoration is blocked rather than guessing", "blocked detail");
             CHECK(scene.text("resultText").startsWith(QStringLiteral("shared chosen by hand")));
             for (const auto &name : {firstName, secondName}) {
                 auto *row = test_support::waitForLayout(scene.window, "recoveryChoiceText-" + name);
@@ -1636,11 +1636,11 @@ public:
             const auto repository = repo.snapshot();
             scene.click(("recoveryChoice-" + firstName).toLatin1().constData());
             settleFor("chosen session restored", [&] {
-                return !scene.controller->opening() && scene.controller->recoveryChoices().isEmpty();
+                return !scene.controller->loader()->opening() && scene.controller->loader()->recoveryChoices().isEmpty();
             });
-            CHECK(scene.controller->startupState() == QStringLiteral("ready"));
+            CHECK(scene.controller->loader()->startupState() == QStringLiteral("ready"));
             CHECK(scene.controller->files()->recoveryDirectory() == first);
-            expectContains(scene.controller->detail(), secondName + " was set aside, not deleted", "set aside");
+            expectContains(scene.controller->loader()->detail(), secondName + " was set aside, not deleted", "set aside");
             settleFor("restored text", [&] { return scene.text("resultText").startsWith(QStringLiteral("first window\n")); });
             CHECK(!scene.item("recoveryChoices")->isVisible());
             CHECK(QFileInfo::exists(second + "/set-aside") && QFileInfo::exists(second + "/journal"));

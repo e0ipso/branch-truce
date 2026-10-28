@@ -18,19 +18,19 @@ RowLayout {
     spacing: Kirigami.Units.largeSpacing
     Label {
         objectName: "sourceCommits"
-        visible: sessionFooter.controller.stage2.length > 0
-        text: sessionFooter.shortCommit(sessionFooter.controller.stage2, sessionFooter.controller.stage2CommitId) + " · "
-            + sessionFooter.shortCommit(sessionFooter.controller.stage3, sessionFooter.controller.stage3CommitId)
+        visible: sessionFooter.controller.loader.stage2.length > 0
+        text: sessionFooter.shortCommit(sessionFooter.controller.loader.stage2, sessionFooter.controller.loader.stage2CommitId) + " · "
+            + sessionFooter.shortCommit(sessionFooter.controller.loader.stage3, sessionFooter.controller.loader.stage3CommitId)
         textFormat: Text.PlainText
         HoverHandler { id: sourceCommitsHover }
-        ToolTip.text: sessionFooter.controller.stage2 + "\n" + sessionFooter.controller.stage3
+        ToolTip.text: sessionFooter.controller.loader.stage2 + "\n" + sessionFooter.controller.loader.stage3
         ToolTip.visible: sourceCommitsHover.hovered
         ToolTip.delay: Kirigami.Units.toolTipDelay
     }
     Label {
         objectName: "workflowStatus"
         Layout.fillWidth: true
-        text: sessionFooter.controller.workflow
+        text: sessionFooter.controller.loader.workflow
         textFormat: Text.PlainText
         elide: Text.ElideRight
         HoverHandler { id: workflowHover }

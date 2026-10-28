@@ -213,20 +213,20 @@ void startController(ApplicationController &controller, const Repository &repo, 
     QTimer timeout;
     timeout.setSingleShot(true);
     QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(&controller, &ApplicationController::launchChanged, &loop, [&] {
-        if (!controller.opening()) loop.quit();
+    QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
+        if (!controller.loader()->opening()) loop.quit();
     });
-    CHECK(controller.openRepository(repo.root, preferredFileId));
+    CHECK(controller.loader()->openRepository(repo.root, preferredFileId));
     timeout.start(15000);
-    if (controller.opening()) loop.exec();
-    CHECK(!controller.opening());
+    if (controller.loader()->opening()) loop.exec();
+    CHECK(!controller.loader()->opening());
 }
 
 void openController(ApplicationController &controller, const Repository &repo, const QString &preferredFileId = {})
 {
     startController(controller, repo, preferredFileId);
-    if (controller.startupState() != "ready")
-        throw std::runtime_error("controller startup: " + controller.detail().toStdString());
+    if (controller.loader()->startupState() != "ready")
+        throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(controller.mergetoolListening());
     CHECK(QFileInfo(checkSocketDirectory(repo)).isDir());
     CHECK(!controller.parentSessionActive());
@@ -692,7 +692,7 @@ int main(int argc, char **argv)
         }
         ApplicationController controller;
         openController(controller, repo);
-        CHECK(controller.recoveryChoices().size() == 2);
+        CHECK(controller.loader()->recoveryChoices().size() == 2);
         // A direct launcher has no Git parent, so MERGED keeps the identity the stores captured.
         QTemporaryDir sides;
         QProcess launcher;
@@ -701,9 +701,9 @@ int main(int argc, char **argv)
         launcher.start(launcherBinary, {"--mergetool"});
         CHECK(launcher.waitForStarted(5000));
         pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; }, controller.commandMessage());
-        CHECK(controller.chooseRecoverySession(chosen));
-        pump([&] { return !controller.opening(); }, controller.detail());
-        CHECK(controller.startupState() == "ready" && controller.recoveryChoices().isEmpty());
+        CHECK(controller.loader()->chooseRecoverySession(chosen));
+        pump([&] { return !controller.loader()->opening(); }, controller.loader()->detail());
+        CHECK(controller.loader()->startupState() == "ready" && controller.loader()->recoveryChoices().isEmpty());
         CHECK(controller.mergetoolWaitingPath() == "tracked.txt");
         const auto id = select(controller, "tracked.txt");
         CHECK(controller.mergetoolWaiting());
@@ -1054,8 +1054,8 @@ int main(int argc, char **argv)
         ScopedEnvironment environment(repo.environment);
         ApplicationController controller;
         startController(controller, repo);
-        CHECK(controller.startupState() == QStringLiteral("ready-without-mergetool"));
-        CHECK(controller.detail().startsWith(QStringLiteral("Mergetool attach is unavailable: The mergetool socket directory ")
+        CHECK(controller.loader()->startupState() == QStringLiteral("ready-without-mergetool"));
+        CHECK(controller.loader()->detail().startsWith(QStringLiteral("Mergetool attach is unavailable: The mergetool socket directory ")
                                              + runtime.path() + QStringLiteral("/branch-truce is not a directory.")));
         CHECK(!controller.mergetoolListening());
         CHECK(controller.files()->totalFiles() == 2);
