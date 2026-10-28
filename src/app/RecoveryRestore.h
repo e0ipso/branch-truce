@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SessionRecovery.h"
+#include "RecoveryRecord.h"
 #include "git/GitAdapter.h"
 #include <QLockFile>
 #include <memory>

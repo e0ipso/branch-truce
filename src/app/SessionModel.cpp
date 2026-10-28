@@ -1,5 +1,5 @@
 #include "SessionModel.h"
-#include "SessionRecovery.h"
+#include "RecoveryRecord.h"
 #include "RecoveryRestore.h"
 #include <QDir>
 #include <QFileInfo>
