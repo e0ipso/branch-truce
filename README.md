@@ -1,5 +1,10 @@
 # Branch Truce
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/branding/svg/for-dark/branch-truce-horizontal.svg">
+  <img src="assets/branding/svg/for-light/branch-truce-horizontal.svg" alt="Branch Truce logo" width="360">
+</picture>
+
 Branch Truce is an offline Linux desktop app for resolving text conflicts
 when a Git merge or rebase stops. It shows both sides next to an editable result,
 with the common earlier version on demand, and it can run as Git's merge
