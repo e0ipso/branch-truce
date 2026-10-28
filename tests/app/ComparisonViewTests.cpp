@@ -1349,6 +1349,42 @@ public:
             settleFor("stage3 ignored tint", ignoredTinted);
             CHECK(ignoredTinted());
         });
+        suite.run("TRUCE-0143 a hand edit outside every region shows the neutral background, the m glyph and letter", [] {
+            Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
+                "header\nright first\nshared\nright extra\ntail\n"));
+            const auto revision = [&] { return QString::number(fixture.file().current().id); };
+            CHECK(fixture.controller.previewWholeFile("choices", revision(), "left"));
+            CHECK(fixture.controller.applyWholeFile());
+            // Line 1 is the header both sides share, so no choice region covers it.
+            const auto header = [&](const QString &background, const QString &glyph, const QString &letter) {
+                const auto marks = paintedMarks(fixture, "result");
+                return marks.backgrounds.value(1) == background && marks.glyphs.value(1) == glyph
+                    && marks.letters.value(1) == letter;
+            };
+            settleFor("the shared header before the edit", [&] { return header({}, {}, "B"); });
+            CHECK(fixture.controller.editResult("choices", revision(), 0, 6, "HEADER"));
+            settleFor("the hand-edited header", [&] { return header("manual", "manual", "m"); });
+            CHECK(header("manual", "manual", "m"));
+            const auto edited = fixture.file().correspondence()->handEditedRanges();
+            CHECK((edited == std::vector<ByteRange>{{0, 6}}));
+            // Undo and redo take the marking with the revision.
+            CHECK(fixture.controller.undo("choices", revision()));
+            settleFor("the header after undo", [&] { return header({}, {}, "B"); });
+            CHECK(header({}, {}, "B"));
+            CHECK(fixture.controller.redo("choices", revision()));
+            settleFor("the header after redo", [&] { return header("manual", "manual", "m"); });
+            CHECK(header("manual", "manual", "m"));
+            // The fill is the theme's neutral background.
+            int filled = 0;
+            for (auto *fill : fixture.item("resultBackgrounds")->childItems()) {
+                if (!fill->isVisible() || fill->property("part").toString() != "line" || fill->property("line").toInt() != 1)
+                    continue;
+                ++filled;
+                CHECK(fill->property("color").value<QColor>()
+                    == qmlValue(fill, QStringLiteral("Kirigami.Theme.neutralBackgroundColor")).value<QColor>());
+            }
+            CHECK(filled == 1);
+        });
         {
             // The batch fixture has a left and a right region on lines 2, 4 and 6, and
             // its result is the common earlier version. The result's letters name the

@@ -8,6 +8,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace branch_truce {
 // Complete state at one acknowledgment boundary. Original sources and exact
@@ -35,6 +36,9 @@ public:
     [[nodiscard]] Draft draft(const QJsonValue &value) const;
     // Records written before hand edits were journaled have none.
     [[nodiscard]] std::set<std::string> handEdited(const QJsonValue &value) const;
+    // Records without hand edits outside choice regions have no ranges.
+    // FileSession checks that they fit the recorded text.
+    [[nodiscard]] std::vector<ByteRange> handEditedRanges(const QJsonValue &value) const;
     [[nodiscard]] std::optional<FileSnapshots> snapshots(const QJsonValue &value) const;
     [[nodiscard]] OperationOutcome outcome(const QJsonValue &value) const;
     // A canonical decimal string, as every 64-bit integer is recorded.

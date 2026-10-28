@@ -325,7 +325,8 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
                 if (action == QLatin1String("replace-draft")) {
                     const auto current = state.value("current").toObject();
                     transition = file.replaceDraft(file.current().id, decoder.draft(current.value("draft")),
-                        decoder.handEdited(current.value("handEdited")));
+                        decoder.handEdited(current.value("handEdited")),
+                        decoder.handEditedRanges(current.value("handEditedRanges")));
                 } else if (action == QLatin1String("undo")) transition = file.undo(file.current().id);
                 else if (action == QLatin1String("redo")) transition = file.redo(file.current().id);
                 else if (action == QLatin1String("discard-to-checkpoint")) transition = file.discardToCheckpoint(file.current().id);

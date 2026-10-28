@@ -698,17 +698,21 @@ public:
             CHECK(model.editResult("choices", 1, {{at, at}, "hand "}) == Transition::Applied);
             const auto recorded = model.file("choices")->correspondence()->handEditedAnchors();
             CHECK(recorded.size() == 4);
-            // A writer from before the field existed recorded the same draft without it.
+            // A writer from before the field existed recorded the same draft without
+            // it, or the hand-edited ranges recorded after it.
             test_support::rewriteLastRecoveryState(model.recoveryDirectory(), [&](QJsonObject &state) {
                 auto current = state.value("current").toObject();
                 CHECK(current.value("handEdited").toArray().size() == static_cast<qsizetype>(recorded.size()));
+                CHECK(current.value("handEditedRanges").toArray().size() == 1);
                 current.remove("handEdited");
+                current.remove("handEditedRanges");
                 state.insert("current", current);
             });
             auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
             CHECK(replay.succeeded && replay.files.size() == 1);
             CHECK(replay.files.front().current().draft == model.file("choices")->current().draft);
             CHECK(replay.files.front().correspondence()->handEditedAnchors().empty());
+            CHECK(replay.files.front().correspondence()->handEditedRanges().empty());
             // Every recorded hand edit must name an anchor of the replayed draft.
             test_support::rewriteLastRecoveryState(model.recoveryDirectory(), [](QJsonObject &state) {
                 auto current = state.value("current").toObject();

@@ -63,7 +63,8 @@ ColumnLayout {
     // Line marks for one pane, keyed by 1-based line. lines holds the kind of
     // each coloured line: "added" when the compared text lacks it, "changed",
     // "conflict" inside an undecided region, "manual" inside a hand-edited
-    // result region, "accepted" and "ignored" inside a decided region of a
+    // result region or on a result line typed by hand outside every region,
+    // "accepted" and "ignored" inside a decided region of a
     // source pane, or "markers" on the lines of a conflict-marker block or a
     // stray marker line of the result. gaps holds the lines above which the
     // compared text has lines this pane lacks. letters holds the result's
@@ -114,6 +115,15 @@ ColumnLayout {
             }
         }
         if (result) {
+            // An empty range is a deletion, which marks the line it joined.
+            const edited = file.handEditedLines || []
+            for (let i = 0; i < edited.length; ++i) {
+                const first = edited[i].resultLineBegin
+                const end = Math.max(edited[i].resultLineEnd, first + 1)
+                mark(first, end, "manual")
+                for (let line = first; line < end; ++line)
+                    from[line] = 4
+            }
             const blocks = file.markerBlocks || []
             for (let i = 0; i < blocks.length; ++i)
                 mark(blocks[i].resultLineBegin, blocks[i].resultLineEnd, "markers")

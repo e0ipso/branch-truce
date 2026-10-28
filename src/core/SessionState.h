@@ -158,9 +158,11 @@ public:
 
     // Each editing transaction carries text and decisions together. Stale
     // editor commands cannot overwrite a later revision. Changed ranges count
-    // as hand edits unless recovery replay supplies its recorded anchors.
+    // as hand edits unless recovery replay supplies its recorded anchors and
+    // hand-edited result ranges.
     Transition replaceDraft(RevisionId expected, Draft draft,
-                            const std::optional<std::set<std::string>> &handEdited = std::nullopt);
+                            const std::optional<std::set<std::string>> &handEdited = std::nullopt,
+                            std::vector<ByteRange> handEditedRanges = {});
     // Binding records a stable source contribution without changing decisions.
     // Inspect the returned current anchor's state before offering a choice.
     Transition bindSourceAnchor(RevisionId expected, SourceAnchor source);

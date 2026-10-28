@@ -133,12 +133,17 @@ int main()
         const auto encodedCurrent = state.value("current").toObject();
         CHECK(decoder.draft(encodedCurrent.value("draft")) == current.draft);
         CHECK(decoder.handEdited(encodedCurrent.value("handEdited")) == current.correspondence->handEditedAnchors());
+        CHECK(!current.correspondence->handEditedRanges().empty());
+        CHECK(decoder.handEditedRanges(encodedCurrent.value("handEditedRanges"))
+            == current.correspondence->handEditedRanges());
         CHECK(encodedCurrent.value("id").toString() == QString::number(current.id));
 
         const auto encodedCheckpoint = state.value("checkpoint").toObject();
         CHECK(decoder.draft(encodedCheckpoint.value("draft")) == file.checkpoint()->draft);
         CHECK(decoder.handEdited(encodedCheckpoint.value("handEdited"))
             == file.checkpoint()->correspondence->handEditedAnchors());
+        CHECK(decoder.handEditedRanges(encodedCheckpoint.value("handEditedRanges"))
+            == file.checkpoint()->correspondence->handEditedRanges());
         CHECK(encodedCheckpoint.value("id").toString() == QString::number(file.checkpoint()->id));
         const auto checkpointOutcome = decoder.outcome(state.value("checkpointOutcome"));
         CHECK(checkpointOutcome.revision == file.checkpointOutcome()->revision
@@ -150,6 +155,61 @@ int main()
         // Encoding the same file again gives the same state and payloads.
         const auto again = recoveryTransaction(file, "manual-save", transactionId);
         CHECK(again.state == transaction.state && again.payloads == transaction.payloads);
+    });
+    suite.run("TRUCE-0143 hand-edited ranges outside every region round-trip through a recovery record", [] {
+        // "header" is a line both sides share, so no choice region covers it.
+        auto file = test_support::choiceFile();
+        CHECK(file.editResult(1, {{0, 6}, "HEADER"}) == Transition::Applied);
+        const auto &current = file.current();
+        CHECK(current.correspondence->handEditedAnchors().empty());
+        CHECK((current.correspondence->handEditedRanges() == std::vector<ByteRange>{{0, 6}}));
+
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        storage::RecoveryStore store(directory.path() + "/store");
+        const auto transactionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const auto state = committedState(store, recoveryTransaction(file, "replace-draft", transactionId));
+        const auto encoded = state.value("current").toObject();
+        CHECK(!encoded.contains("handEdited"));
+        CHECK((encoded.value("handEditedRanges").toArray()
+            == QJsonArray{QJsonObject{{"begin", "0"}, {"end", "6"}}}));
+        const RecoveryRecordDecoder decoder(store);
+        const auto ranges = decoder.handEditedRanges(encoded.value("handEditedRanges"));
+        CHECK(ranges == current.correspondence->handEditedRanges());
+
+        // Replay restores them, so the replayed revision encodes the same record.
+        auto replayed = test_support::choiceFile();
+        CHECK(replayed.replaceDraft(1, decoder.draft(encoded.value("draft")),
+            decoder.handEdited(encoded.value("handEdited")), ranges) == Transition::Applied);
+        CHECK(replayed.correspondence()->handEditedRanges() == ranges);
+        CHECK(recoveryTransaction(replayed, "replace-draft", transactionId).state == state);
+
+        // A revision without the field, as written before it existed, has none,
+        // and a revision with none writes no field.
+        const auto absent = encoded.value("missing");
+        CHECK(absent.isUndefined() && decoder.handEditedRanges(absent).empty());
+        auto older = test_support::choiceFile();
+        CHECK(older.replaceDraft(1, decoder.draft(encoded.value("draft")), std::set<std::string>{},
+            decoder.handEditedRanges(absent)) == Transition::Applied);
+        CHECK(older.correspondence()->handEditedRanges().empty());
+        CHECK(!recoveryTransaction(older, "replace-draft", transactionId).state.value("current").toObject()
+            .contains("handEditedRanges"));
+
+        // Malformed ranges are refused before replay.
+        const auto refused = [&](const QJsonValue &value) {
+            try {
+                (void)decoder.handEditedRanges(value);
+            } catch (const std::runtime_error &) {
+                return true;
+            }
+            return false;
+        };
+        CHECK(refused(QJsonValue(QStringLiteral("0-6"))));
+        CHECK(refused(QJsonArray{QStringLiteral("0")}));
+        CHECK(refused(QJsonArray{QJsonObject{{"begin", "6"}, {"end", "0"}}}));
+        CHECK(refused(QJsonArray{QJsonObject{{"begin", "00"}, {"end", "6"}}}));
+        CHECK(refused(QJsonArray{QJsonObject{{"begin", 0}, {"end", 6}}}));
+        CHECK(refused(QJsonArray{QJsonObject{{"begin", "0"}}}));
     });
     suite.run("TRUCE-0253 a journal written before the marker count fixes replays its text and decisions", [] {
         QTemporaryDir directory;
@@ -185,6 +245,10 @@ int main()
         CHECK(file.current().draft.text == edited.text && file.current().draft.decisions == edited.decisions);
         CHECK(edited.text.find("Title\n=======\nbody\n") == std::string::npos);
         CHECK(file.current().draft.unresolvedMarkers == 1);
+        // That build recorded no hand-edited ranges, so the hand edit replays with none.
+        for (const auto &state : read.transactions)
+            CHECK(!state.value("current").toObject().contains("handEditedRanges"));
+        CHECK(file.correspondence() && file.correspondence()->handEditedRanges().empty());
     });
     suite.run("TRUCE-0253 replay still rejects recorded text, decisions or derived values that cannot be right", [] {
         const auto rejected = [](const auto &mutate, const QString &error) {

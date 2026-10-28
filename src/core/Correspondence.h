@@ -138,6 +138,14 @@ public:
     // Recovery replays whole drafts, which cannot tell typing from a choice,
     // so it restores the recorded flags. False if an anchor is unknown.
     [[nodiscard]] bool restoreHandEdits(const std::set<std::string> &anchors);
+    // The result text editor changes wrote, inside choice regions or not, in
+    // text order. Ranges neither overlap nor touch, and an empty one is where
+    // text was deleted. A choice drops the text it replaces from them, and a
+    // whole-file command clears them.
+    [[nodiscard]] const std::vector<ByteRange> &handEditedRanges() const noexcept { return handEditedRanges_; }
+    // Recovery restores the recorded ranges, as it does the anchor flags.
+    // False unless they are in that form on character boundaries of text().
+    [[nodiscard]] bool restoreHandEditedRanges(std::vector<ByteRange> ranges);
 
 private:
     void align();
@@ -154,6 +162,7 @@ private:
     std::shared_ptr<const std::map<SourceSide, std::vector<std::size_t>>> sourceLines_;
     std::shared_ptr<const std::vector<std::size_t>> resultLines_;
     std::map<std::string, ResultAnchor> anchors_;
+    std::vector<ByteRange> handEditedRanges_;
 };
 
 }

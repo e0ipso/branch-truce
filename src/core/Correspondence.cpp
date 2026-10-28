@@ -198,6 +198,64 @@ void invalidate(ResultAnchor &anchor, AnchorState state)
     anchor.result.reset();
 }
 
+// Ranges in text order, with overlapping or touching ones joined.
+std::vector<ByteRange> joined(std::vector<ByteRange> ranges)
+{
+    std::sort(ranges.begin(), ranges.end(), [](const auto &a, const auto &b) {
+        return a.begin != b.begin ? a.begin < b.begin : a.end < b.end;
+    });
+    std::vector<ByteRange> result;
+    for (const auto &range : ranges) {
+        if (!result.empty() && range.begin <= result.back().end)
+            result.back().end = std::max(result.back().end, range.end);
+        else result.push_back(range);
+    }
+    return result;
+}
+
+// Hand-edited ranges after `edit` replaced its range with `inserted` bytes.
+// The replaced text leaves them, and a hand edit adds the text it wrote.
+std::vector<ByteRange> editedRanges(const std::vector<ByteRange> &ranges, ByteRange edit,
+                                    std::size_t inserted, bool manual)
+{
+    const auto shift = [&](std::size_t offset) { return offset - (edit.end - edit.begin) + inserted; };
+    std::vector<ByteRange> result;
+    for (const auto &range : ranges) {
+        if (range.begin == range.end) {
+            if (range.begin <= edit.begin) result.push_back(range);
+            else if (range.begin >= edit.end) result.push_back({shift(range.begin), shift(range.end)});
+            continue;
+        }
+        if (range.begin < edit.begin) result.push_back({range.begin, std::min(range.end, edit.begin)});
+        if (range.end > edit.end) result.push_back({shift(std::max(range.begin, edit.end)), shift(range.end)});
+    }
+    if (manual) result.push_back({edit.begin, edit.begin + inserted});
+    return joined(std::move(result));
+}
+
+// Hand-edited ranges after a whole-buffer update with these old-to-new
+// passages. A range edge inside changed text widens to cover it, and every
+// changed passage is a hand edit too.
+std::vector<ByteRange> recomputedRanges(const std::vector<ByteRange> &ranges,
+                                        const std::vector<Passage> &changes, std::size_t size)
+{
+    const auto moved = [&](std::size_t offset, bool end) {
+        for (const auto &passage : changes) {
+            if (offset > passage.source.end) continue;
+            if (offset == passage.source.end) return passage.result.end;
+            if (offset == passage.source.begin) return passage.result.begin;
+            if (passage.kind == PassageKind::Equal) return passage.result.begin + offset - passage.source.begin;
+            return end ? passage.result.end : passage.result.begin;
+        }
+        return size;
+    };
+    std::vector<ByteRange> result;
+    for (const auto &range : ranges) result.push_back({moved(range.begin, false), moved(range.end, true)});
+    for (const auto &passage : changes)
+        if (passage.kind != PassageKind::Equal) result.push_back(passage.result);
+    return joined(std::move(result));
+}
+
 // Insertions at the edges of a nonempty range stay outside it, as in editing.
 bool within(const SourceAnchor &outer, const SourceAnchor &inner)
 {
@@ -512,6 +570,7 @@ CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdi
             value.handEdited = false;
         transform(value, edit, manual, id == selectedAnchor, selected && sibling(selected->source, value.source));
     }
+    result.handEditedRanges_ = editedRanges(handEditedRanges_, edit.range, edit.replacement.size(), manual);
     result.align();
     return result;
 }
@@ -579,6 +638,44 @@ CorrespondenceMap CorrespondenceMap::rebuilt(RevisionId revision, ByteRange rang
             invalidate(anchor, AnchorState::Invalidated);
         }
     }
+    // Hand edits keep the text the spans keep. The rest of the range is the choice's.
+    std::vector<ByteRange> edited;
+    const auto keptPieces = [&](std::size_t i, ByteRange inside) {
+        auto from = std::max(inside.begin, spans[i].span.begin);
+        const auto to = std::min(inside.end, spans[i].span.end);
+        for (const auto &cut : spans[i].dropped) {
+            if (from >= to || cut.begin >= to) break;
+            if (cut.end <= from) continue;
+            if (from < cut.begin) edited.push_back({place(i, from), place(i, cut.begin)});
+            from = cut.end;
+        }
+        if (from < to) edited.push_back({place(i, from), place(i, to)});
+    };
+    const auto keptPosition = [&](std::size_t position) {
+        for (std::size_t i = 0; i < spans.size(); ++i) {
+            const auto &kept = spans[i];
+            if (position < kept.span.begin || kept.span.end < position) continue;
+            if (std::none_of(kept.dropped.begin(), kept.dropped.end(), [&](const auto &cut) {
+                    return cut.begin < position && position < cut.end;
+                })) {
+                edited.push_back({place(i, position), place(i, position)});
+                return;
+            }
+        }
+    };
+    for (const auto &old : handEditedRanges_) {
+        if (old.begin == old.end) {
+            if (old.begin <= range.begin) edited.push_back(old);
+            else if (old.begin >= range.end) edited.push_back({shift(old.begin), shift(old.end)});
+            else keptPosition(old.begin);
+            continue;
+        }
+        if (old.begin < range.begin) edited.push_back({old.begin, std::min(old.end, range.begin)});
+        if (old.end > range.end) edited.push_back({shift(std::max(old.begin, range.end)), shift(old.end)});
+        const ByteRange inside{std::max(old.begin, range.begin), std::min(old.end, range.end)};
+        for (std::size_t i = 0; inside.begin < inside.end && i < spans.size(); ++i) keptPieces(i, inside);
+    }
+    result.handEditedRanges_ = joined(std::move(edited));
     result.text_.replace(range.begin, range.end - range.begin, replacement);
     result.align();
     return result;
@@ -592,9 +689,11 @@ CorrespondenceMap CorrespondenceMap::recomputed(RevisionId revision, std::string
             (void)id;
             anchor.handEdited = false;
         }
+        result.handEditedRanges_.clear();
     }
     if (text_ == text) return result;
     const auto changes = algorithm_->compare(text_, text);
+    if (manual) result.handEditedRanges_ = recomputedRanges(handEditedRanges_, changes, text.size());
     for (auto &[id, anchor] : result.anchors_) {
         (void)id;
         if (anchor.state != AnchorState::Mapped || !anchor.result) continue;
@@ -618,6 +717,14 @@ std::set<std::string> CorrespondenceMap::handEditedAnchors() const
     for (const auto &[id, anchor] : anchors_)
         if (anchor.handEdited) result.insert(id);
     return result;
+}
+
+bool CorrespondenceMap::restoreHandEditedRanges(std::vector<ByteRange> ranges)
+{
+    for (std::size_t i = 0; i < ranges.size(); ++i)
+        if (!validByteRange(text_, ranges[i]) || (i && ranges[i].begin <= ranges[i - 1].end)) return false;
+    handEditedRanges_ = std::move(ranges);
+    return true;
 }
 
 bool CorrespondenceMap::restoreHandEdits(const std::set<std::string> &anchors)

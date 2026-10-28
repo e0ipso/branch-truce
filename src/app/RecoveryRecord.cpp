@@ -46,6 +46,13 @@ public:
         if (value.correspondence)
             for (const auto &id : value.correspondence->handEditedAnchors()) handEdited.push_back(bytes(id));
         if (!handEdited.isEmpty()) result.insert(QStringLiteral("handEdited"), handEdited);
+        // The same holds for hand-edited result ranges, which reach outside choice regions.
+        QJsonArray ranges;
+        if (value.correspondence)
+            for (const auto &range : value.correspondence->handEditedRanges())
+                ranges.push_back(QJsonObject{{QStringLiteral("begin"), QString::number(range.begin)},
+                    {QStringLiteral("end"), QString::number(range.end)}});
+        if (!ranges.isEmpty()) result.insert(QStringLiteral("handEditedRanges"), ranges);
         return result;
     }
     QJsonValue outcome(const std::optional<OperationOutcome> &value)
@@ -199,6 +206,22 @@ std::set<std::string> RecoveryRecordDecoder::handEdited(const QJsonValue &value)
     require(value.isArray(), "Invalid recovered hand edits.");
     for (const auto &entry : value.toArray())
         require(result.insert(bytes(entry)).second, "Duplicate recovered hand edit.");
+    return result;
+}
+
+std::vector<ByteRange> RecoveryRecordDecoder::handEditedRanges(const QJsonValue &value) const
+{
+    std::vector<ByteRange> result;
+    if (value.isUndefined()) return result;
+    require(value.isArray(), "Invalid recovered hand-edited ranges.");
+    for (const auto &entry : value.toArray()) {
+        require(entry.isObject(), "Invalid recovered hand-edited range.");
+        const auto range = entry.toObject();
+        const ByteRange decoded{static_cast<std::size_t>(number(range.value("begin"))),
+            static_cast<std::size_t>(number(range.value("end")))};
+        require(decoded.begin <= decoded.end, "Invalid recovered hand-edited range.");
+        result.push_back(decoded);
+    }
     return result;
 }
 

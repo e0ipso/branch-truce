@@ -477,23 +477,27 @@ void FileSession::appendHistory(RevisionId revision)
 }
 
 Transition FileSession::replaceDraft(RevisionId expected, Draft draft,
-                                     const std::optional<std::set<std::string>> &handEdited)
+                                     const std::optional<std::set<std::string>> &handEdited,
+                                     std::vector<ByteRange> handEditedRanges)
 {
     if (expected != current_) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
     if (exceedsEnvelope(draft.text)) return Transition::Blocked;
+    if (!handEdited && !handEditedRanges.empty()) return Transition::InvalidAnchor;
     // The marker count follows from the text, so a supplied count changes nothing.
     const bool unchanged = draft.text == current().draft.text && draft.decisions == current().draft.decisions;
     std::shared_ptr<const CorrespondenceMap> mapping;
     if (handEdited && correspondence()) {
         auto replayed = correspondence()->recomputed(next_, draft.text);
-        if (!replayed.restoreHandEdits(*handEdited)) return Transition::InvalidAnchor;
-        // A recorded choice can change only the hand-edit flags.
-        if (unchanged && replayed.handEditedAnchors() == correspondence()->handEditedAnchors())
+        if (!replayed.restoreHandEdits(*handEdited) || !replayed.restoreHandEditedRanges(std::move(handEditedRanges)))
+            return Transition::InvalidAnchor;
+        // A recorded choice can change only the hand-edit flags and ranges.
+        if (unchanged && replayed.handEditedAnchors() == correspondence()->handEditedAnchors()
+            && replayed.handEditedRanges() == correspondence()->handEditedRanges())
             return Transition::NoChange;
         mapping = std::make_shared<const CorrespondenceMap>(std::move(replayed));
     } else if (unchanged) return Transition::NoChange;
-    else if (handEdited && !handEdited->empty()) return Transition::InvalidAnchor;
+    else if (handEdited && (!handEdited->empty() || !handEditedRanges.empty())) return Transition::InvalidAnchor;
     appendHistory(advance(draft, std::move(mapping)));
     return Transition::Applied;
 }
@@ -591,7 +595,8 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
         }
     }
     // Choosing the text a hand edit left unchanged still replaces that edit.
-    if (draft == current().draft && updated->handEditedAnchors() == mapping->handEditedAnchors())
+    if (draft == current().draft && updated->handEditedAnchors() == mapping->handEditedAnchors()
+        && updated->handEditedRanges() == mapping->handEditedRanges())
         return Transition::NoChange;
     appendHistory(advance(draft, std::make_shared<const CorrespondenceMap>(updated->atRevision(next_))));
     return Transition::Applied;

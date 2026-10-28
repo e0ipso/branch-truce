@@ -278,6 +278,20 @@ QVariantMap ApplicationController::selectedFile() const
         }
     }
     result.insert(QStringLiteral("passages"), passages);
+    // Result lines editor changes wrote, inside choice regions or not. A
+    // deletion marks the line it joined, or the last line after a final newline.
+    QVariantList handEditedLines;
+    if (mapping && file->support() == Support::Supported) {
+        const auto &draft = mapping->text();
+        for (auto range : mapping->handEditedRanges()) {
+            if (range.begin == range.end && range.begin == draft.size() && draft.ends_with('\n'))
+                range = {range.begin - 1, range.begin - 1};
+            QVariantMap entry;
+            resultPositions->insert(entry, QStringLiteral("result"), range);
+            handEditedLines.push_back(entry);
+        }
+    }
+    result.insert(QStringLiteral("handEditedLines"), handEditedLines);
     QVariantList choices;
     QVariantList regions;
     // A marker block tied to choice sections stays in the result until

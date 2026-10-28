@@ -40,7 +40,13 @@ written by a build that counted markers differently still replays, and replay
 keeps its own values for both. Each must still be a decimal string, and the
 decision revision ID must not be later than the revision's own. A revision with hand-edited anchors lists their
 contribution IDs in `handEdited`. A revision without the field has none, which
-covers records written before the field existed. It also records the separate
+covers records written before the field existed. The result text that editor
+changes wrote, inside choice regions or not, is listed in `handEditedRanges` as
+objects with decimal-string `begin` and `end` byte offsets into the revision's
+text. The ranges are in text order and neither overlap nor touch; an empty one
+is where text was deleted. The field is written only when non-empty, so a
+revision without it has no hand-edited ranges, and records written before it
+existed replay as before. It also records the separate
 manual Save checkpoint, review declaration, written/staged revisions and
 operation outcomes. All 64-bit integers are decimal strings. Decision values,
 outcomes and source format enums use the values declared by the version 1
@@ -83,7 +89,7 @@ Exact manual edits, scoped choices and mapped editing commands serialize their
 complete resulting draft as `replace-draft` records. Replay therefore rebuilds
 the same action order before applying durable undo and redo records. A draft
 replacement cannot tell typing from a choice, so replay takes each revision's
-hand-edit flags from its record.
+hand-edit flags and hand-edited ranges from its record.
 Committed IME input uses that same acknowledgment boundary. Composition/pre-edit
 stays in the editor as visibly pending input until it becomes a command.
 Undo grouping cannot defer persistence. The desktop editor routes document

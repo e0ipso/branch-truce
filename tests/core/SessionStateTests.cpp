@@ -1683,6 +1683,67 @@ public:
                 });
             }
         }
+        suite.run("TRUCE-0143 hand edits outside every region keep their ranges through undo, redo, choices and replay", [] {
+            using Ranges = std::vector<ByteRange>;
+            const auto ranges = [](const FileSession &file) { return file.correspondence()->handEditedRanges(); };
+            // "header" and "bridge" are lines both sides share, outside every region.
+            auto file = test_support::choiceFile();
+            CHECK(ranges(file).empty());
+            CHECK(file.editResult(1, {{0, 6}, "HEADER"}) == Transition::Applied);
+            const auto typed = file.current();
+            CHECK((ranges(file) == Ranges{{0, 6}}) && file.correspondence()->handEditedAnchors().empty());
+            // Deleting a line by hand leaves an empty range where it was.
+            const auto bridge = typed.draft.text.find("bridge\n");
+            CHECK(file.editResult(file.current().id, {{bridge, bridge + 7}, ""}) == Transition::Applied);
+            const Ranges deleted{{0, 6}, {bridge, bridge}};
+            CHECK(ranges(file) == deleted);
+            CHECK(file.undo(file.current().id) == Transition::Applied && (ranges(file) == Ranges{{0, 6}}));
+            CHECK(file.undo(file.current().id) == Transition::Applied && ranges(file).empty());
+            CHECK(file.redo(file.current().id) == Transition::Applied && (ranges(file) == Ranges{{0, 6}}));
+            CHECK(file.redo(file.current().id) == Transition::Applied && ranges(file) == deleted);
+            // Typing inside a region adds a range there too. A choice that replaces
+            // that text drops it and keeps the hand edits outside the region.
+            const auto left = file.current().draft.text.find("left first");
+            CHECK(file.editResult(file.current().id, {{left, left + 4}, "LEFT"}) == Transition::Applied);
+            CHECK((ranges(file) == Ranges{{0, 6}, {left, left + 4}, {bridge, bridge}}));
+            CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide) == Transition::Applied);
+            const auto chosen = file.current().draft.text;
+            const auto right = chosen.find("right first\nright second\n");
+            CHECK(right != std::string::npos);
+            const auto after = ranges(file);
+            CHECK(after.size() == 2 && (after.front() == ByteRange{0, 6}));
+            CHECK(std::none_of(after.begin(), after.end(), [&](const auto &range) {
+                return range.begin < right + 25 && right < range.end;
+            }));
+            // A whole draft from the editor counts the lines it changed.
+            auto whole = test_support::choiceFile();
+            auto draft = whole.current().draft;
+            const auto shared = draft.text.find("bridge");
+            draft.text.replace(shared, 6, "BRIDGE");
+            CHECK(whole.replaceDraft(1, draft) == Transition::Applied);
+            CHECK(ranges(whole).size() == 1 && ranges(whole).front().begin <= shared
+                && shared + 6 <= ranges(whole).front().end);
+            // Recovery replay restores the recorded ranges. A record without them,
+            // as written before they were recorded, replays with none.
+            auto replay = test_support::choiceFile();
+            CHECK(replay.replaceDraft(1, typed.draft, std::set<std::string>{}, {{0, 6}}) == Transition::Applied);
+            CHECK((ranges(replay) == Ranges{{0, 6}}));
+            CHECK(replay.replaceDraft(replay.current().id, typed.draft, std::set<std::string>{}, {{0, 6}})
+                == Transition::NoChange);
+            CHECK(replay.replaceDraft(replay.current().id, typed.draft, std::set<std::string>{}, {{0, 3}})
+                == Transition::Applied);
+            CHECK(replay.undo(replay.current().id) == Transition::Applied && (ranges(replay) == Ranges{{0, 6}}));
+            auto older = test_support::choiceFile();
+            CHECK(older.replaceDraft(1, typed.draft, std::set<std::string>{}) == Transition::Applied);
+            CHECK(ranges(older).empty() && older.current().draft == typed.draft);
+            // Ranges must be in order, apart and inside the text, and only replay supplies them.
+            auto refused = test_support::choiceFile();
+            for (const auto &bad : std::vector<Ranges>{{{4, 2}}, {{0, 3}, {3, 6}}, {{3, 6}, {0, 2}},
+                     {{0, typed.draft.text.size() + 1}}})
+                CHECK(refused.replaceDraft(1, typed.draft, std::set<std::string>{}, bad) == Transition::InvalidAnchor);
+            CHECK(refused.replaceDraft(1, typed.draft, std::nullopt, {{0, 6}}) == Transition::InvalidAnchor);
+            CHECK(refused.current().id == 1 && ranges(refused).empty());
+        });
         suite.run("a newer successful Save does not authorize an unsuccessful review checkpoint", [] {
             for (const auto outcome : {Outcome::Failed, Outcome::Uncertain}) {
                 FileSession file("id", "file", draft());
