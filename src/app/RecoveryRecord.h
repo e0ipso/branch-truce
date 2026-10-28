@@ -37,9 +37,10 @@ public:
     [[nodiscard]] std::set<std::string> handEdited(const QJsonValue &value) const;
     [[nodiscard]] std::optional<FileSnapshots> snapshots(const QJsonValue &value) const;
     [[nodiscard]] OperationOutcome outcome(const QJsonValue &value) const;
+    // A canonical decimal string, as every 64-bit integer is recorded.
+    [[nodiscard]] quint64 number(const QJsonValue &value) const;
 
 private:
-    quint64 number(const QJsonValue &value) const;
     [[nodiscard]] qint64 signedNumber(const QJsonValue &value) const;
     [[nodiscard]] TextSnapshot text(const QJsonValue &value) const;
     [[nodiscard]] std::optional<SourceSnapshot> source(const QJsonValue &value) const;

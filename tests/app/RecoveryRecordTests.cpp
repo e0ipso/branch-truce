@@ -1,7 +1,12 @@
 #include "app/RecoveryRecord.h"
+#include "app/RecoveryRestore.h"
 #include "core/EditingCommands.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
+#include "fixtures/RecoveryJournal.h"
+#include <QDir>
+#include <QFile>
+#include <QJsonArray>
 #include <QTemporaryDir>
 #include <QUuid>
 #include <algorithm>
@@ -60,6 +65,35 @@ QJsonObject committedState(storage::RecoveryStore &store, const storage::Recover
     CHECK(read.succeeded && !read.incompleteTail && read.transactions.size() == 1);
     return read.transactions.front();
 }
+
+// tests/fixtures/recovery/underlined-base-7447467 holds a journal that the
+// encoder and core of commit 7447467 wrote, read back and replayed. A writer
+// built against that commit opened a diff3 conflict whose base underlines a
+// heading with exactly seven '=' (the session of underlinedBaseFile), accepted
+// the left section, deleted the base copy of the underline by hand and undid
+// that edit, committing each step. That build took the underline for Git's
+// separator and recorded marker counts 2, 2, 1 and 2, where this one counts 1.
+QString copiedJournal(const QString &directory)
+{
+    const QString fixture = QStringLiteral(BRANCH_TRUCE_RECOVERY_FIXTURES "/underlined-base-7447467");
+    const auto store = directory + QStringLiteral("/store");
+    CHECK(QDir().mkpath(store + QStringLiteral("/payloads")));
+    const auto owner = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+    for (const auto *folder : {"", "/payloads"}) {
+        CHECK(QFile::setPermissions(store + QLatin1String(folder), owner | QFileDevice::ExeOwner));
+        for (const auto &name : QDir(fixture + QLatin1String(folder)).entryList(QDir::Files)) {
+            const auto target = store + QLatin1String(folder) + QLatin1Char('/') + name;
+            CHECK(QFile::copy(fixture + QLatin1String(folder) + QLatin1Char('/') + name, target));
+            CHECK(QFile::setPermissions(target, owner));
+        }
+    }
+    return store;
+}
+
+QJsonObject recordedDraft(const QJsonObject &state)
+{
+    return state.value("current").toObject().value("draft").toObject();
+}
 }
 
 int main()
@@ -116,6 +150,87 @@ int main()
         // Encoding the same file again gives the same state and payloads.
         const auto again = recoveryTransaction(file, "manual-save", transactionId);
         CHECK(again.state == transaction.state && again.payloads == transaction.payloads);
+    });
+    suite.run("TRUCE-0253 a journal written before the marker count fixes replays its text and decisions", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const storage::RecoveryStore store(copiedJournal(directory.path()));
+        const auto read = store.read();
+        CHECK(read.succeeded && !read.incompleteTail && read.transactions.size() == 4);
+        QStringList actions;
+        QStringList counts;
+        for (const auto &state : read.transactions) {
+            actions.push_back(state.value("action").toString());
+            counts.push_back(recordedDraft(state).value("unresolvedMarkers").toString());
+        }
+        CHECK((actions == QStringList{"open", "replace-draft", "replace-draft", "undo"}));
+        CHECK((counts == QStringList{"2", "2", "1", "2"}));
+        const RecoveryRecordDecoder decoder(store);
+        const auto chosen = decoder.draft(recordedDraft(read.transactions[1]));
+        const auto edited = decoder.draft(recordedDraft(read.transactions[2]));
+
+        auto replay = replayRecovery(store);
+        CHECK(replay.succeeded && replay.error.isEmpty() && replay.files.size() == 1 && replay.userWork);
+        auto &file = replay.files.front();
+        const auto launch = test_support::underlinedBaseFile();
+        CHECK(file.snapshots() && *file.snapshots() == *launch.snapshots());
+        // The undo restored the accepted left section over the launch text.
+        CHECK(file.current().id == 4 && file.current().draft.text == launch.current().draft.text);
+        CHECK(file.current().draft.text == chosen.text && file.current().draft.decisions == chosen.decisions);
+        CHECK(std::any_of(chosen.decisions.begin(), chosen.decisions.end(),
+            [](const auto &entry) { return entry.second.value == DecisionValue::Accepted; }));
+        // This build counts the one block, not the underline as another marker.
+        CHECK(file.current().draft.unresolvedMarkers == 1 && file.markers() == launch.markers());
+        CHECK(file.redo(file.current().id) == Transition::Applied);
+        CHECK(file.current().draft.text == edited.text && file.current().draft.decisions == edited.decisions);
+        CHECK(edited.text.find("Title\n=======\nbody\n") == std::string::npos);
+        CHECK(file.current().draft.unresolvedMarkers == 1);
+    });
+    suite.run("TRUCE-0253 replay still rejects recorded text, decisions or derived values that cannot be right", [] {
+        const auto rejected = [](const auto &mutate, const QString &error) {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            const auto store = copiedJournal(directory.path());
+            test_support::rewriteLastRecoveryState(store, mutate);
+            const auto replay = replayRecovery(storage::RecoveryStore(store));
+            CHECK(!replay.succeeded && replay.files.empty() && replay.error.contains(error));
+        };
+        const auto withDraft = [](QJsonObject &state, const auto &change) {
+            auto current = state.value("current").toObject();
+            auto draft = current.value("draft").toObject();
+            change(draft, current);
+            current.insert("draft", draft);
+            state.insert("current", current);
+        };
+        const QString mismatch = "does not match the acknowledged record";
+        // Other text than the undo restores, here an existing payload.
+        rejected([&](QJsonObject &state) {
+            withDraft(state, [&](QJsonObject &draft, QJsonObject &) { draft.insert("text", state.value("path")); });
+        }, mismatch);
+        // Another value for one recorded decision.
+        rejected([&](QJsonObject &state) {
+            withDraft(state, [](QJsonObject &draft, QJsonObject &) {
+                auto decisions = draft.value("decisions").toArray();
+                auto entry = decisions.first().toObject();
+                entry.insert("value", (entry.value("value").toInt() + 1) % 3);
+                decisions.replace(0, entry);
+                draft.insert("decisions", decisions);
+            });
+        }, mismatch);
+        // Another revision identity.
+        rejected([&](QJsonObject &state) {
+            withDraft(state, [](QJsonObject &, QJsonObject &current) { current.insert("id", "5"); });
+        }, mismatch);
+        // Derived values keep their recorded format.
+        rejected([&](QJsonObject &state) {
+            withDraft(state, [](QJsonObject &draft, QJsonObject &) { draft.insert("unresolvedMarkers", "02"); });
+        }, "Invalid recovery integer");
+        rejected([&](QJsonObject &state) {
+            withDraft(state, [](QJsonObject &draft, QJsonObject &) { draft.remove("unresolvedMarkers"); });
+        }, "Invalid recovery integer");
+        rejected([&](QJsonObject &state) {
+            withDraft(state, [](QJsonObject &, QJsonObject &current) { current.insert("decisions", "5"); });
+        }, "Invalid recovery decision revision");
     });
     return suite.report();
 }

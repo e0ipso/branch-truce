@@ -178,8 +178,8 @@ Draft RecoveryRecordDecoder::draft(const QJsonValue &value) const
 {
     const auto object = value.toObject();
     // The recorded marker count is advisory. FileSession scans the text
-    // again, and the replayed state must encode the same count.
-    number(object.value("unresolvedMarkers"));
+    // again, and replay keeps that count in place of the recorded one.
+    (void)number(object.value("unresolvedMarkers"));
     Draft result{bytes(object.value("text")), {}, 0};
     require(validUtf8(result.text) && object.value("decisions").isArray(), "Invalid recovered draft.");
     for (const auto &entry : object.value("decisions").toArray()) {

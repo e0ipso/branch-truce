@@ -34,8 +34,11 @@ and exact path references, support status, immutable snapshots and the complete
 current revision. A revision contains transaction, text and decision revision
 IDs, its text payload, every decision and optional combination order, and its
 unresolved-marker count. Replay scans the restored text again instead of
-trusting that count, so a record whose count differs from the scan does not
-match. A revision with hand-edited anchors lists their
+trusting that count. The decision revision ID advances when either the
+decisions or that count change, so it is derived from the text too. A record
+written by a build that counted markers differently still replays, and replay
+keeps its own values for both. Each must still be a decimal string, and the
+decision revision ID must not be later than the revision's own. A revision with hand-edited anchors lists their
 contribution IDs in `handEdited`. A revision without the field has none, which
 covers records written before the field existed. It also records the separate
 manual Save checkpoint, review declaration, written/staged revisions and
@@ -182,7 +185,8 @@ staged path or a new `core.autocrlf`. Leaving such a path returns it to Git
 unresolved.
 
 The restore adapter replays the existing domain transitions and compares every
-complete state with its canonical encoding. This validates the state schema,
+complete state with its canonical encoding, apart from the derived marker
+counts and decision revision IDs described above. This validates the state schema,
 enums, payload references, revisions and outcome relationships. Records are
 applied in journal order, including durable discard transactions. It preserves
 the launch capture and the manual Save baseline independently of the current

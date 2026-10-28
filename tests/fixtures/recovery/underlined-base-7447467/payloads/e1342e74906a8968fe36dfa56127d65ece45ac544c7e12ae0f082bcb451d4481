@@ -1,0 +1,15 @@
+intro
+<<<<<<< ours
+Left title
+-----------
+left body
+||||||| base
+Title
+=======
+body
+=======
+Right title
+************
+right body
+>>>>>>> theirs
+tail

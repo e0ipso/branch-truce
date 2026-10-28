@@ -32,6 +32,29 @@ bool sameOperation(const SnapshotProvenance &p, const git::RepositoryContext &re
         && p.onto == repository.onto.toStdString();
 }
 
+// A recorded state with the values the core derives from text taken from the
+// replayed state: each revision's marker count, and the revision in which its
+// decisions or marker count last changed. A build that counts markers
+// differently records other values for the same text and decisions, so these
+// only need the recorded format, while every other field must match exactly.
+Object withDerivedValues(Object recorded, const Object &replayed, const RecoveryRecordDecoder &decoder)
+{
+    for (const auto *key : {"current", "checkpoint", "written", "reviewed", "staged"}) {
+        if (!recorded.value(key).isObject() || !replayed.value(key).isObject()) continue;
+        auto revision = recorded.value(key).toObject();
+        const auto expected = replayed.value(key).toObject();
+        auto draft = revision.value("draft").toObject();
+        (void)decoder.number(draft.value("unresolvedMarkers"));
+        require(decoder.number(revision.value("decisions")) <= decoder.number(revision.value("id")),
+                "Invalid recovery decision revision.");
+        draft.insert("unresolvedMarkers", expected.value("draft").toObject().value("unresolvedMarkers"));
+        revision.insert("draft", draft);
+        revision.insert("decisions", expected.value("decisions"));
+        recorded.insert(key, revision);
+    }
+    return recorded;
+}
+
 git::Result inspect(const QString &executable, const git::Request &request)
 {
     git::GitAdapter adapter(executable);
@@ -357,7 +380,7 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
             }
             const auto encoded = recoveryTransaction(found->second, action, transactionId).state;
             require(encoded.value("snapshots") == state.value("snapshots"), "Recovery session or immutable capture identity changed.");
-            require(encoded == state,
+            require(encoded == withDerivedValues(state, encoded, decoder),
                     "Recovery state schema or transition does not match the acknowledged record.");
             if (action == QLatin1String("write-outcome") || action == QLatin1String("stage-outcome")) {
                 const auto kind = action == QLatin1String("write-outcome") ? QStringLiteral("publication") : QStringLiteral("staging");

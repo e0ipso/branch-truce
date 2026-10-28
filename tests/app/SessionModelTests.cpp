@@ -857,7 +857,8 @@ public:
             const auto transaction = recoveryTransaction(file, "replace-draft", QUuid::createUuid().toString());
             CHECK(transaction.state.value("current").toObject().value("draft").toObject()
                 .value("unresolvedMarkers").toString() == "2");
-            // A count of 0 for this text is what a scan of only <<<<<<< lines recorded.
+            // A count of 0 for this text is what a scan of only <<<<<<< lines
+            // recorded. Replay counts again and never adopts it (TRUCE-0253).
             auto stale = transaction;
             auto current = stale.state.value("current").toObject();
             auto draft = current.value("draft").toObject();
@@ -871,7 +872,11 @@ public:
                 CHECK(staleStore.commit(recoveryTransaction(recoverableFile(), "open", QUuid::createUuid().toString())).succeeded);
                 CHECK(staleStore.commit(stale).succeeded);
                 const auto replay = replayRecovery(staleStore);
-                CHECK(!replay.succeeded && replay.files.empty() && replay.error.contains("does not match"));
+                CHECK(replay.succeeded && replay.files.size() == 1);
+                const auto &restored = replay.files.front();
+                CHECK(restored.current().draft.text == stripped.text && restored.current().draft.unresolvedMarkers == 2);
+                const auto blockers = restored.facts().blockers;
+                CHECK(std::find(blockers.begin(), blockers.end(), Blocker::UnresolvedMarkers) != blockers.end());
             }
             CHECK(store.commit(transaction).succeeded);
             const auto replay = replayRecovery(store);
