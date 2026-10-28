@@ -308,47 +308,10 @@ ColumnLayout {
         function onEditorPlaced(): void { Qt.callLater(comparison.placePanes) }
         function onNavigationChanged(): void { Qt.callLater(comparison.followNavigation) }
     }
-    // The result's cursor never rests on a folded line. A key that moves it
-    // there takes it on in the key's direction, keeping its column for a move
-    // by lines; a selection set by other code ends on the side of its anchor;
-    // a cursor placed by other code goes to the next shown line. The check
-    // runs after the change completes, because an edit that joins a folded
-    // line to its neighbour shows that line once the result is captured.
-    property int cursorKey: 0
-    property int settledCursor: 0
-    property bool cursorCheckQueued: false
     // Shows the markers when the cursor is on a folded line, as after going to a marker.
     function revealCursorLine(): void {
         if (resultPane.blocks.hiddenAt(resultPane.editor.cursorPosition))
             markersRevealed()
-    }
-    function queueCursorCheck(): void {
-        if (cursorCheckQueued)
-            return
-        cursorCheckQueued = true
-        Qt.callLater(comparison.skipFoldedLines)
-    }
-    function skipFoldedLines(): void {
-        cursorCheckQueued = false
-        const key = cursorKey
-        cursorKey = 0
-        const editor = resultPane.editor
-        const position = editor.cursorPosition
-        if (resultPane.blocks.hiddenAt(position)) {
-            const selecting = editor.selectionStart !== editor.selectionEnd
-            const anchor = editor.selectionStart === position ? editor.selectionEnd : editor.selectionStart
-            const byLines = [Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown].indexOf(key) >= 0
-            const forward = key === Qt.Key_Down || key === Qt.Key_PageDown ? true
-                : key === Qt.Key_Up || key === Qt.Key_PageUp ? false
-                : key !== 0 ? position > settledCursor
-                : selecting ? anchor > position : true
-            const target = resultPane.blocks.shownPosition(position, forward, byLines ? settledCursor : -1)
-            if (selecting)
-                editor.moveCursorSelection(target, TextEdit.SelectCharacters)
-            else
-                editor.cursorPosition = target
-        }
-        settledCursor = editor.cursorPosition
     }
     Component.onCompleted: {
         controller.setSyntaxBackground(schemeBackground)
@@ -442,13 +405,6 @@ ColumnLayout {
             showWhitespace: comparison.showWhitespace
             minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
             onScrolled: byUser => panesByRole.paneScrolled("result", byUser)
-            onCursorMoved: comparison.queueCursorCheck()
-            onKeyPressed: key => {
-                comparison.cursorKey = key
-                comparison.queueCursorCheck()
-            }
-            // A fold can hide the line the cursor is on.
-            onLinesLaidOut: comparison.queueCursorCheck()
         }
         SourcePane {
             id: rightPane

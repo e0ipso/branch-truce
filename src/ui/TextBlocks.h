@@ -69,12 +69,31 @@ public:
     // of a following line or the end of a preceding one.
     Q_INVOKABLE int shownPosition(int position, bool forward, int from = -1) const;
 
+    // The cursor never rests on a hidden line. A key that moves it there takes
+    // it on in the key's direction: Up, Down, Page Up and Page Down move by
+    // lines and keep the column the cursor had, and any other key goes on the
+    // way the cursor went. A selection set by other code ends on its anchor's
+    // side, and a cursor placed by other code goes to the next shown line.
+    //
+    // Notes the key that is about to move the cursor and asks for a check.
+    Q_INVOKABLE void keyPressed(int key);
+    // Asks for one cursor check after the current change completes, however
+    // often it is asked before then: an edit that joins a hidden line to its
+    // neighbour shows that line only once the text is captured.
+    Q_INVOKABLE void queueCursorCheck();
+    // Where the cursor at position goes, with anchor the other end of its
+    // selection, or position without one. It uses up the noted key, and the
+    // answer is where the next check starts from.
+    Q_INVOKABLE int settledPosition(int position, int anchor);
+
 Q_SIGNALS:
     void documentChanged();
     void blockCountChanged();
     void hiddenChanged();
     // The text or its layout changed, so block positions may have moved.
     void layoutChanged();
+    // A queued cursor check is due.
+    void cursorCheckDue();
 
 private:
     QRectF extent(QAbstractTextDocumentLayout *layout, const QTextBlock &block) const;
@@ -90,5 +109,8 @@ private:
     int hiddenCount_ = 0;
     bool hidingQueued_ = false;
     bool applying_ = false;
+    int cursorKey_ = 0;
+    int settledCursor_ = 0;
+    bool cursorCheckQueued_ = false;
 };
 }

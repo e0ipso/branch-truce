@@ -30,11 +30,19 @@ ColumnLayout {
     // byUser is set while the user scrolls the pane: dragging, flicking or the wheel, its
     // scroll bar, or keyboard focus in its text.
     signal scrolled(bool byUser)
-    signal cursorMoved()
-    // A key reaches the editor; it still handles the key.
-    signal keyPressed(int key)
-    // The text's lines were laid out again, as after a fold hides or shows some.
-    signal linesLaidOut()
+    // Moves the cursor off a folded line to where the blocks say it goes.
+    function settleCursor(): void {
+        const position = resultEditor.cursorPosition
+        const anchor = resultEditor.selectionStart === position ? resultEditor.selectionEnd
+            : resultEditor.selectionStart
+        const target = resultBlocks.settledPosition(position, anchor)
+        if (target === position)
+            return
+        if (anchor !== position)
+            resultEditor.moveCursorSelection(target, TextEdit.SelectCharacters)
+        else
+            resultEditor.cursorPosition = target
+    }
     Label {
         id: resultHeader
         objectName: "resultLabel"
@@ -95,9 +103,10 @@ ColumnLayout {
                 wrapMode: resultPane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                 Accessible.name: qsTr("Editable result")
                 Component.onCompleted: resultPane.controller.attachResultEditor(resultEditor)
-                onCursorPositionChanged: resultPane.cursorMoved()
+                onCursorPositionChanged: resultBlocks.queueCursorCheck()
+                // The editor still handles the key; the blocks note where it is taking the cursor.
                 Keys.onPressed: (event) => {
-                    resultPane.keyPressed(event.key)
+                    resultBlocks.keyPressed(event.key)
                     event.accepted = false
                 }
                 TapHandler {
@@ -146,6 +155,8 @@ ColumnLayout {
         id: resultBlocks
         document: resultEditor.textDocument
         hidden: resultPane.fold.hidden
-        onLayoutChanged: resultPane.linesLaidOut()
+        // A fold can hide the line the cursor is on.
+        onLayoutChanged: resultBlocks.queueCursorCheck()
+        onCursorCheckDue: resultPane.settleCursor()
     }
 }

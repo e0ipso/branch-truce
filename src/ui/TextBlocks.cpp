@@ -7,6 +7,7 @@
 #include <QTextDocument>
 #include <QTextLayout>
 #include <algorithm>
+#include <utility>
 
 namespace branch_truce {
 namespace {
@@ -233,5 +234,35 @@ int TextBlocks::shownPosition(int position, bool forward, int from) const
     if (!sourceLine.isValid() || !layout || layout->lineCount() == 0) return edge;
     const auto line = layout->lineAt(down ? 0 : layout->lineCount() - 1);
     return target.position() + line.xToCursor(sourceLine.cursorToX(from - source.position()));
+}
+
+void TextBlocks::keyPressed(int key)
+{
+    cursorKey_ = key;
+    queueCursorCheck();
+}
+
+void TextBlocks::queueCursorCheck()
+{
+    if (cursorCheckQueued_) return;
+    cursorCheckQueued_ = true;
+    QMetaObject::invokeMethod(this, [this] {
+        cursorCheckQueued_ = false;
+        Q_EMIT cursorCheckDue();
+    }, Qt::QueuedConnection);
+}
+
+int TextBlocks::settledPosition(int position, int anchor)
+{
+    const int key = std::exchange(cursorKey_, 0);
+    int target = position;
+    if (hiddenAt(position)) {
+        const bool down = key == Qt::Key_Down || key == Qt::Key_PageDown;
+        const bool up = key == Qt::Key_Up || key == Qt::Key_PageUp;
+        const bool forward = down ? true : up ? false : key != 0 ? position > settledCursor_ : anchor >= position;
+        target = shownPosition(position, forward, down || up ? settledCursor_ : -1);
+    }
+    settledCursor_ = target;
+    return target;
 }
 }
