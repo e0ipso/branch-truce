@@ -39,3 +39,32 @@ are display only, so their limits drop the word ranges and never the text:
 
 The ranges are computed once for each result revision. Changing the theme or
 redrawing the panes reuses them.
+
+## Typing and scrolling in highlighted panes
+
+The ctest `performance.highlighted-editor`, under the `performance` and `ui`
+labels, opens a 200-line C++ file with a conflict every 20 lines in the real
+comparison view, with syntax highlighting and word differences on. It types
+six letters into the result and turns the mouse wheel fifteen notches over it,
+three times, and measures the process CPU time from each key press or notch to
+the next rendered frame. A key that never reaches the document or a notch that
+never moves the view fails the run instead of counting as a slow sample. The
+median of the three repeat medians must stay within these limits:
+
+| Boundary | Limit | Measured on the development host |
+| --- | ---: | --- |
+| Typing, one key press to the next frame | 3000 ms CPU | 1164 to 1208 ms alone or three runs at once, 1917 to 2070 ms with six at once |
+| Scrolling, one wheel notch to the next frame | 300 ms CPU | 100 to 112 ms alone or three runs at once, 154 to 163 ms with six at once |
+
+The runs use the offscreen platform, the software renderer and the
+`org.kde.desktop` style on an 8-thread host. The load average was 2.0 to 2.7
+alone and with three runs, and reached 9.6 with six. CPU time leaves out the
+time other processes hold the CPU, but sharing cores still raised the medians
+about 1.7 times. The limits hold at that load. On an idle host they catch a
+cost about 2.5 times the measured typing cost and 3 times the scrolling cost,
+not a doubling.
+
+Typing costs about a second of CPU per key here, ten times the 100 ms
+editor keystroke budget in the evidence above, which was measured on the editor
+experiment rather than the real panes. The limit stops typing from getting
+slower; it does not make it fast.

@@ -142,6 +142,41 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     set_tests_properties(app.syntax-highlighting PROPERTIES TIMEOUT 60
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
+    # The real Main scene under the app's style and icon themes: every icon name src/ui uses
+    # resolves, the sidebar and panes paint the View background of a dark and a light KDE colour
+    # scheme, and every coloured line has a gutter glyph. Each exits 77, reported as skipped,
+    # when this host lacks what it checks against. app/ThemeTests.cpp says how to make each fail.
+    # The icon names are collected from src/ui at build time.
+    file(GLOB theme_icon_sources CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/ui/*.qml")
+    list(JOIN theme_icon_sources "|" theme_icon_files)
+    set(theme_icon_list "${CMAKE_CURRENT_BINARY_DIR}/theme-icon-names.txt")
+    add_custom_command(OUTPUT "${theme_icon_list}"
+        COMMAND "${CMAKE_COMMAND}" "-DOUTPUT=${theme_icon_list}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+            "-DQML_FILES=${theme_icon_files}" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/CollectIconNames.cmake"
+        DEPENDS ${theme_icon_sources} "${CMAKE_CURRENT_SOURCE_DIR}/app/CollectIconNames.cmake"
+        COMMENT "Collecting the icon names in src/ui"
+        VERBATIM)
+    add_custom_target(branch_truce_theme_icon_names DEPENDS "${theme_icon_list}")
+    add_executable(branch_truce_theme_tests app/ThemeTests.cpp)
+    target_include_directories(branch_truce_theme_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_theme_tests PRIVATE branch_truce_controller branch_truce_uiplugin
+        Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
+    add_dependencies(branch_truce_theme_tests branch_truce_theme_icon_names)
+    add_test(NAME ui.theme-icons COMMAND branch_truce_theme_tests icons "${theme_icon_list}")
+    add_test(NAME ui.theme-roles-dark COMMAND branch_truce_theme_tests roles BreezeDark)
+    add_test(NAME ui.theme-roles-light COMMAND branch_truce_theme_tests roles BreezeLight)
+    add_test(NAME ui.theme-cues COMMAND branch_truce_theme_tests cues)
+    set_tests_properties(ui.theme-icons ui.theme-roles-dark ui.theme-roles-light ui.theme-cues PROPERTIES
+        TIMEOUT 60 LABELS ui SKIP_RETURN_CODE 77
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    # Typing and wheel scrolling in the real panes with a highlighted 200-line C++ file. It fails
+    # when either median CPU time exceeds its limit in docs/resource-limits.md, and skips when the
+    # build has BRANCH_TRUCE_SYNTAX_HIGHLIGHTING off. The timeout is twice the slowest of twelve
+    # runs on the development host: 50.6 to 52.3 s alone or three at once, 81.0 to 90.7 s six at once.
+    add_test(NAME performance.highlighted-editor COMMAND branch_truce_theme_tests cost)
+    set_tests_properties(performance.highlighted-editor PROPERTIES TIMEOUT 200 LABELS "ui;performance"
+        SKIP_RETURN_CODE 77 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
     # PRD observable acceptance examples, driven through the real Main scene and a real Git merge.
     # Entry point and coverage notes: tests/acceptance/README.md.
     add_executable(branch_truce_journey_acceptance_tests acceptance/JourneyAcceptanceTests.cpp)

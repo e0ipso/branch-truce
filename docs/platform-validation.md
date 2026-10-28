@@ -155,7 +155,10 @@ resources. It loaded 23 `qmldir` files and 30 plugins from the file system,
 all under `/usr/lib/x86_64-linux-gnu/qt6`, and `dpkg-query -S` found an
 installed package for each. These runs predate the app's own style
 selection, described under "Wayland, scaling and theme", so with no platform
-theme they loaded the Fusion Qt Quick Controls style.
+theme they loaded the Fusion Qt Quick Controls style. The offscreen checks in
+[tests/app/ThemeTests.cpp](../tests/app/ThemeTests.cpp) now select the style
+and icon themes the way the app does before they load the window, on the build
+tree rather than the installed package.
 
 The desktop entry's `Exec=branch-truce %f`, started by `gio launch` with the
 repository as its argument, ran `/usr/bin/branch-truce /tmp/bt-repo`, which
@@ -206,6 +209,17 @@ Breeze-styled controls in the light and the dark palette; this was checked by
 looking at the screenshots, not by tracing which style plugin loaded. The colour
 scheme was set before launch; switching it while the app runs was not
 tested.
+
+The build tree now has automated checks for the theme, in
+[tests/app/ThemeTests.cpp](../tests/app/ThemeTests.cpp) under the ctest label
+`ui`. `ui.theme-roles-dark` and `ui.theme-roles-light` write the BreezeDark or
+BreezeLight `kdeglobals` into a private config, render the window offscreen
+under `org.kde.desktop` and compare the sidebar and the four panes with the
+scheme's View background. `ui.theme-icons` checks that every icon name in
+`src/ui` resolves with Breeze as the fallback theme, and `ui.theme-cues` that
+every coloured line has a gutter glyph. They skip, rather than pass, when the
+host lacks the KDE style, the colour schemes or the Breeze icons. The installed
+package is still checked by the screenshots above.
 
 Since then `src/app/main.cpp` picks the Qt Quick Controls style itself,
 before it loads the window. If `QT_QUICK_CONTROLS_STYLE` is set, Qt uses that
