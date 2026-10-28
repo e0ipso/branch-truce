@@ -46,8 +46,12 @@ are 16, 24, and 32 px square. Use SVG when another size is needed.
 
 Linux: hicolor icons at 16, 22, 24, 32, 48, 64, 128, 256, 512, and 1024 px, plus
 scalable and symbolic SVG files. Icons up to 32 px use the small drawing. The
-filenames match the project's existing desktop icon name. This pack does not
-install or replace files in the application.
+files are named after the application ID, com.canpicasoft.branch-truce, which
+is also the desktop entry's icon name. For example:
+  platform/linux/hicolor/48x48/apps/com.canpicasoft.branch-truce.png
+  platform/linux/hicolor/scalable/apps/com.canpicasoft.branch-truce.svg
+  platform/linux/hicolor/symbolic/apps/com.canpicasoft.branch-truce-symbolic.svg
+This pack does not install or replace files in the application.
 
 Web: SVG favicon, a multi-size ICO containing 16/32/48 px, matching PNG favicons,
 180 px Apple touch icon, 192/512 px regular and maskable app icons, webmanifest,

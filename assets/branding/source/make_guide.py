@@ -43,7 +43,7 @@ def main():
         card('Monochrome white', 'White ink on a dark field.', 'svg/mono-white/branch-truce-horizontal.svg', PALETTE['dark_ground']),
     ])
     small = ''.join(f'<div class="size"><img src="{data_uri(f"png/for-light/branch-truce-small-{s}.png")}" width="{s}" height="{s}" alt="Small mark at {s} pixels"><span>{s} px</span></div>' for s in (16,24,32))
-    small += f'<div class="size"><img src="{data_uri("platform/linux/hicolor/48x48/apps/local.branch_truce.BranchTruce.png")}" width="48" height="48" alt="Detailed mark at 48 pixels"><span>48 px</span></div>'
+    small += f'<div class="size"><img src="{data_uri("platform/linux/hicolor/48x48/apps/com.canpicasoft.branch-truce.png")}" width="48" height="48" alt="Detailed mark at 48 pixels"><span>48 px</span></div>'
     # The small-size proof has a real light background inside an SVG asset.
     swatches = ''.join(f'<div class="swatch"><svg viewBox="0 0 100 30" aria-label="{name}"><rect width="100" height="30" rx="5" fill="{color}"/></svg><span>{name.replace("_"," ")}</span><code>{color}</code></div>' for name,color in list(PALETTE.items())[:5])
     text = f'''<!doctype html>

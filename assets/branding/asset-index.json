@@ -902,7 +902,7 @@
       "title": "Branch Truce / stacked / for-dark background"
     },
     {
-      "path": "platform/linux/hicolor/16x16/apps/local.branch_truce.BranchTruce.png",
+      "path": "platform/linux/hicolor/16x16/apps/com.canpicasoft.branch-truce.png",
       "format": "png",
       "width": 16,
       "height": 16,
@@ -910,7 +910,7 @@
       "title": "Branch Truce Linux application icon"
     },
     {
-      "path": "platform/linux/hicolor/22x22/apps/local.branch_truce.BranchTruce.png",
+      "path": "platform/linux/hicolor/22x22/apps/com.canpicasoft.branch-truce.png",
       "format": "png",
       "width": 22,
       "height": 22,
@@ -918,7 +918,7 @@
       "title": "Branch Truce Linux application icon"
     },
     {
-      "path": "platform/linux/hicolor/24x24/apps/local.branch_truce.BranchTruce.png",
+      "path": "platform/linux/hicolor/24x24/apps/com.canpicasoft.branch-truce.png",
       "format": "png",
       "width": 24,
       "height": 24,
@@ -926,7 +926,7 @@
       "title": "Branch Truce Linux application icon"
     },
     {
-      "path": "platform/linux/hicolor/32x32/apps/local.branch_truce.BranchTruce.png",
+      "path": "platform/linux/hicolor/32x32/apps/com.canpicasoft.branch-truce.png",
       "format": "png",
       "width": 32,
       "height": 32,
@@ -934,7 +934,7 @@
       "title": "Branch Truce Linux application icon"
     },
     {
-      "path": "platform/linux/hicolor/48x48/apps/local.branch_truce.BranchTruce.png",
+      "path": "platform/linux/hicolor/48x48/apps/com.canpicasoft.branch-truce.png",
       "format": "png",
       "width": 48,
       "height": 48,
@@ -942,7 +942,7 @@
       "title": "Branch Truce Linux application icon"
     },
     {
-      "path": "platform/linux/hicolor/64x64/apps/local.branch_truce.BranchTruce.png",
+      "path": "platform/linux/hicolor/64x64/apps/com.canpicasoft.branch-truce.png",
       "format": "png",
       "width": 64,
       "height": 64,
@@ -950,7 +950,7 @@
       "title": "Branch Truce Linux application icon"
     },
     {
-      "path": "platform/linux/hicolor/128x128/apps/local.branch_truce.BranchTruce.png",
+      "path": "platform/linux/hicolor/128x128/apps/com.canpicasoft.branch-truce.png",
       "format": "png",
       "width": 128,
       "height": 128,
@@ -958,7 +958,7 @@
       "title": "Branch Truce Linux application icon"
     },
     {
-      "path": "platform/linux/hicolor/256x256/apps/local.branch_truce.BranchTruce.png",
+      "path": "platform/linux/hicolor/256x256/apps/com.canpicasoft.branch-truce.png",
       "format": "png",
       "width": 256,
       "height": 256,
@@ -966,7 +966,7 @@
       "title": "Branch Truce Linux application icon"
     },
     {
-      "path": "platform/linux/hicolor/512x512/apps/local.branch_truce.BranchTruce.png",
+      "path": "platform/linux/hicolor/512x512/apps/com.canpicasoft.branch-truce.png",
       "format": "png",
       "width": 512,
       "height": 512,
@@ -974,7 +974,7 @@
       "title": "Branch Truce Linux application icon"
     },
     {
-      "path": "platform/linux/hicolor/1024x1024/apps/local.branch_truce.BranchTruce.png",
+      "path": "platform/linux/hicolor/1024x1024/apps/com.canpicasoft.branch-truce.png",
       "format": "png",
       "width": 1024,
       "height": 1024,

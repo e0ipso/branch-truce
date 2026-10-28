@@ -152,8 +152,11 @@ def build():
         ink = PALETTE['terracotta'] if name == 'accent' else PALETTE['forest']
         write(f'source/components/{name}.svg', svg(width, height, component(name, 0, 0, 1, ink), f'Branch Truce / {name} component'))
 
-    # Linux hicolor structure is ready to copy into an install prefix.
-    desktop_name = 'local.branch_truce.BranchTruce'
+    # Linux hicolor structure is ready to copy into an install prefix. The
+    # names follow BRANCH_TRUCE_APP_ID in the top-level CMakeLists.txt.
+    # Clearing the tree first keeps icons from an earlier name out of the pack.
+    desktop_name = 'com.canpicasoft.branch-truce'
+    shutil.rmtree(ROOT / 'platform/linux/hicolor', ignore_errors=True)
     for size in (16, 22, 24, 32, 48, 64, 128, 256, 512, 1024):
         layout = 'small' if size <= 32 else 'symbol'
         queue_png(ROOT / f'svg/for-light/branch-truce-{layout}.svg',
