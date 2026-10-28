@@ -150,6 +150,7 @@ session, such as the headless one agents use here:
 tools/preview-app.sh                              # build/desktop/src/app/branch-truce
 PREVIEW_FILE=tracked.txt tools/preview-app.sh     # the three comparison panes on a text file
 PREVIEW_FILE=notes.md tools/preview-app.sh        # the same on a Markdown file
+PREVIEW_SIZE=1280x800 tools/preview-app.sh        # at a 1280x800 logical screen size
 tools/preview-app.sh /path/to/branch-truce        # another build
 ```
 
@@ -176,6 +177,19 @@ Each launch gets `PREVIEW_TIMEOUT` seconds (default 180) to show its window and
 load its files. On an idle host that takes under 15 seconds, but the app renders
 in software on the headless session and a host busy with builds can stretch it
 past a minute. On timeout the script prints the end of the app's log.
+
+`PREVIEW_SIZE=WIDTHxHEIGHT` captures at that logical screen size instead of the
+size of the focused output. The script adds a temporary headless output with
+`swaymsg create_output` and finds its name by comparing the output list before
+and after, because sway numbers new outputs with a counter. It sets that
+output's mode and scale 1, opens the app there and checks that the fullscreen
+window has the requested size. On every exit, including a failure or an
+interrupt, it unplugs the output and gives focus back to the output that had
+it. It never changes another output's mode, so `HEADLESS-1`, which VNC shows,
+keeps its size. The PNG names end in the size, such as
+`branch-truce-BreezeLight-1280x800.png`.
+Agents sharing the headless session run the script under
+`flock /tmp/branch-truce-preview.lock`, so two runs never add outputs at once.
 
 `tools/merge-fixture.sh` builds the fixture. The installed-artifact validator
 uses the same function inside its container for its single `tracked.txt`
