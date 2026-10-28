@@ -96,6 +96,44 @@ void resolve(FileSession &file)
     CHECK(file.facts().resolved);
     CHECK(file.facts().blockers.empty());
 }
+// Opens the one diff3 block Git wrote for these versions, checks that Git's
+// separator is zero-based line `separator`, then keeps each side in turn by
+// accepting it and ignoring the other. Mark resolved applies once both are
+// decided, and undo, redo and a replay of the drafts give the same text.
+void resolvesDiff3Block(const std::string &left, const std::string &earlier, const std::string &right,
+                        const std::string &merged, std::size_t separator)
+{
+    for (const auto kept : {SourceSide::Stage2, SourceSide::Stage3}) {
+        const auto other = kept == SourceSide::Stage2 ? SourceSide::Stage3 : SourceSide::Stage2;
+        auto file = test_support::diff3File(left, right, earlier, merged);
+        const auto launch = file.current().draft;
+        const auto scan = file.markers();
+        CHECK(scan.orphans.empty() && scan.blocks.size() == 1);
+        CHECK(scan.blocks.front().separator.line == separator);
+        CHECK(launch.unresolvedMarkers == 1 && file.markerSections().size() == 1);
+        CHECK(choose(file, kept, ChoiceAction::Accept) == Transition::Applied);
+        const auto partly = file.current().draft;
+        // Accepting a deletion removes the other side's text, but the block stays.
+        const auto held = file.markers();
+        CHECK(partly.unresolvedMarkers == 1 && held.orphans.empty() && file.markerSections().size() == 1);
+        CHECK(has(file, Blocker::Undecided) && has(file, Blocker::UnresolvedMarkers));
+        CHECK(choose(file, other, ChoiceAction::Ignore) == Transition::Applied);
+        const auto chosen = file.current().draft;
+        CHECK(chosen.text == (kept == SourceSide::Stage2 ? left : right));
+        CHECK(chosen.unresolvedMarkers == 0 && file.markerSections().empty());
+        CHECK(!has(file, Blocker::UnresolvedMarkers) && !has(file, Blocker::Undecided));
+        CHECK(file.undo(file.current().id) == Transition::Applied);
+        CHECK(file.current().draft == partly && file.markers() == held);
+        CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+        CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
+        auto replay = test_support::diff3File(left, right, earlier, merged);
+        CHECK(replay.replaceDraft(1, partly, std::set<std::string>{}) == Transition::Applied);
+        CHECK(replay.current().draft == partly && replay.markers() == held);
+        CHECK(replay.replaceDraft(replay.current().id, chosen, std::set<std::string>{}) == Transition::Applied);
+        CHECK(replay.current().draft == chosen && replay.markers().count() == 0);
+        CHECK(replay.beginMarkResolved(replay.current().id) == Transition::Applied);
+    }
+}
 }
 
 class SessionStateTests {
@@ -1478,6 +1516,17 @@ public:
                 CHECK(plain.markers().blocks.front().separator.line == 6 && plain.markers().orphans.size() == 1);
                 CHECK(plain.current().draft.unresolvedMarkers == 2 && plain.markerSections().empty());
             }
+        });
+        suite.run("TRUCE-0252 Git's separator lies between a base ending and a right side starting with a separator line", [] {
+            // The base's underline sits directly above Git's separator and the right
+            // side's first line directly below it, three identical lines in a row.
+            const std::string left = "intro\nLeft\n-----\ntail\n";
+            const std::string earlier = "intro\nTitle\n=======\ntail\n";
+            const std::string right = "intro\n=======\nRight\ntail\n";
+            const auto merged = test_support::gitDiff3(left, earlier, right);
+            CHECK(merged == "intro\n<<<<<<< ours\nLeft\n-----\n||||||| base\nTitle\n=======\n=======\n=======\nRight\n"
+                            ">>>>>>> theirs\ntail\n");
+            resolvesDiff3Block(left, earlier, right, merged, 7);
         });
         suite.run("TRUCE-0098 an outside-app file keeps its support blocker and recorded failures only", [] {
             FileSession file("id", "file", draft());

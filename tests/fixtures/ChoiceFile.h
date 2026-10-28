@@ -1,7 +1,12 @@
 #pragma once
 
 #include "core/EditingCommands.h"
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
+#include <sys/wait.h>
 
 namespace test_support {
 inline branch_truce::TextSnapshot choiceText(const std::string &value)
@@ -108,6 +113,33 @@ inline branch_truce::FileSession diff3File(std::string left, std::string right,
             choiceText(earlier), "earlier-commit", "Common earlier version"};
     return FileSession("choices", sources.path, {std::move(result), {}, 0},
         Support::Supported, {}, sources, true);
+}
+
+// What `git merge-file --diff3` on the PATH writes for three versions, with
+// the labels a merge gives them. Its exit status counts the conflicts, so one
+// above 127 or a signal is a failure.
+inline std::string gitDiff3(const std::string &left, const std::string &earlier, const std::string &right)
+{
+    auto pattern = (std::filesystem::temp_directory_path() / "branch-truce-diff3.XXXXXX").string();
+    if (!mkdtemp(pattern.data())) throw std::runtime_error("cannot create a directory for git merge-file");
+    const std::filesystem::path directory(pattern);
+    std::string command = "git merge-file --diff3 -p -L ours -L base -L theirs";
+    const std::pair<const char *, const std::string *> versions[] = {{"left", &left}, {"base", &earlier}, {"right", &right}};
+    for (const auto &[name, text] : versions) {
+        std::ofstream(directory / name, std::ios::binary) << *text;
+        command += " '" + (directory / name).string() + "'";
+    }
+    std::string merged;
+    int status = -1;
+    if (auto *pipe = popen(command.c_str(), "r")) {
+        char buffer[4096];
+        for (std::size_t read; (read = std::fread(buffer, 1, sizeof buffer, pipe)) > 0;) merged.append(buffer, read);
+        status = pclose(pipe);
+    }
+    std::filesystem::remove_all(directory);
+    if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) > 127)
+        throw std::runtime_error("git merge-file failed");
+    return merged;
 }
 
 // The common earlier version underlines a heading with exactly seven '='

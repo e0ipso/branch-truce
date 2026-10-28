@@ -388,6 +388,12 @@ const std::vector<Passage> *CorrespondenceMap::passages(SourceSide side) const n
     return found == passages_.end() ? nullptr : &found->second;
 }
 
+const std::string *CorrespondenceMap::source(SourceSide side) const noexcept
+{
+    const auto found = sources_->find(side);
+    return found == sources_->end() ? nullptr : &found->second;
+}
+
 const ResultAnchor *CorrespondenceMap::anchor(const std::string &id) const noexcept
 {
     const auto found = anchors_.find(id);
@@ -410,6 +416,62 @@ bool CorrespondenceMap::bind(SourceAnchor source)
         projected.range, projected.changed && projected.range && projected.range->begin != projected.range->end,
         false});
     return true;
+}
+
+void CorrespondenceMap::settle(SourceSide side, const std::vector<ByteRange> &dropped)
+{
+    const auto source = sources_->find(side);
+    if (source == sources_->end() || std::none_of(anchors_.begin(), anchors_.end(), [&](const auto &entry) {
+            return entry.second.source.side == side && entry.second.state == AnchorState::Ambiguous;
+        })) return;
+    auto cuts = dropped;
+    std::sort(cuts.begin(), cuts.end(), [](const auto &a, const auto &b) { return a.begin < b.begin; });
+    // The result's kept pieces in order, each with where it starts in the view.
+    std::vector<std::pair<std::size_t, ByteRange>> pieces;
+    std::string view;
+    std::size_t from = 0;
+    const auto keep = [&](std::size_t end) {
+        if (from >= end) return;
+        pieces.push_back({view.size(), {from, end}});
+        view.append(text_, from, end - from);
+    };
+    for (const auto &cut : cuts) {
+        if (cut.begin < from || cut.end < cut.begin || text_.size() < cut.end
+            || !validByteRange(text_, cut)) throw std::invalid_argument("Dropped result ranges must be disjoint");
+        if (cut.begin == cut.end) continue;
+        keep(cut.begin);
+        from = cut.end;
+    }
+    keep(text_.size());
+    // A view range in the result. Nonempty text lies inside one piece. An
+    // empty position next to dropped text could be on either side of it.
+    const auto place = [&](ByteRange range) -> std::optional<ByteRange> {
+        std::vector<std::size_t> found;
+        if (range.begin == 0 && (pieces.empty() || pieces.front().second.begin != 0)) found.push_back(0);
+        if (range.begin == view.size() && (pieces.empty() || pieces.back().second.end != text_.size()))
+            found.push_back(text_.size());
+        for (const auto &[at, piece] : pieces) {
+            const auto end = at + piece.end - piece.begin;
+            if (range.begin == range.end ? at <= range.begin && range.begin <= end
+                    : at <= range.begin && range.end <= end)
+                found.push_back(piece.begin + range.begin - at);
+        }
+        if (found.size() != 1) return std::nullopt;
+        return ByteRange{found.front(), found.front() + range.end - range.begin};
+    };
+    const auto passages = algorithm_->compare(source->second, view);
+    const auto viewLines = lineStarts(view);
+    const LinePairing pairing{sourceLines_->at(side), viewLines};
+    for (auto &entry : anchors_) {
+        auto &anchor = entry.second;
+        if (anchor.source.side != side || anchor.state != AnchorState::Ambiguous) continue;
+        const auto projected = project(passages, anchor.source.range, anchor.source.affinity, &pairing);
+        const auto range = projected.range ? place(*projected.range) : std::nullopt;
+        if (projected.state != AnchorState::Mapped || !range) continue;
+        anchor.state = AnchorState::Mapped;
+        anchor.result = range;
+        anchor.manualOverlap = projected.changed && range->begin != range->end;
+    }
 }
 
 CorrespondenceMap CorrespondenceMap::atRevision(RevisionId revision) const

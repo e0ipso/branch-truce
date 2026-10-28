@@ -38,6 +38,18 @@ offsets and whole-buffer recomputation keep the edge-only rule. Selecting a
 smaller part of a changed line needs manual editing rather than a substring
 search.
 
+One structural fact narrows ambiguity at launch. Git copies a side's
+conflicting lines into that side's region only, so when the launch result's
+marker lines form complete blocks with none left over, `settle` aligns each
+side's source again with the result minus every block's marker lines, base
+text and other side region. A line that the other region or the base also
+holds then has one copy to match. An ambiguous anchor is mapped where every
+optimal alignment of that text agrees and its range lies inside one stretch of
+kept text. An empty anchor at the edge of removed text stays ambiguous, and so
+does everything when a marker line is left over. Settling happens once, before
+the first revision, so undo, redo and recovery replay start from the same
+anchors.
+
 The algorithm uses O(source lines * result lines) time and O(source lines +
 result lines) memory for different buffers, including line, match and passage
 records. Each split releases its length rows before recursing. Binding keeps one

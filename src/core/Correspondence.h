@@ -108,8 +108,17 @@ public:
     [[nodiscard]] const std::string &text() const noexcept { return text_; }
     // nullptr means unavailable; a present empty source has an alignment.
     [[nodiscard]] const std::vector<Passage> *passages(SourceSide side) const noexcept;
+    // The source text those passages align, or nullptr when unavailable.
+    [[nodiscard]] const std::string *source(SourceSide side) const noexcept;
     [[nodiscard]] const ResultAnchor *anchor(const std::string &id) const noexcept;
     [[nodiscard]] bool bind(SourceAnchor source);
+    // Git copies a side's text of a conflict into that side's region only, so
+    // the marker lines, base text and other side regions, passed as `dropped`,
+    // hold none of it. Each ambiguous anchor of `side` is mapped where every
+    // optimal alignment of its source with the result without them agrees, if
+    // its range lies inside one stretch of kept text. An empty range at the
+    // edge of dropped text stays ambiguous.
+    void settle(SourceSide side, const std::vector<ByteRange> &dropped);
     [[nodiscard]] CorrespondenceMap atRevision(RevisionId revision) const;
     [[nodiscard]] CorrespondenceMap edited(RevisionId revision, const ResultEdit &edit,
                                          bool manual = true,

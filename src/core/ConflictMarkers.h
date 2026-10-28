@@ -38,6 +38,15 @@ struct MarkerScan {
     bool operator==(const MarkerScan &) const = default;
 };
 
+// Where diff3 block text comes from: the texts whose lines Git copies into
+// base regions and right side regions, and base regions an earlier scan found,
+// each from its ||||||| line up to Git's separator.
+struct RegionSources {
+    std::string_view earlier;
+    std::string_view right;
+    std::vector<std::string_view> bases;
+};
+
 // The only marker recognizer. A marker line starts with exactly seven of the
 // same marker character, followed by whitespace or the end of the text, as
 // Git writes them by default. Text elsewhere in a line is never a marker, and
@@ -48,11 +57,20 @@ struct MarkerScan {
 // one of the `baseUncertain` ranges, where earlier-version text may lie, when
 // only separator lines follow it up to the start of the right side region:
 // text inside one of the `rightContent` ranges, which hold known right-side
-// text, or the end marker. The last of those separator lines is Git's. Blocks
-// are assembled from the remaining marker lines.
+// text, or the end marker. The last of those separator lines is Git's.
+//
+// With `sources`, Git's separator among several adjacent separator lines in a
+// base region is the only one that leaves one of the `bases` before it, or
+// consecutive whole lines of `earlier` between the ||||||| line and it and
+// consecutive whole lines of `right` between it and the end marker. Git copies
+// both regions from those texts, so no other line can be Git's. The separator
+// lines before it are base text and those after it right side text. Without
+// exactly one such line the rule above applies. Blocks are assembled from the
+// remaining marker lines.
 [[nodiscard]] MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content = {},
                                      std::vector<ByteRange> baseContent = {},
                                      std::vector<ByteRange> baseUncertain = {},
-                                     std::vector<ByteRange> rightContent = {});
+                                     std::vector<ByteRange> rightContent = {},
+                                     std::optional<RegionSources> sources = {});
 
 }
