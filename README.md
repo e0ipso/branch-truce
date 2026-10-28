@@ -23,7 +23,7 @@ sudo apt-get install --no-install-recommends ./branch-truce_0.1.0+kubuntu26.04_a
 ```
 
 Use the package built for your base. It installs `/usr/bin/branch-truce`,
-the desktop entry `local.branch_truce.BranchTruce.desktop`, its AppStream
+the desktop entry `com.canpicasoft.branch-truce.desktop`, its AppStream
 metadata and an icon. The program reads nothing from the source or build
 tree.
 

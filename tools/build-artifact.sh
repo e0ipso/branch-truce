@@ -84,6 +84,9 @@ tree=$fixture/work/branch-truce-$version
 mkdir -p -- "$tree"
 (cd -- "$root" && git ls-files -z --cached --others --exclude-standard -- \
     CMakeLists.txt cmake src packaging) |
+    while IFS= read -r -d '' file; do
+        if [[ -e "$root/$file" ]]; then printf '%s\0' "$file"; fi
+    done |
     (cd -- "$root" && tar --null --files-from=- --create --file=-) |
     tar --extract --file=- --directory="$tree"
 cp -a -- "$tree/packaging/debian" "$tree/debian"

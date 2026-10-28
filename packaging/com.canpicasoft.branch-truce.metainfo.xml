@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>local.branch_truce.BranchTruce</id>
+  <id>com.canpicasoft.branch-truce</id>
   <metadata_license>CC0-1.0</metadata_license>
   <name>Branch Truce</name>
   <summary>Resolve Git merge and rebase text conflicts offline</summary>
@@ -15,7 +15,7 @@
       It runs offline and needs no account.
     </p>
   </description>
-  <launchable type="desktop-id">local.branch_truce.BranchTruce.desktop</launchable>
+  <launchable type="desktop-id">com.canpicasoft.branch-truce.desktop</launchable>
   <provides>
     <binary>branch-truce</binary>
   </provides>

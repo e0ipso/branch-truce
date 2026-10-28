@@ -38,7 +38,7 @@ case "$package" in
     *) echo "error: $package is not a .deb" >&2; exit 2 ;;
 esac
 
-app_id="local.branch_truce.BranchTruce"
+app_id="com.canpicasoft.branch-truce"
 binary_file="/usr/bin/branch-truce"
 desktop_file="/usr/share/applications/$app_id.desktop"
 metainfo_file="/usr/share/metainfo/$app_id.metainfo.xml"

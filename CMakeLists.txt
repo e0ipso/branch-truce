@@ -51,9 +51,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     endif()
     qt_standard_project_setup(REQUIRES 6.6)
     message(STATUS "Desktop dependencies: Qt ${Qt6_VERSION}, ECM ${ECM_VERSION}, Kirigami ${KF6Kirigami_VERSION}")
-    # Reverse-DNS form of the organization domain branch-truce.local. It names
+    # Reverse-DNS form of the organization domain canpicasoft.com. It names
     # the desktop entry, metainfo and icon, and the Wayland app id.
-    set(BRANCH_TRUCE_APP_ID "local.branch_truce.BranchTruce")
+    set(BRANCH_TRUCE_APP_ID "com.canpicasoft.branch-truce")
     add_subdirectory(src/git)
     add_subdirectory(src/storage)
     add_subdirectory(src/app)

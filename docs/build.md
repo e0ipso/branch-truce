@@ -210,20 +210,20 @@ A desktop build installs four files under `CMAKE_INSTALL_PREFIX`, placed by
 ECM's KDE install directories:
 
 - `bin/branch-truce`, the GUI. With `--mergetool` it is the blocking launcher.
-- `share/applications/local.branch_truce.BranchTruce.desktop`
-- `share/metainfo/local.branch_truce.BranchTruce.metainfo.xml`
-- `share/icons/hicolor/scalable/apps/local.branch_truce.BranchTruce.svg`
+- `share/applications/com.canpicasoft.branch-truce.desktop`
+- `share/metainfo/com.canpicasoft.branch-truce.metainfo.xml`
+- `share/icons/hicolor/scalable/apps/com.canpicasoft.branch-truce.svg`
 
 The QML module is compiled to QML bytecode inside the executable, not to C++
 ([target-platforms.md](target-platforms.md#qml-bytecode-instead-of-compiled-c)
 explains why), so no QML directory is installed and the installed program
 reads nothing from the source or build tree. Qt, Kirigami and the KDE style
 come from system packages. The
-application ID is the reverse-DNS form of the organization domain
-`branch-truce.local`. The GUI sets it as its desktop file name, which is how
-Plasma matches a window to the entry and icon. For a prefix outside the system
-data directories, add `<prefix>/share` to `XDG_DATA_DIRS` so menus and icon
-lookup find the files. The per-OS `.deb` packages, their build containers and
+application ID is `com.canpicasoft.branch-truce`, using the reverse-DNS form of
+the organization domain `canpicasoft.com`. The GUI sets it as its desktop file
+name, which is how Plasma matches a window to the entry and icon. For a prefix
+outside the system data directories, add `<prefix>/share` to `XDG_DATA_DIRS` so
+menus and icon lookup find the files. The per-OS `.deb` packages, their build containers and
 their inspection are described in [target-platforms.md](target-platforms.md).
 
 ```sh

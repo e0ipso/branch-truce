@@ -50,9 +50,9 @@ tree="$work/branch-truce-$native_version"
 mkdir -p "$tree/packaging"
 cp -a "$root_dir/CMakeLists.txt" "$root_dir/cmake" "$root_dir/src" "$tree/"
 cp -a "$packaging_dir/CMakeLists.txt" \
-    "$packaging_dir/local.branch_truce.BranchTruce.desktop" \
-    "$packaging_dir/local.branch_truce.BranchTruce.metainfo.xml" \
-    "$packaging_dir/local.branch_truce.BranchTruce.svg" \
+    "$packaging_dir/com.canpicasoft.branch-truce.desktop" \
+    "$packaging_dir/com.canpicasoft.branch-truce.metainfo.xml" \
+    "$packaging_dir/com.canpicasoft.branch-truce.svg" \
     "$tree/packaging/"
 cp -a "$packaging_dir/debian" "$tree/debian"
 rm -f "$tree/debian/compat"

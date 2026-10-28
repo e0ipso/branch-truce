@@ -118,6 +118,8 @@ windows appear on the compositor and take keyboard focus.
 
 "Pass" means the check ran in the container and its expected outcome was
 observed. The real-desktop column has no observations.
+These results predate the application ID change to `com.canpicasoft.branch-truce`;
+the window IDs below record the IDs observed in those runs.
 
 | Check | Kubuntu container | Tuxedo container | Real desktops |
 | --- | --- | --- | --- |
@@ -367,7 +369,7 @@ with real `git mergetool`. The container run has not been repeated since.
 
 ### Organization name
 
-The app sets an organization domain (`branch-truce.local`) and no organization
+The app sets an organization domain (`canpicasoft.com`) and no organization
 name. `KAboutData::setApplicationData` sets the domain only, and KDE
 applications that use it keep their data under `~/.local/share/<app>`. The
 name would add nothing: the desktop entry, the application ID and the

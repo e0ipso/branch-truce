@@ -37,7 +37,7 @@
 # CONTAINER_ENGINE defaults to docker.
 set -euo pipefail
 
-app_id=local.branch_truce.BranchTruce
+app_id=com.canpicasoft.branch-truce
 qml_root=/usr/lib/x86_64-linux-gnu/qt6/qml
 
 usage() { echo "Usage: $0 --target kubuntu|tuxedo --package DEB [--output DIR]" >&2; exit 2; }

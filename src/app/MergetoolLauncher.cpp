@@ -131,7 +131,7 @@ int runMergetoolLauncher(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
-    QCoreApplication::setOrganizationDomain(QStringLiteral("branch-truce.local"));
+    QCoreApplication::setOrganizationDomain(QStringLiteral("canpicasoft.com"));
     const auto mergedPath = qgetenv("MERGED");
     const auto repositoryPath = mergetoolRepositoryPath(mergedPath);
     if (!repositoryPath) return fail(QStringLiteral("MERGED is missing or is not a repository path."));

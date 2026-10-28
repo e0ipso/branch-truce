@@ -91,7 +91,7 @@ ENGINE
 cat > "$work/stubs/swaymsg" <<'SWAYMSG'
 #!/usr/bin/env bash
 printf '%s SWAYSOCK=%s\n' "$*" "${SWAYSOCK:-}" >> "$STUB_STATE/swaymsg.log"
-window='{"app_id":"local.branch_truce.BranchTruce","name":"Branch Truce","shell":"xdg_shell","rect":{"x":10,"y":20,"width":900,"height":500}}'
+window='{"app_id":"com.canpicasoft.branch-truce","name":"Branch Truce","shell":"xdg_shell","rect":{"x":10,"y":20,"width":900,"height":500}}'
 other='{"app_id":"org.kde.konsole","name":"Konsole","shell":"xdg_shell","rect":{"x":0,"y":0,"width":640,"height":480}}'
 case "$2" in
     get_version) echo '{"human_readable":"1.10-stub"}' ;;
@@ -347,7 +347,7 @@ if [[ -n "$python" && -n "$jq_path" ]]; then
     wayland_args "$work/reports/open"
     invoke STUB_WINDOW_OPEN=1 "${wayland_env[@]}" -- "$script" "${args[@]}"
     expect_status 1
-    expect_output 'FAIL a local.branch_truce.BranchTruce window is already open on this session'
+    expect_output 'FAIL a com.canpicasoft.branch-truce window is already open on this session'
     [[ "$(steps)" == "install kubuntu26.04 /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;" ]] \
         || fail "Wayland steps ran beside an open window: $(steps)"
     pass
@@ -390,7 +390,7 @@ $deb_name.atspi $deb_name.validation "
         grep -qxF -- "$line" "$report" || fail "report lacks: $line"
         pass
     done
-    grep -qx 'window {"app_id":"local.branch_truce.BranchTruce","name":"Branch Truce","shell":"xdg_shell","rect":{"x":10,"y":20,"width":900,"height":500}}' \
+    grep -qx 'window {"app_id":"com.canpicasoft.branch-truce","name":"Branch Truce","shell":"xdg_shell","rect":{"x":10,"y":20,"width":900,"height":500}}' \
         "$report" || fail "window line"
     pass
     ! grep -q '^FAIL' "$report" || fail "failures in a passing run"

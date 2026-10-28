@@ -41,7 +41,7 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("Branch Truce"));
     // No organization name: KDE apps set the domain only. See docs/platform-validation.md.
-    QCoreApplication::setOrganizationDomain(QStringLiteral("branch-truce.local"));
+    QCoreApplication::setOrganizationDomain(QStringLiteral("canpicasoft.com"));
     // Matches the installed desktop entry so Plasma shows its name and icon.
     QGuiApplication::setDesktopFileName(QStringLiteral(BRANCH_TRUCE_APP_ID));
     // Off Plasma the icon theme is hicolor or none, so icon.name falls back to Breeze.

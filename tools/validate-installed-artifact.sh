@@ -47,7 +47,7 @@
 # on exit; the image stays.
 set -euo pipefail
 
-app_id=local.branch_truce.BranchTruce
+app_id=com.canpicasoft.branch-truce
 home=/tmp/bt-home
 repo=/tmp/bt-repo
 wayland_socket=/run/bt-wayland/wayland-0

@@ -8,7 +8,7 @@
 # against the installed executable to cover the resolved (exit 0) handoff.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-app_id=local.branch_truce.BranchTruce
+app_id=com.canpicasoft.branch-truce
 mergetool_tests=
 case "${1:-}" in
     '') ;;
