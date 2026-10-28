@@ -23,7 +23,8 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends
         appstream desktop-file-utils hicolor-icon-theme kde-style-breeze \
         kf6-breeze-icon-theme libasan8 libglib2.0-bin libubsan1 \
         qml6-module-org-kde-desktop qml6-module-org-kde-kirigami \
-        qml6-module-qtqml-workerscript qml6-module-qtquick \
+        qml6-module-qtqml-models qml6-module-qtqml-workerscript \
+        qml6-module-qtquick \
         qml6-module-qtquick-controls qml6-module-qtquick-layouts \
         qml6-module-qtquick-shapes qml6-module-qtquick-templates \
         qml6-module-qtquick-window qml6-module-qttest \

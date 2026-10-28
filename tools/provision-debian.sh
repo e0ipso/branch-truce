@@ -13,7 +13,7 @@ esac
 packages=(g++ cmake make git extra-cmake-modules qt6-base-dev qt6-declarative-dev
     libkirigami-dev libkf6syntaxhighlighting-dev qml6-module-org-kde-kirigami qml6-module-org-kde-desktop
     qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-shapes
-    qml6-module-qtquick-templates qml6-module-qtquick-window qml6-module-qtqml-workerscript
+    qml6-module-qtquick-templates qml6-module-qtquick-window qml6-module-qtqml-models qml6-module-qtqml-workerscript
     kf6-breeze-icon-theme kde-style-breeze hicolor-icon-theme qt6-svg-plugins qt6-wayland libasan8 libubsan1)
 missing=()
 for package in "${packages[@]}"; do
