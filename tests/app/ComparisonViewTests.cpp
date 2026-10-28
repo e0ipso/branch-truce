@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <optional>
 #include <QClipboard>
+#include <QColor>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFont>
@@ -475,14 +476,39 @@ qreal columnOffset(QQuickItem *editor, const QString &text, int column)
 }
 
 // What one pane paints, keyed by line: the kind of each line background, the
-// kind of each gutter glyph, and in the result the provenance letter. A line
-// with no mark is absent.
+// kind of each gutter glyph, in the result the provenance letter, and
+// "ignored" where the whole text takes the ignored side's tint. A line with
+// no mark is absent.
 struct PaneMarks {
     QMap<int, QString> backgrounds;
     QMap<int, QString> glyphs;
     QMap<int, QString> letters;
+    QMap<int, QString> tinted;
     bool operator==(const PaneMarks &) const = default;
 };
+
+// The nonempty lines of an editor whose every character is drawn in its
+// Kirigami.Theme.disabledTextColor, as "ignored".
+QMap<int, QString> tintedLines(QQuickItem *editor)
+{
+    const auto disabled = qmlValue(editor, QStringLiteral("Kirigami.Theme.disabledTextColor")).value<QColor>();
+    CHECK(disabled.isValid());
+    const auto *document = editor->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+    QMap<int, QString> lines;
+    for (auto block = document->begin(); block.isValid(); block = block.next()) {
+        const int length = block.length() - 1;
+        if (length <= 0) continue;
+        QList<bool> covered(length, false);
+        for (const auto &range : block.layout()->formats()) {
+            const auto brush = range.format.foreground();
+            if (brush.style() == Qt::NoBrush || brush.color() != disabled) continue;
+            for (int at = std::max(range.start, 0); at < std::min(range.start + range.length, length); ++at)
+                covered[at] = true;
+        }
+        if (!covered.contains(false)) lines.insert(block.blockNumber() + 1, QStringLiteral("ignored"));
+    }
+    return lines;
+}
 
 PaneMarks paintedMarks(Fixture &fixture, const std::string &pane)
 {
@@ -504,6 +530,7 @@ PaneMarks paintedMarks(Fixture &fixture, const std::string &pane)
         if (child->isVisible() && !text.isEmpty() && !number)
             found.letters.insert(qmlValue(child, QStringLiteral("modelData.number")).toInt(), text);
     }
+    found.tinted = tintedLines(fixture.item((pane + "Text").c_str()));
     return found;
 }
 
@@ -515,7 +542,8 @@ std::string describeMarks(const PaneMarks &marks)
             shown += " " + std::to_string(it.key()) + "=" + it.value().toStdString();
         return shown;
     };
-    return "backgrounds" + list(marks.backgrounds) + "; glyphs" + list(marks.glyphs) + "; letters" + list(marks.letters);
+    return "backgrounds" + list(marks.backgrounds) + "; glyphs" + list(marks.glyphs) + "; letters" + list(marks.letters)
+        + "; tinted" + list(marks.tinted);
 }
 
 void expectMarks(Fixture &fixture, const std::string &when, const std::string &pane, const PaneMarks &expected)
@@ -531,15 +559,19 @@ void expectMarks(Fixture &fixture, const std::string &when, const std::string &p
 }
 
 // The marks of a pane whose regions on lines 2, 4 and 6 have the given kinds;
-// the backgrounds and glyphs agree, and the other lines carry no mark.
+// each gets a glyph of its kind, and a background of its kind unless it is
+// ignored, whose text is tinted instead. The other lines carry no mark.
 PaneMarks regionMarks(const QString &second, const QString &fourth, const QString &sixth,
     const QMap<int, QString> &letters = {})
 {
-    QMap<int, QString> lines;
+    PaneMarks marks;
+    marks.letters = letters;
     for (const auto &[line, kind] : {std::pair{2, second}, std::pair{4, fourth}, std::pair{6, sixth}}) {
-        if (!kind.isEmpty()) lines.insert(line, kind);
+        if (kind.isEmpty()) continue;
+        marks.glyphs.insert(line, kind);
+        (kind == "ignored" ? marks.tinted : marks.backgrounds).insert(line, kind);
     }
-    return {lines, lines, letters};
+    return marks;
 }
 
 // A connector band as its handle draws it: its kind, the source and result
@@ -1305,7 +1337,17 @@ public:
             CHECK(fixture.controller.editResult("choices", revision(), at, at + 4, "LEFT"));
             expect("stage2", {"changed"});
             expect("result", {"manual", "removed"});
-            expect("stage3", {"changed", "ignored"});
+            // TRUCE-0190: the right's extra line is ignored. Its glyph stays, its text
+            // takes the disabled colour, and it gets no background fill.
+            expect("stage3", {"changed"});
+            const auto ignoredTinted = [&] {
+                const auto stage3 = paintedMarks(fixture, "stage3");
+                const auto ignored = stage3.glyphs.keys(QStringLiteral("ignored"));
+                return !ignored.isEmpty() && stage3.tinted.keys() == ignored
+                    && std::none_of(ignored.begin(), ignored.end(), [&](int line) { return stage3.backgrounds.contains(line); });
+            };
+            settleFor("stage3 ignored tint", ignoredTinted);
+            CHECK(ignoredTinted());
         });
         {
             // The batch fixture has a left and a right region on lines 2, 4 and 6, and
@@ -1344,6 +1386,8 @@ public:
                     regionMarks("ignored", "conflict", "conflict")},
             }};
             for (const auto &choice : choices) {
+                // regionMarks gives an ignored line a tinted text and no background
+                // (TRUCE-0190), so undo also checks that the tint goes.
                 suite.run("TRUCE-0174 a scoped " + choice.action.toStdString()
                     + " repaints all three panes and the provenance letters, and undo restores them", [choice, launchLetters] {
                     Fixture fixture;

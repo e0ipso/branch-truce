@@ -131,7 +131,7 @@ void WordDifferenceDecorations::compute(const QString &fileId)
     }
 }
 
-QList<QTextLayout::FormatRange> WordDifferenceDecorations::formats(const Pane &pane, const PaneRanges &ranges) const
+QList<QTextLayout::FormatRange> WordDifferenceDecorations::formats(const Pane &pane, const PaneRanges *ranges) const
 {
     const auto values = style(*pane.editor);
     const auto lines = values.value(QStringLiteral("lines")).toMap();
@@ -151,8 +151,8 @@ QList<QTextLayout::FormatRange> WordDifferenceDecorations::formats(const Pane &p
         return byRole.emplace(role, made).first->second;
     };
     QList<QTextLayout::FormatRange> result;
-    result.reserve(ranges.ranges.size());
-    for (const auto &[start, length] : ranges.ranges) {
+    const PaneRanges none;
+    for (const auto &[start, length] : (ranges ? *ranges : none).ranges) {
         const auto block = pane.document->findBlock(start);
         const auto kind = lines.value(QString::number(block.blockNumber() + 1)).toString();
         // The same role the line background takes for its kind.
@@ -166,6 +166,22 @@ QList<QTextLayout::FormatRange> WordDifferenceDecorations::formats(const Pane &p
         range.length = length;
         range.format = format(role);
         result.push_back(range);
+    }
+    // An ignored side has no background fill; its text takes the disabled colour.
+    if (const auto disabled = values.value(QStringLiteral("disabled")).value<QColor>(); disabled.isValid()) {
+        QTextCharFormat tint;
+        tint.setForeground(disabled);
+        for (auto it = lines.cbegin(); it != lines.cend(); ++it) {
+            bool number = false;
+            const auto block = pane.document->findBlockByNumber(it.key().toInt(&number) - 1);
+            if (!number || it.value().toString() != QLatin1String("ignored") || !block.isValid() || block.length() <= 1)
+                continue;
+            QTextLayout::FormatRange range;
+            range.start = block.position();
+            range.length = block.length() - 1;
+            range.format = tint;
+            result.push_back(range);
+        }
     }
     return result;
 }
@@ -194,7 +210,7 @@ void WordDifferenceDecorations::refresh()
             pane.dirty = false;
             pane.checkedFor = checkedFor;
         }
-        highlighter->setDecorations(pane.matches ? formats(pane, found->second) : QList<QTextLayout::FormatRange>{});
+        highlighter->setDecorations(formats(pane, pane.matches ? &found->second : nullptr));
     }
 }
 }

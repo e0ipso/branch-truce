@@ -46,17 +46,15 @@ Item {
             readonly property string part: "line"
             readonly property int line: modelData.number
             readonly property string kind: backgrounds.gutter.marks.lines[line] || ""
-            visible: kind.length > 0
+            // An ignored side gets no fill: its pane draws the text in disabledTextColor.
+            visible: kind.length > 0 && kind !== "ignored"
             y: modelData.top
             width: backgrounds.width
             height: modelData.extent
-            // An ignored side keeps its text readable under a faint tint.
             color: kind === "added" || kind === "accepted" ? Kirigami.Theme.positiveBackgroundColor
                 : kind === "changed" ? Kirigami.Theme.activeBackgroundColor
                 : kind === "conflict" || kind === "markers" ? Kirigami.Theme.negativeBackgroundColor
-                : kind === "ignored" ? Kirigami.Theme.disabledTextColor
                 : Kirigami.Theme.neutralBackgroundColor
-            opacity: kind === "ignored" ? 0.15 : 1
         }
     }
     // A rule where folded marker lines are, so the sides of a block stay apart.

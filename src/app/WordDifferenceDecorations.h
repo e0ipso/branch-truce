@@ -19,15 +19,17 @@ struct FileSnapshots;
 // Draws the word-level differences of the selected file's current revision
 // (fileWordDifferences) in each attached pane, through the pane document's
 // PaneHighlighter. A range gets the line's theme role as a translucent
-// background and an underline, so the cue survives without colour. It only
-// decorates: no text, decision or revision changes.
+// background and an underline, so the cue survives without colour. The text
+// of every line marked ignored takes the disabled colour, since an ignored
+// side has no background fill. It only decorates: no text, decision or
+// revision changes.
 //
 // Each pane editor declares wordDifferenceStyle, an object with:
 //   pane      "stage2", "stage3", "earlier" or "result"
 //   lines     the line kinds its backgrounds draw, keyed by 1-based line
 //   positive, active, negative, neutral, disabled
 //             the Kirigami.Theme text colours of those roles
-// A pane draws ranges only while its text is exactly the text they were
+// A pane draws word ranges only while its text is exactly the text they were
 // computed for; otherwise it shows none.
 class WordDifferenceDecorations final : public QObject {
     Q_OBJECT
@@ -60,7 +62,8 @@ private:
         QList<std::pair<int, int>> ranges;
     };
     void compute(const QString &fileId);
-    [[nodiscard]] QList<QTextLayout::FormatRange> formats(const Pane &pane, const PaneRanges &ranges) const;
+    // ranges is null when the pane shows no word ranges.
+    [[nodiscard]] QList<QTextLayout::FormatRange> formats(const Pane &pane, const PaneRanges *ranges) const;
 
     SessionModel &files_;
     std::function<QString()> selectedFileId_;
