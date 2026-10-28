@@ -34,6 +34,7 @@ qt_add_qml_module(branch_truce_ui STATIC
         PlainInlineMessage.qml
         PlainPlaceholderMessage.qml
         CenteredPlaceholder.qml
+        DiscardStagedDialog.qml
     SOURCES TextBlocks.cpp TextBlocks.h)
 # Bytecode only: QML compiled to C++ calls Qt's private API
 # (QQmlPrivate::AOTCompiledContext), which pins packages to one exact Qt

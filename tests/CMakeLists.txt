@@ -123,9 +123,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_libraries(branch_truce_journey_acceptance_tests PRIVATE branch_truce_controller branch_truce_uiplugin
         Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
     # The executable takes "review", "handoff" or "window"; with no argument it runs every journey.
-    # "review" is the six journeys on the three panes, choices, editing, search and Save. "handoff" is the five
-    # on the handoff, startup recovery and mergetool. "window" is the five on window fit, first undecided region,
-    # hand edits, line choices inside one conflict and the close guard. Each timeout is at least twice the slowest
+    # "review" is the six journeys on the three panes, choices, editing, search and Save. "handoff" is the six
+    # on the handoff, discarding back to the staged result, startup recovery and mergetool. "window" is the five
+    # on window fit, first undecided region, hand edits, line choices inside one conflict and the close guard. Each timeout is at least twice the slowest
     # of four runs on the development host, one of them with the three groups running together: review 23.5 to
     # 26.6 s (36.5 s together), handoff 21.9 to 23.1 s (39.2 s), window 15.5 to 15.9 s (26.8 s). Those window runs
     # predate the line-choice journey; with it, two runs alone under load from other builds took 18.4 and 18.7 s.

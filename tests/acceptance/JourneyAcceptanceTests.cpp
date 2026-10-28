@@ -12,6 +12,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
+#include <QDialogButtonBox>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
@@ -354,16 +355,23 @@ void clickChoice(Scene &scene, const QString &label, const char *kind)
     test_support::clickItem(scene.window, target);
 }
 
-// Click a dialog button by objectName, or a standard button such as OK, Cancel or Apply by
-// its accessible name. The whole dialog is searched, so a Kirigami.Dialog footer works too.
-void clickDialogButton(Scene &scene, const char *dialog, const QString &button)
+// A dialog button by objectName, or a standard button such as OK, Cancel or Apply by its
+// accessible name, once the dialog is open. The whole dialog is searched, so a Kirigami.Dialog
+// footer works too.
+QQuickItem *dialogButton(Scene &scene, const char *dialog, const QString &button)
 {
     auto *popup = scene.object(dialog);
     settleFor(std::string(dialog) + " opened", [&] { return popup->property("opened").toBool(); });
     auto *root = test_support::popupRoot(popup);
-    auto *target = stable(scene, std::string(dialog) + " " + button.toStdString(),
-                          [&] { return test_support::namedButton(root, button); });
-    test_support::clickItem(scene.window, target);
+    return stable(scene, std::string(dialog) + " " + button.toStdString(),
+                  [&] { return test_support::namedButton(root, button); });
+}
+
+// Click a dialog button and wait for the dialog to close.
+void clickDialogButton(Scene &scene, const char *dialog, const QString &button)
+{
+    test_support::clickItem(scene.window, dialogButton(scene, dialog, button));
+    auto *popup = scene.object(dialog);
     settleFor(std::string(dialog) + " closed", [&] { return !popup->property("visible").toBool(); });
 }
 
@@ -445,8 +453,8 @@ void expectMarkersFolded(Scene &scene, bool folded)
     settleFor(folded ? "folded conflict markers" : "shown conflict markers", look);
 }
 
-// Opens the file toolbar's overflow menu and clicks its Show conflict markers entry.
-void toggleConflictMarkers(Scene &scene)
+// Opens the file toolbar's overflow menu and clicks the entry of the action with this objectName.
+void clickOverflowAction(Scene &scene, const char *name)
 {
     auto *toolbar = scene.item("fileToolBar");
     test_support::clickItem(scene.window, test_support::waitForStable(scene.window, "file toolbar overflow", [&] {
@@ -454,12 +462,18 @@ void toggleConflictMarkers(Scene &scene)
             return test_support::accessibleName(button) == QStringLiteral("More Actions");
         });
     }, Scene::settleMs));
-    auto *action = scene.object("showConflictMarkers");
-    test_support::clickItem(scene.window, test_support::waitForStable(scene.window, "Show conflict markers entry", [&] {
+    auto *action = scene.object(name);
+    test_support::clickItem(scene.window, test_support::waitForStable(scene.window, std::string(name) + " entry", [&] {
         return test_support::visualButton(scene.window->contentItem(), [&](QQuickItem *entry) {
             return entry->property("action").value<QObject *>() == action;
         });
     }, Scene::settleMs));
+}
+
+// Opens the file toolbar's overflow menu and clicks its Show conflict markers entry.
+void toggleConflictMarkers(Scene &scene)
+{
+    clickOverflowAction(scene, "showConflictMarkers");
     // A click on the overflow button while the menu is still closing closes it again.
     settleFor("overflow menu closed", [&] {
         return !descendant(scene.window->contentItem(), [](QQuickItem *item) {
@@ -1458,6 +1472,88 @@ public:
             CHECK(repo.unmerged("done.txt").isEmpty() && repo.unmerged("newer.txt").isEmpty());
             // The summary speaks only for this session.
             expectContains(scene.controller->workflow(), "only the work opened at launch", "session scope");
+            checkOffline(scene);
+        });
+        handoff.run("TRUCE-0201 a newer draft goes back to the staged result from the file toolbar and the handoff", [] {
+            Repository repo("merge", {{"newer.txt", QByteArray("newer base\n"), QByteArray("newer left\n"),
+                                       QByteArray("newer right\n"), QByteArray("newer chosen by hand\n")}});
+            Scene scene(repo);
+            const auto id = fileId("newer.txt");
+            clickFile(scene, "newer.txt");
+            markResolvedByMouse(scene);
+            CHECK(scene.progress().value("resolved").toBool());
+            const auto staged = scene.text("resultText");
+            const auto published = repo.snapshot();
+            CHECK(repo.unmerged("newer.txt").isEmpty());
+            auto *prompt = scene.object("discardStagedDialog");
+            auto *handoff = scene.object("handoffDialog");
+            const auto newerDraft = [&] {
+                appendToResult(scene, "again");
+                settleFor("newer draft", [&] { return scene.progress().value("earlierResolved").toBool(); });
+                CHECK(scene.text("resultText").endsWith(QStringLiteral("again")));
+            };
+            newerDraft();
+            const auto draft = scene.text("resultText");
+
+            // The overflow entry asks first. The prompt names the file, says the draft is lost and
+            // confirms with the destructive Discard button, labelled with what it does.
+            clickOverflowAction(scene, "discardToStaged");
+            settleFor("discard prompt opened", [&] { return prompt->property("opened").toBool(); });
+            expectContains(prompt->property("subtitle").toString(), "The draft of newer.txt is lost", "discard prompt");
+            CHECK(prompt->property("standardButtons").toInt() & QDialogButtonBox::Discard);
+            expectText(dialogButton(scene, "discardStagedDialog", "confirmDiscardStaged")->property("text").toString(),
+                       "Discard draft", "destructive button");
+            CHECK(!scene.item("discardStagedError")->isVisible());
+            // Cancelling changes nothing.
+            clickDialogButton(scene, "discardStagedDialog", "Cancel");
+            expectText(scene.text("resultText"), draft, "draft after cancel");
+            CHECK(scene.progress().value("earlierResolved").toBool() && !scene.progress().value("resolved").toBool());
+            CHECK(repo.snapshot() == published);
+
+            // The handoff entry that says to discard back to the staged result offers it.
+            scene.click("openHandoff");
+            settleFor("handoff opened", [&] { return handoff->property("opened").toBool(); });
+            auto entry = handoffEntries(scene).value(id);
+            expectText(entry.value("category").toString(), "newer-draft", "handoff category");
+            expectText(entry.value("actionLabel").toString(), "Mark resolved or discard back to the staged result", "route");
+            const auto discardName = ("handoffDiscardStaged-" + id).toLatin1();
+            expectText(scene.text(discardName.constData()), "Discard draft and use staged result", "handoff discard");
+            scene.click(discardName.constData());
+            settleFor("handoff closed for discard", [&] { return !handoff->property("visible").toBool(); });
+            clickDialogButton(scene, "discardStagedDialog", "confirmDiscardStaged");
+            settleFor("staged result restored", [&] { return scene.progress().value("resolved").toBool(); });
+            expectText(scene.text("resultText"), staged, "staged result");
+            CHECK(!scene.progress().value("earlierResolved").toBool());
+            expectText(scene.controller->commandMessage(),
+                       "Discarded the draft. The result staged in Git is current again; the repository file is unchanged.",
+                       "discard message");
+            expectText(handoffEntries(scene).value(id).value("category").toString(), "published", "handoff after discard");
+            CHECK(scene.controller->handoff().value("clean").toBool());
+            CHECK(repo.snapshot() == published);
+
+            // A discard the recovery journal cannot record keeps the draft and shows an error.
+            newerDraft();
+            {
+                QLockFile busy(scene.controller->files()->recoveryDirectory() + QStringLiteral("/journal.lock"));
+                CHECK(busy.tryLock(0));
+                clickOverflowAction(scene, "discardToStaged");
+                test_support::clickItem(scene.window, dialogButton(scene, "discardStagedDialog", "confirmDiscardStaged"));
+                settleFor("discard failure shown", [&] { return scene.item("discardStagedError")->isVisible(); });
+                CHECK(prompt->property("opened").toBool());
+                expectText(scene.item("discardStagedError")->property("text").toString(),
+                           "Discard was not completed. The draft is kept until retry finishes the discard.", "discard error");
+                CHECK(scene.item("discardStagedError")->property("type").toInt() == 3); // Kirigami.MessageType.Error
+                CHECK(scene.controller->files()->hasPendingRecovery());
+                expectText(QString::fromStdString(scene.file("newer.txt").current().draft.text), draft, "kept draft");
+                clickDialogButton(scene, "discardStagedDialog", "Cancel");
+                CHECK(scene.item("recoveryProblem")->isVisible());
+            }
+            // Retry finishes that same discard.
+            scene.click("retryRecovery");
+            settleFor("retried discard", [&] { return !scene.controller->files()->hasPendingRecovery(); });
+            settleFor("staged result after retry", [&] { return scene.progress().value("resolved").toBool(); });
+            expectText(QString::fromStdString(scene.file("newer.txt").current().draft.text), staged, "staged after retry");
+            CHECK(repo.snapshot() == published);
             checkOffline(scene);
         });
         handoff.run("PRD.md:149 offline startup without an account resumes saved and unsaved drafts after closing", [] {

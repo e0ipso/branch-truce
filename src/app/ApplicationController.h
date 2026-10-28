@@ -132,6 +132,8 @@ public:
     Q_INVOKABLE bool recheckParentAcknowledgment();
     // Discard restores the manual checkpoint, or the initial result, only after that decision is durable.
     Q_INVOKABLE bool discardUnsaved(const QString &fileId, const QString &revision);
+    // Drops a draft newer than the result staged in Git and makes that staged result current again.
+    Q_INVOKABLE bool discardToStaged(const QString &fileId, const QString &revision);
     Q_INVOKABLE void attachResultEditor(QObject *editor);
     // Highlights a read-only source pane with the selected file's syntax.
     Q_INVOKABLE void attachSourceEditor(QObject *editor);
@@ -192,6 +194,7 @@ Q_SIGNALS:
 private:
     bool commandReady(const QString &fileId, const QString &revision, RevisionId *expected) const;
     [[nodiscard]] QString discardedMessage(const FileSession *current) const;
+    [[nodiscard]] static QString stagedDiscardMessage();
     // Escaped display text for exact path bytes; see displayPath.
     [[nodiscard]] QString displayBytes(const std::string &path) const;
     void classified(const git::ConflictClassificationResult &result);
@@ -229,6 +232,7 @@ private:
     QString commandMessage_;
     QVariantMap markerBlocker_;
     bool discardPending_ = false;
+    bool stagedDiscardPending_ = false;
     bool fileListVisible_ = true;
     bool selectingFromNavigation_ = false;
     QVariantMap navigationTarget_;

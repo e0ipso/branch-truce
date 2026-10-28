@@ -168,7 +168,16 @@ Kirigami.ApplicationWindow {
             controller: window.controller
             iconName: window.handoffIcon(handoffRow.modelData.category)
             onRouted: handoffDialog.close()
+            onDiscardStagedRequested: {
+                handoffDialog.close();
+                discardStagedDialog.ask(window.controller.selectedFileId, window.selectedFile.currentRevision);
+            }
         }
+    }
+    DiscardStagedDialog {
+        id: discardStagedDialog
+        controller: window.controller
+        onPlainTextRequested: item => window.showPlainText(item)
     }
     WholeFileDialog {
         id: wholeFileDialog
@@ -443,6 +452,8 @@ Kirigami.ApplicationWindow {
                             composing: comparison.inputMethodComposing
                             onNonConflictingChosen: scope => window.chooseNonConflicting(scope)
                             onWholeFileChosen: side => window.chooseWholeFile(side)
+                            onDiscardToStagedChosen: discardStagedDialog.ask(window.controller.selectedFileId,
+                                window.selectedFile.currentRevision)
                         }
                         ComparisonView {
                             id: comparison

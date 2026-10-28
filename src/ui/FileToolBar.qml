@@ -18,6 +18,7 @@ RowLayout {
     property alias showMarkers: markersToggle.checked
     signal nonConflictingChosen(scope: string)
     signal wholeFileChosen(side: string)
+    signal discardToStagedChosen()
     Layout.fillWidth: true
     Kirigami.ActionToolBar {
         objectName: "fileToolBar"
@@ -46,6 +47,18 @@ RowLayout {
                 icon.name: "document-revert"
                 enabled: !!fileToolBar.selectedFile.canEdit && !!fileToolBar.selectedFile.unsaved && !fileToolBar.composing
                 onTriggered: fileToolBar.controller.discardUnsaved(fileToolBar.controller.selectedFileId, fileToolBar.selectedFile.currentRevision)
+            },
+            // Only while the draft is newer than the result staged in Git. It asks before the
+            // draft is lost, so it stays in the overflow menu and the action carries the name.
+            Kirigami.Action {
+                objectName: "discardToStaged"
+                text: qsTr("Discard draft and use staged result")
+                tooltip: qsTr("Drop the newer draft and make the result staged in Git current again")
+                icon.name: "document-revert"
+                displayHint: Kirigami.DisplayHint.AlwaysHide
+                visible: !!fileToolBar.selectedFile.progress && !!fileToolBar.selectedFile.progress.earlierResolved
+                enabled: !!fileToolBar.selectedFile.canEdit && !fileToolBar.composing && !fileToolBar.controller.resolutionBusy
+                onTriggered: fileToolBar.discardToStagedChosen()
             },
             NamedAction {
                 controlName: "undoCommand"

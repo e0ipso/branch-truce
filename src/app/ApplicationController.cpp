@@ -372,6 +372,11 @@ ApplicationController::ApplicationController(QObject *parent)
             commandMessage_ = discardedMessage(files_.file(selectedFileId_.toStdString()));
             Q_EMIT commandChanged();
         }
+        if (stagedDiscardPending_ && !files_.hasPendingRecovery()) {
+            stagedDiscardPending_ = false;
+            commandMessage_ = stagedDiscardMessage();
+            Q_EMIT commandChanged();
+        }
         Q_EMIT inventoryChanged();
         Q_EMIT selectedFileChanged();
     });
@@ -1153,6 +1158,39 @@ bool ApplicationController::discardUnsaved(const QString &fileId, const QString 
     discardPending_ = false;
     if (result != Transition::Applied) return commandResult(result);
     commandMessage_ = discardedMessage(files_.file(fileId.toStdString()));
+    Q_EMIT commandChanged();
+    return true;
+}
+
+QString ApplicationController::stagedDiscardMessage()
+{
+    return tr("Discarded the draft. The result staged in Git is current again; the repository file is unchanged.");
+}
+
+bool ApplicationController::discardToStaged(const QString &fileId, const QString &revision)
+{
+    RevisionId expected = 0;
+    const auto *file = files_.file(fileId.toStdString());
+    if (!file || !revisionId(revision) || fileId != selectedFileId_ || file->current().id != *revisionId(revision))
+        return commandResult(Transition::StaleRevision);
+    if (!commandReady(fileId, revision, &expected)) return commandResult(Transition::Blocked);
+    // Applied means the staged revision is current again and the journal holds it.
+    const auto result = files_.discardToStaged(fileId.toStdString(), expected);
+    if (result == Transition::Blocked && files_.hasPendingRecovery()) {
+        // The acknowledged draft stays current until retry commits this same discard.
+        stagedDiscardPending_ = true;
+        commandMessage_ = tr("Discard was not completed. The draft is kept until retry finishes the discard.");
+        Q_EMIT commandChanged();
+        return false;
+    }
+    stagedDiscardPending_ = false;
+    if (result == Transition::Blocked) {
+        commandMessage_ = tr("Discard was not completed. No verified result staged in Git to return to, so the draft is kept.");
+        Q_EMIT commandChanged();
+        return false;
+    }
+    if (result != Transition::Applied) return commandResult(result);
+    commandMessage_ = stagedDiscardMessage();
     Q_EMIT commandChanged();
     return true;
 }

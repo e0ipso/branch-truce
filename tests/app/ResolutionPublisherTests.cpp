@@ -811,5 +811,65 @@ int main(int argc, char **argv)
         CHECK(unmerged(session.repo).contains("tracked.txt"));
         expectUnchanged(session.repo, before);
     });
+    suite.run("TRUCE-0201 discard to staged restores the staged result behind the stale and blocked checks", [] {
+        Session session;
+        CHECK(session.controller.markResolved(session.id, session.revision(), true));
+        waitFor(session.controller, [&] { return openedFile(session.controller).facts().resolved; });
+        const auto stagedText = openedFile(session.controller).current().draft.text;
+        const auto stagedRevision = session.revision();
+        const auto before = session.repo.snapshot();
+        // With no newer draft there is nothing to discard.
+        CHECK(session.controller.discardToStaged(session.id, stagedRevision));
+        CHECK(session.controller.commandMessage() == QStringLiteral("No change."));
+        auto edited = openedFile(session.controller).current().draft;
+        edited.text += "later edit\n";
+        CHECK(session.controller.files()->replaceDraft(session.id.toStdString(),
+            openedFile(session.controller).current().id, edited) == Transition::Applied);
+        const auto draftRevision = session.revision();
+        CHECK(openedFile(session.controller).facts().status == FileStatus::EarlierStaged);
+        CHECK(session.controller.selectedFile().value("progress").toMap().value("earlierResolved").toBool());
+
+        // A stale revision is refused like every other command and keeps the draft.
+        CHECK(!session.controller.discardToStaged(session.id, stagedRevision));
+        CHECK(session.controller.commandMessage().contains(QStringLiteral("changed")));
+        CHECK(openedFile(session.controller).current().draft.text == edited.text);
+
+        // A journal failure keeps the acknowledged draft, and the pending discard blocks other commands.
+        {
+            recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+            CHECK(!session.controller.discardToStaged(session.id, draftRevision));
+            CHECK(recovery_faults::failures == 1);
+        }
+        CHECK(session.controller.files()->hasPendingRecovery());
+        CHECK(session.controller.commandMessage()
+            == QStringLiteral("Discard was not completed. The draft is kept until retry finishes the discard."));
+        CHECK(openedFile(session.controller).current().draft.text == edited.text);
+        CHECK(session.revision() == draftRevision);
+        CHECK(!session.controller.discardToStaged(session.id, draftRevision));
+        CHECK(session.controller.commandMessage().contains(QStringLiteral("Command not completed")));
+        CHECK(!session.controller.saveDraft(session.id, draftRevision));
+        CHECK(openedFile(session.controller).current().draft.text == edited.text);
+
+        // Retry commits the same discard: the staged revision is current and resolved again.
+        CHECK(session.controller.files()->retryPendingRecovery(session.id));
+        CHECK(!session.controller.files()->hasPendingRecovery());
+        CHECK(session.controller.commandMessage() == QStringLiteral(
+            "Discarded the draft. The result staged in Git is current again; the repository file is unchanged."));
+        CHECK(session.revision() == stagedRevision);
+        CHECK(openedFile(session.controller).current().draft.text == stagedText);
+        CHECK(openedFile(session.controller).facts().resolved);
+        CHECK(!openedFile(session.controller).facts().earlierStaged);
+        CHECK(session.controller.selectedFile().value("status").toString() == "Written and resolved");
+        CHECK(handoffEntry(session.controller.handoff(), session.id).value("category").toString() == "published");
+        expectUnchanged(session.repo, before);
+    });
+    suite.run("TRUCE-0201 discard to staged without a staged result refuses and keeps the draft", [] {
+        Session unstaged;
+        const auto text = openedFile(unstaged.controller).current().draft.text;
+        CHECK(!unstaged.controller.discardToStaged(unstaged.id, unstaged.revision()));
+        CHECK(unstaged.controller.commandMessage() == QStringLiteral(
+            "Discard was not completed. No verified result staged in Git to return to, so the draft is kept."));
+        CHECK(openedFile(unstaged.controller).current().draft.text == text);
+    });
     return suite.report();
 }
