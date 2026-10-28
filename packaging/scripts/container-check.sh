@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tests, builds and checks the branch-truce KDE DEB packages in throwaway
 # containers, so the host's packages are never touched. CI and the release
-# workflow run it.
+# workflow run it. Every stage runs even after an earlier one failed; a summary of
+# the stages follows, and the script exits non-zero when any stage failed or was skipped.
 #
 #   container-check.sh --version <version> --output <dir>
 #                      [--format kubuntu-deb|tuxedo-deb|all]
@@ -81,27 +82,41 @@ if [ "$test_uid" -eq 0 ]; then
     test_gid=65534
 fi
 
-for format in $formats; do
-    if [ "$format" = kubuntu-deb ]; then
-        dockerfile="$packaging_dir/ci/kubuntu.Dockerfile"
-        suffix=-ubuntu26.04
-    else
-        dockerfile="$packaging_dir/ci/tuxedo.Dockerfile"
-        suffix=-tuxedo24.04
-    fi
-    new="/out/branch-truce_${native_version}_amd64${suffix}.deb"
-    old="/out/previous/${previous_name:-branch-truce_${native_previous}_amd64${suffix}.deb}"
+summary=()
+failures=0
 
+# Runs one stage of a format, so a failure never hides the stages after it. The stage's
+# output stays as it was; its result goes to the summary printed at the end.
+run_stage() {
+    local format="$1" stage="$2" status=0
+    shift 2
+    "$@" || status=$?
+    if [ "$status" -eq 0 ]; then
+        summary+=("$format $stage: ok")
+    else
+        summary+=("$format $stage: FAILED (exit $status)")
+        failures=$((failures + 1))
+    fi
+    return "$status"
+}
+
+skip_stage() {
+    summary+=("$1 $2: skipped ($3)")
+    failures=$((failures + 1))
+}
+
+images_ready() {
+    local stage
+    for stage in target build test; do
+        [ "$("$engine" image inspect --format "{{ index .Config.Labels \"$inputs_label\" }}" \
+            "$image:$format-$stage" 2>/dev/null)" = "$inputs" ] || return 1
+    done
+}
+
+stage_images() {
     echo "== $format: images from $(basename "$dockerfile")"
-    images_started=$SECONDS
-    inputs="$("$packaging_dir/ci/image-id.sh" --format "$format")"
-    images_ready() {
-        local stage
-        for stage in target build test; do
-            [ "$("$engine" image inspect --format "{{ index .Config.Labels \"$inputs_label\" }}" \
-                "$image:$format-$stage" 2>/dev/null)" = "$inputs" ] || return 1
-        done
-    }
+    local images_started=$SECONDS stage archive
+    inputs="$("$packaging_dir/ci/image-id.sh" --format "$format")" || return 1
     archive="${image_cache:+$image_cache/$format-$inputs.tar}"
     if images_ready; then
         echo "image hit: $image:$format-{target,build,test} already have inputs $inputs"
@@ -112,18 +127,20 @@ for format in $formats; do
         for stage in target build test; do
             "$engine" build -q -f "$dockerfile" --target "$stage" -t "$image:$format-$stage" \
                 --label "$inputs_label=$inputs" \
-                --build-arg "BRANCH_TRUCE_KDE_CI_REFRESH=${BRANCH_TRUCE_KDE_CI_REFRESH:-}" "$packaging_dir"
+                --build-arg "BRANCH_TRUCE_KDE_CI_REFRESH=${BRANCH_TRUCE_KDE_CI_REFRESH:-}" "$packaging_dir" || return 1
         done
         if [ -n "$archive" ]; then
-            mkdir -p "$image_cache"
-            "$engine" save -o "$archive.partial" "$image:$format-target" "$image:$format-build" "$image:$format-test"
-            mv "$archive.partial" "$archive"
+            mkdir -p "$image_cache" || return 1
+            "$engine" save -o "$archive.partial" "$image:$format-target" "$image:$format-build" "$image:$format-test" || return 1
+            mv "$archive.partial" "$archive" || return 1
             echo "saved the images to $archive"
         fi
     fi
     echo "== $format: images ready in $((SECONDS - images_started))s"
     "$engine" run --rm "$image:$format-build" cat /opt/branch-truce/baseline.txt
+}
 
+stage_test() {
     echo "== $format: build, qmllint and run CTest for $version"
     # shellcheck disable=SC2016
     "$engine" run --rm \
@@ -144,7 +161,10 @@ for format in $formats; do
             cmake --build "$work/build" --target branch_truce_ui_qmllint
             ctest --test-dir "$work/build" --output-on-failure
         ' bash "$version"
+}
 
+stage_package() {
+    local build_previous
     if [ -n "$previous_package" ]; then
         echo "== $format: previous package $previous_name, given; package $version"
         build_previous=""
@@ -163,7 +183,9 @@ for format in $formats; do
             /src/packaging/scripts/package-release.sh --version "$3" --format "$1" --output /out
             chown -R "$4" /out
         ' bash "$format" "$build_previous" "$version" "$host_uid:$host_gid"
+}
 
+stage_check() {
     echo "== $format: install, smoke-load, upgrade and remove in a clean target"
     # shellcheck disable=SC2016
     "$engine" run --rm \
@@ -172,4 +194,34 @@ for format in $formats; do
             /src/packaging/scripts/prepare-target.sh --format "$2" --refresh
             /src/packaging/scripts/check-package.sh --version "$1" --package '"$new"' --previous '"$old"'
         ' bash "$version" "$format"
+}
+
+for format in $formats; do
+    if [ "$format" = kubuntu-deb ]; then
+        dockerfile="$packaging_dir/ci/kubuntu.Dockerfile"
+        suffix=-ubuntu26.04
+    else
+        dockerfile="$packaging_dir/ci/tuxedo.Dockerfile"
+        suffix=-tuxedo24.04
+    fi
+    new="/out/branch-truce_${native_version}_amd64${suffix}.deb"
+    old="/out/previous/${previous_name:-branch-truce_${native_previous}_amd64${suffix}.deb}"
+
+    if run_stage "$format" images stage_images; then
+        run_stage "$format" test stage_test || true
+        # The check installs the packages this run built, so it needs the package stage to have worked.
+        if run_stage "$format" package stage_package; then
+            run_stage "$format" check stage_check || true
+        else
+            skip_stage "$format" check "no package was built"
+        fi
+    else
+        for stage in test package check; do
+            skip_stage "$format" "$stage" "no images"
+        done
+    fi
 done
+
+echo "== summary"
+printf '%s\n' "${summary[@]}"
+[ "$failures" -eq 0 ] || exit 1
