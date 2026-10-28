@@ -1,7 +1,6 @@
 #include "ApplicationController.h"
 #include "RecoveryRestore.h"
 #include "core/Correspondence.h"
-#include "core/ResourceLimits.h"
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFileInfo>
@@ -9,20 +8,8 @@
 #include "core/BuildInfo.h"
 #include <QStandardPaths>
 #include <QUuid>
-#include <QQuickTextDocument>
-#include <QQuickItem>
-#include <QQuickWindow>
-#include <QTextDocument>
-#include <QTextOption>
-#include <QKeyEvent>
-#include <QKeySequence>
-#include <QMouseEvent>
-#include <QCoreApplication>
-#include <QGuiApplication>
-#include <QClipboard>
 #include <QScopedValueRollback>
 #include <algorithm>
-#include <exception>
 #include <limits>
 #include <set>
 #include <string_view>
@@ -62,115 +49,6 @@ bool scalarBoundary(const QString &value, int offset)
     return offset >= 0 && offset <= value.size()
         && !(offset > 0 && offset < value.size() && value.at(offset).isLowSurrogate()
              && value.at(offset - 1).isHighSurrogate());
-}
-
-// A TextArea attached with TextArea.flickable sits in the Flickable's contentItem,
-// so the scrolling item is an ancestor rather than the direct parent.
-QQuickItem *scrollViewport(QObject *editor)
-{
-    auto *item = qobject_cast<QQuickItem *>(editor);
-    for (auto *parent = item ? item->parentItem() : nullptr; parent; parent = parent->parentItem())
-        if (parent->property("contentX").isValid() && parent->property("contentY").isValid()) return parent;
-    return nullptr;
-}
-
-QString documentText(const QTextDocument &document)
-{
-    return document.toRawText().replace(QChar(0x2029), QLatin1Char('\n'));
-}
-
-QString envelopeRejection(std::string_view bytes)
-{
-    const auto assessment = assessText(bytes);
-    if (assessment.limit == TextLimit::Within) return {};
-    return QString::fromStdString(textLimitDiagnostic(assessment))
-        + QStringLiteral(". The existing edit was kept and this change was not acknowledged.");
-}
-
-QString envelopeRejection(const QString &text)
-{
-    const auto bytes = text.toUtf8();
-    return envelopeRejection(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
-}
-
-// The one range in which two texts differ, widened to whole surrogate pairs.
-struct TextChange {
-    qsizetype begin = 0;
-    qsizetype oldEnd = 0;
-    qsizetype newEnd = 0;
-};
-
-TextChange changedRange(const QString &old, const QString &next)
-{
-    TextChange change;
-    while (change.begin < old.size() && change.begin < next.size() && old.at(change.begin) == next.at(change.begin))
-        ++change.begin;
-    if (change.begin > 0 && change.begin < old.size() && old.at(change.begin).isLowSurrogate()) --change.begin;
-    change.oldEnd = old.size();
-    change.newEnd = next.size();
-    while (change.oldEnd > change.begin && change.newEnd > change.begin
-        && old.at(change.oldEnd - 1) == next.at(change.newEnd - 1)) {
-        --change.oldEnd;
-        --change.newEnd;
-    }
-    if (change.oldEnd < old.size() && old.at(change.oldEnd).isLowSurrogate()) {
-        ++change.oldEnd;
-        ++change.newEnd;
-    }
-    return change;
-}
-
-// The separate ranges in which two texts differ, in order. Lines that the line
-// correspondence keeps equal split the one outer range, so text between two
-// changes is not part of either. Each part is narrowed to its own changed range.
-std::vector<TextChange> changedRanges(const QString &old, const QString &next)
-{
-    const auto outer = changedRange(old, next);
-    const auto before = old.mid(outer.begin, outer.oldEnd - outer.begin).toUtf8();
-    const auto after = next.mid(outer.begin, outer.newEnd - outer.begin).toUtf8();
-    const auto view = [](const QByteArray &bytes) {
-        return std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size()));
-    };
-    std::vector<Passage> passages;
-    try {
-        passages = ExactLineCorrespondence().compare(view(before), view(after));
-    } catch (const std::exception &) {
-        return {outer};
-    }
-    // Passages split at line ends, so each one decodes on its own. Their lengths
-    // locate the parts of the original texts.
-    const auto length = [](const QByteArray &bytes, ByteRange range) {
-        return QString::fromUtf8(bytes.constData() + range.begin, static_cast<qsizetype>(range.end - range.begin)).size();
-    };
-    std::vector<TextChange> changes;
-    auto oldAt = outer.begin;
-    auto newAt = outer.begin;
-    for (const auto &passage : passages) {
-        const auto oldPart = old.mid(oldAt, length(before, passage.source));
-        const auto newPart = next.mid(newAt, length(after, passage.result));
-        if (oldPart != newPart) {
-            const auto change = changedRange(oldPart, newPart);
-            changes.push_back({oldAt + change.begin, oldAt + change.oldEnd, newAt + change.newEnd});
-        }
-        oldAt += oldPart.size();
-        newAt += newPart.size();
-    }
-    return changes;
-}
-
-// An offset before a change keeps its place and one after it moves with the
-// text. An offset inside a replaced range, or at an insertion, goes to its end.
-// A change's begin and old end are in the old text and its new end in the new
-// text, so the shift after it is its new end less its old end.
-int changedOffset(const std::vector<TextChange> &changes, int offset)
-{
-    qsizetype shift = 0;
-    for (const auto &change : changes) {
-        if (offset < change.begin || (offset == change.begin && change.oldEnd > change.begin)) break;
-        if (offset < change.oldEnd) return static_cast<int>(change.newEnd);
-        shift = change.newEnd - change.oldEnd;
-    }
-    return static_cast<int>(offset + shift);
 }
 
 Support supportFor(const git::Conflict &file)
@@ -443,8 +321,24 @@ ApplicationController::ApplicationController(QObject *parent)
       coordinator_(files_, QStandardPaths::findExecutable(QStringLiteral("git")), this),
       publisher_(files_, coordinator_, QStandardPaths::findExecutable(QStringLiteral("git")), this),
       classifier_(QStandardPaths::findExecutable(QStringLiteral("git")), this),
-      mergetool_(this)
+      mergetool_(this),
+      editor_(files_, [this] { return selectedFileId_; },
+          [this](const FileSession *file, const QString &loaded) { return firstUndecidedPlacement(file, loaded); }, this)
 {
+    connect(&editor_, &ResultEditorAdapter::edited, this, &ApplicationController::editResult);
+    connect(&editor_, &ResultEditorAdapter::undoRequested, this, &ApplicationController::undo);
+    connect(&editor_, &ResultEditorAdapter::redoRequested, this, &ApplicationController::redo);
+    connect(&editor_, &ResultEditorAdapter::editRejected, this, [this] { commandResult(Transition::InvalidAnchor); });
+    connect(&editor_, &ResultEditorAdapter::notice, this, [this](const QString &message) {
+        commandMessage_ = message;
+        Q_EMIT commandChanged();
+    });
+    connect(&editor_, &ResultEditorAdapter::loadRefused, this, [this](const QString &message) {
+        if (commandMessage_ == message) return;
+        commandMessage_ = message;
+        Q_EMIT commandChanged();
+    });
+    connect(&editor_, &ResultEditorAdapter::placed, this, &ApplicationController::editorPlaced);
     connect(&classifier_, &git::ConflictClassifier::finished, this, &ApplicationController::classified);
     connect(&publisher_, &ResolutionPublisher::changed, this, [this](const QString &message) {
         commandMessage_ = message;
@@ -483,9 +377,9 @@ ApplicationController::ApplicationController(QObject *parent)
     });
     connect(this, &ApplicationController::selectedFileChanged, this, [this] {
         const auto *file = files_.file(selectedFileId_.toStdString());
-        syntax_.setFileName(file ? fileName(file->path()) : QString{});
+        editor_.setSyntaxFileName(file ? fileName(file->path()) : QString{});
     });
-    connect(this, &ApplicationController::selectedFileChanged, this, &ApplicationController::syncResultEditor);
+    connect(this, &ApplicationController::selectedFileChanged, &editor_, &ResultEditorAdapter::sync);
     // The mergetool waiting state and the parent staging path follow the selection.
     connect(this, &ApplicationController::selectedFileChanged, this, &ApplicationController::commandChanged);
     connect(&files_, &SessionModel::summaryChanged, this, &ApplicationController::handoffChanged);
@@ -709,7 +603,7 @@ bool ApplicationController::selectFile(const QString &fileId)
 {
     if (!files_.file(fileId.toStdString())) return false;
     if (selectedFileId_ == fileId) return true;
-    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return false;
+    if (editor_.composing()) return false;
     cancelChoice();
     selectedFileId_ = fileId;
     if (!selectingFromNavigation_) clearNavigation();
@@ -776,7 +670,7 @@ bool ApplicationController::previewChoice(const QString &fileId, const QString &
     const auto expected = revisionId(revision);
     if (!file || !expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
     if (files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id())
-        || (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool())) return commandResult(Transition::Blocked);
+        || editor_.composing()) return commandResult(Transition::Blocked);
     ChoiceAction kind;
     if (action == QLatin1String("accept")) kind = ChoiceAction::Accept;
     else if (action == QLatin1String("ignore")) kind = ChoiceAction::Ignore;
@@ -801,7 +695,7 @@ bool ApplicationController::applyChoice(bool confirmReplacement)
     if (!preview_ || previewFileId_ != selectedFileId_) return commandResult(Transition::StaleRevision);
     const auto preview = *preview_;
     const auto id = previewFileId_;
-    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return commandResult(Transition::Blocked);
+    if (editor_.composing()) return commandResult(Transition::Blocked);
     const auto result = files_.applyChoice(id.toStdString(), preview, confirmReplacement);
     if (result != Transition::ConfirmationRequired) { preview_.reset(); previewFileId_.clear(); }
     return commandResult(result);
@@ -846,7 +740,7 @@ bool ApplicationController::previewNonConflicting(const QString &fileId, const Q
     const auto expected = revisionId(revision);
     if (!file || !expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
     if (files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id())
-        || (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool())) return commandResult(Transition::Blocked);
+        || editor_.composing()) return commandResult(Transition::Blocked);
     NonConflictingScope kind;
     if (scope == QLatin1String("left")) kind = NonConflictingScope::Left;
     else if (scope == QLatin1String("right")) kind = NonConflictingScope::Right;
@@ -868,7 +762,7 @@ bool ApplicationController::previewNonConflicting(const QString &fileId, const Q
 bool ApplicationController::applyNonConflicting()
 {
     if (!nonConflictingPreview_ || previewFileId_ != selectedFileId_) return commandResult(Transition::StaleRevision);
-    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return commandResult(Transition::Blocked);
+    if (editor_.composing()) return commandResult(Transition::Blocked);
     const auto preview = *nonConflictingPreview_;
     const auto id = previewFileId_;
     const auto result = files_.applyNonConflicting(id.toStdString(), preview, true);
@@ -937,7 +831,7 @@ bool ApplicationController::previewWholeFile(const QString &fileId, const QStrin
     const auto expected = revisionId(revision);
     if (!file || !expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
     if (files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id())
-        || (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool())) return commandResult(Transition::Blocked);
+        || editor_.composing()) return commandResult(Transition::Blocked);
     SourceSide source;
     if (side == QLatin1String("left")) source = SourceSide::Stage2;
     else if (side == QLatin1String("right")) source = SourceSide::Stage3;
@@ -957,7 +851,7 @@ bool ApplicationController::previewWholeFile(const QString &fileId, const QStrin
 bool ApplicationController::applyWholeFile()
 {
     if (!wholeFilePreview_ || previewFileId_ != selectedFileId_) return commandResult(Transition::StaleRevision);
-    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return commandResult(Transition::Blocked);
+    if (editor_.composing()) return commandResult(Transition::Blocked);
     const auto preview = *wholeFilePreview_;
     const auto id = previewFileId_;
     const auto result = files_.applyWholeFile(id.toStdString(), preview, true);
@@ -995,7 +889,7 @@ bool ApplicationController::undo(const QString &fileId, const QString &revision)
 {
     const auto expected = revisionId(revision);
     if (!expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
-    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return commandResult(Transition::Blocked);
+    if (editor_.composing()) return commandResult(Transition::Blocked);
     return commandResult(files_.undo(fileId.toStdString(), *expected));
 }
 
@@ -1003,7 +897,7 @@ bool ApplicationController::redo(const QString &fileId, const QString &revision)
 {
     const auto expected = revisionId(revision);
     if (!expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
-    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return commandResult(Transition::Blocked);
+    if (editor_.composing()) return commandResult(Transition::Blocked);
     return commandResult(files_.redo(fileId.toStdString(), *expected));
 }
 
@@ -1015,7 +909,7 @@ bool ApplicationController::commandReady(const QString &fileId, const QString &r
     if (expected) *expected = *id;
     return file->support() == Support::Supported && !files_.hasPendingRecovery()
         && !files_.hasRecoveryFailure(file->id())
-        && !(resultEditor_ && resultEditor_->property("inputMethodComposing").toBool());
+        && !editor_.composing();
 }
 
 bool ApplicationController::saveDraft(const QString &fileId, const QString &revision)
@@ -1107,11 +1001,11 @@ bool ApplicationController::showFirstMarker()
 {
     const auto *file = files_.file(selectedFileId_.toStdString());
     // A pending draft in the editor has other offsets than the current revision.
-    if (markerBlocker().isEmpty() || !resultEditor_ || files_.pendingDraft(file->id())) return false;
+    if (markerBlocker().isEmpty() || !editor_.attached() || files_.pendingDraft(file->id())) return false;
     const auto first = file->markers().first();
     const int cursor = first ? utf16Offset(file->current().draft.text, first->bytes.begin) : -1;
     if (cursor < 0) return false;
-    resultEditor_->setProperty("cursorPosition", cursor);
+    editor_.setCursorPosition(cursor);
     return true;
 }
 
@@ -1265,263 +1159,48 @@ bool ApplicationController::discardUnsaved(const QString &fileId, const QString 
 
 void ApplicationController::attachResultEditor(QObject *editor)
 {
-    disconnect(editorConnection_);
-    if (resultEditor_) resultEditor_->removeEventFilter(this);
-    resultEditor_ = editor;
-    if (editor) editor->installEventFilter(this);
-    auto *quick = editor ? editor->property("textDocument").value<QQuickTextDocument *>() : nullptr;
-    resultDocument_ = quick ? quick->textDocument() : nullptr;
-    if (!resultDocument_) return;
-    resultDocument_->setUndoRedoEnabled(false);
-    syntax_.attach(resultDocument_);
-    editorConnection_ = connect(resultDocument_, &QTextDocument::contentsChange,
-        this, &ApplicationController::captureResultEdit);
-    syncResultEditor();
+    editor_.attach(editor);
 }
 
 void ApplicationController::attachSourceEditor(QObject *editor)
 {
-    auto *quick = editor ? editor->property("textDocument").value<QQuickTextDocument *>() : nullptr;
-    syntax_.attach(quick ? quick->textDocument() : nullptr);
+    editor_.attachSource(editor);
 }
 
 void ApplicationController::setSyntaxBackground(const QColor &background)
 {
-    syntax_.setBackground(background);
+    editor_.setSyntaxBackground(background);
 }
 
 void ApplicationController::setVisibleWhitespace(QObject *editor, bool visible)
 {
-    showWhitespace_ = visible;
-    auto *quick = editor ? editor->property("textDocument").value<QQuickTextDocument *>() : nullptr;
-    auto *document = quick ? quick->textDocument() : nullptr;
-    applyVisibleWhitespace(document);
-    if (resultDocument_ && resultDocument_ != document)
-        applyVisibleWhitespace(resultDocument_);
-}
-
-void ApplicationController::applyVisibleWhitespace(QTextDocument *document)
-{
-    if (!document) return;
-    auto options = document->defaultTextOption();
-    auto flags = options.flags();
-    flags.setFlag(QTextOption::ShowTabsAndSpaces, showWhitespace_);
-    if (flags == options.flags()) return;
-    options.setFlags(flags);
-    // A display-option change can notify the document. Keep it out of edit capture.
-    QScopedValueRollback guard(syncingEditor_, true);
-    document->setDefaultTextOption(options);
-}
-
-void ApplicationController::captureResultEdit()
-{
-    if (syncingEditor_ || processingEditorEvent_ || !resultDocument_) return;
-    const auto next = documentText(*resultDocument_);
-    if (next == editorText_) return;
-    if (const auto rejection = envelopeRejection(next); !rejection.isEmpty()) {
-        syncResultEditor();
-        commandMessage_ = rejection;
-        Q_EMIT commandChanged();
-        return;
-    }
-    const auto *file = files_.file(selectedFileId_.toStdString());
-    const auto old = editorText_;
-    if (!file || old != text(file->current().draft.text)
-        || std::max(old.size(), next.size()) > std::numeric_limits<int>::max()) {
-        commandResult(Transition::InvalidAnchor);
-        syncResultEditor();
-        return;
-    }
-    // Observe the complete native event, including a selection replacement or
-    // an IME commit with several document notifications, as one domain command.
-    const auto change = changedRange(old, next);
-    editorText_ = next;
-    (void)editResult(selectedFileId_, QString::number(file->current().id), static_cast<int>(change.begin),
-        static_cast<int>(change.oldEnd), next.mid(change.begin, change.newEnd - change.begin));
-    syncResultEditor();
+    editor_.setVisibleWhitespace(editor, visible);
 }
 
 bool ApplicationController::resultClipboard(const QString &action)
 {
-    if (!resultEditor_ || processingEditorEvent_) return false;
-    const char *method = nullptr;
-    if (action == QLatin1String("copy")) method = "copy";
-    else if (action == QLatin1String("selectAll")) method = "selectAll";
-    else if (action == QLatin1String("cut")) method = "cut";
-    else if (action == QLatin1String("paste")) method = "paste";
-    else return false;
-    if ((action == QLatin1String("cut") || action == QLatin1String("paste"))
-        && (resultEditor_->property("readOnly").toBool() || resultEditor_->property("inputMethodComposing").toBool()))
-        return false;
-    if (action == QLatin1String("paste")) {
-        const auto clip = QGuiApplication::clipboard()->text();
-        const int start = resultEditor_->property("selectionStart").toInt();
-        const int end = resultEditor_->property("selectionEnd").toInt();
-        const int from = std::clamp(std::min(start, end), 0, static_cast<int>(editorText_.size()));
-        const int to = std::clamp(std::max(start, end), 0, static_cast<int>(editorText_.size()));
-        if (const auto rejection = envelopeRejection(editorText_.left(from) + clip + editorText_.mid(to));
-            !rejection.isEmpty()) {
-            commandMessage_ = rejection;
-            Q_EMIT commandChanged();
-            return false;
-        }
-    }
-    if (auto *item = qobject_cast<QQuickItem *>(resultEditor_.data())) item->forceActiveFocus(Qt::ShortcutFocusReason);
-    bool invoked = false;
-    {
-        QScopedValueRollback guard(processingEditorEvent_, true);
-        invoked = QMetaObject::invokeMethod(resultEditor_, method, Qt::DirectConnection);
-    }
-    captureResultEdit();
-    return invoked && !files_.hasPendingRecovery();
+    return editor_.clipboard(action);
 }
 
-bool ApplicationController::eventFilter(QObject *watched, QEvent *event)
+// A newly selected file puts the cursor at its first undecided region, or at
+// the start without one. The offsets belong to the current revision, not to a
+// pending draft in the editor.
+QVariantMap ApplicationController::firstUndecidedPlacement(const FileSession *file, const QString &loaded) const
 {
-    if (syncingEditor_ || processingEditorEvent_) return QObject::eventFilter(watched, event);
-    if (watched == resultEditor_ && event->type() == QEvent::KeyPress) {
-        auto *key = static_cast<QKeyEvent *>(event);
-        const bool newline = key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter;
-        const auto modifiers = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
-        // Backspace and Delete carry a control character in text() but remove
-        // text. Predicting that character as an insertion rejects a deletion
-        // when the line or buffer is already exactly at its limit.
-        const bool deletion = key->key() == Qt::Key_Backspace || key->key() == Qt::Key_Delete;
-        if (modifiers == Qt::NoModifier && !deletion && (newline || !key->text().isEmpty())) {
-            const int start = resultEditor_->property("selectionStart").toInt();
-            const int end = resultEditor_->property("selectionEnd").toInt();
-            const int from = std::clamp(std::min(start, end), 0, static_cast<int>(editorText_.size()));
-            const int to = std::clamp(std::max(start, end), 0, static_cast<int>(editorText_.size()));
-            const auto insertion = newline ? QString(QLatin1Char('\n')) : key->text();
-            if (const auto rejection = envelopeRejection(editorText_.left(from) + insertion + editorText_.mid(to));
-                !rejection.isEmpty()) {
-                event->accept();
-                commandMessage_ = rejection;
-                Q_EMIT commandChanged();
-                return true;
-            }
-        }
-    }
-    if (watched == resultEditor_ && (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)) {
-        auto *key = static_cast<QKeyEvent *>(event);
-        const bool backwards = key->matches(QKeySequence::Undo);
-        const bool forwards = key->matches(QKeySequence::Redo);
-        if (backwards || forwards) {
-            event->accept();
-            if (event->type() == QEvent::KeyPress) {
-                const auto *file = files_.file(selectedFileId_.toStdString());
-                if (file) {
-                    const auto revision = QString::number(file->current().id);
-                    if (backwards) (void)undo(selectedFileId_, revision);
-                    else (void)redo(selectedFileId_, revision);
-                }
-            }
-            return true;
-        }
-    }
-    const bool middlePaste = (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease)
-        && static_cast<QMouseEvent *>(event)->button() == Qt::MiddleButton;
-    if (watched == resultEditor_ && (event->type() == QEvent::KeyPress || event->type() == QEvent::InputMethod
-        || event->type() == QEvent::Drop || middlePaste)) {
-        {
-            QScopedValueRollback guard(processingEditorEvent_, true);
-            QCoreApplication::sendEvent(watched, event);
-        }
-        captureResultEdit();
-        return true;
-    }
-    return QObject::eventFilter(watched, event);
-}
-
-void ApplicationController::syncResultEditor()
-{
-    if (!resultDocument_ || !resultEditor_ || syncingEditor_) return;
-    const auto *file = files_.file(selectedFileId_.toStdString());
-    const auto *pending = file ? files_.pendingDraft(file->id()) : nullptr;
-    const auto stored = file ? (pending ? pending->text : file->current().draft.text) : std::string{};
-    if (file && !withinTextEnvelope(stored)) {
-        const auto rejection = QString::fromStdString(textLimitDiagnostic(assessText(stored)))
-            + QStringLiteral(". The captured text was kept and was not loaded into the editor.");
-        syncingEditor_ = true;
-        resultDocument_->setPlainText({});
-        editorText_.clear();
-        resultEditor_->setProperty("readOnly", true);
-        syncingEditor_ = false;
-        if (commandMessage_ != rejection) {
-            commandMessage_ = rejection;
-            Q_EMIT commandChanged();
-        }
-        if (editorFileId_ != selectedFileId_) placeEditor(nullptr, {});
-        return;
-    }
-    const auto desired = file ? text(stored) : QString{};
-    const auto shown = documentText(*resultDocument_);
-    // Undo, redo or a choice replaces the text of the file already shown.
-    const auto place = file && shown != desired && editorFileId_ == selectedFileId_ ? editorLocation() : EditorLocation{};
-    syncingEditor_ = true;
-    if (shown != desired) resultDocument_->setPlainText(desired);
-    editorText_ = desired;
-    applyVisibleWhitespace(resultDocument_);
-    const auto loaded = documentText(*resultDocument_);
-    const bool lossless = loaded == desired && !desired.contains(QChar(0x2028))
-        && !desired.contains(QChar(0x2029)) && !desired.contains(QLatin1Char('\r'));
-    resultEditor_->setProperty("readOnly", !file || file->support() != Support::Supported || !lossless
-        || files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id()));
-    if (!lossless && file && file->support() == Support::Supported) {
-        commandMessage_ = tr("This text cannot be edited losslessly by the current editor. Its captured result is retained.");
-        Q_EMIT commandChanged();
-    }
-    syncingEditor_ = false;
-    // A new selection, or a loading placeholder replaced by its supported file.
-    const bool supported = file && file->support() == Support::Supported;
-    if (editorFileId_ != selectedFileId_ || editorSupported_ != supported) placeEditor(file, desired);
-    else if (place.valid) keepEditorPlace(place, shown, loaded);
-}
-
-// The viewport goes back first, so the cursor moves it only when it would
-// otherwise leave the view.
-void ApplicationController::keepEditorPlace(const EditorLocation &place, const QString &before, const QString &after)
-{
-    if (auto *viewport = place.hasViewport ? scrollViewport(resultEditor_.data()) : nullptr) {
-        viewport->setProperty("contentX", place.contentX);
-        viewport->setProperty("contentY", place.contentY);
-    }
-    const auto changes = changedRanges(before, after);
-    const int anchor = place.cursor == place.selectionStart ? place.selectionEnd : place.selectionStart;
-    (void)QMetaObject::invokeMethod(resultEditor_, "select", Qt::DirectConnection,
-        Q_ARG(int, changedOffset(changes, anchor)), Q_ARG(int, changedOffset(changes, place.cursor)));
-}
-
-// Replacing the document text leaves the cursor at its end, and the result
-// viewport scrolls to keep the cursor in view. The file already shown keeps
-// its place through keepEditorPlace. A newly selected file instead puts the
-// cursor at its first undecided region, or at the start without one.
-void ApplicationController::placeEditor(const FileSession *file, const QString &loaded)
-{
-    editorFileId_ = selectedFileId_;
-    editorSupported_ = file && file->support() == Support::Supported;
-    int cursor = 0;
     QVariantMap placement{{QStringLiteral("fileId"), selectedFileId_}, {QStringLiteral("count"), 0}};
-    const auto targets = editorSupported_ ? undecidedTargets(*file) : std::vector<ScopeTarget>{};
-    // The offsets belong to the current revision, not to a pending draft in the editor.
-    if (!targets.empty() && loaded == text(file->current().draft.text)) {
-        const auto &first = targets.front();
-        const auto &result = file->current().draft.text;
-        const int begin = first.resultRange ? utf16Offset(result, first.byteBegin) : -1;
-        const int end = first.resultRange ? utf16Offset(result, first.byteEnd) : -1;
-        if (begin >= 0) cursor = begin;
-        placement = {{QStringLiteral("fileId"), selectedFileId_},
-            {QStringLiteral("scope"), first.resultRange ? QStringLiteral("result") : QStringLiteral("unmapped-source")},
-            {QStringLiteral("utf16Begin"), begin},
-            {QStringLiteral("utf16End"), end},
-            {QStringLiteral("contributionId"), text(first.contributionId)},
-            {QStringLiteral("count"), static_cast<int>(targets.size())}};
-    }
-    resultEditor_->setProperty("cursorPosition", cursor);
-    editorPlacement_ = placement;
-    Q_EMIT editorPlaced();
+    const auto targets = file ? undecidedTargets(*file) : std::vector<ScopeTarget>{};
+    if (targets.empty() || loaded != text(file->current().draft.text)) return placement;
+    const auto &first = targets.front();
+    const auto &result = file->current().draft.text;
+    const int begin = first.resultRange ? utf16Offset(result, first.byteBegin) : -1;
+    const int end = first.resultRange ? utf16Offset(result, first.byteEnd) : -1;
+    return {{QStringLiteral("fileId"), selectedFileId_},
+        {QStringLiteral("scope"), first.resultRange ? QStringLiteral("result") : QStringLiteral("unmapped-source")},
+        {QStringLiteral("utf16Begin"), begin},
+        {QStringLiteral("utf16End"), end},
+        {QStringLiteral("contributionId"), text(first.contributionId)},
+        {QStringLiteral("count"), static_cast<int>(targets.size())}};
 }
-
 void ApplicationController::clearNavigation()
 {
     navMode_.clear();
@@ -1540,66 +1219,15 @@ void ApplicationController::clearNavigation()
     Q_EMIT navigationChanged();
 }
 
-ApplicationController::EditorLocation ApplicationController::editorLocation() const
-{
-    EditorLocation location;
-    if (!resultEditor_) return location;
-    location.valid = true;
-    location.fileId = selectedFileId_;
-    location.text = editorText_;
-    location.cursor = resultEditor_->property("cursorPosition").toInt();
-    location.selectionStart = resultEditor_->property("selectionStart").toInt();
-    location.selectionEnd = resultEditor_->property("selectionEnd").toInt();
-    if (auto *viewport = scrollViewport(resultEditor_.data())) {
-        location.hasViewport = true;
-        location.contentX = viewport->property("contentX").toReal();
-        location.contentY = viewport->property("contentY").toReal();
-    }
-    return location;
-}
-
-void ApplicationController::noteEditorLocation()
-{
-    heldLocation_ = editorLocation();
-}
-
-void ApplicationController::restoreEditorLocation()
-{
-    if (!heldLocation_.valid || !resultEditor_ || heldLocation_.fileId != selectedFileId_) return;
-    if (editorText_ != heldLocation_.text) return;
-    const auto *file = files_.file(selectedFileId_.toStdString());
-    const auto *pending = file ? files_.pendingDraft(file->id()) : nullptr;
-    const auto current = file ? text(pending ? pending->text : file->current().draft.text) : QString{};
-    if (current != heldLocation_.text) return;
-    // select() places the cursor at the second offset and keeps that range.
-    const int anchor = heldLocation_.cursor == heldLocation_.selectionStart
-        ? heldLocation_.selectionEnd : heldLocation_.selectionStart;
-    (void)QMetaObject::invokeMethod(resultEditor_, "select", Qt::DirectConnection,
-        Q_ARG(int, anchor), Q_ARG(int, heldLocation_.cursor));
-    if (!heldLocation_.hasViewport) return;
-    if (auto *viewport = scrollViewport(resultEditor_.data())) {
-        const auto x = heldLocation_.contentX;
-        const auto y = heldLocation_.contentY;
-        const auto apply = [viewport, x, y] {
-            viewport->setProperty("contentX", x);
-            viewport->setProperty("contentY", y);
-        };
-        apply();
-        // The relayout after the toggle can clamp the viewport again, so reapply once it has been polished.
-        if (auto *window = viewport->window())
-            connect(window, &QQuickWindow::afterAnimating, viewport, apply, Qt::SingleShotConnection);
-    }
-}
-
 bool ApplicationController::toggleFileList()
 {
-    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return false;
+    if (editor_.composing()) return false;
     const auto fileId = selectedFileId_;
     const auto *file = files_.file(fileId.toStdString());
     const auto *pending = file ? files_.pendingDraft(file->id()) : nullptr;
     const auto before = file ? text(pending ? pending->text : file->current().draft.text) : QString{};
     const auto revision = file ? file->current().id : RevisionId{};
-    noteEditorLocation();
+    editor_.holdLocation();
     fileListVisible_ = !fileListVisible_;
     Q_EMIT fileListChanged();
     const auto *after = files_.file(fileId.toStdString());
@@ -1607,14 +1235,14 @@ bool ApplicationController::toggleFileList()
     const auto afterText = after ? text(afterPending ? afterPending->text : after->current().draft.text) : QString{};
     const bool preserved = selectedFileId_ == fileId && before == afterText
         && (!after || after->current().id == revision);
-    restoreEditorLocation();
+    editor_.restoreLocation();
     return preserved;
 }
 
 bool ApplicationController::navigate(const QString &mode, int direction)
 {
     if (direction != -1 && direction != 1) return false;
-    if (resultEditor_ && resultEditor_->property("inputMethodComposing").toBool()) return false;
+    if (editor_.composing()) return false;
     if (mode == QLatin1String("difference") || mode == QLatin1String("undecided"))
         return navigateWithinFile(mode, direction);
     if (mode == QLatin1String("unfinished") || mode == QLatin1String("saved-or-reviewed"))
@@ -1644,16 +1272,17 @@ bool ApplicationController::navigateWithinFile(const QString &mode, int directio
     }
     const auto &result = file->current().draft.text;
     const int count = static_cast<int>(targets.size());
-    const int cursor = resultEditor_ ? resultEditor_->property("cursorPosition").toInt() : 0;
-    const int selectionStart = resultEditor_ ? resultEditor_->property("selectionStart").toInt() : 0;
-    const int selectionEnd = resultEditor_ ? resultEditor_->property("selectionEnd").toInt() : 0;
+    const auto caret = editor_.caret();
+    const int cursor = caret.cursor;
+    const int selectionStart = caret.selectionStart;
+    const int selectionEnd = caret.selectionEnd;
     const bool continuing = navMode_ == mode && navFileId_ == selectedFileId_
         && navRevision_ == file->current().id && navIndex_ >= 0 && navIndex_ < count
         && targets[static_cast<std::size_t>(navIndex_)].byteBegin == navByteBegin_
         && targets[static_cast<std::size_t>(navIndex_)].byteEnd == navByteEnd_
         && targets[static_cast<std::size_t>(navIndex_)].contributionId == navContribution_
         && targets[static_cast<std::size_t>(navIndex_)].resultRange == navResultRange_
-        && (!resultEditor_ || (cursor == navCursor_ && selectionStart == navSelectionStart_
+        && (!editor_.attached() || (cursor == navCursor_ && selectionStart == navSelectionStart_
             && selectionEnd == navSelectionEnd_));
     const auto utfBegin = [&](const ScopeTarget &target) {
         return target.resultRange ? utf16Offset(result, target.byteBegin) : -1;
@@ -1711,10 +1340,8 @@ bool ApplicationController::navigateWithinFile(const QString &mode, int directio
     const auto &target = targets[static_cast<std::size_t>(index)];
     const int begin = target.resultRange ? utf16Offset(result, target.byteBegin) : -1;
     const int end = target.resultRange ? utf16Offset(result, target.byteEnd) : -1;
-    if (target.resultRange && resultEditor_) {
-        if (begin < 0 || end < 0
-            || !QMetaObject::invokeMethod(resultEditor_, "select", Qt::DirectConnection,
-                Q_ARG(int, begin), Q_ARG(int, end)))
+    if (target.resultRange && editor_.attached()) {
+        if (begin < 0 || end < 0 || !editor_.select(begin, end))
             return fail(tr("The difference could not be selected."));
     }
     navMode_ = mode;
@@ -1725,10 +1352,11 @@ bool ApplicationController::navigateWithinFile(const QString &mode, int directio
     navByteEnd_ = target.byteEnd;
     navContribution_ = target.contributionId;
     navResultRange_ = target.resultRange;
-    if (resultEditor_) {
-        navCursor_ = resultEditor_->property("cursorPosition").toInt();
-        navSelectionStart_ = resultEditor_->property("selectionStart").toInt();
-        navSelectionEnd_ = resultEditor_->property("selectionEnd").toInt();
+    if (editor_.attached()) {
+        const auto placed = editor_.caret();
+        navCursor_ = placed.cursor;
+        navSelectionStart_ = placed.selectionStart;
+        navSelectionEnd_ = placed.selectionEnd;
     } else {
         navCursor_ = -1;
         navSelectionStart_ = -1;

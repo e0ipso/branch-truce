@@ -2,7 +2,8 @@ add_library(branch_truce_controller STATIC ApplicationController.cpp Application
     SessionModel.cpp SessionModel.h SessionRecovery.cpp SessionRecovery.h RecoveryRestore.cpp RecoveryRestore.h
     SessionCoordinator.cpp SessionCoordinator.h ResolutionPublisher.cpp ResolutionPublisher.h
     MergetoolProtocol.cpp MergetoolProtocol.h MergetoolSession.cpp MergetoolSession.h
-    MergetoolLauncher.cpp MergetoolLauncher.h SyntaxHighlighting.h PaneHighlighter.cpp PaneHighlighter.h)
+    MergetoolLauncher.cpp MergetoolLauncher.h SyntaxHighlighting.h PaneHighlighter.cpp PaneHighlighter.h
+    ResultEditorAdapter.cpp ResultEditorAdapter.h TextChange.cpp TextChange.h)
 target_include_directories(branch_truce_controller PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(branch_truce_controller PUBLIC Qt6::Core Qt6::Network Qt6::Quick branch_truce_core branch_truce_git
     PRIVATE branch_truce_storage branch_truce_build_options)

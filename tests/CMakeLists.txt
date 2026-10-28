@@ -74,6 +74,11 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_options(branch_truce_model_tests PRIVATE "LINKER:--wrap=fsync")
     add_test(NAME app.session-model COMMAND branch_truce_model_tests)
 
+    add_executable(branch_truce_text_change_tests app/TextChangeTests.cpp)
+    target_include_directories(branch_truce_text_change_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_text_change_tests PRIVATE branch_truce_controller branch_truce_build_options)
+    add_test(NAME app.text-change COMMAND branch_truce_text_change_tests)
+
     add_executable(branch_truce_recovery_boundary_tests app/RecoveryBoundaryFaultTests.cpp)
     target_include_directories(branch_truce_recovery_boundary_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_recovery_boundary_tests PRIVATE branch_truce_controller branch_truce_build_options)

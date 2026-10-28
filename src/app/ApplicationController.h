@@ -2,17 +2,14 @@
 #include "MergetoolSession.h"
 #include "RecoveryRestore.h"
 #include "ResolutionPublisher.h"
+#include "ResultEditorAdapter.h"
 #include "SessionModel.h"
 #include "SessionCoordinator.h"
-#include "SyntaxHighlighting.h"
 #include "git/ConflictClassifier.h"
 #include <QObject>
 #include <QString>
 #include <QStringList>
-#include <QPointer>
 #include <string>
-
-class QTextDocument;
 
 namespace branch_truce {
 class ApplicationController final : public QObject {
@@ -98,7 +95,7 @@ public:
     [[nodiscard]] QVariantMap navigationTarget() const { return navigationTarget_; }
     // Where the editor put a newly selected file: its first undecided region,
     // in the keys of navigationTarget, with count 0 when it has none.
-    [[nodiscard]] QVariantMap editorPlacement() const { return editorPlacement_; }
+    [[nodiscard]] QVariantMap editorPlacement() const { return editor_.placement(); }
     Q_INVOKABLE bool previewWholeFile(const QString &fileId, const QString &revision, const QString &side);
     Q_INVOKABLE bool applyWholeFile();
     Q_INVOKABLE bool previewChoice(const QString &fileId, const QString &revision,
@@ -197,19 +194,13 @@ private:
     [[nodiscard]] QString discardedMessage(const FileSession *current) const;
     // Escaped display text for exact path bytes; see displayPath.
     [[nodiscard]] QString displayBytes(const std::string &path) const;
-    bool eventFilter(QObject *watched, QEvent *event) override;
     void classified(const git::ConflictClassificationResult &result);
     void loadWorkingFiles(QList<git::Conflict> conflicts);
     [[nodiscard]] bool launchedWithCapturedBytes(const FileSession &file) const;
     void settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity, const QString &failure);
     void setState(QString state, QString detail);
     bool commandResult(Transition result);
-    void captureResultEdit();
-    void syncResultEditor();
-    void placeEditor(const FileSession *file, const QString &loaded);
-    void applyVisibleWhitespace(QTextDocument *document);
-    void noteEditorLocation();
-    void restoreEditorLocation();
+    [[nodiscard]] QVariantMap firstUndecidedPlacement(const FileSession *file, const QString &loaded) const;
     void clearNavigation();
     bool navigateWithinFile(const QString &mode, int direction);
     bool navigateAcrossFiles(const QString &mode, int direction);
@@ -218,7 +209,7 @@ private:
     ResolutionPublisher publisher_;
     git::ConflictClassifier classifier_;
     MergetoolSession mergetool_;
-    SyntaxHighlighting syntax_;
+    ResultEditorAdapter editor_;
     git::RepositoryContext repository_;
     QString state_ = QStringLiteral("idle");
     QString operation_;
@@ -238,18 +229,6 @@ private:
     QString commandMessage_;
     QVariantMap markerBlocker_;
     bool discardPending_ = false;
-    QPointer<QObject> resultEditor_;
-    QPointer<QTextDocument> resultDocument_;
-    QMetaObject::Connection editorConnection_;
-    QString editorText_;
-    // The file the editor last placed, and whether it was supported then. A
-    // file opens as an unsupported placeholder until its captures load.
-    QString editorFileId_;
-    bool editorSupported_ = false;
-    QVariantMap editorPlacement_;
-    bool syncingEditor_ = false;
-    bool processingEditorEvent_ = false;
-    bool showWhitespace_ = false;
     bool fileListVisible_ = true;
     bool selectingFromNavigation_ = false;
     QVariantMap navigationTarget_;
@@ -265,19 +244,5 @@ private:
     std::size_t navByteEnd_ = 0;
     std::string navContribution_;
     bool navResultRange_ = false;
-    struct EditorLocation {
-        bool valid = false;
-        QString fileId;
-        QString text;
-        int cursor = 0;
-        int selectionStart = 0;
-        int selectionEnd = 0;
-        qreal contentX = 0;
-        qreal contentY = 0;
-        bool hasViewport = false;
-    };
-    EditorLocation heldLocation_;
-    [[nodiscard]] EditorLocation editorLocation() const;
-    void keepEditorPlace(const EditorLocation &place, const QString &before, const QString &after);
 };
 }
