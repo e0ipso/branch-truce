@@ -148,7 +148,6 @@ ColumnLayout {
             viewport: resultViewport
             blocks: resultBlocks
             active: resultPane.showWhitespace
-            wrapped: resultPane.wrapLines
         }
     }
     TextBlocks {

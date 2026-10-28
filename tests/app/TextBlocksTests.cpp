@@ -1,4 +1,4 @@
-// Unit tests for TextBlocks: where the cursor goes around folded lines.
+// Unit tests for TextBlocks: where the cursor goes around folded lines and where the whitespace markers lie.
 #include "TestHarness.h"
 #include "ui/TextBlocks.h"
 #include <QAbstractTextDocumentLayout>
@@ -8,7 +8,9 @@
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QSignalSpy>
+#include <QRectF>
 #include <QTextDocument>
+#include <cmath>
 #include <memory>
 
 using branch_truce::TextBlocks;
@@ -20,7 +22,8 @@ public:
     Pane(const QString &text, const QList<int> &folded)
     {
         QQmlComponent component(&engine);
-        component.setData("import QtQuick\nTextEdit { width: 400 }", QUrl(QStringLiteral("qrc:/TextBlocksTests/Pane.qml")));
+        component.setData("import QtQuick\nTextEdit { width: 400; tabStopDistance: 40 }",
+            QUrl(QStringLiteral("qrc:/TextBlocksTests/Pane.qml")));
         editor.reset(qobject_cast<QQuickItem *>(component.create()));
         if (!editor) throw std::runtime_error(component.errorString().toStdString());
         CHECK(editor->setProperty("text", text));
@@ -37,10 +40,35 @@ public:
         (void)laidOut->documentLayout()->blockBoundingRect(laidOut->lastBlock());
     }
 
+    // The editor's cursor rectangle at position, which the old marker scan used.
+    QRectF cursorAt(int position) const
+    {
+        QRectF rect;
+        CHECK(QMetaObject::invokeMethod(editor.get(), "positionToRectangle", Q_RETURN_ARG(QRectF, rect),
+            Q_ARG(int, position)));
+        return rect;
+    }
+
     QQmlEngine engine;
     std::unique_ptr<QQuickItem> editor;
     TextBlocks blocks;
 };
+
+bool near(qreal value, qreal expected)
+{
+    return std::abs(value - expected) < 1e-3;
+}
+
+// The marker covers the character at position, seen from area's top left.
+bool covers(const Pane &pane, const QVariant &marker, int position, bool tab, QPointF area = {})
+{
+    const auto map = marker.toMap();
+    const auto rect = pane.cursorAt(position);
+    const auto next = pane.cursorAt(position + 1);
+    return map.value("tab").toBool() == tab && near(map.value("x").toReal(), rect.x() - area.x())
+        && near(map.value("y").toReal(), rect.y() - area.y()) && near(map.value("w").toReal(), next.x() - rect.x())
+        && near(map.value("h").toReal(), rect.height());
+}
 
 // Folded lines 2 and 3 between two equal lines: line 1 starts at 0, line 2 at 7,
 // line 3 at 20 and line 4 at 28.
@@ -115,6 +143,28 @@ int main(int argc, char **argv)
         pane.blocks.queueCursorCheck();
         QCoreApplication::processEvents();
         CHECK(due.count() == 2);
+    });
+    suite.run("TRUCE-0222 markers lie on the spaces and tabs of the text", [] {
+        // Line 2 starts at 6; its spaces are at 7 and 8.
+        Pane pane(QStringLiteral("a b\tc\nd  e\n"), {});
+        const auto markers = pane.blocks.whitespaceWithin(QRectF(0, 0, 1000, 1000), 2, 8);
+        CHECK(markers.size() == 4);
+        CHECK(covers(pane, markers.at(0), 1, false));
+        CHECK(covers(pane, markers.at(1), 3, true));
+        CHECK(covers(pane, markers.at(2), 7, false));
+        CHECK(covers(pane, markers.at(3), 8, false));
+        // The tab reaches on to its tab stop, past a space's width.
+        CHECK(markers.at(1).toMap().value("w").toReal() > markers.at(0).toMap().value("w").toReal());
+    });
+    suite.run("TRUCE-0222 markers are relative to the area and leave out folded and outside lines", [] {
+        // Line 2 is folded and holds a space; line 3 starts at 17, its space is at 18.
+        Pane pane(QStringLiteral("x x\n<<<<<<< HEAD\ny y\n"), {2});
+        CHECK(pane.blocks.whitespaceWithin(QRectF(0, 0, 1000, 1000), 2, 8).size() == 2);
+        const QPointF origin(1, pane.cursorAt(18).y() + 1);
+        const auto below = pane.blocks.whitespaceWithin(QRectF(origin, QSizeF(1000, 1000)), 2, 8);
+        CHECK(below.size() == 1 && covers(pane, below.at(0), 18, false, origin));
+        CHECK(pane.blocks.whitespaceWithin(QRectF(0, 1000, 1000, 1000), 2, 8).isEmpty());
+        CHECK(pane.blocks.whitespaceWithin(QRectF(0, 0, 0, 0), 2, 8).isEmpty());
     });
     return suite.report();
 }

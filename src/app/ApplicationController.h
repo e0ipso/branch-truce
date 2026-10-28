@@ -124,8 +124,6 @@ public:
     Q_INVOKABLE void attachSourceEditor(QObject *editor);
     // The Kirigami colour scheme background; its lightness picks the syntax theme.
     Q_INVOKABLE void setSyntaxBackground(const QColor &background);
-    // Space and tab markers are paint options. They never enter the draft, history or progress.
-    Q_INVOKABLE void setVisibleWhitespace(QObject *editor, bool visible);
     Q_INVOKABLE bool resultClipboard(const QString &action);
     // Select by the exact byte-derived file ID, never by a display path.
     Q_INVOKABLE bool selectFile(const QString &fileId);

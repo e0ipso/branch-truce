@@ -15,7 +15,6 @@ ColumnLayout {
     readonly property bool wrapLines: wrapLinesBox.checked
     readonly property bool showWhitespace: showWhitespaceBox.checked
     signal findRequested()
-    signal whitespaceToggled()
     objectName: "readingControls"
     spacing: Kirigami.Units.smallSpacing
     RowLayout {
@@ -54,7 +53,6 @@ ColumnLayout {
             id: showWhitespaceBox
             objectName: "showWhitespace"
             text: qsTr("Show spaces and tabs")
-            onToggled: readingBar.whitespaceToggled()
         }
         Label {
             objectName: "searchStatus"

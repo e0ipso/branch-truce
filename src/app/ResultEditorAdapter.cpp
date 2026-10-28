@@ -13,7 +13,6 @@
 #include <QQuickWindow>
 #include <QScopedValueRollback>
 #include <QTextDocument>
-#include <QTextOption>
 #include <algorithm>
 #include <limits>
 #include <string_view>
@@ -103,27 +102,6 @@ void ResultEditorAdapter::setSyntaxFileName(const QString &fileName)
 void ResultEditorAdapter::setSyntaxBackground(const QColor &background)
 {
     syntax_.setBackground(background);
-}
-
-void ResultEditorAdapter::setVisibleWhitespace(QObject *editor, bool visible)
-{
-    showWhitespace_ = visible;
-    auto *document = textDocument(editor);
-    applyVisibleWhitespace(document);
-    if (document_ && document_ != document) applyVisibleWhitespace(document_);
-}
-
-void ResultEditorAdapter::applyVisibleWhitespace(QTextDocument *document)
-{
-    if (!document) return;
-    auto options = document->defaultTextOption();
-    auto flags = options.flags();
-    flags.setFlag(QTextOption::ShowTabsAndSpaces, showWhitespace_);
-    if (flags == options.flags()) return;
-    options.setFlags(flags);
-    // A display-option change can notify the document. Keep it out of edit capture.
-    QScopedValueRollback guard(syncing_, true);
-    document->setDefaultTextOption(options);
 }
 
 bool ResultEditorAdapter::composing() const
@@ -292,7 +270,6 @@ void ResultEditorAdapter::sync()
     syncing_ = true;
     if (shown != desired) document_->setPlainText(desired);
     text_ = desired;
-    applyVisibleWhitespace(document_);
     const auto loaded = documentText(*document_);
     const bool lossless = loaded == desired && !desired.contains(QChar(0x2028))
         && !desired.contains(QChar(0x2029)) && !desired.contains(QLatin1Char('\r'));

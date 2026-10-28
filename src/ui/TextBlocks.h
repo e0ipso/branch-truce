@@ -68,6 +68,12 @@ public:
     // by lines would; otherwise it goes to the line's near edge, the start
     // of a following line or the end of a preceding one.
     Q_INVOKABLE int shownPosition(int position, bool forward, int from = -1) const;
+    // The space and tab markers on the shown lines that meet area, in document
+    // coordinates, as {x, y, w, h, tab} maps relative to area's top left. A
+    // marker covers its character's advance and its row's height, and is at
+    // least stroke wide and high. Where the next position starts another row,
+    // as at a wrap, a space's marker is stroke wide and a tab's tabWidth.
+    Q_INVOKABLE QVariantList whitespaceWithin(const QRectF &area, qreal stroke, qreal tabWidth) const;
 
     // The cursor never rests on a hidden line. A key that moves it there takes
     // it on in the key's direction: Up, Down, Page Up and Page Down move by

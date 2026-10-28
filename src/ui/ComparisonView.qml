@@ -18,7 +18,6 @@ ColumnLayout {
     readonly property bool showWhitespace: readingBar.showWhitespace
     // Text panes never get shorter than this many lines; on a short window the page scrolls instead.
     property int minimumPaneLines: 8
-    property bool whitespaceReady: false
     // Shows the raw lines of every conflict-marker block instead of folding them.
     property bool showMarkers: false
     // Asks for showMarkers, because something the user asked for is on a folded line.
@@ -42,17 +41,6 @@ ColumnLayout {
     }
     function editorNamed(name: string): Item {
         return panesByRole.editor(name)
-    }
-    function applyWhitespace(): void {
-        const visible = readingBar.showWhitespace
-        const editors = panesByRole.editors()
-        for (let i = 0; i < editors.length; ++i)
-            controller.setVisibleWhitespace(editors[i], visible)
-    }
-    // A source's text is replaced when its file changes; its markers follow once set up.
-    function sourceTextReplaced(): void {
-        if (whitespaceReady)
-            applyWhitespace()
     }
     // Selects the next passage the search finds and scrolls the panes to it, showing the
     // folded markers when it lies on them.
@@ -315,8 +303,6 @@ ColumnLayout {
     }
     Component.onCompleted: {
         controller.setSyntaxBackground(schemeBackground)
-        applyWhitespace()
-        whitespaceReady = true
         Qt.callLater(placePanes)
     }
     onSchemeBackgroundChanged: controller.setSyntaxBackground(schemeBackground)
@@ -352,7 +338,6 @@ ColumnLayout {
         Layout.fillWidth: true
         search: passageSearch
         onFindRequested: comparison.findPassage()
-        onWhitespaceToggled: comparison.applyWhitespace()
     }
     SplitView {
         id: panes
@@ -386,7 +371,6 @@ ColumnLayout {
             showWhitespace: comparison.showWhitespace
             minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
             onScrolled: byUser => panesByRole.paneScrolled(leftPane.paneName, byUser)
-            onTextReplaced: comparison.sourceTextReplaced()
             onEditorCompleted: comparison.controller.attachSourceEditor(leftPane.editor)
         }
         ResultPane {
@@ -422,7 +406,6 @@ ColumnLayout {
             showWhitespace: comparison.showWhitespace
             minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
             onScrolled: byUser => panesByRole.paneScrolled(rightPane.paneName, byUser)
-            onTextReplaced: comparison.sourceTextReplaced()
             onEditorCompleted: comparison.controller.attachSourceEditor(rightPane.editor)
         }
     }
@@ -450,7 +433,6 @@ ColumnLayout {
         showWhitespace: comparison.showWhitespace
         minimumTextHeight: comparison.paneMinimumHeight(3)
         onScrolled: byUser => panesByRole.paneScrolled(earlierPane.paneName, byUser)
-        onTextReplaced: comparison.sourceTextReplaced()
         onEditorCompleted: comparison.controller.attachSourceEditor(earlierPane.editor)
         onVisibleChanged: if (visible)
             Qt.callLater(comparison.followEarlier)

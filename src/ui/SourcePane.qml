@@ -35,7 +35,6 @@ ColumnLayout {
     // byUser is set while the user scrolls the pane: dragging, flicking or the wheel, its
     // scroll bar, or keyboard focus in its text.
     signal scrolled(bool byUser)
-    signal textReplaced()
     signal editorCompleted()
     function shortCommit(label: string): string {
         return sourcePane.commitId.length > 10
@@ -117,7 +116,6 @@ ColumnLayout {
                 width: sourcePane.wrapLines ? sourceViewport.width : implicitWidth
                 wrapMode: sourcePane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                 Accessible.name: sourcePane.paneRole + " · " + (sourcePane.source.label || "")
-                onTextChanged: sourcePane.textReplaced()
                 Component.onCompleted: sourcePane.editorCompleted()
             }
             LineGutter {
@@ -144,8 +142,8 @@ ColumnLayout {
             anchors.leftMargin: sourceGutter.width
             editor: sourceText
             viewport: sourceViewport
+            blocks: sourceBlocks
             active: sourcePane.showWhitespace
-            wrapped: sourcePane.wrapLines
         }
     }
     TextBlocks {

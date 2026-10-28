@@ -76,8 +76,6 @@ public:
 
     // The editor of the pane named name, or the result's for any other name.
     Q_INVOKABLE QQuickItem *editor(const QString &name) const;
-    // The editors of every pane, shown or not.
-    Q_INVOKABLE QList<QObject *> editors() const;
     // Scrolls the other shown panes, or only the one named only, to follow
     // the pane named leader. Moving them does not make them lead in turn.
     Q_INVOKABLE void follow(const QString &leader, const QString &only = {});

@@ -38,7 +38,6 @@ public:
     void attachSource(QObject *editor);
     void setSyntaxFileName(const QString &fileName);
     void setSyntaxBackground(const QColor &background);
-    void setVisibleWhitespace(QObject *editor, bool visible);
     bool clipboard(const QString &action);
     // Loads the selected file's text, or its pending draft, into the editor.
     void sync();
@@ -87,7 +86,6 @@ private:
     bool eventFilter(QObject *watched, QEvent *event) override;
     void capture();
     void place(const FileSession *file, const QString &loaded);
-    void applyVisibleWhitespace(QTextDocument *document);
     [[nodiscard]] Location location() const;
     void keepPlace(const Location &place, const QString &before, const QString &after);
     [[nodiscard]] const FileSession *selectedFile() const;
@@ -108,7 +106,6 @@ private:
     QVariantMap placement_;
     bool syncing_ = false;
     bool processingEvent_ = false;
-    bool showWhitespace_ = false;
     Location heldLocation_;
 };
 }

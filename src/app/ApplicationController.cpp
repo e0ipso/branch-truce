@@ -816,11 +816,6 @@ void ApplicationController::setSyntaxBackground(const QColor &background)
     editor_.setSyntaxBackground(background);
 }
 
-void ApplicationController::setVisibleWhitespace(QObject *editor, bool visible)
-{
-    editor_.setVisibleWhitespace(editor, visible);
-}
-
 bool ApplicationController::resultClipboard(const QString &action)
 {
     return editor_.clipboard(action);

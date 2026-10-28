@@ -6,6 +6,7 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextLayout>
+#include <QVariantMap>
 #include <algorithm>
 #include <utility>
 
@@ -15,6 +16,36 @@ QTextBlock shown(QTextBlock block, bool forward)
 {
     while (block.isValid() && !block.isVisible()) block = forward ? block.next() : block.previous();
     return block;
+}
+
+// Appends the markers of one shown block whose layout starts at origin.
+void appendWhitespace(QVariantList &markers, const QTextBlock &block, QPointF origin, const QRectF &area,
+                      qreal stroke, qreal tabWidth)
+{
+    const auto *lines = block.layout();
+    const auto text = block.text();
+    for (int row = 0; lines && row < lines->lineCount(); ++row) {
+        const auto line = lines->lineAt(row);
+        const auto top = origin.y() + line.y();
+        if (top >= area.bottom()) break;
+        if (top + line.height() < area.top()) continue;
+        // Only the characters across the area, with one more at either side.
+        const int start = line.textStart();
+        const int from = std::max(start, line.xToCursor(area.left() - origin.x()) - 1);
+        const int to = std::min(start + line.textLength(), line.xToCursor(area.right() - origin.x()) + 1);
+        for (int at = from; at < to; ++at) {
+            const bool tab = text.at(at) == QLatin1Char('\t');
+            if (!tab && text.at(at) != QLatin1Char(' ')) continue;
+            const auto x = origin.x() + line.cursorToX(at);
+            auto width = lines->lineForTextPosition(at + 1).lineNumber() == row
+                ? origin.x() + line.cursorToX(at + 1) - x : 0;
+            if (width < stroke) width = tab ? tabWidth : stroke;
+            if (x >= area.right() || x + width <= area.left()) continue;
+            markers.append(QVariantMap{{QStringLiteral("x"), x - area.left()}, {QStringLiteral("y"), top - area.top()},
+                {QStringLiteral("w"), width}, {QStringLiteral("h"), std::max(line.height(), stroke)},
+                {QStringLiteral("tab"), tab}});
+        }
+    }
 }
 }
 
@@ -234,6 +265,23 @@ int TextBlocks::shownPosition(int position, bool forward, int from) const
     if (!sourceLine.isValid() || !layout || layout->lineCount() == 0) return edge;
     const auto line = layout->lineAt(down ? 0 : layout->lineCount() - 1);
     return target.position() + line.xToCursor(sourceLine.cursorToX(from - source.position()));
+}
+
+QVariantList TextBlocks::whitespaceWithin(const QRectF &area, qreal stroke, qreal tabWidth) const
+{
+    QVariantList markers;
+    auto *text = document_ ? document_->textDocument() : nullptr;
+    auto *layout = text ? text->documentLayout() : nullptr;
+    if (!layout || area.isEmpty()) return markers;
+    const int first = layout->hitTest(QPointF(0, std::max<qreal>(0, area.top())), Qt::FuzzyHit);
+    for (auto block = text->findBlock(std::max(0, first)); block.isValid(); block = block.next()) {
+        if (!block.isVisible()) continue;
+        const auto rect = layout->blockBoundingRect(block);
+        if (rect.top() >= area.bottom()) break;
+        if (rect.bottom() < area.top()) continue;
+        appendWhitespace(markers, block, rect.topLeft(), area, stroke, tabWidth);
+    }
+    return markers;
 }
 
 void TextBlocks::keyPressed(int key)

@@ -112,15 +112,6 @@ QQuickItem *ComparisonPanes::editor(const QString &name) const
     return item ? partOf<QQuickItem>(item, "editor") : nullptr;
 }
 
-QList<QObject *> ComparisonPanes::editors() const
-{
-    QList<QObject *> found;
-    for (const auto &name : {leftName, resultName, rightName, earlierName}) {
-        if (auto *item = editor(name)) found.append(item);
-    }
-    return found;
-}
-
 std::optional<ComparisonPanes::Pane> ComparisonPanes::partsOf(const QString &name, QQuickItem *pane)
 {
     if (!pane) return std::nullopt;

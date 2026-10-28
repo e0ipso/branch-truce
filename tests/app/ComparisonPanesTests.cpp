@@ -183,7 +183,6 @@ int main(int argc, char **argv)
         CHECK(scene.panes->editor("earlier") == scene.pane("earlier")->property("editor").value<QQuickItem *>());
         CHECK(scene.panes->editor("result") == scene.pane("result")->property("editor").value<QQuickItem *>());
         CHECK(scene.panes->editor("unknown") == scene.panes->editor("result"));
-        CHECK(scene.panes->editors().size() == 4);
     });
     suite.run("TRUCE-0219 panes declared in reverse order still scroll together", [] {
         Scene scene;
