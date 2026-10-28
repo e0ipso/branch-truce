@@ -1,0 +1,1097 @@
+{
+  "project": "Branch Truce",
+  "selection": "3C",
+  "version": 1,
+  "lettering": "Custom outlined shapes; no font dependency",
+  "color_space": "sRGB",
+  "assets": [
+    {
+      "path": "svg/for-light/branch-truce-full.svg",
+      "format": "svg",
+      "width": 1264,
+      "height": 664,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-full-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 538,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-full-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1076,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / for-light"
+    },
+    {
+      "path": "svg/for-light/branch-truce-horizontal.svg",
+      "format": "svg",
+      "width": 1648,
+      "height": 372,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-horizontal-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 231,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-horizontal-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 462,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / for-light"
+    },
+    {
+      "path": "svg/for-light/branch-truce-stacked.svg",
+      "format": "svg",
+      "width": 960,
+      "height": 720,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-stacked-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 768,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-stacked-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1536,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / for-light"
+    },
+    {
+      "path": "svg/for-light/branch-truce-wordmark.svg",
+      "format": "svg",
+      "width": 1328,
+      "height": 290,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-wordmark-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 224,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-wordmark-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 447,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / for-light"
+    },
+    {
+      "path": "svg/for-light/branch-truce-symbol.svg",
+      "format": "svg",
+      "width": 640,
+      "height": 640,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-symbol-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-symbol-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / for-light"
+    },
+    {
+      "path": "svg/for-light/branch-truce-small.svg",
+      "format": "svg",
+      "width": 32,
+      "height": 32,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-small-16.png",
+      "format": "png",
+      "width": 16,
+      "height": 16,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-small-24.png",
+      "format": "png",
+      "width": 24,
+      "height": 24,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-small-32.png",
+      "format": "png",
+      "width": 32,
+      "height": 32,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / for-light"
+    },
+    {
+      "path": "svg/for-light/branch-truce-square.svg",
+      "format": "svg",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-square-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-square-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / for-light"
+    },
+    {
+      "path": "svg/for-light/branch-truce-circle.svg",
+      "format": "svg",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-circle-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / for-light"
+    },
+    {
+      "path": "png/for-light/branch-truce-circle-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / for-light"
+    },
+    {
+      "path": "svg/for-dark/branch-truce-full.svg",
+      "format": "svg",
+      "width": 1264,
+      "height": 664,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-full-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 538,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-full-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1076,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / for-dark"
+    },
+    {
+      "path": "svg/for-dark/branch-truce-horizontal.svg",
+      "format": "svg",
+      "width": 1648,
+      "height": 372,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-horizontal-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 231,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-horizontal-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 462,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / for-dark"
+    },
+    {
+      "path": "svg/for-dark/branch-truce-stacked.svg",
+      "format": "svg",
+      "width": 960,
+      "height": 720,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-stacked-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 768,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-stacked-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1536,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / for-dark"
+    },
+    {
+      "path": "svg/for-dark/branch-truce-wordmark.svg",
+      "format": "svg",
+      "width": 1328,
+      "height": 290,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-wordmark-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 224,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-wordmark-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 447,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / for-dark"
+    },
+    {
+      "path": "svg/for-dark/branch-truce-symbol.svg",
+      "format": "svg",
+      "width": 640,
+      "height": 640,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-symbol-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-symbol-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / for-dark"
+    },
+    {
+      "path": "svg/for-dark/branch-truce-small.svg",
+      "format": "svg",
+      "width": 32,
+      "height": 32,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-small-16.png",
+      "format": "png",
+      "width": 16,
+      "height": 16,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-small-24.png",
+      "format": "png",
+      "width": 24,
+      "height": 24,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-small-32.png",
+      "format": "png",
+      "width": 32,
+      "height": 32,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / for-dark"
+    },
+    {
+      "path": "svg/for-dark/branch-truce-square.svg",
+      "format": "svg",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-square-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-square-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / for-dark"
+    },
+    {
+      "path": "svg/for-dark/branch-truce-circle.svg",
+      "format": "svg",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-circle-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / for-dark"
+    },
+    {
+      "path": "png/for-dark/branch-truce-circle-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / for-dark"
+    },
+    {
+      "path": "svg/mono-black/branch-truce-full.svg",
+      "format": "svg",
+      "width": 1264,
+      "height": 664,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-full-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 538,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-full-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1076,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / mono-black"
+    },
+    {
+      "path": "svg/mono-black/branch-truce-horizontal.svg",
+      "format": "svg",
+      "width": 1648,
+      "height": 372,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-horizontal-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 231,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-horizontal-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 462,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / mono-black"
+    },
+    {
+      "path": "svg/mono-black/branch-truce-stacked.svg",
+      "format": "svg",
+      "width": 960,
+      "height": 720,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-stacked-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 768,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-stacked-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1536,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / mono-black"
+    },
+    {
+      "path": "svg/mono-black/branch-truce-wordmark.svg",
+      "format": "svg",
+      "width": 1328,
+      "height": 290,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-wordmark-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 224,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-wordmark-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 447,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / mono-black"
+    },
+    {
+      "path": "svg/mono-black/branch-truce-symbol.svg",
+      "format": "svg",
+      "width": 640,
+      "height": 640,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-symbol-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-symbol-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / mono-black"
+    },
+    {
+      "path": "svg/mono-black/branch-truce-small.svg",
+      "format": "svg",
+      "width": 32,
+      "height": 32,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-small-16.png",
+      "format": "png",
+      "width": 16,
+      "height": 16,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-small-24.png",
+      "format": "png",
+      "width": 24,
+      "height": 24,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-small-32.png",
+      "format": "png",
+      "width": 32,
+      "height": 32,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / mono-black"
+    },
+    {
+      "path": "svg/mono-black/branch-truce-square.svg",
+      "format": "svg",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-square-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-square-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / mono-black"
+    },
+    {
+      "path": "svg/mono-black/branch-truce-circle.svg",
+      "format": "svg",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-circle-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / mono-black"
+    },
+    {
+      "path": "png/mono-black/branch-truce-circle-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / mono-black"
+    },
+    {
+      "path": "svg/mono-white/branch-truce-full.svg",
+      "format": "svg",
+      "width": 1264,
+      "height": 664,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-full-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 538,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-full-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1076,
+      "transparent_corners": true,
+      "title": "Branch Truce / full / mono-white"
+    },
+    {
+      "path": "svg/mono-white/branch-truce-horizontal.svg",
+      "format": "svg",
+      "width": 1648,
+      "height": 372,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-horizontal-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 231,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-horizontal-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 462,
+      "transparent_corners": true,
+      "title": "Branch Truce / horizontal / mono-white"
+    },
+    {
+      "path": "svg/mono-white/branch-truce-stacked.svg",
+      "format": "svg",
+      "width": 960,
+      "height": 720,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-stacked-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 768,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-stacked-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1536,
+      "transparent_corners": true,
+      "title": "Branch Truce / stacked / mono-white"
+    },
+    {
+      "path": "svg/mono-white/branch-truce-wordmark.svg",
+      "format": "svg",
+      "width": 1328,
+      "height": 290,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-wordmark-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 224,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-wordmark-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 447,
+      "transparent_corners": true,
+      "title": "Branch Truce / wordmark / mono-white"
+    },
+    {
+      "path": "svg/mono-white/branch-truce-symbol.svg",
+      "format": "svg",
+      "width": 640,
+      "height": 640,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-symbol-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-symbol-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / symbol / mono-white"
+    },
+    {
+      "path": "svg/mono-white/branch-truce-small.svg",
+      "format": "svg",
+      "width": 32,
+      "height": 32,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-small-16.png",
+      "format": "png",
+      "width": 16,
+      "height": 16,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-small-24.png",
+      "format": "png",
+      "width": 24,
+      "height": 24,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-small-32.png",
+      "format": "png",
+      "width": 32,
+      "height": 32,
+      "transparent_corners": true,
+      "title": "Branch Truce / small / mono-white"
+    },
+    {
+      "path": "svg/mono-white/branch-truce-square.svg",
+      "format": "svg",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-square-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-square-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / square / mono-white"
+    },
+    {
+      "path": "svg/mono-white/branch-truce-circle.svg",
+      "format": "svg",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-circle-256.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / mono-white"
+    },
+    {
+      "path": "png/mono-white/branch-truce-circle-1024.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce / circle / mono-white"
+    },
+    {
+      "path": "svg/backgrounds/branch-truce-full-for-light.svg",
+      "format": "svg",
+      "width": 1264,
+      "height": 664,
+      "transparent_corners": false,
+      "title": "Branch Truce / full / for-light background"
+    },
+    {
+      "path": "png/backgrounds/branch-truce-full-for-light-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1076,
+      "transparent_corners": false,
+      "title": "Branch Truce / full / for-light background"
+    },
+    {
+      "path": "svg/backgrounds/branch-truce-horizontal-for-light.svg",
+      "format": "svg",
+      "width": 1648,
+      "height": 372,
+      "transparent_corners": false,
+      "title": "Branch Truce / horizontal / for-light background"
+    },
+    {
+      "path": "png/backgrounds/branch-truce-horizontal-for-light-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 462,
+      "transparent_corners": false,
+      "title": "Branch Truce / horizontal / for-light background"
+    },
+    {
+      "path": "svg/backgrounds/branch-truce-stacked-for-light.svg",
+      "format": "svg",
+      "width": 960,
+      "height": 720,
+      "transparent_corners": false,
+      "title": "Branch Truce / stacked / for-light background"
+    },
+    {
+      "path": "png/backgrounds/branch-truce-stacked-for-light-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1536,
+      "transparent_corners": false,
+      "title": "Branch Truce / stacked / for-light background"
+    },
+    {
+      "path": "svg/backgrounds/branch-truce-full-for-dark.svg",
+      "format": "svg",
+      "width": 1264,
+      "height": 664,
+      "transparent_corners": false,
+      "title": "Branch Truce / full / for-dark background"
+    },
+    {
+      "path": "png/backgrounds/branch-truce-full-for-dark-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1076,
+      "transparent_corners": false,
+      "title": "Branch Truce / full / for-dark background"
+    },
+    {
+      "path": "svg/backgrounds/branch-truce-horizontal-for-dark.svg",
+      "format": "svg",
+      "width": 1648,
+      "height": 372,
+      "transparent_corners": false,
+      "title": "Branch Truce / horizontal / for-dark background"
+    },
+    {
+      "path": "png/backgrounds/branch-truce-horizontal-for-dark-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 462,
+      "transparent_corners": false,
+      "title": "Branch Truce / horizontal / for-dark background"
+    },
+    {
+      "path": "svg/backgrounds/branch-truce-stacked-for-dark.svg",
+      "format": "svg",
+      "width": 960,
+      "height": 720,
+      "transparent_corners": false,
+      "title": "Branch Truce / stacked / for-dark background"
+    },
+    {
+      "path": "png/backgrounds/branch-truce-stacked-for-dark-2048.png",
+      "format": "png",
+      "width": 2048,
+      "height": 1536,
+      "transparent_corners": false,
+      "title": "Branch Truce / stacked / for-dark background"
+    },
+    {
+      "path": "platform/linux/hicolor/16x16/apps/local.branch_truce.BranchTruce.png",
+      "format": "png",
+      "width": 16,
+      "height": 16,
+      "transparent_corners": true,
+      "title": "Branch Truce Linux application icon"
+    },
+    {
+      "path": "platform/linux/hicolor/22x22/apps/local.branch_truce.BranchTruce.png",
+      "format": "png",
+      "width": 22,
+      "height": 22,
+      "transparent_corners": true,
+      "title": "Branch Truce Linux application icon"
+    },
+    {
+      "path": "platform/linux/hicolor/24x24/apps/local.branch_truce.BranchTruce.png",
+      "format": "png",
+      "width": 24,
+      "height": 24,
+      "transparent_corners": true,
+      "title": "Branch Truce Linux application icon"
+    },
+    {
+      "path": "platform/linux/hicolor/32x32/apps/local.branch_truce.BranchTruce.png",
+      "format": "png",
+      "width": 32,
+      "height": 32,
+      "transparent_corners": true,
+      "title": "Branch Truce Linux application icon"
+    },
+    {
+      "path": "platform/linux/hicolor/48x48/apps/local.branch_truce.BranchTruce.png",
+      "format": "png",
+      "width": 48,
+      "height": 48,
+      "transparent_corners": true,
+      "title": "Branch Truce Linux application icon"
+    },
+    {
+      "path": "platform/linux/hicolor/64x64/apps/local.branch_truce.BranchTruce.png",
+      "format": "png",
+      "width": 64,
+      "height": 64,
+      "transparent_corners": true,
+      "title": "Branch Truce Linux application icon"
+    },
+    {
+      "path": "platform/linux/hicolor/128x128/apps/local.branch_truce.BranchTruce.png",
+      "format": "png",
+      "width": 128,
+      "height": 128,
+      "transparent_corners": true,
+      "title": "Branch Truce Linux application icon"
+    },
+    {
+      "path": "platform/linux/hicolor/256x256/apps/local.branch_truce.BranchTruce.png",
+      "format": "png",
+      "width": 256,
+      "height": 256,
+      "transparent_corners": true,
+      "title": "Branch Truce Linux application icon"
+    },
+    {
+      "path": "platform/linux/hicolor/512x512/apps/local.branch_truce.BranchTruce.png",
+      "format": "png",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": true,
+      "title": "Branch Truce Linux application icon"
+    },
+    {
+      "path": "platform/linux/hicolor/1024x1024/apps/local.branch_truce.BranchTruce.png",
+      "format": "png",
+      "width": 1024,
+      "height": 1024,
+      "transparent_corners": true,
+      "title": "Branch Truce Linux application icon"
+    },
+    {
+      "path": "web/app-icon.svg",
+      "format": "svg",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": false,
+      "title": "Branch Truce web application icon"
+    },
+    {
+      "path": "web/apple-touch-icon.png",
+      "format": "png",
+      "width": 180,
+      "height": 180,
+      "transparent_corners": false,
+      "title": "apple-touch-icon.png"
+    },
+    {
+      "path": "web/icon-192.png",
+      "format": "png",
+      "width": 192,
+      "height": 192,
+      "transparent_corners": false,
+      "title": "icon-192.png"
+    },
+    {
+      "path": "web/icon-512.png",
+      "format": "png",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": false,
+      "title": "icon-512.png"
+    },
+    {
+      "path": "web/maskable-192.png",
+      "format": "png",
+      "width": 192,
+      "height": 192,
+      "transparent_corners": false,
+      "title": "maskable-192.png"
+    },
+    {
+      "path": "web/maskable-512.png",
+      "format": "png",
+      "width": 512,
+      "height": 512,
+      "transparent_corners": false,
+      "title": "maskable-512.png"
+    },
+    {
+      "path": "web/favicon.svg",
+      "format": "svg",
+      "width": 32,
+      "height": 32,
+      "transparent_corners": false,
+      "title": "Branch Truce favicon"
+    },
+    {
+      "path": "web/favicon-16.png",
+      "format": "png",
+      "width": 16,
+      "height": 16,
+      "transparent_corners": false,
+      "title": "Favicon 16px"
+    },
+    {
+      "path": "web/favicon-32.png",
+      "format": "png",
+      "width": 32,
+      "height": 32,
+      "transparent_corners": false,
+      "title": "Favicon 32px"
+    },
+    {
+      "path": "web/favicon-48.png",
+      "format": "png",
+      "width": 48,
+      "height": 48,
+      "transparent_corners": false,
+      "title": "Favicon 48px"
+    },
+    {
+      "path": "social/branch-truce-og-for-light.svg",
+      "format": "svg",
+      "width": 1200,
+      "height": 630,
+      "transparent_corners": false,
+      "title": "Branch Truce social share / for-light"
+    },
+    {
+      "path": "social/branch-truce-og-for-light.png",
+      "format": "png",
+      "width": 1200,
+      "height": 630,
+      "transparent_corners": false,
+      "title": "Social sharing image"
+    },
+    {
+      "path": "social/branch-truce-og-for-dark.svg",
+      "format": "svg",
+      "width": 1200,
+      "height": 630,
+      "transparent_corners": false,
+      "title": "Branch Truce social share / for-dark"
+    },
+    {
+      "path": "social/branch-truce-og-for-dark.png",
+      "format": "png",
+      "width": 1200,
+      "height": 630,
+      "transparent_corners": false,
+      "title": "Social sharing image"
+    }
+  ]
+}

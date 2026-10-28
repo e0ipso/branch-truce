@@ -1,0 +1,5 @@
+{
+  "mode": "built-in imagegen",
+  "reference": "selected-3c.png",
+  "prompt": "Use case: precise-object-edit / logo-brand production master.\nInput image: selected final Branch Truce logo concept 3C; this is the exact identity to preserve.\nEdit ONLY the background and color cleanliness. Remove the white canvas to real alpha transparency, including the white negative spaces within the pennant and the letters. Keep the same soft swallowtail flag, fork with two source nodes, central terracotta merge dot with transparent separation, and the exact same rounded lowercase \"branch truce\" lettering in two lines at the right. Preserve every silhouette, letter shape, relationship and proportion as closely as possible.\nFlatten the existing green to uniform deep forest green (#124D33) and the accent dot to uniform muted terracotta (#BE6041). Solid opaque ink colors, no texture, no shading, no gradient, no ghost white halos. Crisp smooth edges suitable for vector tracing.\nKeep the full logo centered with sufficient margin so nothing is clipped. Exactly one logo, no labels, no new elements. Do not redesign or change the name. Transparent background is required."
+}

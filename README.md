@@ -109,6 +109,8 @@ derives the version from them.
 
 ## Documentation
 
+- [assets/branding/README.txt](assets/branding/README.txt): logo assets,
+  color variants, usage notes and rebuild instructions.
 - [docs/mergetool.md](docs/mergetool.md): registering and using Branch Truce
   as Git's merge tool.
 - [docs/build.md](docs/build.md): provisioning, building, testing and

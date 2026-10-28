@@ -1,0 +1,7 @@
+<!-- Copy this directory to /brand, then add to the document head. -->
+<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/brand/favicon.ico" sizes="16x16 32x32 48x48">
+<link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" sizes="180x180">
+<link rel="manifest" href="/brand/site.webmanifest">
+<meta name="theme-color" content="#124D33">
+<!-- Set start_url and scope in the manifest for the site being deployed. -->

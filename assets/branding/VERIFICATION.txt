@@ -1,0 +1,13 @@
+Branch Truce asset verification
+
+49 SVG files parsed successfully and contain vector paths.
+No embedded raster images, live text, scripts, or external references in SVGs.
+94 exported PNG files passed CRC, decompression, dimension, alpha, and corner checks.
+No fully blank PNG exports. Opaque exports have no transparent pixels.
+Favicon ICO contains 16, 32, and 48 px entries.
+All webmanifest icon references resolve.
+Maskable artwork fits inside the central 40%-radius safe circle.
+All 136 indexed asset paths exist and are unique.
+Visual guide and native-size icon samples inspected.
+
+Application code and installation files were not changed.
