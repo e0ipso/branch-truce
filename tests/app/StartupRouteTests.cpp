@@ -1571,6 +1571,20 @@ public:
             CHECK(state.value("state") == "no-session" && state.value("files").toArray().isEmpty());
             CHECK(!state.value("detail").toString().isEmpty() && state.value("operation").toString().isEmpty());
             CHECK(state.value("stage2").toString().isEmpty() && state.value("stage3").toString().isEmpty());
+            // TRUCE-0138: the message says no operation runs, not that one has no files left.
+            CHECK(state.value("detail").toString().contains("No merge or rebase is in progress"));
+            CHECK(state.value("detail").toString().contains("Branch Truce resolves conflicts while a merge or rebase"));
+            CHECK(!state.value("detail").toString().contains("no current unmerged files"));
+        });
+        suite.run("TRUCE-0138 a merge whose conflicts are all resolved says it has no current unmerged files", [&] {
+            Repository repo;
+            repo.conflict("merge");
+            repo.git({"add", "--", "tracked.txt", "excluded.txt"});
+            const auto state = repo.launch(application, {repo.root});
+            CHECK(state.value("state") == "no-session" && state.value("files").toArray().isEmpty());
+            CHECK(state.value("operation") == "Merge");
+            CHECK(state.value("detail").toString()
+                  == "This operation has no current unmerged files. Return to your Git workflow.");
         });
         suite.run("TRUCE-0015 Save and discard leave the repository untouched and restart keeps the baseline", [] {
             Repository repo;

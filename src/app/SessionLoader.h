@@ -92,6 +92,9 @@ Q_SIGNALS:
     void notice(const QString &message);
 
 private:
+    // Shown when the repository has no merge or rebase, unlike an operation
+    // whose conflicts are all resolved.
+    [[nodiscard]] static QString noOperationDetail();
     void setState(QString state, QString detail);
     void classified(const git::ConflictClassificationResult &result);
     void loadWorkingFiles(QList<git::Conflict> conflicts);

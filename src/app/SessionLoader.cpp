@@ -47,6 +47,12 @@ QString SessionLoader::workflow() const
               "This session covers only the work opened at launch.");
 }
 
+QString SessionLoader::noOperationDetail()
+{
+    return tr("No merge or rebase is in progress in this repository. "
+              "Branch Truce resolves conflicts while a merge or rebase is in progress.");
+}
+
 void SessionLoader::setState(QString state, QString detail)
 {
     state_ = std::move(state);
@@ -147,7 +153,7 @@ void SessionLoader::classified(const git::ConflictClassificationResult &result)
         if (result.outcome != git::Outcome::Success) {
             setState(QStringLiteral("error"), tr("Could not open the selected work: %1").arg(result.diagnostic));
         } else if (repository_.operation == git::RepositoryOperation::None) {
-            setState(QStringLiteral("no-session"), tr("No merge or rebase is in progress in this repository."));
+            setState(QStringLiteral("no-session"), noOperationDetail());
         } else {
             setState(QStringLiteral("unsupported"), repository_.diagnostic);
         }
@@ -221,8 +227,10 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                 return;
             }
             if (files_.totalFiles() == 0) {
-                setState(diagnostics.isEmpty() ? QStringLiteral("no-session") : QStringLiteral("error"),
-                    diagnostics.isEmpty() ? tr("This operation has no current unmerged files. Return to your Git workflow.") : diagnostics);
+                if (!diagnostics.isEmpty()) setState(QStringLiteral("error"), diagnostics);
+                else if (repository_.operation == git::RepositoryOperation::None) setState(QStringLiteral("no-session"), noOperationDetail());
+                else setState(QStringLiteral("no-session"),
+                    tr("This operation has no current unmerged files. Return to your Git workflow."));
                 return;
             }
             auto listen = MergetoolSession::Listen::Listening;
