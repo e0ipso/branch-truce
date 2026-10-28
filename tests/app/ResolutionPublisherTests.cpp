@@ -7,6 +7,8 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QMap>
+#include <QMetaMethod>
+#include <QMetaProperty>
 #include <QFileInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -20,6 +22,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <functional>
+#include <map>
 #include <memory>
 #include <poll.h>
 #include <sys/socket.h>
@@ -950,6 +953,59 @@ int main(int argc, char **argv)
         CHECK(openedFile(controller).current().id == current);
         for (const auto &command : commands) refuses(command, "tracked.txt", session.revision(), blocked);
         expectUnchanged(session.repo, before);
+    });
+    suite.run("TRUCE-0226 each concern notifies through its own signal and a new message notifies nothing else", [] {
+        Session session;
+        auto &controller = session.controller;
+        const auto *meta = controller.metaObject();
+        const std::vector<std::pair<const char *, QMetaMethod>> notifiers{
+            {"commandMessage", QMetaMethod::fromSignal(&ApplicationController::messageChanged)},
+            {"markerBlocker", QMetaMethod::fromSignal(&ApplicationController::messageChanged)},
+            {"commandPreview", QMetaMethod::fromSignal(&ApplicationController::commandPreviewChanged)},
+            {"nonConflictingPreview", QMetaMethod::fromSignal(&ApplicationController::nonConflictingPreviewChanged)},
+            {"wholeFilePreview", QMetaMethod::fromSignal(&ApplicationController::wholeFilePreviewChanged)},
+            {"resolutionConfirmation", QMetaMethod::fromSignal(&ApplicationController::resolutionChanged)},
+            {"resolutionFileId", QMetaMethod::fromSignal(&ApplicationController::resolutionChanged)},
+            {"resolutionRevision", QMetaMethod::fromSignal(&ApplicationController::resolutionChanged)},
+            {"resolutionBusy", QMetaMethod::fromSignal(&ApplicationController::resolutionChanged)},
+            {"parentStagingPath", QMetaMethod::fromSignal(&ApplicationController::mergetoolChanged)},
+            {"mergetoolWaiting", QMetaMethod::fromSignal(&ApplicationController::mergetoolChanged)},
+            {"parentSessionActive", QMetaMethod::fromSignal(&ApplicationController::mergetoolChanged)},
+            {"canEndParentSession", QMetaMethod::fromSignal(&ApplicationController::mergetoolChanged)},
+            {"handoff", QMetaMethod::fromSignal(&ApplicationController::handoffChanged)},
+        };
+        for (const auto &[name, signal] : notifiers) {
+            if (meta->property(meta->indexOfProperty(name)).notifySignal() != signal)
+                throw std::runtime_error(std::string(name) + " notifies through another signal");
+        }
+
+        // A pending preview, so a preview notification would have something to say.
+        CHECK(controller.previewWholeFile(session.id, session.revision(), QStringLiteral("left")));
+        CHECK(!controller.wholeFilePreview().isEmpty());
+        std::map<std::string, int> emitted;
+        const auto count = [&](const char *name, auto signal) {
+            QObject::connect(&controller, signal, &controller, [&emitted, name] { ++emitted[name]; });
+        };
+        count("message", &ApplicationController::messageChanged);
+        count("commandPreview", &ApplicationController::commandPreviewChanged);
+        count("nonConflictingPreview", &ApplicationController::nonConflictingPreviewChanged);
+        count("wholeFilePreview", &ApplicationController::wholeFilePreviewChanged);
+        count("resolution", &ApplicationController::resolutionChanged);
+        count("mergetool", &ApplicationController::mergetoolChanged);
+        count("handoff", &ApplicationController::handoffChanged);
+        count("selection", &ApplicationController::selectedFileChanged);
+
+        // A refused Save changes only the command message.
+        CHECK(!controller.saveDraft(session.id, QStringLiteral("not a revision")));
+        CHECK(controller.commandMessage() == QStringLiteral("The result changed. Select the scope again."));
+        CHECK(emitted == (std::map<std::string, int>{{"message", 1}}));
+        CHECK(!controller.wholeFilePreview().isEmpty());
+
+        // Cancelling notifies the pending preview and the cleared message only.
+        emitted.clear();
+        controller.cancelChoice();
+        CHECK(controller.wholeFilePreview().isEmpty() && controller.commandMessage().isEmpty());
+        CHECK(emitted == (std::map<std::string, int>{{"message", 1}, {"wholeFilePreview", 1}}));
     });
     return suite.report();
 }

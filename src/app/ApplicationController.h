@@ -30,19 +30,19 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QJSValue selectedFile READ selectedFileScript NOTIFY selectedFileChanged)
     Q_PROPERTY(int outsideAppFiles READ outsideAppFiles NOTIFY inventoryChanged)
     Q_PROPERTY(int loadErrorFiles READ loadErrorFiles NOTIFY inventoryChanged)
-    Q_PROPERTY(QVariantMap commandPreview READ commandPreview NOTIFY commandChanged)
-    Q_PROPERTY(QString commandMessage READ commandMessage NOTIFY commandChanged)
-    Q_PROPERTY(QVariantMap markerBlocker READ markerBlocker NOTIFY commandChanged)
-    Q_PROPERTY(bool resolutionConfirmation READ resolutionConfirmation NOTIFY commandChanged)
-    Q_PROPERTY(QString resolutionFileId READ resolutionFileId NOTIFY commandChanged)
-    Q_PROPERTY(QString resolutionRevision READ resolutionRevision NOTIFY commandChanged)
-    Q_PROPERTY(bool resolutionBusy READ resolutionBusy NOTIFY commandChanged)
-    Q_PROPERTY(QString parentStagingPath READ parentStagingPath NOTIFY commandChanged)
-    Q_PROPERTY(bool mergetoolWaiting READ mergetoolWaiting NOTIFY commandChanged)
-    Q_PROPERTY(bool parentSessionActive READ parentSessionActive NOTIFY commandChanged)
-    Q_PROPERTY(bool canEndParentSession READ canEndParentSession NOTIFY commandChanged)
-    Q_PROPERTY(QVariantMap nonConflictingPreview READ nonConflictingPreview NOTIFY commandChanged)
-    Q_PROPERTY(QVariantMap wholeFilePreview READ wholeFilePreview NOTIFY commandChanged)
+    Q_PROPERTY(QVariantMap commandPreview READ commandPreview NOTIFY commandPreviewChanged)
+    Q_PROPERTY(QString commandMessage READ commandMessage NOTIFY messageChanged)
+    Q_PROPERTY(QVariantMap markerBlocker READ markerBlocker NOTIFY messageChanged)
+    Q_PROPERTY(bool resolutionConfirmation READ resolutionConfirmation NOTIFY resolutionChanged)
+    Q_PROPERTY(QString resolutionFileId READ resolutionFileId NOTIFY resolutionChanged)
+    Q_PROPERTY(QString resolutionRevision READ resolutionRevision NOTIFY resolutionChanged)
+    Q_PROPERTY(bool resolutionBusy READ resolutionBusy NOTIFY resolutionChanged)
+    Q_PROPERTY(QString parentStagingPath READ parentStagingPath NOTIFY mergetoolChanged)
+    Q_PROPERTY(bool mergetoolWaiting READ mergetoolWaiting NOTIFY mergetoolChanged)
+    Q_PROPERTY(bool parentSessionActive READ parentSessionActive NOTIFY mergetoolChanged)
+    Q_PROPERTY(bool canEndParentSession READ canEndParentSession NOTIFY mergetoolChanged)
+    Q_PROPERTY(QVariantMap nonConflictingPreview READ nonConflictingPreview NOTIFY nonConflictingPreviewChanged)
+    Q_PROPERTY(QVariantMap wholeFilePreview READ wholeFilePreview NOTIFY wholeFilePreviewChanged)
     Q_PROPERTY(bool fileListVisible READ fileListVisible NOTIFY fileListChanged)
     Q_PROPERTY(QVariantMap navigationTarget READ navigationTarget NOTIFY navigationChanged)
     Q_PROPERTY(QVariantMap editorPlacement READ editorPlacement NOTIFY editorPlaced)
@@ -151,7 +151,19 @@ public:
 Q_SIGNALS:
     void selectedFileChanged();
     void inventoryChanged();
-    void commandChanged();
+    // The command message and the marker blocker. The blocker also follows the
+    // selected file and its revision, so a selection change emits this too.
+    void messageChanged();
+    // One per pending preview: commandPreview, nonConflictingPreview and wholeFilePreview.
+    void commandPreviewChanged();
+    void nonConflictingPreviewChanged();
+    void wholeFilePreviewChanged();
+    // A resolution started, finished or asked for confirmation.
+    void resolutionChanged();
+    // Waiting launchers, parent staging and the parent session. The waiting
+    // state and the staging path follow the selection, so a selection change
+    // emits this too.
+    void mergetoolChanged();
     void fileListChanged();
     void navigationChanged();
     // The editor loaded a newly selected file and moved its cursor to the start
@@ -169,6 +181,7 @@ private:
     // Escaped display text for exact path bytes; see displayPath.
     [[nodiscard]] QString displayBytes(const std::string &path) const;
     bool commandResult(Transition result);
+    void showMessage(const QString &message);
     [[nodiscard]] QVariantMap firstUndecidedPlacement(const FileSession *file, const QString &loaded) const;
     SessionModel files_;
     SessionCoordinator coordinator_;

@@ -59,6 +59,18 @@ private:
 ChoicePreviewFlow::ChoicePreviewFlow(SessionModel &files, ResultEditorAdapter &editor, Owners owners, QObject *parent)
     : QObject(parent), files_(files), editor_(editor), owners_(std::move(owners))
 {
+    // The view reads the pending file, which a session replacement can remove.
+    connect(&files_, &SessionModel::modelReset, this, [this] {
+        if (const auto scope = pendingScope()) Q_EMIT changed(*scope);
+    });
+}
+
+std::optional<ChoicePreviewFlow::Scope> ChoicePreviewFlow::pendingScope() const
+{
+    if (std::holds_alternative<ChoicePreview>(pending_)) return Scope::Choice;
+    if (std::holds_alternative<NonConflictingPreview>(pending_)) return Scope::NonConflicting;
+    if (std::holds_alternative<WholeFilePreview>(pending_)) return Scope::WholeFile;
+    return std::nullopt;
 }
 
 bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QString &revision,
@@ -106,17 +118,14 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
     if (accepted) {
         pending_ = std::move(pending);
         fileId_ = fileId;
+        Q_EMIT changed(scope);
     }
-    Q_EMIT changed();
     return accepted;
 }
 
 bool ChoicePreviewFlow::apply(Scope scope, bool confirm)
 {
-    const bool held = scope == Scope::Choice ? std::holds_alternative<ChoicePreview>(pending_)
-        : scope == Scope::NonConflicting ? std::holds_alternative<NonConflictingPreview>(pending_)
-        : std::holds_alternative<WholeFilePreview>(pending_);
-    if (!held || fileId_ != owners_.selectedFileId()) return owners_.report(Transition::StaleRevision);
+    if (pendingScope() != scope || fileId_ != owners_.selectedFileId()) return owners_.report(Transition::StaleRevision);
     if (editor_.composing()) return owners_.report(Transition::Blocked);
     const auto pending = pending_;
     const auto id = fileId_.toStdString();
@@ -129,16 +138,18 @@ bool ChoicePreviewFlow::apply(Scope scope, bool confirm)
     if (scope != Scope::Choice || result != Transition::ConfirmationRequired) {
         pending_ = std::monostate{};
         fileId_.clear();
+        Q_EMIT changed(scope);
     }
     return owners_.report(result);
 }
 
 void ChoicePreviewFlow::cancel()
 {
+    const auto previous = pendingScope();
     pending_ = std::monostate{};
     fileId_.clear();
     owners_.setMessage({});
-    Q_EMIT changed();
+    if (previous) Q_EMIT changed(*previous);
 }
 
 QVariantMap ChoicePreviewFlow::view(Scope scope) const

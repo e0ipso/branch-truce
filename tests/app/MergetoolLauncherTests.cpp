@@ -624,14 +624,14 @@ int main(int argc, char **argv)
         const auto *meta = controller.metaObject();
         for (const auto *name : {"mergetoolWaiting", "parentStagingPath"}) {
             CHECK(meta->property(meta->indexOfProperty(name)).notifySignal()
-                  == QMetaMethod::fromSignal(&ApplicationController::commandChanged));
+                  == QMetaMethod::fromSignal(&ApplicationController::mergetoolChanged));
         }
         struct Observed {
             bool waiting = false;
             QString staging;
         };
         QList<Observed> seen;
-        QObject::connect(&controller, &ApplicationController::commandChanged, &controller, [&] {
+        QObject::connect(&controller, &ApplicationController::mergetoolChanged, &controller, [&] {
             seen.append({controller.mergetoolWaiting(), controller.parentStagingPath()});
         });
         const auto other = select(controller, "excluded.txt");

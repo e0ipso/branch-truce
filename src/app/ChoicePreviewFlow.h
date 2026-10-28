@@ -27,7 +27,7 @@ public:
         // Shows a command outcome as the command message and notifies it.
         // True when the command applied or changed nothing.
         std::function<bool(Transition result)> report;
-        // Sets the command message; the flow's changed signal notifies it.
+        // Shows the command message and notifies it.
         std::function<void(const QString &message)> setMessage;
     };
     ChoicePreviewFlow(SessionModel &files, ResultEditorAdapter &editor, Owners owners, QObject *parent = nullptr);
@@ -47,11 +47,12 @@ public:
     [[nodiscard]] QVariantMap view(Scope scope) const;
 
 Q_SIGNALS:
-    // The pending preview changed after preview or cancel. apply reports
-    // through Owners::report instead.
-    void changed();
+    // view(scope) may have changed: a preview of that scope became pending or
+    // stopped pending, or the session's files were replaced under it.
+    void changed(branch_truce::ChoicePreviewFlow::Scope scope);
 
 private:
+    [[nodiscard]] std::optional<Scope> pendingScope() const;
     [[nodiscard]] QVariantMap choiceView(const ChoicePreview &preview, const FileSession &file) const;
     [[nodiscard]] QVariantMap nonConflictingView(const NonConflictingPreview &preview, const FileSession &file) const;
     [[nodiscard]] QVariantMap wholeFileView(const WholeFilePreview &preview, const FileSession &file) const;

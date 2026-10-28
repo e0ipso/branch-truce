@@ -131,38 +131,39 @@ ApplicationController::ApplicationController(QObject *parent)
           [this] { return selectedFileId_; },
           [this](const QString &fileId) { return displayPath(fileId); },
           [this](Transition result) { return commandResult(result); },
-          [this](const QString &message) { commandMessage_ = message; }}, this)
+          [this](const QString &message) { showMessage(message); }}, this)
 {
     connect(&editor_, &ResultEditorAdapter::edited, this, &ApplicationController::editResult);
     connect(&editor_, &ResultEditorAdapter::undoRequested, this, &ApplicationController::undo);
     connect(&editor_, &ResultEditorAdapter::redoRequested, this, &ApplicationController::redo);
     connect(&editor_, &ResultEditorAdapter::editRejected, this, [this] { commandResult(Transition::InvalidAnchor); });
-    connect(&editor_, &ResultEditorAdapter::notice, this, [this](const QString &message) {
-        commandMessage_ = message;
-        Q_EMIT commandChanged();
-    });
+    connect(&editor_, &ResultEditorAdapter::notice, this, &ApplicationController::showMessage);
     connect(&editor_, &ResultEditorAdapter::loadRefused, this, [this](const QString &message) {
-        if (commandMessage_ == message) return;
-        commandMessage_ = message;
-        Q_EMIT commandChanged();
+        if (commandMessage_ != message) showMessage(message);
     });
     connect(&editor_, &ResultEditorAdapter::placed, this, &ApplicationController::editorPlaced);
     connect(&navigator_, &FileNavigator::changed, this, &ApplicationController::navigationChanged);
-    connect(&choices_, &ChoicePreviewFlow::changed, this, &ApplicationController::commandChanged);
-    connect(&loader_, &SessionLoader::notice, this, [this](const QString &message) {
-        commandMessage_ = message;
-        Q_EMIT commandChanged();
+    connect(&choices_, &ChoicePreviewFlow::changed, this, [this](ChoicePreviewFlow::Scope scope) {
+        switch (scope) {
+        case ChoicePreviewFlow::Scope::Choice: Q_EMIT commandPreviewChanged(); break;
+        case ChoicePreviewFlow::Scope::NonConflicting: Q_EMIT nonConflictingPreviewChanged(); break;
+        case ChoicePreviewFlow::Scope::WholeFile: Q_EMIT wholeFilePreviewChanged(); break;
+        }
     });
+    connect(&loader_, &SessionLoader::notice, this, &ApplicationController::showMessage);
+    // A publication step can end the resolution and set or drop the parent
+    // staging offer, which the mergetool state shows.
     connect(&publisher_, &ResolutionPublisher::changed, this, [this](const QString &message) {
         commandMessage_ = message;
         mergetool_.onPublisherChanged();
-        Q_EMIT commandChanged();
+        Q_EMIT messageChanged();
+        Q_EMIT resolutionChanged();
+        Q_EMIT mergetoolChanged();
     });
-    connect(&mergetool_, &MergetoolSession::notice, this, [this](const QString &message) {
-        commandMessage_ = message;
-        Q_EMIT commandChanged();
-    });
-    connect(&mergetool_, &MergetoolSession::changed, this, [this] { Q_EMIT commandChanged(); });
+    // A new session drops the publisher's attempt, confirmation and offer.
+    connect(&coordinator_, &SessionCoordinator::sessionChanged, this, &ApplicationController::resolutionChanged);
+    connect(&mergetool_, &MergetoolSession::notice, this, &ApplicationController::showMessage);
+    connect(&mergetool_, &MergetoolSession::changed, this, &ApplicationController::mergetoolChanged);
     connect(&files_, &SessionModel::summaryChanged, this, [this] {
         if (!files_.file(selectedFileId_.toStdString())) {
             const auto preferred = loader_.preferredFileId();
@@ -178,13 +179,11 @@ ApplicationController::ApplicationController(QObject *parent)
         // remain once that restored result is acknowledged.
         if (discardPending_ && !files_.hasPendingRecovery()) {
             discardPending_ = false;
-            commandMessage_ = discardedMessage(files_.file(selectedFileId_.toStdString()));
-            Q_EMIT commandChanged();
+            showMessage(discardedMessage(files_.file(selectedFileId_.toStdString())));
         }
         if (stagedDiscardPending_ && !files_.hasPendingRecovery()) {
             stagedDiscardPending_ = false;
-            commandMessage_ = stagedDiscardMessage();
-            Q_EMIT commandChanged();
+            showMessage(stagedDiscardMessage());
         }
         Q_EMIT inventoryChanged();
         Q_EMIT selectedFileChanged();
@@ -194,10 +193,15 @@ ApplicationController::ApplicationController(QObject *parent)
         editor_.setSyntaxFileName(file ? fileName(file->path()) : QString{});
     });
     connect(this, &ApplicationController::selectedFileChanged, &editor_, &ResultEditorAdapter::sync);
-    // The mergetool waiting state and the parent staging path follow the selection.
-    connect(this, &ApplicationController::selectedFileChanged, this, &ApplicationController::commandChanged);
+    // The marker blocker, the mergetool waiting state and the parent staging
+    // path follow the selection. summaryChanged emits selectedFileChanged, so
+    // a new revision of the selected file reaches the blocker too.
+    connect(this, &ApplicationController::selectedFileChanged, this, &ApplicationController::messageChanged);
+    connect(this, &ApplicationController::selectedFileChanged, this, &ApplicationController::mergetoolChanged);
+    // The handoff reads the files, the running resolution and the launches Git still waits on.
     connect(&files_, &SessionModel::summaryChanged, this, &ApplicationController::handoffChanged);
-    connect(this, &ApplicationController::commandChanged, this, &ApplicationController::handoffChanged);
+    connect(&publisher_, &ResolutionPublisher::changed, this, &ApplicationController::handoffChanged);
+    connect(&mergetool_, &MergetoolSession::changed, this, &ApplicationController::handoffChanged);
 }
 QString ApplicationController::version() const
 {
@@ -414,6 +418,12 @@ QVariantMap ApplicationController::commandPreview() const
     return choices_.view(ChoicePreviewFlow::Scope::Choice);
 }
 
+void ApplicationController::showMessage(const QString &message)
+{
+    commandMessage_ = message;
+    Q_EMIT messageChanged();
+}
+
 bool ApplicationController::commandResult(Transition result)
 {
     switch (result) {
@@ -425,7 +435,7 @@ bool ApplicationController::commandResult(Transition result)
     case Transition::InvalidAnchor: commandMessage_ = tr("The target is no longer valid. Select the scope again."); break;
     default: commandMessage_ = tr("Command not completed. Check pending recovery and the selected scope."); break;
     }
-    Q_EMIT commandChanged();
+    Q_EMIT messageChanged();
     return result == Transition::Applied || result == Transition::NoChange;
 }
 
@@ -532,13 +542,11 @@ bool ApplicationController::saveDraft(const QString &fileId, const QString &revi
     // write the worktree or stage a path; publication stays on Mark resolved.
     const auto result = files_.recordCheckpoint(fileId.toStdString(), expected, Outcome::Succeeded);
     if (result == Transition::Blocked && files_.hasPendingRecovery()) {
-        commandMessage_ = tr("Draft save failed. The edited result is still available.");
-        Q_EMIT commandChanged();
+        showMessage(tr("Draft save failed. The edited result is still available."));
         return false;
     }
     if (result != Transition::Applied) return commandResult(result);
-    commandMessage_ = tr("Draft saved in Branch Truce; repository file unchanged.");
-    Q_EMIT commandChanged();
+    showMessage(tr("Draft saved in Branch Truce; repository file unchanged."));
     return true;
 }
 
@@ -570,8 +578,7 @@ bool ApplicationController::markResolved(const QString &fileId, const QString &r
     if (!target) return false;
     const auto &[session, expected] = *target;
     if (mergetool_.blocks(QByteArray::fromStdString(session->path()))) {
-        commandMessage_ = tr("Waiting for Git to launch this path. It is not resolved.");
-        Q_EMIT commandChanged();
+        showMessage(tr("Waiting for Git to launch this path. It is not resolved."));
         return false;
     }
     const auto started = publisher_.start(fileId.toStdString(), expected, confirmUndecided);
@@ -582,7 +589,11 @@ bool ApplicationController::markResolved(const QString &fileId, const QString &r
             {QStringLiteral("message"), started.detail},
             {QStringLiteral("count"), QVariant::fromValue(static_cast<qulonglong>(started.markers->count()))},
             {QStringLiteral("line"), QVariant::fromValue(static_cast<qulonglong>(started.markers->first()->line + 1))}};
-    Q_EMIT commandChanged();
+    Q_EMIT messageChanged();
+    // Starting drops the parent staging offer and can ask for confirmation.
+    Q_EMIT resolutionChanged();
+    Q_EMIT mergetoolChanged();
+    Q_EMIT handoffChanged();
     return started.transition == Transition::Applied || started.transition == Transition::NoChange;
 }
 
@@ -679,9 +690,8 @@ bool ApplicationController::finishSession()
     if (!sessionOutcome_.isEmpty()) return false;
     const auto summary = handoff();
     if (!summary.value(QStringLiteral("clean")).toBool()) {
-        commandMessage_ = tr("Work remains outstanding, so this session cannot finish cleanly. "
-                             "Open an outstanding file or leave deliberately.");
-        Q_EMIT commandChanged();
+        showMessage(tr("Work remains outstanding, so this session cannot finish cleanly. "
+                       "Open an outstanding file or leave deliberately."));
         return false;
     }
     sessionOutcome_ = summary.value(QStringLiteral("outcome")).toString();
@@ -695,10 +705,7 @@ bool ApplicationController::leaveSession()
     const auto summary = handoff();
     if (!summary.value(QStringLiteral("canLeave")).toBool()) {
         const auto blocker = summary.value(QStringLiteral("leaveBlocker")).toString();
-        if (!blocker.isEmpty()) {
-            commandMessage_ = blocker;
-            Q_EMIT commandChanged();
-        }
+        if (!blocker.isEmpty()) showMessage(blocker);
         return false;
     }
     const bool clean = summary.value(QStringLiteral("clean")).toBool();
@@ -745,14 +752,12 @@ bool ApplicationController::discardUnsaved(const QString &fileId, const QString 
         // The editor shows the pending restored result. The acknowledged edit
         // stays in place until this same discard commits.
         discardPending_ = true;
-        commandMessage_ = tr("Discard was not completed. The restored result is shown until retry finishes it.");
-        Q_EMIT commandChanged();
+        showMessage(tr("Discard was not completed. The restored result is shown until retry finishes it."));
         return false;
     }
     discardPending_ = false;
     if (result != Transition::Applied) return commandResult(result);
-    commandMessage_ = discardedMessage(files_.file(fileId.toStdString()));
-    Q_EMIT commandChanged();
+    showMessage(discardedMessage(files_.file(fileId.toStdString())));
     return true;
 }
 
@@ -771,19 +776,16 @@ bool ApplicationController::discardToStaged(const QString &fileId, const QString
     if (result == Transition::Blocked && files_.hasPendingRecovery()) {
         // The acknowledged draft stays current until retry commits this same discard.
         stagedDiscardPending_ = true;
-        commandMessage_ = tr("Discard was not completed. The draft is kept until retry finishes the discard.");
-        Q_EMIT commandChanged();
+        showMessage(tr("Discard was not completed. The draft is kept until retry finishes the discard."));
         return false;
     }
     stagedDiscardPending_ = false;
     if (result == Transition::Blocked) {
-        commandMessage_ = tr("Discard was not completed. No verified result staged in Git to return to, so the draft is kept.");
-        Q_EMIT commandChanged();
+        showMessage(tr("Discard was not completed. No verified result staged in Git to return to, so the draft is kept."));
         return false;
     }
     if (result != Transition::Applied) return commandResult(result);
-    commandMessage_ = stagedDiscardMessage();
-    Q_EMIT commandChanged();
+    showMessage(stagedDiscardMessage());
     return true;
 }
 
