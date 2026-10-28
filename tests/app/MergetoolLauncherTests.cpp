@@ -209,16 +209,10 @@ QString checkSocketDirectory(const Repository &repo)
 void startController(ApplicationController &controller, const Repository &repo, const QString &preferredFileId = {})
 {
     checkSocketDirectory(repo);
-    QEventLoop loop;
-    QTimer timeout;
-    timeout.setSingleShot(true);
-    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
-        if (!controller.loader()->opening()) loop.quit();
-    });
     CHECK(controller.loader()->openRepository(repo.root, preferredFileId));
-    timeout.start(15000);
-    if (controller.loader()->opening()) loop.exec();
+    // Opening takes about 0.5 s on an idle host. At load averages of 25 to 36 on 8 cores it
+    // averaged 2.5 s and some opens took over 10 s.
+    pump([&] { return !controller.loader()->opening(); }, QStringLiteral("the repository opening did not finish"));
     CHECK(!controller.loader()->opening());
 }
 

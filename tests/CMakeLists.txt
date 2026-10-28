@@ -241,7 +241,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_options(branch_truce_mergetool_tests PRIVATE "LINKER:--wrap=getsockopt")
     add_dependencies(branch_truce_mergetool_tests branch-truce)
     add_test(NAME app.mergetool-launcher COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_tests> $<TARGET_FILE:branch-truce>)
-    set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 120)
+    # Alone it takes about 40 s. At load averages of 25 to 36 on 8 cores 14 runs on the host and in
+    # the Tuxedo image took 97 to 174 s, so it gets 240 s: the longest run plus 25 %, rounded up.
+    set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 240)
 
     # Installed /usr/bin/git runs `git mergetool` against the launcher and an in-process session.
     add_executable(branch_truce_mergetool_parent_tests git/MergetoolParentTests.cpp)

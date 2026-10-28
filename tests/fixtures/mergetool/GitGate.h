@@ -22,6 +22,10 @@ class GitGate {
 public:
     // Holds `git ... <subcommand> ... -- <path>` while closed. A held call
     // leaves one held.* file naming its arguments and waits until it is gone.
+    // The call writes its arguments to an arguments.* file first and links
+    // held.* to it only when they are complete, so a test never reads a held
+    // call before its arguments exist. The arguments.* file keeps the suffix
+    // reserved until the call is released.
     explicit GitGate(const QByteArray &path)
     {
         CHECK(directory_.isValid());
@@ -38,9 +42,12 @@ public:
             "  [ -n \"$held\" ] && [ \"$argument\" = \"$held\" ] && found=1\n"
             "done\n"
             "if [ -n \"$found\" ] && [ \"$last\" = %2 ]; then\n"
-            "  call=$(mktemp \"$gate/held.XXXXXX\") || exit 125\n"
-            "  printf '%s\\n' \"$*\" > \"$call\"\n"
+            "  arguments=$(mktemp \"$gate/arguments.XXXXXX\") || exit 125\n"
+            "  printf '%s\\n' \"$*\" > \"$arguments\" || exit 125\n"
+            "  call=\"$gate/held.${arguments##*/arguments.}\"\n"
+            "  ln \"$arguments\" \"$call\" || exit 125\n"
             "  while [ -e \"$call\" ]; do sleep 0.01; done\n"
+            "  rm -f \"$arguments\"\n"
             "fi\n"
             "exec /usr/bin/git \"$@\"\n").arg(quoted(directory_.path()), quoted(QString::fromLatin1(path)));
         // GitAdapter trusts only executables whose file and directories nobody else can write.
@@ -73,7 +80,7 @@ public:
         CHECK(closed.open(QIODevice::WriteOnly | QIODevice::Truncate) && closed.write(bytes) == bytes.size());
     }
     void open() { QFile::remove(directory_.filePath(QStringLiteral("closed"))); }
-    // The calls waiting now, oldest name first.
+    // The calls waiting now, sorted by their random names, not by age.
     QStringList held() const
     {
         return QDir(directory_.path()).entryList({QStringLiteral("held.*")}, QDir::Files, QDir::Name);
