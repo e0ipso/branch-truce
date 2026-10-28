@@ -161,9 +161,18 @@ app fullscreen with a private home and XDG directories and no D-Bus session.
 Once the session's recovery journal appears it waits `PREVIEW_SETTLE` seconds
 (default 1), saves the window with grim and stops the app. stdout gets one PNG
 path per scheme. The PNGs go to `PREVIEW_OUTPUT`, or to a new
-`/tmp/bt-preview-shots.*` directory that you remove when done. The fixture
-directory is deleted on exit. The script writes nothing to the checkout or
-`$HOME` and stops only the app it started.
+`/tmp/bt-preview-shots.*` directory that you remove when done. The script
+writes nothing to the checkout or `$HOME` and stops only the app it started.
+
+Captures repeat from run to run. The fixture always lives in
+`/tmp/bt-preview-fixture`, so the window heading shows the same path, and its
+commits carry fixed dates, so the footer shows the same commit ids. Two runs on
+one build, size and scheme give byte-identical decoded pixels, and a before and
+after comparison needs no masking. The script creates that directory
+exclusively with mode 700 and deletes it on exit. A second run that starts
+while one is active stops with an error that names the directory, so run the
+script under `flock` when several sessions share a host. A run killed with
+SIGKILL leaves the directory behind; remove it.
 
 Without `PREVIEW_FILE` the app selects its first file, `image.bin`, so the
 captures show the outside-app notice instead of the comparison. `PREVIEW_FILE`

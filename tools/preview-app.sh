@@ -15,6 +15,12 @@
 # more. The script prints one PNG path per scheme on stdout. Without
 # PREVIEW_FILE the app selects its first file, image.bin.
 #
+# Captures repeat from run to run: two runs on one build, size and scheme give
+# byte-identical decoded pixels. The fixture always lives at the same path, so
+# the window heading is the same, and its commits carry fixed dates, so the
+# footer's commit ids are the same. A plain pixel comparison of two runs, such
+# as before and after a UI change, needs no masking.
+#
 # Environment:
 #   PREVIEW_FILE    fixture file to select at launch: tracked.txt, notes.md or
 #                   image.bin, passed hex-encoded through the app's
@@ -40,9 +46,13 @@
 #
 # Needs WAYLAND_DISPLAY and XDG_RUNTIME_DIR from a sway session (SWAYSOCK or
 # $XDG_RUNTIME_DIR/sway-ipc.*.sock), plus git, swaymsg, jq, grim and comm. The
-# fixture, home and logs live in one ${TMPDIR:-/tmp}/bt-preview.* directory,
-# removed on exit. The checkout and $HOME are not written. Only the app this
-# script started is stopped.
+# fixture, home and logs live in one private directory, /tmp/bt-preview-fixture
+# (not under $TMPDIR, which varies between sessions). The script creates it
+# exclusively and removes it on every exit, so a second run that starts while
+# the first is active stops with an error instead of sharing it; serialise runs
+# with flock. A run killed with SIGKILL leaves the directory behind, and the
+# next run names it in its error. The checkout and $HOME are not written. Only
+# the app this script started is stopped.
 set -euo pipefail
 
 schemes=(BreezeLight BreezeDark)
@@ -98,9 +108,12 @@ else
     output=$(mktemp -d "${TMPDIR:-/tmp}/bt-preview-shots.XXXXXXXX")
     made_output=1
 fi
-work=$(mktemp -d "${TMPDIR:-/tmp}/bt-preview.XXXXXXXX")
-home=$work/home
-repo=$work/repo
+# The fixed fixture directory. $work stays empty until this run has created the
+# directory, so the exit handler never removes one that belongs to another run.
+fixture_dir=/tmp/bt-preview-fixture
+work=
+home=$fixture_dir/home
+repo=$fixture_dir/repo
 app_pid=
 scheme=
 log=
@@ -163,7 +176,7 @@ cleanup() {
     trap - EXIT INT TERM
     stop_app
     close_screen
-    rm -rf -- "$work"
+    [[ -z "$work" ]] || rm -rf -- "$work"
     # A run that captured nothing leaves no empty directory behind.
     ((made_output == 0)) || rmdir -- "$output" 2>/dev/null || true
     exit "$status"
@@ -172,6 +185,14 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 cd /
+
+# mkdir without -p fails if the path exists, even as a symlink, so only one run
+# owns the directory and nobody else can have prepared it.
+if [[ -e "$fixture_dir" || -L "$fixture_dir" ]]; then
+    die "$fixture_dir exists: another preview run is active, or one was killed; remove it if none is"
+fi
+mkdir -m 700 -- "$fixture_dir" || die "could not create $fixture_dir"
+work=$fixture_dir
 
 source "$root/tools/merge-fixture.sh"
 
@@ -182,7 +203,13 @@ base_env=(
     "XDG_RUNTIME_DIR=$home/runtime" "GIT_CONFIG_NOSYSTEM=1" "GIT_CONFIG_GLOBAL=$home/gitconfig"
     "GIT_TERMINAL_PROMPT=0"
 )
-isolated() { (cd "$repo" && env -i "${base_env[@]}" "$@"); }
+# The fixture's Git commands also get fixed commit dates. The identity is fixed
+# in the gitconfig that make_merge_fixture writes. Together they make the
+# commit ids the same on every run. The app does not get these.
+fixture_env=(
+    "GIT_AUTHOR_DATE=2000-01-01T00:00:00+0000" "GIT_COMMITTER_DATE=2000-01-01T00:00:00+0000"
+)
+isolated() { (cd "$repo" && env -i "${base_env[@]}" "${fixture_env[@]}" "$@"); }
 
 has_window() {
     swaymsg -t get_tree | jq -e --argjson pid "$app_pid" 'any(.. | objects; .pid? == $pid)' >/dev/null
