@@ -165,7 +165,13 @@ The window choice (`chooseRecoverySession`) moves the window to a new store and
 reloads the current files through the same restore. It is refused while another
 window holds one of the listed sessions, and while this window's own store
 already holds app edits, pending input or a running resolution, because the
-reload would leave that work in a store nobody chose. The check releases its
+reload would leave that work in a store nobody chose. The window knows whether
+its store holds app edits without reading it: the flag is set as such a record
+commits and taken from the store a restore adopts. Those refusals are
+immediate. An accepted choice shows the window opening while a worker reads
+the window's own store. If that store cannot be read, or holds a record the
+window never acknowledged, the window shows its files again and refuses the
+choice once the read finishes. The check releases its
 locks before the reload, so another window can still take the chosen session
 in between; the reload then stays blocked as described above. A `git mergetool`
 launcher that waits during the choice stays attached. After the reload its path

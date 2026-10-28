@@ -85,6 +85,10 @@ public:
     // sessions are set aside, not deleted. Refused while another window holds
     // one of the choices, or while this window's own session holds app edits,
     // pending input or a running resolution that a reload would leave behind.
+    // Those refusals return false. An accepted choice returns true and opens
+    // at once, but this window's store is read on the worker first: if it
+    // cannot be read, the window returns to its files and notice refuses the
+    // choice then.
     Q_INVOKABLE bool chooseRecoverySession(const QString &session);
 
 Q_SIGNALS:
@@ -100,6 +104,14 @@ private:
     void setState(QString state, QString detail);
     void classified(const git::ConflictClassificationResult &result);
     void loadWorkingFiles(QList<git::Conflict> conflicts);
+    // Why this window cannot switch to session now, judged from memory while
+    // it shows state, or empty.
+    [[nodiscard]] QString choiceRefusal(const QString &session, const QString &state);
+    [[nodiscard]] static QString appEditsRefusal();
+    // The worker read this window's store at directory for a choice of session.
+    void ownStoreRead(const QString &session, const QString &directory, const RecoveryReplay &own);
+    // Leaves a choice that will not reload: the window shows its files again.
+    void refuseChoice(const QString &message);
     SessionModel &files_;
     SessionCoordinator &coordinator_;
     Owners owners_;
@@ -112,5 +124,10 @@ private:
     QString preferredFileId_;
     QString recoverySession_;
     std::vector<RecoveryChoice> recoveryChoices_;
+    // A choice whose own-store read is running, and what the window showed before it.
+    quint64 choiceTask_ = 0;
+    QString choiceSession_;
+    QString choiceState_;
+    QString choiceDetail_;
 };
 }

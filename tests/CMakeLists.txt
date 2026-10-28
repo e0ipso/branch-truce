@@ -238,6 +238,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     set(correspondence_constructor "_ZN12branch_truce17CorrespondenceMapC1EmRKNS_13FileSnapshotsENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrIKNS_23CorrespondenceAlgorithmEE")
     target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=${correspondence_constructor}")
     target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=fsync")
+    # Record the thread of every recovery store read, which every replay starts with.
+    target_link_options(branch_truce_startup_route_tests PRIVATE
+        "LINKER:--wrap=_ZNK12branch_truce7storage13RecoveryStore4readEv")
     add_dependencies(branch_truce_startup_route_tests branch-truce)
     add_test(NAME app.startup-routes COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_route_tests> $<TARGET_FILE:branch-truce>)
     # Real merge fixtures include restart and recovery fault matrices. Alone it takes 71 to 79 s.

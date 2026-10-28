@@ -550,6 +550,7 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         const auto sessionId = captured->snapshots()->provenance.sessionId;
         result.found = true;
         result.directory = adopted->directory;
+        result.userWork = replay.userWork;
         result.lease = std::move(adopted->lease);
         if (replay.incompleteTail)
             result.diagnostics.push_back(QStringLiteral("An interrupted final recovery record was ignored. Pending input may need repeating."));

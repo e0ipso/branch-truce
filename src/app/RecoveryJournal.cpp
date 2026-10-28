@@ -29,7 +29,10 @@ QString RecoveryJournal::ensureLease()
 storage::RecoveryCommit RecoveryJournal::commit(const storage::RecoveryTransaction &transaction)
 {
     const auto leaseError = ensureLease();
-    return leaseError.isEmpty() ? store_.commit(transaction) : storage::RecoveryCommit{false, leaseError};
+    if (!leaseError.isEmpty()) return storage::RecoveryCommit{false, leaseError};
+    auto result = store_.commit(transaction);
+    if (result.succeeded && transaction.state.value("action").toString() != QLatin1String("open")) userWork_ = true;
+    return result;
 }
 
 bool RecoveryJournal::commitCandidate(const FileSession &candidate, const QString &action)
@@ -62,6 +65,7 @@ bool RecoveryJournal::startNewStore()
     store_ = storage::RecoveryStore(QFileInfo(store_.directory()).absolutePath() + QLatin1Char('/')
         + QUuid::createUuid().toString(QUuid::WithoutBraces));
     lease_.reset();
+    userWork_ = false;
     return true;
 }
 
@@ -73,6 +77,7 @@ void RecoveryJournal::reset(RecoveryRestore *restore)
     lease_ = std::move(restore->lease);
     store_ = storage::RecoveryStore(restore->directory);
     failures_ = std::move(restore->failures);
+    userWork_ = restore->userWork;
 }
 
 const RecoveryJournal::Pending *RecoveryJournal::pending(const std::string &id) const

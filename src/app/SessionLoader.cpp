@@ -15,6 +15,14 @@ SessionLoader::SessionLoader(SessionModel &files, SessionCoordinator &coordinato
       gitExecutable_(std::move(gitExecutable)), classifier_(gitExecutable_, this)
 {
     connect(&classifier_, &git::ConflictClassifier::finished, this, &SessionLoader::classified);
+    // The fences drop a choice's read when work changes or the session is
+    // replaced, so its completion never runs; the choice ends here instead.
+    connect(&coordinator_, &SessionCoordinator::taskFinished, this, [this](const TaskCompletion &completion) {
+        if (choiceTask_ == 0 || completion.stamp.id != choiceTask_ || completion.disposition == TaskDisposition::Current)
+            return;
+        const auto refusal = choiceRefusal(choiceSession_, choiceState_);
+        refuseChoice(refusal.isEmpty() ? tr("Choose a recovery session after the session finishes loading.") : refusal);
+    });
 }
 
 QString SessionLoader::stage2() const
@@ -72,28 +80,34 @@ QVariantList SessionLoader::recoveryChoices() const
     return result;
 }
 
+QString SessionLoader::appEditsRefusal()
+{
+    return tr("This window already holds app edits, so it cannot switch to a recovery session. "
+        "Leave this session, then start Branch Truce with --recovery-session followed by the session to keep.");
+}
+
+QString SessionLoader::choiceRefusal(const QString &session, const QString &state)
+{
+    if (state != QLatin1String("ready") && state != QLatin1String("ready-without-mergetool"))
+        return tr("Choose a recovery session after the session finishes loading.");
+    if (std::none_of(recoveryChoices_.cbegin(), recoveryChoices_.cend(),
+            [&](const auto &choice) { return choice.session == session; }))
+        return tr("That recovery session is not one of the choices for this session.");
+    if (owners_.sessionBusy() || files_.hasPendingRecovery())
+        return tr("Choose a recovery session after the running resolution or pending recovery input finishes.");
+    // The reload replaces this window's files. Edits already recorded here
+    // would be left in a store nobody chose, so they refuse the choice.
+    if (files_.recoveryJournal().holdsUserWork()) return appEditsRefusal();
+    return {};
+}
+
 bool SessionLoader::chooseRecoverySession(const QString &session)
 {
     const auto refuse = [this](const QString &message) {
         Q_EMIT notice(message);
         return false;
     };
-    const auto chosen = std::find_if(recoveryChoices_.cbegin(), recoveryChoices_.cend(),
-        [&](const auto &choice) { return choice.session == session; });
-    if (state_ != QLatin1String("ready") && state_ != QLatin1String("ready-without-mergetool"))
-        return refuse(tr("Choose a recovery session after the session finishes loading."));
-    if (chosen == recoveryChoices_.cend())
-        return refuse(tr("That recovery session is not one of the choices for this session."));
-    if (owners_.sessionBusy() || files_.hasPendingRecovery())
-        return refuse(tr("Choose a recovery session after the running resolution or pending recovery input finishes."));
-    // The reload replaces this window's files. Edits already recorded here
-    // would be left in a store nobody chose, so they refuse the choice.
-    const auto own = replayRecovery(storage::RecoveryStore(files_.recoveryDirectory()));
-    if (!own.succeeded)
-        return refuse(tr("This window's recovery store could not be read, so it cannot switch sessions: %1").arg(own.error));
-    if (own.userWork)
-        return refuse(tr("This window already holds app edits, so it cannot switch to a recovery session. "
-            "Leave this session, then start Branch Truce with --recovery-session followed by the session to keep."));
+    if (const auto refusal = choiceRefusal(session, state_); !refusal.isEmpty()) return refuse(refusal);
     // These locks are released before the reload. If another window takes the
     // chosen session in between, the restore adopts no other edited session.
     for (const auto &choice : recoveryChoices_) {
@@ -102,11 +116,57 @@ bool SessionLoader::chooseRecoverySession(const QString &session)
             return refuse(tr("Recovery session %1 is open in another Branch Truce window. Close that window, then choose again.")
                 .arg(choice.session));
     }
+    // Reading this window's store waits on the disk, so the worker reads it,
+    // fenced by session and revision like the initial load. The window shows
+    // the reload opening meanwhile.
+    const auto anchor = files_.data(files_.index(0), SessionModel::FileIdRole).toString().toStdString();
+    const auto *file = files_.file(anchor);
+    const auto directory = files_.recoveryDirectory();
+    auto own = std::make_shared<RecoveryReplay>();
+    const auto task = !file ? 0 : coordinator_.submit(anchor, file->current().id,
+        [directory, own](const TaskInput &, const TaskControl &) {
+            *own = replayRecovery(storage::RecoveryStore(directory));
+            return TaskResult{};
+        }, [this, session, directory, own](const TaskCompletion &completion) {
+            if (completion.result.status != TaskStatus::Succeeded) {
+                own->succeeded = false;
+                own->error = completion.result.diagnostic;
+            }
+            ownStoreRead(session, directory, *own);
+        });
+    if (task == 0) return refuse(tr("Choose a recovery session after the session finishes loading."));
+    choiceTask_ = task;
+    choiceSession_ = session;
+    choiceState_ = state_;
+    choiceDetail_ = detail_;
+    setState(QStringLiteral("opening"), tr("Inspecting the selected local repository…"));
+    return true;
+}
+
+void SessionLoader::ownStoreRead(const QString &session, const QString &directory, const RecoveryReplay &own)
+{
+    choiceTask_ = 0;
+    // Work recorded while the store was read refuses the choice too.
+    if (const auto refusal = choiceRefusal(session, choiceState_); !refusal.isEmpty()) return refuseChoice(refusal);
+    if (files_.recoveryDirectory() != directory)
+        return refuseChoice(tr("Choose a recovery session after the session finishes loading."));
+    if (!own.succeeded)
+        return refuseChoice(tr("This window's recovery store could not be read, so it cannot switch sessions: %1").arg(own.error));
+    // A record this window never acknowledged, from a commit that reported
+    // failure after the record reached the disk, is work as well.
+    if (own.userWork) return refuseChoice(appEditsRefusal());
     if (!files_.startNewRecoveryStore())
-        return refuse(tr("Choose a recovery session after the pending recovery input finishes."));
+        return refuseChoice(tr("Choose a recovery session after the pending recovery input finishes."));
     Q_EMIT notice({});
     state_ = QStringLiteral("idle");
-    return openRepository(repository_.worktreeRoot, owners_.selectedFileId(), session);
+    openRepository(repository_.worktreeRoot, owners_.selectedFileId(), session);
+}
+
+void SessionLoader::refuseChoice(const QString &message)
+{
+    choiceTask_ = 0;
+    setState(choiceState_, choiceDetail_);
+    Q_EMIT notice(message);
 }
 
 bool SessionLoader::openRepository(const QString &directory, const QString &preferredFileId,

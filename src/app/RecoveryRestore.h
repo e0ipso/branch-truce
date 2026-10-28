@@ -47,6 +47,8 @@ struct RecoveryChoice {
 struct RecoveryRestore {
     bool found = false;
     QString directory;
+    // Whether the adopted store holds a record other than a launch capture.
+    bool userWork = false;
     std::vector<FileSession> files;
     std::map<std::string, QString> failures;
     std::set<std::string> newFiles;

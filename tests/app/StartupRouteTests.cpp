@@ -23,11 +23,15 @@
 #include <QProcessEnvironment>
 #include <QSet>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QUuid>
 #include <array>
 #include <atomic>
+#include <mutex>
 #include <sys/stat.h>
+#include <utility>
+#include <vector>
 
 using namespace branch_truce;
 
@@ -56,6 +60,39 @@ extern "C" void wrapMap(CorrespondenceMap *self, RevisionId revision, const File
     realMap(self, revision, sources, std::move(result), std::move(algorithm));
 }
 #undef MAP_CONSTRUCTOR
+
+// Every recovery replay starts with RecoveryStore::read, so recording the
+// thread of each read records the thread of each replay.
+namespace store_reads {
+std::mutex mutex;
+bool recording = false;
+std::vector<std::pair<QString, QThread *>> reads;
+void start()
+{
+    const std::lock_guard lock(mutex);
+    reads.clear();
+    recording = true;
+}
+std::vector<std::pair<QString, QThread *>> stop()
+{
+    const std::lock_guard lock(mutex);
+    recording = false;
+    return std::exchange(reads, {});
+}
+}
+
+#define STORE_READ "_ZNK12branch_truce7storage13RecoveryStore4readEv"
+storage::RecoveryRead realRead(const storage::RecoveryStore *store) asm("__real_" STORE_READ);
+storage::RecoveryRead wrapRead(const storage::RecoveryStore *store) asm("__wrap_" STORE_READ);
+storage::RecoveryRead wrapRead(const storage::RecoveryStore *store)
+{
+    {
+        const std::lock_guard lock(store_reads::mutex);
+        if (store_reads::recording) store_reads::reads.emplace_back(store->directory(), QThread::currentThread());
+    }
+    return realRead(store);
+}
+#undef STORE_READ
 
 namespace {
 void writeFile(const QString &path, const QByteArray &bytes)
@@ -885,6 +922,70 @@ public:
                 [&](const auto &file) { return file.id() == restoredId; });
             CHECK(adopted.succeeded && kept != adopted.files.end()
                   && kept->current().draft.text.starts_with("kept\nfirst window\n"));
+        });
+        suite.run("TRUCE-0228 a recovery choice replays every store on a worker and refuses an unreadable own store later", [] {
+            Repository repo;
+            repo.conflict("merge");
+            ScopedEnvironment environment(repo.environment);
+            QString first;
+            QString second;
+            {
+                ApplicationController one(gitOnPath());
+                openController(one, repo);
+                ApplicationController two(gitOnPath());
+                openController(two, repo);
+                for (auto *controller : {&one, &two}) {
+                    const auto &selected = openedFile(*controller);
+                    const std::string text = controller == &one ? "first window\n" : "second window\n";
+                    CHECK(controller->files()->editResult(selected.id(), selected.current().id, {{0, 0}, text}) == Transition::Applied);
+                }
+                first = one.files()->recoveryDirectory();
+                second = two.files()->recoveryDirectory();
+            }
+            const auto firstName = QFileInfo(first).fileName();
+            auto *gui = QThread::currentThread();
+            const auto onWorkers = [&](const std::vector<std::pair<QString, QThread *>> &reads) {
+                return !reads.empty() && std::none_of(reads.begin(), reads.end(),
+                    [&](const auto &read) { return read.second == gui || read.second == nullptr; });
+            };
+            const auto readOf = [](const std::vector<std::pair<QString, QThread *>> &reads, const QString &directory) {
+                return std::any_of(reads.begin(), reads.end(), [&](const auto &read) { return read.first == directory; });
+            };
+
+            ApplicationController controller(gitOnPath());
+            openController(controller, repo);
+            CHECK(controller.loader()->recoveryChoices().size() == 2);
+            const auto own = controller.files()->recoveryDirectory();
+            const auto journal = own + "/journal";
+            const auto intact = readFile(journal);
+            // A complete line that is no recovery frame makes this window's store unreadable.
+            {
+                QFile file(journal);
+                const QByteArray garbage("not a recovery frame\n");
+                CHECK(file.open(QIODevice::Append) && file.write(garbage) == garbage.size());
+            }
+            // The choice is accepted and opens at once; the worker's read refuses it afterwards.
+            store_reads::start();
+            CHECK(controller.loader()->chooseRecoverySession(firstName));
+            CHECK(controller.loader()->opening());
+            waitOpened(controller, "the choice refused by its unreadable store");
+            auto reads = store_reads::stop();
+            CHECK(controller.loader()->startupState() == "ready");
+            CHECK(controller.commandMessage().contains("This window's recovery store could not be read"));
+            CHECK(controller.files()->recoveryDirectory() == own && controller.loader()->recoveryChoices().size() == 2);
+            CHECK(!QFileInfo::exists(first + "/set-aside") && !QFileInfo::exists(second + "/set-aside"));
+            CHECK(reads.size() == 1 && readOf(reads, own) && onWorkers(reads));
+
+            // Readable again, the choice reloads. Every replay on the way, of this
+            // window's store and of each matching store, runs on a worker.
+            writeFile(journal, intact);
+            store_reads::start();
+            CHECK(controller.loader()->chooseRecoverySession(firstName));
+            waitOpened(controller, "the chosen recovery session");
+            reads = store_reads::stop();
+            CHECK(controller.loader()->startupState() == "ready" && controller.files()->recoveryDirectory() == first);
+            CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
+            CHECK(readOf(reads, own) && readOf(reads, first) && readOf(reads, second) && onWorkers(reads));
         });
         suite.run("TRUCE-0099 a chosen session locked during the reload restores no other session in its place", [] {
             Repository repo;

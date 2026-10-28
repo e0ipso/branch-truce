@@ -49,6 +49,11 @@ public:
     // Drops pending input and errors. With a restore, adopts its store, its
     // lease and its per-file errors.
     void reset(RecoveryRestore *restore = nullptr);
+    // Whether the store holds a record other than a launch capture, as a
+    // replay's userWork reports, known without reading it: set when such a
+    // record commits here, taken from the restore whose store this adopts,
+    // and cleared by a new store.
+    [[nodiscard]] bool holdsUserWork() const { return userWork_; }
 
     [[nodiscard]] bool hasPending() const { return !pending_.empty(); }
     [[nodiscard]] const Pending *pending(const std::string &id) const;
@@ -69,5 +74,6 @@ private:
     std::shared_ptr<QLockFile> lease_;
     std::map<std::string, Pending> pending_;
     std::map<std::string, QString> failures_;
+    bool userWork_ = false;
 };
 }
