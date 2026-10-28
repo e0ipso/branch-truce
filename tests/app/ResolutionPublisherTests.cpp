@@ -871,5 +871,85 @@ int main(int argc, char **argv)
             "Discard was not completed. No verified result staged in Git to return to, so the draft is kept."));
         CHECK(openedFile(unstaged.controller).current().draft.text == text);
     });
+    // The messages are the ones each command showed before one guard replaced
+    // its own copy of the checks. The previews never checked the current
+    // revision or support themselves, so the preview reports those.
+    suite.run("TRUCE-0225 every result command refuses a stale revision, a blocked file and an unsupported file as before", [] {
+        Session session;
+        auto &controller = session.controller;
+        const QString stale = QStringLiteral("The result changed. Select the scope again.");
+        const QString blocked = QStringLiteral("Command not completed. Check pending recovery and the selected scope.");
+        struct Command {
+            const char *name;
+            std::function<bool(const QString &id, const QString &revision)> run;
+            QString staleMessage;
+            QString unsupportedMessage;
+        };
+        const std::vector<Command> commands{
+            {"previewChoice", [&](const QString &id, const QString &revision) {
+                return controller.previewChoice(id, revision, QStringLiteral("unknown"), QStringLiteral("accept"));
+            }, stale, QStringLiteral("This file cannot be edited in Branch Truce.")},
+            {"previewNonConflicting", [&](const QString &id, const QString &revision) {
+                return controller.previewNonConflicting(id, revision, QStringLiteral("both"));
+            }, QStringLiteral("The result changed. Preview the batch again."),
+                QStringLiteral("This file cannot apply non-conflicting changes.")},
+            {"previewWholeFile", [&](const QString &id, const QString &revision) {
+                return controller.previewWholeFile(id, revision, QStringLiteral("left"));
+            }, QStringLiteral("The result changed. Inspect a new whole-file preview."),
+                QStringLiteral("This file has no editable captured source.")},
+            {"saveDraft", [&](const QString &id, const QString &revision) { return controller.saveDraft(id, revision); },
+                stale, blocked},
+            {"markResolved", [&](const QString &id, const QString &revision) {
+                return controller.markResolved(id, revision, true);
+            }, stale, blocked},
+            {"discardUnsaved", [&](const QString &id, const QString &revision) {
+                return controller.discardUnsaved(id, revision);
+            }, stale, blocked},
+            {"discardToStaged", [&](const QString &id, const QString &revision) {
+                return controller.discardToStaged(id, revision);
+            }, stale, blocked},
+        };
+        const auto before = session.repo.snapshot();
+        const auto refuses = [&](const Command &command, const char *path, const QString &revision, const QString &message) {
+            const auto draft = openedFile(controller, path).current();
+            if (command.run(QString::fromLatin1(QByteArray(path).toHex()), revision))
+                throw std::runtime_error(std::string(command.name) + " ran on " + path + " at revision " + revision.toStdString());
+            if (controller.commandMessage() != message)
+                throw std::runtime_error(std::string(command.name) + " showed: " + controller.commandMessage().toStdString());
+            CHECK(controller.commandPreview().isEmpty() && controller.nonConflictingPreview().isEmpty()
+                  && controller.wholeFilePreview().isEmpty());
+            CHECK(!controller.resolutionBusy() && !controller.resolutionConfirmation());
+            CHECK(openedFile(controller, path).current().id == draft.id && openedFile(controller, path).current().draft == draft.draft);
+        };
+
+        const auto current = openedFile(controller).current().id;
+        for (const auto &command : commands) {
+            // A revision that is not the file's current one, and one that does not parse.
+            refuses(command, "tracked.txt", QString::number(static_cast<qulonglong>(current + 1)), command.staleMessage);
+            refuses(command, "tracked.txt", QStringLiteral("not a revision"), stale);
+            // A file other than the selected one.
+            refuses(command, "excluded.txt", revisionOf(openedFile(controller, "excluded.txt")), stale);
+        }
+
+        // An unsupported file, selected at its current revision.
+        CHECK(openedFile(controller, "excluded.txt").support() != Support::Supported);
+        CHECK(controller.selectFile(QString::fromLatin1(QByteArray("excluded.txt").toHex())));
+        for (const auto &command : commands)
+            refuses(command, "excluded.txt", revisionOf(openedFile(controller, "excluded.txt")), command.unsupportedMessage);
+
+        // Pending recovery input blocks the file at its current revision.
+        CHECK(controller.selectFile(session.id));
+        auto edited = openedFile(controller).current().draft;
+        edited.text += "pending edit\n";
+        {
+            recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+            CHECK(controller.files()->replaceDraft(session.id.toStdString(), current, edited) != Transition::Applied);
+            CHECK(recovery_faults::failures == 1);
+        }
+        CHECK(controller.files()->hasPendingRecovery());
+        CHECK(openedFile(controller).current().id == current);
+        for (const auto &command : commands) refuses(command, "tracked.txt", session.revision(), blocked);
+        expectUnchanged(session.repo, before);
+    });
     return suite.report();
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include "ChoicePreviewFlow.h"
+#include "CommandGuard.h"
 #include "FileNavigator.h"
 #include "MergetoolSession.h"
 #include "RecoveryRestore.h"
@@ -161,7 +162,8 @@ Q_SIGNALS:
     void sessionEnded(const QString &outcome, bool clean);
 
 private:
-    bool commandReady(const QString &fileId, const QString &revision, RevisionId *expected) const;
+    // The command guard for the current revision of a supported file. Shows a refusal and returns nothing.
+    std::optional<CommandTarget> admitCommand(const QString &fileId, const QString &revision);
     [[nodiscard]] QString discardedMessage(const FileSession *current) const;
     [[nodiscard]] static QString stagedDiscardMessage();
     // Escaped display text for exact path bytes; see displayPath.

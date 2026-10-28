@@ -36,7 +36,7 @@ public:
     // ignore, resolve, left-first or right-first) for Choice, with target the
     // choice's contribution ID; left, right or both for NonConflicting; left
     // or right for WholeFile. False when nothing is left pending.
-    bool preview(Scope scope, const QString &fileId, std::optional<RevisionId> revision,
+    bool preview(Scope scope, const QString &fileId, const QString &revision,
                  const QString &option, const QString &target = {});
     // Applies the pending preview of scope to the selected file. confirm
     // allows a replacement the preview asked to confirm.

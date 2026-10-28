@@ -1,4 +1,5 @@
 #include "ApplicationController.h"
+#include "CommandGuard.h"
 #include "NavigationTargets.h"
 #include "RecoveryRestore.h"
 #include "TextPositions.h"
@@ -52,13 +53,6 @@ QVariantMap sourceData(const std::optional<SourceSnapshot> &source)
             {QStringLiteral("label"), text(source->label)}, {QStringLiteral("objectId"), text(source->objectId)},
             {QStringLiteral("commitId"), source->commitId ? text(*source->commitId) : QString{}},
             {QStringLiteral("mode"), text(source->mode)}};
-}
-
-std::optional<RevisionId> revisionId(const QString &value)
-{
-    bool ok = false;
-    const auto id = value.toULongLong(&ok);
-    return ok && id != 0 && QString::number(id) == value ? std::optional<RevisionId>{id} : std::nullopt;
 }
 
 bool scalarBoundary(const QString &value, int offset)
@@ -438,7 +432,7 @@ bool ApplicationController::commandResult(Transition result)
 bool ApplicationController::previewChoice(const QString &fileId, const QString &revision,
                                          const QString &target, const QString &action)
 {
-    return choices_.preview(ChoicePreviewFlow::Scope::Choice, fileId, revisionId(revision), action, target);
+    return choices_.preview(ChoicePreviewFlow::Scope::Choice, fileId, revision, action, target);
 }
 
 bool ApplicationController::applyChoice(bool confirmReplacement)
@@ -453,7 +447,7 @@ QVariantMap ApplicationController::nonConflictingPreview() const
 
 bool ApplicationController::previewNonConflicting(const QString &fileId, const QString &revision, const QString &scope)
 {
-    return choices_.preview(ChoicePreviewFlow::Scope::NonConflicting, fileId, revisionId(revision), scope);
+    return choices_.preview(ChoicePreviewFlow::Scope::NonConflicting, fileId, revision, scope);
 }
 
 bool ApplicationController::applyNonConflicting()
@@ -468,7 +462,7 @@ QVariantMap ApplicationController::wholeFilePreview() const
 
 bool ApplicationController::previewWholeFile(const QString &fileId, const QString &revision, const QString &side)
 {
-    return choices_.preview(ChoicePreviewFlow::Scope::WholeFile, fileId, revisionId(revision), side);
+    return choices_.preview(ChoicePreviewFlow::Scope::WholeFile, fileId, revision, side);
 }
 
 bool ApplicationController::applyWholeFile()
@@ -485,7 +479,7 @@ bool ApplicationController::editResult(const QString &fileId, const QString &rev
                                       int begin, int end, const QString &replacement)
 {
     const auto *file = files_.file(fileId.toStdString());
-    const auto expected = revisionId(revision);
+    const auto expected = parseRevisionId(revision);
     if (!file || !expected || fileId != selectedFileId_ || file->current().id != *expected)
         return commandResult(Transition::StaleRevision);
     const auto old = text(file->current().draft.text);
@@ -498,7 +492,7 @@ bool ApplicationController::editResult(const QString &fileId, const QString &rev
 
 bool ApplicationController::undo(const QString &fileId, const QString &revision)
 {
-    const auto expected = revisionId(revision);
+    const auto expected = parseRevisionId(revision);
     if (!expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
     if (editor_.composing()) return commandResult(Transition::Blocked);
     return commandResult(files_.undo(fileId.toStdString(), *expected));
@@ -506,30 +500,28 @@ bool ApplicationController::undo(const QString &fileId, const QString &revision)
 
 bool ApplicationController::redo(const QString &fileId, const QString &revision)
 {
-    const auto expected = revisionId(revision);
+    const auto expected = parseRevisionId(revision);
     if (!expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
     if (editor_.composing()) return commandResult(Transition::Blocked);
     return commandResult(files_.redo(fileId.toStdString(), *expected));
 }
 
-bool ApplicationController::commandReady(const QString &fileId, const QString &revision, RevisionId *expected) const
+std::optional<CommandTarget> ApplicationController::admitCommand(const QString &fileId, const QString &revision)
 {
-    const auto *file = files_.file(fileId.toStdString());
-    const auto id = revisionId(revision);
-    if (!file || !id || fileId != selectedFileId_ || file->current().id != *id) return false;
-    if (expected) *expected = *id;
-    return file->support() == Support::Supported && !files_.hasPendingRecovery()
-        && !files_.hasRecoveryFailure(file->id())
-        && !editor_.composing();
+    const auto checked = checkCommand(files_, selectedFileId_, editor_.composing(), fileId, revision,
+                                      CommandCheck::CurrentSupported);
+    if (const auto *refused = std::get_if<Transition>(&checked)) {
+        commandResult(*refused);
+        return std::nullopt;
+    }
+    return std::get<CommandTarget>(checked);
 }
 
 bool ApplicationController::saveDraft(const QString &fileId, const QString &revision)
 {
-    RevisionId expected = 0;
-    const auto *file = files_.file(fileId.toStdString());
-    if (!file || !revisionId(revision) || fileId != selectedFileId_ || file->current().id != *revisionId(revision))
-        return commandResult(Transition::StaleRevision);
-    if (!commandReady(fileId, revision, &expected)) return commandResult(Transition::Blocked);
+    const auto target = admitCommand(fileId, revision);
+    if (!target) return false;
+    const auto &[file, expected] = *target;
     const auto saved = file->checkpoint() && file->checkpoint()->id == expected
         && file->checkpoint()->result == file->current().result
         && file->checkpoint()->decisions == file->current().decisions
@@ -574,11 +566,9 @@ bool ApplicationController::canEndParentSession() const
 
 bool ApplicationController::markResolved(const QString &fileId, const QString &revision, bool confirmUndecided)
 {
-    RevisionId expected = 0;
-    const auto *session = files_.file(fileId.toStdString());
-    if (!session || !revisionId(revision) || fileId != selectedFileId_ || session->current().id != *revisionId(revision))
-        return commandResult(Transition::StaleRevision);
-    if (!commandReady(fileId, revision, &expected)) return commandResult(Transition::Blocked);
+    const auto target = admitCommand(fileId, revision);
+    if (!target) return false;
+    const auto &[session, expected] = *target;
     if (mergetool_.blocks(QByteArray::fromStdString(session->path()))) {
         commandMessage_ = tr("Waiting for Git to launch this path. It is not resolved.");
         Q_EMIT commandChanged();
@@ -601,7 +591,7 @@ QVariantMap ApplicationController::markerBlocker() const
     const auto *file = files_.file(selectedFileId_.toStdString());
     if (markerBlocker_.isEmpty() || !file || markerBlocker_.value(QStringLiteral("fileId")).toString() != selectedFileId_
         || markerBlocker_.value(QStringLiteral("message")).toString() != commandMessage_
-        || revisionId(markerBlocker_.value(QStringLiteral("revision")).toString()) != file->current().id)
+        || parseRevisionId(markerBlocker_.value(QStringLiteral("revision")).toString()) != file->current().id)
         return {};
     auto result = markerBlocker_;
     result.remove(QStringLiteral("message"));
@@ -632,7 +622,7 @@ bool ApplicationController::assignParentStaging(const QByteArray &path)
 
 bool ApplicationController::verifyParentAcknowledgment(const QString &fileId, const QString &revision)
 {
-    const auto expected = revisionId(revision);
+    const auto expected = parseRevisionId(revision);
     if (!expected) return false;
     return publisher_.verifyParentAcknowledgment(fileId.toStdString(), *expected);
 }
@@ -746,11 +736,9 @@ QString ApplicationController::discardedMessage(const FileSession *current) cons
 
 bool ApplicationController::discardUnsaved(const QString &fileId, const QString &revision)
 {
-    RevisionId expected = 0;
-    const auto *file = files_.file(fileId.toStdString());
-    if (!file || !revisionId(revision) || fileId != selectedFileId_ || file->current().id != *revisionId(revision))
-        return commandResult(Transition::StaleRevision);
-    if (!commandReady(fileId, revision, &expected)) return commandResult(Transition::Blocked);
+    const auto target = admitCommand(fileId, revision);
+    if (!target) return false;
+    const auto expected = target->revision;
     // Applied means the restored text and decisions are already in the journal.
     const auto result = files_.discardToCheckpoint(fileId.toStdString(), expected);
     if (result == Transition::Blocked && files_.hasPendingRecovery()) {
@@ -775,11 +763,9 @@ QString ApplicationController::stagedDiscardMessage()
 
 bool ApplicationController::discardToStaged(const QString &fileId, const QString &revision)
 {
-    RevisionId expected = 0;
-    const auto *file = files_.file(fileId.toStdString());
-    if (!file || !revisionId(revision) || fileId != selectedFileId_ || file->current().id != *revisionId(revision))
-        return commandResult(Transition::StaleRevision);
-    if (!commandReady(fileId, revision, &expected)) return commandResult(Transition::Blocked);
+    const auto target = admitCommand(fileId, revision);
+    if (!target) return false;
+    const auto expected = target->revision;
     // Applied means the staged revision is current again and the journal holds it.
     const auto result = files_.discardToStaged(fileId.toStdString(), expected);
     if (result == Transition::Blocked && files_.hasPendingRecovery()) {

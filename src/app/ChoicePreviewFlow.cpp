@@ -1,4 +1,5 @@
 #include "ChoicePreviewFlow.h"
+#include "CommandGuard.h"
 #include "ResultEditorAdapter.h"
 #include "SessionModel.h"
 #include "TextPositions.h"
@@ -60,14 +61,14 @@ ChoicePreviewFlow::ChoicePreviewFlow(SessionModel &files, ResultEditorAdapter &e
 {
 }
 
-bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, std::optional<RevisionId> revision,
+bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QString &revision,
                                 const QString &option, const QString &target)
 {
     cancel();
-    const auto *file = files_.file(fileId.toStdString());
-    if (!file || !revision || fileId != owners_.selectedFileId()) return owners_.report(Transition::StaleRevision);
-    if (files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id())
-        || editor_.composing()) return owners_.report(Transition::Blocked);
+    const auto checked = checkCommand(files_, owners_.selectedFileId(), editor_.composing(), fileId, revision,
+                                      CommandCheck::Selected);
+    if (const auto *refused = std::get_if<Transition>(&checked)) return owners_.report(*refused);
+    const auto &[file, expected] = std::get<CommandTarget>(checked);
     decltype(pending_) pending;
     QString message;
     bool accepted = false;
@@ -75,7 +76,7 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, std::optiona
     case Scope::Choice: {
         const auto action = choiceAction(option);
         if (!action) return owners_.report(Transition::InvalidAnchor);
-        auto preview = previewChoice(*file, *revision, target.toStdString(), *action);
+        auto preview = previewChoice(*file, expected, target.toStdString(), *action);
         message = text(preview.detail);
         accepted = preview.state == Transition::Applied || preview.state == Transition::ConfirmationRequired;
         pending = std::move(preview);
@@ -84,7 +85,7 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, std::optiona
     case Scope::NonConflicting: {
         const auto kind = nonConflictingScope(option);
         if (!kind) return owners_.report(Transition::InvalidAnchor);
-        auto preview = previewNonConflicting(*file, *revision, *kind);
+        auto preview = previewNonConflicting(*file, expected, *kind);
         message = (preview.state == Transition::NoChange ? tr("No eligible non-conflicting changes. ") : QString{})
             + text(preview.detail);
         accepted = preview.state == Transition::ConfirmationRequired;
@@ -94,7 +95,7 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, std::optiona
     case Scope::WholeFile: {
         const auto side = wholeFileSide(option);
         if (!side) return owners_.report(Transition::InvalidAnchor);
-        auto preview = previewWholeFile(*file, *revision, *side);
+        auto preview = previewWholeFile(*file, expected, *side);
         message = text(preview.detail);
         accepted = preview.state == Transition::ConfirmationRequired;
         pending = std::move(preview);
