@@ -238,8 +238,9 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected,
     if (action != ChoiceAction::Ignore) {
         // A source deletion has an empty insertion anchor. Its replacement
         // range must come from the captured competitor, never nearby text.
-        // In a marker section the insertion point lies past the end marker,
-        // but the competitor's anchor is exactly its region inside the block.
+        // In a marker section the competitor's anchor lies inside the block:
+        // its whole region when the insertion point lies past the end marker,
+        // or one scope of it between lines both regions share.
         const ResultAnchor *replacementAnchor = anchor;
         if (found->source.range.begin == found->source.range.end) {
             const auto opposite = std::find_if(targets.begin(), targets.end(), [&](const auto &target) {

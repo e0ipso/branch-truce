@@ -166,9 +166,10 @@ std::vector<ByteRange> sharedText(ByteRange region, const std::vector<ByteRange>
 
 // The sections of a block Git wrote around lines both sides share: each side
 // region holds one mapped scope of every section, in the same order on both
-// sides, and the same text around them. A deletion has no text inside a
-// block, so a section with one, or with a scope outside its region, leaves
-// the block untied.
+// sides, and the same text around them. A deletion's insertion point counts
+// only strictly inside its region, where it lies between shared lines; at an
+// edge it could belong outside the block. A section with a scope outside its
+// region leaves the block untied.
 std::vector<std::string> enclosedSections(const std::vector<ChoiceTarget> &choices, const CorrespondenceMap &mapping,
                                           const MarkerRange &block, std::string_view text)
 {
@@ -176,16 +177,20 @@ std::vector<std::string> enclosedSections(const std::vector<ChoiceTarget> &choic
     for (const auto &target : choices) {
         if (target.scope != ChoiceScope::Section || target.source.side == SourceSide::Earlier) continue;
         const auto *anchor = mapping.anchor(target.source.contributionId);
-        if (!anchor || anchor->state != AnchorState::Mapped || !anchor->result
-            || anchor->result->begin == anchor->result->end) continue;
+        if (!anchor || anchor->state != AnchorState::Mapped || !anchor->result) continue;
         const auto index = target.source.side == SourceSide::Stage2 ? 0u : 1u;
-        if (inside(*anchor->result, sideRegion(block, target.source.side)))
-            placed[index].push_back({*anchor->result, target.section});
+        const auto region = sideRegion(block, target.source.side);
+        const auto range = *anchor->result;
+        if (range.begin == range.end ? region.begin < range.begin && range.end < region.end : inside(range, region))
+            placed[index].push_back({range, target.section});
     }
     auto &[left, right] = placed;
     if (left.empty() || left.size() != right.size()) return {};
     for (auto &side : placed)
-        std::sort(side.begin(), side.end(), [](const auto &a, const auto &b) { return a.first.begin < b.first.begin; });
+        // A deletion goes before a scope that starts where it is.
+        std::sort(side.begin(), side.end(), [](const auto &a, const auto &b) {
+            return a.first.begin != b.first.begin ? a.first.begin < b.first.begin : a.first.end < b.first.end;
+        });
     std::vector<std::string> sections;
     std::array<std::vector<ByteRange>, 2> scopes;
     for (std::size_t i = 0; i < left.size(); ++i) {

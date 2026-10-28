@@ -1528,6 +1528,18 @@ public:
                             ">>>>>>> theirs\ntail\n");
             resolvesDiff3Block(left, earlier, right, merged, 7);
         });
+        suite.run("TRUCE-0254 Git's separator lies between a base ending in a separator line and left text", [] {
+            // The right side starts with a line the left side has too, so both copies
+            // of it are equally good matches for the right side's line, and the left
+            // side's deletion lies between two lines its region shares with the right.
+            const std::string left = "intro\nLeft\n-----\ntail\n";
+            const std::string earlier = "intro\nTitle\n=======\ntail\n";
+            const std::string right = "intro\nLeft\nRight\n-----\ntail\n";
+            const auto merged = test_support::gitDiff3(left, earlier, right);
+            CHECK(merged == "intro\n<<<<<<< ours\nLeft\n-----\n||||||| base\nTitle\n=======\n=======\nLeft\nRight\n-----\n"
+                            ">>>>>>> theirs\ntail\n");
+            resolvesDiff3Block(left, earlier, right, merged, 7);
+        });
         suite.run("TRUCE-0098 an outside-app file keeps its support blocker and recorded failures only", [] {
             FileSession file("id", "file", draft());
             CHECK(file.beginMarkResolved(1) == Transition::Applied);

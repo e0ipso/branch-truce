@@ -26,7 +26,8 @@ sections it encloses. Either its two side regions hold exactly the mapped
 scopes of one section, or Git wrote several sections into one block around
 lines both sides share: then each side region holds one mapped scope of every
 section, in the same order and with the same lines around them on both sides.
-A section with a deletion, or shared lines that differ, leave the block
+A deletion counts only strictly inside its region, between lines both regions
+share. One at a region's edge, or shared lines that differ, leave the block
 untied. `FileSession::markerSections` lists them. When a command
 decides the last open contribution of a marker section and each of its
 sections has an accepted contribution, the same history entry deletes the
@@ -50,9 +51,10 @@ resolved. A deletion side fills only an empty region. The preview says when a ch
 
 A source deletion uses the mapped competing section as its replacement range
 and validates both anchors. It cannot infer a deletion range from neighboring
-text. In a marker section the deletion's insertion point sits past the end
-marker, so only the competing anchor is checked: `markerSections` already
-requires it to be exactly that side's region inside the block. Accept never silently replaces an accepted competing contribution.
+text. In a marker section only the competing anchor is checked, because
+`markerSections` already requires it inside the block: exactly that side's
+region when the deletion's insertion point sits past the end marker, or one
+scope of that region when Git wrote the section between shared lines. Accept never silently replaces an accepted competing contribution.
 A section choice unmaps the line anchors inside it, so an accepted line of
 another section is located by its side's section anchor instead. The accept
 is refused when neither anchor is mapped or the located range overlaps.
