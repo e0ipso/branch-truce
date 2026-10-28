@@ -1,4 +1,5 @@
 #pragma once
+#include "FileNavigator.h"
 #include "MergetoolSession.h"
 #include "RecoveryRestore.h"
 #include "ResolutionPublisher.h"
@@ -70,7 +71,7 @@ public:
     Q_INVOKABLE bool applyNonConflicting();
     [[nodiscard]] QVariantMap wholeFilePreview() const;
     [[nodiscard]] bool fileListVisible() const { return fileListVisible_; }
-    [[nodiscard]] QVariantMap navigationTarget() const { return navigationTarget_; }
+    [[nodiscard]] QVariantMap navigationTarget() const { return navigator_.target(); }
     // Where the editor put a newly selected file: its first undecided region,
     // in the keys of navigationTarget, with count 0 when it has none.
     [[nodiscard]] QVariantMap editorPlacement() const { return editor_.placement(); }
@@ -165,15 +166,13 @@ private:
     void settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity, const QString &failure);
     bool commandResult(Transition result);
     [[nodiscard]] QVariantMap firstUndecidedPlacement(const FileSession *file, const QString &loaded) const;
-    void clearNavigation();
-    bool navigateWithinFile(const QString &mode, int direction);
-    bool navigateAcrossFiles(const QString &mode, int direction);
     SessionModel files_;
     SessionCoordinator coordinator_;
     ResolutionPublisher publisher_;
     MergetoolSession mergetool_;
     ResultEditorAdapter editor_;
     SessionLoader loader_;
+    FileNavigator navigator_;
     QString selectedFileId_;
     // Restored files that only a waiting launcher can clear; see RecoveryRestore.
     std::map<std::string, SnapshotFileIdentity> copiedLaunches_;
@@ -188,19 +187,6 @@ private:
     bool discardPending_ = false;
     bool stagedDiscardPending_ = false;
     bool fileListVisible_ = true;
-    bool selectingFromNavigation_ = false;
-    QVariantMap navigationTarget_;
     QString sessionOutcome_;
-    QString navMode_;
-    QString navFileId_;
-    RevisionId navRevision_ = 0;
-    int navIndex_ = -1;
-    int navCursor_ = -1;
-    int navSelectionStart_ = -1;
-    int navSelectionEnd_ = -1;
-    std::size_t navByteBegin_ = 0;
-    std::size_t navByteEnd_ = 0;
-    std::string navContribution_;
-    bool navResultRange_ = false;
 };
 }

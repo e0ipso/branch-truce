@@ -87,6 +87,11 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_libraries(branch_truce_text_change_tests PRIVATE branch_truce_controller branch_truce_build_options)
     add_test(NAME app.text-change COMMAND branch_truce_text_change_tests)
 
+    add_executable(branch_truce_navigation_targets_tests app/NavigationTargetsTests.cpp)
+    target_include_directories(branch_truce_navigation_targets_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_navigation_targets_tests PRIVATE branch_truce_controller branch_truce_build_options)
+    add_test(NAME app.navigation-targets COMMAND branch_truce_navigation_targets_tests)
+
     add_executable(branch_truce_conflict_capture_tests app/ConflictCaptureTests.cpp)
     target_include_directories(branch_truce_conflict_capture_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_conflict_capture_tests PRIVATE branch_truce_controller branch_truce_build_options)
