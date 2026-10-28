@@ -63,7 +63,8 @@ QString envelopeRejection(const QString &text)
 
 ResultEditorAdapter::ResultEditorAdapter(SessionModel &files, std::function<QString()> selectedFileId,
                                          Placement placement, QObject *parent)
-    : QObject(parent), files_(files), selectedFileId_(std::move(selectedFileId)), placementFor_(std::move(placement))
+    : QObject(parent), files_(files), selectedFileId_(std::move(selectedFileId)), placementFor_(std::move(placement)),
+      words_(files, [this] { return selectedFileId_(); })
 {
 }
 
@@ -83,12 +84,15 @@ void ResultEditorAdapter::attach(QObject *editor)
     document_->setUndoRedoEnabled(false);
     syntax_.attach(document_);
     documentConnection_ = connect(document_, &QTextDocument::contentsChange, this, &ResultEditorAdapter::capture);
+    words_.attach(editor, document_);
     sync();
 }
 
 void ResultEditorAdapter::attachSource(QObject *editor)
 {
-    syntax_.attach(textDocument(editor));
+    auto *document = textDocument(editor);
+    syntax_.attach(document);
+    words_.attach(editor, document);
 }
 
 void ResultEditorAdapter::setSyntaxFileName(const QString &fileName)
@@ -276,6 +280,7 @@ void ResultEditorAdapter::sync()
         text_.clear();
         editor_->setProperty("readOnly", true);
         syncing_ = false;
+        words_.refresh();
         Q_EMIT loadRefused(rejection);
         if (placedFileId_ != selectedFileId_()) place(nullptr, {});
         return;
@@ -296,6 +301,8 @@ void ResultEditorAdapter::sync()
     if (!lossless && file && file->support() == Support::Supported)
         Q_EMIT notice(tr("This text cannot be edited losslessly by the current editor. Its captured result is retained."));
     syncing_ = false;
+    // Revisions and selections reach the editor here, so word ranges follow them.
+    words_.refresh();
     // A new selection, or a loading placeholder replaced by its supported file.
     const bool supported = file && file->support() == Support::Supported;
     if (placedFileId_ != selectedFileId_() || placedSupported_ != supported) place(file, desired);

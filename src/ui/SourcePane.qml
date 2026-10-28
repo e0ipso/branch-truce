@@ -97,6 +97,17 @@ ColumnLayout {
                 persistentSelection: true
                 textFormat: TextEdit.PlainText
                 font: Kirigami.Theme.fixedWidthFont
+                // Read by the C++ word-difference decoration: this pane, the line kinds its
+                // backgrounds draw, and the text colours of those kinds' theme roles.
+                readonly property var wordDifferenceStyle: ({
+                    pane: sourcePane.paneName,
+                    lines: sourcePane.marks.lines,
+                    positive: Kirigami.Theme.positiveTextColor,
+                    active: Kirigami.Theme.activeTextColor,
+                    negative: Kirigami.Theme.negativeTextColor,
+                    neutral: Kirigami.Theme.neutralTextColor,
+                    disabled: Kirigami.Theme.disabledTextColor
+                })
                 tabStopDistance: sourcePane.tabStop
                 leftPadding: sourceGutter.width + Kirigami.Units.smallSpacing
                 width: sourcePane.wrapLines ? sourceViewport.width : implicitWidth

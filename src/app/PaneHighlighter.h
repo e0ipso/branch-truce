@@ -36,8 +36,9 @@ public:
     // Without a valid definition the blocks get decorations only.
     void highlight(const KSyntaxHighlighting::Definition &definition, const KSyntaxHighlighting::Theme &theme);
 #endif
-    // Ranges in document positions to draw over the syntax formats. None of
-    // them are drawn yet. Replacing them runs a format pass.
+    // Ranges in document positions, kept in position order, merged over the
+    // syntax formats of the characters they cover. Replacing them runs a
+    // format pass over the blocks the old or new ranges touch.
     void setDecorations(const QList<QTextLayout::FormatRange> &ranges);
     const QList<QTextLayout::FormatRange> &decorations() const { return decorations_; }
 
@@ -45,6 +46,10 @@ protected:
     void highlightBlock(const QString &text) override;
 
 private:
+    void decorate(int begin, int end);
     QList<QTextLayout::FormatRange> decorations_;
+    // reach_[i] is the furthest end of decorations_[0..i], so a binary search
+    // finds the first range that can reach a block.
+    QList<int> reach_;
 };
 }

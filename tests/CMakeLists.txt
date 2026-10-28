@@ -22,6 +22,10 @@ add_executable(branch_truce_correspondence_fixtures core/CorrespondenceCommandFi
 target_include_directories(branch_truce_correspondence_fixtures PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(branch_truce_correspondence_fixtures PRIVATE branch_truce_core branch_truce_build_options)
 add_test(NAME core.correspondence-fixtures COMMAND branch_truce_correspondence_fixtures)
+add_executable(branch_truce_word_differences_tests core/WordDifferencesTests.cpp)
+target_include_directories(branch_truce_word_differences_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(branch_truce_word_differences_tests PRIVATE branch_truce_core branch_truce_build_options)
+add_test(NAME core.word-differences COMMAND branch_truce_word_differences_tests)
 find_program(BASH_EXECUTABLE bash REQUIRED)
 add_test(NAME lifecycle.cli-guards
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/SetupGuards.sh")

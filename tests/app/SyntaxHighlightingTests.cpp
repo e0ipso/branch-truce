@@ -14,6 +14,7 @@
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QTextBlock>
+#include <QTextCharFormat>
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QtQml/qqml.h>
@@ -86,11 +87,47 @@ public:
     QQuickWindow *window = nullptr;
 };
 
+// Syntax formats set a foreground; word-difference decorations never do.
 bool hasFormats(QTextDocument *document)
 {
     for (auto block = document->begin(); block.isValid(); block = block.next())
-        if (!block.layout()->formats().isEmpty()) return true;
+        for (const auto &range : block.layout()->formats())
+            if (range.format.hasProperty(QTextFormat::ForegroundBrush)) return true;
     return false;
+}
+
+// The format drawn at a document position, or an empty one.
+QTextCharFormat formatAt(QTextDocument *document, int position)
+{
+    const auto block = document->findBlock(position);
+    for (const auto &range : block.layout()->formats())
+        if (range.start <= position - block.position() && position - block.position() < range.start + range.length)
+            return range.format;
+    return {};
+}
+
+// Whether every character of word, found after the first occurrence of
+// context, is drawn underlined.
+bool underlined(QTextDocument *document, const QString &context, const QString &word)
+{
+    const auto text = document->toPlainText();
+    const auto from = text.indexOf(context);
+    const auto at = from < 0 ? -1 : text.indexOf(word, from);
+    if (at < 0) return false;
+    for (auto position = at; position < at + word.size(); ++position)
+        if (formatAt(document, static_cast<int>(position)).underlineStyle() != QTextCharFormat::SingleUnderline)
+            return false;
+    return true;
+}
+
+bool undecorated(QTextDocument *document, const QString &word)
+{
+    const auto at = document->toPlainText().indexOf(word);
+    if (at < 0) return false;
+    for (auto position = at; position < at + word.size(); ++position)
+        if (formatAt(document, static_cast<int>(position)).underlineStyle() != QTextCharFormat::NoUnderline)
+            return false;
+    return true;
 }
 
 #ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
@@ -128,7 +165,7 @@ void settleHighlighted(Fixture &fixture)
 }
 #endif
 
-// Every pane has its highlighter attached and no formats.
+// Every pane has its highlighter attached and no syntax formats.
 void settlePlain(Fixture &fixture)
 {
     settle([&] {
@@ -221,6 +258,66 @@ public:
             checkPythonColours(result);
         });
 #endif
+        suite.run("TRUCE-0119 changed words are tinted and underlined in every pane, and a format pass makes no revision", [] {
+            Fixture fixture;
+            auto *result = fixture.document("resultText");
+            auto *left = fixture.document("stage2Text");
+            auto *right = fixture.document("stage3Text");
+            // The competing sides pair with each other; the result pairs with both sides.
+            const auto decorated = [&](const QString &prefix) {
+                return underlined(left, QStringLiteral("# Left"), QStringLiteral("Left"))
+                    && underlined(left, QStringLiteral("'hi"), QStringLiteral("hi"))
+                    && underlined(right, QStringLiteral("# Right"), QStringLiteral("Right"))
+                    && underlined(right, QStringLiteral("'hey"), QStringLiteral("hey"))
+                    && underlined(result, prefix + QStringLiteral("'hello"), QStringLiteral("hello"));
+            };
+            settle([&] { return decorated({}); });
+            for (auto *document : {left, right, result}) CHECK(undecorated(document, QStringLiteral("return")));
+            const auto hello = result->toPlainText().indexOf(QStringLiteral("hello"));
+            const auto tint = formatAt(result, static_cast<int>(hello));
+            CHECK(tint.background().color().alpha() > 0 && tint.background().color().alpha() < 255);
+            CHECK(tint.underlineColor().isValid() && tint.underlineColor().alpha() == 255);
+            // The quote before the word is unchanged and stays undecorated.
+            CHECK(formatAt(result, static_cast<int>(hello) - 1).underlineStyle() == QTextCharFormat::NoUnderline);
+#ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
+            settleHighlighted(fixture);
+            // The string colour stays under the decoration.
+            CHECK(formatAt(result, static_cast<int>(hello)).hasProperty(QTextFormat::ForegroundBrush));
+            checkPythonColours(result);
+#endif
+            const auto before = fixture.file().current();
+            const auto canUndo = fixture.file().canUndo();
+            const auto text = result->toPlainText();
+            const auto transactions = fixture.transactions();
+            CHECK(transactions > 0);
+            const auto unchanged = [&] {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+                CHECK(fixture.file().current().id == before.id);
+                CHECK(fixture.file().current().draft == before.draft);
+                CHECK(fixture.file().canUndo() == canUndo);
+                CHECK(fixture.transactions() == transactions);
+                CHECK(!fixture.controller.files()->hasPendingRecovery());
+                CHECK(result->toPlainText() == text);
+                CHECK(decorated({}));
+            };
+            for (const auto *pane : panes) fixture.highlighter(pane)->rehighlight();
+            unchanged();
+            fixture.controller.setSyntaxBackground(QColor(QStringLiteral("#202326")));
+            unchanged();
+            fixture.controller.setSyntaxBackground(QColor(QStringLiteral("#eff0f1")));
+            unchanged();
+            // An edit moves the ranges with the text of its revision.
+            auto *editor = fixture.item("resultText");
+            editor->forceActiveFocus();
+            CHECK(QMetaObject::invokeMethod(editor, "select", Q_ARG(int, 0), Q_ARG(int, 0)));
+            QKeyEvent key(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+            QCoreApplication::sendEvent(editor, &key);
+            settle([&] { return fixture.file().current().id != before.id; });
+            CHECK(fixture.transactions() == transactions + 1);
+            settle([&] { return decorated(QStringLiteral("return ")); });
+            CHECK(formatAt(result, static_cast<int>(hello)).underlineStyle() == QTextCharFormat::NoUnderline);
+            CHECK(undecorated(result, QStringLiteral("return")));
+        });
         suite.run("TRUCE-0173 a .txt file keeps one highlighter attached to every pane", [] {
             Fixture fixture;
             CHECK(fixture.controller.selectFile("notes"));

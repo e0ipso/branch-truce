@@ -1,5 +1,6 @@
 #pragma once
 #include "SyntaxHighlighting.h"
+#include "WordDifferenceDecorations.h"
 #include <QColor>
 #include <QMetaObject>
 #include <QObject>
@@ -17,8 +18,8 @@ class SessionModel;
 // The result editor, one QML TextArea, seen from C++. Only this class reads or
 // sets its properties and calls its methods by name. It captures native edits
 // as domain edits, loads the selected file's text, keeps the cursor and scroll
-// position across text replacements, and attaches syntax highlighting to the
-// result and source panes.
+// position across text replacements, and attaches syntax highlighting and
+// word-level differences to the result and source panes.
 class ResultEditorAdapter final : public QObject {
     Q_OBJECT
 public:
@@ -95,6 +96,7 @@ private:
     std::function<QString()> selectedFileId_;
     Placement placementFor_;
     SyntaxHighlighting syntax_;
+    WordDifferenceDecorations words_;
     QPointer<QObject> editor_;
     QPointer<QTextDocument> document_;
     QMetaObject::Connection documentConnection_;

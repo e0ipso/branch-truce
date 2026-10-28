@@ -24,3 +24,18 @@ The editor does not load that text. Mark resolved of a result that is already
 inside the envelope is unchanged. A recovery commit that exceeds the payload
 limit leaves the acknowledged journal record in place and says that pending
 input is retained.
+
+## Word-level differences
+
+The panes underline and tint the words that differ inside changed lines
+([src/core/WordDifferences.h](../src/core/WordDifferences.h)). These ranges
+are display only, so their limits drop the word ranges and never the text:
+
+| Boundary | Limit | Just above it |
+| --- | ---: | --- |
+| Line length | 1000 bytes, newline excluded | the line is compared as one token and keeps its line colouring only |
+| Token comparisons for one pair of passages | 1000000 | the pair gets no word ranges |
+| Token comparisons for one revision | 4000000 | pairs later in the text get no word ranges |
+
+The ranges are computed once for each result revision. Changing the theme or
+redrawing the panes reuses them.

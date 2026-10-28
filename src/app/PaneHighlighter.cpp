@@ -1,5 +1,9 @@
 #include "PaneHighlighter.h"
+#include <QTextBlock>
 #include <QTextDocument>
+#include <algorithm>
+#include <set>
+#include <utility>
 
 namespace branch_truce {
 PaneHighlighter::PaneHighlighter(QTextDocument *document)
@@ -30,18 +34,63 @@ void PaneHighlighter::highlight(const KSyntaxHighlighting::Definition &definitio
 
 void PaneHighlighter::setDecorations(const QList<QTextLayout::FormatRange> &ranges)
 {
-    if (ranges == decorations_) return;
-    decorations_ = ranges;
-    if (document()) rehighlight();
+    auto sorted = ranges;
+    std::stable_sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) { return a.start < b.start; });
+    if (sorted == decorations_) return;
+    const auto previous = std::exchange(decorations_, std::move(sorted));
+    reach_.clear();
+    reach_.reserve(decorations_.size());
+    for (const auto &range : std::as_const(decorations_))
+        reach_.push_back(std::max(reach_.isEmpty() ? 0 : reach_.back(), range.start + range.length));
+    auto *target = document();
+    if (!target) return;
+    // A block formatted with the previous ranges after an edit lies under them
+    // in current positions, so these blocks cover it.
+    std::set<int> blocks;
+    const QList<QTextLayout::FormatRange> *lists[] = {&previous, &decorations_};
+    for (const auto *list : lists) {
+        for (const auto &range : *list) {
+            const auto first = target->findBlock(range.start);
+            if (!first.isValid()) continue;
+            const auto last = target->findBlock(range.start + std::max(range.length, 1) - 1);
+            const int lastNumber = last.isValid() ? last.blockNumber() : target->blockCount() - 1;
+            for (int number = first.blockNumber(); number <= lastNumber; ++number) blocks.insert(number);
+        }
+    }
+    if (static_cast<qsizetype>(blocks.size()) * 2 > target->blockCount()) {
+        rehighlight();
+        return;
+    }
+    for (const int number : blocks) rehighlightBlock(target->findBlockByNumber(number));
 }
 
 void PaneHighlighter::highlightBlock(const QString &text)
 {
 #ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
     if (definition().isValid()) SyntaxHighlighter::highlightBlock(text);
-#else
-    Q_UNUSED(text)
 #endif
-    // The decoration pass goes here, after the syntax formats.
+    const int begin = currentBlock().position();
+    decorate(begin, begin + static_cast<int>(text.size()));
+}
+
+// Merges each decoration into the formats already set on [begin, end), one
+// run of equal formats at a time, so syntax colours stay under it.
+void PaneHighlighter::decorate(int begin, int end)
+{
+    auto from = std::upper_bound(reach_.cbegin(), reach_.cend(), begin) - reach_.cbegin();
+    for (; from < decorations_.size() && decorations_[from].start < end; ++from) {
+        const auto &range = decorations_[from];
+        int at = std::max(range.start, begin) - begin;
+        const int stop = std::min(range.start + range.length, end) - begin;
+        while (at < stop) {
+            const auto under = format(at);
+            int run = at + 1;
+            while (run < stop && format(run) == under) ++run;
+            auto merged = under;
+            merged.merge(range.format);
+            setFormat(at, run - at, merged);
+            at = run;
+        }
+    }
 }
 }
