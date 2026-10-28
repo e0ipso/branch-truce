@@ -10,7 +10,7 @@ load errors with persistent reasons. Selecting a file by its exact byte-derived 
 opens read-only captured sources around the editable result; the common
 earlier version is available on demand. The session warning keeps outside-app work
 visible while supported files are selected. Using the app, including Save and
-Mark resolved, is described in the [README](../README.md#launch).
+Mark resolved, is described in the [README](../README.md#use-it).
 The core uses C++20 and the standard library without Qt or platform I/O.
 
 ## Machine provisioning
@@ -140,6 +140,21 @@ shell syntax command above has a separate stamp covering env, Bash and their
 linked libraries. That stamp is empty when exported loader overrides are present,
 so the evidence helper must treat its declaration as incomplete in that case.
 
+## Node tooling and commit messages
+
+The repository scripts and their tests need Node 24 or later:
+
+```sh
+npm ci
+npm run typecheck
+npm test
+npm run check:tracker-refs
+```
+
+Commit messages follow Conventional Commits. `npm ci` installs a commit-msg
+hook that runs commitlint, and CI runs the same check. semantic-release
+derives the release version from the messages.
+
 ## Preview
 
 After a desktop build, `tools/preview-app.sh` takes a light and a dark
@@ -203,6 +218,11 @@ Agents sharing the headless session run the script under
 `tools/merge-fixture.sh` builds the fixture. The installed-artifact validator
 uses the same function inside its container for its single `tracked.txt`
 conflict.
+
+The README images `docs/images/comparison-light.png` and
+`docs/images/comparison-dark.png` are the BreezeLight and BreezeDark captures
+of `PREVIEW_FILE=notes.md PREVIEW_SIZE=1440x900`. To refresh them, run that
+command and copy the two PNGs over the old ones.
 
 ## Install
 

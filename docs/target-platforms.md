@@ -165,9 +165,19 @@ spec's initial candidate. Flatpak would need its own design for Git access.
   their own version form and file names.
 - The build uses each base's default `dpkg-buildflags`, including LTO,
   `_FORTIFY_SOURCE=3` and `hardening=+all`. No debug-symbol package is built.
-- `debian/copyright` states all rights reserved, with the metadata under
-  CC0-1.0 as the AppStream metainfo declares. The packages built here are
-  local validation artifacts.
+- `debian/copyright` declares `GPL-3.0+` in the machine-readable format and
+  points at `/usr/share/common-licenses/GPL-3`. The AppStream metainfo
+  declares `GPL-3.0-or-later` as its `project_license` and CC0-1.0 for the
+  metadata. The packages built here are local validation artifacts.
+- CI builds the release packages with
+  `packaging/scripts/container-check.sh`, which also checks installation,
+  smoke-test loading, upgrade and removal in a container of each base.
+  semantic-release attaches them to the GitHub release as
+  `branch-truce_<version>_amd64-ubuntu26.04.deb` and
+  `branch-truce_<version>_amd64-tuxedo24.04.deb` when the commits pushed to
+  `main` call for a new version. The container validation in
+  [platform-validation.md](platform-validation.md) used packages from
+  `tools/build-artifact.sh`, not release packages.
 - The binary keeps the `RUNPATH` `$ORIGIN:$ORIGIN/../lib/x86_64-linux-gnu`
   that the CMake build sets. Under `/usr/bin` it points at system directories
   only.
