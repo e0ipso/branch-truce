@@ -56,6 +56,10 @@ ColumnLayout {
         Flickable {
             id: resultViewport
             objectName: "resultViewport"
+            // TextArea.flickable moves the text's background into this Flickable, out of the
+            // TextArea's View colour set; give the Flickable the same set as the gutter.
+            Kirigami.Theme.colorSet: Kirigami.Theme.View
+            Kirigami.Theme.inherit: false
             anchors.fill: parent
             clip: true
             boundsBehavior: Flickable.StopAtBounds
