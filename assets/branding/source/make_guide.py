@@ -48,6 +48,7 @@ def main():
     swatches = ''.join(f'<div class="swatch"><svg viewBox="0 0 100 30" aria-label="{name}"><rect width="100" height="30" rx="5" fill="{color}"/></svg><span>{name.replace("_"," ")}</span><code>{color}</code></div>' for name,color in list(PALETTE.items())[:5])
     text = f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Branch Truce logo asset guide</title>
+<link rel="icon" href="{data_uri('web/favicon.svg')}" type="image/svg+xml"><link rel="icon" href="{data_uri('web/favicon-32.png')}" sizes="32x32" type="image/png">
 <style>
 *{{box-sizing:border-box}}html,body{{margin:0;padding:0}}body{{font-family:var(--font-sans,system-ui,sans-serif);color:var(--foreground,CanvasText);line-height:1.5}}
 .grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}}.icons{{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:16px}}.wide{{grid-column:1/-1}}

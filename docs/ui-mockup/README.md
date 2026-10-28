@@ -7,7 +7,7 @@ The target look of the Branch Truce window. [ui-design.md](../ui-design.md) stat
 | `light-text.png`, `dark-text.png` | A text conflict in the three comparison panes, with one conflict undecided and one decided |
 | `light-binary.png`, `dark-binary.png` | A binary file selected; it has to be resolved outside the app |
 
-The repository, file names and code are sample content, not a test fixture. Each PNG is the HTML file beside it rendered as a 1280x720 window at 1.5x scale. The HTML inlines the Breeze icons and uses the Breeze Light and Breeze Dark colour values with Noto Sans and Hack, so it looks right on a machine with those fonts. To render one again:
+The repository, file names and code are sample content, not a test fixture. Each PNG is the HTML file beside it rendered as a 1280x720 window at 1.5x scale. The HTML inlines the Breeze icons and uses the Breeze Light and Breeze Dark colour values with Noto Sans and Hack, so it looks right on a machine with those fonts. Each page takes its favicon from `../../assets/branding/web/`, so open the pages from a repository checkout. To render one again:
 
 ```sh
 chrome --headless --hide-scrollbars --window-size=1280,720 --force-device-scale-factor=1.5 \
