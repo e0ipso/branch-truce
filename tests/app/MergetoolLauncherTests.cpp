@@ -227,7 +227,7 @@ void openController(ApplicationController &controller, const Repository &repo, c
     startController(controller, repo, preferredFileId);
     if (controller.loader()->startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
-    CHECK(controller.mergetoolListening());
+    CHECK(controller.mergetool()->listening());
     CHECK(QFileInfo(checkSocketDirectory(repo)).isDir());
     CHECK(!controller.parentSessionActive());
 }

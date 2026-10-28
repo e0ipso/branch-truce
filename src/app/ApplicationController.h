@@ -49,6 +49,8 @@ public:
     [[nodiscard]] SessionCoordinator *coordinator() noexcept { return &coordinator_; }
     // Opens the repository and owns the launch state.
     [[nodiscard]] SessionLoader *loader() noexcept { return &loader_; }
+    // Waiting mergetool launchers and the copied launch paths they can clear.
+    [[nodiscard]] MergetoolSession *mergetool() noexcept { return &mergetool_; }
     [[nodiscard]] QString selectedFileId() const { return selectedFileId_; }
     [[nodiscard]] QVariantMap selectedFile() const;
     [[nodiscard]] int outsideAppFiles() const;
@@ -97,11 +99,6 @@ public:
     // The launcher assigns one parent-owned path. Repository mode leaves this empty.
     bool assignParentStaging(const QByteArray &path);
     bool verifyParentAcknowledgment(const QString &fileId, const QString &revision);
-    // Clears the recovery error of a restored file that git mergetool replaced
-    // by a same-byte copy, once a launcher waits on its path with a MERGED copy
-    // of the launch bytes, the file still has the identity recovery saw, and a
-    // background check finds its index entries and conversion policy unchanged.
-    void acceptCopiedLaunches();
     [[nodiscard]] std::optional<ResolutionPublisher::Offer> parentStagingOffer(const QString &fileId) const;
     [[nodiscard]] bool mergetoolListening() const;
     [[nodiscard]] QByteArray mergetoolWaitingPath() const;
@@ -163,8 +160,6 @@ private:
     [[nodiscard]] static QString stagedDiscardMessage();
     // Escaped display text for exact path bytes; see displayPath.
     [[nodiscard]] QString displayBytes(const std::string &path) const;
-    [[nodiscard]] bool launchedWithCapturedBytes(const FileSession &file) const;
-    void settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity, const QString &failure);
     bool commandResult(Transition result);
     [[nodiscard]] QVariantMap firstUndecidedPlacement(const FileSession *file, const QString &loaded) const;
     SessionModel files_;
@@ -176,10 +171,6 @@ private:
     FileNavigator navigator_;
     ChoicePreviewFlow choices_;
     QString selectedFileId_;
-    // Restored files that only a waiting launcher can clear; see RecoveryRestore.
-    std::map<std::string, SnapshotFileIdentity> copiedLaunches_;
-    // The revalidation task in flight for a copiedLaunches_ entry.
-    std::map<std::string, TaskId> copiedLaunchChecks_;
     QString commandMessage_;
     QVariantMap markerBlocker_;
     bool discardPending_ = false;

@@ -1,21 +1,32 @@
 #include "MergetoolSession.h"
-#include "ApplicationController.h"
 #include "MergetoolProtocol.h"
+#include "RecoveryRestore.h"
+#include "SessionModel.h"
 
+#include <QCryptographicHash>
 #include <QFileInfo>
 #include <QHash>
 #include <QJsonObject>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QStandardPaths>
 #include <QTimer>
 #include <algorithm>
 
 namespace branch_truce {
-MergetoolSession::MergetoolSession(ApplicationController *controller) : QObject(controller), controller_(controller)
+MergetoolSession::MergetoolSession(ResolutionPublisher &publisher, SessionModel &files, SessionCoordinator &coordinator,
+                                   std::function<git::RepositoryContext()> loadedRepository, QObject *parent)
+    : QObject(parent), publisher_(publisher), files_(files), coordinator_(coordinator),
+      loadedRepository_(std::move(loadedRepository))
 {
     acknowledgment_ = new QTimer(this);
     acknowledgment_->setInterval(200);
     connect(acknowledgment_, &QTimer::timeout, this, &MergetoolSession::pollAcknowledgment);
+    // A fenced revalidation never completes; the next attach may check again.
+    connect(&coordinator_, &SessionCoordinator::taskFinished, this, [this](const TaskCompletion &completion) {
+        if (completion.disposition == TaskDisposition::Current) return;
+        std::erase_if(copiedLaunchChecks_, [&](const auto &check) { return check.second == completion.stamp.id; });
+    });
 }
 
 MergetoolSession::Listen MergetoolSession::listen(const git::RepositoryContext &repository, QString *error)
@@ -84,7 +95,7 @@ QByteArray MergetoolSession::waitingMergedSha256(const QByteArray &path) const
 
 bool MergetoolSession::leave(const QByteArray &path)
 {
-    if (controller_->resolutionBusy() || offerHeld_) return false;
+    if (publisher_.busy() || offerHeld_) return false;
     const auto index = indexOfPath(path, true);
     if (index < 0) return false;
     auto &waiter = waiters_[index];
@@ -94,7 +105,7 @@ bool MergetoolSession::leave(const QByteArray &path)
     waiter.released = true;
     if (waiter.assigned && !offerHeld_) {
         assigning_ = true;
-        controller_->assignParentStaging({});
+        publisher_.assignParentStaging({});
         assigning_ = false;
         waiter.assigned = false;
         tryAssign();
@@ -128,7 +139,7 @@ int MergetoolSession::leaveAll()
     }
     if (clearAssignment) {
         assigning_ = true;
-        controller_->assignParentStaging({});
+        publisher_.assignParentStaging({});
         assigning_ = false;
     }
     Q_EMIT changed();
@@ -148,7 +159,7 @@ bool MergetoolSession::endParentSession()
     if (!canEndParentSession()) return false;
     parentSession_ = false;
     assigning_ = true;
-    controller_->assignParentStaging({});
+    publisher_.assignParentStaging({});
     assigning_ = false;
     Q_EMIT notice(tr("Parent Git is finished. Remaining files can be resolved here."));
     Q_EMIT changed();
@@ -176,7 +187,7 @@ void MergetoolSession::onPublisherChanged()
 {
     if (assigning_) return;
     if (offerHeld_) {
-        if (!controller_->parentStagingOffer(acknowledgmentFile_)) {
+        if (!publisher_.parentStagingOffer(acknowledgmentFile_)) {
             offerHeld_ = false;
             acknowledgment_->stop();
             tryAssign();
@@ -189,7 +200,7 @@ void MergetoolSession::onPublisherChanged()
         tryAssign();
         return;
     }
-    const auto offer = controller_->parentStagingOffer(QString::fromLatin1(path.toHex()));
+    const auto offer = publisher_.parentStagingOffer(path.toHex().toStdString());
     if (!offer || offer->path != path) return;
     const auto index = indexOfPath(path, true);
     if (index < 0) return;
@@ -201,8 +212,8 @@ void MergetoolSession::onPublisherChanged()
     if (!send(waiter.socket, message)) return;
     waiter.released = true;
     offerHeld_ = true;
-    acknowledgmentFile_ = QString::fromLatin1(path.toHex());
-    acknowledgmentRevision_ = QString::number(offer->revision);
+    acknowledgmentFile_ = path.toHex().toStdString();
+    acknowledgmentRevision_ = offer->revision;
     acknowledgmentAttempts_ = 0;
     acknowledgment_->start();
     Q_EMIT changed();
@@ -243,7 +254,7 @@ void MergetoolSession::readSocket(QLocalSocket *socket)
         reject(socket, invocation, tr("Git is already waiting on this path."));
         return;
     }
-    const auto *file = controller_->files()->file(attached->path.toHex().toStdString());
+    const auto *file = files_.file(attached->path.toHex().toStdString());
     if (!file || file->support() != Support::Supported) {
         reject(socket, invocation, tr("This path is not an editable conflict in the open session."));
         return;
@@ -264,7 +275,7 @@ void MergetoolSession::readSocket(QLocalSocket *socket)
         waiters_.last().released = true;
         return;
     }
-    controller_->acceptCopiedLaunches();
+    acceptCopiedLaunches();
     tryAssign();
     Q_EMIT notice(tr("Git is waiting. Mark resolved hands this path back, or leave it unresolved."));
     Q_EMIT changed();
@@ -279,7 +290,7 @@ void MergetoolSession::dropped(QLocalSocket *socket)
     waiter.released = true;
     if (waiter.assigned && !offerHeld_) {
         assigning_ = true;
-        controller_->assignParentStaging({});
+        publisher_.assignParentStaging({});
         assigning_ = false;
         waiter.assigned = false;
         tryAssign();
@@ -306,12 +317,12 @@ bool MergetoolSession::send(QLocalSocket *socket, const QJsonObject &object)
 
 void MergetoolSession::tryAssign()
 {
-    if (assigning_ || offerHeld_ || controller_->resolutionBusy() || !waitingPath().isEmpty()) return;
+    if (assigning_ || offerHeld_ || publisher_.busy() || !waitingPath().isEmpty()) return;
     for (int index = 0; index < waiters_.size(); ++index) {
         auto &waiter = waiters_[index];
         if (waiter.released || waiter.assigned) continue;
         assigning_ = true;
-        const bool assigned = controller_->assignParentStaging(waiter.path);
+        const bool assigned = publisher_.assignParentStaging(waiter.path);
         assigning_ = false;
         if (!assigned) return;
         waiter.assigned = true;
@@ -322,8 +333,8 @@ void MergetoolSession::tryAssign()
 
 void MergetoolSession::pollAcknowledgment()
 {
-    if (!offerHeld_ || controller_->resolutionBusy()) return;
-    if (!controller_->parentStagingOffer(acknowledgmentFile_)) {
+    if (!offerHeld_ || publisher_.busy()) return;
+    if (!publisher_.parentStagingOffer(acknowledgmentFile_)) {
         offerHeld_ = false;
         acknowledgment_->stop();
         tryAssign();
@@ -336,7 +347,7 @@ void MergetoolSession::pollAcknowledgment()
         Q_EMIT changed();
         return;
     }
-    controller_->verifyParentAcknowledgment(acknowledgmentFile_, acknowledgmentRevision_);
+    publisher_.verifyParentAcknowledgment(acknowledgmentFile_, acknowledgmentRevision_);
 }
 
 int MergetoolSession::indexOfSocket(const QLocalSocket *socket) const
@@ -354,5 +365,79 @@ int MergetoolSession::indexOfPath(const QByteArray &path, bool unreleasedOnly) c
         if (waiter.path == path) return index;
     }
     return -1;
+}
+
+void MergetoolSession::adoptCopiedLaunches(std::map<std::string, SnapshotFileIdentity> copiedLaunches)
+{
+    copiedLaunches_ = std::move(copiedLaunches);
+}
+
+void MergetoolSession::clearCopiedLaunches()
+{
+    copiedLaunches_.clear();
+    copiedLaunchChecks_.clear();
+}
+
+bool MergetoolSession::launchedWithCapturedBytes(const FileSession &file) const
+{
+    const auto launch = QCryptographicHash::hash(QByteArray::fromStdString(file.snapshots()->launchResult.text.bytes),
+        QCryptographicHash::Sha256).toHex();
+    return waitingMergedSha256(QByteArray::fromStdString(file.path())) == launch;
+}
+
+void MergetoolSession::acceptCopiedLaunches()
+{
+    for (auto entry = copiedLaunches_.begin(); entry != copiedLaunches_.end();) {
+        const auto *file = files_.file(entry->first);
+        if (!file || !file->snapshots() || !files_.hasRecoveryFailure(entry->first)) {
+            copiedLaunchChecks_.erase(entry->first);
+            entry = copiedLaunches_.erase(entry);
+            continue;
+        }
+        if (copiedLaunchChecks_.contains(entry->first) || !launchedWithCapturedBytes(*file)) {
+            ++entry;
+            continue;
+        }
+        // Git launched this path with the launch bytes. The index and the
+        // conversion policy may have changed since the restore validated them,
+        // so Git inspects both again off the GUI thread before the error clears.
+        const auto fileId = entry->first;
+        const auto identity = entry->second;
+        const auto task = coordinator_.submit(fileId, file->current().id,
+            [snapshots = *file->snapshots(), identity, repository = loadedRepository_(),
+             executable = QStandardPaths::findExecutable(QStringLiteral("git"))](const TaskInput &, const TaskControl &) {
+                TaskResult result;
+                result.diagnostic = revalidateCopiedLaunch(snapshots, identity, repository, executable);
+                return result;
+            },
+            [this, fileId, identity](const TaskCompletion &completion) {
+                copiedLaunchChecks_.erase(fileId);
+                settleCopiedLaunch(fileId, identity, completion.result.diagnostic);
+            });
+        if (task != 0) copiedLaunchChecks_.insert_or_assign(fileId, task);
+        ++entry;
+    }
+}
+
+void MergetoolSession::settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
+    const QString &failure)
+{
+    const auto entry = copiedLaunches_.find(fileId);
+    if (entry == copiedLaunches_.end() || entry->second != identity) return;
+    const auto *file = files_.file(fileId);
+    if (!file || !file->snapshots() || !files_.hasRecoveryFailure(fileId)) {
+        copiedLaunches_.erase(entry);
+        return;
+    }
+    // The launcher left while Git inspected the path; a later attach checks again.
+    if (!launchedWithCapturedBytes(*file)) return;
+    // The copy must still be the file recovery validated; any change keeps the path failed.
+    const bool settled = failure.isEmpty() && publisher_.adoptCopiedLaunch(fileId, identity)
+        ? files_.settleRecoveryFailure(fileId, copiedLaunchFailure())
+        : files_.settleRecoveryFailure(fileId, copiedLaunchFailure(), !failure.isEmpty() ? failure
+            : tr("Recovered draft retained, but the repository file changed after recovery validation. "
+                 "Work remains outstanding; no publication is authorized."));
+    copiedLaunches_.erase(entry);
+    if (settled) Q_EMIT changed();
 }
 }
