@@ -61,9 +61,13 @@ ChoicePreview previewCombination(const FileSession &file, RevisionId expected,
     std::size_t matches = 0;
     bool exact = false;
     // The two sides of a marker section sit apart, across its separator line.
+    // In a block Git wrote around lines both sides share, the other sections'
+    // scopes and those shared lines sit between them as well.
     const auto markers = file.markerSections();
-    const bool marked = selected.scope == ChoiceScope::Section && std::any_of(markers.begin(), markers.end(),
-        [&](const auto &found) { return found.encloses(selected.section); });
+    const auto block = selected.scope != ChoiceScope::Section ? markers.end() : std::find_if(markers.begin(),
+        markers.end(), [&](const auto &found) { return found.encloses(selected.section); });
+    const bool marked = block != markers.end();
+    const bool split = marked && block->sections.size() > 1;
     for (const auto &target : file.choices()) {
         if (target.section != selected.section || target.scope != selected.scope
             || target.source.side == selected.source.side) continue;
@@ -91,6 +95,12 @@ ChoicePreview previewCombination(const FileSession &file, RevisionId expected,
     preview.sourceOrder = {first->source, second->source};
     preview.command.expected = expected;
     preview.command.targets = {*anchor, *other};
+    const auto sourceText = [&](const ChoiceTarget &target) {
+        const auto &source = target.source.side == SourceSide::Stage2
+            ? file.snapshots()->stage2 : file.snapshots()->stage3;
+        return source->worktree.utf8.substr(target.source.range.begin,
+            target.source.range.end - target.source.range.begin);
+    };
     std::uint64_t order = 1;
     for (const auto *target : {first, second}) {
         for (const auto &id : target->decisions) {
@@ -98,14 +108,15 @@ ChoicePreview previewCombination(const FileSession &file, RevisionId expected,
                 return fail(Transition::Blocked, "This draft has no recorded scoped choices. Edit the result directly.");
             preview.command.decisions[id] = {DecisionValue::Accepted, order};
         }
-        const auto &source = target->source.side == SourceSide::Stage2
-            ? file.snapshots()->stage2 : file.snapshots()->stage3;
-        preview.replacement += source->worktree.utf8.substr(target->source.range.begin,
-            target->source.range.end - target->source.range.begin);
+        preview.replacement += sourceText(*target);
         ++order;
     }
     const ByteRange affected{std::min(anchor->result->begin, other->result->begin),
                              std::max(anchor->result->end, other->result->end)};
+    // A split block's combination edits only this section's two scopes, so
+    // only text inside them could be replaced.
+    const auto replaced = split ? std::vector<ByteRange>{*anchor->result, *other->result}
+                                : std::vector<ByteRange>{affected};
     // A partial combination must not erase another contribution, even if it
     // is still undecided. Unknown line mappings within this section are unsafe.
     std::set<std::string> inspected;
@@ -116,7 +127,8 @@ ChoicePreview previewCombination(const FileSession &file, RevisionId expected,
             if (!unselected || unselected->state != AnchorState::Mapped || !unselected->result) {
                 if (target.section == selected.section)
                     return fail(Transition::AmbiguousTarget, "Other lines in this section cannot be located safely. Use a section or edit manually.");
-            } else if (overlaps(affected, *unselected->result)) {
+            } else if (std::any_of(replaced.begin(), replaced.end(),
+                           [&](const auto &range) { return overlaps(range, *unselected->result); })) {
                 return fail(Transition::AmbiguousTarget, "This combination would replace an unselected contribution. Use a section or edit manually.");
             }
         }
@@ -124,7 +136,13 @@ ChoicePreview previewCombination(const FileSession &file, RevisionId expected,
     preview.affectedRange = affected;
     preview.before = file.current().draft.text.substr(affected.begin, affected.end - affected.begin);
     preview.replacesManual = anchor->manualOverlap || other->manualOverlap;
-    if (*anchor->result == *other->result || anchor->result->begin == anchor->result->end
+    if (split) {
+        // Joining the two scopes here would move text across the shared lines
+        // and the other sections. Each scope keeps its own side's text instead,
+        // and the decisions' order puts them together when the block is rebuilt
+        // once every section is decided.
+        preview.command.edits = {{*anchor->result, sourceText(selected)}, {*other->result, sourceText(*competitor)}};
+    } else if (*anchor->result == *other->result || anchor->result->begin == anchor->result->end
         || other->result->begin == other->result->end) {
         const auto range = anchor->result->begin == anchor->result->end ? *other->result : *anchor->result;
         preview.command.edits.push_back({range, preview.replacement});
@@ -141,6 +159,7 @@ ChoicePreview previewCombination(const FileSession &file, RevisionId expected,
     preview.detail = action == ChoiceAction::CombineLeftFirst ? "Take both: Left then Right. " : "Take both: Right then Left. ";
     preview.detail += "Only the displayed source scopes are combined. Review the exact text for duplication and edit it afterwards if needed.";
     if (file.completesMarkers(preview.command)) preview.detail += " The conflict's marker lines are removed.";
+    else if (split) preview.detail += " The conflict keeps its marker lines until its other sections are decided, then holds this text in this order.";
     return preview;
 }
 }

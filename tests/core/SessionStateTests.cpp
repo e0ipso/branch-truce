@@ -1161,19 +1161,118 @@ public:
             CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);
             CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
             CHECK(typed.current().draft.text == edited && typed.current().draft.unresolvedMarkers == 1);
-            // Take both cannot join one section's sides across the other section's lines, so it is
-            // refused and the text and decisions stay as they were.
+            // TRUCE-0196: Take both on a section works (see below), but a single line of one half
+            // still cannot be joined to a line of the other half, so that stays refused and the
+            // text and decisions stay as they were.
             auto both = test_support::splitFile();
             const auto before = both.current();
             for (const auto side : {SourceSide::Stage2, SourceSide::Stage3})
                 for (const std::size_t at : {0u, 1u})
                     for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst}) {
                         const auto preview = previewChoice(both, both.current().id, test_support::choiceTarget(
-                            both, side, ChoiceScope::Section, at).source.contributionId, action);
+                            both, side, ChoiceScope::Line, at).source.contributionId, action);
                         CHECK(preview.state == Transition::AmbiguousTarget && preview.command.edits.empty());
                         CHECK(applyChoice(both, preview, true) != Transition::Applied);
                     }
             CHECK(both.current().draft == before.draft && both.current().id == before.id);
+        });
+        suite.run("TRUCE-0196 Take both on a section of a split block resolves the block in section order", [] {
+            const auto launch = test_support::splitText();
+            const std::array<std::string, 2> left{"left one\n", "left two\n"}, right{"right one\n", "right two\n"};
+            enum class Other { Left, Right, LeftFirst, RightFirst };
+            // Decides the section that was not combined and returns the text it keeps.
+            const auto decide = [&](FileSession &file, Other other, std::size_t at) {
+                switch (other) {
+                case Other::Left:
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, at) == Transition::Applied);
+                    return left[at];
+                case Other::Right:
+                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, at) == Transition::Applied);
+                    return right[at];
+                case Other::LeftFirst:
+                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::CombineLeftFirst, ChoiceScope::Section, at) == Transition::Applied);
+                    return left[at] + right[at];
+                case Other::RightFirst:
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::CombineRightFirst, ChoiceScope::Section, at) == Transition::Applied);
+                    return right[at] + left[at];
+                }
+                return std::string{};
+            };
+            // Take both on the `side` target of section `at`, before or after the other section is decided.
+            const auto check = [&](bool combineFirst, std::size_t at, SourceSide side, ChoiceAction action, Other other) {
+                const bool leftFirst = action == ChoiceAction::CombineLeftFirst;
+                const auto rest = std::size_t{1} - at;
+                auto file = test_support::splitFile();
+                const auto sections = file.markerSections();
+                std::array<std::string, 2> kept;
+                if (!combineFirst) kept[rest] = decide(file, other, rest);
+                const auto earlier = file.current();
+                CHECK(earlier.draft.text == launch && file.markerSections() == sections);
+                const auto preview = previewChoice(file, earlier.id, test_support::choiceTarget(
+                    file, side, ChoiceScope::Section, at).source.contributionId, action);
+                kept[at] = leftFirst ? left[at] + right[at] : right[at] + left[at];
+                CHECK(preview.state == Transition::ConfirmationRequired && preview.replacement == kept[at]);
+                CHECK(preview.detail.find(combineFirst ? "keeps its marker lines until" : "marker lines are removed")
+                    != std::string::npos);
+                // Only this section's two scopes are edited, each with its own side's text,
+                // so the shared line and the other section's lines are outside every edit.
+                CHECK(preview.command.edits.size() == 2);
+                for (const auto &edit : preview.command.edits) {
+                    CHECK(earlier.draft.text.substr(edit.range.begin, edit.range.end - edit.range.begin) == edit.replacement);
+                    CHECK((edit.replacement == left[at] || edit.replacement == right[at]));
+                }
+                CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired && file.current().id == earlier.id);
+                CHECK(applyChoice(file, preview, true) == Transition::Applied);
+                for (const auto &[combined, order] : {std::pair{SourceSide::Stage2, leftFirst ? 1u : 2u},
+                                                      std::pair{SourceSide::Stage3, leftFirst ? 2u : 1u}})
+                    for (const auto &id : test_support::choiceTarget(file, combined, ChoiceScope::Section, at).decisions)
+                        CHECK((file.current().draft.decisions.at(id) == Decision{DecisionValue::Accepted, order}));
+                if (combineFirst) {
+                    // The block keeps its markers and text until the other section is decided.
+                    CHECK(file.current().draft.text == launch && file.current().draft.unresolvedMarkers == 1);
+                    CHECK(file.markerSections() == sections && has(file, Blocker::UnresolvedMarkers));
+                }
+                const auto partly = combineFirst ? file.current().draft : earlier.draft;
+                if (combineFirst) kept[rest] = decide(file, other, rest);
+                const auto chosen = file.current().draft;
+                const auto expected = "header\n" + kept[0] + "shared\n" + kept[1] + "tail\n";
+                CHECK(chosen.text == expected && chosen.unresolvedMarkers == 0 && file.markerSections().empty());
+                CHECK(!has(file, Blocker::UnresolvedMarkers) && !has(file, Blocker::Undecided));
+                // One undo brings back the block and the first section's decisions.
+                CHECK(file.undo(file.current().id) == Transition::Applied);
+                CHECK(file.current().draft == partly && file.markerSections() == sections);
+                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+                CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
+                // Recovery replays each draft and derives the same text and count.
+                auto replay = test_support::splitFile();
+                CHECK(replay.replaceDraft(1, partly, std::set<std::string>{}) == Transition::Applied);
+                CHECK(replay.markerSections() == sections);
+                CHECK(replay.replaceDraft(replay.current().id, chosen, std::set<std::string>{}) == Transition::Applied);
+                CHECK(replay.current().draft == chosen && replay.markers().count() == 0);
+                CHECK(replay.beginMarkResolved(replay.current().id) == Transition::Applied);
+                // A draft recovered between the two decisions finishes the same way.
+                auto resumed = test_support::splitFile();
+                CHECK(resumed.replaceDraft(1, partly, std::set<std::string>{}) == Transition::Applied);
+                if (combineFirst) CHECK(decide(resumed, other, rest) == kept[rest]);
+                else CHECK(applyChoice(resumed, previewChoice(resumed, resumed.current().id, test_support::choiceTarget(
+                    resumed, side, ChoiceScope::Section, at).source.contributionId, action), true) == Transition::Applied);
+                CHECK(resumed.current().draft == chosen);
+            };
+            for (const bool combineFirst : {true, false})
+                for (const std::size_t at : {0u, 1u})
+                    for (const auto side : {SourceSide::Stage2, SourceSide::Stage3})
+                        for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst})
+                            for (const auto other : {Other::Left, Other::Right, Other::LeftFirst, Other::RightFirst})
+                                check(combineFirst, at, side, action, other);
+            // A combination that would overwrite an unselected contribution is still refused:
+            // the right side's second line maps onto the left line its first line also maps to.
+            auto overlapping = test_support::choiceFile("header\nleft\ntail\n", "header\nright one\nright two\ntail\n");
+            const auto before = overlapping.current();
+            const auto refused = previewChoice(overlapping, before.id, test_support::choiceTarget(
+                overlapping, SourceSide::Stage3, ChoiceScope::Line, 1).source.contributionId, ChoiceAction::CombineLeftFirst);
+            CHECK(refused.state == Transition::AmbiguousTarget && refused.command.edits.empty());
+            CHECK(refused.detail.find("would replace an unselected contribution") != std::string::npos);
+            CHECK(applyChoice(overlapping, refused, true) != Transition::Applied && overlapping.current().draft == before.draft);
         });
         suite.run("TRUCE-0189 the deleting side of a marker section can be accepted and resolved", [] {
             const auto launch = test_support::deletionFile().current().draft.text;

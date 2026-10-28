@@ -36,12 +36,13 @@ back the markers, text and decisions together. Accept alone keeps the markers,
 and so does ignoring both sides of any section. Deleting text cannot reorder
 it, so it works only while the left text kept comes before the right text
 kept. When an earlier section keeps right text and a later section keeps left
-text, the same history entry instead replaces the whole block with each
-section's kept text in section order, left before right within a section,
-between single copies of the shared lines. `CorrespondenceMap::rebuilt` moves
-each kept scope's anchor with its text and leaves each ignored one empty
-beside its section's text, so undo, redo and recovery replay restore the same
-text and decisions. A hand edit to a marker line or to the base text orphans
+text, or a combination put a section's right text first, the same history
+entry instead replaces the whole block with each section's kept text in
+section order, left before right within a section unless that section's
+combination order says otherwise, between single copies of the shared lines.
+`CorrespondenceMap::rebuilt` moves each kept scope's anchor with its text and
+leaves each ignored one empty beside its section's text, so undo, redo and
+recovery replay restore the same text and decisions. A hand edit to a marker line or to the base text orphans
 the block.
 Ignored text that holds a hand edit or pre-launch work keeps the whole block.
 In all these cases the markers stay for direct editing and keep blocking Mark
@@ -120,7 +121,11 @@ result range takes priority over adjacent ranges. Without an exact match, a
 unique adjacent range is required. The two sides of a marker section sit apart,
 across its separator line, and still pair with each other: the combination
 fills the first side's region and empties the other before the markers go.
-Unequal overlapping ranges, repeated passages
+In a block Git wrote around shared lines, the shared lines and the other
+sections lie between the two scopes, so the combination edits only the two
+scopes, each with its own side's text, and records the order. The block keeps
+its markers until every section is decided and then resolves with this
+section's text in that order. Unequal overlapping ranges, repeated passages
 without unique correspondence, and replacements that would erase unselected
 contributions require a larger safe scope or direct editing.
 

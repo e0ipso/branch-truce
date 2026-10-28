@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -274,9 +275,10 @@ std::vector<MarkerSection> FileSession::markerSections(const std::string &text,
 // marker lines, base text and ignored text to delete, each with the anchor
 // that keeps its empty range, last range first. Text both sides share around
 // several sections stays once. Deleting keeps the left text before the right
-// text, so a block whose kept text it cannot put in section order is rebuilt
-// from that text and one copy of the shared lines instead. A section whose
-// ignored text holds other work keeps all.
+// text, so a block whose kept text it cannot put in section order, or whose
+// section a combination ordered right first, is rebuilt from that text and one
+// copy of the shared lines instead. A section whose ignored text holds other
+// work keeps all.
 std::vector<FileSession::MarkerEdit> FileSession::markerEdits(
     const Draft &draft, const CorrespondenceMap &mapping,
     const std::map<std::string, Decision> &decided) const
@@ -294,10 +296,14 @@ std::vector<FileSession::MarkerEdit> FileSession::markerEdits(
         std::vector<std::array<bool, 2>> dropped;
         std::vector<std::array<std::vector<ByteRange>, 2>> cuts;
         std::array<std::vector<ByteRange>, 2> scopes;
+        // Per section of a split block, whether a combination ordered its
+        // right text before its left text. Each scope still holds its own side.
+        std::vector<bool> rightFirst;
         for (const auto &section : found.sections) {
             bool accepted = false;
             auto &sides = dropped.emplace_back();
             auto &cut = cuts.emplace_back();
+            std::array<std::optional<std::uint64_t>, 2> order;
             for (const auto &side : *choices_) {
                 if (side.scope != ChoiceScope::Section || side.section != section) continue;
                 const auto index = side.source.side == SourceSide::Stage2 ? 0u : 1u;
@@ -311,8 +317,11 @@ std::vector<FileSession::MarkerEdit> FileSession::markerEdits(
                     touched = touched || decided.contains(id);
                     const auto value = draft.decisions.find(id);
                     if (value == draft.decisions.end() || value->second.value == DecisionValue::Undecided) complete = false;
-                    else if (value->second.value == DecisionValue::Accepted) accepted = true;
-                    else ignored.push_back(id);
+                    else if (value->second.value == DecisionValue::Accepted) {
+                        accepted = true;
+                        if (value->second.order && (!order[index] || *value->second.order < *order[index]))
+                            order[index] = value->second.order;
+                    } else ignored.push_back(id);
                 }
                 sides[index] = ignored.size() == side.decisions.size();
                 if (sides[index]) ignored = {side.source.contributionId};
@@ -327,13 +336,15 @@ std::vector<FileSession::MarkerEdit> FileSession::markerEdits(
                 }
             }
             complete = complete && accepted;
+            rightFirst.push_back(found.sections.size() > 1 && order[0] && order[1] && *order[1] < *order[0]);
         }
         if (!placed && found.sections.size() > 1) complete = false;
         if (!touched || !complete) continue;
         // Deleting keeps the kept text in order only around one crossing
         // section: the sections before it keep no right text and the sections
-        // after it keep no left text.
+        // after it keep no left text. It keeps left text before right text.
         const auto crossesAt = [&](std::size_t crossing) {
+            if (rightFirst[crossing]) return false;
             for (std::size_t i = 0; i < dropped.size(); ++i)
                 if ((i < crossing && !dropped[i][1]) || (i > crossing && !dropped[i][0])) return false;
             return true;
@@ -348,12 +359,12 @@ std::vector<FileSession::MarkerEdit> FileSession::markerEdits(
         const auto left = sharedText(regions[0], scopes[0]);
         const auto right = sharedText(regions[1], scopes[1]);
         if (crossing == dropped.size()) {
-            // Each section's kept text, left before right, between the left
-            // copies of the shared lines.
+            // Each section's kept text, left before right unless a combination
+            // put right first, between the left copies of the shared lines.
             std::vector<KeptSpan> spans;
             for (std::size_t i = 0; i < found.sections.size(); ++i) {
                 spans.push_back({left[i], {}});
-                for (const auto index : {0u, 1u}) {
+                for (const auto index : rightFirst[i] ? std::array{1u, 0u} : std::array{0u, 1u}) {
                     auto kept = cuts[i][index];
                     std::sort(kept.begin(), kept.end(), [](const auto &a, const auto &b) { return a.begin < b.begin; });
                     for (std::size_t at = 0; at < kept.size(); ++at)
