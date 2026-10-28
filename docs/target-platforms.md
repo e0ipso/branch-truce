@@ -75,6 +75,7 @@ shlibs and symbols files, so they differ:
 | libqt6network6 | >= 6.6~ | >= 6.10.2+dfsg |
 | libqt6qml6 | >= 6.6.0 | >= 6.10.2+dfsg |
 | libqt6quick6 | >= 6.6.0 | >= 6.10.2+dfsg |
+| libqt6quickcontrols2-6 | >= 6.6.0 | >= 6.10.2+dfsg |
 | libqt6widgets6 | >= 6.6~ | >= 6.10.2+dfsg |
 | libkf6syntaxhighlighting6 | >= 6.0.0 | >= 6.24.0 |
 
