@@ -31,9 +31,16 @@ Item {
         }
         return false
     }
+    // Kirigami stops a disabled item from inheriting its parent's theme and gives
+    // it the default Window set, so each fill under this disabled layer names
+    // the View set itself.
+    component Fill: Rectangle {
+        Kirigami.Theme.colorSet: Kirigami.Theme.View
+        Kirigami.Theme.inherit: false
+    }
     Repeater {
         model: backgrounds.gutter.rows
-        delegate: Rectangle {
+        delegate: Fill {
             required property var modelData
             readonly property string part: "line"
             readonly property int line: modelData.number
@@ -54,7 +61,7 @@ Item {
     // A rule where folded marker lines are, so the sides of a block stay apart.
     Repeater {
         model: backgrounds.gutter.rows
-        delegate: Rectangle {
+        delegate: Fill {
             required property var modelData
             readonly property string part: "fold"
             readonly property int line: modelData.number
@@ -68,7 +75,7 @@ Item {
     }
     Repeater {
         model: backgrounds.gutter.rows
-        delegate: Rectangle {
+        delegate: Fill {
             required property var modelData
             readonly property string part: "gap"
             readonly property int line: modelData.number
@@ -82,7 +89,7 @@ Item {
     }
     Repeater {
         model: backgrounds.gutter.rows
-        delegate: Rectangle {
+        delegate: Fill {
             required property var modelData
             readonly property string part: "current"
             readonly property int line: modelData.number

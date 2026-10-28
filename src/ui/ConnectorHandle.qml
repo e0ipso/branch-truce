@@ -92,6 +92,10 @@ Item {
                 id: band
                 required property var modelData
                 readonly property string kind: modelData.kind
+                // Under the disabled layer Kirigami would give the band the
+                // default Window set instead of inheriting the handle's View set.
+                Kirigami.Theme.colorSet: Kirigami.Theme.View
+                Kirigami.Theme.inherit: false
                 readonly property real sourceTop: connector.edge(true, modelData.sourceBegin,
                     modelData.sourceEnd, false, connector.layoutRevision)
                 readonly property real sourceBottom: connector.edge(true, modelData.sourceBegin,
