@@ -94,10 +94,13 @@ the imagegen cleanup used for tracing. generation.json contains the exact prompt
 The production SVGs use flat colors and smoothed paths derived from that master.
 The small mark is a separate vector drawing for legibility at small sizes.
 
-Rebuild exported assets with Python 3, librsvg's rsvg-convert, and ImageMagick 7:
-  python3 source/build.py
-  python3 source/make_guide.py
+Rebuild the pack with Python 3, librsvg's rsvg-convert, and ImageMagick 7.
+From this directory, run:
+  python3 source/rebuild.py
 
+The script runs source/build.py for the exports, then source/make_guide.py for
+GUIDE.html, and then rewrites SHA256SUMS.txt. Run it after any change to the
+pack, including edits to this file, so that the checksums stay current.
 RSVG_CONVERT and MAGICK may specify executable paths. Change the PALETTE values
 in source/build.py to adjust colors consistently. No network access is required
 after these tools are installed. Rebuilding intentionally replaces the pack's
@@ -105,4 +108,6 @@ generated exports. The original concept and source geometry stay intact.
 
 asset-index.json lists export dimensions and transparency expectations.
 VERIFICATION.txt records the checks performed for this pack.
-SHA256SUMS.txt covers all asset files except itself.
+SHA256SUMS.txt covers every file in the pack except itself. To verify the pack,
+run this from this directory:
+  sha256sum -c SHA256SUMS.txt
