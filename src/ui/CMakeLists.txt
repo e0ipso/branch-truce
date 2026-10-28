@@ -22,7 +22,8 @@ qt_add_qml_module(branch_truce_ui STATIC
         MainToolBar.qml
         FileToolBar.qml
         FileNotices.qml
-        SourceChoiceList.qml
+        ChoiceLane.qml
+        ChoiceButtons.qml
         SessionFooter.qml
         NamedAction.qml
         MenuAction.qml

@@ -23,11 +23,24 @@ the Flickable's content child, and the TextArea pads its text by the gutter's
 width. `TextBlocks` (`src/ui/TextBlocks.h`) reads block positions from the
 QQuickTextDocument, so each line of the file gets one number and wrapped
 continuation lines get none. Between the numbers and the text the gutter keeps
-a column, `markerSlot`, for per-line glyphs and per-region actions. Its
+a column, `markerSlot`, for per-line glyphs. Its
 y coordinates are the editor's: place an item at the y of
 `editor.positionToRectangle(position)`, using the gutter's `rows` for the blocks
 near the view. Code and numbers use `Kirigami.Theme.fixedWidthFont`, and tab
 stops are four average character widths.
+
+Region choices sit in the gutters too. Each source pane keeps a column on the
+edge that faces the result, and `ChoiceLane` lays one row of `ChoiceButtons` on
+the first line of each scope there: Accept and Ignore, nearest the result, and
+a `merge` menu with Resolve using this side and Take both in either order. A
+section owns the row on its first line, so the line choice that starts on the
+same line is in that row's menu. A decided scope loses its buttons and the
+glyph column shows the decision. The result gutter adds a column after
+`markerSlot` with a chip for each fully decided section and, while a section is
+undecided, a Take both menu on its first shown line, which for a folded marker
+block is the row below the fold. Both lanes sit in one `scopedChoices` item
+laid over the panes, so showing or hiding the choices changes only the panes'
+widths, never their heights.
 
 Diff colours come from the selected file's `passages` and `regions`. Each line
 gets one kind. It is added when the compared text lacks it, changed, conflict

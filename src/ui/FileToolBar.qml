@@ -12,7 +12,7 @@ RowLayout {
     required property var selectedFile
     // True while an input method composes text that the result has not acknowledged.
     required property bool composing
-    // Whether the source choices list shows.
+    // Whether the region choices show in the source panes' gutters.
     readonly property alias showSourceChoices: sourceChoices.checked
     // Whether the result shows the conflict-marker lines it folds.
     property alias showMarkers: markersToggle.checked
@@ -137,6 +137,7 @@ RowLayout {
                     onTriggered: fileToolBar.wholeFileChosen("right")
                 }
             },
+            // The region choices start shown; hiding them gives the source text their column.
             NamedAction {
                 id: sourceChoices
                 controlName: "showSourceChoices"
@@ -144,6 +145,7 @@ RowLayout {
                 icon.name: "view-list-details"
                 iconOnly: true
                 toggle: true
+                checked: true
             },
             // A view control that folds or shows marker lines and changes no
             // text, decision, history or progress. It is always in the overflow

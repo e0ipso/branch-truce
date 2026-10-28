@@ -1,4 +1,5 @@
-// The session toolbar: the handoff, difference and file navigation, and the file list toggle.
+// The session toolbar: the handoff, difference navigation, the undecided stepper with its
+// count, file navigation, and the file list toggle.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -8,6 +9,11 @@ Kirigami.ActionToolBar {
     id: mainToolBar
     required property var controller
     signal handoffRequested()
+    // The selected file's undecided choices; the stepper steps through them.
+    readonly property int undecided: {
+        const progress = controller.selectedFile.progress
+        return progress ? Number(progress.undecided) : 0
+    }
     objectName: "mainToolBar"
     actions: [
         NamedAction {
@@ -36,13 +42,28 @@ Kirigami.ActionToolBar {
             text: qsTr("Previous undecided")
             icon.name: "arrow-up"
             iconOnly: true
+            enabled: mainToolBar.undecided > 0
             onTriggered: mainToolBar.controller.navigate("undecided", -1)
+        },
+        // The count of undecided choices left in the selected file. Clicking it goes to the
+        // next one, and it drops as choices are decided.
+        NamedAction {
+            controlName: "undecidedCounter"
+            text: mainToolBar.undecided > 0 ? qsTr("%n undecided", "", mainToolBar.undecided)
+                                            : qsTr("Nothing undecided")
+            tooltip: mainToolBar.undecided > 0 ? qsTr("Go to the next undecided choice in this file")
+                                               : qsTr("No undecided choices to step through")
+            icon.name: "vcs-conflicting"
+            displayHint: Kirigami.DisplayHint.KeepVisible
+            enabled: mainToolBar.undecided > 0
+            onTriggered: mainToolBar.controller.navigate("undecided", 1)
         },
         NamedAction {
             controlName: "nextUndecided"
             text: qsTr("Next undecided")
             icon.name: "arrow-down"
             iconOnly: true
+            enabled: mainToolBar.undecided > 0
             onTriggered: mainToolBar.controller.navigate("undecided", 1)
         },
         MenuAction {

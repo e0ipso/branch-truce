@@ -336,24 +336,47 @@ QString regionResult(Scene &scene, const QVariantMap &region)
     return scene.text("resultText").mid(begin, end - begin);
 }
 
-// Scroll the scoped-choice list to one row and click one of its buttons. kind is the part of
-// the button's objectName before the choice ID: Accept, Ignore, Resolve, PreviewLeftFirst or
-// PreviewRightFirst.
+// The scope whose gutter row offers a choice: the section that starts on the choice's line
+// on its side, or else the choice itself.
+QString rowOwner(Scene &scene, const QVariantMap &region)
+{
+    const auto id = region.value(QStringLiteral("id")).toString();
+    if (region.value(QStringLiteral("scope")).toString() == QStringLiteral("section")) return id;
+    for (const auto &value : scene.controller->selectedFile().value(QStringLiteral("regions")).toList()) {
+        const auto other = value.toMap();
+        if (other.value(QStringLiteral("scope")).toString() == QStringLiteral("section")
+            && other.value(QStringLiteral("side")) == region.value(QStringLiteral("side"))
+            && other.value(QStringLiteral("sourceLineBegin")) == region.value(QStringLiteral("sourceLineBegin")))
+            return other.value(QStringLiteral("id")).toString();
+    }
+    return id;
+}
+
+// Click one scoped choice in the source gutters. kind is the part of the control's objectName
+// before the choice ID: Accept, Ignore, Resolve, PreviewLeftFirst or PreviewRightFirst. Accept
+// and Ignore of the scope that owns a gutter row are buttons on that row; every other choice
+// is an entry of the row's menu, choiceMore-<owner ID>.
 void clickChoice(Scene &scene, const QString &label, const char *kind)
 {
-    auto *list = scene.item("scopedChoices");
-    const auto rows = choiceRows(scene);
-    int index = -1;
-    for (int i = 0; i < rows.size(); ++i)
-        if (rows[i].toMap().value(QStringLiteral("label")).toString() == label) index = i;
-    if (index < 0) throw std::runtime_error("missing choice row " + label.toStdString());
-    const auto id = rows[index].toMap().value(QStringLiteral("id")).toString();
-    constexpr int contain = 4; // ListView.Contain
-    CHECK(QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, index), Q_ARG(int, contain)));
+    auto *lanes = scene.item("scopedChoices");
+    const auto region = regionFor(scene, label);
+    const auto id = region.value(QStringLiteral("id")).toString();
+    const auto owner = rowOwner(scene, region);
     const auto name = QStringLiteral("choice") + QLatin1String(kind) + QLatin1Char('-') + id;
-    auto *target = stable(scene, (label + " " + name).toStdString(),
-                          [&] { return test_support::namedButton(list, name); });
-    test_support::clickItem(scene.window, target);
+    const bool onRow = owner == id && (qstrcmp(kind, "Accept") == 0 || qstrcmp(kind, "Ignore") == 0);
+    if (onRow) {
+        auto *target = stable(scene, (label + " " + name).toStdString(),
+                              [&] { return test_support::namedButton(lanes, name); });
+        test_support::clickItem(scene.window, target);
+        return;
+    }
+    const auto more = QStringLiteral("choiceMore-") + owner;
+    auto *menuButton = stable(scene, (label + " " + more).toStdString(),
+                              [&] { return test_support::namedButton(lanes, more); });
+    test_support::clickItem(scene.window, menuButton);
+    auto *entry = stable(scene, (label + " " + name).toStdString(),
+                         [&] { return test_support::namedButton(scene.window->contentItem(), name); });
+    test_support::clickItem(scene.window, entry);
 }
 
 // A dialog button by objectName, or a standard button such as OK, Cancel or Apply by its
@@ -629,7 +652,7 @@ std::unique_ptr<QProcess> startMergetool(const Repository &repo, const QStringLi
 // Every named control of the main view, in reading order.
 const char *const mainControls[] = {
     "inventoryWarning", "openHandoff", "previousDifference", "nextDifference", "previousUndecided",
-    "nextUndecided", "navigateMenu", "toggleFileList", "fileList", "selectedPath", "selectedStatus", "saveDraft",
+    "undecidedCounter", "nextUndecided", "navigateMenu", "toggleFileList", "fileList", "selectedPath", "selectedStatus", "saveDraft",
     "markResolved", "discardUnsaved", "undoCommand", "redoCommand", "copyResult", "pasteResult",
     "sourceChoicesMenu", "showSourceChoices",
     "searchScope", "searchQuery", "findPassage", "wrapLines", "showWhitespace", "stage2Label", "resultLabel",
@@ -1059,7 +1082,6 @@ public:
             clickFile(scene, "notes.txt");
             const auto notes = scene.file("notes.txt").current();
             clickFile(scene, "story.txt");
-            scene.click("showSourceChoices");
             std::vector<Work> history{work(scene, "story.txt")};
             const auto state = [&](const char *label) {
                 return choiceRow(scene, QString::fromUtf8(label)).value(QStringLiteral("state")).toString();
@@ -1139,7 +1161,6 @@ public:
             Repository repo("merge", journeyPaths());
             Scene scene(repo);
             clickFile(scene, "story.txt");
-            scene.click("showSourceChoices");
             CHECK(scene.controller->selectedFile().value(QStringLiteral("fileName")).toString() == QStringLiteral("story.txt"));
             const auto region = [&](const char *label) { return regionFor(scene, QString::fromUtf8(label)); };
             const auto edited = [&](const char *label) {
@@ -1831,26 +1852,32 @@ public:
             QMetaObject::invokeMethod(dialog, "close");
             settleFor("handoff closed", [&] { return !dialog->property("visible").toBool(); });
 
-            // TRUCE-0084: with the source choices shown, the three panes keep eight lines and the
-            // panes and choices stay reachable, from a roomy window down to 960x540. There the file
-            // list beside them is taller than the window, so it is left out.
-            scene.click("showSourceChoices");
+            // TRUCE-0084: the source choices start shown, in the source panes' gutters, where they
+            // take no height. With them the three panes keep eight lines and the panes and choices
+            // stay reachable, from a roomy window down to 960x540, and hiding them leaves every
+            // text pane as high as it was. At 960x540 the file list beside them is taller than the
+            // window, so it is left out.
             settleFor("source choices shown", [&] { return scene.item("scopedChoices")->isVisible(); });
-            const std::vector<const char *> withChoices{"showSourceChoices", "sourceChoicesMenu", "stage2Label",
-                "resultLabel", "stage3Label", "stage2Viewport", "resultViewport", "stage3Viewport", "scopedChoices",
-                "workflowStatus"};
+            const std::vector<const char *> withChoices{"showSourceChoices", "sourceChoicesMenu", "undecidedCounter",
+                "stage2Label", "resultLabel", "stage3Label", "stage2Viewport", "resultViewport", "stage3Viewport",
+                "scopedChoices", "workflowStatus"};
             for (const auto &screen : {QSize(1500, 1040), QSize(1280, 800), QSize(1280, 720), QSize(960, 540)}) {
+                const auto size = std::to_string(screen.width()) + "x" + std::to_string(screen.height());
                 const auto pane = checkFits(scene, screen.width(), screen.height(), withChoices);
                 if (pane < 8 * lineHeight)
                     throw std::runtime_error("with source choices, text panes " + std::to_string(pane) + " px high at "
-                                             + std::to_string(screen.width()) + "x" + std::to_string(screen.height())
-                                             + ", less than eight " + std::to_string(lineHeight) + " px lines");
+                                             + size + ", less than eight " + std::to_string(lineHeight) + " px lines");
+                scene.click("showSourceChoices");
+                settleFor("source choices hidden at " + size, [&] { return !scene.item("scopedChoices")->isVisible(); });
+                const auto hidden = checkFits(scene, screen.width(), screen.height(),
+                                              {"stage2Viewport", "resultViewport", "stage3Viewport"});
+                if (hidden != pane)
+                    throw std::runtime_error("at " + size + " the text panes are " + std::to_string(pane)
+                                             + " px high with the source choices and " + std::to_string(hidden)
+                                             + " px without them");
+                scene.click("showSourceChoices");
+                settleFor("source choices shown at " + size, [&] { return scene.item("scopedChoices")->isVisible(); });
             }
-            // The choices below the eight-line panes make the page taller than a 960x540 window, by
-            // 170 px in the CI images, so the mouse wheel over its labels scrolls it.
-            if (!checkWheelScroll(scene, "selectedStatus"))
-                throw std::runtime_error("with source choices the page fits 960x540: "
-                                         + pageExtent(scene.object("pageScroll")));
             checkOffline(scene);
         });
         window.run("TRUCE-0115 selecting a file shows its first undecided region in all three panes", [] {
@@ -1896,7 +1923,6 @@ public:
                                        left}});
             Scene scene(repo);
             clickFile(scene, "pair.txt");
-            scene.click("showSourceChoices");
             const auto region = [&](const char *label) { return regionFor(scene, QString::fromUtf8(label)); };
             const auto edited = [&](const char *label) {
                 return region(label).value(QStringLiteral("handEdited")).toBool();
@@ -1971,7 +1997,6 @@ public:
                                        QByteArray("header\nright one\nright two\nright three\ntail\n"), base}});
             Scene scene(repo);
             clickFile(scene, "lines.txt");
-            scene.click("showSourceChoices");
             const auto state = [&](const char *label) {
                 return choiceRow(scene, QString::fromUtf8(label)).value(QStringLiteral("state")).toString();
             };

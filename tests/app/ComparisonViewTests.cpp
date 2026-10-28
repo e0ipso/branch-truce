@@ -846,7 +846,7 @@ public:
             QStringList expectedCommands;
             for (const auto *name : {"saveDraft", "markResolved", "discardUnsaved", "undoCommand", "redoCommand",
                      "copyResult", "pasteResult", "openHandoff", "previousDifference", "nextDifference",
-                     "previousUndecided", "nextUndecided"}) {
+                     "previousUndecided", "undecidedCounter", "nextUndecided"}) {
                 commands << describe(name);
                 expectedCommands << QStringLiteral("%1 checkable=0 role=%2").arg(QLatin1String(name)).arg(static_cast<int>(QAccessible::Button));
             }
@@ -876,10 +876,10 @@ public:
             settle([&] { return fixture.item("earlierText")->isVisible(); });
             CHECK(fixture.item("earlierText")->property("readOnly").toBool());
             CHECK(fixture.item("earlierText")->property("text").toString().toStdString() == fixture.file().snapshots()->earlier->worktree.utf8);
-            CHECK(!fixture.item("scopedChoices")->isVisible());
-            CHECK(fixture.item("showSourceChoices")->setProperty("checked", true));
-            settle([&] { return fixture.item("scopedChoices")->isVisible(); });
+            // The source choices start shown in the gutters; collapse them for the resize below.
+            CHECK(fixture.item("scopedChoices")->isVisible());
             CHECK(fixture.item("showSourceChoices")->setProperty("checked", false));
+            settle([&] { return !fixture.item("scopedChoices")->isVisible(); });
             CHECK(fixture.item("showEarlier")->setProperty("checked", false));
             auto *pane = fixture.item("stage2Label")->parentItem()->parentItem();
             const auto width = pane->width();
@@ -1792,6 +1792,36 @@ public:
             settle([&] { return markers->property("markerCount").toInt() == 0 && paintedMarkers(markers) == 0; });
             CHECK(fixture.item("resultText")->property("text").toString().toStdString() == result);
             checkUnchanged(fixture, before);
+        });
+        suite.run("TRUCE-0118 the undecided counter steps to the next undecided choice and counts down as choices are decided", [] {
+            const std::string result = "same\nAAA\nmid\nBBB\n";
+            const std::string left = "same\nleftA\nmid\nleftB\n";
+            Fixture fixture(test_support::choiceFile(left, result, result));
+            CHECK(fixture.file().facts().undecided == 4);
+            auto *counter = fixture.item("undecidedCounter");
+            settle([&] { return counter->property("text").toString() == QStringLiteral("4 undecided"); });
+            CHECK(counter->isEnabled());
+
+            fixture.select(0, 0);
+            fixture.click("undecidedCounter");
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
+                QStringLiteral("result"), 0, 4, 5, 9,
+                QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
+                QStringLiteral("pick/1/5/11"));
+            fixture.click("undecidedCounter");
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
+                QStringLiteral("result"), 1, 4, 5, 9,
+                QStringLiteral("Undecided 2 of 4 · Right · result bytes 5-9"),
+                QStringLiteral("pick/2/5/9"));
+
+            // Ignoring the left side of the first region decides one choice.
+            const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+            CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
+                QString::fromStdString(target.source.contributionId), "ignore"));
+            CHECK(fixture.controller.applyChoice(true));
+            CHECK(fixture.file().facts().undecided == 3);
+            settle([&] { return counter->property("text").toString() == QStringLiteral("3 undecided"); });
+            CHECK(counter->isEnabled());
         });
         suite.run("TRUCE-0059 revision progress, within-file navigation, unfinished files and file-list location", [] {
             const std::string result = "same\nAAA\nmid\nBBB\n";

@@ -455,6 +455,16 @@ Kirigami.ApplicationWindow {
                             onDiscardToStagedChosen: discardStagedDialog.ask(window.controller.selectedFileId,
                                 window.selectedFile.currentRevision)
                         }
+                        // Why the region choices are missing from the gutters, while they are shown.
+                        PlainInlineMessage {
+                            objectName: "choiceNotice"
+                            Layout.fillWidth: true
+                            onPlainTextRequested: item => window.showPlainText(item)
+                            type: Kirigami.MessageType.Information
+                            visible: window.supportedSelection && fileToolBar.showSourceChoices
+                                && !!window.selectedFile.choiceNotice
+                            text: window.selectedFile.choiceNotice || ""
+                        }
                         ComparisonView {
                             id: comparison
                             Layout.fillWidth: true
@@ -463,15 +473,9 @@ Kirigami.ApplicationWindow {
                             controller: window.controller
                             file: window.selectedFile
                             showMarkers: fileToolBar.showMarkers
+                            showChoices: fileToolBar.showSourceChoices
                             onMarkersRevealed: fileToolBar.showMarkers = true
-                        }
-                        SourceChoiceList {
-                            selectedFile: window.selectedFile
-                            supportedSelection: window.supportedSelection
-                            shown: fileToolBar.showSourceChoices
-                            composing: comparison.inputMethodComposing
-                            onPlainTextRequested: item => window.showPlainText(item)
-                            onChosen: (target, action) => window.choose(target, action)
+                            onChoiceChosen: (target, action) => window.choose(target, action)
                         }
                     }
                 }

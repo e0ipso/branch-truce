@@ -1,5 +1,6 @@
 // The comparison of one file: the reading controls, the source and result panes with the
-// connector bands between them, and the earlier version below.
+// connector bands between them, the region choices in the source panes' gutters, and the
+// earlier version below.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -22,6 +23,11 @@ ColumnLayout {
     property bool showMarkers: false
     // Asks for showMarkers, because something the user asked for is on a folded line.
     signal markersRevealed()
+    // Shows the region choices in the source panes' gutters and the result's Take both menus.
+    property bool showChoices: true
+    // A choice of action for a source scope; the owner previews it when it needs confirming.
+    signal choiceChosen(target: string, action: string)
+    readonly property bool choosing: !!file.canEdit && !inputMethodComposing
     readonly property var markerFold: kept("fold", foldFor(file, showMarkers))
     // The controller picks Breeze Light or Breeze Dark syntax colours from its lightness.
     readonly property color schemeBackground: Kirigami.Theme.backgroundColor
@@ -209,6 +215,91 @@ ColumnLayout {
         }
         return bands
     }
+    // The choice rows of one source pane, in line order: one per line where a scope starts.
+    // A section owns the row on its first line. A line choice owns the row on its line unless
+    // a section starts there; then it rides in that row's extras, as does any other scope
+    // that starts on a taken line. Each choice gains its region's undecided state.
+    function choiceRowsFor(side: string, file: var): var {
+        const choices = file.choices || []
+        const regions = file.regions || []
+        const scoped = []
+        for (let i = 0; i < choices.length && i < regions.length; ++i) {
+            const region = regions[i]
+            if (region.side !== side || region.id !== choices[i].id)
+                continue
+            scoped.push({line: region.sourceLineBegin, section: region.scope === "section",
+                choice: Object.assign({undecided: region.state === "undecided"}, choices[i])})
+        }
+        const byLine = {}
+        for (const sections of [true, false]) {
+            for (let i = 0; i < scoped.length; ++i) {
+                const entry = scoped[i]
+                if (entry.section !== sections)
+                    continue
+                if (byLine[entry.line])
+                    byLine[entry.line].extras.push(entry.choice)
+                else
+                    byLine[entry.line] = {line: entry.line, choice: entry.choice, extras: []}
+            }
+        }
+        return Object.keys(byLine).map(Number).sort((a, b) => a - b).map(line => byLine[line])
+    }
+    // The result gutter's section actions, keyed by the first result line of each section
+    // with a side mapped there: its state once no side is undecided, or a Take both offer
+    // while one is and the sides can be combined. A key on a folded marker line moves to the
+    // next shown line, the row the fold leaves.
+    function resultSectionsFor(file: var, fold: var): var {
+        const hidden = {}
+        for (let i = 0; i < fold.hidden.length; ++i)
+            hidden[fold.hidden[i].line] = true
+        const choices = file.choices || []
+        const regions = file.regions || []
+        const sections = {}
+        const order = []
+        for (let i = 0; i < choices.length && i < regions.length; ++i) {
+            const region = regions[i]
+            if (region.scope !== "section" || region.id !== choices[i].id)
+                continue
+            if (!sections[region.section]) {
+                sections[region.section] = {sides: {}, first: -1}
+                order.push(region.section)
+            }
+            const section = sections[region.section]
+            section.sides[region.side] = {region: region, choice: choices[i]}
+            if (region.mapped && region.resultLineBegin > 0
+                    && (section.first < 0 || region.resultLineBegin < section.first))
+                section.first = region.resultLineBegin
+        }
+        const sideNames = {stage2: qsTr("Left"), stage3: qsTr("Right")}
+        const stateNames = {accepted: qsTr("accepted"), ignored: qsTr("ignored"),
+            manual: qsTr("edited by hand"), undecided: qsTr("undecided")}
+        const decisions = {}
+        const combinations = {}
+        for (let i = 0; i < order.length; ++i) {
+            const section = sections[order[i]]
+            if (section.first < 0)
+                continue
+            let line = section.first
+            while (hidden[line])
+                ++line
+            if (decisions[line] || combinations[line])
+                continue
+            const sides = ["stage2", "stage3"].filter(side => !!section.sides[side])
+            const states = sides.map(side => section.sides[side].region.state)
+            if (states.indexOf("undecided") < 0) {
+                decisions[line] = {
+                    state: states.indexOf("manual") >= 0 ? "manual" : states.indexOf("accepted") >= 0 ? "accepted" : "ignored",
+                    label: sides.map(side => qsTr("%1 %2").arg(sideNames[side])
+                        .arg(stateNames[section.sides[side].region.state] || "")).join(", ")
+                }
+            } else if (sides.length === 2 && section.sides.stage2.choice.combinationAvailable) {
+                combinations[line] = {id: section.sides.stage2.choice.id,
+                    label: sides.map(side => section.sides[side].choice.label).join(qsTr(" and "))}
+            }
+        }
+        return {decisions: decisions, combinations: combinations}
+    }
+    readonly property var resultSections: kept("sections:result", resultSectionsFor(file, markerFold))
     // The lines of one pane that the navigation target covers, as [first, end)
     // ranges. An empty range marks the line boundary at first.
     function currentFor(pane: string, target: var, file: var): var {
@@ -317,6 +408,10 @@ ColumnLayout {
     }
     // Four characters, so tab-indented text lines up the same in every pane.
     readonly property real tabStop: 4 * paneFont.averageCharacterWidth
+    // One text row; a gutter button is this high and wide.
+    readonly property real rowHeight: Math.ceil(paneFont.lineSpacing)
+    // A source pane's choice column: three buttons with a small spacing between and around them.
+    readonly property real choiceWidth: 3 * rowHeight + 4 * Kirigami.Units.smallSpacing
     // The panes by role, scrolled together through the file's passages.
     ComparisonPanes {
         id: panesByRole
@@ -339,74 +434,107 @@ ColumnLayout {
         search: passageSearch
         onFindRequested: comparison.findPassage()
     }
-    SplitView {
-        id: panes
-        objectName: "comparisonPanes"
+    // The panes, with each source pane's region choices laid over the column it keeps for
+    // them. The choices take no height, so showing them never shortens the panes.
+    Item {
         Layout.fillWidth: true
         Layout.fillHeight: true
         // A SplitView does not pass its panes' minimum height on to the layout.
         Layout.minimumHeight: Math.max(leftPane.Layout.minimumHeight, resultPane.Layout.minimumHeight,
             rightPane.Layout.minimumHeight)
-        orientation: Qt.Horizontal
-        handle: ConnectorHandle {
-            id: connectorHandle
-            result: resultPane
-            source: connectorHandle.leftSide ? leftPane : rightPane
-            bands: comparison.kept("bands:" + connectorHandle.source.paneName,
-                comparison.bandsFor(connectorHandle.source.paneName, comparison.file))
+        SplitView {
+            id: panes
+            objectName: "comparisonPanes"
+            anchors.fill: parent
+            orientation: Qt.Horizontal
+            handle: ConnectorHandle {
+                id: connectorHandle
+                result: resultPane
+                source: connectorHandle.leftSide ? leftPane : rightPane
+                bands: comparison.kept("bands:" + connectorHandle.source.paneName,
+                    comparison.bandsFor(connectorHandle.source.paneName, comparison.file))
+            }
+            SourcePane {
+                id: leftPane
+                SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
+                SplitView.preferredWidth: panes.width / 3
+                paneName: "stage2"
+                paneRole: qsTr("Left source")
+                choiceEdge: "right"
+                choiceWidth: comparison.showChoices ? comparison.choiceWidth : 0
+                source: comparison.file.stage2 || ({})
+                marks: comparison.kept("marks:stage2", comparison.marksFor(leftPane.paneName, comparison.file))
+                current: comparison.kept("current:stage2", comparison.currentFor(leftPane.paneName,
+                    comparison.controller.navigationTarget, comparison.file))
+                headerHeight: comparison.headerHeight
+                tabStop: comparison.tabStop
+                wrapLines: comparison.wrapLines
+                showWhitespace: comparison.showWhitespace
+                minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
+                onScrolled: byUser => panesByRole.paneScrolled(leftPane.paneName, byUser)
+                onEditorCompleted: comparison.controller.attachSourceEditor(leftPane.editor)
+            }
+            ResultPane {
+                id: resultPane
+                SplitView.minimumWidth: Kirigami.Units.gridUnit * 10
+                SplitView.preferredWidth: panes.width / 3
+                controller: comparison.controller
+                file: comparison.file
+                marks: comparison.kept("marks:result", comparison.marksFor("result", comparison.file))
+                current: comparison.kept("current:result", comparison.currentFor("result",
+                    comparison.controller.navigationTarget, comparison.file))
+                fold: comparison.markerFold
+                decisions: comparison.resultSections.decisions
+                combinations: comparison.showChoices ? comparison.resultSections.combinations : ({})
+                choosing: comparison.choosing
+                onChoiceChosen: (target, action) => comparison.choiceChosen(target, action)
+                headerHeight: comparison.headerHeight
+                tabStop: comparison.tabStop
+                wrapLines: comparison.wrapLines
+                showWhitespace: comparison.showWhitespace
+                minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
+                onScrolled: byUser => panesByRole.paneScrolled("result", byUser)
+            }
+            SourcePane {
+                id: rightPane
+                SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
+                SplitView.preferredWidth: panes.width / 3
+                paneName: "stage3"
+                paneRole: qsTr("Right source")
+                choiceEdge: "left"
+                choiceWidth: comparison.showChoices ? comparison.choiceWidth : 0
+                source: comparison.file.stage3 || ({})
+                marks: comparison.kept("marks:stage3", comparison.marksFor(rightPane.paneName, comparison.file))
+                current: comparison.kept("current:stage3", comparison.currentFor(rightPane.paneName,
+                    comparison.controller.navigationTarget, comparison.file))
+                headerHeight: comparison.headerHeight
+                tabStop: comparison.tabStop
+                wrapLines: comparison.wrapLines
+                showWhitespace: comparison.showWhitespace
+                minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
+                onScrolled: byUser => panesByRole.paneScrolled(rightPane.paneName, byUser)
+                onEditorCompleted: comparison.controller.attachSourceEditor(rightPane.editor)
+            }
         }
-        SourcePane {
-            id: leftPane
-            SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
-            SplitView.preferredWidth: panes.width / 3
-            paneName: "stage2"
-            paneRole: qsTr("Left source")
-            source: comparison.file.stage2 || ({})
-            marks: comparison.kept("marks:stage2", comparison.marksFor(leftPane.paneName, comparison.file))
-            current: comparison.kept("current:stage2", comparison.currentFor(leftPane.paneName,
-                comparison.controller.navigationTarget, comparison.file))
-            headerHeight: comparison.headerHeight
-            tabStop: comparison.tabStop
-            wrapLines: comparison.wrapLines
-            showWhitespace: comparison.showWhitespace
-            minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
-            onScrolled: byUser => panesByRole.paneScrolled(leftPane.paneName, byUser)
-            onEditorCompleted: comparison.controller.attachSourceEditor(leftPane.editor)
-        }
-        ResultPane {
-            id: resultPane
-            SplitView.minimumWidth: Kirigami.Units.gridUnit * 10
-            SplitView.preferredWidth: panes.width / 3
-            controller: comparison.controller
-            file: comparison.file
-            marks: comparison.kept("marks:result", comparison.marksFor("result", comparison.file))
-            current: comparison.kept("current:result", comparison.currentFor("result",
-                comparison.controller.navigationTarget, comparison.file))
-            fold: comparison.markerFold
-            headerHeight: comparison.headerHeight
-            tabStop: comparison.tabStop
-            wrapLines: comparison.wrapLines
-            showWhitespace: comparison.showWhitespace
-            minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
-            onScrolled: byUser => panesByRole.paneScrolled("result", byUser)
-        }
-        SourcePane {
-            id: rightPane
-            SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
-            SplitView.preferredWidth: panes.width / 3
-            paneName: "stage3"
-            paneRole: qsTr("Right source")
-            source: comparison.file.stage3 || ({})
-            marks: comparison.kept("marks:stage3", comparison.marksFor(rightPane.paneName, comparison.file))
-            current: comparison.kept("current:stage3", comparison.currentFor(rightPane.paneName,
-                comparison.controller.navigationTarget, comparison.file))
-            headerHeight: comparison.headerHeight
-            tabStop: comparison.tabStop
-            wrapLines: comparison.wrapLines
-            showWhitespace: comparison.showWhitespace
-            minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
-            onScrolled: byUser => panesByRole.paneScrolled(rightPane.paneName, byUser)
-            onEditorCompleted: comparison.controller.attachSourceEditor(rightPane.editor)
+        Item {
+            id: scopedChoices
+            objectName: "scopedChoices"
+            anchors.fill: parent
+            visible: comparison.showChoices
+            ChoiceLane {
+                pane: leftPane
+                rows: comparison.kept("choices:stage2", comparison.choiceRowsFor(leftPane.paneName, comparison.file))
+                rowHeight: comparison.rowHeight
+                choosing: comparison.choosing
+                onChosen: (target, action) => comparison.choiceChosen(target, action)
+            }
+            ChoiceLane {
+                pane: rightPane
+                rows: comparison.kept("choices:stage3", comparison.choiceRowsFor(rightPane.paneName, comparison.file))
+                rowHeight: comparison.rowHeight
+                choosing: comparison.choosing
+                onChosen: (target, action) => comparison.choiceChosen(target, action)
+            }
         }
     }
     CheckBox {

@@ -6,14 +6,22 @@
 //
 // markerSlot is a column between the numbers and the text. It shows the
 // glyph of each line in marks.lines, and the gaps in marks.gaps on its
-// right edge; per-region actions go there too. Place an item in it at the
-// y of editor.positionToRectangle(position); rows lists the blocks near
-// the view as {number, position, y, height, top, extent}, where top and
-// extent span the whole block. With provenance set, a column before the
-// slot shows the letter in marks.letters. folds maps the first line below
-// each run of folded lines to that run; on a run that opens a conflict-
-// marker block the slot shows a chip saying that markers remain, in place
-// of the line's glyph.
+// right edge. Place an item in it at the y of
+// editor.positionToRectangle(position); rows lists the blocks near the view
+// as {number, position, y, height, top, extent}, where top and extent span
+// the whole block. With provenance set, a column before the slot shows the
+// letter in marks.letters. folds maps the first line below each run of
+// folded lines to that run; on a run that opens a conflict-marker block the
+// slot shows a chip saying that markers remain, in place of the line's
+// glyph.
+//
+// With decisionColumn set, a column after the slot holds the result's
+// section actions, keyed by line. decisions maps a line to the {state,
+// label} of the section that starts there once both its sides are decided,
+// and the column shows that state as a chip. combinations maps a line to
+// the {id, label} of an undecided section whose sides can be taken
+// together, and the column shows a Take both menu that asks to combine
+// them in either order through combinationChosen.
 //
 // rowSlots holds one entry per row. A Repeater over it, with each delegate
 // reading rows[index], keeps its delegates when a refresh changes rows but
@@ -33,6 +41,12 @@ Item {
     property var marks: ({lines: {}, gaps: {}, letters: {}})
     property var folds: ({})
     property bool provenance: false
+    property bool decisionColumn: false
+    property var decisions: ({})
+    property var combinations: ({})
+    // Whether the file takes choices now: it can be edited and no input is composing.
+    property bool choosing: false
+    signal combinationChosen(target: string, action: string)
     readonly property alias markerSlot: slot
     readonly property int digits: Math.max(2, String(blocks.blockCount).length)
     readonly property real numberWidth: Math.ceil(digits * gutterFont.averageCharacterWidth)
@@ -42,7 +56,8 @@ Item {
     property real coveredTop: 0
     property real coveredBottom: -1
     z: 1
-    implicitWidth: Kirigami.Units.smallSpacing * 2 + numberWidth + letterWidth + slot.width + separator.width
+    implicitWidth: Kirigami.Units.smallSpacing * 2 + numberWidth + letterWidth + slot.width + decisionSlot.width
+        + separator.width
     Kirigami.Theme.colorSet: Kirigami.Theme.View
     Kirigami.Theme.inherit: false
     Accessible.ignored: true
@@ -231,6 +246,94 @@ Item {
                 textFormat: Text.PlainText
                 font: gutter.editor.font
                 color: Kirigami.Theme.disabledTextColor
+            }
+        }
+    }
+    Item {
+        id: decisionSlot
+        objectName: gutter.objectName + "DecisionSlot"
+        x: slot.x + slot.width
+        width: gutter.decisionColumn ? Math.ceil(gutterFont.lineSpacing) + Kirigami.Units.smallSpacing : 0
+        height: gutter.height
+        visible: width > 0
+        Repeater {
+            model: gutter.decisionColumn ? gutter.rowSlots : 0
+            delegate: Item {
+                id: decisionRow
+                required property int index
+                readonly property var modelData: gutter.rows[index] || gutter.noRow
+                readonly property int line: modelData.number
+                readonly property var decision: gutter.decisions[line] || null
+                readonly property var combination: gutter.combinations[line] || null
+                y: modelData.y
+                width: decisionSlot.width
+                height: modelData.height
+                // The decided section's state as a short tag in its role's colour.
+                Rectangle {
+                    id: decisionChip
+                    readonly property string part: "decision"
+                    readonly property string decision: decisionRow.decision ? decisionRow.decision.state : ""
+                    readonly property color tone: decision === "accepted" ? Kirigami.Theme.positiveTextColor
+                        : decision === "manual" ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.disabledTextColor
+                    readonly property string text: ({accepted: "✓", ignored: "×", manual: "m"})[decision] || ""
+                    visible: text.length > 0
+                    anchors.centerIn: parent
+                    height: decisionRow.height
+                    width: Math.max(height, decisionText.implicitWidth + Kirigami.Units.smallSpacing)
+                    radius: height / 2
+                    color: Qt.rgba(tone.r, tone.g, tone.b, 0.14)
+                    border.width: 1
+                    border.color: Qt.rgba(tone.r, tone.g, tone.b, 0.4)
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: text
+                    Accessible.description: decisionRow.decision ? decisionRow.decision.label : ""
+                    Text {
+                        id: decisionText
+                        anchors.centerIn: parent
+                        text: decisionChip.text
+                        textFormat: Text.PlainText
+                        font: Kirigami.Theme.smallFont
+                        color: decisionChip.tone
+                    }
+                }
+                ToolButton {
+                    id: takeBoth
+                    readonly property string target: decisionRow.combination ? decisionRow.combination.id : ""
+                    objectName: "resultTakeBoth-" + target
+                    visible: target.length > 0
+                    enabled: gutter.choosing
+                    anchors.centerIn: parent
+                    width: decisionRow.height
+                    height: decisionRow.height
+                    padding: 0
+                    flat: false
+                    display: AbstractButton.IconOnly
+                    text: decisionRow.combination ? qsTr("Take both: %1").arg(decisionRow.combination.label) : ""
+                    icon.name: "merge"
+                    icon.width: Math.min(Kirigami.Units.iconSizes.small, height)
+                    icon.height: Math.min(Kirigami.Units.iconSizes.small, height)
+                    down: pressed || takeBothMenu.visible
+                    Accessible.role: Accessible.ButtonMenu
+                    ToolTip.text: text
+                    ToolTip.visible: hovered && !takeBothMenu.visible
+                    ToolTip.delay: Kirigami.Units.toolTipDelay
+                    onClicked: takeBothMenu.popup(takeBoth, 0, takeBoth.height)
+                    Menu {
+                        id: takeBothMenu
+                        MenuItem {
+                            objectName: "resultTakeBothLeftFirst-" + takeBoth.target
+                            text: qsTr("Take both, Left then Right")
+                            enabled: gutter.choosing
+                            onTriggered: gutter.combinationChosen(takeBoth.target, "left-first")
+                        }
+                        MenuItem {
+                            objectName: "resultTakeBothRightFirst-" + takeBoth.target
+                            text: qsTr("Take both, Right then Left")
+                            enabled: gutter.choosing
+                            onTriggered: gutter.combinationChosen(takeBoth.target, "right-first")
+                        }
+                    }
+                }
             }
         }
     }

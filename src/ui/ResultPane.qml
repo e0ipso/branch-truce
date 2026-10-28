@@ -1,5 +1,6 @@
 // The editable result as a pane: its header above the text, with line numbers and
-// provenance, diff colours, whitespace markers and the folded conflict-marker lines.
+// provenance, diff colours, whitespace markers, the folded conflict-marker lines, and a
+// gutter column with each section's decision or its Take both menu.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -16,6 +17,11 @@ ColumnLayout {
     required property var current
     // The folded conflict-marker lines: hidden for the blocks, boundaries for the gutter.
     required property var fold
+    // The gutter's section decisions and Take both offers by line; see LineGutter.
+    required property var decisions
+    required property var combinations
+    // Whether the file takes choices now: it can be edited and no input is composing.
+    required property bool choosing
     // The height every aligned pane gives its header, so the texts start on one row.
     required property real headerHeight
     required property real tabStop
@@ -30,6 +36,8 @@ ColumnLayout {
     // byUser is set while the user scrolls the pane: dragging, flicking or the wheel, its
     // scroll bar, or keyboard focus in its text.
     signal scrolled(bool byUser)
+    // A Take both order for a section; the owner previews it.
+    signal choiceChosen(target: string, action: string)
     // Moves the cursor off a folded line to where the blocks say it goes.
     function settleCursor(): void {
         const position = resultEditor.cursorPosition
@@ -131,6 +139,11 @@ ColumnLayout {
                 provenance: true
                 marks: resultPane.marks
                 folds: resultPane.fold.boundaries
+                decisionColumn: true
+                decisions: resultPane.decisions
+                combinations: resultPane.combinations
+                choosing: resultPane.choosing
+                onCombinationChosen: (target, action) => resultPane.choiceChosen(target, action)
             }
             LineBackgrounds {
                 objectName: "resultBackgrounds"

@@ -1,5 +1,6 @@
 // One captured source as a read-only pane: its identity header above the text, with line
-// numbers, diff colours and whitespace markers.
+// numbers, diff colours and whitespace markers. A pane with a choiceEdge keeps a column of
+// choiceWidth on that edge, beside the text, where ChoiceLane lays the region choices.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -26,6 +27,10 @@ ColumnLayout {
     property alias viewport: sourceViewport
     property alias blocks: sourceBlocks
     property bool alignHeader: true
+    // The edge that faces the result, "left" or "right", for the choice column; none without it.
+    property string choiceEdge: ""
+    property real choiceWidth: 0
+    readonly property alias choiceSlot: choiceColumn
     readonly property real headerImplicitHeight: sourceHeaderRow.implicitHeight
     // The commit id is cut to 10 characters on the line; the tooltip keeps the full ids.
     readonly property string commitId: sourcePane.source.commitId || ""
@@ -75,6 +80,18 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.minimumHeight: sourcePane.minimumTextHeight
+        Rectangle {
+            id: choiceColumn
+            objectName: sourcePane.paneName + "ChoiceColumn"
+            Kirigami.Theme.colorSet: Kirigami.Theme.View
+            Kirigami.Theme.inherit: false
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            x: sourcePane.choiceEdge === "right" ? parent.width - width : 0
+            width: sourcePane.choiceEdge.length > 0 ? sourcePane.choiceWidth : 0
+            visible: width > 0
+            color: Kirigami.Theme.backgroundColor
+        }
         Flickable {
             id: sourceViewport
             objectName: sourcePane.paneName + "Viewport"
@@ -83,6 +100,8 @@ ColumnLayout {
             Kirigami.Theme.colorSet: Kirigami.Theme.View
             Kirigami.Theme.inherit: false
             anchors.fill: parent
+            anchors.leftMargin: sourcePane.choiceEdge === "left" ? choiceColumn.width : 0
+            anchors.rightMargin: sourcePane.choiceEdge === "right" ? choiceColumn.width : 0
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.horizontal: ScrollBar {}
@@ -138,7 +157,7 @@ ColumnLayout {
         }
         WhitespaceMarkers {
             objectName: sourcePane.paneName + "Whitespace"
-            anchors.fill: parent
+            anchors.fill: sourceViewport
             anchors.leftMargin: sourceGutter.width
             editor: sourceText
             viewport: sourceViewport
