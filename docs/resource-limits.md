@@ -53,18 +53,22 @@ median of the three repeat medians must stay within these limits:
 
 | Boundary | Limit | Measured on the development host |
 | --- | ---: | --- |
-| Typing, one key press to the next frame | 3000 ms CPU | 1164 to 1208 ms alone or three runs at once, 1917 to 2070 ms with six at once |
+| Typing, one key press to the next frame | 200 ms CPU | 63 to 66 ms alone, 62 to 89 ms with three runs at once, 100 to 106 ms with six at once |
 | Scrolling, one wheel notch to the next frame | 300 ms CPU | 100 to 112 ms alone or three runs at once, 154 to 163 ms with six at once |
 
 The runs use the offscreen platform, the software renderer and the
-`org.kde.desktop` style on an 8-thread host. The load average was 2.0 to 2.7
-alone and with three runs, and reached 9.6 with six. CPU time leaves out the
-time other processes hold the CPU, but sharing cores still raised the medians
-about 1.7 times. The limits hold at that load. On an idle host they catch a
-cost about 2.5 times the measured typing cost and 3 times the scrolling cost,
-not a doubling.
+`org.kde.desktop` style on an 8-thread host. For scrolling the load average was
+2.0 to 2.7 alone and with three runs, and reached 9.6 with six. The typing row
+comes from later runs, made while other builds and tests shared the host. Their
+one-minute load average was 3.5 to 6.9 alone, 2.7 to 4.8 with three runs and 4.8
+to 7.0 with six. With the Fusion style, typing cost 62 to 72 ms alone. CPU time
+leaves out the time other processes hold the CPU, but sharing cores still raised
+the medians about 1.6 times. The limits hold at that load. On an idle host they
+catch a cost about 3 times the measured typing and scrolling costs, not a
+doubling.
 
-Typing costs about a second of CPU per key here, ten times the 100 ms
-editor keystroke budget in the evidence above, which was measured on the editor
-experiment rather than the real panes. The limit stops typing from getting
-slower; it does not make it fast.
+A key press costs about 65 ms of CPU here, under the 100 ms editor keystroke
+budget in the evidence above. The largest parts are the edit itself, about
+10 ms, and its recovery journal commit. The commit reads back every earlier
+record of the journal, so it grows with each key: 3 to 5 ms for the first key of
+a run and about 25 ms for the eighteenth.

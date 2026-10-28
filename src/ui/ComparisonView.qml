@@ -25,13 +25,26 @@ ColumnLayout {
     property bool showMarkers: false
     // Asks for showMarkers, because something the user asked for is on a folded line.
     signal markersRevealed()
-    readonly property var markerFold: foldFor(file, showMarkers)
+    readonly property var markerFold: kept("fold", foldFor(file, showMarkers))
     // The controller picks Breeze Light or Breeze Dark syntax colours from its lightness.
     readonly property color schemeBackground: Kirigami.Theme.backgroundColor
     readonly property string searchStatusText: searchDetail.length > 0
         ? searchDetail
         : qsTr("Search scope: %1.").arg(readingBar.scope.currentText || qsTr("Editable result"))
 
+    // The last value of each kept binding, with its JSON text.
+    readonly property var keptValues: ({})
+    // Each revision gives the file a new map, so the marks, ranges, bands and fold made from it
+    // are new objects too. One equal to the last value under key is that value instead, so the
+    // panes and their line delegates are not told of a change when typing leaves it the same.
+    function kept(key: string, value: var): var {
+        const text = JSON.stringify(value)
+        const last = keptValues[key]
+        if (last && last.text === text)
+            return last.value
+        keptValues[key] = {text: text, value: value}
+        return value
+    }
     function editorNamed(name): Item {
         if (name === "stage2")
             return leftPane.editor
@@ -550,7 +563,8 @@ ColumnLayout {
             id: connectorHandle
             result: resultPane
             source: connectorHandle.leftSide ? leftPane : rightPane
-            bands: comparison.bandsFor(connectorHandle.source.paneName, comparison.file)
+            bands: comparison.kept("bands:" + connectorHandle.source.paneName,
+                comparison.bandsFor(connectorHandle.source.paneName, comparison.file))
         }
         SourcePane {
             id: leftPane
@@ -559,9 +573,9 @@ ColumnLayout {
             paneName: "stage2"
             paneRole: qsTr("Left source")
             source: comparison.file.stage2 || ({})
-            marks: comparison.marksFor(leftPane.paneName, comparison.file)
-            current: comparison.currentFor(leftPane.paneName, comparison.controller.navigationTarget,
-                comparison.file)
+            marks: comparison.kept("marks:stage2", comparison.marksFor(leftPane.paneName, comparison.file))
+            current: comparison.kept("current:stage2", comparison.currentFor(leftPane.paneName,
+                comparison.controller.navigationTarget, comparison.file))
             headerHeight: comparison.headerHeight
             tabStop: comparison.tabStop
             wrapLines: comparison.wrapLines
@@ -577,9 +591,9 @@ ColumnLayout {
             SplitView.preferredWidth: panes.width / 3
             controller: comparison.controller
             file: comparison.file
-            marks: comparison.marksFor("result", comparison.file)
-            current: comparison.currentFor("result", comparison.controller.navigationTarget,
-                comparison.file)
+            marks: comparison.kept("marks:result", comparison.marksFor("result", comparison.file))
+            current: comparison.kept("current:result", comparison.currentFor("result",
+                comparison.controller.navigationTarget, comparison.file))
             fold: comparison.markerFold
             headerHeight: comparison.headerHeight
             tabStop: comparison.tabStop
@@ -602,9 +616,9 @@ ColumnLayout {
             paneName: "stage3"
             paneRole: qsTr("Right source")
             source: comparison.file.stage3 || ({})
-            marks: comparison.marksFor(rightPane.paneName, comparison.file)
-            current: comparison.currentFor(rightPane.paneName, comparison.controller.navigationTarget,
-                comparison.file)
+            marks: comparison.kept("marks:stage3", comparison.marksFor(rightPane.paneName, comparison.file))
+            current: comparison.kept("current:stage3", comparison.currentFor(rightPane.paneName,
+                comparison.controller.navigationTarget, comparison.file))
             headerHeight: comparison.headerHeight
             tabStop: comparison.tabStop
             wrapLines: comparison.wrapLines
@@ -631,9 +645,9 @@ ColumnLayout {
         paneName: "earlier"
         paneRole: qsTr("Earlier-version context · read-only")
         source: comparison.file.earlier || ({})
-        marks: comparison.marksFor(earlierPane.paneName, comparison.file)
-        current: comparison.currentFor(earlierPane.paneName, comparison.controller.navigationTarget,
-            comparison.file)
+        marks: comparison.kept("marks:earlier", comparison.marksFor(earlierPane.paneName, comparison.file))
+        current: comparison.kept("current:earlier", comparison.currentFor(earlierPane.paneName,
+            comparison.controller.navigationTarget, comparison.file))
         headerHeight: comparison.headerHeight
         tabStop: comparison.tabStop
         wrapLines: comparison.wrapLines

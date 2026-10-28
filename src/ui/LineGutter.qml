@@ -14,6 +14,11 @@
 // each run of folded lines to that run; on a run that opens a conflict-
 // marker block the slot shows a chip saying that markers remain, in place
 // of the line's glyph.
+//
+// rowSlots holds one entry per row. A Repeater over it, with each delegate
+// reading rows[index], keeps its delegates when a refresh changes rows but
+// not their number, as typing on a line does. A delegate the Repeater has
+// removed but not yet destroyed reads noRow, which shows nothing.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -78,9 +83,17 @@ Item {
         }
         coveredTop = top
         coveredBottom = bottom
-        if (!same)
-            rows = next
+        if (same)
+            return
+        // Every slot keeps a row: drop the extra slots first and add the new ones last.
+        if (rowSlots.count > next.length)
+            rowSlots.remove(next.length, rowSlots.count - next.length)
+        rows = next
+        while (rowSlots.count < next.length)
+            rowSlots.append({})
     }
+    readonly property ListModel rowSlots: ListModel {}
+    readonly property var noRow: ({number: 0, position: 0, y: 0, height: 0, top: 0, extent: 0})
     Component.onCompleted: schedule()
 
     TextBlocks {
@@ -108,9 +121,10 @@ Item {
         color: Kirigami.Theme.backgroundColor
     }
     Repeater {
-        model: gutter.rows
+        model: gutter.rowSlots
         delegate: Text {
-            required property var modelData
+            required property int index
+            readonly property var modelData: gutter.rows[index] || gutter.noRow
             x: Kirigami.Units.smallSpacing
             y: modelData.y
             width: gutter.numberWidth
@@ -123,9 +137,10 @@ Item {
         }
     }
     Repeater {
-        model: gutter.provenance ? gutter.rows : []
+        model: gutter.provenance ? gutter.rowSlots : 0
         delegate: Text {
-            required property var modelData
+            required property int index
+            readonly property var modelData: gutter.rows[index] || gutter.noRow
             x: Kirigami.Units.smallSpacing * 2 + gutter.numberWidth
             y: modelData.y
             width: gutter.letterWidth
@@ -144,9 +159,10 @@ Item {
         width: Kirigami.Units.gridUnit
         height: gutter.height
         Repeater {
-            model: gutter.rows
+            model: gutter.rowSlots
             delegate: Text {
-                required property var modelData
+                required property int index
+                readonly property var modelData: gutter.rows[index] || gutter.noRow
                 readonly property int line: modelData.number
                 readonly property string kind: gutter.marks.lines[line] || ""
                 y: modelData.y
@@ -170,10 +186,11 @@ Item {
             }
         }
         Repeater {
-            model: gutter.rows
+            model: gutter.rowSlots
             delegate: Rectangle {
                 id: chip
-                required property var modelData
+                required property int index
+                readonly property var modelData: gutter.rows[index] || gutter.noRow
                 readonly property int line: modelData.number
                 readonly property var fold: gutter.folds[line] || null
                 readonly property string part: "chip"
@@ -201,9 +218,10 @@ Item {
             }
         }
         Repeater {
-            model: gutter.rows
+            model: gutter.rowSlots
             delegate: Text {
-                required property var modelData
+                required property int index
+                readonly property var modelData: gutter.rows[index] || gutter.noRow
                 readonly property int line: modelData.number
                 readonly property string kind: gutter.marks.gaps[line] ? "removed" : ""
                 anchors.right: parent.right

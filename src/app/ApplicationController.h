@@ -10,6 +10,7 @@
 #include "SessionLoader.h"
 #include <QByteArray>
 #include <QColor>
+#include <QJSValue>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -25,7 +26,7 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(branch_truce::SessionCoordinator *coordinator READ coordinator CONSTANT)
     Q_PROPERTY(branch_truce::SessionLoader *loader READ loader CONSTANT)
     Q_PROPERTY(QString selectedFileId READ selectedFileId NOTIFY selectedFileChanged)
-    Q_PROPERTY(QVariantMap selectedFile READ selectedFile NOTIFY selectedFileChanged)
+    Q_PROPERTY(QJSValue selectedFile READ selectedFileScript NOTIFY selectedFileChanged)
     Q_PROPERTY(int outsideAppFiles READ outsideAppFiles NOTIFY inventoryChanged)
     Q_PROPERTY(int loadErrorFiles READ loadErrorFiles NOTIFY inventoryChanged)
     Q_PROPERTY(QVariantMap commandPreview READ commandPreview NOTIFY commandChanged)
@@ -57,6 +58,9 @@ public:
     [[nodiscard]] MergetoolSession *mergetool() noexcept { return &mergetool_; }
     [[nodiscard]] QString selectedFileId() const { return selectedFileId_; }
     [[nodiscard]] QVariantMap selectedFile() const;
+    // selectedFile as plain script objects and arrays, for QML. A QVariantMap property reaches
+    // QML as a reference that reads the property again and converts each value it is asked for.
+    [[nodiscard]] QJSValue selectedFileScript() const;
     [[nodiscard]] int outsideAppFiles() const;
     [[nodiscard]] int loadErrorFiles() const;
     [[nodiscard]] QVariantMap commandPreview() const;

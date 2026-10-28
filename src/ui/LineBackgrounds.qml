@@ -39,9 +39,10 @@ Item {
         Kirigami.Theme.inherit: false
     }
     Repeater {
-        model: backgrounds.gutter.rows
+        model: backgrounds.gutter.rowSlots
         delegate: Fill {
-            required property var modelData
+            required property int index
+            readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
             readonly property string part: "line"
             readonly property int line: modelData.number
             readonly property string kind: backgrounds.gutter.marks.lines[line] || ""
@@ -60,9 +61,10 @@ Item {
     }
     // A rule where folded marker lines are, so the sides of a block stay apart.
     Repeater {
-        model: backgrounds.gutter.rows
+        model: backgrounds.gutter.rowSlots
         delegate: Fill {
-            required property var modelData
+            required property int index
+            readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
             readonly property string part: "fold"
             readonly property int line: modelData.number
             readonly property string kind: backgrounds.gutter.folds[line] ? "markers" : ""
@@ -74,9 +76,10 @@ Item {
         }
     }
     Repeater {
-        model: backgrounds.gutter.rows
+        model: backgrounds.gutter.rowSlots
         delegate: Fill {
-            required property var modelData
+            required property int index
+            readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
             readonly property string part: "gap"
             readonly property int line: modelData.number
             readonly property string kind: backgrounds.gutter.marks.gaps[line] ? "removed" : ""
@@ -88,9 +91,10 @@ Item {
         }
     }
     Repeater {
-        model: backgrounds.gutter.rows
+        model: backgrounds.gutter.rowSlots
         delegate: Fill {
-            required property var modelData
+            required property int index
+            readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
             readonly property string part: "current"
             readonly property int line: modelData.number
             readonly property bool gap: backgrounds.isCurrentGap(line)

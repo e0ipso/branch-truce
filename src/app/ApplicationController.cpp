@@ -4,6 +4,7 @@
 #include "TextPositions.h"
 #include "core/Correspondence.h"
 #include <QDir>
+#include <QJSEngine>
 #include "core/BuildInfo.h"
 #include <QStandardPaths>
 #include <algorithm>
@@ -16,6 +17,26 @@ namespace {
 QString text(const std::string &value)
 {
     return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size()));
+}
+
+// value as a script value, with every QVariantMap a plain object and every QVariantList an array.
+QJSValue scriptValue(QJSEngine &engine, const QVariant &value)
+{
+    if (value.metaType() == QMetaType::fromType<QVariantMap>()) {
+        auto object = engine.newObject();
+        const auto map = value.toMap();
+        for (auto entry = map.cbegin(); entry != map.cend(); ++entry)
+            object.setProperty(entry.key(), scriptValue(engine, entry.value()));
+        return object;
+    }
+    if (value.metaType() == QMetaType::fromType<QVariantList>()) {
+        const auto list = value.toList();
+        auto array = engine.newArray(static_cast<quint32>(list.size()));
+        for (qsizetype index = 0; index < list.size(); ++index)
+            array.setProperty(static_cast<quint32>(index), scriptValue(engine, list.at(index)));
+        return array;
+    }
+    return engine.toScriptValue(value);
 }
 
 // The undecorated last path component, for syntax definition lookup.
@@ -206,6 +227,12 @@ QString ApplicationController::displayBytes(const std::string &path) const
     display.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
     display.replace(QLatin1Char('\t'), QStringLiteral("\\t"));
     return exact ? display : tr("%1 [path bytes: %2]").arg(display, QString::fromLatin1(bytes.toHex()));
+}
+
+QJSValue ApplicationController::selectedFileScript() const
+{
+    auto *engine = qjsEngine(this);
+    return engine ? scriptValue(*engine, selectedFile()) : QJSValue{};
 }
 
 QVariantMap ApplicationController::selectedFile() const

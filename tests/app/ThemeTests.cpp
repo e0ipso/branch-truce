@@ -60,7 +60,7 @@ constexpr int kSkipped = 77;
 // The limits docs/resource-limits.md records for the cost workload: the median CPU time, in
 // milliseconds, that the process spends from one key press, or one wheel notch, to the next
 // rendered frame. CPU time rather than wall time, so time other processes hold the CPU does not count.
-constexpr qint64 kTypingLimitMs = 3000;
+constexpr qint64 kTypingLimitMs = 200;
 constexpr qint64 kScrollLimitMs = 300;
 // The workload: a C++ file as long as the gate's editor-lines-200 workload in
 // performance/WorkloadMeasurements.cpp, with a conflict every kRegionEvery lines.
