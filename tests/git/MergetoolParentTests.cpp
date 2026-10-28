@@ -39,16 +39,10 @@ QString checkSocketDirectory(const ParentRepository &repo)
 void openController(ApplicationController &controller, const ParentRepository &repo)
 {
     checkSocketDirectory(repo);
-    QEventLoop loop;
-    QTimer timeout;
-    timeout.setSingleShot(true);
-    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
-        if (!controller.loader()->opening()) loop.quit();
-    });
     CHECK(controller.loader()->openRepository(repo.root));
-    timeout.start(15000);
-    if (controller.loader()->opening()) loop.exec();
+    // Opening takes about 0.5 s on an idle host. At load averages of 25 to 36 on 8 cores it
+    // averaged 2.5 s and some opens took over 10 s.
+    pump([&] { return !controller.loader()->opening(); }, QStringLiteral("the repository opening did not finish"));
     CHECK(!controller.loader()->opening());
     if (controller.loader()->startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
@@ -175,13 +169,8 @@ QString twoEditedStores(const ParentRepository &repo)
     openController(chosen, repo);
     // A second window on the operation finds the socket taken and does not listen.
     ApplicationController other;
-    QEventLoop loop;
-    QObject::connect(other.loader(), &SessionLoader::launchChanged, &loop, [&] {
-        if (!other.loader()->opening()) loop.quit();
-    });
-    QTimer::singleShot(15000, &loop, &QEventLoop::quit);
     CHECK(other.loader()->openRepository(repo.root));
-    if (other.loader()->opening()) loop.exec();
+    pump([&] { return !other.loader()->opening(); }, QStringLiteral("the second window's repository opening did not finish"));
     CHECK(other.loader()->startupState() == "ready" && !other.mergetoolListening());
     editDraft(chosen, "other.txt", QStringLiteral("chosen\n"));
     editDraft(other, "other.txt", QStringLiteral("other\n"));
@@ -721,7 +710,13 @@ int main(int argc, char **argv)
             return parentBlocked(*parent, controller, "tracked.txt") && !QFile::exists(sentinel)
                 && !opened(controller, "tracked.txt").facts().resolved;
         }, controller.commandMessage() + QStringLiteral(" | the parent was released with a monitor configured"));
+        // The refusal comes from background Git inspections, which can take longer than the hold under load.
+        pump([&] { return controller.commandMessage().contains(QStringLiteral("filesystem monitor setting: core.fsmonitor")); },
+             QStringLiteral("Mark resolved was not refused for core.fsmonitor | message after the hold: ")
+                 + controller.commandMessage());
         CHECK(controller.commandMessage().contains(QStringLiteral("filesystem monitor setting: core.fsmonitor")));
+        CHECK(parentBlocked(*parent, controller, "tracked.txt") && !QFile::exists(sentinel)
+              && !opened(controller, "tracked.txt").facts().resolved);
         // Fixture inspections below must not run the monitor either.
         repo.git({"config", "--unset", "core.fsmonitor"});
         CHECK(!QFile::exists(sentinel));

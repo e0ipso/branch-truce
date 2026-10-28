@@ -213,8 +213,10 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=fsync")
     add_dependencies(branch_truce_startup_route_tests branch-truce)
     add_test(NAME app.startup-routes COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_route_tests> $<TARGET_FILE:branch-truce>)
-    # Real merge fixtures include restart and recovery fault matrices.
-    set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 90)
+    # Real merge fixtures include restart and recovery fault matrices. Alone it takes 71 to 79 s.
+    # With 24 busy loops on 8 cores (load averages of 25 to 36) 14 runs on the host and in the
+    # Tuxedo image took 287 to 463 s, so it gets 600 s: the longest run plus 25 %, rounded up.
+    set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 600)
 
     # Preloaded into the real binary to report its style and icon theme state.
     add_library(branch_truce_appearance_probe MODULE fixtures/AppearanceProbe.cpp)
@@ -251,7 +253,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_libraries(branch_truce_mergetool_parent_tests PRIVATE branch_truce_controller branch_truce_build_options)
     add_dependencies(branch_truce_mergetool_parent_tests branch-truce)
     add_test(NAME git.mergetool-parent COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_parent_tests> $<TARGET_FILE:branch-truce>)
-    set_tests_properties(git.mergetool-parent PROPERTIES TIMEOUT 120)
+    # Alone it takes about 35 s. At load averages of 25 to 36 on 8 cores 14 runs on the host and in
+    # the Tuxedo image took 107 to 218 s, so it gets 300 s: the longest run plus 25 %, rounded up.
+    set_tests_properties(git.mergetool-parent PROPERTIES TIMEOUT 300)
 
     add_executable(branch_truce_coordinator_tests app/SessionCoordinatorTests.cpp)
     target_include_directories(branch_truce_coordinator_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

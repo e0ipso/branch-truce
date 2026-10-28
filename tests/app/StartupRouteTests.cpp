@@ -262,9 +262,12 @@ private:
     QMap<QByteArray, std::optional<QByteArray>> previous;
 };
 
-void openController(ApplicationController &controller, const Repository &repo, const QString &recoverySession = {})
+// Runs the event loop until the loader stops opening, for at most 25 s. Opening takes
+// about 0.5 s on an idle host. At load averages of 25 to 36 on 8 cores it averaged 2.5 s
+// and some opens took over 10 s.
+void waitOpened(ApplicationController &controller, const std::string &what)
 {
-    const auto before = repo.snapshot();
+    if (!controller.loader()->opening()) return;
     QEventLoop loop;
     QTimer timeout;
     timeout.setSingleShot(true);
@@ -272,11 +275,18 @@ void openController(ApplicationController &controller, const Repository &repo, c
     QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
         if (!controller.loader()->opening()) loop.quit();
     });
+    timeout.start(25000);
+    loop.exec();
+    if (controller.loader()->opening()) throw std::runtime_error(what + " did not finish opening within 25 s");
+}
+
+void openController(ApplicationController &controller, const Repository &repo, const QString &recoverySession = {})
+{
+    const auto before = repo.snapshot();
     repo.checkSocketDirectory();
     CHECK(mergetoolSocketDirectory() == repo.socketDirectory());
     CHECK(controller.loader()->openRepository(repo.root, {}, recoverySession));
-    timeout.start(10000);
-    if (controller.loader()->opening()) loop.exec();
+    waitOpened(controller, "the repository");
     CHECK(!controller.loader()->opening());
     if (controller.loader()->startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
@@ -801,16 +811,8 @@ public:
             const auto secondName = QFileInfo(second).fileName();
             const auto retained = storeContents(second);
             const auto reload = [](ApplicationController &controller, const QString &session) {
-                QEventLoop loop;
-                QTimer timeout;
-                timeout.setSingleShot(true);
-                QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-                QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
-                    if (!controller.loader()->opening()) loop.quit();
-                });
                 if (!controller.loader()->chooseRecoverySession(session)) return false;
-                timeout.start(10000);
-                if (controller.loader()->opening()) loop.exec();
+                waitOpened(controller, "the chosen recovery session");
                 CHECK(!controller.loader()->opening() && controller.loader()->startupState() == "ready");
                 return true;
             };
@@ -911,21 +913,13 @@ public:
                 openController(controller, repo);
                 CHECK(controller.loader()->recoveryChoices().size() == 2);
                 const auto own = controller.files()->recoveryDirectory();
-                QEventLoop loop;
-                QTimer timeout;
-                timeout.setSingleShot(true);
-                QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-                QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
-                    if (!controller.loader()->opening()) loop.quit();
-                });
                 CHECK(controller.loader()->chooseRecoverySession(firstName));
                 {
                     // Another window takes the chosen session after the choice
                     // was checked and before the background restore runs.
                     QLockFile held(first + "/session.lock");
                     CHECK(held.tryLock(0));
-                    timeout.start(10000);
-                    if (controller.loader()->opening()) loop.exec();
+                    waitOpened(controller, "the reload after the locked choice");
                     CHECK(!controller.loader()->opening() && controller.loader()->startupState() == "ready");
                 }
                 const auto location = controller.files()->recoveryDirectory();
