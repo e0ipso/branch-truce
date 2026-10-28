@@ -5,6 +5,10 @@
 #include <QList>
 #include <QMap>
 #include <QString>
+#include <optional>
+
+class QFile;
+class QIODevice;
 
 namespace branch_truce::storage {
 
@@ -34,11 +38,26 @@ public:
     explicit RecoveryStore(QString directory);
     [[nodiscard]] const QString &directory() const { return directory_; }
     [[nodiscard]] RecoveryRead read() const;
+    // Verifies the journal as read() does unless its bytes are exactly those
+    // this store last verified or wrote, then appends one record.
     [[nodiscard]] RecoveryCommit commit(const RecoveryTransaction &transaction);
     [[nodiscard]] QByteArray payload(const QByteArray &digest, QString *error = nullptr) const;
     [[nodiscard]] static QByteArray digest(const QByteArray &bytes);
 private:
+    // The journal through its last complete record, as this store last
+    // verified or wrote it, and what the next append needs from it.
+    struct JournalEnd {
+        QByteArray bytes;
+        qsizetype records = 0;
+        QByteArray lastDigest;
+        QJsonObject lastState;
+    };
+    [[nodiscard]] bool openJournal(QFile &file, RecoveryRead &result) const;
+    [[nodiscard]] RecoveryRead parse(QIODevice &journal) const;
+    [[nodiscard]] const JournalEnd *refreshEnd(QString *error);
+
     QString directory_;
+    std::optional<JournalEnd> end_;
 };
 
 }

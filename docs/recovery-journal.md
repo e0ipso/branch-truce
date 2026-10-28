@@ -222,7 +222,11 @@ trailing record is pending, never an acknowledged command. This protocol does
 not promise recovery from machine power loss. Orphan payloads left before a
 record commit are harmless and are retained; garbage collection is separate.
 
-The initial implementation scans and verifies the journal before each append.
+Before each append the store reads the journal and compares it with the bytes it
+last verified or wrote. Any difference, such as a record from another writer, a
+changed byte, a cut or interrupted tail or a different journal, makes it verify
+the whole journal as the reader does, payloads included, before it appends.
+Payloads of records it already verified are not read again.
 A recovery payload larger than 8388608 bytes is refused before it is written.
 The prior acknowledged record stays in the journal, and the failure says that
 pending input is retained. Compaction and checkpoint replacement remain separate.
