@@ -1,7 +1,31 @@
 qt_add_qml_module(branch_truce_ui STATIC
     URI BranchTruce VERSION 1.0
     OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/BranchTruce"
-    QML_FILES Main.qml ComparisonView.qml
+    QML_FILES
+        Main.qml
+        ComparisonView.qml
+        HandoffDialog.qml
+        HandoffRow.qml
+        WholeFileDialog.qml
+        NonConflictingDialog.qml
+        ReplacementDialog.qml
+        FileList.qml
+        FileRow.qml
+        MainToolBar.qml
+        FileToolBar.qml
+        FileNotices.qml
+        SourceChoiceList.qml
+        SessionFooter.qml
+        NamedAction.qml
+        MenuAction.qml
+        MenuEntry.qml
+        StatusChip.qml
+        SnapshotPane.qml
+        DialogBody.qml
+        PreviewBody.qml
+        PlainInlineMessage.qml
+        PlainPlaceholderMessage.qml
+        CenteredPlaceholder.qml
     SOURCES TextBlocks.cpp TextBlocks.h)
 # Bytecode only: QML compiled to C++ calls Qt's private API
 # (QQmlPrivate::AOTCompiledContext), which pins packages to one exact Qt

@@ -1,0 +1,63 @@
+// One handoff entry: a category icon, the path as title, the status and each blocker on a
+// line of its own, and the route to the file on the trailing side.
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import org.kde.kirigami as Kirigami
+
+RowLayout {
+    id: handoffEntry
+    required property var modelData
+    required property var controller
+    required property string iconName
+    signal routed()
+    Layout.fillWidth: true
+    spacing: Kirigami.Units.largeSpacing
+    Kirigami.Icon {
+        Layout.alignment: Qt.AlignTop
+        Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+        Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+        source: handoffEntry.iconName
+    }
+    ColumnLayout {
+        Layout.fillWidth: true
+        spacing: 0
+        Label {
+            Layout.fillWidth: true
+            text: handoffEntry.controller.displayPath(handoffEntry.modelData.fileId)
+            textFormat: Text.PlainText
+            elide: Text.ElideMiddle
+        }
+        Label {
+            Layout.fillWidth: true
+            text: handoffEntry.modelData.status
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            font: Kirigami.Theme.smallFont
+        }
+        Repeater {
+            model: handoffEntry.modelData.blockers
+            delegate: Label {
+                required property string modelData
+                Layout.fillWidth: true
+                text: modelData
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                font: Kirigami.Theme.smallFont
+                color: Kirigami.Theme.disabledTextColor
+            }
+        }
+    }
+    Button {
+        objectName: "handoffRoute-" + handoffEntry.modelData.fileId
+        Layout.alignment: Qt.AlignVCenter
+        icon.name: "go-jump"
+        text: handoffEntry.modelData.actionLabel || qsTr("Open file")
+        onClicked: {
+            if (handoffEntry.controller.selectFile(handoffEntry.modelData.fileId))
+                handoffEntry.routed();
+        }
+    }
+}
