@@ -32,6 +32,7 @@
 #include <QTextLayout>
 #include <QWheelEvent>
 #include <QtQml/qqml.h>
+#include <QtQuickTest/quicktest.h>
 #include <tuple>
 
 using namespace branch_truce;
@@ -92,6 +93,19 @@ public:
         const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    // Click a control that has just appeared in a layout once the window has laid it out. The
+    // control's own geometry can be final while its column has not yet moved the siblings after
+    // it: under the KDE style the file toolbar still lay over the resolution confirmation, so
+    // the click saved a draft instead (TRUCE-0144).
+    void clickLaidOut(const char *name)
+    {
+        auto *target = item(name);
+        test_support::settleFor(std::string("layout of ") + name,
+            [&] { return target->isVisible() && target->width() > 0 && target->height() > 0; });
+        if (!QQuickTest::qWaitForPolish(window, 5000))
+            throw std::runtime_error(std::string("the window kept polishing before clicking ") + name);
+        click(name);
     }
     // Open a toolbar menu and click one of its entries once the menu has laid out, then wait
     // until the menu has finished closing. The KDE style fades a menu out; reopening it during
@@ -2378,11 +2392,8 @@ public:
             CHECK(fixture.controller.resolutionConfirmation());
             CHECK(fixture.controller.commandMessage().contains(QStringLiteral("intentional")));
             CHECK(fixture.text() == text && !fixture.file().reviewed() && fixture.file().facts().unsaved);
-            settle([&] {
-                return fixture.item("confirmResolution")->isVisible() && fixture.item("cancelResolution")->isVisible()
-                    && fixture.item("cancelResolution")->width() > 0 && fixture.item("cancelResolution")->height() > 0;
-            });
-            fixture.click("cancelResolution");
+            settle([&] { return fixture.item("confirmResolution")->isVisible() && fixture.item("cancelResolution")->isVisible(); });
+            fixture.clickLaidOut("cancelResolution");
             CHECK(!fixture.controller.resolutionConfirmation());
             CHECK(fixture.controller.commandMessage().contains(QStringLiteral("unchanged")));
             CHECK(fixture.text() == text && fixture.file().current().draft.text == text.toStdString());
@@ -2390,8 +2401,7 @@ public:
             CHECK(fixture.controller.commandMessage().contains(QStringLiteral("changed")));
             CHECK(fixture.text() == text && !fixture.file().reviewed() && !fixture.file().facts().resolved);
             fixture.click("markResolved");
-            settle([&] { return fixture.item("confirmResolution")->isVisible() && fixture.item("confirmResolution")->height() > 0; });
-            fixture.click("confirmResolution");
+            fixture.clickLaidOut("confirmResolution");
             settle([&] {
                 return fixture.controller.selectedFile().value(QStringLiteral("status")).toString()
                     == QStringLiteral("Repository write failed");

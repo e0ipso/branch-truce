@@ -110,24 +110,26 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         branch_truce_build_options)
     add_test(NAME app.recovery-record COMMAND branch_truce_recovery_record_tests)
 
-    find_package(Qt6 6.6 REQUIRED COMPONENTS Test)
+    find_package(Qt6 6.6 REQUIRED COMPONENTS Test QuickTest)
     add_executable(branch_truce_comparison_tests app/ComparisonViewTests.cpp)
     target_include_directories(branch_truce_comparison_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_comparison_tests PRIVATE branch_truce_controller branch_truce_uiplugin
-        Qt6::Widgets Qt6::QuickControls2 Qt6::Network Qt6::Test branch_truce_build_options)
+        Qt6::Widgets Qt6::QuickControls2 Qt6::Network Qt6::Test Qt6::QuickTest branch_truce_build_options)
     target_link_options(branch_truce_comparison_tests PRIVATE "LINKER:--wrap=fsync")
     # The executable takes "scenes" or "boundary"; with no argument it runs both groups.
     # "display" reruns the result viewport cases on a real display and is not a ctest entry:
     #   QT_QPA_PLATFORM=wayland tests/with-private-xdg.sh build/desktop/tests/branch_truce_comparison_tests display
     # with WAYLAND_DISPLAY naming the compositor socket by absolute path, because the wrapper
     # replaces XDG_RUNTIME_DIR. "boundary" is the two Backspace and Delete fixtures that edit 262144-byte lines and an
-    # 8388608-byte buffer in the real editor. Each timeout is at least twice the slowest of nine runs
-    # on the development host, one of them under load from another build: scenes 33.0 to 50.1 s,
-    # boundary 17.8 to 23.8 s. The single entry this replaced took 53.7 to 57.5 s against 60 s.
+    # 8388608-byte buffer in the real editor. Each timeout is at least twice the slowest measured run on
+    # the development host. Boundary took 17.8 to 23.8 s over nine runs, one of them under load from
+    # another build. Scenes run under org.kde.desktop, the style the app selects at startup; a run under
+    # the default Basic style would add no coverage, as the app never selects Basic. Five such runs at
+    # load averages of 2 to 12 took 180 to 213 s, against 84 s under Basic, so scenes get 450 s.
     add_test(NAME app.comparison-view COMMAND branch_truce_comparison_tests scenes)
     add_test(NAME app.comparison-view-boundary COMMAND branch_truce_comparison_tests boundary)
-    set_tests_properties(app.comparison-view PROPERTIES TIMEOUT 120
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    set_tests_properties(app.comparison-view PROPERTIES TIMEOUT 450
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QUICK_CONTROLS_STYLE=org.kde.desktop")
     set_tests_properties(app.comparison-view-boundary PROPERTIES TIMEOUT 60
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
