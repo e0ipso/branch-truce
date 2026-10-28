@@ -35,7 +35,7 @@ qt_add_qml_module(branch_truce_ui STATIC
         PlainPlaceholderMessage.qml
         CenteredPlaceholder.qml
         DiscardStagedDialog.qml
-    SOURCES TextBlocks.cpp TextBlocks.h)
+    SOURCES TextBlocks.cpp TextBlocks.h ComparisonPanes.cpp ComparisonPanes.h)
 # Bytecode only: QML compiled to C++ calls Qt's private API
 # (QQmlPrivate::AOTCompiledContext), which pins packages to one exact Qt
 # release. docs/target-platforms.md records the measured startup cost.

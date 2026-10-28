@@ -45,14 +45,8 @@ ColumnLayout {
         keptValues[key] = {text: text, value: value}
         return value
     }
-    function editorNamed(name): Item {
-        if (name === "stage2")
-            return leftPane.editor
-        if (name === "stage3")
-            return rightPane.editor
-        if (name === "earlier")
-            return earlierPane.editor
-        return resultPane.editor
+    function editorNamed(name: string): Item {
+        return panesByRole.editor(name)
     }
     function refreshSearchScopes(): void {
         const labels = [qsTr("Left source"), qsTr("Editable result"), qsTr("Right source")]
@@ -69,7 +63,7 @@ ColumnLayout {
     }
     function applyWhitespace(): void {
         const visible = readingBar.showWhitespace
-        const editors = [leftPane.editor, resultPane.editor, rightPane.editor, earlierPane.editor]
+        const editors = panesByRole.editors()
         for (let i = 0; i < editors.length; ++i)
             controller.setVisibleWhitespace(editors[i], visible)
     }
@@ -102,7 +96,7 @@ ColumnLayout {
         if (editor === resultPane.editor && resultPane.blocks.hiddenWithin(found, found + query.length))
             markersRevealed()
         editor.select(found, found + query.length)
-        followScroll(name, "")
+        panesByRole.follow(name)
         searchDetail = qsTr("Passage in %1.").arg(scope)
     }
     // Line marks for one pane, keyed by 1-based line. lines holds the kind of
@@ -311,132 +305,9 @@ ColumnLayout {
         return ranges
     }
 
-    // Scroll synchronisation. The panes share a reference row a few lines below
-    // their tops. The line on the leading pane's row maps through its side's
-    // passages to the result, and from there through each other side's
-    // passages, and each other pane scrolls to put its line on that row. An
-    // equal passage maps line by line; any other passage maps proportionally
-    // between its boundaries, so an ambiguous one scrolls without a jump. A
-    // side without passages maps proportionally over the whole text.
-    property bool syncingScroll: false
-    readonly property var scrollMaps: scrollMapsFor(file)
-    function scrollMapsFor(file: var): var {
-        const maps = {stage2: [], stage3: [], earlier: []}
-        const passages = file.passages || []
-        for (let i = 0; i < passages.length; ++i) {
-            const passage = passages[i]
-            if (maps[passage.side])
-                maps[passage.side].push([passage.sourceLineBegin, passage.sourceLineEnd,
-                    passage.resultLineBegin, passage.resultLineEnd])
-        }
-        return maps
-    }
-    // Maps a fractional line through one side's passages, from the source to
-    // the result when toResult is set and back otherwise.
-    function mapLine(map: var, line: real, toResult: bool, fromLines: int, toLines: int): real {
-        if (map.length === 0)
-            return fromLines > 0 ? 1 + (line - 1) * toLines / fromLines : 1
-        const from = toResult ? 0 : 2
-        const to = toResult ? 2 : 0
-        // The first passage that ends below the line. Both sides are in order.
-        let low = 0
-        let high = map.length
-        while (low < high) {
-            const middle = (low + high) >> 1
-            if (map[middle][from + 1] > line)
-                high = middle
-            else
-                low = middle + 1
-        }
-        if (low === map.length) {
-            const last = map[map.length - 1]
-            return last[to + 1] + line - last[from + 1]
-        }
-        const passage = map[low]
-        if (line <= passage[from])
-            return passage[to]
-        return passage[to] + (line - passage[from]) * (passage[to + 1] - passage[to])
-            / (passage[from + 1] - passage[from])
-    }
-    function scrollPanes(): var {
-        const panes = [
-            {name: "stage2", viewport: leftPane.viewport, editor: leftPane.editor, blocks: leftPane.blocks},
-            {name: "result", viewport: resultPane.viewport, editor: resultPane.editor, blocks: resultPane.blocks},
-            {name: "stage3", viewport: rightPane.viewport, editor: rightPane.editor, blocks: rightPane.blocks}]
-        if (earlierPane.visible)
-            panes.push({name: "earlier", viewport: earlierPane.viewport, editor: earlierPane.editor,
-                blocks: earlierPane.blocks})
-        return panes
-    }
-    // Up to three lines of context above the row, and at most a quarter of the shortest pane.
-    function scrollRow(panes: var): real {
-        let shortest = Infinity
-        for (let i = 0; i < panes.length; ++i)
-            shortest = Math.min(shortest, panes[i].viewport.height)
-        return Math.max(0, Math.min(3 * paneFont.lineSpacing, shortest / 4))
-    }
-    function lineOnRow(pane: var, row: real): real {
-        return pane.blocks.lineAtY(pane.viewport.contentY + row - pane.editor.y - pane.editor.topPadding)
-    }
-    function putLineOnRow(pane: var, line: real, row: real): void {
-        const y = pane.editor.y + pane.editor.topPadding + pane.blocks.yAtLine(line) - row
-        const bottom = Math.max(0, pane.viewport.contentHeight - pane.viewport.height)
-        pane.viewport.contentY = Math.max(0, Math.min(bottom, y))
-    }
-    // Scrolls the other panes, or only the one named only, to follow leader.
-    function followScroll(leader: string, only: string): void {
-        const panes = scrollPanes()
-        let lead = null
-        for (let i = 0; i < panes.length; ++i) {
-            if (panes[i].name === leader)
-                lead = panes[i]
-        }
-        if (!lead || syncingScroll)
-            return
-        const row = scrollRow(panes)
-        const resultLines = resultPane.blocks.blockCount
-        const line = lineOnRow(lead, row)
-        const resultLine = leader === "result" ? line
-            : mapLine(scrollMaps[leader], line, true, lead.blocks.blockCount, resultLines)
-        // Moving the other panes must not make them lead in turn.
-        syncingScroll = true
-        try {
-            for (let i = 0; i < panes.length; ++i) {
-                const pane = panes[i]
-                if (pane === lead || (only.length > 0 && pane.name !== only))
-                    continue
-                putLineOnRow(pane, pane.name === "result" ? resultLine
-                    : mapLine(scrollMaps[pane.name], resultLine, false, resultLines, pane.blocks.blockCount), row)
-            }
-        } finally {
-            syncingScroll = false
-        }
-    }
-    // A pane leads only when the user scrolls it: dragging, flicking or the
-    // wheel, its scroll bar, or keyboard focus in its text. A relayout that
-    // moves a pane the user is not scrolling leaves the others alone.
-    function paneScrolled(name: string, byUser: bool): void {
-        if (byUser)
-            followScroll(name, "")
-    }
-    // A relayout scrolls a source to keep its cursor in view, so keep the
-    // cursor on a line the source now shows rather than at the top. A
-    // selection stays where the user made it.
-    function keepCursorOnLine(pane: var, line: real): void {
-        const editor = pane.editor
-        if (editor.selectionStart === editor.selectionEnd)
-            editor.cursorPosition = pane.blocks.positionOf(line)
-    }
-    // Showing the earlier version lays it out again, which would scroll it
-    // back to the cursor it had while hidden. Following can leave a line cut
-    // at the row, so the cursor goes to the first whole line below it.
+    // Showing the earlier version brings it to the result's position.
     function followEarlier(): void {
-        const panes = scrollPanes()
-        const earlier = panes.find(pane => pane.name === "earlier")
-        if (!earlier)
-            return
-        followScroll("result", "earlier")
-        keepCursorOnLine(earlier, Math.ceil(lineOnRow(earlier, scrollRow(panes))))
+        panesByRole.paneShown(earlierPane.paneName)
     }
     // A newly selected file opens with the region the editor put its cursor on
     // at the reference row of every pane, or at the top without one. A
@@ -449,31 +320,21 @@ ColumnLayout {
         if (navigation.fileId === target.fileId
                 && (navigation.scope === "result" || navigation.scope === "unmapped-source"))
             return
-        const panes = scrollPanes()
-        let lead = panes[1]
-        let line = 1
         // The result first, then a source for a region the result does not map.
-        const order = [1, 0, 2]
-        for (let i = 0; i < order.length; ++i) {
-            const ranges = currentFor(panes[order[i]].name, target, file)
+        const leads = ["result", leftPane.paneName, rightPane.paneName]
+        for (let i = 0; i < leads.length; ++i) {
+            const ranges = currentFor(leads[i], target, file)
             if (ranges.length > 0) {
-                lead = panes[order[i]]
-                line = ranges[0][0]
-                break
+                panesByRole.place(leads[i], ranges[0][0])
+                return
             }
         }
-        const row = scrollRow(panes)
-        putLineOnRow(lead, line, row)
-        followScroll(lead.name, "")
-        for (let i = 0; i < panes.length; ++i) {
-            if (panes[i].name !== "result")
-                keepCursorOnLine(panes[i], Math.floor(lineOnRow(panes[i], row)))
-        }
+        panesByRole.place("result", 1)
     }
     function followNavigation(): void {
         const target = controller.navigationTarget
         if (target.fileId === controller.selectedFileId && target.scope === "result")
-            followScroll("result", "")
+            panesByRole.follow("result")
     }
     Connections {
         target: comparison.controller
@@ -541,6 +402,16 @@ ColumnLayout {
     }
     // Four characters, so tab-indented text lines up the same in every pane.
     readonly property real tabStop: 4 * paneFont.averageCharacterWidth
+    // The panes by role, scrolled together through the file's passages.
+    ComparisonPanes {
+        id: panesByRole
+        left: leftPane
+        result: resultPane
+        right: rightPane
+        earlier: earlierPane
+        passages: comparison.file.passages || []
+        lineSpacing: paneFont.lineSpacing
+    }
 
     ReadingBar {
         id: readingBar
@@ -581,7 +452,7 @@ ColumnLayout {
             wrapLines: comparison.wrapLines
             showWhitespace: comparison.showWhitespace
             minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
-            onScrolled: byUser => comparison.paneScrolled(leftPane.paneName, byUser)
+            onScrolled: byUser => panesByRole.paneScrolled(leftPane.paneName, byUser)
             onTextReplaced: comparison.sourceTextReplaced()
             onEditorCompleted: comparison.controller.attachSourceEditor(leftPane.editor)
         }
@@ -600,7 +471,7 @@ ColumnLayout {
             wrapLines: comparison.wrapLines
             showWhitespace: comparison.showWhitespace
             minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
-            onScrolled: byUser => comparison.paneScrolled("result", byUser)
+            onScrolled: byUser => panesByRole.paneScrolled("result", byUser)
             onCursorMoved: comparison.queueCursorCheck()
             onKeyPressed: key => {
                 comparison.cursorKey = key
@@ -624,7 +495,7 @@ ColumnLayout {
             wrapLines: comparison.wrapLines
             showWhitespace: comparison.showWhitespace
             minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
-            onScrolled: byUser => comparison.paneScrolled(rightPane.paneName, byUser)
+            onScrolled: byUser => panesByRole.paneScrolled(rightPane.paneName, byUser)
             onTextReplaced: comparison.sourceTextReplaced()
             onEditorCompleted: comparison.controller.attachSourceEditor(rightPane.editor)
         }
@@ -653,7 +524,7 @@ ColumnLayout {
         wrapLines: comparison.wrapLines
         showWhitespace: comparison.showWhitespace
         minimumTextHeight: comparison.paneMinimumHeight(3)
-        onScrolled: byUser => comparison.paneScrolled(earlierPane.paneName, byUser)
+        onScrolled: byUser => panesByRole.paneScrolled(earlierPane.paneName, byUser)
         onTextReplaced: comparison.sourceTextReplaced()
         onEditorCompleted: comparison.controller.attachSourceEditor(earlierPane.editor)
         onVisibleChanged: if (visible)

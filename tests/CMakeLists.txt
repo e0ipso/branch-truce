@@ -135,6 +135,14 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     set_tests_properties(app.comparison-view-boundary PROPERTIES TIMEOUT 60
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
+    add_executable(branch_truce_comparison_panes_tests app/ComparisonPanesTests.cpp)
+    target_include_directories(branch_truce_comparison_panes_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_comparison_panes_tests PRIVATE branch_truce_controller branch_truce_uiplugin
+        Qt6::Quick branch_truce_build_options)
+    add_test(NAME app.comparison-panes COMMAND branch_truce_comparison_panes_tests)
+    set_tests_properties(app.comparison-panes PROPERTIES TIMEOUT 60
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
     # Built either way: with highlighting OFF it checks the plain highlighters.
     add_executable(branch_truce_syntax_highlighting_tests app/SyntaxHighlightingTests.cpp)
     target_include_directories(branch_truce_syntax_highlighting_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
