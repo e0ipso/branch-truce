@@ -18,6 +18,7 @@
 // path. For the icon check, run app/CollectIconNames.cmake over the QML files plus a fixture QML
 // file that names a missing icon, and pass that list.
 #include "app/ApplicationController.h"
+#include "fixtures/GitOnPath.h"
 #include "app/PaneHighlighter.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
@@ -127,7 +128,7 @@ public:
         test_support::waitForLayout(window, QStringLiteral("earlierViewport"), 60);
     }
 
-    ApplicationController controller;
+    ApplicationController controller{gitOnPath()};
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };

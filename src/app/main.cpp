@@ -10,6 +10,7 @@
 #include <QJsonObject>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
+#include <QStandardPaths>
 #include <QTextStream>
 #include <QTimer>
 #include <algorithm>
@@ -31,9 +32,12 @@ void selectControlsStyle(const QQmlEngine &engine)
 
 int main(int argc, char *argv[])
 {
+    // The one PATH lookup for Git. Every Git call in this process runs this
+    // executable; it is empty when Git is not on PATH.
+    const auto git = QStandardPaths::findExecutable(QStringLiteral("git"));
     for (int index = 1; index < argc; ++index) {
         if (qstrcmp(argv[index], "--mergetool") == 0)
-            return branch_truce::runMergetoolLauncher(argc, argv);
+            return branch_truce::runMergetoolLauncher(argc, argv, git);
     }
     // QApplication rather than QGuiApplication: the org.kde.desktop style draws its
     // controls through QApplication::style(). See docs/platform-validation.md.
@@ -52,7 +56,7 @@ int main(int argc, char *argv[])
     // the system path, so the Breeze fallback still applies.
     if (QIcon::themeName().isEmpty()) QIcon::setThemeName(QStringLiteral("hicolor"));
     QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral(BRANCH_TRUCE_APP_ID)));
-    branch_truce::ApplicationController controller;
+    branch_truce::ApplicationController controller(git);
     QCoreApplication::setApplicationVersion(controller.version());
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Open local merge or rebase conflicts offline."));

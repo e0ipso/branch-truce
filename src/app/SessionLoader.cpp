@@ -4,15 +4,15 @@
 #include "SessionModel.h"
 #include <QFileInfo>
 #include <QLockFile>
-#include <QStandardPaths>
 #include <QUuid>
 #include <algorithm>
 #include <memory>
 
 namespace branch_truce {
-SessionLoader::SessionLoader(SessionModel &files, SessionCoordinator &coordinator, Owners owners, QObject *parent)
+SessionLoader::SessionLoader(SessionModel &files, SessionCoordinator &coordinator, QString gitExecutable,
+                             Owners owners, QObject *parent)
     : QObject(parent), files_(files), coordinator_(coordinator), owners_(std::move(owners)),
-      classifier_(QStandardPaths::findExecutable(QStringLiteral("git")), this)
+      gitExecutable_(std::move(gitExecutable)), classifier_(gitExecutable_, this)
 {
     connect(&classifier_, &git::ConflictClassifier::finished, this, &SessionLoader::classified);
 }
@@ -183,11 +183,10 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
     const auto anchor = conflicts.empty() ? std::string("recovery-inventory") : conflicts.front().path.toHex().toStdString();
     const auto recoveryDirectory = files_.recoveryDirectory();
     const auto recoveryInventory = QFileInfo(recoveryDirectory).absolutePath();
-    const auto executable = QStandardPaths::findExecutable(QStringLiteral("git"));
     const auto sessionId = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
     const auto task = coordinator_.submit(anchor, 1,
         [files = std::move(conflicts), repository = repository_, sessionId, loaded, recovery,
-         recoveryDirectory, recoveryInventory, executable, chosen = recoverySession_](const TaskInput &, const TaskControl &control) {
+         recoveryDirectory, recoveryInventory, executable = gitExecutable_, chosen = recoverySession_](const TaskInput &, const TaskControl &control) {
             for (const auto &file : files) {
                 if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
                 Draft draft;

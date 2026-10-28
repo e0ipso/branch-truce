@@ -29,9 +29,11 @@ public:
     // Elsewhere: another live session already owns this operation's socket.
     // Unavailable: no launcher can attach to this session; error says why.
     enum class Listen { Listening, Elsewhere, Unavailable };
-    // loadedRepository is the loaded operation that copied-launch checks inspect.
+    // loadedRepository is the loaded operation that copied-launch checks
+    // inspect, and gitExecutable the Git they run.
     MergetoolSession(ResolutionPublisher &publisher, SessionModel &files, SessionCoordinator &coordinator,
-                     std::function<git::RepositoryContext()> loadedRepository, QObject *parent = nullptr);
+                     std::function<git::RepositoryContext()> loadedRepository, QString gitExecutable,
+                     QObject *parent = nullptr);
     Listen listen(const git::RepositoryContext &repository, QString *error);
     [[nodiscard]] bool listening() const { return listening_; }
     [[nodiscard]] bool parentSessionActive() const { return parentSession_; }
@@ -96,6 +98,7 @@ private:
     SessionModel &files_;
     SessionCoordinator &coordinator_;
     std::function<git::RepositoryContext()> loadedRepository_;
+    const QString gitExecutable_;
     QLocalServer *server_ = nullptr;
     QTimer *acknowledgment_ = nullptr;
     git::RepositoryContext repository_;

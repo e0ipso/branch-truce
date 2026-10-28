@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "fixtures/GitOnPath.h"
 #include "app/PaneHighlighter.h"
 #include "storage/RecoveryStore.h"
 #include "TestHarness.h"
@@ -82,7 +83,7 @@ public:
     }
     const FileSession &file(const std::string &id = "app") { return *controller.files()->file(id); }
 
-    ApplicationController controller;
+    ApplicationController controller{gitOnPath()};
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };

@@ -1,9 +1,9 @@
 #pragma once
 
-// A `git` first on this process's PATH that holds one subcommand on one path
-// until the test releases it, then runs /usr/bin/git. The app finds Git through
-// PATH, so a test can change the repository at an exact point of a background
-// inspection. Child processes started with their own environment keep theirs.
+// A `git` that holds one subcommand on one path until the test releases it,
+// then runs /usr/bin/git. A test constructs the controller with executable(),
+// so it can change the repository at an exact point of a background
+// inspection. PATH stays as it is, so child processes do not run it.
 
 #include "TestHarness.h"
 
@@ -13,8 +13,6 @@
 #include <QString>
 #include <QStringList>
 #include <QTemporaryDir>
-
-#include <optional>
 
 namespace mergetool_fixture {
 
@@ -59,9 +57,6 @@ public:
         CHECK(git.open(QIODevice::WriteOnly | QIODevice::Truncate) && git.write(bytes) == bytes.size());
         git.close();
         CHECK(git.setPermissions(owner));
-        if (qEnvironmentVariableIsSet("PATH")) previousPath_ = qgetenv("PATH");
-        qputenv("PATH", QFile::encodeName(directory_.filePath(QStringLiteral("bin"))) + ':'
-            + previousPath_.value_or("/usr/bin:/bin"));
     }
     GitGate(const GitGate &) = delete;
     GitGate &operator=(const GitGate &) = delete;
@@ -69,9 +64,10 @@ public:
     {
         open();
         releaseAll();
-        if (previousPath_) qputenv("PATH", *previousPath_);
-        else qunsetenv("PATH");
     }
+
+    // The wrapper to pass as the controller's Git executable.
+    QString executable() const { return directory_.filePath(QStringLiteral("bin/git")); }
 
     void close(const QString &subcommand)
     {
@@ -98,7 +94,6 @@ public:
 
 private:
     QTemporaryDir directory_;
-    std::optional<QByteArray> previousPath_;
 };
 
 } // namespace mergetool_fixture

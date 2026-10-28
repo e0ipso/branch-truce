@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "fixtures/GitOnPath.h"
 #include "app/RecoveryRestore.h"
 #include "app/SessionCoordinator.h"
 #include "TestHarness.h"
@@ -261,7 +262,7 @@ struct RegionView {
         CHECK(controller.files()->redo("choices", revision()) == Transition::Applied);
         return file();
     }
-    ApplicationController controller;
+    ApplicationController controller{gitOnPath()};
 };
 
 class Fixture {
@@ -342,7 +343,7 @@ public:
             suite.run(name, [&] { DrainWorkers drain; body(); });
         };
         test("the selected file exposes passage kinds, region ranges, decisions and the file name", [] {
-            ApplicationController controller;
+            ApplicationController controller(gitOnPath());
             CHECK(controller.files()->appendFile(viewFile()));
             CHECK(controller.selectFile("choices"));
             const auto file = controller.selectedFile();
@@ -363,7 +364,7 @@ public:
             CHECK(choices[6].toMap().value("state").toString() == "undecided");
         });
         test("selected file ranges, kinds and region states follow each new revision", [] {
-            ApplicationController controller;
+            ApplicationController controller(gitOnPath());
             CHECK(controller.files()->appendFile(viewFile()));
             CHECK(controller.selectFile("choices"));
             int changes = 0;

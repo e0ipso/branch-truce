@@ -3,6 +3,7 @@
 // docs/mergetool-launcher.md records the tested Git version and configuration.
 
 #include "app/ApplicationController.h"
+#include "fixtures/GitOnPath.h"
 #include "app/MergetoolProtocol.h"
 #include "fixtures/mergetool/GitGate.h"
 #include "fixtures/mergetool/RealParent.h"
@@ -10,6 +11,7 @@
 
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QScopeGuard>
 #include <QTextStream>
 
 #include <csignal>
@@ -107,7 +109,7 @@ QMap<QByteArray, std::string> saveDrafts(ApplicationController &controller, cons
 // A new session on the same repository restores every saved draft, still unresolved.
 void checkRecovered(const ParentRepository &repo, const QMap<QByteArray, std::string> &drafts)
 {
-    ApplicationController reopened;
+    ApplicationController reopened(gitOnPath());
     openController(reopened, repo);
     for (auto draft = drafts.cbegin(); draft != drafts.cend(); ++draft) {
         const auto &file = opened(reopened, draft.key());
@@ -165,10 +167,10 @@ ino_t inodeOf(const QString &path)
 // restore stays blocked on a choice. Returns the session of the "chosen" store.
 QString twoEditedStores(const ParentRepository &repo)
 {
-    ApplicationController chosen;
+    ApplicationController chosen(gitOnPath());
     openController(chosen, repo);
     // A second window on the operation finds the socket taken and does not listen.
-    ApplicationController other;
+    ApplicationController other(gitOnPath());
     CHECK(other.loader()->openRepository(repo.root));
     pump([&] { return !other.loader()->opening(); }, QStringLiteral("the second window's repository opening did not finish"));
     CHECK(other.loader()->startupState() == "ready" && !other.mergetoolListening());
@@ -199,7 +201,7 @@ int main(int argc, char **argv)
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
                                                conflict("other.txt", "other launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         const auto indexBefore = repo.index();
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
@@ -229,7 +231,7 @@ int main(int argc, char **argv)
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n"),
                                                conflict("other.txt", "other launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         auto parent = startParent(repo, ParentRepository::GatedTool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
@@ -268,7 +270,7 @@ int main(int argc, char **argv)
                                                conflict("other.txt", "other launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
         const auto session = twoEditedStores(repo);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         const auto launchInode = inodeOf(repo.path("tracked.txt"));
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
@@ -306,7 +308,7 @@ int main(int argc, char **argv)
         ScopedEnvironment environment(repo.environment);
         const auto session = twoEditedStores(repo);
         const auto indexBefore = repo.index();
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
@@ -343,7 +345,7 @@ int main(int argc, char **argv)
                                                    conflict("other.txt", "other launch bytes\n")});
             ScopedEnvironment environment(repo.environment);
             const auto session = twoEditedStores(repo);
-            ApplicationController controller;
+            ApplicationController controller(gitOnPath());
             openController(controller, repo);
             auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
             waitForWaiter(controller, "tracked.txt");
@@ -382,11 +384,14 @@ int main(int argc, char **argv)
                                                    conflict("other.txt", "other launch bytes\n")});
             ScopedEnvironment environment(repo.environment);
             const auto session = twoEditedStores(repo);
-            ApplicationController controller;
+            // Open until close, so the load runs Git through it unchanged.
+            GitGate gate("tracked.txt");
+            ApplicationController controller(gate.executable());
+            // Runs before the controller goes, so its tasks never wait on a held call.
+            const auto releaseGate = qScopeGuard([&gate] { gate.open(); gate.releaseAll(); });
             openController(controller, repo);
             auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
             waitForWaiter(controller, "tracked.txt");
-            GitGate gate("tracked.txt");
             gate.close(QStringLiteral("ls-files"));
             CHECK(controller.loader()->chooseRecoverySession(session));
             // Calls held while the load runs are the restore's. The load
@@ -431,7 +436,7 @@ int main(int argc, char **argv)
     suite.run("bytes the parent stages after the launcher are not acknowledged as the reviewed result", [] {
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         auto parent = startParent(repo, ParentRepository::TamperTool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
@@ -450,7 +455,7 @@ int main(int argc, char **argv)
     suite.run("leave restores the parent-visible file after an outside edit and keeps the saved draft", [] {
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         const auto indexBefore = repo.index();
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
@@ -475,7 +480,7 @@ int main(int argc, char **argv)
         ScopedEnvironment environment(repo.environment);
         const auto indexBefore = repo.index();
         std::string draft;
-        auto controller = std::make_unique<ApplicationController>();
+        auto controller = std::make_unique<ApplicationController>(gitOnPath());
         openController(*controller, repo);
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
         waitForWaiter(*controller, "tracked.txt");
@@ -488,7 +493,7 @@ int main(int argc, char **argv)
         CHECK(parent->readAllStandardError().contains("closed before an explicit decision"));
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(repo.index() == indexBefore);
-        ApplicationController reopened;
+        ApplicationController reopened(gitOnPath());
         openController(reopened, repo);
         CHECK(opened(reopened, "tracked.txt").checkpoint());
         CHECK(opened(reopened, "tracked.txt").checkpoint()->draft.text == draft);
@@ -500,7 +505,7 @@ int main(int argc, char **argv)
                                                conflict("other.txt", "other launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
         const auto indexBefore = repo.index();
-        auto controller = std::make_unique<ApplicationController>();
+        auto controller = std::make_unique<ApplicationController>(gitOnPath());
         openController(*controller, repo);
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
         waitForWaiter(*controller, "tracked.txt");
@@ -533,7 +538,7 @@ int main(int argc, char **argv)
                                                conflict("beta.txt", "beta launch\n"),
                                                conflict("gamma.txt", "gamma launch\n")});
         ScopedEnvironment environment(repo.environment);
-        auto controller = std::make_unique<ApplicationController>();
+        auto controller = std::make_unique<ApplicationController>(gitOnPath());
         openController(*controller, repo);
         auto parent = startParent(repo, ParentRepository::GatedTool, {});
         // Resolve alpha.txt first, so the leave must skip a launcher that already has its decision.
@@ -585,7 +590,7 @@ int main(int argc, char **argv)
     suite.run("a terminal interrupt stops Git and the launcher without staging and keeps the saved draft", [] {
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         const auto indexBefore = repo.index();
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
@@ -608,7 +613,7 @@ int main(int argc, char **argv)
     suite.run("repeated invocations of one path keep each intake while Git removes its own temporaries", [] {
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         auto first = startParent(repo, ParentRepository::Tool, {"tracked.txt"});
         waitForWaiter(controller, "tracked.txt");
@@ -647,7 +652,7 @@ int main(int argc, char **argv)
         ParentRepository repo(launcherBinary, {conflict("alpha.txt", "same launch\n"),
                                                conflict("beta.txt", "same launch\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         const auto betaEntries = repo.git({"ls-files", "--stage", "-z", "--", "beta.txt"});
         auto parent = startParent(repo, ParentRepository::GatedTool, {});
@@ -694,7 +699,7 @@ int main(int argc, char **argv)
     suite.run("an external monitor configured during the wait keeps the parent blocked instead of releasing it", [] {
         ParentRepository repo(launcherBinary, {conflict("tracked.txt", "launch bytes\n")});
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         const auto indexBefore = repo.index();
         auto parent = startParent(repo, ParentRepository::Tool, {"tracked.txt"});

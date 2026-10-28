@@ -7,7 +7,6 @@
 #include <QDir>
 #include <QJSEngine>
 #include "core/BuildInfo.h"
-#include <QStandardPaths>
 #include <algorithm>
 #include <set>
 #include <string_view>
@@ -101,14 +100,14 @@ QString kindName(PassageKind kind)
 
 }
 
-ApplicationController::ApplicationController(QObject *parent)
+ApplicationController::ApplicationController(QString gitExecutable, QObject *parent)
     : QObject(parent), files_(this),
-      coordinator_(files_, QStandardPaths::findExecutable(QStringLiteral("git")), this),
-      publisher_(files_, coordinator_, QStandardPaths::findExecutable(QStringLiteral("git")), this),
-      mergetool_(publisher_, files_, coordinator_, [this] { return loader_.repository(); }, this),
+      coordinator_(files_, gitExecutable, this),
+      publisher_(files_, coordinator_, gitExecutable, this),
+      mergetool_(publisher_, files_, coordinator_, [this] { return loader_.repository(); }, gitExecutable, this),
       editor_(files_, [this] { return selectedFileId_; },
           [this](const FileSession *file, const QString &loaded) { return firstUndecidedPlacement(file, loaded); }, this),
-      loader_(files_, coordinator_, SessionLoader::Owners{
+      loader_(files_, coordinator_, gitExecutable, SessionLoader::Owners{
           [this](const std::string &path) { return displayBytes(path); },
           [this] { return selectedFileId_; },
           [this] { return !sessionOutcome_.isEmpty() || publisher_.busy(); },

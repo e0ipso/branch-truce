@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "fixtures/GitOnPath.h"
 #include "app/RecoveryRestore.h"
 #include "core/ResourceLimits.h"
 #include "TestHarness.h"
@@ -129,7 +130,7 @@ public:
         CHECK(!replay.files.front().facts().resolved && !controller.files()->hasPendingRecovery());
     }
 
-    ApplicationController controller;
+    ApplicationController controller{gitOnPath()};
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };

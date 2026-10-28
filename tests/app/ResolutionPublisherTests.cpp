@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "fixtures/GitOnPath.h"
 #include "TestHarness.h"
 #include "fixtures/RecoveryFaults.h"
 #include <QCoreApplication>
@@ -236,7 +237,7 @@ void expectUnchanged(const Repository &repo, const QMap<QString, QByteArray> &be
 struct Session {
     Repository repo;
     ScopedEnvironment environment;
-    ApplicationController controller;
+    ApplicationController controller{gitOnPath()};
     QString id;
     explicit Session() : environment(repo.environment)
     {
@@ -326,7 +327,7 @@ struct RestartedWrite {
     {
         const auto hook = repo.path(".git/hooks/post-index-change");
         {
-            ApplicationController first;
+            ApplicationController first(gitOnPath());
             openController(first, repo);
             CHECK(first.selectFile(id));
             auto draft = openedFile(first).current().draft;
@@ -346,7 +347,7 @@ struct RestartedWrite {
             CHECK(readFile(repo.path("tracked.txt")) == edited);
         }
         CHECK(QFile::remove(hook));
-        controller = std::make_unique<ApplicationController>();
+        controller = std::make_unique<ApplicationController>(gitOnPath());
         openController(*controller, repo);
         CHECK(controller->selectFile(id));
         const auto &restored = openedFile(*controller);

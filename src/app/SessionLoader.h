@@ -50,7 +50,9 @@ public:
         std::function<MergetoolSession::Listen(const git::RepositoryContext &repository,
             std::map<std::string, SnapshotFileIdentity> copiedLaunches, QString *error)> startSession;
     };
-    SessionLoader(SessionModel &files, SessionCoordinator &coordinator, Owners owners, QObject *parent = nullptr);
+    // gitExecutable is the Git that classifies the conflicts and restores recovery.
+    SessionLoader(SessionModel &files, SessionCoordinator &coordinator, QString gitExecutable, Owners owners,
+                  QObject *parent = nullptr);
 
     [[nodiscard]] QString startupState() const { return state_; }
     [[nodiscard]] bool opening() const { return state_ == QLatin1String("opening"); }
@@ -101,6 +103,7 @@ private:
     SessionModel &files_;
     SessionCoordinator &coordinator_;
     Owners owners_;
+    const QString gitExecutable_;
     git::ConflictClassifier classifier_;
     git::RepositoryContext repository_;
     QString state_ = QStringLiteral("idle");

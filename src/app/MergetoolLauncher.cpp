@@ -13,7 +13,6 @@
 #include <QFileInfo>
 #include <QLocalSocket>
 #include <QProcess>
-#include <QStandardPaths>
 #include <QTextStream>
 #include <QThread>
 #include <QTimer>
@@ -127,7 +126,7 @@ bool connectUntilDeadline(QLocalSocket *socket, const QString &name, qint64 dead
 }
 }
 
-int runMergetoolLauncher(int argc, char **argv)
+int runMergetoolLauncher(int argc, char **argv, const QString &gitExecutable)
 {
     QCoreApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
@@ -136,7 +135,7 @@ int runMergetoolLauncher(int argc, char **argv)
     const auto repositoryPath = mergetoolRepositoryPath(mergedPath);
     if (!repositoryPath) return fail(QStringLiteral("MERGED is missing or is not a repository path."));
 
-    git::GitAdapter adapter(QStandardPaths::findExecutable(QStringLiteral("git")));
+    git::GitAdapter adapter(gitExecutable);
     std::optional<git::Result> discovered;
     QEventLoop discovery;
     QTimer discoveryTimeout;

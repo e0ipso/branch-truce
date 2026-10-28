@@ -9,15 +9,15 @@
 #include <QJsonObject>
 #include <QLocalServer>
 #include <QLocalSocket>
-#include <QStandardPaths>
 #include <QTimer>
 #include <algorithm>
 
 namespace branch_truce {
 MergetoolSession::MergetoolSession(ResolutionPublisher &publisher, SessionModel &files, SessionCoordinator &coordinator,
-                                   std::function<git::RepositoryContext()> loadedRepository, QObject *parent)
+                                   std::function<git::RepositoryContext()> loadedRepository, QString gitExecutable,
+                                   QObject *parent)
     : QObject(parent), publisher_(publisher), files_(files), coordinator_(coordinator),
-      loadedRepository_(std::move(loadedRepository))
+      loadedRepository_(std::move(loadedRepository)), gitExecutable_(std::move(gitExecutable))
 {
     acknowledgment_ = new QTimer(this);
     acknowledgment_->setInterval(200);
@@ -405,7 +405,7 @@ void MergetoolSession::acceptCopiedLaunches()
         const auto identity = entry->second;
         const auto task = coordinator_.submit(fileId, file->current().id,
             [snapshots = *file->snapshots(), identity, repository = loadedRepository_(),
-             executable = QStandardPaths::findExecutable(QStringLiteral("git"))](const TaskInput &, const TaskControl &) {
+             executable = gitExecutable_](const TaskInput &, const TaskControl &) {
                 TaskResult result;
                 result.diagnostic = revalidateCopiedLaunch(snapshots, identity, repository, executable);
                 return result;

@@ -49,7 +49,9 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QVariantMap handoff READ handoff NOTIFY handoffChanged)
     Q_PROPERTY(QString sessionOutcome READ sessionOutcome NOTIFY handoffChanged)
 public:
-    explicit ApplicationController(QObject *parent = nullptr);
+    // gitExecutable is the Git every collaborator and worker task runs; main
+    // resolves it once. Empty when Git is not on PATH.
+    explicit ApplicationController(QString gitExecutable, QObject *parent = nullptr);
     [[nodiscard]] QString version() const;
     [[nodiscard]] SessionModel *files() noexcept { return &files_; }
     [[nodiscard]] SessionCoordinator *coordinator() noexcept { return &coordinator_; }

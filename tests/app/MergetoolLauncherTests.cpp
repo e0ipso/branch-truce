@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "fixtures/GitOnPath.h"
 #include "app/MergetoolLauncher.h"
 #include "app/MergetoolProtocol.h"
 #include "app/RecoveryRestore.h"
@@ -16,6 +17,7 @@
 #include <QMetaProperty>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QTimer>
@@ -310,7 +312,7 @@ void copyInPlace(const QString &target)
 void storeBeforeCopiedLaunch(const Repository &repo)
 {
     {
-        ApplicationController before;
+        ApplicationController before(gitOnPath());
         openController(before, repo);
         CHECK(before.files()->editResult(QByteArray("tracked.txt").toHex().toStdString(),
             opened(before, "tracked.txt").current().id, {{0, 0}, "recovered edit\n"}) == Transition::Applied);
@@ -495,7 +497,7 @@ int main(int argc, char **argv)
         peer_credentials::foreign = true;
         char mergetool[] = "--mergetool";
         char *launcherArguments[] = {argv[0], mergetool, nullptr};
-        return runMergetoolLauncher(2, launcherArguments);
+        return runMergetoolLauncher(2, launcherArguments, gitOnPath());
     }
     QCoreApplication application(argc, argv);
     if (argc != 2) {
@@ -507,7 +509,7 @@ int main(int argc, char **argv)
     suite.run("installed Git stages only after an explicit resolution and a repeated launch keeps the first inputs", [] {
         Repository repo("resolved from the app\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         auto parent = startMergetool(repo, {"tracked.txt"});
         pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; }, controller.commandMessage());
@@ -557,7 +559,7 @@ int main(int argc, char **argv)
     suite.run("cancel restores the parent-visible file and keeps the app checkpoint", [] {
         Repository repo("cancel keeps this draft\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         auto parent = startMergetool(repo, {"tracked.txt"});
         pump([&] { return controller.mergetoolWaitingPath() == "tracked.txt"; }, controller.commandMessage());
@@ -576,7 +578,7 @@ int main(int argc, char **argv)
     suite.run("multi-file Git mergetool blocks the second path until the first launcher is released", [] {
         Repository repo("first path resolved\n", "second path left unresolved\n");
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         auto parent = startMergetool(repo, {});
         pump([&] {
@@ -618,7 +620,7 @@ int main(int argc, char **argv)
     suite.run("selecting the launched path after Git attached notifies the waiting state and the staging path", [] {
         Repository repo("selected after the attach\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         // QML reads both properties again only when their notify signal fires.
         const auto *meta = controller.metaObject();
@@ -673,9 +675,9 @@ int main(int argc, char **argv)
         ScopedEnvironment environment(repo.environment);
         QString chosen;
         {
-            ApplicationController one;
+            ApplicationController one(gitOnPath());
             openController(one, repo);
-            ApplicationController two;
+            ApplicationController two(gitOnPath());
             startController(two, repo);
             for (auto *controller : {&one, &two}) {
                 const auto revision = opened(*controller, "tracked.txt").current().id;
@@ -684,7 +686,7 @@ int main(int argc, char **argv)
             }
             chosen = QFileInfo(one.files()->recoveryDirectory()).fileName();
         }
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         CHECK(controller.loader()->recoveryChoices().size() == 2);
         // A direct launcher has no Git parent, so MERGED keeps the identity the stores captured.
@@ -724,7 +726,7 @@ int main(int argc, char **argv)
             ScopedEnvironment environment(repo.environment);
             const auto fileId = QString::fromLatin1(QByteArray("tracked.txt").toHex());
             {
-                ApplicationController before;
+                ApplicationController before(gitOnPath());
                 openController(before, repo);
                 CHECK(before.files()->editResult(fileId.toStdString(), opened(before, "tracked.txt").current().id,
                     {{0, 0}, "recovered edit\n"}) == Transition::Applied);
@@ -732,7 +734,7 @@ int main(int argc, char **argv)
             const auto target = repo.path("tracked.txt");
             CHECK(QFile::rename(target, target + ".moved") && QFile::copy(target + ".moved", target));
             CHECK(QFile::remove(target + ".moved"));
-            ApplicationController controller;
+            ApplicationController controller(gitOnPath());
             openController(controller, repo);
             CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
             if (change == QStringLiteral("staged")) repo.git({"add", "--", "tracked.txt"});
@@ -776,7 +778,7 @@ int main(int argc, char **argv)
         ScopedEnvironment environment(repo.environment);
         storeBeforeCopiedLaunch(repo);
         const auto target = repo.path("tracked.txt");
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         SpawnedLauncher launcher(repo);
         launcher.start();
         pump([&] { return launcher.spawned() || launcher.process.state() == QProcess::NotRunning; },
@@ -810,7 +812,7 @@ int main(int argc, char **argv)
             ScopedEnvironment environment(repo.environment);
             storeBeforeCopiedLaunch(repo);
             const auto target = repo.path("tracked.txt");
-            ApplicationController controller;
+            ApplicationController controller(gitOnPath());
             openController(controller, repo);
             CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
             if (change == QStringLiteral("copied")) copyInPlace(target);
@@ -842,10 +844,13 @@ int main(int argc, char **argv)
             ScopedEnvironment environment(repo.environment);
             storeBeforeCopiedLaunch(repo);
             const auto target = repo.path("tracked.txt");
-            ApplicationController controller;
+            // Open until close, so the load runs Git through it unchanged.
+            mergetool_fixture::GitGate gate("tracked.txt");
+            ApplicationController controller(gate.executable());
+            // Runs before the controller goes, so its tasks never wait on a held call.
+            const auto releaseGate = qScopeGuard([&gate] { gate.open(); gate.releaseAll(); });
             openController(controller, repo);
             CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
-            mergetool_fixture::GitGate gate("tracked.txt");
             gate.close(QStringLiteral("ls-files"));
             QTemporaryDir sides;
             QProcess launcher;
@@ -877,7 +882,7 @@ int main(int argc, char **argv)
     suite.run("TRUCE-0065 a session that listens after the GUI start is attached within the deadline", [] {
         Repository repo("attached after the spawn\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         SpawnedLauncher launcher(repo);
         launcher.start();
         pump([&] { return launcher.spawned() || launcher.process.state() == QProcess::NotRunning; },
@@ -920,7 +925,7 @@ int main(int argc, char **argv)
     suite.run("TRUCE-0066 a leave after a longer write restores exactly the launch bytes", [] {
         Repository repo("short launch\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         // A direct launcher has no Git parent whose backup move would hide a leftover tail.
         QTemporaryDir sides;
@@ -1015,7 +1020,7 @@ int main(int argc, char **argv)
         guiEnvironment.insert("TMPDIR", guiTemporary);
         ScopedEnvironment environment(guiEnvironment);
         CHECK(QDir::tempPath() == guiTemporary);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         const auto sockets = QDir(runtime + QStringLiteral("/branch-truce"))
             .entryInfoList({QStringLiteral("bt-mt-*")}, QDir::System);
@@ -1046,7 +1051,7 @@ int main(int argc, char **argv)
         writeFile(runtime.filePath(QStringLiteral("branch-truce")), "not a directory\n");
         repo.environment.insert("XDG_RUNTIME_DIR", runtime.path());
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         startController(controller, repo);
         CHECK(controller.loader()->startupState() == QStringLiteral("ready-without-mergetool"));
         CHECK(controller.loader()->detail().startsWith(QStringLiteral("Mergetool attach is unavailable: The mergetool socket directory ")
@@ -1070,7 +1075,7 @@ int main(int argc, char **argv)
     suite.run("TRUCE-0072 a session socket answered by another uid is refused before the launcher sends anything", [] {
         Repository repo("never attached\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        ApplicationController controller;
+        ApplicationController controller(gitOnPath());
         openController(controller, repo);
         QTemporaryDir sides;
         QProcess launcher;

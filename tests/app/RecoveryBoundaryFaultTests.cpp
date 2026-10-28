@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "fixtures/GitOnPath.h"
 #include "app/RecoveryRestore.h"
 #include "app/SessionModel.h"
 #include "storage/DestinationWriter.h"
@@ -378,7 +379,7 @@ public:
         git({QStringLiteral("merge"), QStringLiteral("--no-edit"), QStringLiteral("side")}, 1);
         writeFile(path(QStringLiteral("result.txt")), manual);
         scoped.apply(environment);
-        controller = std::make_unique<ApplicationController>();
+        controller = std::make_unique<ApplicationController>(gitOnPath());
         open();
         CHECK(controller->selectFile(id));
         auto draft = file().current().draft;

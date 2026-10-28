@@ -4,6 +4,7 @@
 // offscreen and drives it with mouse clicks and key events. Coverage notes and
 // the entry point are in tests/acceptance/README.md.
 #include "app/ApplicationController.h"
+#include "fixtures/GitOnPath.h"
 #include "app/MergetoolLauncher.h"
 #include "app/MergetoolProtocol.h"
 #include "TestHarness.h"
@@ -198,7 +199,7 @@ class Scene {
 public:
     explicit Scene(const Repository &repository) : repo(repository)
     {
-        controller = std::make_unique<ApplicationController>();
+        controller = std::make_unique<ApplicationController>(gitOnPath());
         engine = std::make_unique<QQmlApplicationEngine>();
         engine->setInitialProperties({{"controller", QVariant::fromValue(controller.get())}});
         engine->loadFromModule("BranchTruce", "Main");
@@ -1620,7 +1621,7 @@ public:
             {
                 // Two windows on one merge each keep their own edits.
                 Scene one(repo);
-                ApplicationController two;
+                ApplicationController two(gitOnPath());
                 CHECK(two.loader()->openRepository(repo.root));
                 // The load runs Git and the recovery restore off the GUI thread, so it gets the
                 // deadline of a process, not the layout deadline of settleFor.
@@ -2089,7 +2090,7 @@ public:
 int main(int argc, char **argv)
 {
     // Child mode: git mergetool starts this binary as the real launcher.
-    if (argc == 2 && std::strcmp(argv[1], "--mergetool") == 0) return runMergetoolLauncher(argc, argv);
+    if (argc == 2 && std::strcmp(argv[1], "--mergetool") == 0) return runMergetoolLauncher(argc, argv, gitOnPath());
     Sandbox shared;
     if (!shared.root.isValid() || !shared.runtime.isValid()) return 2;
     sandbox = &shared;
