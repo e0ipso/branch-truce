@@ -4,10 +4,18 @@
 #include "core/EditingCommands.h"
 #include "RecoveryJournal.h"
 #include <QAbstractListModel>
+#include <QByteArray>
+#include <QHash>
+#include <QString>
 #include <QStringList>
+#include <QVariant>
+#include <QVariantList>
 #include <QVariantMap>
-#include <utility>
+#include <cstddef>
 #include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace branch_truce {
 struct RecoveryRestore;

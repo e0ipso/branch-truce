@@ -8,9 +8,13 @@
 #include "SessionModel.h"
 #include "SessionCoordinator.h"
 #include "SessionLoader.h"
+#include <QByteArray>
+#include <QColor>
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QVariantMap>
+#include <optional>
 #include <string>
 
 namespace branch_truce {

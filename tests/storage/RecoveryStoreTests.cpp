@@ -1,4 +1,4 @@
-#include "RecoveryStore.h"
+#include "storage/RecoveryStore.h"
 #include "TestHarness.h"
 #include "fixtures/RecoveryFaults.h"
 #include <QCoreApplication>

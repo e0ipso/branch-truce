@@ -140,27 +140,22 @@ highlighting does not establish merge correspondence.
 
 ## Reproduce
 
-Run from the repository root using the already-installed dependencies. Build
-output and disposable recovery data stay outside the checkout.
+Run from the repository root in a desktop build configured as
+[docs/build.md](build.md) describes. The fixture lives in
+`tests/fixtures/editor/` and builds only from `tests/CMakeLists.txt`, with the
+project's shared warning flags.
 
 ```sh
-cmake -S experiments/editor-integration -B /tmp/branch-truce-editor-build
-cmake --build /tmp/branch-truce-editor-build -j2
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
-  /tmp/branch-truce-editor-build/editor-experiment --baseline
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
-  /tmp/branch-truce-editor-build/editor-experiment
-/usr/lib/qt6/bin/qmllint "$PWD/experiments/editor-integration/Editor.qml"
+cmake --build build/desktop --target branch_truce_editor_tests --parallel 2
+ctest --test-dir build/desktop -R '^editor\.' --output-on-failure -V
+/usr/lib/qt6/bin/qmllint "$PWD/tests/fixtures/editor/Editor.qml"
 ```
 
-The root desktop build also registers this fixture as `editor.baseline` and
-`editor.regression` in CTest. Run both with
-`ctest --test-dir build/desktop -R '^editor\.' --output-on-failure -V`.
-The fixture remains independent of product targets and returns nonzero for
+CTest registers the fixture as `editor.baseline` and `editor.regression`.
+The fixture links no product target and returns nonzero for
 failed assertions. The acceptance runner requires
 `offscreen` to avoid changing a desktop user's clipboard. Its private clipboard
 is cleared, its owner-only recovery directory is removed, and removal is checked.
-The build directory can be retained for review and removed afterwards.
 
 ## Observed contracts
 

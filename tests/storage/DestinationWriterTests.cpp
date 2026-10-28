@@ -1,4 +1,4 @@
-#include "DestinationWriter.h"
+#include "storage/DestinationWriter.h"
 #include "TestHarness.h"
 #include <QCoreApplication>
 #include <QDir>

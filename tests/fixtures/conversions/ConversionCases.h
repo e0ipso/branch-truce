@@ -1,6 +1,6 @@
 #pragma once
 
-#include "TextConversion.h"
+#include "git/TextConversion.h"
 
 namespace conversion_fixtures {
 using namespace branch_truce::storage;

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "GitAdapter.h"
-#include "TextFormat.h"
+#include "storage/TextFormat.h"
 #include <optional>
 
 namespace branch_truce::git {

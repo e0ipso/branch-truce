@@ -2,7 +2,7 @@
 
 `branch_truce_workload_measurements` generates the files in memory and measures them. This directory does not store a corpus. The recorded run is `evidence.md`, with the same rows in `evidence.tsv`.
 
-The generator builds UTF-8 text with a fixed width of 96 bytes on ordinary lines, a shared `repeat-passage` line every 40 lines, and a `café` line every 100 lines. Correspondence uses three sources. Earlier text is the base. Stage 2, stage 3 and the result each change a different residue class of lines, modulo 25. An adverse long line is one buffer with no newline. The editor loads the same bytes into the result and both source panes of `experiments/editor-integration/Editor.qml`. Git stores a raw blob with `git hash-object --stdin` and reads it back through `GitAdapter::ReadObject`. Recovery commits that payload through `RecoveryStore::commit`, which fsyncs before it returns.
+The generator builds UTF-8 text with a fixed width of 96 bytes on ordinary lines, a shared `repeat-passage` line every 40 lines, and a `café` line every 100 lines. Correspondence uses three sources. Earlier text is the base. Stage 2, stage 3 and the result each change a different residue class of lines, modulo 25. An adverse long line is one buffer with no newline. The editor loads the same bytes into the result and both source panes of `tests/fixtures/editor/Editor.qml`. Git stores a raw blob with `git hash-object --stdin` and reads it back through `GitAdapter::ReadObject`. Recovery commits that payload through `RecoveryStore::commit`, which fsyncs before it returns.
 
 Scratch directories are `/var/tmp/truce-workload-*`. `/tmp` is tmpfs on the development host, so a recovery fsync there would not represent the ext4 application-data disk.
 

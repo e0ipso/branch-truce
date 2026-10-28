@@ -1,7 +1,7 @@
 // Generates representative files and adverse long lines, measures the product
 // paths, and refuses to report a truncated or unfinished action as completed.
-#include "GitAdapter.h"
-#include "RecoveryStore.h"
+#include "git/GitAdapter.h"
+#include "storage/RecoveryStore.h"
 #include "core/Correspondence.h"
 #include "core/FileSnapshot.h"
 

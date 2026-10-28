@@ -266,8 +266,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # Allow the real 30-second operation deadline plus the Git fixture matrix.
     set_tests_properties(git.adapter PROPERTIES TIMEOUT 90)
 
-    # Keep the accepted standalone editor fixture in the permanent regression suite.
-    set(editor_fixture "${PROJECT_SOURCE_DIR}/experiments/editor-integration")
+    # Keep the accepted editor fixture, which links no product target, in the permanent regression suite.
+    set(editor_fixture "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/editor")
     add_executable(branch_truce_editor_tests "${editor_fixture}/main.cpp")
     target_link_libraries(branch_truce_editor_tests PRIVATE Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
     qt_add_resources(branch_truce_editor_tests editor_scene PREFIX "/" BASE "${editor_fixture}"
