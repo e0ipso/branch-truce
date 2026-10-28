@@ -1,6 +1,6 @@
 # Recovery journal version 1
 
-`SessionModel` keeps automatic recovery under
+The `RecoveryJournal` that each `SessionModel` owns keeps automatic recovery under
 `<GenericDataLocation>/Branch Truce/recovery/v1/<session-uuid>/`, normally
 `~/.local/share/Branch Truce/recovery/v1/<session-uuid>/`. The root does not
 depend on the organization or application name. Each model

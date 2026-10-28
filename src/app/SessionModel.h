@@ -2,15 +2,12 @@
 
 #include "core/SessionState.h"
 #include "core/EditingCommands.h"
-#include "storage/RecoveryStore.h"
+#include "RecoveryJournal.h"
 #include <QAbstractListModel>
 #include <QStringList>
 #include <QVariantMap>
 #include <utility>
-#include <memory>
 #include <set>
-
-class QLockFile;
 
 namespace branch_truce {
 struct RecoveryRestore;
@@ -55,19 +52,33 @@ public:
     [[nodiscard]] QVariantMap handoff() const;
     [[nodiscard]] const FileSession *file(const std::string &id) const;
     [[nodiscard]] const Draft *pendingDraft(const std::string &id) const;
-    [[nodiscard]] bool hasPendingRecovery() const { return !pending_.empty(); }
-    [[nodiscard]] bool hasRecoveryFailures() const { return !recoveryFailures_.empty(); }
-    [[nodiscard]] bool hasRecoveryFailure(const std::string &id) const { return recoveryFailures_.contains(id); }
+    [[nodiscard]] bool hasPendingRecovery() const { return journal_.hasPending(); }
+    [[nodiscard]] bool hasRecoveryFailures() const { return journal_.hasFailures(); }
+    [[nodiscard]] bool hasRecoveryFailure(const std::string &id) const { return journal_.failure(id) != nullptr; }
     // Replaces a file's recovery error only while it is still exactly
     // expected; an empty replacement clears it. Returns whether it changed.
     bool settleRecoveryFailure(const std::string &id, const QString &expected, const QString &replacement = {});
-    [[nodiscard]] const QString &recoveryDirectory() const { return recovery_.directory(); }
+    // Records a recovery error that blocks the file until it is settled.
+    void recordRecoveryFailure(const std::string &id, const QString &error);
+    [[nodiscard]] const QString &recoveryDirectory() const { return journal_.directory(); }
+    // The store every acknowledged transaction of this model goes to.
+    // Record per-file errors through recordRecoveryFailure, which notifies.
+    [[nodiscard]] RecoveryJournal &recoveryJournal() { return journal_; }
     // Moves recovery to a new store beside the current one and releases the
     // current store's lease, so a repeated load never records over captures
     // already in it. Refused while pending input waits for this store.
     bool startNewRecoveryStore();
     Transition retryRecovery(const std::string &id);
     Q_INVOKABLE bool retryPendingRecovery(const QString &id);
+    // Whether files may complete the current load: every row is still the
+    // untouched placeholder for the same ID and path, and only its open
+    // capture waits for recovery retry.
+    [[nodiscard]] bool canCompleteLoad(const std::vector<FileSession> &files) const;
+    [[nodiscard]] bool canRestoreLoad() const;
+    // Resets every row and drops pending input and recovery errors. With a
+    // restore, adopts its store and errors, and commits only its new files.
+    // SessionCoordinator calls this after cancelling the old session's work.
+    void replaceFiles(std::vector<FileSession> files, RecoveryRestore *restore = nullptr);
 
     bool appendFile(FileSession file);
     Transition replaceDraft(const std::string &id, RevisionId expected, Draft draft);
@@ -91,12 +102,6 @@ Q_SIGNALS:
     void summaryChanged();
 
 private:
-    friend class SessionCoordinator;
-    [[nodiscard]] bool canCompleteLoad(const std::vector<FileSession> &files) const;
-    void replaceFiles(std::vector<FileSession> files, RecoveryRestore *restore = nullptr);
-    [[nodiscard]] bool canRestoreLoad() const;
-    QString ensureRecoveryLease();
-    void recordRecoveryFailure(const std::string &id, const QString &error);
     bool commitCandidate(std::size_t row, FileSession candidate, const QString &action);
     void notifyRow(std::size_t row);
     [[nodiscard]] QStringList blockersFor(const FileSession &file) const;
@@ -118,18 +123,9 @@ private:
         }
         return Transition::StaleRevision;
     }
-    struct PendingRecovery {
-        FileSession candidate;
-        QString action;
-        QString transactionId;
-        QString error;
-    };
     std::vector<FileSession> files_;
-    storage::RecoveryStore recovery_;
-    std::map<std::string, PendingRecovery> pending_;
-    std::map<std::string, QString> recoveryFailures_;
+    RecoveryJournal journal_;
     std::set<std::string> restored_;
-    std::shared_ptr<QLockFile> recoveryLease_;
 };
 
 }

@@ -1,13 +1,9 @@
 #include "SessionModel.h"
-#include "RecoveryRecord.h"
 #include "RecoveryRestore.h"
-#include <QDir>
-#include <QFileInfo>
 #include <QStandardPaths>
 #include <QUuid>
 #include <algorithm>
 #include <limits>
-#include <unistd.h>
 
 namespace branch_truce {
 namespace {
@@ -100,45 +96,23 @@ QString SessionModel::recoveryRoot()
 }
 
 SessionModel::SessionModel(QString recoveryDirectory, QObject *parent)
-    : QAbstractListModel(parent), recovery_(std::move(recoveryDirectory)) {}
-
-QString SessionModel::ensureRecoveryLease()
-{
-    if (recoveryLease_) return {};
-    const auto &directory = recovery_.directory();
-    const QFileInfo before(directory);
-    const auto permissions = QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
-    if (!QDir::isAbsolutePath(directory) || before.isSymLink()
-        || (before.exists() && (!before.isDir() || before.ownerId() != ::geteuid()))
-        || !QDir().mkpath(directory, permissions)) return tr("Recovery storage is unavailable or unsafe.");
-    auto lease = std::make_shared<QLockFile>(directory + QStringLiteral("/session.lock"));
-    if (!lease->tryLock(0)) return tr("Recovery session is already open or unavailable; close its other window before retrying.");
-    recoveryLease_ = std::move(lease);
-    return {};
-}
+    : QAbstractListModel(parent), journal_(std::move(recoveryDirectory)) {}
 
 bool SessionModel::startNewRecoveryStore()
 {
-    if (hasPendingRecovery()) return false;
-    recovery_ = storage::RecoveryStore(QFileInfo(recovery_.directory()).absolutePath() + QLatin1Char('/')
-        + QUuid::createUuid().toString(QUuid::WithoutBraces));
-    recoveryLease_.reset();
-    return true;
+    return journal_.startNewStore();
 }
 
 void SessionModel::recordRecoveryFailure(const std::string &id, const QString &error)
 {
-    recoveryFailures_.insert_or_assign(id, error);
+    journal_.recordFailure(id, error);
     for (std::size_t row = 0; row < files_.size(); ++row)
         if (files_[row].id() == id) { notifyRow(row); return; }
 }
 
 bool SessionModel::settleRecoveryFailure(const std::string &id, const QString &expected, const QString &replacement)
 {
-    const auto failure = recoveryFailures_.find(id);
-    if (failure == recoveryFailures_.end() || failure->second != expected) return false;
-    if (replacement.isEmpty()) recoveryFailures_.erase(failure);
-    else failure->second = replacement;
+    if (!journal_.settleFailure(id, expected, replacement)) return false;
     for (std::size_t row = 0; row < files_.size(); ++row)
         if (files_[row].id() == id) { notifyRow(row); break; }
     return true;
@@ -146,17 +120,9 @@ bool SessionModel::settleRecoveryFailure(const std::string &id, const QString &e
 
 bool SessionModel::commitCandidate(std::size_t row, FileSession candidate, const QString &action)
 {
-    const auto transactionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const auto leaseError = ensureRecoveryLease();
-    const auto result = leaseError.isEmpty() ? recovery_.commit(recoveryTransaction(candidate, action, transactionId))
-        : storage::RecoveryCommit{false, leaseError};
-    if (result.succeeded) {
-        files_[row] = std::move(candidate);
-        return true;
-    }
-    const auto id = candidate.id();
-    pending_.insert_or_assign(id, PendingRecovery{std::move(candidate), action, transactionId, result.error});
-    return false;
+    if (!journal_.commitCandidate(candidate, action)) return false;
+    files_[row] = std::move(candidate);
+    return true;
 }
 
 void SessionModel::notifyRow(std::size_t row)
@@ -168,26 +134,21 @@ void SessionModel::notifyRow(std::size_t row)
 
 const Draft *SessionModel::pendingDraft(const std::string &id) const
 {
-    const auto found = pending_.find(id);
-    return found == pending_.end() ? nullptr : &found->second.candidate.current().draft;
+    const auto *pending = journal_.pending(id);
+    return pending ? &pending->candidate.current().draft : nullptr;
 }
 
 Transition SessionModel::retryRecovery(const std::string &id)
 {
-    const auto pending = pending_.find(id);
-    if (pending == pending_.end()) return file(id) ? Transition::NoChange : Transition::StaleRevision;
+    if (!journal_.pending(id)) return file(id) ? Transition::NoChange : Transition::StaleRevision;
     for (std::size_t row = 0; row < files_.size(); ++row) {
         if (files_[row].id() != id) continue;
-        const auto leaseError = ensureRecoveryLease();
-        const auto result = leaseError.isEmpty() ? recovery_.commit(recoveryTransaction(pending->second.candidate,
-            pending->second.action, pending->second.transactionId)) : storage::RecoveryCommit{false, leaseError};
-        if (!result.succeeded) {
-            pending->second.error = result.error;
+        auto committed = journal_.retryPending(id);
+        if (!committed) {
             notifyRow(row);
             return Transition::Blocked;
         }
-        files_[row] = std::move(pending->second.candidate);
-        pending_.erase(pending);
+        files_[row] = std::move(*committed);
         notifyRow(row);
         return Transition::Applied;
     }
@@ -201,18 +162,7 @@ bool SessionModel::retryPendingRecovery(const QString &id)
 
 bool SessionModel::canCompleteLoad(const std::vector<FileSession> &files) const
 {
-    if (files.size() != files_.size()) return false;
-    for (std::size_t row = 0; row < files_.size(); ++row) {
-        const auto &current = files_[row];
-        if (current.id() != files[row].id() || current.path() != files[row].path()
-            || current.support() != Support::Unreadable || current.snapshots()
-            || current.current().id != 1 || current.current().draft != Draft{}
-            || current.checkpoint() || current.reviewed() || current.written() || current.staged()
-            || current.checkpointOutcome() || current.writeOutcome() || current.stageOutcome()) return false;
-    }
-    return std::all_of(pending_.cbegin(), pending_.cend(), [](const auto &pending) {
-        return pending.second.action == QLatin1String("open");
-    });
+    return journal_.canCompleteLoad(files_, files);
 }
 
 bool SessionModel::canRestoreLoad() const
@@ -225,15 +175,9 @@ void SessionModel::replaceFiles(std::vector<FileSession> files, RecoveryRestore 
     beginResetModel();
     // The coordinator permits pending entries only for the placeholders of
     // this load. Retry must commit the captured files, never old placeholders.
-    pending_.clear();
-    recoveryFailures_.clear();
+    journal_.reset(restore);
     restored_.clear();
     files_ = std::move(files);
-    if (restore) {
-        recoveryLease_ = std::move(restore->lease);
-        recovery_ = storage::RecoveryStore(restore->directory);
-        recoveryFailures_ = std::move(restore->failures);
-    }
     for (std::size_t row = 0; row < files_.size(); ++row) {
         if (restore && !restore->newFiles.contains(files_[row].id())) restored_.insert(files_[row].id());
         else (void)commitCandidate(row, files_[row], QStringLiteral("open"));
@@ -255,10 +199,10 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
         || index.row() < 0 || index.row() >= totalFiles()) return {};
     const auto &file = files_[static_cast<std::size_t>(index.row())];
     const auto facts = file.facts();
-    const auto pending = pending_.find(file.id());
-    const bool pendingInput = pending != pending_.end();
-    const auto failure = recoveryFailures_.find(file.id());
-    const bool recoveryFailed = failure != recoveryFailures_.end();
+    const auto *pending = journal_.pending(file.id());
+    const bool pendingInput = pending != nullptr;
+    const auto *failure = journal_.failure(file.id());
+    const bool recoveryFailed = failure != nullptr;
     switch (role) {
     case FileIdRole: return text(file.id());
     case Qt::DisplayRole:
@@ -302,7 +246,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case ResolvedRole: return !pendingInput && !recoveryFailed && facts.resolved;
     case StatusRole:
         if (recoveryFailed) return tr("Recovery requires attention; work remains outstanding");
-        if (pendingInput && pending->second.action == QLatin1String("manual-save"))
+        if (pendingInput && pending->action == QLatin1String("manual-save"))
             return QString::fromUtf8(statusText(FileStatus::CheckpointFailed));
         if (pendingInput) return tr("Recovery failed; pending input retained");
         return QString::fromUtf8(statusText(facts.status));
@@ -310,15 +254,15 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case CanUndoRole: return !pendingInput && !recoveryFailed && file.canUndo();
     case CanRedoRole: return !pendingInput && !recoveryFailed && file.canRedo();
     case PendingInputRole: return pendingInput;
-    case PendingTextRole: return pendingInput ? text(pending->second.candidate.current().draft.text) : QString{};
-    case PendingDecisionsRole: return pendingInput ? decisionData(pending->second.candidate.current().draft) : QVariantList{};
+    case PendingTextRole: return pendingInput ? text(pending->candidate.current().draft.text) : QString{};
+    case PendingDecisionsRole: return pendingInput ? decisionData(pending->candidate.current().draft) : QVariantList{};
     case RecoveryStateRole:
         if (recoveryFailed) return QStringLiteral("blocked");
-        if (pendingInput && pending->second.action == QLatin1String("manual-save"))
+        if (pendingInput && pending->action == QLatin1String("manual-save"))
             return QStringLiteral("save-failed");
         if (pendingInput) return QStringLiteral("failed");
         return restored_.contains(file.id()) ? QStringLiteral("restored") : QStringLiteral("durable");
-    case RecoveryErrorRole: return recoveryFailed ? failure->second : pendingInput ? pending->second.error : QString{};
+    case RecoveryErrorRole: return recoveryFailed ? *failure : pendingInput ? pending->error : QString{};
     case ProgressRole: return progressData(file, pendingInput, recoveryFailed);
     default: return {};
     }
@@ -366,8 +310,8 @@ bool SessionModel::appendFile(FileSession file)
 int SessionModel::resolvedFiles() const
 {
     return static_cast<int>(std::count_if(files_.begin(), files_.end(),
-                                          [this](const auto &file) { return !pending_.contains(file.id())
-                                              && !recoveryFailures_.contains(file.id()) && file.facts().resolved; }));
+                                          [this](const auto &file) { return !journal_.pending(file.id())
+                                              && !journal_.failure(file.id()) && file.facts().resolved; }));
 }
 
 bool SessionModel::canFinish() const
@@ -395,21 +339,20 @@ QVariantList SessionModel::finishBlockers() const
 QStringList SessionModel::blockersFor(const FileSession &file) const
 {
     auto blockers = blockerData(file.facts());
-    const auto pending = pending_.find(file.id());
-    if (pending != pending_.end()) blockers.push_back(pending->second.action == QLatin1String("manual-save")
+    const auto *pending = journal_.pending(file.id());
+    if (pending) blockers.push_back(pending->action == QLatin1String("manual-save")
         ? tr("Draft save failed; the edited result is still available")
         : tr("Pending input needs recovery retry"));
-    const auto failure = recoveryFailures_.find(file.id());
-    if (failure != recoveryFailures_.end()) blockers.push_back(failure->second);
+    if (const auto *failure = journal_.failure(file.id())) blockers.push_back(*failure);
     return blockers;
 }
 
 QVariantMap SessionModel::handoffEntry(const FileSession &file) const
 {
     const auto facts = file.facts();
-    const auto pending = pending_.find(file.id());
-    const bool pendingInput = pending != pending_.end();
-    const bool recoveryFailed = recoveryFailures_.contains(file.id());
+    const auto *pending = journal_.pending(file.id());
+    const bool pendingInput = pending != nullptr;
+    const bool recoveryFailed = journal_.failure(file.id()) != nullptr;
     QString category;
     QString action;
     QString actionLabel;
@@ -420,7 +363,7 @@ QVariantMap SessionModel::handoffEntry(const FileSession &file) const
         action = QStringLiteral("recovery");
         actionLabel = tr("Open the recovery problem");
     } else if (pendingInput) {
-        const bool save = pending->second.action == QLatin1String("manual-save");
+        const bool save = pending->action == QLatin1String("manual-save");
         category = QStringLiteral("failed");
         action = save ? QStringLiteral("retry-save") : QStringLiteral("retry-recovery");
         actionLabel = save ? tr("Retry Save") : tr("Retry recovery");
@@ -485,7 +428,7 @@ QVariantMap SessionModel::handoffEntry(const FileSession &file) const
     const bool outstanding = pendingInput || recoveryFailed || !facts.resolved;
     QString status;
     if (recoveryFailed) status = tr("Recovery requires attention; work remains outstanding");
-    else if (pendingInput && pending->second.action == QLatin1String("manual-save"))
+    else if (pendingInput && pending->action == QLatin1String("manual-save"))
         status = QString::fromUtf8(statusText(FileStatus::CheckpointFailed));
     else if (pendingInput) status = tr("Recovery failed; pending input retained");
     else status = QString::fromUtf8(statusText(facts.status));

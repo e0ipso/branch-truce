@@ -1,5 +1,6 @@
 add_library(branch_truce_controller STATIC ApplicationController.cpp ApplicationController.h
-    SessionModel.cpp SessionModel.h RecoveryRecord.cpp RecoveryRecord.h RecoveryRestore.cpp RecoveryRestore.h
+    SessionModel.cpp SessionModel.h RecoveryJournal.cpp RecoveryJournal.h RecoveryRecord.cpp RecoveryRecord.h
+    RecoveryRestore.cpp RecoveryRestore.h
     SessionCoordinator.cpp SessionCoordinator.h ResolutionPublisher.cpp ResolutionPublisher.h
     MergetoolProtocol.cpp MergetoolProtocol.h MergetoolSession.cpp MergetoolSession.h
     MergetoolLauncher.cpp MergetoolLauncher.h SyntaxHighlighting.h PaneHighlighter.cpp PaneHighlighter.h

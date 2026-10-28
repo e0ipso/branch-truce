@@ -133,7 +133,8 @@ public:
             if (job->mutation && queues.at(job->input.stamp.worktree).front() != id) continue;
             if (job->mutation) {
                 const auto *file = model.file(job->input.stamp.fileId);
-                const auto leaseError = model.ensureRecoveryLease();
+                auto &journal = model.recoveryJournal();
+                const auto leaseError = journal.ensureLease();
                 if (!file || model.hasPendingRecovery() || model.hasRecoveryFailure(file->id()) || !leaseError.isEmpty()) {
                     finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {},
                         QStringLiteral("Mutation blocked by unavailable recovery storage: ") + leaseError, {}});
@@ -142,7 +143,7 @@ public:
                 }
                 const auto mutationId = QUuid::createUuid().toString(QUuid::WithoutBraces);
                 const auto kind = job->gitRequest ? QStringLiteral("staging") : QStringLiteral("publication");
-                const auto committed = model.recovery_.commit(mutationRecoveryTransaction(*file, kind, mutationId));
+                const auto committed = journal.commit(mutationRecoveryTransaction(*file, kind, mutationId));
                 if (!committed.succeeded) {
                     model.recordRecoveryFailure(file->id(), committed.error);
                     finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, committed.error, {}});
