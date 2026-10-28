@@ -153,6 +153,15 @@ stage_test() {
             trap "rm -rf \"\$work\" /tmp/bt-home" EXIT
             cp -r /src "$work/repo"
             rm -rf "$work/repo/build" "$work/repo/node_modules" "$work/repo/dist"
+            # In a linked worktree .git is a file pointing at a path that does not exist here.
+            # Give the copy a repository of its own, so the tests that need one see the same tree.
+            if [ -f "$work/repo/.git" ]; then
+                rm -f "$work/repo/.git"
+                git -C "$work/repo" init --quiet --initial-branch=main
+                git -C "$work/repo" add -A
+                git -C "$work/repo" -c user.name="Container Check" -c user.email="container-check@example.invalid" \
+                    commit --quiet -m "Worktree snapshot"
+            fi
             cmake -S "$work/repo" -B "$work/build" -G "Unix Makefiles" \
                 -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
                 -DBRANCH_TRUCE_BUILD_DESKTOP=ON -DBRANCH_TRUCE_WARNINGS_AS_ERRORS=ON \
