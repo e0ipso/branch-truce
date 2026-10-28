@@ -143,6 +143,13 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     set_tests_properties(app.comparison-panes PROPERTIES TIMEOUT 60
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
+    add_executable(branch_truce_passage_search_tests app/PassageSearchTests.cpp)
+    target_include_directories(branch_truce_passage_search_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_passage_search_tests PRIVATE branch_truce_controller branch_truce_uiplugin
+        Qt6::Quick Qt6::Test branch_truce_build_options)
+    add_test(NAME app.passage-search COMMAND branch_truce_passage_search_tests)
+    set_tests_properties(app.passage-search PROPERTIES TIMEOUT 60)
+
     # Built either way: with highlighting OFF it checks the plain highlighters.
     add_executable(branch_truce_syntax_highlighting_tests app/SyntaxHighlightingTests.cpp)
     target_include_directories(branch_truce_syntax_highlighting_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

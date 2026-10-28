@@ -16,8 +16,6 @@ ColumnLayout {
         resultPane.headerImplicitHeight, rightPane.headerImplicitHeight)
     readonly property bool wrapLines: readingBar.wrapLines
     readonly property bool showWhitespace: readingBar.showWhitespace
-    property var scopeNames: ["stage2", "result", "stage3"]
-    property string searchDetail: ""
     // Text panes never get shorter than this many lines; on a short window the page scrolls instead.
     property int minimumPaneLines: 8
     property bool whitespaceReady: false
@@ -28,9 +26,6 @@ ColumnLayout {
     readonly property var markerFold: kept("fold", foldFor(file, showMarkers))
     // The controller picks Breeze Light or Breeze Dark syntax colours from its lightness.
     readonly property color schemeBackground: Kirigami.Theme.backgroundColor
-    readonly property string searchStatusText: searchDetail.length > 0
-        ? searchDetail
-        : qsTr("Search scope: %1.").arg(readingBar.scope.currentText || qsTr("Editable result"))
 
     // The last value of each kept binding, with its JSON text.
     readonly property var keptValues: ({})
@@ -48,19 +43,6 @@ ColumnLayout {
     function editorNamed(name: string): Item {
         return panesByRole.editor(name)
     }
-    function refreshSearchScopes(): void {
-        const labels = [qsTr("Left source"), qsTr("Editable result"), qsTr("Right source")]
-        const names = ["stage2", "result", "stage3"]
-        if (showEarlier.enabled && showEarlier.checked) {
-            labels.push(qsTr("Earlier version"))
-            names.push("earlier")
-        }
-        const current = scopeNames[readingBar.scope.currentIndex] || "result"
-        scopeNames = names
-        readingBar.scope.model = labels
-        const next = names.indexOf(current)
-        readingBar.scope.currentIndex = next >= 0 ? next : names.indexOf("result")
-    }
     function applyWhitespace(): void {
         const visible = readingBar.showWhitespace
         const editors = panesByRole.editors()
@@ -72,32 +54,17 @@ ColumnLayout {
         if (whitespaceReady)
             applyWhitespace()
     }
+    // Selects the next passage the search finds and scrolls the panes to it, showing the
+    // folded markers when it lies on them.
     function findPassage(): void {
-        const index = readingBar.scope.currentIndex
-        const name = index >= 0 && index < scopeNames.length ? scopeNames[index] : "result"
-        const editor = editorNamed(name)
-        const scope = readingBar.scope.currentText || qsTr("Editable result")
-        const query = readingBar.query
-        if (!editor || query.length === 0) {
-            searchDetail = qsTr("Search scope: %1. Enter a passage.").arg(scope)
+        const name = passageSearch.scope
+        const match = passageSearch.find(name, readingBar.query, true)
+        if (match.begin < 0)
             return
-        }
-        const haystack = editor.text
-        let start = 0
-        if (editor.selectedText === query)
-            start = editor.selectionEnd
-        let found = haystack.indexOf(query, start)
-        if (found < 0 && start > 0)
-            found = haystack.indexOf(query, 0)
-        if (found < 0) {
-            searchDetail = qsTr("No passage in %1.").arg(scope)
-            return
-        }
-        if (editor === resultPane.editor && resultPane.blocks.hiddenWithin(found, found + query.length))
+        if (name === "result" && resultPane.blocks.hiddenWithin(match.begin, match.end))
             markersRevealed()
-        editor.select(found, found + query.length)
+        editorNamed(name).select(match.begin, match.end)
         panesByRole.follow(name)
-        searchDetail = qsTr("Passage in %1.").arg(scope)
     }
     // Line marks for one pane, keyed by 1-based line. lines holds the kind of
     // each coloured line: "added" when the compared text lacks it, "changed",
@@ -385,7 +352,6 @@ ColumnLayout {
     }
     Component.onCompleted: {
         controller.setSyntaxBackground(schemeBackground)
-        refreshSearchScopes()
         applyWhitespace()
         whitespaceReady = true
         Qt.callLater(placePanes)
@@ -412,12 +378,16 @@ ColumnLayout {
         passages: comparison.file.passages || []
         lineSpacing: paneFont.lineSpacing
     }
+    PassageSearch {
+        id: passageSearch
+        panes: panesByRole
+        earlierShown: showEarlier.enabled && showEarlier.checked
+    }
 
     ReadingBar {
         id: readingBar
         Layout.fillWidth: true
-        statusText: comparison.searchStatusText
-        onScopeSwitched: comparison.searchDetail = ""
+        search: passageSearch
         onFindRequested: comparison.findPassage()
         onWhitespaceToggled: comparison.applyWhitespace()
     }
@@ -505,7 +475,6 @@ ColumnLayout {
         objectName: "showEarlier"
         enabled: !!comparison.file.earlier && !!comparison.file.earlier.available
         text: enabled ? qsTr("Show common earlier version") : qsTr("Common earlier version unavailable")
-        onCheckedChanged: comparison.refreshSearchScopes()
     }
     SourcePane {
         id: earlierPane

@@ -9,13 +9,11 @@ import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: readingBar
-    required property string statusText
-    // The view fills in the scopes, since the earlier version adds one while it is shown.
-    property alias scope: searchScope
+    // The scopes, the selected scope and the status come from the search.
+    required property PassageSearch search
     readonly property string query: searchQuery.text
     readonly property bool wrapLines: wrapLinesBox.checked
     readonly property bool showWhitespace: showWhitespaceBox.checked
-    signal scopeSwitched()
     signal findRequested()
     signal whitespaceToggled()
     objectName: "readingControls"
@@ -25,10 +23,11 @@ ColumnLayout {
         ComboBox {
             id: searchScope
             objectName: "searchScope"
-            model: [qsTr("Left source"), qsTr("Editable result"), qsTr("Right source")]
+            model: readingBar.search.scopeLabels
+            currentIndex: readingBar.search.scopeIndex
             Accessible.name: qsTr("Search scope")
             Layout.preferredWidth: Math.max(implicitWidth, Kirigami.Units.gridUnit * 10)
-            onCurrentIndexChanged: readingBar.scopeSwitched()
+            onCurrentIndexChanged: readingBar.search.scopeIndex = currentIndex
         }
         TextField {
             id: searchQuery
@@ -60,7 +59,7 @@ ColumnLayout {
         Label {
             objectName: "searchStatus"
             Layout.fillWidth: true
-            text: readingBar.statusText
+            text: readingBar.search.status
             textFormat: Text.PlainText
             wrapMode: Text.Wrap
         }
