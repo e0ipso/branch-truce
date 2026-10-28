@@ -12,12 +12,15 @@ Kirigami.PromptDialog {
     required property var controller
     // The file and revision the user confirms; the controller refuses a newer revision as stale.
     property string fileId: ""
+    property string path: ""
     property string revision: ""
     property string failure: ""
     // Asks the owner to set plain text on an item and each label inside it.
     signal plainTextRequested(item: Item)
+    // Both callers ask about the selected file, whose display path the controller has.
     function ask(id: string, current: string): void {
         fileId = id;
+        path = id === controller.selectedFileId ? (controller.selectedFile.path || "") : "";
         revision = current;
         failure = "";
         open();
@@ -31,7 +34,7 @@ Kirigami.PromptDialog {
     objectName: "discardStagedDialog"
     title: qsTr("Discard draft?")
     subtitle: qsTr("The draft of %1 is lost. The result staged in Git becomes the current result again, and the repository file stays as it is.")
-        .arg(fileId.length > 0 ? controller.displayPath(fileId) : "")
+        .arg(path)
     dialogType: Kirigami.PromptDialog.Warning
     standardButtons: Kirigami.Dialog.Discard | Kirigami.Dialog.Cancel
     // The subtitle names a repository path.

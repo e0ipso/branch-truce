@@ -2623,7 +2623,7 @@ public:
             const auto launch = sources.launchResult.text.utf8;
             CHECK(fixture.controller.files()->appendFile(
                 FileSession("crafted", path, {launch, {}, 0}, Support::Supported, {}, std::move(sources), true)));
-            const auto shown = fixture.controller.displayPath(QStringLiteral("crafted"));
+            const auto shown = fixture.controller.files()->displayPath("crafted");
             CHECK(shown.toStdString() == path);
             const auto message = QStringLiteral("Waiting for Git to stage %1.").arg(shown);
             // Every label inside the item must show the message as plain characters. A label

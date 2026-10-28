@@ -171,15 +171,17 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # resolves, the sidebar and panes paint the View background of a dark and a light KDE colour
     # scheme, and every coloured line has a gutter glyph. Each exits 77, reported as skipped,
     # when this host lacks what it checks against. app/ThemeTests.cpp says how to make each fail.
-    # The icon names are collected from src/ui at build time.
+    # The icon names are collected at build time from src/ui and from the model, which names
+    # each file's status icon.
     file(GLOB theme_icon_sources CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/ui/*.qml")
+    list(APPEND theme_icon_sources "${PROJECT_SOURCE_DIR}/src/app/SessionModel.cpp")
     list(JOIN theme_icon_sources "|" theme_icon_files)
     set(theme_icon_list "${CMAKE_CURRENT_BINARY_DIR}/theme-icon-names.txt")
     add_custom_command(OUTPUT "${theme_icon_list}"
         COMMAND "${CMAKE_COMMAND}" "-DOUTPUT=${theme_icon_list}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
             "-DQML_FILES=${theme_icon_files}" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/CollectIconNames.cmake"
         DEPENDS ${theme_icon_sources} "${CMAKE_CURRENT_SOURCE_DIR}/app/CollectIconNames.cmake"
-        COMMENT "Collecting the icon names in src/ui"
+        COMMENT "Collecting the icon names in src/ui and the session model"
         VERBATIM)
     add_custom_target(branch_truce_theme_icon_names DEPENDS "${theme_icon_list}")
     add_executable(branch_truce_theme_tests app/ThemeTests.cpp)

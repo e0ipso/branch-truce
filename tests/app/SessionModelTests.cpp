@@ -660,9 +660,13 @@ public:
             CHECK(decisions[1].toMap().value("value").toString() == "ignored");
             CHECK(!decisions[1].toMap().contains("order"));
             const auto names = model.roleNames();
-            // Progress is an additional revision-derived role after the recovery roles.
-            CHECK(names.size() == SessionModel::ProgressRole - SessionModel::FileIdRole + 1);
+            // Progress and the view roles follow the recovery roles.
+            CHECK(names.size() == SessionModel::SummaryRole - SessionModel::FileIdRole + 1);
             CHECK(names.value(SessionModel::ProgressRole) == "progress");
+            CHECK(names.value(SessionModel::StatusIconRole) == "statusIcon");
+            CHECK(names.value(SessionModel::StatusLineRole) == "statusLine");
+            CHECK(names.value(SessionModel::ChipsRole) == "chips");
+            CHECK(names.value(SessionModel::SummaryRole) == "summary");
             QSet<QByteArray> unique;
             for (auto it = names.cbegin(); it != names.cend(); ++it) {
                 CHECK(!it.value().isEmpty() && !unique.contains(it.value()));
@@ -818,6 +822,112 @@ public:
             CHECK(summary.value("counts").toMap().value("failed").toInt() == 1);
             CHECK(summary.value("counts").toMap().value("review-needed").toInt() == 2);
             CHECK(summary.value("outstandingFiles").toInt() == 8 && !summary.value("clean").toBool());
+        });
+        suite.run("TRUCE-0218 a failed write, stage or recovery shows the handoff's icon in the list", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            for (const auto *id : {"write", "stage", "recovery"}) CHECK(model.appendFile(sessionFile(id)));
+            const auto icon = [&](const std::string &id) {
+                return role(model, SessionModel::StatusIconRole, model.rowOf(id)).toString();
+            };
+            // A fresh draft needs review and Save; the cached facts must follow each outcome.
+            CHECK(icon("write") == "vcs-locally-modified");
+            CHECK(model.beginMarkResolved("write", 1) == Transition::Applied);
+            CHECK(model.recordCheckpoint("write", 1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(icon("write") == "document-save");
+            CHECK(model.recordWrite("write", 1, Outcome::Failed, "disk full") == Transition::Applied);
+            CHECK(model.beginMarkResolved("stage", 1) == Transition::Applied);
+            CHECK(model.recordCheckpoint("stage", 1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(model.recordWrite("stage", 1, Outcome::Succeeded) == Transition::Applied);
+            CHECK(model.recordStage("stage", 1, Outcome::Failed, {}, {}, "index locked") == Transition::Applied);
+            model.recordRecoveryFailure("recovery", "store unavailable");
+            const auto entries = handoffEntries(model.handoff());
+            for (const auto *id : {"write", "stage", "recovery"}) {
+                const auto entry = entries.value(id);
+                CHECK(entry.value("category").toString() == "failed");
+                CHECK(entry.value("icon").toString() == "dialog-error");
+                CHECK(icon(id) == "dialog-error");
+                CHECK(role(model, SessionModel::StatusRole, model.rowOf(id)) == entry.value("status"));
+            }
+            CHECK(role(model, SessionModel::StatusRole, model.rowOf("write")).toString() == "Repository write failed");
+            CHECK(role(model, SessionModel::StatusRole, model.rowOf("recovery")).toString()
+                  == "Recovery requires attention; work remains outstanding");
+        });
+        suite.run("TRUCE-0218 rows carry one status line, toned chips, a summary and the escaped path", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            auto choices = draft();
+            choices.decisions["left"] = {};
+            CHECK(model.appendFile(sessionFile("undecided", choices)));
+            CHECK(model.appendFile(sessionFile("published")));
+            resolve(model, "published");
+            CHECK(model.appendFile(FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+            CHECK(model.appendFile(FileSession("unreadable", "broken.txt", {}, Support::Unreadable, {})));
+            const std::string bytes = std::string(":literal\t") + static_cast<char>(0xff);
+            CHECK(model.appendFile(FileSession("bytes", bytes, draft())));
+            CHECK(model.rowOf("published") == 1 && model.rowOf("bytes") == 4 && model.rowOf("missing") == -1);
+            CHECK(model.supportCount(Support::Supported) == 3 && model.supportCount(Support::OutsideApp) == 1
+                  && model.supportCount(Support::Unreadable) == 1);
+            const auto at = [&](const std::string &id, int value) { return role(model, value, model.rowOf(id)); };
+
+            CHECK(at("undecided", SessionModel::StatusLineRole).toString() == "1 undecided");
+            CHECK(at("published", SessionModel::StatusLineRole).toString() == "Written and resolved");
+            CHECK(at("outside", SessionModel::StatusLineRole).toString() == "image content");
+            CHECK(at("unreadable", SessionModel::StatusLineRole).toString() == "File could not be read");
+            CHECK(at("undecided", SessionModel::StatusIconRole).toString() == "vcs-conflicting");
+            CHECK(at("published", SessionModel::StatusIconRole).toString() == "checkmark");
+            CHECK(at("outside", SessionModel::StatusIconRole).toString() == "unknown");
+            CHECK(at("unreadable", SessionModel::StatusIconRole).toString() == "dialog-error");
+
+            CHECK(at("published", SessionModel::SummaryRole).toString()
+                  == "Written and resolved. Undecided: 0. Saved. Reviewed. Resolved.");
+            CHECK(at("undecided", SessionModel::SummaryRole).toString()
+                  == "Source choices remain undecided. Undecided: 1. Not saved. Not reviewed. Not resolved.");
+            const QSet<QString> tones{"neutral", "positive", "negative", "warning"};
+            for (int row = 0; row < model.rowCount(); ++row) {
+                CHECK(!role(model, SessionModel::SummaryRole, row).toString().contains(QStringLiteral(" \u00b7 ")));
+                const auto chips = role(model, SessionModel::ChipsRole, row).toList();
+                CHECK(chips.size() >= 5);
+                // The first chip is the status sentence, without an icon.
+                CHECK(chips.first().toMap().value("text") == role(model, SessionModel::StatusRole, row));
+                CHECK(chips.first().toMap().value("icon").toString().isEmpty());
+                for (const auto &chip : chips) {
+                    const auto fields = chip.toMap();
+                    CHECK(fields.size() == 3 && !fields.value("text").toString().isEmpty());
+                    CHECK(tones.contains(fields.value("tone").toString()));
+                }
+            }
+            const auto texts = [&](const std::string &id) {
+                QStringList result;
+                for (const auto &chip : at(id, SessionModel::ChipsRole).toList()) result << chip.toMap().value("text").toString();
+                return result;
+            };
+            CHECK(texts("published") == QStringList({"Written and resolved", "Manual Save checkpoint retained",
+                "Undecided: 0", "Saved", "Reviewed", "Resolved"}));
+            CHECK(texts("undecided") == QStringList({"Source choices remain undecided", "Unsaved draft",
+                "Undecided: 1", "Not saved", "Not reviewed", "Not resolved"}));
+            // A file the app cannot edit has no draft chip.
+            CHECK(!texts("outside").join("\n").contains("draft", Qt::CaseInsensitive));
+            const auto undecidedChip = at("undecided", SessionModel::ChipsRole).toList().value(2).toMap();
+            CHECK(undecidedChip.value("icon").toString() == "dialog-question" && undecidedChip.value("tone").toString() == "negative");
+
+            // One escaper for every surface: the path role, the handoff and the finish blockers.
+            const auto escaped = QStringLiteral(":literal\\t\\xff");
+            CHECK(at("bytes", SessionModel::PathRole).toString() == escaped);
+            CHECK(at("bytes", Qt::DisplayRole).toString() == escaped);
+            CHECK(model.displayPath("bytes") == escaped && model.displayPath("missing").isEmpty());
+            CHECK(at("bytes", SessionModel::PathBytesRole).toByteArray()
+                  == QByteArray(bytes.data(), static_cast<qsizetype>(bytes.size())));
+            CHECK(handoffEntries(model.handoff()).value("bytes").value("path").toString() == escaped);
+            bool blocked = false;
+            for (const auto &entry : model.finishBlockers()) {
+                if (entry.toMap().value("fileId").toString() != "bytes") continue;
+                CHECK(entry.toMap().value("path").toString() == escaped);
+                blocked = true;
+            }
+            CHECK(blocked);
         });
         suite.run("Qt history restores atomic decisions, invalidates review and fences discard callbacks", [] {
             SessionModel model;

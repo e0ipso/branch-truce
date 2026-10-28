@@ -4,6 +4,7 @@
 #include "RecoveryRestore.h"
 #include "TextPositions.h"
 #include "core/Correspondence.h"
+#include "git/GitAdapter.h"
 #include <QDir>
 #include <QJSEngine>
 #include "core/BuildInfo.h"
@@ -108,7 +109,9 @@ ApplicationController::ApplicationController(QString gitExecutable, QObject *par
       editor_(files_, [this] { return selectedFileId_; },
           [this](const FileSession *file, const QString &loaded) { return firstUndecidedPlacement(file, loaded); }, this),
       loader_(files_, coordinator_, gitExecutable, SessionLoader::Owners{
-          [this](const std::string &path) { return displayBytes(path); },
+          [](const std::string &path) {
+              return git::displayPath(QByteArray(path.data(), static_cast<qsizetype>(path.size())));
+          },
           [this] { return selectedFileId_; },
           [this] { return !sessionOutcome_.isEmpty() || publisher_.busy(); },
           [this] { mergetool_.clearCopiedLaunches(); },
@@ -125,10 +128,10 @@ ApplicationController::ApplicationController(QString gitExecutable, QObject *par
           [this] { return selectedFileId_; },
           [this] { return selectedRow(); },
           [this](const QString &fileId) { return selectFile(fileId); },
-          [this](const QString &fileId) { return displayPath(fileId); }}, this),
+          [this](const QString &fileId) { return files_.displayPath(fileId.toStdString()); }}, this),
       choices_(files_, editor_, ChoicePreviewFlow::Owners{
           [this] { return selectedFileId_; },
-          [this](const QString &fileId) { return displayPath(fileId); },
+          [this](const QString &fileId) { return files_.displayPath(fileId.toStdString()); },
           [this](Transition result) { return commandResult(result); },
           [this](const QString &message) { showMessage(message); }}, this)
 {
@@ -208,24 +211,6 @@ QString ApplicationController::version() const
                              static_cast<qsizetype>(branch_truce::version().size()));
 }
 
-QString ApplicationController::displayPath(const QString &fileId) const
-{
-    const auto *file = files_.file(fileId.toStdString());
-    return file ? displayBytes(file->path()) : QString{};
-}
-
-QString ApplicationController::displayBytes(const std::string &path) const
-{
-    auto display = text(path);
-    const QByteArray bytes(path.data(), static_cast<qsizetype>(path.size()));
-    const bool exact = display.toUtf8() == bytes;
-    display.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-    display.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
-    display.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
-    display.replace(QLatin1Char('\t'), QStringLiteral("\\t"));
-    return exact ? display : tr("%1 [path bytes: %2]").arg(display, QString::fromLatin1(bytes.toHex()));
-}
-
 QJSValue ApplicationController::selectedFileScript() const
 {
     auto *engine = qjsEngine(this);
@@ -244,22 +229,20 @@ QVariantMap ApplicationController::selectedFile() const
     }
     const auto &path = file->path();
     QVariantMap result{{QStringLiteral("fileId"), selectedFileId_},
-        {QStringLiteral("path"), displayPath(selectedFileId_)},
+        {QStringLiteral("path"), files_.displayPath(file->id())},
         {QStringLiteral("pathBytes"), QByteArray(path.data(), static_cast<qsizetype>(path.size()))},
         {QStringLiteral("fileName"), fileName(path)},
         {QStringLiteral("support"), support}, {QStringLiteral("supportDetail"), text(file->supportDetail())},
         {QStringLiteral("resultText"), text(file->current().draft.text)}};
-    for (int row = 0; row < files_.totalFiles(); ++row) {
-        const auto index = files_.index(row);
-        if (files_.data(index, SessionModel::FileIdRole).toString() != selectedFileId_) continue;
-        for (const auto role : {SessionModel::StatusRole, SessionModel::UnsavedRole, SessionModel::ReviewNeededRole,
-             SessionModel::ResolvedRole, SessionModel::UndecidedRole, SessionModel::PendingInputRole,
-             SessionModel::PendingTextRole, SessionModel::RecoveryStateRole, SessionModel::RecoveryErrorRole,
-             SessionModel::FinishBlockersRole, SessionModel::CurrentRevisionRole, SessionModel::CanUndoRole,
-             SessionModel::CanRedoRole, SessionModel::ProgressRole, SessionModel::DecisionsRole})
-            result.insert(QString::fromLatin1(files_.roleNames().value(role)), files_.data(index, role));
-        break;
-    }
+    const auto index = files_.index(files_.rowOf(file->id()));
+    const auto names = files_.roleNames();
+    for (const auto role : {SessionModel::StatusRole, SessionModel::UnsavedRole, SessionModel::ReviewNeededRole,
+         SessionModel::ResolvedRole, SessionModel::UndecidedRole, SessionModel::PendingInputRole,
+         SessionModel::PendingTextRole, SessionModel::RecoveryStateRole, SessionModel::RecoveryErrorRole,
+         SessionModel::FinishBlockersRole, SessionModel::CurrentRevisionRole, SessionModel::CanUndoRole,
+         SessionModel::CanRedoRole, SessionModel::ProgressRole, SessionModel::DecisionsRole,
+         SessionModel::StatusIconRole, SessionModel::StatusLineRole, SessionModel::ChipsRole, SessionModel::SummaryRole})
+        result.insert(QString::fromLatin1(names.value(role)), files_.data(index, role));
     if (const auto &snapshots = file->snapshots(); snapshots && file->support() == Support::Supported) {
         result.insert(QStringLiteral("stage2"), sourceData(snapshots->stage2));
         result.insert(QStringLiteral("stage3"), sourceData(snapshots->stage3));
@@ -406,10 +389,7 @@ bool ApplicationController::selectFile(const QString &fileId)
 
 int ApplicationController::selectedRow() const
 {
-    for (int row = 0; row < files_.totalFiles(); ++row)
-        if (files_.data(files_.index(row), SessionModel::FileIdRole).toString() == selectedFileId_)
-            return row;
-    return -1;
+    return files_.rowOf(selectedFileId_.toStdString());
 }
 
 QVariantMap ApplicationController::commandPreview() const
@@ -552,7 +532,7 @@ bool ApplicationController::saveDraft(const QString &fileId, const QString &revi
 QString ApplicationController::parentStagingPath() const
 {
     if (!publisher_.parentStagingOffer(selectedFileId_.toStdString())) return {};
-    return displayPath(selectedFileId_);
+    return files_.displayPath(selectedFileId_.toStdString());
 }
 
 bool ApplicationController::mergetoolWaiting() const
@@ -855,17 +835,11 @@ bool ApplicationController::navigate(const QString &mode, int direction)
 
 int ApplicationController::outsideAppFiles() const
 {
-    int count = 0;
-    for (int row = 0; row < files_.totalFiles(); ++row)
-        if (files_.data(files_.index(row), SessionModel::SupportRole).toString() == QLatin1String("outside-app")) ++count;
-    return count;
+    return files_.supportCount(Support::OutsideApp);
 }
 
 int ApplicationController::loadErrorFiles() const
 {
-    int count = 0;
-    for (int row = 0; row < files_.totalFiles(); ++row)
-        if (files_.data(files_.index(row), SessionModel::SupportRole).toString() == QLatin1String("unreadable")) ++count;
-    return count;
+    return files_.supportCount(Support::Unreadable);
 }
 }

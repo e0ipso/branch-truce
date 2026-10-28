@@ -12,7 +12,6 @@ RowLayout {
     id: handoffEntry
     required property var modelData
     required property var controller
-    required property string iconName
     signal routed()
     // The file is selected; the owner confirms before the draft is discarded.
     signal discardStagedRequested()
@@ -22,14 +21,14 @@ RowLayout {
         Layout.alignment: Qt.AlignTop
         Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
         Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
-        source: handoffEntry.iconName
+        source: handoffEntry.modelData.icon
     }
     ColumnLayout {
         Layout.fillWidth: true
         spacing: 0
         Label {
             Layout.fillWidth: true
-            text: handoffEntry.controller.displayPath(handoffEntry.modelData.fileId)
+            text: handoffEntry.modelData.path
             textFormat: Text.PlainText
             elide: Text.ElideMiddle
         }

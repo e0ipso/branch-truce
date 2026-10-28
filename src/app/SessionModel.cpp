@@ -1,5 +1,6 @@
 #include "SessionModel.h"
 #include "RecoveryRestore.h"
+#include "git/GitAdapter.h"
 #include <QStandardPaths>
 #include <QUuid>
 #include <algorithm>
@@ -66,23 +67,46 @@ QStringList blockerData(const FileFacts &facts)
     return result;
 }
 
-// Dimensions come from the current revision and the saved, reviewed and staged
-// revisions. They stay separate so one resolved flag cannot hide the others.
-QVariantMap progressData(const FileSession &file, bool pendingInput, bool recoveryFailed)
+QString pathText(const std::string &path)
 {
-    const auto facts = file.facts();
-    const bool reviewed = file.reviewed() && file.reviewed()->revision.id == file.current().id;
-    const bool saved = !pendingInput && !facts.unsaved;
-    const bool resolved = !pendingInput && !recoveryFailed && facts.resolved;
-    return {{QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(facts.undecided))},
-        {QStringLiteral("saved"), saved},
-        {QStringLiteral("reviewed"), reviewed},
-        {QStringLiteral("resolved"), resolved},
-        {QStringLiteral("earlierResolved"), facts.earlierStaged},
-        {QStringLiteral("currentRevision"), revisionText(file.current().id)},
-        {QStringLiteral("savedRevision"), saved && file.checkpoint() ? revisionText(file.checkpoint()->id) : QString{}},
-        {QStringLiteral("reviewedRevision"), reviewed ? revisionText(file.reviewed()->revision.id) : QString{}},
-        {QStringLiteral("stagedRevision"), file.staged() ? revisionText(file.staged()->revision.id) : QString{}}};
+    return git::displayPath(QByteArray(path.data(), static_cast<qsizetype>(path.size())));
+}
+
+// Icon names are written as designated initializers so the theme icon check
+// collects them from this file.
+struct CategoryIcon {
+    const char *category;
+    const char *icon;
+};
+constexpr CategoryIcon categoryIcons[] = {
+    {.category = "undecided", .icon = "vcs-conflicting"},
+    {.category = "saved-draft", .icon = "document-save"},
+    {.category = "review-needed", .icon = "vcs-locally-modified"},
+    {.category = "newer-draft", .icon = "vcs-update-required"},
+    {.category = "written-unresolved", .icon = "vcs-locally-modified"},
+    {.category = "failed", .icon = "dialog-error"},
+    {.category = "outside-app", .icon = "unknown"},
+    {.category = "published", .icon = "checkmark"},
+};
+
+QString categoryIcon(const QString &category)
+{
+    for (const auto &entry : categoryIcons)
+        if (category == QLatin1String(entry.category)) return QString::fromLatin1(entry.icon);
+    return {};
+}
+
+// One status fact. tone is neutral, positive, negative or warning.
+struct Chip {
+    const char *icon;
+    QString text;
+    const char *tone;
+};
+
+QVariantMap chipData(const Chip &chip)
+{
+    return {{QStringLiteral("icon"), QString::fromLatin1(chip.icon)}, {QStringLiteral("text"), chip.text},
+            {QStringLiteral("tone"), QString::fromLatin1(chip.tone)}};
 }
 }
 
@@ -106,23 +130,32 @@ bool SessionModel::startNewRecoveryStore()
 void SessionModel::recordRecoveryFailure(const std::string &id, const QString &error)
 {
     journal_.recordFailure(id, error);
-    for (std::size_t row = 0; row < files_.size(); ++row)
-        if (files_[row].id() == id) { notifyRow(row); return; }
+    notifyFile(id);
 }
 
 bool SessionModel::settleRecoveryFailure(const std::string &id, const QString &expected, const QString &replacement)
 {
     if (!journal_.settleFailure(id, expected, replacement)) return false;
-    for (std::size_t row = 0; row < files_.size(); ++row)
-        if (files_[row].id() == id) { notifyRow(row); break; }
+    notifyFile(id);
     return true;
 }
 
 bool SessionModel::commitCandidate(std::size_t row, FileSession candidate, const QString &action)
 {
     if (!journal_.commitCandidate(candidate, action)) return false;
-    files_[row] = std::move(candidate);
+    setFile(row, std::move(candidate));
     return true;
+}
+
+void SessionModel::setFile(std::size_t row, FileSession file)
+{
+    files_[row] = std::move(file);
+    facts_[row] = files_[row].facts();
+}
+
+void SessionModel::notifyFile(const std::string &id)
+{
+    if (const auto row = rowOf(id); row >= 0) notifyRow(static_cast<std::size_t>(row));
 }
 
 void SessionModel::notifyRow(std::size_t row)
@@ -141,18 +174,13 @@ const Draft *SessionModel::pendingDraft(const std::string &id) const
 Transition SessionModel::retryRecovery(const std::string &id)
 {
     if (!journal_.pending(id)) return file(id) ? Transition::NoChange : Transition::StaleRevision;
-    for (std::size_t row = 0; row < files_.size(); ++row) {
-        if (files_[row].id() != id) continue;
-        auto committed = journal_.retryPending(id);
-        if (!committed) {
-            notifyRow(row);
-            return Transition::Blocked;
-        }
-        files_[row] = std::move(*committed);
-        notifyRow(row);
-        return Transition::Applied;
-    }
-    return Transition::StaleRevision;
+    const auto found = rowOf(id);
+    if (found < 0) return Transition::StaleRevision;
+    const auto row = static_cast<std::size_t>(found);
+    auto committed = journal_.retryPending(id);
+    if (committed) setFile(row, std::move(*committed));
+    notifyRow(row);
+    return committed ? Transition::Applied : Transition::Blocked;
 }
 
 bool SessionModel::retryPendingRecovery(const QString &id)
@@ -178,6 +206,12 @@ void SessionModel::replaceFiles(std::vector<FileSession> files, RecoveryRestore 
     journal_.reset(restore);
     restored_.clear();
     files_ = std::move(files);
+    facts_.clear();
+    rows_.clear();
+    for (std::size_t row = 0; row < files_.size(); ++row) {
+        facts_.push_back(files_[row].facts());
+        rows_.emplace(files_[row].id(), row);
+    }
     for (std::size_t row = 0; row < files_.size(); ++row) {
         if (restore && !restore->newFiles.contains(files_[row].id())) restored_.insert(files_[row].id());
         else (void)commitCandidate(row, files_[row], QStringLiteral("open"));
@@ -197,8 +231,9 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.model() != this || index.column() != 0
         || index.row() < 0 || index.row() >= totalFiles()) return {};
-    const auto &file = files_[static_cast<std::size_t>(index.row())];
-    const auto facts = file.facts();
+    const auto row = static_cast<std::size_t>(index.row());
+    const auto &file = files_[row];
+    const auto &facts = facts_[row];
     const auto *pending = journal_.pending(file.id());
     const bool pendingInput = pending != nullptr;
     const auto *failure = journal_.failure(file.id());
@@ -206,7 +241,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     switch (role) {
     case FileIdRole: return text(file.id());
     case Qt::DisplayRole:
-    case PathRole: return text(file.path());
+    case PathRole: return pathText(file.path());
     case PathBytesRole: return QByteArray(file.path().data(), static_cast<qsizetype>(file.path().size()));
     case ResultTextRole: return text(file.current().draft.text);
     case DecisionsRole: return decisionData(file.current().draft);
@@ -243,14 +278,9 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case UnsavedRole: return pendingInput || facts.unsaved;
     case ReviewNeededRole: return facts.needsReview;
     case EarlierStagedRole: return facts.earlierStaged;
-    case ResolvedRole: return !pendingInput && !recoveryFailed && facts.resolved;
-    case StatusRole:
-        if (recoveryFailed) return tr("Recovery requires attention; work remains outstanding");
-        if (pendingInput && pending->action == QLatin1String("manual-save"))
-            return QString::fromUtf8(statusText(FileStatus::CheckpointFailed));
-        if (pendingInput) return tr("Recovery failed; pending input retained");
-        return QString::fromUtf8(statusText(facts.status));
-    case FinishBlockersRole: return blockersFor(file);
+    case ResolvedRole: return resolvedAt(row);
+    case StatusRole: return statusAt(row);
+    case FinishBlockersRole: return blockersAt(row);
     case CanUndoRole: return !pendingInput && !recoveryFailed && file.canUndo();
     case CanRedoRole: return !pendingInput && !recoveryFailed && file.canRedo();
     case PendingInputRole: return pendingInput;
@@ -263,7 +293,11 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
         if (pendingInput) return QStringLiteral("failed");
         return restored_.contains(file.id()) ? QStringLiteral("restored") : QStringLiteral("durable");
     case RecoveryErrorRole: return recoveryFailed ? *failure : pendingInput ? pending->error : QString{};
-    case ProgressRole: return progressData(file, pendingInput, recoveryFailed);
+    case ProgressRole: return progressData(row);
+    case StatusIconRole: return categoryIcon(routeAt(row).category);
+    case StatusLineRole: return statusLineAt(row);
+    case ChipsRole: return chipsAt(row);
+    case SummaryRole: return summaryAt(row);
     default: return {};
     }
 }
@@ -284,14 +318,33 @@ QHash<int, QByteArray> SessionModel::roleNames() const
             {CanUndoRole, "canUndo"}, {CanRedoRole, "canRedo"},
             {PendingInputRole, "pendingInput"}, {PendingTextRole, "pendingText"},
             {PendingDecisionsRole, "pendingDecisions"}, {RecoveryStateRole, "recoveryState"},
-            {RecoveryErrorRole, "recoveryError"}, {ProgressRole, "progress"}};
+            {RecoveryErrorRole, "recoveryError"}, {ProgressRole, "progress"},
+            {StatusIconRole, "statusIcon"}, {StatusLineRole, "statusLine"}, {ChipsRole, "chips"},
+            {SummaryRole, "summary"}};
 }
 
 const FileSession *SessionModel::file(const std::string &id) const
 {
-    const auto found = std::find_if(files_.begin(), files_.end(),
-                                    [&](const auto &file) { return file.id() == id; });
-    return found == files_.end() ? nullptr : &*found;
+    const auto row = rowOf(id);
+    return row < 0 ? nullptr : &files_[static_cast<std::size_t>(row)];
+}
+
+int SessionModel::rowOf(const std::string &id) const
+{
+    const auto found = rows_.find(id);
+    return found == rows_.end() ? -1 : static_cast<int>(found->second);
+}
+
+int SessionModel::supportCount(Support support) const
+{
+    return static_cast<int>(std::count_if(files_.begin(), files_.end(),
+                                          [support](const auto &file) { return file.support() == support; }));
+}
+
+QString SessionModel::displayPath(const std::string &id) const
+{
+    const auto *found = file(id);
+    return found ? pathText(found->path()) : QString{};
 }
 
 bool SessionModel::appendFile(FileSession file)
@@ -300,6 +353,8 @@ bool SessionModel::appendFile(FileSession file)
         return false;
     const auto row = totalFiles();
     beginInsertRows({}, row, row);
+    facts_.push_back(file.facts());
+    rows_.emplace(file.id(), files_.size());
     files_.push_back(std::move(file));
     (void)commitCandidate(static_cast<std::size_t>(row), files_.back(), QStringLiteral("open"));
     endInsertRows();
@@ -309,9 +364,10 @@ bool SessionModel::appendFile(FileSession file)
 
 int SessionModel::resolvedFiles() const
 {
-    return static_cast<int>(std::count_if(files_.begin(), files_.end(),
-                                          [this](const auto &file) { return !journal_.pending(file.id())
-                                              && !journal_.failure(file.id()) && file.facts().resolved; }));
+    int count = 0;
+    for (std::size_t row = 0; row < files_.size(); ++row)
+        if (resolvedAt(row)) ++count;
+    return count;
 }
 
 bool SessionModel::canFinish() const
@@ -326,19 +382,112 @@ QVariantList SessionModel::finishBlockers() const
         result.push_back(QVariantMap{{QStringLiteral("fileId"), QString{}},
             {QStringLiteral("blockers"), QStringList{QStringLiteral("No files loaded")}}});
     }
-    for (const auto &file : files_) {
-        const auto blockers = blockersFor(file);
+    for (std::size_t row = 0; row < files_.size(); ++row) {
+        const auto blockers = blockersAt(row);
         if (blockers.isEmpty()) continue;
-        result.push_back(QVariantMap{{QStringLiteral("fileId"), text(file.id())},
-            {QStringLiteral("path"), text(file.path())},
+        result.push_back(QVariantMap{{QStringLiteral("fileId"), text(files_[row].id())},
+            {QStringLiteral("path"), pathText(files_[row].path())},
             {QStringLiteral("blockers"), blockers}});
     }
     return result;
 }
 
-QStringList SessionModel::blockersFor(const FileSession &file) const
+bool SessionModel::resolvedAt(std::size_t row) const
 {
-    auto blockers = blockerData(file.facts());
+    const auto &id = files_[row].id();
+    return !journal_.pending(id) && !journal_.failure(id) && facts_[row].resolved;
+}
+
+SessionModel::Progress SessionModel::progressAt(std::size_t row) const
+{
+    const auto &facts = facts_[row];
+    return {facts.undecided, !journal_.pending(files_[row].id()) && !facts.unsaved, !facts.needsReview,
+            resolvedAt(row), facts.earlierStaged};
+}
+
+// Dimensions come from the current revision and the saved, reviewed and staged
+// revisions. They stay separate so one resolved flag cannot hide the others.
+QVariantMap SessionModel::progressData(std::size_t row) const
+{
+    const auto &file = files_[row];
+    const auto progress = progressAt(row);
+    return {{QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(progress.undecided))},
+        {QStringLiteral("saved"), progress.saved},
+        {QStringLiteral("reviewed"), progress.reviewed},
+        {QStringLiteral("resolved"), progress.resolved},
+        {QStringLiteral("earlierResolved"), progress.earlierStaged},
+        {QStringLiteral("currentRevision"), revisionText(file.current().id)},
+        {QStringLiteral("savedRevision"), progress.saved && file.checkpoint() ? revisionText(file.checkpoint()->id) : QString{}},
+        {QStringLiteral("reviewedRevision"), progress.reviewed ? revisionText(file.reviewed()->revision.id) : QString{}},
+        {QStringLiteral("stagedRevision"), file.staged() ? revisionText(file.staged()->revision.id) : QString{}}};
+}
+
+QString SessionModel::statusAt(std::size_t row) const
+{
+    const auto &id = files_[row].id();
+    if (journal_.failure(id)) return tr("Recovery requires attention; work remains outstanding");
+    if (const auto *pending = journal_.pending(id)) {
+        return pending->action == QLatin1String("manual-save")
+            ? QString::fromUtf8(statusText(FileStatus::CheckpointFailed)) : tr("Recovery failed; pending input retained");
+    }
+    return QString::fromUtf8(statusText(facts_[row].status));
+}
+
+// A file outside the app names its reason and an unresolved file its undecided
+// count; otherwise the status.
+QString SessionModel::statusLineAt(std::size_t row) const
+{
+    const auto &file = files_[row];
+    if (file.support() != Support::Supported)
+        return file.supportDetail().empty() ? statusAt(row) : text(file.supportDetail());
+    const auto progress = progressAt(row);
+    if (progress.undecided > 0 && !progress.resolved)
+        return tr("%1 undecided").arg(static_cast<qulonglong>(progress.undecided));
+    return statusAt(row);
+}
+
+// The status sentence, the draft state, then one chip per progress fact.
+QVariantList SessionModel::chipsAt(std::size_t row) const
+{
+    const auto progress = progressAt(row);
+    QVariantList chips{chipData({.icon = "", .text = statusAt(row), .tone = "neutral"})};
+    // Outside-app and unreadable files have no app draft to describe.
+    if (files_[row].support() == Support::Supported) {
+        chips.push_back(chipData(journal_.pending(files_[row].id()) || facts_[row].unsaved
+            ? Chip{.icon = "document-edit", .text = tr("Unsaved draft"), .tone = "warning"}
+            : Chip{.icon = "document-save", .text = tr("Manual Save checkpoint retained"), .tone = "neutral"}));
+    }
+    const bool undecided = progress.undecided > 0;
+    chips.push_back(chipData({.icon = undecided ? "dialog-question" : "checkmark",
+        .text = tr("Undecided: %1").arg(static_cast<qulonglong>(progress.undecided)),
+        .tone = undecided ? "negative" : "positive"}));
+    chips.push_back(chipData(progress.saved ? Chip{.icon = "document-save", .text = tr("Saved"), .tone = "positive"}
+        : Chip{.icon = "vcs-locally-modified", .text = tr("Not saved"), .tone = "warning"}));
+    chips.push_back(chipData(progress.reviewed ? Chip{.icon = "view-visible", .text = tr("Reviewed"), .tone = "positive"}
+        : Chip{.icon = "view-hidden", .text = tr("Not reviewed"), .tone = "neutral"}));
+    chips.push_back(chipData(progress.resolved ? Chip{.icon = "checkmark", .text = tr("Resolved"), .tone = "positive"}
+        : Chip{.icon = "vcs-conflicting", .text = tr("Not resolved"), .tone = "neutral"}));
+    if (progress.earlierStaged) {
+        chips.push_back(chipData({.icon = "vcs-update-required",
+            .text = tr("Earlier result staged; current draft not applied"), .tone = "warning"}));
+    }
+    return chips;
+}
+
+QString SessionModel::summaryAt(std::size_t row) const
+{
+    const auto progress = progressAt(row);
+    return tr("%1. Undecided: %2. %3. %4. %5.").arg(statusAt(row),
+        QString::number(static_cast<qulonglong>(progress.undecided)),
+        progress.saved ? tr("Saved") : tr("Not saved"),
+        progress.reviewed ? tr("Reviewed") : tr("Not reviewed"),
+        progress.resolved ? tr("Resolved") : tr("Not resolved"));
+}
+
+QStringList SessionModel::blockersAt(std::size_t row) const
+{
+    const auto &file = files_[row];
+    auto blockers = blockerData(facts_[row]);
     const auto *pending = journal_.pending(file.id());
     if (pending) blockers.push_back(pending->action == QLatin1String("manual-save")
         ? tr("Draft save failed; the edited result is still available")
@@ -347,15 +496,14 @@ QStringList SessionModel::blockersFor(const FileSession &file) const
     return blockers;
 }
 
-QVariantMap SessionModel::handoffEntry(const FileSession &file) const
+SessionModel::Route SessionModel::routeAt(std::size_t row) const
 {
-    const auto facts = file.facts();
-    const auto *pending = journal_.pending(file.id());
+    const auto &facts = facts_[row];
+    const auto *pending = journal_.pending(files_[row].id());
     const bool pendingInput = pending != nullptr;
-    const bool recoveryFailed = journal_.failure(file.id()) != nullptr;
-    QString category;
-    QString action;
-    QString actionLabel;
+    const bool recoveryFailed = journal_.failure(files_[row].id()) != nullptr;
+    Route route;
+    auto &[category, action, actionLabel] = route;
     // Recovery problems outrank every revision fact: until they clear, the
     // recorded state may not be the state the user last saw.
     if (recoveryFailed) {
@@ -425,20 +573,23 @@ QVariantMap SessionModel::handoffEntry(const FileSession &file) const
             break;
         }
     }
-    const bool outstanding = pendingInput || recoveryFailed || !facts.resolved;
-    QString status;
-    if (recoveryFailed) status = tr("Recovery requires attention; work remains outstanding");
-    else if (pendingInput && pending->action == QLatin1String("manual-save"))
-        status = QString::fromUtf8(statusText(FileStatus::CheckpointFailed));
-    else if (pendingInput) status = tr("Recovery failed; pending input retained");
-    else status = QString::fromUtf8(statusText(facts.status));
-    return {{QStringLiteral("fileId"), text(file.id())}, {QStringLiteral("path"), text(file.path())},
-            {QStringLiteral("category"), category}, {QStringLiteral("status"), status},
-            {QStringLiteral("blockers"), blockersFor(file)},
+    return route;
+}
+
+QVariantMap SessionModel::handoffEntry(std::size_t row) const
+{
+    const auto &file = files_[row];
+    const auto &facts = facts_[row];
+    const bool pendingInput = journal_.pending(file.id()) != nullptr;
+    const auto route = routeAt(row);
+    return {{QStringLiteral("fileId"), text(file.id())}, {QStringLiteral("path"), pathText(file.path())},
+            {QStringLiteral("category"), route.category}, {QStringLiteral("icon"), categoryIcon(route.category)},
+            {QStringLiteral("status"), statusAt(row)},
+            {QStringLiteral("blockers"), blockersAt(row)},
             {QStringLiteral("unsaved"), pendingInput || facts.unsaved},
             {QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(facts.undecided))},
-            {QStringLiteral("outstanding"), outstanding},
-            {QStringLiteral("action"), action}, {QStringLiteral("actionLabel"), actionLabel}};
+            {QStringLiteral("outstanding"), !resolvedAt(row)},
+            {QStringLiteral("action"), route.action}, {QStringLiteral("actionLabel"), route.actionLabel}};
 }
 
 QVariantMap SessionModel::handoff() const
@@ -456,8 +607,8 @@ QVariantMap SessionModel::handoff() const
     };
     std::map<QString, QVariantList> entries;
     int outstanding = 0;
-    for (const auto &file : files_) {
-        auto entry = handoffEntry(file);
+    for (std::size_t row = 0; row < files_.size(); ++row) {
+        auto entry = handoffEntry(row);
         if (entry.value(QStringLiteral("outstanding")).toBool()) ++outstanding;
         entries[entry.value(QStringLiteral("category")).toString()].push_back(std::move(entry));
     }

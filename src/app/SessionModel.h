@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -38,12 +39,16 @@ public:
         SupportRole, SupportDetailRole, UndecidedRole, UnsavedRole, ReviewNeededRole,
         EarlierStagedRole, ResolvedRole, StatusRole, FinishBlockersRole, CanUndoRole, CanRedoRole,
         PendingInputRole, PendingTextRole, PendingDecisionsRole, RecoveryStateRole, RecoveryErrorRole,
-        ProgressRole
+        ProgressRole, StatusIconRole, StatusLineRole, ChipsRole, SummaryRole
     };
     Q_ENUM(Role)
 
     explicit SessionModel(QObject *parent = nullptr);
     explicit SessionModel(QString recoveryDirectory, QObject *parent = nullptr);
+    // Roles the views read. PathRole is the escaped display path, never the path
+    // bytes. StatusIconRole uses the handoff category's icon, StatusLineRole is
+    // one short phrase, ChipsRole is a list of {icon, text, tone} and SummaryRole
+    // is one sentence for a tooltip or an accessible description.
     // Holds every session's store. Built from GenericDataLocation and a fixed
     // segment, so setting an organization or application name never moves it.
     [[nodiscard]] static QString recoveryRoot();
@@ -59,6 +64,11 @@ public:
     // published, failed, outside-app), each with its blockers and next action.
     [[nodiscard]] QVariantMap handoff() const;
     [[nodiscard]] const FileSession *file(const std::string &id) const;
+    // The row of a file ID, or -1.
+    [[nodiscard]] int rowOf(const std::string &id) const;
+    [[nodiscard]] int supportCount(Support support) const;
+    // The escaped label of a file's path, empty for an unknown ID. A label only.
+    [[nodiscard]] QString displayPath(const std::string &id) const;
     [[nodiscard]] const Draft *pendingDraft(const std::string &id) const;
     [[nodiscard]] bool hasPendingRecovery() const { return journal_.hasPending(); }
     [[nodiscard]] bool hasRecoveryFailures() const { return journal_.hasFailures(); }
@@ -110,28 +120,54 @@ Q_SIGNALS:
     void summaryChanged();
 
 private:
+    // A handoff category with the next action and its label.
+    struct Route {
+        QString category;
+        QString action;
+        QString actionLabel;
+    };
+    // The progress facts of a row, with pending input and recovery errors applied.
+    struct Progress {
+        std::size_t undecided;
+        bool saved;
+        bool reviewed;
+        bool resolved;
+        bool earlierStaged;
+    };
     bool commitCandidate(std::size_t row, FileSession candidate, const QString &action);
+    // Stores a row's file and recomputes its cached facts.
+    void setFile(std::size_t row, FileSession file);
     void notifyRow(std::size_t row);
-    [[nodiscard]] QStringList blockersFor(const FileSession &file) const;
-    [[nodiscard]] QVariantMap handoffEntry(const FileSession &file) const;
+    void notifyFile(const std::string &id);
+    [[nodiscard]] bool resolvedAt(std::size_t row) const;
+    [[nodiscard]] Progress progressAt(std::size_t row) const;
+    [[nodiscard]] QVariantMap progressData(std::size_t row) const;
+    // The one status rule for the status role and the handoff.
+    [[nodiscard]] QString statusAt(std::size_t row) const;
+    [[nodiscard]] QString statusLineAt(std::size_t row) const;
+    [[nodiscard]] QVariantList chipsAt(std::size_t row) const;
+    [[nodiscard]] QString summaryAt(std::size_t row) const;
+    [[nodiscard]] Route routeAt(std::size_t row) const;
+    [[nodiscard]] QStringList blockersAt(std::size_t row) const;
+    [[nodiscard]] QVariantMap handoffEntry(std::size_t row) const;
     template<typename Command>
     Transition update(const std::string &id, const QString &action, Command command)
     {
-        for (std::size_t row = 0; row < files_.size(); ++row) {
-            if (files_[row].id() != id) continue;
-            if (hasPendingRecovery() || hasRecoveryFailure(id)) return Transition::Blocked;
-            auto candidate = files_[row];
-            const auto result = command(candidate);
-            if (result == Transition::Applied) {
-                const auto committed = commitCandidate(row, std::move(candidate), action);
-                notifyRow(row);
-                return committed ? Transition::Applied : Transition::Blocked;
-            }
-            return result;
-        }
-        return Transition::StaleRevision;
+        const auto found = rowOf(id);
+        if (found < 0) return Transition::StaleRevision;
+        const auto row = static_cast<std::size_t>(found);
+        if (hasPendingRecovery() || hasRecoveryFailure(id)) return Transition::Blocked;
+        auto candidate = files_[row];
+        const auto result = command(candidate);
+        if (result != Transition::Applied) return result;
+        const auto committed = commitCandidate(row, std::move(candidate), action);
+        notifyRow(row);
+        return committed ? Transition::Applied : Transition::Blocked;
     }
     std::vector<FileSession> files_;
+    // facts_[row] is files_[row].facts(), recomputed whenever setFile stores the row.
+    std::vector<FileFacts> facts_;
+    std::unordered_map<std::string, std::size_t> rows_;
     RecoveryJournal journal_;
     std::set<std::string> restored_;
 };

@@ -26,78 +26,9 @@ Kirigami.ApplicationWindow {
         if (controller.previewWholeFile(controller.selectedFileId, selectedFile.currentRevision, side))
             wholeFileDialog.open();
     }
-    // One chip per progress fact: undecided count, save, review and resolution state.
-    function progressChips(progress): var {
-        if (!progress)
-            return []
-        const chips = [
-            {icon: progress.undecided > 0 ? "dialog-question" : "checkmark",
-             text: qsTr("Undecided: %1").arg(progress.undecided)},
-            progress.saved ? {icon: "document-save", text: qsTr("Saved")}
-                           : {icon: "vcs-locally-modified", text: qsTr("Not saved")},
-            progress.reviewed ? {icon: "view-visible", text: qsTr("Reviewed")}
-                              : {icon: "view-hidden", text: qsTr("Not reviewed")},
-            progress.resolved ? {icon: "checkmark", text: qsTr("Resolved")}
-                              : {icon: "vcs-conflicting", text: qsTr("Not resolved")}
-        ]
-        if (progress.earlierResolved)
-            chips.push({icon: "vcs-update-required", text: qsTr("Earlier result staged; current draft not applied")})
-        return chips
-    }
-    function progressSummary(progress): string {
-        return progressChips(progress).map(chip => chip.text).join(" · ")
-    }
-    // The status sentence, the draft state, then the progress chips.
-    function statusChips(status: string, support: string, unsaved: bool, progress): var {
-        const chips = [{icon: "", text: status}]
-        // Outside-app and unreadable files have no app draft to describe.
-        if (support === "supported")
-            chips.push(unsaved ? {icon: "document-edit", text: qsTr("Unsaved draft")}
-                               : {icon: "document-save", text: qsTr("Manual Save checkpoint retained")})
-        return chips.concat(progressChips(progress))
-    }
-    function statusLines(status: string, support: string, unsaved: bool, progress): string {
-        const lines = statusChips(status, support, unsaved, null).map(chip => chip.text)
-        lines.push(progressSummary(progress))
-        return lines.join("\n")
-    }
     // A source label with its commit id cut to 10 characters; the full id stays in the tooltip.
     function shortCommit(label: string, commitId: string): string {
         return commitId.length > 10 ? label.replace(commitId, commitId.slice(0, 10)) : label
-    }
-    // A file row shows the first line only: the outside-app reason or the undecided count,
-    // otherwise the status. The rest stays in the text for the tooltip.
-    function rowStatus(status: string, support: string, supportDetail: string, unsaved: bool, progress): string {
-        let summary = status
-        if (support !== "supported")
-            summary = supportDetail || status
-        else if (progress && progress.undecided > 0 && !progress.resolved)
-            summary = qsTr("%1 undecided").arg(progress.undecided)
-        const lines = statusLines(status, support, unsaved, progress).split("\n")
-        return [summary].concat(lines.filter(line => line !== summary)).join("\n")
-    }
-    function rowIcon(support: string, unsaved: bool, progress): string {
-        if (support === "unreadable")
-            return "dialog-error"
-        if (support !== "supported")
-            return "unknown"
-        if (progress && progress.resolved)
-            return "checkmark"
-        if (progress && progress.undecided > 0)
-            return "vcs-conflicting"
-        return unsaved ? "vcs-locally-modified" : "document-save"
-    }
-    function handoffIcon(category: string): string {
-        switch (category) {
-        case "published": return "checkmark"
-        case "undecided": return "vcs-conflicting"
-        case "saved-draft": return "document-save"
-        case "newer-draft": return "vcs-update-required"
-        case "written-unresolved": return "vcs-locally-modified"
-        case "failed": return "dialog-error"
-        case "outside-app": return "unknown"
-        default: return "document-edit"
-        }
     }
     // The placeholder for a session with nothing to list: an empty session, an unsupported
     // operation and a failed open are three different messages.
@@ -164,9 +95,7 @@ Kirigami.ApplicationWindow {
         controller: window.controller
         onPlainTextRequested: item => window.showPlainText(item)
         rowDelegate: HandoffRow {
-            id: handoffRow
             controller: window.controller
-            iconName: window.handoffIcon(handoffRow.modelData.category)
             onRouted: handoffDialog.close()
             onDiscardStagedRequested: {
                 handoffDialog.close();
@@ -374,9 +303,6 @@ Kirigami.ApplicationWindow {
                         rowDelegate: FileRow {
                             id: fileRow
                             controller: window.controller
-                            iconName: window.rowIcon(fileRow.support, fileRow.unsaved, fileRow.progress)
-                            statusText: window.rowStatus(fileRow.status, fileRow.support, fileRow.supportDetail, fileRow.unsaved,
-                                fileRow.progress)
                             onClicked: {
                                 fileListPane.currentIndex = fileRow.index;
                                 window.controller.selectFile(fileRow.fileId);
@@ -386,8 +312,7 @@ Kirigami.ApplicationWindow {
                     ColumnLayout {
                         id: workArea
                         SplitView.fillWidth: true
-                        // The selected file's name, its status sentence and one chip per state;
-                        // read in order, the chip texts form the sidebar's status lines.
+                        // The selected file's name, its status sentence and one chip per state.
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: Kirigami.Units.largeSpacing
@@ -408,8 +333,7 @@ Kirigami.ApplicationWindow {
                                 visible: window.controller.selectedFileId.length > 0
                                 spacing: Kirigami.Units.smallSpacing
                                 Repeater {
-                                    model: window.statusChips(window.selectedFile.status || "", window.selectedFile.support || "",
-                                        !!window.selectedFile.unsaved, window.selectedFile.progress)
+                                    model: window.selectedFile.chips || []
                                     delegate: StatusChip {
                                         maximumWidth: selectedStatus.width
                                     }
@@ -421,7 +345,7 @@ Kirigami.ApplicationWindow {
                             visible: window.controller.selectedFileId.length > 0 && !window.supportedSelection
                             messageName: "selectedProblem"
                             onPlainTextRequested: item => window.showPlainText(item)
-                            iconName: window.rowIcon(window.selectedFile.support || "", false, null)
+                            iconName: window.selectedFile.statusIcon || ""
                             text: window.selectedFile.support === "unreadable" ? qsTr("Load error") : qsTr("Outside app")
                             explanation: (window.selectedFile.supportDetail || "") + "\n\n"
                                 + qsTr("This file remains outstanding until it is handled outside Branch Truce.")

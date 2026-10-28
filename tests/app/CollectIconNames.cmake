@@ -1,4 +1,5 @@
-# Collects the icon names the QML files name literally, one per line as
+# Collects the icon names the QML files, and C++ files that use designated
+# initializers such as {.icon = "name"}, name literally, one per line as
 # "<name><TAB><file>:<line>", for the icon check in ThemeTests.cpp.
 #
 #   cmake -DOUTPUT=icons.txt -DSOURCE_DIR=<root> "-DQML_FILES=a.qml|b.qml" -P CollectIconNames.cmake

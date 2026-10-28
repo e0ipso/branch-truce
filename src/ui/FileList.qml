@@ -8,7 +8,7 @@ import org.kde.kirigami as Kirigami
 Rectangle {
     id: fileListPane
     required property var controller
-    // Builds one row from the model's roles, with the icon and status lines computed for it.
+    // Builds one row from the model's roles.
     required property Component rowDelegate
     property alias currentIndex: fileList.currentIndex
     Kirigami.Theme.colorSet: Kirigami.Theme.View

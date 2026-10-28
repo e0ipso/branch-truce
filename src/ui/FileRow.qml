@@ -1,4 +1,4 @@
-// A file list row: the path, the first status line and a chip for a file outside the app.
+// A file list row: the path, the status line and a chip for a file outside the app.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -12,31 +12,29 @@ KirigamiDelegates.SubtitleDelegate {
     required property int index
     required property string fileId
     required property string support
-    required property string supportDetail
-    required property string status
-    required property bool unsaved
-    required property var progress
+    required property string path
+    required property string statusIcon
+    required property string statusLine
+    required property string summary
     required property var controller
-    // Derived from the role values above where the row is created.
-    required property string iconName
-    required property string statusText
     readonly property bool current: fileId === row.controller.selectedFileId
     readonly property string chip: support === "unreadable" ? qsTr("Load error")
         : support === "supported" ? "" : qsTr("Outside app")
     width: ListView.view.width
     // The path alone names the row, so a screen reader reads it as the list item's name.
-    text: row.controller.displayPath(fileId)
-    subtitle: row.statusText
-    Accessible.description: subtitle
-    icon.name: row.iconName
+    text: row.path
+    subtitle: row.statusLine
+    Accessible.description: row.summary
+    icon.name: row.statusIcon
     highlighted: current
     // The style's shared tooltip fades out after the pointer leaves its row. Opened below a row
     // near the top of the list, it covers the next rows and takes their clicks while it fades,
     // so each row shows its own tooltip, which closes as soon as the row loses the pointer.
     ToolTip.visible: false
+    // It holds the summary, which the row does not show, and a status line the row elides.
     ToolTip {
-        text: row.text + (row.subtitle.length > 0 ? "\n\n" + row.subtitle : "")
-        visible: row.hovered && (titleLabel.truncated || subtitleLabel.truncated)
+        text: row.text + "\n\n" + (subtitleLabel.truncated ? row.subtitle + "\n\n" : "") + row.summary
+        visible: row.hovered
         delay: Kirigami.Units.toolTipDelay
         exit: null
         // A path or a status line is plain text, as the shared tooltip shows it.
@@ -74,7 +72,6 @@ KirigamiDelegates.SubtitleDelegate {
                 font.bold: row.current
                 color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
             }
-            // Holds every status line for the tooltip and shows only the first.
             Label {
                 id: subtitleLabel
                 Layout.fillWidth: true

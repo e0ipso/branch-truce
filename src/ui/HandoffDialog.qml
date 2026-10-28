@@ -11,7 +11,7 @@ Kirigami.Dialog {
     required property var controller
     // Asks the owner to set plain text on a message and each label inside it, once they exist.
     signal plainTextRequested(item: Item)
-    // Builds one entry of a group, with the icon computed for its category.
+    // Builds one entry of a group from its handoff entry.
     required property Component rowDelegate
     readonly property var summary: controller.handoff
     objectName: "handoffDialog"

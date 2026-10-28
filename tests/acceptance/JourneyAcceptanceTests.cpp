@@ -569,6 +569,9 @@ QString rowText(Scene &scene, const char *path)
     });
     QStringList texts;
     collectTexts(row, texts);
+    // The summary is the row's accessible description and tooltip, not a label.
+    if (const auto *face = QAccessible::queryAccessibleInterface(row))
+        texts << face->text(QAccessible::Description);
     return texts.join('\n');
 }
 
@@ -1038,7 +1041,7 @@ public:
                     throw std::runtime_error("outside-app file labelled as a draft: " + label.toStdString());
             }
             expectContains(scene.text("selectedStatus"), "outside Branch Truce", "outside-app status");
-            expectContains(rowText(scene, "story.txt"), "Unsaved draft", "supported row");
+            expectContains(rowText(scene, "story.txt"), "Not saved.", "supported row");
 
             // Saving the three supported results leaves the session and file warnings.
             for (const auto *path : {"story.txt", "notes.txt", "reading.txt"}) {
@@ -1431,9 +1434,8 @@ public:
             CHECK(!repo.unmerged("written.txt").isEmpty());
 
             // Outstanding-work indicators are words, not only colours.
-            expectContains(rowText(scene, "done.txt"), "Saved · Reviewed · Resolved", "done row");
-            expectContains(rowText(scene, "typed.txt"), "Unsaved draft", "typed row");
-            expectContains(rowText(scene, "typed.txt"), "Not saved · Not reviewed · Not resolved", "typed row");
+            expectContains(rowText(scene, "done.txt"), "Saved. Reviewed. Resolved.", "done row");
+            expectContains(rowText(scene, "typed.txt"), "Not saved. Not reviewed. Not resolved.", "typed row");
             expectContains(rowText(scene, "newer.txt"), "Earlier result staged; current draft not applied", "newer row");
 
             auto *dialog = scene.object("handoffDialog");

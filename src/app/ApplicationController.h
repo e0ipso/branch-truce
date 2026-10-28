@@ -131,7 +131,6 @@ public:
     // Select by the exact byte-derived file ID, never by a display path.
     Q_INVOKABLE bool selectFile(const QString &fileId);
     Q_INVOKABLE int selectedRow() const;
-    Q_INVOKABLE QString displayPath(const QString &fileId) const;
     // Hide or show the file list without changing the selected file, editor
     // location or unsaved result.
     Q_INVOKABLE bool toggleFileList();
@@ -180,8 +179,6 @@ private:
     std::optional<CommandTarget> admitCommand(const QString &fileId, const QString &revision);
     [[nodiscard]] QString discardedMessage(const FileSession *current) const;
     [[nodiscard]] static QString stagedDiscardMessage();
-    // Escaped display text for exact path bytes; see displayPath.
-    [[nodiscard]] QString displayBytes(const std::string &path) const;
     bool commandResult(Transition result);
     void showMessage(const QString &message);
     [[nodiscard]] QVariantMap firstUndecidedPlacement(const FileSession *file, const QString &loaded) const;
