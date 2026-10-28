@@ -55,7 +55,11 @@ int main(int argc, char *argv[])
     // distro builds lack. Naming hicolor, as Qt does on xcb and Wayland, keeps
     // the system path, so the Breeze fallback still applies.
     if (QIcon::themeName().isEmpty()) QIcon::setThemeName(QStringLiteral("hicolor"));
-    QApplication::setWindowIcon(QIcon::fromTheme(QStringLiteral(BRANCH_TRUCE_APP_ID)));
+    // An installed icon wins. Isolated launches and the build tree have none, so the
+    // bundled symbol keeps the window and its taskbar entry from going blank.
+    auto applicationIcon = QIcon::fromTheme(QStringLiteral(BRANCH_TRUCE_APP_ID));
+    if (applicationIcon.isNull()) applicationIcon = QIcon(QStringLiteral(":/branch-truce/icons/branch-truce-symbol.svg"));
+    QApplication::setWindowIcon(applicationIcon);
     branch_truce::ApplicationController controller(git);
     QCoreApplication::setApplicationVersion(controller.version());
     QCommandLineParser parser;

@@ -254,6 +254,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_startup_appearance_tests app/StartupAppearanceTests.cpp)
     target_include_directories(branch_truce_startup_appearance_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_startup_appearance_tests PRIVATE Qt6::Core branch_truce_build_options)
+    target_compile_definitions(branch_truce_startup_appearance_tests PRIVATE BRANCH_TRUCE_APP_ID="${BRANCH_TRUCE_APP_ID}")
     add_dependencies(branch_truce_startup_appearance_tests branch-truce branch_truce_appearance_probe)
     add_test(NAME app.startup-appearance COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_appearance_tests>
         $<TARGET_FILE:branch-truce> $<TARGET_FILE:branch_truce_appearance_probe>)

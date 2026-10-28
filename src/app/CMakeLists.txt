@@ -25,4 +25,9 @@ qt_add_executable(branch-truce main.cpp)
 target_link_libraries(branch-truce PRIVATE branch_truce_controller Qt6::Widgets
     Qt6::Qml Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
 target_compile_definitions(branch-truce PRIVATE BRANCH_TRUCE_APP_ID="${BRANCH_TRUCE_APP_ID}")
+# The window icon main falls back to when the icon theme has no application icon.
+# It is compiled in, so installed runs never look at the source tree.
+set(_branch_truce_symbol "${PROJECT_SOURCE_DIR}/assets/branding/svg/for-light/branch-truce-symbol.svg")
+set_source_files_properties("${_branch_truce_symbol}" PROPERTIES QT_RESOURCE_ALIAS branch-truce-symbol.svg)
+qt_add_resources(branch-truce branch_truce_window_icon PREFIX "/branch-truce/icons" FILES "${_branch_truce_symbol}")
 install(TARGETS branch-truce RUNTIME DESTINATION "${KDE_INSTALL_BINDIR}")

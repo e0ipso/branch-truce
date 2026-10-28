@@ -8,6 +8,7 @@
 #include <QLibraryInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <utility>
 
@@ -32,6 +33,33 @@ void mirrorWithout(const QString &source, const QString &target, const QStringLi
         }
         CHECK(QFile::link(source + '/' + name, target + '/' + name));
     }
+}
+
+// An application icon in the user's own hicolor theme, which the app has to prefer
+// over the symbol it bundles. The index.theme is self-contained so the result does
+// not depend on the hicolor theme the host installs.
+void installThemedApplicationIcon(const QString &dataHome)
+{
+    const auto theme = dataHome + "/icons/hicolor";
+    CHECK(QDir().mkpath(theme + "/scalable/apps"));
+    writeFile(theme + "/index.theme",
+              "[Icon Theme]\nName=Hicolor\nComment=Test theme\nDirectories=scalable/apps\n\n"
+              "[scalable/apps]\nSize=128\nMinSize=8\nMaxSize=512\nType=Scalable\nContext=Applications\n");
+    writeFile(theme + "/scalable/apps/" BRANCH_TRUCE_APP_ID ".svg",
+              "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\">"
+              "<rect width=\"16\" height=\"16\" fill=\"#c0392b\"/></svg>");
+}
+
+// A data directory that holds the Breeze theme and nothing else, so no icon
+// theme on the host can supply the application icon. Breeze stays reachable
+// because the app's fallback theme and the action icons depend on it.
+void isolateIconThemes(const QString &dataDirs)
+{
+    const auto breeze = QStandardPaths::locate(QStandardPaths::GenericDataLocation, "icons/breeze",
+                                               QStandardPaths::LocateDirectory);
+    CHECK(!breeze.isEmpty());
+    CHECK(QDir().mkpath(dataDirs + "/icons"));
+    CHECK(QFile::link(breeze, dataDirs + "/icons/breeze"));
 }
 
 // The real binary started offscreen with no Plasma session variables and the
@@ -168,6 +196,35 @@ int main(int argc, char **argv)
         CHECK(state.value("documentSave").toBool());
         CHECK(state.value("theme") == "hicolor");
         CHECK(state.value("fallbackTheme") == "breeze");
+    });
+    suite.run("TRUCE-0248 with no themed application icon the window shows the bundled symbol", [&] {
+        QTemporaryDir dataDirs;
+        CHECK(dataDirs.isValid());
+        isolateIconThemes(dataDirs.path());
+        Launch launch(probe);
+        launch.environment.insert("XDG_DATA_DIRS", dataDirs.path());
+        const auto state = launch.appearance(binary);
+        const auto icon = state.value("windowIcon").toObject();
+        CHECK(!icon.value("themeHasApplicationIcon").toBool());
+        CHECK(!icon.value("null").toBool());
+        // Only a theme icon carries the name it was looked up by.
+        CHECK(icon.value("name").toString().isEmpty());
+        CHECK(icon.value("small").toBool());
+        CHECK(icon.value("large").toBool());
+        // The Breeze action icons are unaffected by the fallback icon.
+        CHECK(state.value("documentSave").toBool());
+        CHECK(state.value("displayName") == "Branch Truce");
+    });
+    suite.run("TRUCE-0248 an installed application icon is preferred over the bundled symbol", [&] {
+        Launch launch(probe);
+        installThemedApplicationIcon(launch.home.path() + "/data");
+        const auto state = launch.appearance(binary);
+        const auto icon = state.value("windowIcon").toObject();
+        CHECK(icon.value("themeHasApplicationIcon").toBool());
+        CHECK(icon.value("name") == BRANCH_TRUCE_APP_ID);
+        CHECK(icon.value("small").toBool());
+        CHECK(icon.value("large").toBool());
+        CHECK(state.value("documentSave").toBool());
     });
     return suite.report();
 }
