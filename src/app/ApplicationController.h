@@ -1,4 +1,5 @@
 #pragma once
+#include "ChoicePreviewFlow.h"
 #include "FileNavigator.h"
 #include "MergetoolSession.h"
 #include "RecoveryRestore.h"
@@ -173,15 +174,12 @@ private:
     ResultEditorAdapter editor_;
     SessionLoader loader_;
     FileNavigator navigator_;
+    ChoicePreviewFlow choices_;
     QString selectedFileId_;
     // Restored files that only a waiting launcher can clear; see RecoveryRestore.
     std::map<std::string, SnapshotFileIdentity> copiedLaunches_;
     // The revalidation task in flight for a copiedLaunches_ entry.
     std::map<std::string, TaskId> copiedLaunchChecks_;
-    std::optional<ChoicePreview> preview_;
-    std::optional<NonConflictingPreview> nonConflictingPreview_;
-    std::optional<WholeFilePreview> wholeFilePreview_;
-    QString previewFileId_;
     QString commandMessage_;
     QVariantMap markerBlocker_;
     bool discardPending_ = false;

@@ -1,5 +1,6 @@
 add_library(branch_truce_controller STATIC ApplicationController.cpp ApplicationController.h
-    FileNavigator.cpp FileNavigator.h NavigationTargets.cpp NavigationTargets.h
+    ChoicePreviewFlow.cpp ChoicePreviewFlow.h FileNavigator.cpp FileNavigator.h
+    NavigationTargets.cpp NavigationTargets.h TextPositions.h
     SessionModel.cpp SessionModel.h RecoveryJournal.cpp RecoveryJournal.h RecoveryRecord.cpp RecoveryRecord.h
     RecoveryRestore.cpp RecoveryRestore.h
     SessionCoordinator.cpp SessionCoordinator.h ResolutionPublisher.cpp ResolutionPublisher.h

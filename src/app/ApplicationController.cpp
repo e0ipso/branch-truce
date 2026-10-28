@@ -1,6 +1,7 @@
 #include "ApplicationController.h"
 #include "NavigationTargets.h"
 #include "RecoveryRestore.h"
+#include "TextPositions.h"
 #include "core/Correspondence.h"
 #include <QCryptographicHash>
 #include <QDir>
@@ -47,62 +48,6 @@ bool scalarBoundary(const QString &value, int offset)
              && value.at(offset - 1).isHighSurrogate());
 }
 
-// Line numbers and editor offsets for one valid UTF-8 text. One pass records
-// each line start, so a lookup scans at most one line. Lines are 1-based, as in
-// the scope labels, and a range covers lines [LineBegin, LineEnd).
-class TextPositions {
-public:
-    explicit TextPositions(std::string_view text) : text_(text)
-    {
-        int units = 0;
-        for (std::size_t i = 0; i < text_.size(); ++i) {
-            units += utf16Units(text_[i]);
-            if (text_[i] == '\n') starts_.push_back({i + 1, units});
-        }
-    }
-    [[nodiscard]] bool contains(ByteRange range) const noexcept
-    {
-        return range.begin <= range.end && range.end <= text_.size();
-    }
-    [[nodiscard]] int line(std::size_t offset) const
-    {
-        return static_cast<int>(std::distance(starts_.begin(), lineAt(offset))) + 1;
-    }
-    [[nodiscard]] int utf16(std::size_t offset) const
-    {
-        const auto start = lineAt(offset);
-        auto units = start->utf16;
-        for (auto i = start->byte; i < offset; ++i) units += utf16Units(text_[i]);
-        return units;
-    }
-    void insert(QVariantMap &map, const QString &prefix, ByteRange range) const
-    {
-        const auto first = line(range.begin);
-        map.insert(prefix + QStringLiteral("LineBegin"), first);
-        map.insert(prefix + QStringLiteral("LineEnd"), range.end > range.begin ? line(range.end - 1) + 1 : first);
-        map.insert(prefix + QStringLiteral("Utf16Begin"), utf16(range.begin));
-        map.insert(prefix + QStringLiteral("Utf16End"), utf16(range.end));
-    }
-
-private:
-    struct Start {
-        std::size_t byte;
-        int utf16;
-    };
-    static int utf16Units(char byte) noexcept
-    {
-        const auto value = static_cast<unsigned char>(byte);
-        return (value & 0xC0) == 0x80 ? 0 : value >= 0xF0 ? 2 : 1;
-    }
-    [[nodiscard]] std::vector<Start>::const_iterator lineAt(std::size_t offset) const
-    {
-        return std::prev(std::upper_bound(starts_.begin(), starts_.end(), offset,
-            [](std::size_t value, const Start &start) { return value < start.byte; }));
-    }
-    std::string_view text_;
-    std::vector<Start> starts_{{0, 0}};
-};
-
 void insertUnmapped(QVariantMap &map, const QString &prefix)
 {
     for (const auto *key : {"LineBegin", "LineEnd", "Utf16Begin", "Utf16End"})
@@ -140,11 +85,6 @@ QString kindName(PassageKind kind)
     return {};
 }
 
-const std::optional<SourceSnapshot> &snapshotFor(const FileSnapshots &snapshots, SourceSide side)
-{
-    return side == SourceSide::Earlier ? snapshots.earlier
-        : side == SourceSide::Stage2 ? snapshots.stage2 : snapshots.stage3;
-}
 }
 
 ApplicationController::ApplicationController(QObject *parent)
@@ -175,7 +115,12 @@ ApplicationController::ApplicationController(QObject *parent)
           [this] { return selectedFileId_; },
           [this] { return selectedRow(); },
           [this](const QString &fileId) { return selectFile(fileId); },
-          [this](const QString &fileId) { return displayPath(fileId); }}, this)
+          [this](const QString &fileId) { return displayPath(fileId); }}, this),
+      choices_(files_, editor_, ChoicePreviewFlow::Owners{
+          [this] { return selectedFileId_; },
+          [this](const QString &fileId) { return displayPath(fileId); },
+          [this](Transition result) { return commandResult(result); },
+          [this](const QString &message) { commandMessage_ = message; }}, this)
 {
     connect(&editor_, &ResultEditorAdapter::edited, this, &ApplicationController::editResult);
     connect(&editor_, &ResultEditorAdapter::undoRequested, this, &ApplicationController::undo);
@@ -192,6 +137,7 @@ ApplicationController::ApplicationController(QObject *parent)
     });
     connect(&editor_, &ResultEditorAdapter::placed, this, &ApplicationController::editorPlaced);
     connect(&navigator_, &FileNavigator::changed, this, &ApplicationController::navigationChanged);
+    connect(&choices_, &ChoicePreviewFlow::changed, this, &ApplicationController::commandChanged);
     connect(&loader_, &SessionLoader::notice, this, [this](const QString &message) {
         commandMessage_ = message;
         Q_EMIT commandChanged();
@@ -453,30 +399,7 @@ int ApplicationController::selectedRow() const
 
 QVariantMap ApplicationController::commandPreview() const
 {
-    if (!preview_) return {};
-    QStringList sources;
-    const auto *file = files_.file(previewFileId_.toStdString());
-    if (!file || !file->snapshots()) return {};
-    for (const auto &scope : preview_->sourceOrder) {
-        const auto &source = scope.side == SourceSide::Stage2 ? file->snapshots()->stage2 : file->snapshots()->stage3;
-        const auto &value = source->worktree.utf8;
-        const auto line = [&](std::size_t offset) {
-            return 1 + std::count(value.begin(), value.begin() + static_cast<std::ptrdiff_t>(offset), '\n');
-        };
-        const auto side = scope.side == SourceSide::Stage2 ? tr("Left") : tr("Right");
-        sources.push_back(scope.range.begin == scope.range.end
-            ? tr("%1, empty scope at line %2 · %3").arg(side).arg(line(scope.range.begin)).arg(text(source->label))
-            : tr("%1, lines %2–%3 · %4").arg(side).arg(line(scope.range.begin)).arg(line(scope.range.end - 1))
-                .arg(text(source->label)));
-    }
-    return {{QStringLiteral("before"), text(preview_->before)},
-        {QStringLiteral("replacement"), text(preview_->replacement)},
-        {QStringLiteral("detail"), text(preview_->detail)},
-        {QStringLiteral("orderedCombination"), !preview_->sourceOrder.empty()},
-        {QStringLiteral("order"), preview_->action == ChoiceAction::CombineLeftFirst ? tr("Left then Right") : tr("Right then Left")},
-        {QStringLiteral("sourceScopes"), sources.join(QLatin1Char('\n'))},
-        {QStringLiteral("replacesManual"), preview_->replacesManual},
-        {QStringLiteral("confirmationRequired"), preview_->state == Transition::ConfirmationRequired}};
+    return choices_.view(ChoicePreviewFlow::Scope::Choice);
 }
 
 bool ApplicationController::commandResult(Transition result)
@@ -497,209 +420,47 @@ bool ApplicationController::commandResult(Transition result)
 bool ApplicationController::previewChoice(const QString &fileId, const QString &revision,
                                          const QString &target, const QString &action)
 {
-    cancelChoice();
-    const auto *file = files_.file(fileId.toStdString());
-    const auto expected = revisionId(revision);
-    if (!file || !expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
-    if (files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id())
-        || editor_.composing()) return commandResult(Transition::Blocked);
-    ChoiceAction kind;
-    if (action == QLatin1String("accept")) kind = ChoiceAction::Accept;
-    else if (action == QLatin1String("ignore")) kind = ChoiceAction::Ignore;
-    else if (action == QLatin1String("resolve")) kind = ChoiceAction::ResolveUsingSide;
-    else if (action == QLatin1String("left-first")) kind = ChoiceAction::CombineLeftFirst;
-    else if (action == QLatin1String("right-first")) kind = ChoiceAction::CombineRightFirst;
-    else return commandResult(Transition::InvalidAnchor);
-    auto preview = branch_truce::previewChoice(*file, *expected, target.toStdString(), kind);
-    commandMessage_ = text(preview.detail);
-    if (preview.state != Transition::Applied && preview.state != Transition::ConfirmationRequired) {
-        Q_EMIT commandChanged();
-        return false;
-    }
-    preview_ = std::move(preview);
-    previewFileId_ = fileId;
-    Q_EMIT commandChanged();
-    return true;
+    return choices_.preview(ChoicePreviewFlow::Scope::Choice, fileId, revisionId(revision), action, target);
 }
 
 bool ApplicationController::applyChoice(bool confirmReplacement)
 {
-    if (!preview_ || previewFileId_ != selectedFileId_) return commandResult(Transition::StaleRevision);
-    const auto preview = *preview_;
-    const auto id = previewFileId_;
-    if (editor_.composing()) return commandResult(Transition::Blocked);
-    const auto result = files_.applyChoice(id.toStdString(), preview, confirmReplacement);
-    if (result != Transition::ConfirmationRequired) { preview_.reset(); previewFileId_.clear(); }
-    return commandResult(result);
+    return choices_.apply(ChoicePreviewFlow::Scope::Choice, confirmReplacement);
 }
 
 QVariantMap ApplicationController::nonConflictingPreview() const
 {
-    if (!nonConflictingPreview_) return {};
-    const auto &preview = *nonConflictingPreview_;
-    const auto *file = files_.file(previewFileId_.toStdString());
-    if (!file || !file->snapshots()) return {};
-    QVariantList changes;
-    for (const auto &change : preview.changes) {
-        QStringList scopes;
-        for (const auto &source : change.sources) {
-            const auto &captured = source.side == SourceSide::Stage2 ? file->snapshots()->stage2 : file->snapshots()->stage3;
-            const auto &value = captured->worktree.utf8;
-            const auto line = [&](std::size_t offset) {
-                return 1 + std::count(value.begin(), value.begin() + static_cast<std::ptrdiff_t>(offset), '\n');
-            };
-            const auto side = source.side == SourceSide::Stage2 ? tr("Left") : tr("Right");
-            scopes.push_back(source.range.begin == source.range.end
-                ? tr("%1 deletion at line %2 · %3").arg(side).arg(line(source.range.begin)).arg(text(captured->label))
-                : tr("%1 lines %2–%3 · %4").arg(side).arg(line(source.range.begin)).arg(line(source.range.end - 1))
-                    .arg(text(captured->label)));
-        }
-        changes.push_back(QVariantMap{{QStringLiteral("scope"), scopes.join(QLatin1Char('\n'))},
-            {QStringLiteral("before"), text(change.before)}, {QStringLiteral("replacement"), text(change.replacement)}});
-    }
-    return {{QStringLiteral("path"), displayPath(previewFileId_)},
-        {QStringLiteral("scope"), preview.scope == NonConflictingScope::Left ? tr("Left")
-            : preview.scope == NonConflictingScope::Right ? tr("Right") : tr("Left and Right")},
-        {QStringLiteral("detail"), text(preview.detail)}, {QStringLiteral("changes"), changes},
-        {QStringLiteral("summary"), tr("%1 eligible changes · %2 other non-conflicting changes skipped")
-            .arg(preview.changes.size()).arg(preview.skipped)}};
+    return choices_.view(ChoicePreviewFlow::Scope::NonConflicting);
 }
 
 bool ApplicationController::previewNonConflicting(const QString &fileId, const QString &revision, const QString &scope)
 {
-    cancelChoice();
-    const auto *file = files_.file(fileId.toStdString());
-    const auto expected = revisionId(revision);
-    if (!file || !expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
-    if (files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id())
-        || editor_.composing()) return commandResult(Transition::Blocked);
-    NonConflictingScope kind;
-    if (scope == QLatin1String("left")) kind = NonConflictingScope::Left;
-    else if (scope == QLatin1String("right")) kind = NonConflictingScope::Right;
-    else if (scope == QLatin1String("both")) kind = NonConflictingScope::Both;
-    else return commandResult(Transition::InvalidAnchor);
-    auto preview = branch_truce::previewNonConflicting(*file, *expected, kind);
-    commandMessage_ = preview.state == Transition::NoChange ? tr("No eligible non-conflicting changes. ") : QString{};
-    commandMessage_ += text(preview.detail);
-    if (preview.state != Transition::ConfirmationRequired) {
-        Q_EMIT commandChanged();
-        return false;
-    }
-    nonConflictingPreview_ = std::move(preview);
-    previewFileId_ = fileId;
-    Q_EMIT commandChanged();
-    return true;
+    return choices_.preview(ChoicePreviewFlow::Scope::NonConflicting, fileId, revisionId(revision), scope);
 }
 
 bool ApplicationController::applyNonConflicting()
 {
-    if (!nonConflictingPreview_ || previewFileId_ != selectedFileId_) return commandResult(Transition::StaleRevision);
-    if (editor_.composing()) return commandResult(Transition::Blocked);
-    const auto preview = *nonConflictingPreview_;
-    const auto id = previewFileId_;
-    const auto result = files_.applyNonConflicting(id.toStdString(), preview, true);
-    nonConflictingPreview_.reset();
-    previewFileId_.clear();
-    return commandResult(result);
+    return choices_.apply(ChoicePreviewFlow::Scope::NonConflicting, true);
 }
 
 QVariantMap ApplicationController::wholeFilePreview() const
 {
-    if (!wholeFilePreview_) return {};
-    const auto &preview = *wholeFilePreview_;
-    const auto *file = files_.file(previewFileId_.toStdString());
-    if (!file || !file->snapshots()) return {};
-    const auto &captured = *file->snapshots();
-    const auto &selected = preview.side == SourceSide::Stage2 ? captured.stage2 : captured.stage3;
-    if (!selected || captured.provenance.sessionId != preview.origin.sessionId
-        || selected->objectId != preview.origin.sourceObjectId) return {};
-    const auto rangeLabel = [&](const QString &label, const std::string &value, ByteRange range) {
-        const auto line = [&](std::size_t offset) {
-            return 1 + std::count(value.begin(), value.begin() + static_cast<std::ptrdiff_t>(offset), '\n');
-        };
-        return range.begin == range.end ? tr("%1, empty scope at line %2").arg(label).arg(line(range.begin))
-            : tr("%1, lines %2–%3").arg(label).arg(line(range.begin)).arg(line(range.end - 1));
-    };
-    const auto decisionLabel = [&](const Decision &decision) {
-        auto label = decision.value == DecisionValue::Accepted ? tr("accepted")
-            : decision.value == DecisionValue::Ignored ? tr("ignored") : tr("undecided");
-        if (decision.order) label += tr(" · order %1").arg(*decision.order);
-        return label;
-    };
-    QVariantList contributions;
-    for (const auto &contribution : preview.contributions) {
-        const auto &source = contribution.source.side == SourceSide::Stage2 ? captured.stage2 : captured.stage3;
-        const auto &value = source->worktree.utf8;
-        contributions.push_back(QVariantMap{
-            {QStringLiteral("scope"), rangeLabel(contribution.source.side == SourceSide::Stage2 ? tr("Left") : tr("Right"),
-                value, contribution.source.range) + QStringLiteral(" · ") + text(source->label)},
-            {QStringLiteral("sourceText"), text(value.substr(contribution.source.range.begin,
-                contribution.source.range.end - contribution.source.range.begin))},
-            {QStringLiteral("beforeState"), decisionLabel(contribution.before)},
-            {QStringLiteral("afterState"), decisionLabel(contribution.after)}});
-    }
-    QVariantList differences;
-    for (const auto &passage : preview.differences) {
-        differences.push_back(QVariantMap{
-            {QStringLiteral("scope"), rangeLabel(tr("Current result"), preview.before, passage.result)
-                + QStringLiteral(" → ") + rangeLabel(tr("Selected source"), preview.replacement, passage.source)},
-            {QStringLiteral("before"), text(preview.before.substr(passage.result.begin, passage.result.end - passage.result.begin))},
-            {QStringLiteral("replacement"), text(preview.replacement.substr(passage.source.begin, passage.source.end - passage.source.begin))}});
-    }
-    return {{QStringLiteral("path"), displayPath(previewFileId_)},
-        {QStringLiteral("side"), preview.side == SourceSide::Stage2 ? tr("Left") : tr("Right")},
-        {QStringLiteral("source"), text(selected->label) + QStringLiteral("\n") + text(selected->objectId)},
-        {QStringLiteral("before"), text(preview.before)}, {QStringLiteral("replacement"), text(preview.replacement)},
-        {QStringLiteral("detail"), text(preview.detail)}, {QStringLiteral("contributions"), contributions},
-        {QStringLiteral("differences"), differences},
-        {QStringLiteral("retainedDecisions"), preview.retainedDecisions
-            ? tr("%1 earlier decisions without a source scope are retained.").arg(preview.retainedDecisions) : QString{}}};
+    return choices_.view(ChoicePreviewFlow::Scope::WholeFile);
 }
 
 bool ApplicationController::previewWholeFile(const QString &fileId, const QString &revision, const QString &side)
 {
-    cancelChoice();
-    const auto *file = files_.file(fileId.toStdString());
-    const auto expected = revisionId(revision);
-    if (!file || !expected || fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
-    if (files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id())
-        || editor_.composing()) return commandResult(Transition::Blocked);
-    SourceSide source;
-    if (side == QLatin1String("left")) source = SourceSide::Stage2;
-    else if (side == QLatin1String("right")) source = SourceSide::Stage3;
-    else return commandResult(Transition::InvalidAnchor);
-    auto preview = branch_truce::previewWholeFile(*file, *expected, source);
-    commandMessage_ = text(preview.detail);
-    if (preview.state != Transition::ConfirmationRequired) {
-        Q_EMIT commandChanged();
-        return false;
-    }
-    wholeFilePreview_ = std::move(preview);
-    previewFileId_ = fileId;
-    Q_EMIT commandChanged();
-    return true;
+    return choices_.preview(ChoicePreviewFlow::Scope::WholeFile, fileId, revisionId(revision), side);
 }
 
 bool ApplicationController::applyWholeFile()
 {
-    if (!wholeFilePreview_ || previewFileId_ != selectedFileId_) return commandResult(Transition::StaleRevision);
-    if (editor_.composing()) return commandResult(Transition::Blocked);
-    const auto preview = *wholeFilePreview_;
-    const auto id = previewFileId_;
-    const auto result = files_.applyWholeFile(id.toStdString(), preview, true);
-    wholeFilePreview_.reset();
-    previewFileId_.clear();
-    return commandResult(result);
+    return choices_.apply(ChoicePreviewFlow::Scope::WholeFile, true);
 }
 
 void ApplicationController::cancelChoice()
 {
-    preview_.reset();
-    nonConflictingPreview_.reset();
-    wholeFilePreview_.reset();
-    previewFileId_.clear();
-    commandMessage_.clear();
-    Q_EMIT commandChanged();
+    choices_.cancel();
 }
 
 bool ApplicationController::editResult(const QString &fileId, const QString &revision,
