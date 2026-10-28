@@ -6,9 +6,9 @@
 #
 # The in-container half of tools/inspect-artifact.sh (--in-container) is not run:
 # it reads /inspect and writes /tmp at fixed paths, so it needs the target container.
-# Its private Qt ABI and document-save icon decisions are tested on their own by
-# sourcing the script and feeding synthetic objdump -T output, Depends fields and
-# appearance records to its functions.
+# Its private Qt ABI, document-save icon and application icon decisions are tested
+# on their own by sourcing the script and feeding synthetic objdump -T output,
+# Depends fields, appearance records, icon files and index.theme files to its functions.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 work=$(mktemp -d "${TMPDIR:-/tmp}/bt-artifact-tooling.XXXXXXXX")
@@ -114,6 +114,9 @@ chmod +x "$work/bin/engine"
 export STUB_STATE=$work/state
 
 build=$root/tools/build-artifact.sh
+app_id=com.canpicasoft.branch-truce
+hicolor_pack=$root/assets/branding/platform/linux/hicolor
+icon_paths=$(printf '%s\n' "scalable/apps/$app_id.svg" 16x16 22x22 24x24 32x32 | sed "2,\$s|\$|/apps/$app_id.png|")
 # The release version build-artifact.sh reads from package.json and passes to debian/rules.
 release=$(sed -n 's/^  "version": "\([^"]*\)",\{0,1\}$/\1/p' "$root/package.json")
 [[ "$release" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "package.json version '$release'"
@@ -191,6 +194,21 @@ build_succeeds() {
     done
     ! grep -qE '^\./(tests|tools|docs|build)/' "$work/state/snapshot" || fail "$target snapshot has paths outside the build inputs"
     pass
+    # It carries the branding pack's Linux icons and SVG exports, and no other part of the pack.
+    local branding
+    branding=$(cd -- "$root" && git ls-files -- assets/branding/platform/linux assets/branding/svg | sed 's|^|./|')
+    for member in "./assets/branding/platform/linux/hicolor/scalable/apps/$app_id.svg" \
+        "./assets/branding/platform/linux/hicolor/16x16/apps/$app_id.png" \
+        ./assets/branding/svg/for-light/branch-truce-symbol.svg; do
+        grep -qxF -- "$member" <<<"$branding" || fail "branding pack lacks $member"
+        pass
+    done
+    [[ "$(grep '^\./assets/' "$work/state/snapshot")" == "$branding" ]] \
+        || fail "$target snapshot branding files differ from assets/branding/platform/linux and svg"
+    pass
+    # The old packaging icon is gone, so the pack is the only source of the application icon.
+    ! grep -qE '^\./packaging/.*\.(svg|png)$' "$work/state/snapshot" || fail "$target snapshot has an icon under packaging/"
+    pass
     # control declares debhelper-compat, so the package build must not see debian/compat.
     ! grep -qxF ./debian/compat "$work/state/snapshot" || fail "$target snapshot keeps debian/compat"
     pass
@@ -212,7 +230,8 @@ build_succeeds() {
     pass
     [[ "$(sed -n 9p "$manifest")" =~ ^source_changed_paths$'\t'[0-9]+$ ]] || fail "$target changed paths"
     pass
-    [[ "$(sed -n 10p "$manifest")" == "source_date_epoch	$(git -C "$root" log -1 --format=%at -- CMakeLists.txt cmake src packaging)" ]] \
+    [[ "$(sed -n 10p "$manifest")" == "source_date_epoch	$(git -C "$root" log -1 --format=%at -- CMakeLists.txt cmake src packaging \
+        assets/branding/platform/linux assets/branding/svg)" ]] \
         || fail "$target source date epoch"
     pass
     [[ "$(sed -n '11,$p' "$manifest")" == "os	Stub OS	stub" ]] || fail "$target manifest lacks the container baseline"
@@ -298,6 +317,14 @@ cmp -s -- "$inspect" "$work/state/inspect/inspect-artifact.sh" || fail "containe
 pass
 cmp -s -- "$root/tools/artifact-baseline.sh" "$work/state/inspect/artifact-baseline.sh" || fail "baseline script differs"
 pass
+# The container gets the branding pack's icons to compare the installed ones with, and nothing else there.
+[[ "$(cd -- "$work/state/inspect/icons" && find . -type f -printf '%P\n' | LC_ALL=C sort)" == "$(LC_ALL=C sort <<<"$icon_paths")" ]] \
+    || fail "inspection volume icons: $(cd -- "$work/state/inspect/icons" && find . -type f -printf '%P ')"
+pass
+while IFS= read -r icon; do
+    cmp -s -- "$hicolor_pack/$icon" "$work/state/inspect/icons/$icon" || fail "inspection icon $icon differs from the pack"
+    pass
+done <<<"$icon_paths"
 imports=$work/state/inspect/imports.txt
 [[ -s "$imports" ]] && LC_ALL=C sort -u -c "$imports" || fail "imports.txt is empty or not sorted and unique"
 pass
@@ -345,7 +372,8 @@ expect_only_output() {
 
 # Sourcing defines the functions and runs neither host_main nor container_main.
 expect_sourced_only() {
-    sourced 'declare -F host_main container_main symbol_tags check_private_abi check_icon_resolves build_appearance_probe >/dev/null; echo sourced' "$@"
+    sourced 'declare -F host_main container_main symbol_tags check_private_abi check_icon_resolves build_appearance_probe \
+        icon_paths png_size check_app_icon check_icon_lookup >/dev/null; echo sourced' "$@"
     expect_status 0
     expect_only_output sourced
     [[ ! -s "$work/state/engine.log" ]] || fail "sourcing with $(quoted "$@") ran the container engine"
@@ -361,6 +389,8 @@ expect_output 'tags=$(objdump -T "$binary" | symbol_tags)'
 expect_output 'check_private_abi "$tags" "$depends"'
 expect_output 'check_icon_resolves "$appearance"'
 expect_output 'LD_PRELOAD=/inspect/probe/lib/libappearance_probe.so'
+expect_output 'check_app_icon "$hicolor" /inspect/icons "$relative"'
+expect_output 'check_icon_lookup "$hicolor/index.theme" "$relative"'
 
 objdump_head=$'\n/usr/bin/branch-truce:     file format elf64-x86-64\n\nDYNAMIC SYMBOL TABLE:'
 undefined() { printf '0000000000000000      DF *UND*\t0000000000000000 (%s) %s\n' "$1" "$2"; }
@@ -430,6 +460,114 @@ expect_only_output $'FAIL QIcon::fromTheme(document-save) is null in the install
 icon_check ''
 expect_status 0
 expect_only_output $'FAIL no BRANCH_TRUCE_APPEARANCE record from the installed application\nfailures=1'
+
+# --- tools/inspect-artifact.sh sourced, for the application icon checks
+# icon_paths lists the scalable symbol and the small drawing's sizes.
+sourced 'icon_paths'
+expect_status 0
+expect_only_output "$icon_paths"
+
+# png_size reads the IHDR chunk, and fails for an SVG, a truncated PNG or a missing file.
+for size in 16 22 24 32; do
+    sourced 'png_size "$1"' "$hicolor_pack/${size}x${size}/apps/$app_id.png"
+    expect_status 0
+    expect_only_output "${size}x${size}"
+done
+sourced 'png_size "$1"' "$hicolor_pack/512x512/apps/$app_id.png"
+expect_status 0
+expect_only_output 512x512
+head -c 20 -- "$hicolor_pack/16x16/apps/$app_id.png" > "$work/truncated.png"
+for file in "$hicolor_pack/scalable/apps/$app_id.svg" "$work/truncated.png" "$work/missing.png"; do
+    sourced 'png_size "$1"' "$file"
+    [[ "$status" != 0 ]] || fail "png_size accepted $file"
+    pass
+done
+
+# check_app_icon passes only the pack's own file at its directory's size.
+pack_copy() { mkdir -p -- "$1/${2%/*}" && cp -- "$hicolor_pack/$3" "$1/$2"; }
+while IFS= read -r icon; do
+    pack_copy "$work/expected" "$icon" "$icon"
+    pack_copy "$work/installed" "$icon" "$icon"
+done <<<"$icon_paths"
+app_icon() { sourced 'check_app_icon "$1" "$2" "$3"; echo "failures=$failures"' "$work/installed" "$work/expected" "$1"; }
+app_icon "scalable/apps/$app_id.svg"
+expect_status 0
+expect_only_output $'PASS icon scalable/apps/'"$app_id"$'.svg is the branding pack\'s scalable symbol\nfailures=0'
+app_icon "16x16/apps/$app_id.png"
+expect_status 0
+expect_only_output $'PASS icon 16x16/apps/'"$app_id"$'.png is the branding pack\'s 16x16 PNG\nfailures=0'
+# Another size in the right place fails even when it is the expected file.
+pack_copy "$work/expected" "24x24/apps/$app_id.png" "22x22/apps/$app_id.png"
+pack_copy "$work/installed" "24x24/apps/$app_id.png" "22x22/apps/$app_id.png"
+app_icon "24x24/apps/$app_id.png"
+expect_status 0
+expect_only_output $'FAIL icon 24x24/apps/'"$app_id"$'.png is 22x22, not 24x24\nfailures=1'
+# A file that is not the pack's fails, even at the right size, as does a missing one.
+cp -- "$root/assets/branding/png/for-dark/branch-truce-small-32.png" "$work/installed/32x32/apps/$app_id.png"
+app_icon "32x32/apps/$app_id.png"
+expect_status 0
+expect_only_output $'FAIL icon 32x32/apps/'"$app_id"$'.png differs from the branding pack\nfailures=1'
+rm -- "$work/installed/22x22/apps/$app_id.png"
+app_icon "22x22/apps/$app_id.png"
+expect_status 0
+expect_only_output $'FAIL icon 22x22/apps/'"$app_id"$'.png is not installed\nfailures=1'
+
+# check_icon_lookup passes a directory index.theme lists at the icon's size and type.
+cat > "$work/index.theme" <<'THEME'
+[Icon Theme]
+Name=Hicolor
+Directories=16x16/apps,22x22/apps,scalable/apps,32x32/apps,48x48/apps
+
+[16x16/apps]
+Size=16
+Context=Applications
+Type=Threshold
+
+[22x22/apps]
+Size=22
+Type=Fixed
+
+[24x24/apps]
+Size=24
+Type=Threshold
+
+[32x32/apps]
+Size=48
+Type=Threshold
+
+[48x48/apps]
+Size=48
+
+[scalable/apps]
+MinSize=1
+Size=128
+MaxSize=256
+Type=Scalable
+THEME
+icon_lookup() { sourced 'check_icon_lookup "$1" "$2"; echo "failures=$failures"' "$work/index.theme" "$1"; }
+icon_lookup "16x16/apps/$app_id.png"
+expect_status 0
+expect_only_output $'PASS index.theme declares 16x16/apps (16 Threshold)\nfailures=0'
+icon_lookup "22x22/apps/$app_id.png"
+expect_status 0
+expect_only_output $'PASS index.theme declares 22x22/apps (22 Fixed)\nfailures=0'
+# A section without Type is Threshold, the specification's default.
+icon_lookup "48x48/apps/$app_id.png"
+expect_status 0
+expect_only_output $'PASS index.theme declares 48x48/apps (48 Threshold)\nfailures=0'
+icon_lookup "scalable/apps/$app_id.svg"
+expect_status 0
+expect_only_output $'PASS index.theme declares scalable/apps (128 Scalable)\nfailures=0'
+# A section missing from Directories is never searched; a wrong Size is not this size.
+icon_lookup "24x24/apps/$app_id.png"
+expect_status 0
+expect_only_output $'FAIL index.theme does not declare 24x24/apps as 24 Fixed or Threshold (not listed)\nfailures=1'
+icon_lookup "32x32/apps/$app_id.png"
+expect_status 0
+expect_only_output $'FAIL index.theme does not declare 32x32/apps as 32 Fixed or Threshold (48 Threshold)\nfailures=1'
+icon_lookup "64x64/apps/$app_id.png"
+expect_status 0
+expect_only_output $'FAIL index.theme does not declare 64x64/apps as 64 Fixed or Threshold (not listed)\nfailures=1'
 expect_no_fixture
 
 printf '%s artifact tooling assertions passed\n' "$assertions"

@@ -95,6 +95,10 @@ expected=(
     "bin/branch-truce"
     "share/applications/$app_id.desktop"
     "share/icons/hicolor/scalable/apps/$app_id.svg"
+    "share/icons/hicolor/16x16/apps/$app_id.png"
+    "share/icons/hicolor/22x22/apps/$app_id.png"
+    "share/icons/hicolor/24x24/apps/$app_id.png"
+    "share/icons/hicolor/32x32/apps/$app_id.png"
     "share/metainfo/$app_id.metainfo.xml"
 )
 deployed=$(cd -- "$prefix" && find . \( -type f -o -type l \) -printf '%P\n' | LC_ALL=C sort)

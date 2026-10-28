@@ -51,7 +51,8 @@ is also the desktop entry's icon name. For example:
   platform/linux/hicolor/48x48/apps/com.canpicasoft.branch-truce.png
   platform/linux/hicolor/scalable/apps/com.canpicasoft.branch-truce.svg
   platform/linux/hicolor/symbolic/apps/com.canpicasoft.branch-truce-symbolic.svg
-This pack does not install or replace files in the application.
+packaging/CMakeLists.txt installs the scalable icon and the 16, 22, 24 and
+32 px PNGs from this directory, so edit them here and rebuild, never in place.
 
 Web: SVG favicon, a multi-size ICO containing 16/32/48 px, matching PNG favicons,
 180 px Apple touch icon, 192/512 px regular and maskable app icons, webmanifest,

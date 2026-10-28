@@ -42,7 +42,15 @@ app_id="com.canpicasoft.branch-truce"
 binary_file="/usr/bin/branch-truce"
 desktop_file="/usr/share/applications/$app_id.desktop"
 metainfo_file="/usr/share/metainfo/$app_id.metainfo.xml"
-icon_file="/usr/share/icons/hicolor/scalable/apps/$app_id.svg"
+icon_theme="/usr/share/icons/hicolor"
+# The application icons, relative to the theme: the scalable symbol and the
+# small drawing's PNG sizes. They must equal the branding pack's exports.
+icon_files="scalable/apps/$app_id.svg
+16x16/apps/$app_id.png
+22x22/apps/$app_id.png
+24x24/apps/$app_id.png
+32x32/apps/$app_id.png"
+branding_icons="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/assets/branding/platform/linux/hicolor"
 license_file="/usr/share/doc/branch-truce/copyright"
 expected_arch="amd64"
 
@@ -59,7 +67,7 @@ expected_recommends="plasma-integration"
 expected_files="$binary_file
 $desktop_file
 $metainfo_file
-$icon_file
+$(sed "s|^|$icon_theme/|" <<<"$icon_files")
 $license_file"
 
 failures=0
@@ -101,6 +109,27 @@ target_versions() {
 }
 verify_installed() {
     dpkg --verify branch-truce
+}
+# Prints WIDTHxHEIGHT from the IHDR chunk of a PNG file and fails for anything else.
+png_size() {
+    local -a bytes
+    [ "$(od -An -tx1 -N16 -- "$1" | tr -d ' \n')" = 89504e470d0a1a0a0000000d49484452 ] || return 1
+    read -r -a bytes <<<"$(od -An -tu1 -j16 -N8 -- "$1" | tr '\n' ' ')"
+    [ "${#bytes[@]}" -eq 8 ] || return 1
+    printf '%dx%d\n' $(((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3])) \
+        $(((bytes[4] << 24) | (bytes[5] << 16) | (bytes[6] << 8) | bytes[7]))
+}
+# Prints "<Size> <Type>" for DIR when the theme's index.theme lists it, else nothing.
+theme_dir() {
+    awk -v dir="$1" '
+        /^\[.*\]$/ { section = substr($0, 2, length($0) - 2); next }
+        section == "Icon Theme" && /^Directories=/ {
+            n = split(substr($0, 13), names, ",")
+            for (i = 1; i <= n; i++) if (names[i] == dir) listed = 1
+        }
+        section == dir && /^Size=/ { size = substr($0, 6) }
+        section == dir && /^Type=/ { type = substr($0, 6) }
+        END { if (listed) print size " " (type == "" ? "Threshold" : type) }' "$icon_theme/index.theme"
 }
 
 inspect() {
@@ -149,6 +178,7 @@ check_installed() {
     for path in $expected_files; do
         expect "installed $path" "missing installed $path" [ -f "$path" ]
     done
+    check_icons
 
     ldd_out="$(ldd "$binary_file" 2>&1)" || ldd_status=$?
     if [ "$ldd_status" -ne 0 ]; then
@@ -214,9 +244,37 @@ check_loads() {
     fi
 }
 
+# Each installed icon is the branding pack's export, each PNG has its
+# directory's size, and hicolor's index.theme declares each icon directory at
+# that size, so a theme lookup finds the icon in the installed files alone.
+check_icons() {
+    local rel dir size got declared
+    for rel in $icon_files; do
+        expect "icon $rel matches the branding pack" "icon $rel differs from $branding_icons/$rel" \
+            cmp -s "$branding_icons/$rel" "$icon_theme/$rel"
+        dir="${rel%/*}"
+        got="$(theme_dir "$dir")"
+        case "$rel" in
+            scalable/*)
+                expect "index.theme declares $dir as Scalable" "index.theme declares $dir as '$got'" \
+                    [ "${got#* }" = Scalable ] ;;
+            *)
+                size="${dir%%/*}"
+                case "$got" in
+                    "${size%%x*} Threshold"|"${size%%x*} Fixed") declared=true ;;
+                    *) declared=false ;;
+                esac
+                expect "index.theme declares $dir at ${size%%x*} px" "index.theme declares $dir as '$got'" \
+                    "$declared"
+                got="$(png_size "$icon_theme/$rel")" || got="not a PNG"
+                expect "icon $rel is $size" "icon $rel is $got, expected $size" [ "$got" = "$size" ] ;;
+        esac
+    done
+}
+
 check_removed() {
     expect "branch-truce is not installed" "branch-truce is still installed" [ -z "$(installed_version)" ]
-    for path in "$binary_file" "$desktop_file" "$metainfo_file" "$icon_file" "$license_file"; do
+    for path in $expected_files; do
         expect "$path is gone" "$path is left behind" [ ! -e "$path" ]
     done
     if (cd "$fixture_home" && sha256sum --quiet -c "$fixture_sums"); then

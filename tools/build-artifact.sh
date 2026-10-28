@@ -9,8 +9,9 @@
 # The image build needs network access to the target archive. The package
 # build itself runs with --network none in a throwaway container. Nothing is
 # installed on the host. The checkout is only read: its tracked and untracked
-# non-ignored CMakeLists.txt, cmake/, src/ and packaging/ files are copied to a
-# fixture under ${TMPDIR:-/tmp}, which is removed on exit.
+# non-ignored CMakeLists.txt, cmake/, src/ and packaging/ files, and the
+# branding pack's assets/branding/platform/linux/ and assets/branding/svg/
+# exports, are copied to a fixture under ${TMPDIR:-/tmp}, which is removed on exit.
 #
 # DIR receives:
 #   branch-truce_<version>_amd64.deb   <version> is <release>+<base>, <release>
@@ -80,10 +81,12 @@ for stage in target build; do
 done
 
 echo "== Source snapshot"
+# The build inputs. The branding exports hold the installed application icons
+# and the vector artwork the executable can embed.
+inputs=(CMakeLists.txt cmake src packaging assets/branding/platform/linux assets/branding/svg)
 tree=$fixture/work/branch-truce-$version
 mkdir -p -- "$tree"
-(cd -- "$root" && git ls-files -z --cached --others --exclude-standard -- \
-    CMakeLists.txt cmake src packaging) |
+(cd -- "$root" && git ls-files -z --cached --others --exclude-standard -- "${inputs[@]}") |
     while IFS= read -r -d '' file; do
         if [[ -e "$root/$file" ]]; then printf '%s\0' "$file"; fi
     done |
@@ -96,7 +99,7 @@ rm -f -- "$tree/debian/compat"
 # The changelog date fixes SOURCE_DATE_EPOCH for dpkg-buildpackage. It is the
 # author time of the last commit that changed the copied paths, so commits
 # elsewhere, or amending one, leave the artifact unchanged.
-epoch=$(git -C "$root" log -1 --format=%at -- CMakeLists.txt cmake src packaging)
+epoch=$(git -C "$root" log -1 --format=%at -- "${inputs[@]}")
 cat > "$tree/debian/changelog" <<EOF
 branch-truce ($version) $suite; urgency=medium
 
@@ -106,7 +109,7 @@ branch-truce ($version) $suite; urgency=medium
 EOF
 source_digest=$(tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner \
     --format=gnu -C "$fixture/work" -cf - "branch-truce-$version" | sha256sum | cut -d' ' -f1)
-dirty=$(git -C "$root" status --porcelain -- CMakeLists.txt cmake src packaging | wc -l)
+dirty=$(git -C "$root" status --porcelain -- "${inputs[@]}" | wc -l)
 echo "source sha256 $source_digest; HEAD $(git -C "$root" rev-parse HEAD); changed paths $dirty"
 
 echo "== Package build (no network)"

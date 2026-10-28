@@ -206,13 +206,20 @@ conflict.
 
 ## Install
 
-A desktop build installs four files under `CMAKE_INSTALL_PREFIX`, placed by
+A desktop build installs eight files under `CMAKE_INSTALL_PREFIX`, placed by
 ECM's KDE install directories:
 
 - `bin/branch-truce`, the GUI. With `--mergetool` it is the blocking launcher.
 - `share/applications/com.canpicasoft.branch-truce.desktop`
 - `share/metainfo/com.canpicasoft.branch-truce.metainfo.xml`
 - `share/icons/hicolor/scalable/apps/com.canpicasoft.branch-truce.svg`
+- `share/icons/hicolor/<size>/apps/com.canpicasoft.branch-truce.png` for
+  `16x16`, `22x22`, `24x24` and `32x32`
+
+The icons are copied from the branding pack in
+`assets/branding/platform/linux/hicolor/`: the scalable file is the detailed
+symbol, and the PNGs are the simpler drawing made for 16 to 32 px. Regenerate
+the pack with `assets/branding/source/rebuild.py`; do not edit the icons by hand.
 
 The QML module is compiled to QML bytecode inside the executable, not to C++
 ([target-platforms.md](target-platforms.md#qml-bytecode-instead-of-compiled-c)
@@ -243,7 +250,7 @@ The script copies the checkout's tracked and untracked non-ignored files into
 a fixture under `${TMPDIR:-/tmp}`, builds and installs a Release prefix, and
 deletes the copied sources and build tree before launching anything. It then:
 
-1. Compares the deployed file list with the four files above and runs
+1. Compares the deployed file list with the eight files above and runs
    `desktop-file-validate` and `appstreamcli validate --no-net`.
 2. Runs the installed `branch-truce --version` and
    `branch-truce --smoke-test <repo>` on a disposable merge conflict.

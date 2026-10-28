@@ -47,13 +47,16 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 tree="$work/branch-truce-$native_version"
-mkdir -p "$tree/packaging"
+mkdir -p "$tree/packaging" "$tree/assets/branding/platform"
 cp -a "$root_dir/CMakeLists.txt" "$root_dir/cmake" "$root_dir/src" "$tree/"
 cp -a "$packaging_dir/CMakeLists.txt" \
     "$packaging_dir/com.canpicasoft.branch-truce.desktop" \
     "$packaging_dir/com.canpicasoft.branch-truce.metainfo.xml" \
-    "$packaging_dir/com.canpicasoft.branch-truce.svg" \
     "$tree/packaging/"
+# The branding exports hold the installed application icons and the vector
+# artwork the executable can embed. tools/build-artifact.sh copies the same.
+cp -a "$root_dir/assets/branding/platform/linux" "$tree/assets/branding/platform/"
+cp -a "$root_dir/assets/branding/svg" "$tree/assets/branding/"
 cp -a "$packaging_dir/debian" "$tree/debian"
 rm -f "$tree/debian/compat"
 chmod +x "$tree/debian/rules"

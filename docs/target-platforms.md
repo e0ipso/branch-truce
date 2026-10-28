@@ -196,8 +196,9 @@ The images stay for reuse. Image builds fetch from the archives; set
 `BRANCH_TRUCE_REFRESH` to a new value to fetch again instead of reusing
 cached layers. Remove the images with `docker image rm`.
 
-The script copies the checkout's `CMakeLists.txt`, `cmake/`, `src/` and
-`packaging/` (tracked and untracked, not ignored) into a temporary directory and
+The script copies the checkout's `CMakeLists.txt`, `cmake/`, `src/`,
+`packaging/`, `assets/branding/platform/linux/` and `assets/branding/svg/`
+(tracked and untracked, not ignored) into a temporary directory and
 runs `dpkg-buildpackage -b` there with `--network none` and `parallel=2`. The
 build path is always `/work/branch-truce-<version>`, and `SOURCE_DATE_EPOCH`
 is the author time of the last commit that changed those paths. The output directory gets the `.deb`, its
@@ -209,7 +210,7 @@ the number of changed source paths and the toolchain list above.
 `inspect-artifact.sh` starts a throwaway container from the `-target` image,
 which needs network access for the package lists, and checks:
 
-1. Metadata and contents: the version suffix, `amd64`, exactly the four
+1. Metadata and contents: the version suffix, `amd64`, exactly the eight
    installed files from [build.md](build.md#install) plus the Debian
    `copyright` and `changelog.gz`, and no maintainer scripts.
 2. `apt-get install --no-install-recommends` of the `.deb`. The packages it
@@ -220,7 +221,11 @@ which needs network access for the package lists, and checks:
    pins a Qt private ABI to an exact version.
 4. Each QML module imported by `src/ui` has a `qmldir` from a package named in
    `Depends`.
-5. `desktop-file-validate` and `appstreamcli validate --no-net`.
+5. `desktop-file-validate` and `appstreamcli validate --no-net`. Each
+   installed application icon equals the branding pack's file byte for byte,
+   each PNG has its directory's pixel size, and the `hicolor` theme's
+   `index.theme` declares every icon directory at that size, so a theme lookup
+   finds the icon in the installed files alone.
 6. The installed `branch-truce --version` and `--smoke-test` on a disposable
    merge conflict, offscreen with software rendering. This loads the compiled
    QML, Qt Quick Controls and Kirigami from the installed closure only.

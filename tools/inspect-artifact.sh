@@ -21,6 +21,9 @@
 #   4. QML closure: each module src/ui imports has a qmldir whose package is
 #      in Depends.
 #   5. desktop-file-validate and appstreamcli validate --no-net.
+#      The application icons are the branding pack's exports byte for byte, each
+#      PNG has its directory's size, and hicolor's index.theme declares every
+#      icon directory, so a theme lookup finds the icon in installed files only.
 #   6. The installed branch-truce runs --version and --smoke-test on a
 #      disposable merge conflict, offscreen. This loads the embedded QML,
 #      Kirigami and Qt Quick Controls from the installed closure.
@@ -39,6 +42,9 @@ set -euo pipefail
 
 app_id=com.canpicasoft.branch-truce
 qml_root=/usr/lib/x86_64-linux-gnu/qt6/qml
+hicolor=/usr/share/icons/hicolor
+# The small drawing's PNG sizes; larger sizes use the scalable symbol.
+icon_sizes=(16 22 24 32)
 
 usage() { echo "Usage: $0 --target kubuntu|tuxedo --package DEB [--output DIR]" >&2; exit 2; }
 
@@ -76,6 +82,12 @@ host_main() {
     # The QML modules the application imports, from the sources it was built from.
     sed -n 's/^import \([A-Za-z][A-Za-z0-9.]*\).*/\1/p' "$root"/src/ui/*.qml | LC_ALL=C sort -u > "$fixture/imports.txt"
     cp -- "$root/tools/inspect-artifact.sh" "$root/tools/artifact-baseline.sh" "$fixture/"
+    # The branding pack's icons, which the installed ones must equal.
+    local relative
+    while IFS= read -r relative; do
+        mkdir -p -- "$fixture/icons/${relative%/*}"
+        cp -- "$root/assets/branding/platform/linux/hicolor/$relative" "$fixture/icons/$relative"
+    done < <(icon_paths)
     build_appearance_probe "$engine" "${image%-target}-build" "$root" "$fixture/probe" \
         || { echo "Could not build the appearance probe in ${image%-target}-build; run tools/build-artifact.sh --target $target first" >&2; exit 1; }
 
@@ -129,6 +141,71 @@ check_icon_resolves() {
     fi
 }
 
+# The application icons the package installs, relative to the hicolor theme.
+icon_paths() {
+    local size
+    printf '%s\n' "scalable/apps/$app_id.svg"
+    for size in "${icon_sizes[@]}"; do printf '%s\n' "${size}x${size}/apps/$app_id.png"; done
+}
+
+# Prints WIDTHxHEIGHT from the IHDR chunk of a PNG file and fails for anything else.
+png_size() {
+    local -a bytes
+    [[ "$(od -An -tx1 -N16 -- "$1" | tr -d ' \n')" == 89504e470d0a1a0a0000000d49484452 ]] || return 1
+    read -r -a bytes <<<"$(od -An -tu1 -j16 -N8 -- "$1" | tr '\n' ' ')"
+    ((${#bytes[@]} == 8)) || return 1
+    printf '%dx%d\n' $(((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3])) \
+        $(((bytes[4] << 24) | (bytes[5] << 16) | (bytes[6] << 8) | bytes[7]))
+}
+
+# The icon content decision: the installed THEME/RELATIVE must equal the branding
+# pack's EXPECTED/RELATIVE byte for byte, and a PNG must have its directory's size.
+check_app_icon() {
+    local theme=$1 expected=$2 relative=$3 size got
+    if [[ ! -f "$theme/$relative" ]]; then
+        fail "icon $relative is not installed"
+    elif ! cmp -s -- "$expected/$relative" "$theme/$relative"; then
+        fail "icon $relative differs from the branding pack"
+    elif [[ "$relative" == scalable/* ]]; then
+        pass "icon $relative is the branding pack's scalable symbol"
+    else
+        size=${relative%%/*}
+        got=$(png_size "$theme/$relative") || got="not a PNG"
+        [[ "$got" == "$size" ]] && pass "icon $relative is the branding pack's $size PNG" \
+            || fail "icon $relative is $got, not $size"
+    fi
+}
+
+# The icon lookup decision: a theme lookup searches only the directories INDEX
+# lists, at the Size and Type their sections give. RELATIVE's directory must be
+# listed, as Scalable for an SVG and at its pixel size otherwise.
+check_icon_lookup() {
+    local index=$1 relative=$2 dir declared want
+    dir=${relative%/*}
+    declared=$(awk -v dir="$dir" '
+        /^\[.*\]$/ { section = substr($0, 2, length($0) - 2); next }
+        section == "Icon Theme" && /^Directories=/ {
+            n = split(substr($0, 13), names, ",")
+            for (i = 1; i <= n; i++) if (names[i] == dir) listed = 1
+        }
+        section == dir && /^Size=/ { size = substr($0, 6) }
+        section == dir && /^Type=/ { type = substr($0, 6) }
+        END { if (listed) print size " " (type == "" ? "Threshold" : type) }' "$index")
+    local found=false
+    if [[ "$relative" == scalable/* ]]; then
+        want=Scalable
+        [[ "$declared" == *" Scalable" ]] && found=true
+    else
+        want="${dir%%x*} Fixed or Threshold"
+        [[ "$declared" == "${dir%%x*} Fixed" || "$declared" == "${dir%%x*} Threshold" ]] && found=true
+    fi
+    if $found; then
+        pass "index.theme declares $dir ($declared)"
+    else
+        fail "index.theme does not declare $dir as $want (${declared:-not listed})"
+    fi
+}
+
 # Everything below runs as root inside the disposable target container.
 failures=0
 step() { printf '\n== %s\n' "$*"; }
@@ -176,11 +253,12 @@ container_main() {
     [[ "$arch" == amd64 ]] && pass "architecture amd64" || fail "architecture $arch"
 
     step "Package contents"
-    local files expected controls
+    local files expected controls icons
     files=$(dpkg-deb --fsys-tarfile "$deb" | tar -t | grep -v '/$' | LC_ALL=C sort)
+    mapfile -t icons < <(icon_paths | sed "s|^|.$hicolor/|")
     expected=$(printf '%s\n' ./usr/bin/branch-truce \
         "./usr/share/applications/$app_id.desktop" \
-        "./usr/share/icons/hicolor/scalable/apps/$app_id.svg" \
+        "${icons[@]}" \
         "./usr/share/metainfo/$app_id.metainfo.xml" \
         ./usr/share/doc/branch-truce/changelog.gz ./usr/share/doc/branch-truce/copyright | LC_ALL=C sort)
     printf '%s\n' "$files"
@@ -257,6 +335,13 @@ container_main() {
     desktop-file-validate "/usr/share/applications/$app_id.desktop" && pass "desktop entry" || fail "desktop entry"
     appstreamcli validate --no-net --override=url-homepage-missing=info \
         "/usr/share/metainfo/$app_id.metainfo.xml" && pass "metainfo" || fail "metainfo"
+
+    step "Application icon"
+    local relative
+    while IFS= read -r relative; do
+        check_app_icon "$hicolor" /inspect/icons "$relative"
+        check_icon_lookup "$hicolor/index.theme" "$relative"
+    done < <(icon_paths)
 
     step "Installed application on a disposable merge conflict"
     local home=/tmp/bt-home repo=/tmp/bt-repo smoke record
