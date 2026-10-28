@@ -595,6 +595,14 @@ void waitFor(const std::string &what, const std::function<bool()> &ready, const 
     if (!ready()) throw std::runtime_error("timed out waiting for " + what + ": " + state());
 }
 
+// A loader's startup state, its recovery choices and its detail, for the failure text of a
+// wait on a repository load.
+std::string loaderState(const SessionLoader &loader)
+{
+    return "startup " + loader.startupState().toStdString() + ", "
+        + std::to_string(loader.recoveryChoices().size()) + " recovery choices: " + loader.detail().toStdString();
+}
+
 // Real `git mergetool` over the given paths. This test binary is the launcher: main()
 // runs the real launcher code when Git starts it with --mergetool.
 std::unique_ptr<QProcess> startMergetool(const Repository &repo, const QStringList &paths)
@@ -1618,7 +1626,10 @@ public:
                 Scene one(repo);
                 ApplicationController two;
                 CHECK(two.loader()->openRepository(repo.root));
-                settleFor("second window", [&] { return !two.loader()->opening(); });
+                // The load runs Git and the recovery restore off the GUI thread, so it gets the
+                // deadline of a process, not the layout deadline of settleFor.
+                waitFor("second window", [&] { return !two.loader()->opening(); },
+                        [&] { return loaderState(*two.loader()); });
                 CHECK(two.loader()->startupState() == QStringLiteral("ready"));
                 edit(*one.controller, "first window\n");
                 edit(two, "second window\n");
@@ -1639,9 +1650,9 @@ public:
             }
             const auto repository = repo.snapshot();
             scene.click(("recoveryChoice-" + firstName).toLatin1().constData());
-            settleFor("chosen session restored", [&] {
+            waitFor("chosen session restored", [&] {
                 return !scene.controller->loader()->opening() && scene.controller->loader()->recoveryChoices().isEmpty();
-            });
+            }, [&] { return loaderState(*scene.controller->loader()); });
             CHECK(scene.controller->loader()->startupState() == QStringLiteral("ready"));
             CHECK(scene.controller->files()->recoveryDirectory() == first);
             expectContains(scene.controller->loader()->detail(), secondName + " was set aside, not deleted", "set aside");
