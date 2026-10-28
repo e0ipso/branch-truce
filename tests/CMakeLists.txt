@@ -155,7 +155,10 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # of four runs on the development host, one of them with the three groups running together: review 23.5 to
     # 26.6 s (36.5 s together), handoff 21.9 to 23.1 s (39.2 s), window 15.5 to 15.9 s (26.8 s). Those window runs
     # predate the line-choice journey; with it, two runs alone under load from other builds took 18.4 and 18.7 s.
-    # The single entry these replaced took 85 to 108 s against 120 s.
+    # The single entry these replaced took 85 to 108 s against 120 s. The window journeys run under org.kde.desktop,
+    # the style the app selects at startup, as the window fit is what users see; the app never selects the default
+    # Basic style, so a Basic run would add no coverage. Under it two runs at load averages of 3 and 4 took 31.1 and
+    # 38.1 s, against 29.7 s under Basic.
     add_test(NAME acceptance.journeys-review COMMAND branch_truce_journey_acceptance_tests review)
     add_test(NAME acceptance.journeys-handoff COMMAND branch_truce_journey_acceptance_tests handoff)
     add_test(NAME acceptance.journeys-window COMMAND branch_truce_journey_acceptance_tests window)
@@ -163,6 +166,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         set_tests_properties(acceptance.journeys-${journey_group} PROPERTIES TIMEOUT 120 LABELS acceptance
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
     endforeach()
+    set_tests_properties(acceptance.journeys-window PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QUICK_CONTROLS_STYLE=org.kde.desktop")
 
     add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp)
     target_include_directories(branch_truce_startup_route_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

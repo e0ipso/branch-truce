@@ -652,6 +652,10 @@ qreal checkFits(Scene &scene, int width, int height, const std::vector<const cha
         throw std::runtime_error("minimum size " + std::to_string(window->minimumWidth()) + "x"
                                  + std::to_string(window->minimumHeight()) + " exceeds the screen "
                                  + std::to_string(width) + "x" + std::to_string(height));
+    // A user resizes the window from its frame, so the pointer leaves the content first. A pointer
+    // left resting on a file row while the list moves under it can leave that row's tooltip open
+    // under the KDE style, over the rows below it (TRUCE-0238).
+    QTest::mouseMove(window, QPoint(-1, -1));
     window->resize(width, height);
     settleFor("window size", [&] { return window->width() == width && window->height() == height; });
     const QRectF screen(0, 0, width, height);
