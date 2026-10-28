@@ -1,20 +1,21 @@
+// The comparison of one file: the reading controls, the source and result panes with the
+// connector bands between them, and the earlier version below.
 pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Shapes
 import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: comparison
     required property var controller
     required property var file
-    readonly property bool inputMethodComposing: resultEditor.inputMethodComposing
+    readonly property bool inputMethodComposing: resultPane.editor.inputMethodComposing
     readonly property real headerHeight: Math.max(leftPane.headerImplicitHeight,
-        resultHeader.implicitHeight, rightPane.headerImplicitHeight)
-    readonly property bool wrapLines: wrapLinesBox.checked
-    readonly property bool showWhitespace: showWhitespaceBox.checked
+        resultPane.headerImplicitHeight, rightPane.headerImplicitHeight)
+    readonly property bool wrapLines: readingBar.wrapLines
+    readonly property bool showWhitespace: readingBar.showWhitespace
     property var scopeNames: ["stage2", "result", "stage3"]
     property string searchDetail: ""
     // Text panes never get shorter than this many lines; on a short window the page scrolls instead.
@@ -29,7 +30,7 @@ ColumnLayout {
     readonly property color schemeBackground: Kirigami.Theme.backgroundColor
     readonly property string searchStatusText: searchDetail.length > 0
         ? searchDetail
-        : qsTr("Search scope: %1.").arg(searchScope.currentText || qsTr("Editable result"))
+        : qsTr("Search scope: %1.").arg(readingBar.scope.currentText || qsTr("Editable result"))
 
     function editorNamed(name): Item {
         if (name === "stage2")
@@ -38,7 +39,7 @@ ColumnLayout {
             return rightPane.editor
         if (name === "earlier")
             return earlierPane.editor
-        return resultEditor
+        return resultPane.editor
     }
     function refreshSearchScopes(): void {
         const labels = [qsTr("Left source"), qsTr("Editable result"), qsTr("Right source")]
@@ -47,24 +48,29 @@ ColumnLayout {
             labels.push(qsTr("Earlier version"))
             names.push("earlier")
         }
-        const current = scopeNames[searchScope.currentIndex] || "result"
+        const current = scopeNames[readingBar.scope.currentIndex] || "result"
         scopeNames = names
-        searchScope.model = labels
+        readingBar.scope.model = labels
         const next = names.indexOf(current)
-        searchScope.currentIndex = next >= 0 ? next : names.indexOf("result")
+        readingBar.scope.currentIndex = next >= 0 ? next : names.indexOf("result")
     }
     function applyWhitespace(): void {
-        const visible = showWhitespaceBox.checked
-        const editors = [leftPane.editor, resultEditor, rightPane.editor, earlierPane.editor]
+        const visible = readingBar.showWhitespace
+        const editors = [leftPane.editor, resultPane.editor, rightPane.editor, earlierPane.editor]
         for (let i = 0; i < editors.length; ++i)
             controller.setVisibleWhitespace(editors[i], visible)
     }
+    // A source's text is replaced when its file changes; its markers follow once set up.
+    function sourceTextReplaced(): void {
+        if (whitespaceReady)
+            applyWhitespace()
+    }
     function findPassage(): void {
-        const index = searchScope.currentIndex
+        const index = readingBar.scope.currentIndex
         const name = index >= 0 && index < scopeNames.length ? scopeNames[index] : "result"
         const editor = editorNamed(name)
-        const scope = searchScope.currentText || qsTr("Editable result")
-        const query = searchQuery.text
+        const scope = readingBar.scope.currentText || qsTr("Editable result")
+        const query = readingBar.query
         if (!editor || query.length === 0) {
             searchDetail = qsTr("Search scope: %1. Enter a passage.").arg(scope)
             return
@@ -80,7 +86,7 @@ ColumnLayout {
             searchDetail = qsTr("No passage in %1.").arg(scope)
             return
         }
-        if (editor === resultEditor && resultBlocks.hiddenWithin(found, found + query.length))
+        if (editor === resultPane.editor && resultPane.blocks.hiddenWithin(found, found + query.length))
             markersRevealed()
         editor.select(found, found + query.length)
         followScroll(name, "")
@@ -250,8 +256,8 @@ ColumnLayout {
         let first = -1
         let end = -1
         if (target.scope === "result" && target.utf16Begin >= 0) {
-            first = resultBlocks.lineAt(target.utf16Begin)
-            end = target.utf16End > target.utf16Begin ? resultBlocks.lineAt(target.utf16End - 1) + 1 : first
+            first = resultPane.blocks.lineAt(target.utf16Begin)
+            end = target.utf16End > target.utf16Begin ? resultPane.blocks.lineAt(target.utf16End - 1) + 1 : first
         }
         if (pane === "result") {
             if (first > 0)
@@ -342,7 +348,7 @@ ColumnLayout {
     function scrollPanes(): var {
         const panes = [
             {name: "stage2", viewport: leftPane.viewport, editor: leftPane.editor, blocks: leftPane.blocks},
-            {name: "result", viewport: resultViewport, editor: resultEditor, blocks: resultBlocks},
+            {name: "result", viewport: resultPane.viewport, editor: resultPane.editor, blocks: resultPane.blocks},
             {name: "stage3", viewport: rightPane.viewport, editor: rightPane.editor, blocks: rightPane.blocks}]
         if (earlierPane.visible)
             panes.push({name: "earlier", viewport: earlierPane.viewport, editor: earlierPane.editor,
@@ -375,7 +381,7 @@ ColumnLayout {
         if (!lead || syncingScroll)
             return
         const row = scrollRow(panes)
-        const resultLines = resultBlocks.blockCount
+        const resultLines = resultPane.blocks.blockCount
         const line = lineOnRow(lead, row)
         const resultLine = leader === "result" ? line
             : mapLine(scrollMaps[leader], line, true, lead.blocks.blockCount, resultLines)
@@ -461,13 +467,6 @@ ColumnLayout {
         function onEditorPlaced(): void { Qt.callLater(comparison.placePanes) }
         function onNavigationChanged(): void { Qt.callLater(comparison.followNavigation) }
     }
-    TextBlocks {
-        id: resultBlocks
-        document: resultEditor.textDocument
-        hidden: comparison.markerFold.hidden
-        // A fold can hide the line the cursor is on.
-        onLayoutChanged: comparison.queueCursorCheck()
-    }
     // The result's cursor never rests on a folded line. A key that moves it
     // there takes it on in the key's direction, keeping its column for a move
     // by lines; a selection set by other code ends on the side of its anchor;
@@ -479,7 +478,7 @@ ColumnLayout {
     property bool cursorCheckQueued: false
     // Shows the markers when the cursor is on a folded line, as after going to a marker.
     function revealCursorLine(): void {
-        if (resultBlocks.hiddenAt(resultEditor.cursorPosition))
+        if (resultPane.blocks.hiddenAt(resultPane.editor.cursorPosition))
             markersRevealed()
     }
     function queueCursorCheck(): void {
@@ -492,9 +491,9 @@ ColumnLayout {
         cursorCheckQueued = false
         const key = cursorKey
         cursorKey = 0
-        const editor = resultEditor
+        const editor = resultPane.editor
         const position = editor.cursorPosition
-        if (resultBlocks.hiddenAt(position)) {
+        if (resultPane.blocks.hiddenAt(position)) {
             const selecting = editor.selectionStart !== editor.selectionEnd
             const anchor = editor.selectionStart === position ? editor.selectionEnd : editor.selectionStart
             const byLines = [Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown].indexOf(key) >= 0
@@ -502,7 +501,7 @@ ColumnLayout {
                 : key === Qt.Key_Up || key === Qt.Key_PageUp ? false
                 : key !== 0 ? position > settledCursor
                 : selecting ? anchor > position : true
-            const target = resultBlocks.shownPosition(position, forward, byLines ? settledCursor : -1)
+            const target = resultPane.blocks.shownPosition(position, forward, byLines ? settledCursor : -1)
             if (selecting)
                 editor.moveCursorSelection(target, TextEdit.SelectCharacters)
             else
@@ -519,639 +518,24 @@ ColumnLayout {
     }
     onSchemeBackgroundChanged: controller.setSyntaxBackground(schemeBackground)
 
-    // Qt Quick ignores QTextOption.ShowTabsAndSpaces, so the markers are drawn
-    // over the text. They are not document characters.
-    component WhitespaceMarkers: Item {
-        id: markers
-        required property TextEdit editor
-        required property Flickable viewport
-        // The pane's blocks when it can hide lines, which get no markers.
-        property TextBlocks blocks: null
-        property bool active: false
-        property bool wrapped: false
-        property var spots: []
-        readonly property int markerCount: spots.length
-        readonly property color ink: editor.color.a > 0 ? editor.color : Kirigami.Theme.textColor
-        readonly property real stroke: Kirigami.Units.smallSpacing / 2
-        readonly property real inset: Kirigami.Units.smallSpacing / 4
-        z: 2
-        enabled: false
-        clip: true
-
-        property bool refreshQueued: false
-        function schedule(): void {
-            if (refreshQueued)
-                return
-            refreshQueued = true
-            Qt.callLater(markers.refresh)
-        }
-        function refresh(): void {
-            refreshQueued = false
-            if (!active || width <= 0 || height <= 0) {
-                spots = []
-                return
-            }
-            const text = editor.text || ""
-            const found = []
-            if (text.length === 0) {
-                spots = found
-                return
-            }
-            const origin = editor.mapFromItem(markers, 0, 0)
-            let pos = editor.positionAt(origin.x, Math.max(0, origin.y))
-            if (pos < 0)
-                pos = 0
-            while (pos > 0) {
-                const prev = text.charAt(pos - 1)
-                if (prev === "\n" || prev === "\u2028" || prev === "\u2029")
-                    break
-                pos = pos - 1
-            }
-            let guard = 0
-            while (pos < text.length && guard < 200000) {
-                guard = guard + 1
-                if (markers.blocks && markers.blocks.hiddenAt(pos)) {
-                    const shown = markers.blocks.shownPosition(pos, true)
-                    if (shown <= pos)
-                        break
-                    pos = shown
-                    continue
-                }
-                const ch = text.charAt(pos)
-                const rect = editor.positionToRectangle(pos)
-                const mapped = editor.mapToItem(markers, rect.x, rect.y)
-                if (mapped.y > height + rect.height)
-                    break
-                let span = rect.width
-                if (pos + 1 <= text.length) {
-                    const next = editor.positionToRectangle(pos + 1)
-                    const mappedNext = editor.mapToItem(markers, next.x, next.y)
-                    if (Math.abs(mappedNext.y - mapped.y) < rect.height / 2)
-                        span = mappedNext.x - mapped.x
-                }
-                if (span < markers.stroke)
-                    span = ch === "\t" ? Kirigami.Units.largeSpacing : markers.stroke
-                if ((ch === " " || ch === "\t") && mapped.y + rect.height >= 0
-                        && mapped.x < width && mapped.x + span > 0)
-                    found.push({x: mapped.x, y: mapped.y, w: span, h: Math.max(rect.height, markers.stroke), tab: ch === "\t"})
-                if (mapped.x > width && !wrapped) {
-                    const newline = text.indexOf("\n", pos)
-                    if (newline < 0)
-                        break
-                    pos = newline + 1
-                    continue
-                }
-                pos = pos + 1
-            }
-            spots = found
-        }
-        onActiveChanged: schedule()
-        Component.onCompleted: schedule()
-        Connections {
-            target: markers.editor
-            function onTextChanged(): void { markers.schedule() }
-            function onWidthChanged(): void { markers.schedule() }
-            function onHeightChanged(): void { markers.schedule() }
-        }
-        Connections {
-            target: markers.viewport
-            function onContentXChanged(): void { markers.schedule() }
-            function onContentYChanged(): void { markers.schedule() }
-            function onWidthChanged(): void { markers.schedule() }
-            function onHeightChanged(): void { markers.schedule() }
-        }
-        Repeater {
-            model: markers.spots
-            delegate: Item {
-                id: spot
-                required property var modelData
-                x: modelData.x
-                y: modelData.y
-                width: Math.max(markers.stroke, modelData.w)
-                height: Math.max(markers.stroke, modelData.h)
-                Rectangle {
-                    visible: !spot.modelData.tab
-                    width: Math.min(Kirigami.Units.smallSpacing, Math.max(markers.stroke, spot.height * 0.22))
-                    height: width
-                    radius: width / 2
-                    color: markers.ink
-                    anchors.centerIn: parent
-                }
-                Rectangle {
-                    visible: spot.modelData.tab
-                    x: markers.inset
-                    height: markers.stroke
-                    width: Math.max(markers.inset, parent.width - Kirigami.Units.largeSpacing)
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: markers.ink
-                }
-                Rectangle {
-                    visible: spot.modelData.tab
-                    width: Kirigami.Units.smallSpacing + markers.inset
-                    height: width
-                    radius: markers.inset
-                    anchors.right: parent.right
-                    anchors.rightMargin: markers.inset
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: markers.ink
-                }
-            }
-        }
-    }
-
-    // Line numbers for one pane, one per document block, so a wrapped line keeps
-    // a single number. The gutter sits in the pane's Flickable beside the
-    // TextArea: its y coordinates are the editor's and it scrolls vertically with
-    // the text. Where it is used, x follows contentX to keep it at the left edge,
-    // width is implicitWidth and the editor pads its text by that width.
-    //
-    // markerSlot is a column between the numbers and the text. It shows the
-    // glyph of each line in marks.lines, and the gaps in marks.gaps on its
-    // right edge; per-region actions go there too. Place an item in it at the
-    // y of editor.positionToRectangle(position); rows lists the blocks near
-    // the view as {number, position, y, height, top, extent}, where top and
-    // extent span the whole block. With provenance set, a column before the
-    // slot shows the letter in marks.letters. folds maps the first line below
-    // each run of folded lines to that run; on a run that opens a conflict-
-    // marker block the slot shows a chip saying that markers remain, in place
-    // of the line's glyph.
-    component LineGutter: Item {
-        id: gutter
-        required property TextArea editor
-        required property Flickable viewport
-        property var rows: []
-        property var marks: ({lines: {}, gaps: {}, letters: {}})
-        property var folds: ({})
-        property bool provenance: false
-        readonly property alias markerSlot: slot
-        readonly property int digits: Math.max(2, String(blocks.blockCount).length)
-        readonly property real numberWidth: Math.ceil(digits * gutterFont.averageCharacterWidth)
-        readonly property real letterWidth: provenance
-            ? Math.ceil(gutterFont.averageCharacterWidth) + Kirigami.Units.smallSpacing : 0
-        // The editor range, with one view height either side, that rows covers.
-        property real coveredTop: 0
-        property real coveredBottom: -1
-        z: 1
-        implicitWidth: Kirigami.Units.smallSpacing * 2 + numberWidth + letterWidth + slot.width + separator.width
-        Kirigami.Theme.colorSet: Kirigami.Theme.View
-        Kirigami.Theme.inherit: false
-        Accessible.ignored: true
-
-        property bool refreshQueued: false
-        function schedule(): void {
-            if (refreshQueued)
-                return
-            refreshQueued = true
-            Qt.callLater(gutter.refresh)
-        }
-        function invalidate(): void {
-            coveredBottom = -1
-            schedule()
-        }
-        function follow(): void {
-            const top = viewport.contentY - editor.y
-            if (top < coveredTop || top + viewport.height > coveredBottom)
-                schedule()
-        }
-        function refresh(): void {
-            refreshQueued = false
-            const span = viewport.height
-            const top = Math.max(0, viewport.contentY - editor.y - span)
-            const bottom = viewport.contentY - editor.y + 2 * span
-            const found = blocks.between(top - editor.topPadding, bottom - editor.topPadding)
-            const next = []
-            let same = found.length === rows.length
-            for (let i = 0; i < found.length; ++i) {
-                const rect = editor.positionToRectangle(found[i].position)
-                const row = {number: found[i].number, position: found[i].position,
-                    y: editor.y + rect.y, height: rect.height,
-                    top: editor.y + editor.topPadding + found[i].top, extent: found[i].height}
-                same = same && rows[i].number === row.number && rows[i].position === row.position
-                    && rows[i].y === row.y && rows[i].height === row.height
-                    && rows[i].top === row.top && rows[i].extent === row.extent
-                next.push(row)
-            }
-            coveredTop = top
-            coveredBottom = bottom
-            if (!same)
-                rows = next
-        }
-        Component.onCompleted: schedule()
-
-        TextBlocks {
-            id: blocks
-            document: gutter.editor.textDocument
-            onLayoutChanged: gutter.invalidate()
-        }
-        FontMetrics {
-            id: gutterFont
-            font: gutter.editor.font
-        }
-        Connections {
-            target: gutter.editor
-            function onWidthChanged(): void { gutter.invalidate() }
-            function onFontChanged(): void { gutter.invalidate() }
-            function onTopPaddingChanged(): void { gutter.invalidate() }
-        }
-        Connections {
-            target: gutter.viewport
-            function onContentYChanged(): void { gutter.follow() }
-            function onHeightChanged(): void { gutter.invalidate() }
-        }
-        Rectangle {
-            anchors.fill: parent
-            color: Kirigami.Theme.backgroundColor
-        }
-        Repeater {
-            model: gutter.rows
-            delegate: Text {
-                required property var modelData
-                x: Kirigami.Units.smallSpacing
-                y: modelData.y
-                width: gutter.numberWidth
-                height: modelData.height
-                text: String(modelData.number)
-                textFormat: Text.PlainText
-                font: gutter.editor.font
-                color: Kirigami.Theme.disabledTextColor
-                horizontalAlignment: Text.AlignRight
-            }
-        }
-        Repeater {
-            model: gutter.provenance ? gutter.rows : []
-            delegate: Text {
-                required property var modelData
-                x: Kirigami.Units.smallSpacing * 2 + gutter.numberWidth
-                y: modelData.y
-                width: gutter.letterWidth
-                height: modelData.height
-                text: gutter.marks.letters[modelData.number] || ""
-                visible: text.length > 0
-                textFormat: Text.PlainText
-                font: gutter.editor.font
-                color: Kirigami.Theme.disabledTextColor
-            }
-        }
-        Item {
-            id: slot
-            objectName: gutter.objectName + "MarkerSlot"
-            x: Kirigami.Units.smallSpacing * 2 + gutter.numberWidth + gutter.letterWidth
-            width: Kirigami.Units.gridUnit
-            height: gutter.height
-            Repeater {
-                model: gutter.rows
-                delegate: Text {
-                    required property var modelData
-                    readonly property int line: modelData.number
-                    readonly property string kind: gutter.marks.lines[line] || ""
-                    y: modelData.y
-                    height: modelData.height
-                    text: ({added: "+", changed: "~", conflict: "!", manual: "m",
-                        accepted: "✓", ignored: "×", markers: "!"})[kind] || ""
-                    visible: text.length > 0 && !(gutter.folds[line] && gutter.folds[line].chip)
-                    textFormat: Text.PlainText
-                    font: gutter.editor.font
-                    color: kind === "added" || kind === "accepted" ? Kirigami.Theme.positiveTextColor
-                        : kind === "changed" ? Kirigami.Theme.activeTextColor
-                        : kind === "conflict" || kind === "markers" ? Kirigami.Theme.negativeTextColor
-                        : kind === "ignored" ? Kirigami.Theme.disabledTextColor
-                        : Kirigami.Theme.neutralTextColor
-                    Accessible.role: Accessible.StaticText
-                    Accessible.name: text
-                    Accessible.description: ({added: qsTr("Added line"), changed: qsTr("Changed line"),
-                        conflict: qsTr("Undecided conflict"), manual: qsTr("Hand-edited line"),
-                        accepted: qsTr("Accepted side"), ignored: qsTr("Ignored side"),
-                        markers: qsTr("Conflict markers remain")})[kind] || ""
-                }
-            }
-            Repeater {
-                model: gutter.rows
-                delegate: Rectangle {
-                    id: chip
-                    required property var modelData
-                    readonly property int line: modelData.number
-                    readonly property var fold: gutter.folds[line] || null
-                    readonly property string part: "chip"
-                    readonly property string kind: fold && fold.chip ? "markers" : ""
-                    readonly property string text: kind.length > 0 ? "!" : ""
-                    visible: kind.length > 0
-                    y: modelData.y
-                    width: Math.max(chipText.implicitWidth + Kirigami.Units.smallSpacing, height / 2)
-                    height: modelData.height
-                    radius: Kirigami.Units.cornerRadius
-                    color: Kirigami.Theme.negativeBackgroundColor
-                    Accessible.role: Accessible.StaticText
-                    Accessible.name: text
-                    Accessible.description: !fold ? ""
-                        : fold.count === 1 ? qsTr("Conflict markers remain: 1 marker line hidden above")
-                        : qsTr("Conflict markers remain: %1 marker lines hidden above").arg(fold.count)
-                    Text {
-                        id: chipText
-                        anchors.centerIn: parent
-                        text: chip.text
-                        textFormat: Text.PlainText
-                        font: gutter.editor.font
-                        color: Kirigami.Theme.negativeTextColor
-                    }
-                }
-            }
-            Repeater {
-                model: gutter.rows
-                delegate: Text {
-                    required property var modelData
-                    readonly property int line: modelData.number
-                    readonly property string kind: gutter.marks.gaps[line] ? "removed" : ""
-                    anchors.right: parent.right
-                    y: modelData.top - height / 2
-                    text: kind.length > 0 ? "\u2212" : ""
-                    visible: text.length > 0
-                    textFormat: Text.PlainText
-                    font: gutter.editor.font
-                    color: Kirigami.Theme.disabledTextColor
-                }
-            }
-        }
-        Kirigami.Separator {
-            id: separator
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            anchors.right: parent.right
-        }
-    }
-
-    // Diff colours for one pane, painted under its text rather than as
-    // character formats. The layer sits in the pane's Flickable below the
-    // TextArea, takes its rows and marks from the pane's gutter and scrolls
-    // with the text. A gap is a thin rule on a line boundary. current lists
-    // the [first, end) line ranges of the navigation target, drawn on top.
-    component LineBackgrounds: Item {
-        id: backgrounds
-        required property LineGutter gutter
-        property var current: []
-        readonly property real rule: Kirigami.Units.smallSpacing / 2
-        z: -1
-        enabled: false
-        Kirigami.Theme.colorSet: Kirigami.Theme.View
-        Kirigami.Theme.inherit: false
-        function isCurrent(line: int): bool {
-            for (let i = 0; i < current.length; ++i) {
-                if (line >= current[i][0] && line < current[i][1])
-                    return true
-            }
-            return false
-        }
-        function isCurrentGap(line: int): bool {
-            for (let i = 0; i < current.length; ++i) {
-                if (current[i][0] === line && current[i][1] === line)
-                    return true
-            }
-            return false
-        }
-        Repeater {
-            model: backgrounds.gutter.rows
-            delegate: Rectangle {
-                required property var modelData
-                readonly property string part: "line"
-                readonly property int line: modelData.number
-                readonly property string kind: backgrounds.gutter.marks.lines[line] || ""
-                visible: kind.length > 0
-                y: modelData.top
-                width: backgrounds.width
-                height: modelData.extent
-                // An ignored side keeps its text readable under a faint tint.
-                color: kind === "added" || kind === "accepted" ? Kirigami.Theme.positiveBackgroundColor
-                    : kind === "changed" ? Kirigami.Theme.activeBackgroundColor
-                    : kind === "conflict" || kind === "markers" ? Kirigami.Theme.negativeBackgroundColor
-                    : kind === "ignored" ? Kirigami.Theme.disabledTextColor
-                    : Kirigami.Theme.neutralBackgroundColor
-                opacity: kind === "ignored" ? 0.15 : 1
-            }
-        }
-        // A rule where folded marker lines are, so the sides of a block stay apart.
-        Repeater {
-            model: backgrounds.gutter.rows
-            delegate: Rectangle {
-                required property var modelData
-                readonly property string part: "fold"
-                readonly property int line: modelData.number
-                readonly property string kind: backgrounds.gutter.folds[line] ? "markers" : ""
-                visible: kind.length > 0
-                y: modelData.top - height / 2
-                width: backgrounds.width
-                height: backgrounds.rule
-                color: Kirigami.Theme.negativeTextColor
-            }
-        }
-        Repeater {
-            model: backgrounds.gutter.rows
-            delegate: Rectangle {
-                required property var modelData
-                readonly property string part: "gap"
-                readonly property int line: modelData.number
-                readonly property string kind: backgrounds.gutter.marks.gaps[line] ? "removed" : ""
-                visible: kind.length > 0
-                y: modelData.top - height / 2
-                width: backgrounds.width
-                height: backgrounds.rule
-                color: Kirigami.Theme.disabledTextColor
-            }
-        }
-        Repeater {
-            model: backgrounds.gutter.rows
-            delegate: Rectangle {
-                required property var modelData
-                readonly property string part: "current"
-                readonly property int line: modelData.number
-                readonly property bool gap: backgrounds.isCurrentGap(line)
-                visible: gap || backgrounds.isCurrent(line)
-                y: gap ? modelData.top - height / 2 : modelData.top
-                width: backgrounds.width
-                height: gap ? backgrounds.rule * 2 : modelData.extent
-                color: Kirigami.Theme.highlightColor
-                opacity: 0.3
-            }
-        }
-    }
-
     function paneMinimumHeight(lines: int): real {
-        return Math.ceil(lines * paneFont.lineSpacing + resultEditor.topPadding + resultEditor.bottomPadding)
+        return Math.ceil(lines * paneFont.lineSpacing + resultPane.editor.topPadding
+            + resultPane.editor.bottomPadding)
     }
     FontMetrics {
         id: paneFont
-        font: resultEditor.font
+        font: resultPane.editor.font
     }
     // Four characters, so tab-indented text lines up the same in every pane.
     readonly property real tabStop: 4 * paneFont.averageCharacterWidth
 
-    component CapturedSource: ColumnLayout {
-        id: sourcePane
-        required property string paneName
-        required property string paneRole
-        required property var source
-        property alias editor: sourceText
-        property alias viewport: sourceViewport
-        property alias blocks: sourceBlocks
-        property bool alignHeader: true
-        property int minimumLines: comparison.minimumPaneLines
-        readonly property real headerImplicitHeight: sourceHeaderRow.implicitHeight
-        // The commit id is cut to 10 characters on the line; the tooltip keeps the full ids.
-        readonly property string commitId: sourcePane.source.commitId || ""
-        readonly property string fullIdentity: qsTr("Verified commit: %1\nCaptured blob: %2")
-            .arg(sourcePane.commitId || qsTr("unavailable"))
-            .arg(sourcePane.source.objectId || qsTr("unavailable"))
-        function shortCommit(label: string): string {
-            return sourcePane.commitId.length > 10
-                ? label.replace(sourcePane.commitId, sourcePane.commitId.slice(0, 10)) : label
-        }
-        RowLayout {
-            id: sourceHeaderRow
-            Layout.fillWidth: true
-            Layout.preferredHeight: sourcePane.alignHeader ? comparison.headerHeight : implicitHeight
-            Layout.rightMargin: Kirigami.Units.largeSpacing
-            spacing: Kirigami.Units.largeSpacing
-            Label {
-                id: sourceHeader
-                objectName: sourcePane.paneName + "Label"
-                Layout.fillWidth: true
-                text: sourcePane.paneRole + " · "
-                    + sourcePane.shortCommit(sourcePane.source.label || qsTr("Source identity unavailable"))
-                textFormat: Text.PlainText
-                elide: Text.ElideRight
-                Accessible.description: sourcePane.fullIdentity
-            }
-            Label {
-                objectName: sourcePane.paneName + "Identity"
-                Layout.maximumWidth: sourceHeaderRow.width / 2
-                text: qsTr("Captured blob: %1").arg(sourcePane.source.objectId
-                    ? sourcePane.source.objectId.slice(0, 10) : qsTr("unavailable"))
-                textFormat: Text.PlainText
-                elide: Text.ElideRight
-                color: Kirigami.Theme.disabledTextColor
-                Accessible.description: sourcePane.fullIdentity
-            }
-            HoverHandler { id: identityHover }
-            ToolTip.visible: identityHover.hovered
-            ToolTip.text: sourcePane.fullIdentity
-            ToolTip.delay: Kirigami.Units.toolTipDelay
-        }
-        Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.minimumHeight: comparison.paneMinimumHeight(sourcePane.minimumLines)
-            Flickable {
-                id: sourceViewport
-                objectName: sourcePane.paneName + "Viewport"
-                anchors.fill: parent
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.horizontal: ScrollBar {}
-                ScrollBar.vertical: ScrollBar {
-                    id: sourceBar
-                }
-                onContentYChanged: comparison.paneScrolled(sourcePane.paneName,
-                    moving || !!sourceBar && sourceBar.pressed || sourceText.activeFocus)
-                TextArea.flickable: TextArea {
-                    id: sourceText
-                    objectName: sourcePane.paneName + "Text"
-                    text: sourcePane.source.text || ""
-                    readOnly: true
-                    selectByMouse: true
-                    persistentSelection: true
-                    textFormat: TextEdit.PlainText
-                    font: Kirigami.Theme.fixedWidthFont
-                    tabStopDistance: comparison.tabStop
-                    leftPadding: sourceGutter.width + Kirigami.Units.smallSpacing
-                    width: comparison.wrapLines ? sourceViewport.width : implicitWidth
-                    wrapMode: comparison.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
-                    Accessible.name: sourcePane.paneRole + " · " + (sourcePane.source.label || "")
-                    onTextChanged: if (comparison.whitespaceReady)
-                        comparison.applyWhitespace()
-                    Component.onCompleted: comparison.controller.attachSourceEditor(sourceText)
-                }
-                LineGutter {
-                    id: sourceGutter
-                    objectName: sourcePane.paneName + "Gutter"
-                    x: sourceViewport.contentX
-                    width: implicitWidth
-                    height: Math.max(sourceText.height, sourceViewport.height)
-                    editor: sourceText
-                    viewport: sourceViewport
-                    marks: comparison.marksFor(sourcePane.paneName, comparison.file)
-                }
-                LineBackgrounds {
-                    objectName: sourcePane.paneName + "Backgrounds"
-                    width: Math.max(sourceText.width, sourceViewport.width)
-                    height: sourceGutter.height
-                    gutter: sourceGutter
-                    current: comparison.currentFor(sourcePane.paneName, comparison.controller.navigationTarget,
-                        comparison.file)
-                }
-            }
-            WhitespaceMarkers {
-                objectName: sourcePane.paneName + "Whitespace"
-                anchors.fill: parent
-                anchors.leftMargin: sourceGutter.width
-                editor: sourceText
-                viewport: sourceViewport
-                active: comparison.showWhitespace
-                wrapped: comparison.wrapLines
-            }
-        }
-        TextBlocks {
-            id: sourceBlocks
-            document: sourceText.textDocument
-        }
-    }
-
-    ColumnLayout {
-        objectName: "readingControls"
+    ReadingBar {
+        id: readingBar
         Layout.fillWidth: true
-        spacing: Kirigami.Units.smallSpacing
-        RowLayout {
-            Layout.fillWidth: true
-            ComboBox {
-                id: searchScope
-                objectName: "searchScope"
-                model: [qsTr("Left source"), qsTr("Editable result"), qsTr("Right source")]
-                Accessible.name: qsTr("Search scope")
-                Layout.preferredWidth: Math.max(implicitWidth, Kirigami.Units.gridUnit * 10)
-                onCurrentIndexChanged: comparison.searchDetail = ""
-            }
-            TextField {
-                id: searchQuery
-                objectName: "searchQuery"
-                Layout.fillWidth: true
-                placeholderText: qsTr("Find a passage")
-                Accessible.name: qsTr("Passage search")
-                onAccepted: comparison.findPassage()
-            }
-            Button {
-                objectName: "findPassage"
-                text: qsTr("Find")
-                onClicked: comparison.findPassage()
-            }
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            CheckBox {
-                id: wrapLinesBox
-                objectName: "wrapLines"
-                text: qsTr("Wrap lines")
-            }
-            CheckBox {
-                id: showWhitespaceBox
-                objectName: "showWhitespace"
-                text: qsTr("Show spaces and tabs")
-                onToggled: comparison.applyWhitespace()
-            }
-            Label {
-                objectName: "searchStatus"
-                Layout.fillWidth: true
-                text: comparison.searchStatusText
-                textFormat: Text.PlainText
-                wrapMode: Text.Wrap
-            }
-        }
+        statusText: comparison.searchStatusText
+        onScopeSwitched: comparison.searchDetail = ""
+        onFindRequested: comparison.findPassage()
+        onWhitespaceToggled: comparison.applyWhitespace()
     }
     SplitView {
         id: panes
@@ -1159,271 +543,76 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
         // A SplitView does not pass its panes' minimum height on to the layout.
-        Layout.minimumHeight: Math.max(leftPane.Layout.minimumHeight, resultColumn.Layout.minimumHeight,
+        Layout.minimumHeight: Math.max(leftPane.Layout.minimumHeight, resultPane.Layout.minimumHeight,
             rightPane.Layout.minimumHeight)
         orientation: Qt.Horizontal
-        // Each handle sits between a source and the result and holds that
-        // source's connector bands. A band joins a passage's lines on the
-        // source's edge to its lines on the result's edge, each at the line's
-        // y in its pane less the pane's scroll. An empty range ends in a thin
-        // wedge on its line boundary, where the pane draws its gap rule. The
-        // bands cover the panes' viewports and clip what they scroll out of
-        // view, and only those that cross it are made. They take no input or
-        // focus, so the split still drags the handle.
-        handle: Item {
-            id: connector
-            // A handle starts at x 0, before the split places it, and the right
-            // source may not exist yet, so it counts as the left one until placed.
-            readonly property bool leftSide: x <= resultColumn.x
-            readonly property CapturedSource source: leftSide ? leftPane : rightPane
-            readonly property var bands: comparison.bandsFor(source.paneName, comparison.file)
-            // Counts relayouts of either pane's text, so the band ends follow them.
-            property int layoutRevision: 0
-            readonly property real rule: Kirigami.Units.smallSpacing / 2
-            readonly property int firstShown: shownIndex(false, layoutRevision)
-            readonly property int endShown: shownIndex(true, layoutRevision)
-            // The y in the bands of the top, or the bottom, of lines [begin, end)
-            // of the source or of the result. revision is layoutRevision, so a
-            // binding follows relayouts.
-            function edge(inSource: bool, begin: int, end: int, bottom: bool, revision: int): real {
-                const viewport = inSource ? source.viewport : resultViewport
-                const editor = inSource ? source.editor : resultEditor
-                const blocks = inSource ? source.blocks : resultBlocks
-                const y = viewport.parent.y - source.viewport.parent.y + editor.y + editor.topPadding
-                    + blocks.yAtLine(bottom ? end : begin) - viewport.contentY
-                return begin < end ? y : y + (bottom ? rule : -rule) / 2
-            }
-            // The index of the first band not wholly above the view, or with
-            // below set, of the first band wholly below it. Both ends of the
-            // bands are in order, so each of those is a run at one end.
-            function shownIndex(below: bool, revision: int): int {
-                const extent = below ? source.viewport.height : 0
-                const sourceLine = source.blocks.lineAtY(source.viewport.contentY + extent
-                    - source.editor.y - source.editor.topPadding)
-                const resultLine = resultBlocks.lineAtY(resultViewport.contentY + extent
-                    - resultEditor.y - resultEditor.topPadding)
-                let low = 0
-                let high = bands.length
-                while (low < high) {
-                    const middle = (low + high) >> 1
-                    const band = bands[middle]
-                    const found = below ? band.sourceBegin > sourceLine && band.resultBegin > resultLine
-                        : band.sourceEnd >= sourceLine || band.resultEnd >= resultLine
-                    if (found)
-                        high = middle
-                    else
-                        low = middle + 1
-                }
-                return low
-            }
-            objectName: source.paneName + "Connector"
-            implicitWidth: Kirigami.Units.gridUnit
-            Kirigami.Theme.colorSet: Kirigami.Theme.View
-            Kirigami.Theme.inherit: false
-            Accessible.ignored: true
-            Connections {
-                target: connector.source.blocks
-                function onLayoutChanged(): void { ++connector.layoutRevision }
-            }
-            Connections {
-                target: resultBlocks
-                function onLayoutChanged(): void { ++connector.layoutRevision }
-            }
-            Rectangle {
-                anchors.fill: parent
-                color: Kirigami.Theme.highlightColor
-                opacity: connector.SplitHandle.pressed ? 0.3 : connector.SplitHandle.hovered ? 0.15 : 0
-            }
-            Item {
-                id: bandLayer
-                objectName: connector.source.paneName + "Bands"
-                y: connector.source.viewport.parent.y
-                width: connector.width
-                height: connector.source.viewport.height
-                clip: true
-                enabled: false
-                Repeater {
-                    model: connector.bands.slice(connector.firstShown, connector.endShown)
-                    delegate: Shape {
-                        id: band
-                        required property var modelData
-                        readonly property string kind: modelData.kind
-                        readonly property real sourceTop: connector.edge(true, modelData.sourceBegin,
-                            modelData.sourceEnd, false, connector.layoutRevision)
-                        readonly property real sourceBottom: connector.edge(true, modelData.sourceBegin,
-                            modelData.sourceEnd, true, connector.layoutRevision)
-                        readonly property real resultTop: connector.edge(false, modelData.resultBegin,
-                            modelData.resultEnd, false, connector.layoutRevision)
-                        readonly property real resultBottom: connector.edge(false, modelData.resultBegin,
-                            modelData.resultEnd, true, connector.layoutRevision)
-                        readonly property real sourceX: connector.leftSide ? 0 : width
-                        readonly property real resultX: width - sourceX
-                        // The passage's background role; removed and ignored lines get a faint tint.
-                        readonly property color fill: kind === "added" || kind === "accepted"
-                            ? Kirigami.Theme.positiveBackgroundColor
-                            : kind === "changed" ? Kirigami.Theme.activeBackgroundColor
-                            : kind === "conflict" ? Kirigami.Theme.negativeBackgroundColor
-                            : kind === "manual" ? Kirigami.Theme.neutralBackgroundColor
-                            : Kirigami.Theme.disabledTextColor
-                        width: bandLayer.width
-                        height: bandLayer.height
-                        opacity: kind === "removed" || kind === "ignored" ? 0.15 : 1
-                        preferredRendererType: Shape.CurveRenderer
-                        ShapePath {
-                            strokeWidth: -1
-                            fillColor: band.fill
-                            startX: band.sourceX
-                            startY: band.sourceTop
-                            PathLine { x: band.resultX; y: band.resultTop }
-                            PathLine { x: band.resultX; y: band.resultBottom }
-                            PathLine { x: band.sourceX; y: band.sourceBottom }
-                            PathLine { x: band.sourceX; y: band.sourceTop }
-                        }
-                    }
-                }
-            }
+        handle: ConnectorHandle {
+            id: connectorHandle
+            result: resultPane
+            source: connectorHandle.leftSide ? leftPane : rightPane
+            bands: comparison.bandsFor(connectorHandle.source.paneName, comparison.file)
         }
-        CapturedSource {
+        SourcePane {
             id: leftPane
             SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
             SplitView.preferredWidth: panes.width / 3
             paneName: "stage2"
             paneRole: qsTr("Left source")
             source: comparison.file.stage2 || ({})
+            marks: comparison.marksFor(leftPane.paneName, comparison.file)
+            current: comparison.currentFor(leftPane.paneName, comparison.controller.navigationTarget,
+                comparison.file)
+            headerHeight: comparison.headerHeight
+            tabStop: comparison.tabStop
+            wrapLines: comparison.wrapLines
+            showWhitespace: comparison.showWhitespace
+            minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
+            onScrolled: byUser => comparison.paneScrolled(leftPane.paneName, byUser)
+            onTextReplaced: comparison.sourceTextReplaced()
+            onEditorCompleted: comparison.controller.attachSourceEditor(leftPane.editor)
         }
-        ColumnLayout {
-            id: resultColumn
+        ResultPane {
+            id: resultPane
             SplitView.minimumWidth: Kirigami.Units.gridUnit * 10
             SplitView.preferredWidth: panes.width / 3
-            Label {
-                id: resultHeader
-                objectName: "resultLabel"
-                Layout.fillWidth: true
-                Layout.preferredHeight: comparison.headerHeight
-                text: qsTr("Editable result · App draft")
-                textFormat: Text.PlainText
-                elide: Text.ElideRight
-                HoverHandler { id: resultHeaderHover }
-                ToolTip.visible: resultHeaderHover.hovered
-                ToolTip.text: qsTr("Initial content and your edits are kept")
-                ToolTip.delay: Kirigami.Units.toolTipDelay
-                Accessible.description: ToolTip.text
+            controller: comparison.controller
+            file: comparison.file
+            marks: comparison.marksFor("result", comparison.file)
+            current: comparison.currentFor("result", comparison.controller.navigationTarget,
+                comparison.file)
+            fold: comparison.markerFold
+            headerHeight: comparison.headerHeight
+            tabStop: comparison.tabStop
+            wrapLines: comparison.wrapLines
+            showWhitespace: comparison.showWhitespace
+            minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
+            onScrolled: byUser => comparison.paneScrolled("result", byUser)
+            onCursorMoved: comparison.queueCursorCheck()
+            onKeyPressed: key => {
+                comparison.cursorKey = key
+                comparison.queueCursorCheck()
             }
-            Item {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.minimumHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
-                Flickable {
-                    id: resultViewport
-                    objectName: "resultViewport"
-                    anchors.fill: parent
-                    clip: true
-                    boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.horizontal: ScrollBar {}
-                    ScrollBar.vertical: ScrollBar {
-                        id: resultBar
-                    }
-                    onContentYChanged: comparison.paneScrolled("result",
-                        moving || !!resultBar && resultBar.pressed || resultEditor.activeFocus)
-                    TextArea.flickable: TextArea {
-                        id: resultEditor
-                        objectName: "resultText"
-                        // Only the adapter enables editing after loading durable captures.
-                        readOnly: true
-                        selectByMouse: true
-                        persistentSelection: true
-                        textFormat: TextEdit.PlainText
-                        font: Kirigami.Theme.fixedWidthFont
-                        tabStopDistance: comparison.tabStop
-                        leftPadding: resultGutter.width + Kirigami.Units.smallSpacing
-                        width: comparison.wrapLines ? resultViewport.width : implicitWidth
-                        wrapMode: comparison.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
-                        Accessible.name: qsTr("Editable result")
-                        Component.onCompleted: comparison.controller.attachResultEditor(resultEditor)
-                        onCursorPositionChanged: comparison.queueCursorCheck()
-                        Keys.onPressed: (event) => {
-                            comparison.cursorKey = event.key
-                            comparison.queueCursorCheck()
-                            event.accepted = false
-                        }
-                        TapHandler {
-                            acceptedButtons: Qt.RightButton
-                            onTapped: resultMenu.popup()
-                        }
-                        Menu {
-                            id: resultMenu
-                            MenuItem {
-                                text: qsTr("Undo")
-                                enabled: !!comparison.file.canEdit && !!comparison.file.canUndo && !comparison.inputMethodComposing
-                                onTriggered: comparison.controller.undo(comparison.controller.selectedFileId, comparison.file.currentRevision)
-                            }
-                            MenuItem {
-                                text: qsTr("Redo")
-                                enabled: !!comparison.file.canEdit && !!comparison.file.canRedo && !comparison.inputMethodComposing
-                                onTriggered: comparison.controller.redo(comparison.controller.selectedFileId, comparison.file.currentRevision)
-                            }
-                            MenuSeparator {}
-                            MenuItem {
-                                text: qsTr("Cut")
-                                enabled: !resultEditor.readOnly && resultEditor.selectedText.length > 0 && !comparison.inputMethodComposing
-                                onTriggered: comparison.controller.resultClipboard("cut")
-                            }
-                            MenuItem {
-                                text: qsTr("Copy")
-                                enabled: resultEditor.selectedText.length > 0
-                                onTriggered: comparison.controller.resultClipboard("copy")
-                            }
-                            MenuItem {
-                                text: qsTr("Paste")
-                                enabled: !resultEditor.readOnly && resultEditor.canPaste && !comparison.inputMethodComposing
-                                onTriggered: comparison.controller.resultClipboard("paste")
-                            }
-                            MenuItem {
-                                text: qsTr("Select all")
-                                onTriggered: comparison.controller.resultClipboard("selectAll")
-                            }
-                        }
-                    }
-                    LineGutter {
-                        id: resultGutter
-                        objectName: "resultGutter"
-                        x: resultViewport.contentX
-                        width: implicitWidth
-                        height: Math.max(resultEditor.height, resultViewport.height)
-                        editor: resultEditor
-                        viewport: resultViewport
-                        provenance: true
-                        marks: comparison.marksFor("result", comparison.file)
-                        folds: comparison.markerFold.boundaries
-                    }
-                    LineBackgrounds {
-                        objectName: "resultBackgrounds"
-                        width: Math.max(resultEditor.width, resultViewport.width)
-                        height: resultGutter.height
-                        gutter: resultGutter
-                        current: comparison.currentFor("result", comparison.controller.navigationTarget,
-                            comparison.file)
-                    }
-                }
-                WhitespaceMarkers {
-                    objectName: "resultWhitespace"
-                    anchors.fill: parent
-                    anchors.leftMargin: resultGutter.width
-                    editor: resultEditor
-                    viewport: resultViewport
-                    blocks: resultBlocks
-                    active: comparison.showWhitespace
-                    wrapped: comparison.wrapLines
-                }
-            }
+            // A fold can hide the line the cursor is on.
+            onLinesLaidOut: comparison.queueCursorCheck()
         }
-        CapturedSource {
+        SourcePane {
             id: rightPane
             SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
             SplitView.preferredWidth: panes.width / 3
             paneName: "stage3"
             paneRole: qsTr("Right source")
             source: comparison.file.stage3 || ({})
+            marks: comparison.marksFor(rightPane.paneName, comparison.file)
+            current: comparison.currentFor(rightPane.paneName, comparison.controller.navigationTarget,
+                comparison.file)
+            headerHeight: comparison.headerHeight
+            tabStop: comparison.tabStop
+            wrapLines: comparison.wrapLines
+            showWhitespace: comparison.showWhitespace
+            minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
+            onScrolled: byUser => comparison.paneScrolled(rightPane.paneName, byUser)
+            onTextReplaced: comparison.sourceTextReplaced()
+            onEditorCompleted: comparison.controller.attachSourceEditor(rightPane.editor)
         }
     }
     CheckBox {
@@ -1433,16 +622,26 @@ ColumnLayout {
         text: enabled ? qsTr("Show common earlier version") : qsTr("Common earlier version unavailable")
         onCheckedChanged: comparison.refreshSearchScopes()
     }
-    CapturedSource {
+    SourcePane {
         id: earlierPane
         Layout.fillWidth: true
         Layout.preferredHeight: Math.min(comparison.height / 3, Kirigami.Units.gridUnit * 10)
         visible: showEarlier.enabled && showEarlier.checked
         alignHeader: false
-        minimumLines: 3
         paneName: "earlier"
         paneRole: qsTr("Earlier-version context · read-only")
         source: comparison.file.earlier || ({})
+        marks: comparison.marksFor(earlierPane.paneName, comparison.file)
+        current: comparison.currentFor(earlierPane.paneName, comparison.controller.navigationTarget,
+            comparison.file)
+        headerHeight: comparison.headerHeight
+        tabStop: comparison.tabStop
+        wrapLines: comparison.wrapLines
+        showWhitespace: comparison.showWhitespace
+        minimumTextHeight: comparison.paneMinimumHeight(3)
+        onScrolled: byUser => comparison.paneScrolled(earlierPane.paneName, byUser)
+        onTextReplaced: comparison.sourceTextReplaced()
+        onEditorCompleted: comparison.controller.attachSourceEditor(earlierPane.editor)
         onVisibleChanged: if (visible)
             Qt.callLater(comparison.followEarlier)
     }

@@ -4,6 +4,14 @@ qt_add_qml_module(branch_truce_ui STATIC
     QML_FILES
         Main.qml
         ComparisonView.qml
+        ReadingBar.qml
+        SourcePane.qml
+        ResultPane.qml
+        ResultContextMenu.qml
+        ConnectorHandle.qml
+        LineGutter.qml
+        LineBackgrounds.qml
+        WhitespaceMarkers.qml
         HandoffDialog.qml
         HandoffRow.qml
         WholeFileDialog.qml
