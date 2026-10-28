@@ -93,11 +93,16 @@ public:
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     }
-    // Open a toolbar menu and click one of its entries once the menu has laid out.
+    // Open a toolbar menu and click one of its entries once the menu has laid out, then wait
+    // until the menu has finished closing. The KDE style fades a menu out; reopening it during
+    // that fade lets the end of the fade close the reopened menu (TRUCE-0144).
     void clickMenuEntry(const char *menu, const char *entry)
     {
         click(menu);
-        test_support::clickItem(window, test_support::waitForLayout(window, QString::fromLatin1(entry), 60));
+        const auto name = QString::fromLatin1(entry);
+        test_support::clickItem(window, test_support::waitForLayout(window, name, 60));
+        test_support::settleFor(std::string("the menu holding ") + entry + " to close",
+            [&] { return !test_support::visualItem(window->contentItem(), name); });
     }
     void checkRecovered(const Draft &expected)
     {
