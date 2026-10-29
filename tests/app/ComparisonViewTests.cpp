@@ -20,6 +20,7 @@
 #include <QKeyEvent>
 #include <QMap>
 #include <QSet>
+#include <QSignalSpy>
 #include <QQmlApplicationEngine>
 #include <QQmlExpression>
 #include <QQuickItem>
@@ -863,6 +864,44 @@ public:
             if (commands != expectedCommands || toggles != expectedToggles)
                 throw std::runtime_error(("commands:\n" + commands.join('\n') + "\ntoggles:\n" + toggles.join('\n')).toStdString());
             CHECK(commands == expectedCommands && toggles == expectedToggles);
+        });
+        suite.run("TRUCE-0191 a named command overflows as a menu item and closes after one activation", [] {
+            Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
+            fixture.key(Qt::Key_A, Qt::NoModifier, "a");
+            const auto onceTyped = fixture.file().current();
+            fixture.key(Qt::Key_B, Qt::NoModifier, "b");
+            auto *actions = fixture.object("resultEditActions");
+            auto *undo = actions->property("undo").value<QObject *>();
+            CHECK(undo);
+            QSignalSpy triggered(undo, SIGNAL(triggered(QObject *)));
+            CHECK(triggered.isValid());
+            auto *toolbar = fixture.item("fileToolBar");
+            // Constrain the actual toolbar, regardless of the window's minimum width.
+            // Save and Mark resolved keep their compact buttons; Undo must overflow.
+            QQmlExpression narrow(qmlContext(toolbar), toolbar, QStringLiteral("Layout.maximumWidth = 100"));
+            narrow.evaluate();
+            CHECK(!narrow.hasError());
+            auto *more = test_support::waitForStable(fixture.window, "file toolbar overflow", [&] {
+                return test_support::namedButton(toolbar, QStringLiteral("More Actions"));
+            }, 60);
+            clickItem(fixture, more);
+            auto *menu = more->property("menu").value<QObject *>();
+            CHECK(menu);
+            settle([&] { return menu->property("opened").toBool(); });
+            auto *content = menu->property("contentItem").value<QQuickItem *>();
+            CHECK(content);
+            auto *entry = test_support::waitForStable(fixture.window, "overflowed Undo", [&] {
+                return test_support::namedButton(content, QStringLiteral("undoCommand"));
+            }, 60);
+            CHECK(entry->objectName() == "undoCommand");
+            CHECK(entry->property("containingMenu").value<QObject *>() == menu);
+            auto *accessible = QAccessible::queryAccessibleInterface(entry);
+            CHECK(accessible && accessible->role() == QAccessible::MenuItem);
+            CHECK(accessible->text(QAccessible::Name) == "Undo");
+            clickItem(fixture, entry);
+            settle([&] { return !menu->property("visible").toBool(); });
+            CHECK(triggered.count() == 1);
+            CHECK(fixture.file().current().draft == onceTyped.draft);
         });
         suite.run("TRUCE-0020 resizing earlier context and collapsed choices preserve current sources and manual work", [] {
             Fixture fixture;
