@@ -48,7 +48,9 @@ ColumnLayout {
         title: qsTr("%1 · %2").arg(sourcePane.paneRole)
             .arg(sourcePane.displayIdentity)
         identityName: sourcePane.paneName + "Identity"
-        identity: qsTr("Captured blob: %1").arg(sourcePane.source.shortObjectId || qsTr("unavailable"))
+        identity: qsTr("Captured blob: %1 · Verified commit: %2")
+            .arg(sourcePane.source.objectId || qsTr("unavailable"))
+            .arg(sourcePane.commitId || qsTr("unavailable"))
         description: sourcePane.fullIdentity
     }
     Item {

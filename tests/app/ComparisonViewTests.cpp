@@ -867,7 +867,9 @@ public:
                 const auto label = fixture.item((std::string(prefix) + "Label").c_str())->property("text").toString();
                 CHECK(label.startsWith(side == SourceSide::Stage2 ? "Left source · " : "Right source · "));
                 CHECK(label.contains(QString::fromStdString(source->label)));
-                CHECK(fixture.item((std::string(prefix) + "Identity").c_str())->property("text").toString().contains(QString::fromStdString(source->objectId).left(10)));
+                const auto identity = fixture.item((std::string(prefix) + "Identity").c_str())->property("text").toString();
+                CHECK(identity.contains(QString::fromStdString(source->objectId)));
+                CHECK(identity.contains(QString::fromStdString(*source->commitId)));
                 const auto projected = fixture.controller.selectedFile()->property(prefix).toMap();
                 CHECK(projected.value("commitId").toString().toStdString() == *source->commitId);
             }
