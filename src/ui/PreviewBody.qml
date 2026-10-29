@@ -15,5 +15,6 @@ Item {
     ColumnLayout {
         id: bodyColumn
         anchors.fill: parent
+        spacing: Kirigami.Units.largeSpacing
     }
 }

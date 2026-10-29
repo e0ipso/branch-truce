@@ -4,6 +4,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: pane
@@ -12,6 +13,8 @@ ColumnLayout {
     required property string paneText
     Layout.fillWidth: true
     Layout.fillHeight: true
+    spacing: Kirigami.Units.smallSpacing
+    FontMetrics { id: snapshotFont; font: Kirigami.Theme.fixedWidthFont }
     PlainLabel {
         objectName: pane.paneName + "Label"
         Layout.fillWidth: true
@@ -27,7 +30,8 @@ ColumnLayout {
             readOnly: true
             selectByMouse: true
             textFormat: TextEdit.PlainText
-            font.family: "monospace"
+            font: Kirigami.Theme.fixedWidthFont
+            tabStopDistance: 4 * snapshotFont.averageCharacterWidth
             wrapMode: TextEdit.NoWrap
             Accessible.name: pane.paneTitle
         }

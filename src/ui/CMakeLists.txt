@@ -8,6 +8,9 @@ qt_add_qml_module(branch_truce_ui STATIC
         PlainLabel.qml
         Pill.qml
         PaneHeader.qml
+        PreviewDialog.qml
+        BeforeAfterPanes.qml
+        ScopedChange.qml
         ComparisonView.qml
         ReadingBar.qml
         SourcePane.qml

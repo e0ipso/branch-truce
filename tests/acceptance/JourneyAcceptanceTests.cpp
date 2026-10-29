@@ -1104,7 +1104,7 @@ public:
 
             // A line choice decides only its side; the competitor stays available.
             clickChoice(scene, "Left line 2", "Accept");
-            clickDialogButton(scene, "replacementDialog", "OK");
+            clickDialogButton(scene, "replacementDialog", "Apply choice");
             expectText(scene.text("resultText"), "header\nleft first\nbridge one\nbridge two\nbridge three\nbase later\ntail\n", "accept left");
             CHECK(state("Left line 2") == QStringLiteral("accepted") && state("Right line 2") == QStringLiteral("undecided"));
             CHECK(choiceRow(scene, "Right line 2").value(QStringLiteral("available")).toBool());
@@ -1113,7 +1113,7 @@ public:
 
             // Resolving the other region with one side explicitly rejects its competitor.
             clickChoice(scene, QString::fromUtf8("Right section, lines 6–6"), "Resolve");
-            clickDialogButton(scene, "replacementDialog", "OK");
+            clickDialogButton(scene, "replacementDialog", "Apply choice");
             expectText(scene.text("resultText"), "header\nleft first\nbridge one\nbridge two\nbridge three\nright later\ntail\n", "resolve right");
             CHECK(state("Right line 6") == QStringLiteral("accepted") && state("Left line 6") == QStringLiteral("ignored"));
             CHECK(state("Left line 2") == QStringLiteral("accepted") && state("Right line 2") == QStringLiteral("undecided"));
@@ -1131,7 +1131,7 @@ public:
             clickChoice(scene, QString::fromUtf8("Right section, lines 2–2"), "PreviewRightFirst");
             expectText(scene.object("replacementDialog")->property("title").toString(), "Preview Right then Left", "order title");
             expectText(scene.text("replacementAfterText"), "right first\nleft first\n", "ordered preview");
-            clickDialogButton(scene, "replacementDialog", "OK");
+            clickDialogButton(scene, "replacementDialog", "Apply choice");
             expectText(scene.text("resultText"), "header\nright first\nleft first\nbridge one\nbridge two\nbridge three\nright later\ntail\n", "ordered combination");
             CHECK(state("Right line 2") == QStringLiteral("accepted") && state("Left line 2") == QStringLiteral("accepted"));
             history.push_back(work(scene, "story.txt"));
@@ -1183,7 +1183,7 @@ public:
             }
 
             clickChoice(scene, "Left line 2", "Accept");
-            clickDialogButton(scene, "replacementDialog", "OK");
+            clickDialogButton(scene, "replacementDialog", "Apply choice");
             CHECK(region("Left line 2").value(QStringLiteral("state")).toString() == QStringLiteral("accepted"));
             CHECK(!edited("Left line 2"));
             expectText(regionResult(scene, region("Left line 2")), "left first\n", "accepted range");
@@ -1208,7 +1208,7 @@ public:
             clickChoice(scene, QString::fromUtf8("Right section, lines 2–2"), "PreviewLeftFirst");
             CHECK(scene.item("manualReplacementNotice")->isVisible());
             expectText(scene.text("replacementBeforeText"), "left hand first\n", "replaced edit");
-            clickDialogButton(scene, "replacementDialog", "OK");
+            clickDialogButton(scene, "replacementDialog", "Apply choice");
             expectText(scene.text("resultText"), "header\nleft first\nright first\nbridge one\nbridge two\nbridge three\nbase later\ntail\n", "combined");
             CHECK(!edited("Left line 2") && !edited("Right line 2"));
             CHECK(region("Left line 2").value(QStringLiteral("state")).toString() == QStringLiteral("accepted"));
@@ -1957,7 +1957,7 @@ public:
             // Accepting the section around it puts the line back and clears the mark.
             clickChoice(scene, QString::fromUtf8("Left section, lines 2–3"), "Accept");
             CHECK(scene.item("manualReplacementNotice")->isVisible());
-            clickDialogButton(scene, "replacementDialog", "OK");
+            clickDialogButton(scene, "replacementDialog", "Apply choice");
             expectText(scene.text("resultText"), utf8(left), "restored line");
             CHECK(noneEdited());
             CHECK(region("Left line 2").value(QStringLiteral("state")).toString() == QStringLiteral("accepted"));
@@ -1972,7 +1972,7 @@ public:
                 scene.click("sourceChoicesMenu");
                 test_support::clickItem(scene.window,
                     test_support::waitForLayout(scene.window, QStringLiteral("wholeFileLeft"), Scene::settleMs));
-                clickDialogButton(scene, "wholeFileDialog", "Apply");
+                clickDialogButton(scene, "wholeFileDialog", "Replace whole file");
             };
             wholeLeft();
             expectText(scene.text("resultText"), utf8(left), "whole left");
@@ -2029,7 +2029,7 @@ public:
             CHECK(scene.item("manualReplacementNotice")->isVisible());
             expectText(scene.text("replacementBeforeText"), "base two\n", "replaced left target");
             expectText(scene.text("replacementAfterText"), "left two\n", "left replacement");
-            clickDialogButton(scene, "replacementDialog", "OK");
+            clickDialogButton(scene, "replacementDialog", "Apply choice");
             expectText(scene.text("resultText"), "header\nbase one\nleft two\nbase three\ntail\n", "accept left line 3");
             states("undecided accepted undecided undecided undecided undecided");
             history.push_back(work(scene, "lines.txt"));
@@ -2038,7 +2038,7 @@ public:
             clickChoice(scene, "Right line 4", "Accept");
             expectText(scene.text("replacementBeforeText"), "base three\n", "replaced right target");
             expectText(scene.text("replacementAfterText"), "right three\n", "right replacement");
-            clickDialogButton(scene, "replacementDialog", "OK");
+            clickDialogButton(scene, "replacementDialog", "Apply choice");
             expectText(scene.text("resultText"), "header\nbase one\nleft two\nright three\ntail\n", "accept right line 4");
             states("undecided accepted undecided undecided undecided accepted");
             history.push_back(work(scene, "lines.txt"));

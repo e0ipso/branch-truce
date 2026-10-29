@@ -7,132 +7,98 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-Kirigami.Dialog {
+PreviewDialog {
     id: wholeFileDialog
     required property ApplicationController controller
     objectName: "wholeFileDialog"
     title: qsTr("Replace whole file from %1").arg(wholeFileDialog.controller.wholeFilePreview.side || "")
-    preferredWidth: Kirigami.Units.gridUnit * 52
-    padding: Kirigami.Units.largeSpacing
-    standardButtons: Kirigami.Dialog.Apply | Kirigami.Dialog.Cancel
-    onApplied: {
-        wholeFileDialog.controller.applyWholeFile();
-        close();
-    }
+    path: wholeFileDialog.controller.wholeFilePreview.path || ""
+    summary: wholeFileDialog.controller.wholeFilePreview.source || ""
+    detail: wholeFileDialog.controller.wholeFilePreview.detail || ""
+    detailName: "wholeFileWarning"
+    confirmText: qsTr("Replace whole file")
+    onConfirmed: wholeFileDialog.controller.applyWholeFile()
     onRejected: wholeFileDialog.controller.cancelChoice()
-    PreviewBody {
-        dialog: wholeFileDialog
-        PlainLabel {
-            Layout.fillWidth: true
-            text: wholeFileDialog.controller.wholeFilePreview.path || ""
-            wrapMode: Text.WrapAnywhere
-            font.bold: true
-        }
-        PlainLabel {
-            Layout.fillWidth: true
-            text: wholeFileDialog.controller.wholeFilePreview.source || ""
-            wrapMode: Text.WrapAnywhere
-        }
-        PlainLabel {
-            objectName: "wholeFileWarning"
-            Layout.fillWidth: true
-            text: wholeFileDialog.controller.wholeFilePreview.detail || ""
-            wrapMode: Text.Wrap
-        }
-        TabBar {
-            id: wholeFileTabs
-            Layout.fillWidth: true
-            TabButton { text: qsTr("Full file") }
-            TabButton { text: qsTr("Contribution decisions") }
-            TabButton { text: qsTr("Text and edits replaced") }
-        }
-        StackLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            currentIndex: wholeFileTabs.currentIndex
-            RowLayout {
-                SnapshotPane {
-                    paneName: "wholeFileBefore"
-                    paneTitle: qsTr("Full current result, including manual edits")
-                    paneText: wholeFileDialog.controller.wholeFilePreview.before || ""
-                }
-                SnapshotPane {
-                    paneName: "wholeFileAfter"
-                    paneTitle: qsTr("Full proposed result")
-                    paneText: wholeFileDialog.controller.wholeFilePreview.replacement || ""
-                }
+    TabBar {
+        id: wholeFileTabs
+        Layout.fillWidth: true
+        TabButton { text: qsTr("Full file") }
+        TabButton { text: qsTr("Contribution decisions") }
+        TabButton { text: qsTr("Text and edits replaced") }
+    }
+    StackLayout {
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        currentIndex: wholeFileTabs.currentIndex
+        ColumnLayout {
+            BeforeAfterPanes {
+                namePrefix: "wholeFile"
+                beforeTitle: qsTr("Full current result, including manual edits")
+                beforeText: wholeFileDialog.controller.wholeFilePreview.before || ""
+                afterTitle: qsTr("Full proposed result")
+                afterText: wholeFileDialog.controller.wholeFilePreview.replacement || ""
             }
-            ColumnLayout {
-                PlainLabel {
-                    Layout.fillWidth: true
-                    visible: !!wholeFileDialog.controller.wholeFilePreview.retainedDecisions
-                    text: wholeFileDialog.controller.wholeFilePreview.retainedDecisions || ""
-                    wrapMode: Text.Wrap
-                }
-                ListView {
-                    objectName: "wholeFileContributions"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    model: wholeFileDialog.controller.wholeFilePreview.contributions || []
-                    delegate: ColumnLayout {
-                        id: wholeContribution
-                        required property var modelData
-                        width: ListView.view.width
-                        PlainLabel {
-                            Layout.fillWidth: true
-                            text: wholeContribution.modelData.scope + "\n"
-                                + wholeContribution.modelData.beforeState + " → " + wholeContribution.modelData.afterState
-                            wrapMode: Text.Wrap
-                        }
-                        SnapshotPane {
-                            Layout.preferredHeight: Kirigami.Units.gridUnit * 7
-                            paneName: "wholeContributionSource"
-                            paneTitle: qsTr("Source contribution")
-                            paneText: wholeContribution.modelData.sourceText
-                        }
-                    }
-                    ScrollBar.vertical: ScrollBar {}
-                }
+            Item { Layout.fillHeight: true }
+        }
+        ColumnLayout {
+            PlainLabel {
+                Layout.fillWidth: true
+                visible: !!wholeFileDialog.controller.wholeFilePreview.retainedDecisions
+                text: wholeFileDialog.controller.wholeFilePreview.retainedDecisions || ""
+                wrapMode: Text.Wrap
             }
-            ColumnLayout {
-                PlainLabel {
-                    Layout.fillWidth: true
-                    text: qsTr("All differences from the selected source are replaced, including manual and pre-existing edits. Identical text stays the same.")
-                    wrapMode: Text.Wrap
-                }
-                ListView {
-                    objectName: "wholeFileDifferences"
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    model: wholeFileDialog.controller.wholeFilePreview.differences || []
-                    delegate: ColumnLayout {
-                        id: wholeDifference
-                        required property var modelData
-                        width: ListView.view.width
-                        PlainLabel {
-                            Layout.fillWidth: true
-                            text: wholeDifference.modelData.scope
-                            wrapMode: Text.Wrap
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: Kirigami.Units.gridUnit * 8
-                            SnapshotPane {
-                                paneName: "wholeDifferenceBefore"
-                                paneTitle: qsTr("Current text being replaced")
-                                paneText: wholeDifference.modelData.before
-                            }
-                            SnapshotPane {
-                                paneName: "wholeDifferenceAfter"
-                                paneTitle: qsTr("Replacement text")
-                                paneText: wholeDifference.modelData.replacement
-                            }
-                        }
+            ListView {
+                objectName: "wholeFileContributions"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: wholeFileDialog.controller.wholeFilePreview.contributions || []
+                spacing: Kirigami.Units.largeSpacing
+                delegate: ColumnLayout {
+                    id: wholeContribution
+                    required property var modelData
+                    width: ListView.view.width
+                    PlainLabel {
+                        Layout.fillWidth: true
+                        text: wholeContribution.modelData.scope + "\n"
+                            + wholeContribution.modelData.beforeState + " → " + wholeContribution.modelData.afterState
+                        wrapMode: Text.Wrap
                     }
-                    ScrollBar.vertical: ScrollBar {}
+                    SnapshotPane {
+                        Layout.preferredHeight: Kirigami.Units.gridUnit * 7
+                        paneName: "wholeContributionSource"
+                        paneTitle: qsTr("Source contribution")
+                        paneText: wholeContribution.modelData.sourceText
+                    }
                 }
+                ScrollBar.vertical: ScrollBar {}
+            }
+        }
+        ColumnLayout {
+            PlainLabel {
+                Layout.fillWidth: true
+                text: qsTr("All differences from the selected source are replaced, including manual and pre-existing edits. Identical text stays the same.")
+                wrapMode: Text.Wrap
+            }
+            ListView {
+                objectName: "wholeFileDifferences"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: wholeFileDialog.controller.wholeFilePreview.differences || []
+                spacing: Kirigami.Units.largeSpacing
+                delegate: ScopedChange {
+                    id: wholeDifference
+                    required property var modelData
+                    width: ListView.view.width
+                    scope: modelData.scope
+                    namePrefix: "wholeDifference"
+                    beforeTitle: qsTr("Current text being replaced")
+                    beforeText: modelData.before
+                    afterTitle: qsTr("Replacement text")
+                    afterText: modelData.replacement
+                }
+                ScrollBar.vertical: ScrollBar {}
             }
         }
     }

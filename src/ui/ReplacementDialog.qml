@@ -7,53 +7,34 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-Kirigami.Dialog {
+PreviewDialog {
     id: replacementDialog
     required property ApplicationController controller
     objectName: "replacementDialog"
     title: replacementDialog.controller.commandPreview.orderedCombination
         ? qsTr("Preview %1").arg(replacementDialog.controller.commandPreview.order)
         : qsTr("Replace manual work in this scope?")
-    preferredWidth: Kirigami.Units.gridUnit * 40
-    padding: Kirigami.Units.largeSpacing
-    standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
-    onAccepted: replacementDialog.controller.applyChoice(true)
+    path: replacementDialog.controller.selectedFile.path || ""
+    summary: replacementDialog.controller.commandPreview.orderedCombination
+        ? replacementDialog.controller.commandPreview.sourceScopes || "" : ""
+    detail: replacementDialog.controller.commandPreview.detail || ""
+    confirmText: qsTr("Apply choice")
+    onConfirmed: replacementDialog.controller.applyChoice(true)
     onRejected: replacementDialog.controller.cancelChoice()
-    PreviewBody {
-        dialog: replacementDialog
-        PlainLabel {
-            Layout.fillWidth: true
-            text: replacementDialog.controller.commandPreview.detail || ""
-            wrapMode: Text.Wrap
-        }
-        PlainLabel {
-            Layout.fillWidth: true
-            visible: !!replacementDialog.controller.commandPreview.orderedCombination
-            text: replacementDialog.controller.commandPreview.sourceScopes || ""
-            wrapMode: Text.Wrap
-        }
-        PlainLabel {
-            objectName: "manualReplacementNotice"
-            Layout.fillWidth: true
-            visible: !!replacementDialog.controller.commandPreview.replacesManual
-            text: qsTr("Manual or pre-existing edits in the current scope below will be replaced. Confirm to replace this work, or cancel to keep it.")
-            wrapMode: Text.Wrap
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            SnapshotPane {
-                paneName: "replacementBefore"
-                paneTitle: qsTr("Current text in this scope")
-                paneText: replacementDialog.controller.commandPreview.before || ""
-            }
-            SnapshotPane {
-                paneName: "replacementAfter"
-                paneTitle: replacementDialog.controller.commandPreview.orderedCombination
-                    ? qsTr("Proposed text · %1").arg(replacementDialog.controller.commandPreview.order)
-                    : qsTr("Replacement from the selected source")
-                paneText: replacementDialog.controller.commandPreview.replacement || ""
-            }
-        }
+    PlainLabel {
+        objectName: "manualReplacementNotice"
+        Layout.fillWidth: true
+        visible: !!replacementDialog.controller.commandPreview.replacesManual
+        text: qsTr("Manual or pre-existing edits in the current scope below will be replaced. Confirm to replace this work, or cancel to keep it.")
+        wrapMode: Text.Wrap
+    }
+    BeforeAfterPanes {
+        namePrefix: "replacement"
+        beforeTitle: qsTr("Current text in this scope")
+        beforeText: replacementDialog.controller.commandPreview.before || ""
+        afterTitle: replacementDialog.controller.commandPreview.orderedCombination
+            ? qsTr("Proposed text · %1").arg(replacementDialog.controller.commandPreview.order)
+            : qsTr("Replacement from the selected source")
+        afterText: replacementDialog.controller.commandPreview.replacement || ""
     }
 }
