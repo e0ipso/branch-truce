@@ -1,6 +1,6 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:9c21b9177a6f736ba7868d62a291732b54f8fbfffb030000eef95ecf21b0f4fd'
+nodes_hash: 'sha256:5895b63309d292916f0af1437f2e77755082f02b4b0c831f19177ca837c3a939'
 node_count: 31
 ---
 # kenkeep
@@ -30,7 +30,7 @@ _None._
 - Open [**Follow the UI design brief for the KDE-native window**](nodes/practice-follow-the-ui-design-brief-for-the-kde-native-window.md) to learn about: docs/ui-design.md sets layout, actions and colour roles; panes get the space and red marks only ranges that need a decision. #ui #design #kde #kirigami #qml
 - Open [**Hold a Git call to test racing repository changes**](nodes/practice-hold-a-git-call-to-test-racing-repository-changes.md) to learn about: GitGate holds one git subcommand on one path so a write lands mid-inspection; keep a race test only if it fails without its guard. #testing #git #concurrency #mergetool
 - Open [**Keep the qmllint target at zero warnings**](nodes/practice-keep-the-qmllint-target-at-zero-warnings.md) to learn about: src/ui/.qmllint.ini makes branch_truce_ui_qmllint fail on any warning; type QML properties concretely, anchor at use sites. #qml #lint #ui #ci
-- Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](nodes/practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) to learn about: Conventional Commits headers carry no TRUCE IDs or co-author/AI trailers; check:tracker-refs bans ticket IDs outside agent paths and tests/. #git #commits #ci #conventions #release
+- Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](nodes/practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) to learn about: Sift ticket references stay inside Sift; commitlint and check:tracker-refs enforce this for commit messages and tracked files. #git #commits #ci #conventions #release
 
 ## Components (what exists)
 - Open [**Branch Truce desktop implementation baseline**](nodes/map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation. #architecture #desktop #platform #cpp

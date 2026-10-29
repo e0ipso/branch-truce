@@ -200,7 +200,7 @@ public:
         test_support::Suite suite("SessionModelTests");
         for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
             for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst}) {
-                suite.run("TRUCE-0017 ordered combination undo and redo recover as complete transactions "
+                suite.run("ordered combination undo and redo recover as complete transactions "
                     + std::to_string(static_cast<int>(scope)) + "/" + std::to_string(static_cast<int>(action)), [=] {
                     QTemporaryDir directory;
                     CHECK(directory.isValid());
@@ -223,7 +223,7 @@ public:
             }
         }
         for (const auto scope : {NonConflictingScope::Left, NonConflictingScope::Right, NonConflictingScope::Both}) {
-            suite.run("TRUCE-0018 file batch undo and redo recover together with protected manual work "
+            suite.run("file batch undo and redo recover together with protected manual work "
                 + std::to_string(static_cast<int>(scope)), [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
@@ -244,7 +244,7 @@ public:
             });
         }
         for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
-            suite.run("TRUCE-0019 whole-file replacement undo and redo recover text and decisions "
+            suite.run("whole-file replacement undo and redo recover text and decisions "
                 + std::to_string(static_cast<int>(side)), [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
@@ -295,7 +295,7 @@ public:
         }
         for (const bool staging : {false, true}) {
             const auto kind = staging ? QStringLiteral("staging") : QStringLiteral("publication");
-            suite.run("TRUCE-0056 successive successful outcomes retain every earlier completion " + kind.toStdString(), [=] {
+            suite.run("successive successful outcomes retain every earlier completion " + kind.toStdString(), [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
                 SessionModel model(directory.path() + "/recovery");
@@ -320,7 +320,7 @@ public:
                 }
                 CHECK(replay.files.front().current().draft.text == "second published\n");
             });
-            suite.run("TRUCE-0056 earlier same-revision success cannot complete a later intent " + kind.toStdString(), [=] {
+            suite.run("earlier same-revision success cannot complete a later intent " + kind.toStdString(), [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
                 SessionModel model(directory.path() + "/recovery");
@@ -335,7 +335,7 @@ public:
                 CHECK(replay.mutations[1].id == interrupted && !replay.mutations[1].completed);
                 CHECK(replay.mutations[0].target.current().id == replay.mutations[1].target.current().id);
             });
-            suite.run("TRUCE-0056 a later revision outcome leaves an unmatched earlier interruption uncertain " + kind.toStdString(), [=] {
+            suite.run("a later revision outcome leaves an unmatched earlier interruption uncertain " + kind.toStdString(), [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
                 SessionModel model(directory.path() + "/recovery");
@@ -354,7 +354,7 @@ public:
                 CHECK(replay.mutations[1].id == completed && replay.mutations[1].completed);
             });
         }
-        suite.run("TRUCE-0056 outcomes match the file and kind and failed staging does not complete an intent", [] {
+        suite.run("outcomes match the file and kind and failed staging does not complete an intent", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             SessionModel model(directory.path() + "/recovery");
@@ -381,7 +381,7 @@ public:
             CHECK(replay.succeeded && replay.mutations[2].completed);
         });
         for (const auto action : {ChoiceAction::Accept, ChoiceAction::Ignore, ChoiceAction::ResolveUsingSide}) {
-            suite.run("TRUCE-0016 command undo and redo each replay complete text and decisions "
+            suite.run("command undo and redo each replay complete text and decisions "
                 + std::to_string(static_cast<int>(action)), [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
@@ -412,7 +412,7 @@ public:
                 CHECK(reopened.redo(reopened.current().id) == Transition::Applied && reopened.current().draft == chosen);
             });
         }
-        suite.run("TRUCE-0016 a failed choice retains its atomic candidate until durable retry", [] {
+        suite.run("a failed choice retains its atomic candidate until durable retry", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             SessionModel model(directory.path() + "/recovery");
@@ -436,7 +436,7 @@ public:
             CHECK(records.succeeded && records.transactions.size() == 2);
         });
         for (const int checkpoint : {0, 1, 2}) {
-            suite.run("TRUCE-0014 durable discard replays instead of the abandoned draft "
+            suite.run("durable discard replays instead of the abandoned draft "
                 + std::to_string(checkpoint), [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
@@ -465,7 +465,7 @@ public:
             });
         }
         for (const int corruption : {0, 1, 2}) {
-            suite.run("TRUCE-0014 invalid schema session or file identity rejects the entire replay "
+            suite.run("invalid schema session or file identity rejects the entire replay "
                 + std::to_string(corruption), [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
@@ -505,7 +505,7 @@ public:
                 CHECK(replay.error.contains(expected));
             });
         }
-        suite.run("TRUCE-0013 an immediate process exit after acknowledgment preserves edits decisions captures and Save separately", [] {
+        suite.run("an immediate process exit after acknowledgment preserves edits decisions captures and Save separately", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             const auto location = directory.path() + "/recovery";
@@ -559,7 +559,7 @@ public:
                     payload(reopened, attribute.toObject().value("value")));
             CHECK(policy == QMap<QByteArray, QByteArray>{{"eol", "crlf"}, {"text", "set"}});
         });
-        suite.run("TRUCE-0013 failed recovery retains pending input separately and retries its completed record once", [] {
+        suite.run("failed recovery retains pending input separately and retries its completed record once", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             SessionModel model(directory.path() + "/recovery");
@@ -746,7 +746,7 @@ public:
             resolve(model, "second");
             CHECK(model.handoff().value("outcome").toString().startsWith("All 2 files in this session are written"));
         });
-        suite.run("TRUCE-0028 handoff puts each mixed outcome in one category and pending input stays failed until retried", [] {
+        suite.run("handoff puts each mixed outcome in one category and pending input stays failed until retried", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             SessionModel model(directory.path() + "/recovery");
@@ -829,7 +829,7 @@ public:
             CHECK(summary.value("counts").toMap().value("review-needed").toInt() == 2);
             CHECK(summary.value("outstandingFiles").toInt() == 8 && !summary.value("clean").toBool());
         });
-        suite.run("TRUCE-0218 a failed write, stage or recovery shows the handoff's icon in the list", [] {
+        suite.run("a failed write, stage or recovery shows the handoff's icon in the list", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             SessionModel model(directory.path() + "/recovery");
@@ -860,7 +860,7 @@ public:
             CHECK(role(model, SessionModel::StatusRole, model.rowOf("recovery")).toString()
                   == "Recovery requires attention; work remains outstanding");
         });
-        suite.run("TRUCE-0218 rows carry one status line, toned chips, a summary and the escaped path", [] {
+        suite.run("rows carry one status line, toned chips, a summary and the escaped path", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             SessionModel model(directory.path() + "/recovery");
@@ -959,7 +959,7 @@ public:
             CHECK(model.recordCheckpoint("id", 4, Outcome::Failed) == Transition::StaleRevision);
             CHECK(model.canFinish());
         });
-        suite.run("TRUCE-0172 replay recomputes markers from the restored text", [] {
+        suite.run("replay recomputes markers from the restored text", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             storage::RecoveryStore store(directory.path() + "/recovery");
@@ -973,7 +973,7 @@ public:
             CHECK(transaction.state.value("current").toObject().value("draft").toObject()
                 .value("unresolvedMarkers").toString() == "2");
             // A count of 0 for this text is what a scan of only <<<<<<< lines
-            // recorded. Replay counts again and never adopts it (TRUCE-0253).
+            // recorded. Replay counts again and never adopts it.
             auto stale = transaction;
             auto current = stale.state.value("current").toObject();
             auto draft = current.value("draft").toObject();
@@ -1002,7 +1002,7 @@ public:
             const auto blockers = restored.facts().blockers;
             CHECK(std::find(blockers.begin(), blockers.end(), Blocker::UnresolvedMarkers) != blockers.end());
         });
-        suite.run("TRUCE-0177 replay restores the text and markers a full decision left", [] {
+        suite.run("replay restores the text and markers a full decision left", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             SessionModel model(directory.path() + "/recovery");
@@ -1035,7 +1035,7 @@ public:
             CHECK(reopened.undo(reopened.current().id) == Transition::Applied);
             CHECK(reopened.current().draft.text == test_support::markedText(true) && reopened.current().draft.unresolvedMarkers == 2);
         });
-        suite.run("TRUCE-0187 replay derives the marker count against the captured sources", [] {
+        suite.run("replay derives the marker count against the captured sources", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             SessionModel model(directory.path() + "/recovery");
@@ -1072,7 +1072,7 @@ public:
             CHECK(role(model, SessionModel::FinishBlockersRole).toStringList().contains("Known conflict markers remain"));
         });
         for (const auto outcome : {Outcome::Succeeded, Outcome::Failed, Outcome::Uncertain}) {
-            suite.run("TRUCE-0042 delayed write stays visible after a newer Save "
+            suite.run("delayed write stays visible after a newer Save "
                       + std::to_string(static_cast<int>(outcome)), [=] {
                 SessionModel model;
                 CHECK(model.appendFile(FileSession("id", "file", draft())));
@@ -1099,7 +1099,7 @@ public:
                 CHECK(outcome == Outcome::Succeeded ? written && written->id == 1 : !written);
             });
         }
-        suite.run("TRUCE-0015 manual Save and discard stay distinct from recovery and publication", [] {
+        suite.run("manual Save and discard stay distinct from recovery and publication", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             SessionModel model(directory.path() + "/recovery");
@@ -1178,7 +1178,7 @@ public:
             CHECK(retried.current().draft == unsavedDraft() && retried.checkpoint()
                   && retried.checkpoint()->draft == unsavedDraft() && !retried.written() && !retried.staged());
         });
-        suite.run("TRUCE-0015 failed Save and discard reuse one transaction and block the session until retry", [] {
+        suite.run("failed Save and discard reuse one transaction and block the session until retry", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             SessionModel model(directory.path() + "/recovery");

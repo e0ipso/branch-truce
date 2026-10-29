@@ -1,6 +1,6 @@
 // The real Main scene under the app's own look: its icon names, its colour roles in a dark and
 // a light KDE colour scheme, a non-colour cue for every coloured line, and what typing and
-// scrolling cost once the panes are highlighted (TRUCE-0122).
+// scrolling cost once the panes are highlighted.
 //
 //   branch_truce_theme_tests icons <icon list>   every collected icon.name resolves
 //   branch_truce_theme_tests roles <scheme>      the sidebar and panes paint the scheme's View background

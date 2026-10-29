@@ -2,8 +2,8 @@
 
 `GitAdapterTests.cpp` uses disposable repositories and the absolute executable
 `/usr/bin/git`. It prints the selected executable and version and checks the
-Git 2.43 compatibility floor. TRUCE-0031 was exercised with Git 2.43.0;
-no additional Git version was exercised for that ticket.
+Git 2.43 compatibility floor. The adapter was exercised with Git 2.43.0;
+no additional Git version was exercised.
 
 Run from the checkout root:
 
@@ -44,8 +44,8 @@ case and assertion totals separately for the adapter and classification suites.
 `/usr/bin/git mergetool` against the built `branch-truce` launcher and an
 in-process session. The shared fixture is
 `tests/fixtures/mergetool/RealParent.h`. Each parent runs in its own process
-group and is killed with it when a case ends. TRUCE-0033 exercised Git 2.43.0
-only. `docs/mergetool-launcher.md` lists the tested configuration, the
+group and is killed with it when a case ends. The parent fixtures exercised
+Git 2.43.0 only. `docs/mergetool-launcher.md` lists the tested configuration, the
 behaviour declared compatible and the trust boundaries.
 
 ```sh

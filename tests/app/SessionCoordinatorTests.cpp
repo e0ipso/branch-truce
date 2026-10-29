@@ -499,7 +499,7 @@ public:
             }
             CHECK(overlapping > 0);
         });
-        test("TRUCE-0177 deciding both sides of a marked section removes its marker lines from the shown result", [] {
+        test("deciding both sides of a marked section removes its marker lines from the shown result", [] {
             RegionView view(test_support::markedFile());
             auto file = view.file();
             const auto preview = [&](const char *side, ChoicePreviewFlow::Action action) {

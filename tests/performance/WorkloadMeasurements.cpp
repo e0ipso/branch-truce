@@ -1231,7 +1231,7 @@ void writeReports(const std::string &path, const std::vector<Aggregate> &results
         }
         return best;
     };
-    markdown << "\n## Proposed envelope for TRUCE-0029\n\n";
+    markdown << "\n## Proposed resource envelope\n\n";
     markdown << "Component bounds before taking the tightest measured point: correspondence construction "
              << sizeOrNone(corrLines, "lines") << ", correspondence edit " << sizeOrNone(corrEdit, "lines")
              << ", editor load " << sizeOrNone(editorLines, "lines") << ", editor keystroke "

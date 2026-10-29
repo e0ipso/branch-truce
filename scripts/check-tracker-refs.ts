@@ -8,11 +8,12 @@ import { fileURLToPath } from 'node:url';
 //
 // Neither pattern matches its own source: the regex has `\d`, not digits, and the path is joined.
 
-const TICKET = /\bTRUCE-\d+\b/;
+const TICKET = /\bTRUCE-\d+\b/i;
+const SIFT_ROOT = ['.ai', 'sift', ''].join('/');
 const PLANS_PATH = ['.ai', 'strikethroo', 'plans'].join('/');
 
-/** Tracked paths the check skips: agent tooling, the knowledge base, and internal test fixtures. */
-const EXCLUDED = [
+/** These exclusions apply only to plan paths. Ticket IDs are allowed only inside Sift. */
+const PLAN_EXCLUDED = [
   '.ai/',
   '.agents/',
   '.claude/',
@@ -25,8 +26,8 @@ const EXCLUDED = [
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 
-const isExcluded = (path: string) =>
-  EXCLUDED.some((entry) => (entry.endsWith('/') ? path.startsWith(entry) : path === entry));
+const isPlanExcluded = (path: string) =>
+  PLAN_EXCLUDED.some((entry) => (entry.endsWith('/') ? path.startsWith(entry) : path === entry));
 
 function trackedFiles(): string[] {
   const out = execFileSync('git', ['ls-files', '-z'], {
@@ -34,7 +35,7 @@ function trackedFiles(): string[] {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
-  return out.split('\0').filter((path) => path && !isExcluded(path));
+  return out.split('\0').filter((path) => path && !path.startsWith(SIFT_ROOT));
 }
 
 /** The file's text, or null for a path that is not a readable regular text file. */
@@ -55,7 +56,9 @@ for (const path of trackedFiles()) {
   const text = readText(path);
   if (text === null) continue;
   text.split('\n').forEach((line, index) => {
-    if (TICKET.test(line) || line.includes(PLANS_PATH)) hits.push(`${path}:${index + 1}`);
+    if (TICKET.test(line) || (!isPlanExcluded(path) && line.includes(PLANS_PATH))) {
+      hits.push(`${path}:${index + 1}`);
+    }
   });
 }
 
@@ -64,7 +67,7 @@ if (hits.length > 0) {
     `${hits.length} tracked line${hits.length === 1 ? '' : 's'} cite a ticket ID or a plan path:`,
   );
   for (const hit of hits) console.error(hit);
-  console.error('Remove the reference, or add the path to EXCLUDED in scripts/check-tracker-refs.ts.');
+  console.error('Remove the reference. Ticket IDs belong only inside Sift.');
   process.exit(1);
 }
 console.log('No ticket or plan references in tracked files.');

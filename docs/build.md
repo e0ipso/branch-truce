@@ -156,6 +156,11 @@ Commit messages follow Conventional Commits. `npm ci` installs a commit-msg
 hook that runs commitlint, and CI runs the same check. semantic-release
 derives the release version from the messages.
 
+Sift ticket IDs and links to individual tickets belong only inside Sift. Keep them
+out of source, tests, documentation, knowledge nodes and commit messages, including
+bodies and trailers. Describe the behavior directly. `check:tracker-refs` checks
+tracked files, and commitlint checks the entire commit message.
+
 ## Preview
 
 After a desktop build, `tools/preview-app.sh` takes a light and a dark

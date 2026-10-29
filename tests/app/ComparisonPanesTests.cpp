@@ -136,7 +136,7 @@ int main(int argc, char **argv)
     test_support::Suite suite("comparison-panes");
     using Spans = QList<ComparisonPanes::Span>;
 
-    suite.run("TRUCE-0219 an equal passage maps line by line and an unequal one proportionally", [] {
+    suite.run("an equal passage maps line by line and an unequal one proportionally", [] {
         const Spans spans{{1, 3, 1, 3}, {3, 4, 3, 6}, {4, 10, 6, 12}};
         CHECK(near(ComparisonPanes::mapLine(spans, 2, true, 9, 11), 2));
         CHECK(near(ComparisonPanes::mapLine(spans, 3.5, true, 9, 11), 4.5));
@@ -149,7 +149,7 @@ int main(int argc, char **argv)
         // Below the last passage the lines run on one by one.
         CHECK(near(ComparisonPanes::mapLine(spans, 12, true, 13, 15), 14));
     });
-    suite.run("TRUCE-0219 an empty passage does not divide by its length", [] {
+    suite.run("an empty passage does not divide by its length", [] {
         // Source A B C D E F G becomes A B C X Y Z D E F G.
         // The half-open equal passages put source D (line 4) at result line 7.
         const Spans spans{{1, 4, 1, 4}, {4, 4, 4, 7}, {4, 8, 7, 11}};
@@ -168,12 +168,12 @@ int main(int argc, char **argv)
         CHECK(near(ComparisonPanes::mapLine(sourceOnly, 4.5, false, 7, 10), 7.5));
         CHECK(near(ComparisonPanes::mapLine(sourceOnly, 5, true, 10, 7), 4));
     });
-    suite.run("TRUCE-0219 a side without passages maps over the whole text", [] {
+    suite.run("a side without passages maps over the whole text", [] {
         CHECK(near(ComparisonPanes::mapLine({}, 5, true, 10, 20), 9));
         CHECK(near(ComparisonPanes::mapLine({}, 9, false, 20, 10), 5));
         CHECK(near(ComparisonPanes::mapLine({}, 5, true, 0, 20), 1));
     });
-    suite.run("TRUCE-0219 passages of unequal length map between the sources and the earlier pane", [] {
+    suite.run("passages of unequal length map between the sources and the earlier pane", [] {
         ComparisonPanes panes;
         panes.setPassages(unequalPassages());
         // Left line 16 is halfway through the passage that became result lines 11 to 40.
@@ -185,7 +185,7 @@ int main(int argc, char **argv)
         CHECK(near(panes.mapBetween("stage2", "stage3", 16, 40, 60, 30), 13.5));
         CHECK(near(panes.mapBetween("earlier", "stage3", 26, 60, 60, 30), 13.5));
     });
-    suite.run("TRUCE-0219 the registry finds editors by role", [] {
+    suite.run("the registry finds editors by role", [] {
         Scene scene;
         for (const char *role : {"left", "result", "right", "earlier"})
             CHECK(scene.pane(role) != nullptr);
@@ -195,7 +195,7 @@ int main(int argc, char **argv)
         CHECK(scene.panes->editor("result") == scene.pane("result")->property("editor").value<QQuickItem *>());
         CHECK(scene.panes->editor("unknown") == scene.panes->editor("result"));
     });
-    suite.run("TRUCE-0219 panes declared in reverse order still scroll together", [] {
+    suite.run("panes declared in reverse order still scroll together", [] {
         Scene scene;
         auto *left = scene.pane("left");
         auto *result = scene.pane("result");
@@ -239,7 +239,7 @@ int main(int argc, char **argv)
         auto *earlierText = scene.panes->editor("earlier");
         CHECK(earlierText->property("cursorPosition").toInt() == Scene::blocks(earlier)->positionOf(9));
     });
-    suite.run("TRUCE-0219 placing a pane moves the source cursors to their rows", [] {
+    suite.run("placing a pane moves the source cursors to their rows", [] {
         Scene scene;
         auto *left = scene.pane("left");
         auto *result = scene.pane("result");

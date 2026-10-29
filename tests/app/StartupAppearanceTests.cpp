@@ -151,21 +151,21 @@ int main(int argc, char **argv)
     const auto binary = application.arguments()[1];
     const auto probe = application.arguments()[2];
     test_support::Suite suite("startup-appearance");
-    suite.run("TRUCE-0103 off Plasma the installed KDE style is selected", [&] {
+    suite.run("off Plasma the installed KDE style is selected", [&] {
         const auto state = Launch(probe).appearance(binary);
         CHECK(state.value("style") == "org.kde.desktop");
         CHECK(state.value("displayName") == "Branch Truce");
     });
-    suite.run("TRUCE-0103 an explicit QT_QUICK_CONTROLS_STYLE overrides the KDE style", [&] {
+    suite.run("an explicit QT_QUICK_CONTROLS_STYLE overrides the KDE style", [&] {
         Launch launch(probe);
         launch.environment.insert("QT_QUICK_CONTROLS_STYLE", "Basic");
         CHECK(launch.appearance(binary).value("style") == "Basic");
     });
-    suite.run("TRUCE-0103 without the KDE style module the style is Fusion", [&] {
+    suite.run("without the KDE style module the style is Fusion", [&] {
         HiddenKdeStyle hidden(binary);
         CHECK(Launch(probe).appearance(hidden.binary).value("style") == "Fusion");
     });
-    suite.run("TRUCE-0103 the KDE style module on QML_IMPORT_PATH is selected", [&] {
+    suite.run("the KDE style module on QML_IMPORT_PATH is selected", [&] {
         // Guards the hidden fixture itself: the same copy picks the module up again.
         HiddenKdeStyle hidden(binary);
         const auto extra = hidden.directory.path() + "/extra";
@@ -176,7 +176,7 @@ int main(int argc, char **argv)
         launch.environment.insert("QML_IMPORT_PATH", extra);
         CHECK(launch.appearance(hidden.binary).value("style") == "org.kde.desktop");
     });
-    suite.run("TRUCE-0103 in a GNOME session Breeze action icons resolve through the fallback theme", [&] {
+    suite.run("in a GNOME session Breeze action icons resolve through the fallback theme", [&] {
         // A display manager names the desktop, so Kirigami keeps the app's icon
         // theme and only adds its own fallback path.
         Launch launch(probe);
@@ -197,7 +197,7 @@ int main(int argc, char **argv)
         CHECK(state.value("theme") == "hicolor");
         CHECK(state.value("fallbackTheme") == "breeze");
     });
-    suite.run("TRUCE-0248 with no themed application icon the window shows the bundled symbol", [&] {
+    suite.run("with no themed application icon the window shows the bundled symbol", [&] {
         QTemporaryDir dataDirs;
         CHECK(dataDirs.isValid());
         isolateIconThemes(dataDirs.path());
@@ -215,7 +215,7 @@ int main(int argc, char **argv)
         CHECK(state.value("documentSave").toBool());
         CHECK(state.value("displayName") == "Branch Truce");
     });
-    suite.run("TRUCE-0248 an installed application icon is preferred over the bundled symbol", [&] {
+    suite.run("an installed application icon is preferred over the bundled symbol", [&] {
         QTemporaryDir dataDirs;
         CHECK(dataDirs.isValid());
         isolateIconThemes(dataDirs.path());

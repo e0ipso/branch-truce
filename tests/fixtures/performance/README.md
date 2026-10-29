@@ -27,7 +27,7 @@ The registered check is `performance.workloads`. It runs `--profile gate` under 
 
 A size enters the proposed envelope only when every repeat completed and the median time is within budget. The proposal keeps the largest measured point that qualifies. A size that was not attempted is not claimed. A timeout, resource kill, truncation, unacknowledged edit, explicit failure or fabricated success stays outside the envelope.
 
-Budgets are correspondence construction 1000 ms, correspondence edit 1000 ms, editor load 1000 ms, editor keystroke 100 ms, Git read 2000 ms, and recovery acknowledgment 500 ms. The Git proposal also cannot exceed the existing 8 MiB output guard. That guard is not changed by the measurement. TRUCE-0029 enforces the resulting envelope: 4000 lines, 262144-byte lines, 4194304-byte Git reads, and 8388608-byte recovery payloads.
+Budgets are correspondence construction 1000 ms, correspondence edit 1000 ms, editor load 1000 ms, editor keystroke 100 ms, Git read 2000 ms, and recovery acknowledgment 500 ms. The Git proposal also cannot exceed the existing 8 MiB output guard. That guard is not changed by the measurement. The application enforces the resulting envelope: 4000 lines, 262144-byte lines, 4194304-byte Git reads, and 8388608-byte recovery payloads.
 
 Larger sizes in a group are skipped after a smaller size misses a stall ceiling: 4000 ms for correspondence and editor load, 400 ms for a keystroke, 8000 ms for a Git read, and 2000 ms for recovery. The process is killed at 1536 MiB resident set or at its wall-clock ceiling. A killed run is not given a latency.
 

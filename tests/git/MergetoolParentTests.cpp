@@ -260,7 +260,7 @@ int main(int argc, char **argv)
         CHECK(!controller.parentStagingOffer(id));
     });
 
-    // TRUCE-0100, TRUCE-0101: the in-window recovery choice reloads the files while
+    // the in-window recovery choice reloads the files while
     // Git waits. The chosen store captured tracked.txt before Git moved MERGED
     // aside and copied it back, so only the inode and timestamps changed. The
     // waiting launcher's MERGED copy holds the captured launch bytes, so the
@@ -286,7 +286,7 @@ int main(int argc, char **argv)
         CHECK(opened(controller, "tracked.txt").snapshots()->launchResult.text.bytes == "launch bytes\n");
         waitForWaiter(controller, "tracked.txt");
         const auto id = select(controller, "tracked.txt");
-        // TRUCE-0102: Git rechecks the index and conversion policy before the error clears.
+        // Git rechecks the index and conversion policy before the error clears.
         pump([&] { return !controller.files()->hasRecoveryFailure(id.toStdString()); }, controller.commandMessage());
         CHECK(controller.mergetoolWaiting());
         editDraft(controller, "tracked.txt", QStringLiteral("reviewed after the choice\n"));
@@ -336,7 +336,7 @@ int main(int argc, char **argv)
         CHECK(!controller.mergetool()->hasWaiter("tracked.txt"));
     });
 
-    // TRUCE-0102: the waiting launcher's MERGED copy still holds the launch
+    // the waiting launcher's MERGED copy still holds the launch
     // bytes, but the index entries or the conversion policy changed since the
     // store captured the path, so the restored draft keeps its recovery error.
     suite.run("a staged launched path or a changed conversion policy before a recovery choice keeps its recovery error", [] {
@@ -373,7 +373,7 @@ int main(int argc, char **argv)
         }
     });
 
-    // TRUCE-0102: the restore after the choice validates the index and policy
+    // the restore after the choice validates the index and policy
     // itself, so the case above keeps its error even without the revalidation.
     // Here both change after the restore and while the revalidation that the
     // choice starts waits on its first index inspection, so only the

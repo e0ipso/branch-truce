@@ -32,7 +32,7 @@ const forbiddenPatterns = [
   new RegExp(`(?:Generated|Made) (?:with|by|using)\\b.*${tool}`, 'iu'),
 ];
 
-const ticketIdInHeader = /\bTRUCE-\d+\b/;
+const ticketId = /\bTRUCE-\d+\b/i;
 
 const findForbiddenContent = raw => {
   for (const pattern of forbiddenPatterns) {
@@ -45,12 +45,12 @@ const findForbiddenContent = raw => {
   return null;
 };
 
-const findTicketId = header => (header ?? '').match(ticketIdInHeader)?.[0] ?? null;
+const findTicketId = message => (message ?? '').match(ticketId)?.[0] ?? null;
 
 const firstLine = message => message.split(/\r?\n/, 1)[0];
 
 const passesCustomChecks = message =>
-  findForbiddenContent(message) === null && findTicketId(firstLine(message)) === null;
+  findForbiddenContent(message) === null && findTicketId(message) === null;
 
 // commitlint skips every rule, the two custom ones included, for a message that matches one
 // of its default ignores: merges, `Revert "..."`, `fixup!`/`squash!`, bare versions and a few
@@ -74,12 +74,12 @@ export default {
 
           return [true, ''];
         },
-        'no-ticket-id-in-header': parsed => {
-          const match = findTicketId(parsed.header);
+        'no-ticket-references': parsed => {
+          const match = findTicketId(parsed.raw);
           if (match) {
             return [
               false,
-              `Commit header contains ticket ID "${match}". Move it to a "Refs: ${match}" trailer in the body.`,
+              `Commit message contains ticket ID "${match}". Remove it; ticket IDs belong only inside Sift.`,
             ];
           }
 
@@ -123,8 +123,8 @@ export default {
     ],
     // Custom rule to block AI-generated strings
     'no-ai-generated': [2, 'always'],
-    // Custom rule to keep internal ticket IDs out of release notes and the CHANGELOG
-    'no-ticket-id-in-header': [2, 'always'],
+    // Ticket IDs belong only inside Sift, including when writing commit bodies and trailers.
+    'no-ticket-references': [2, 'always'],
   },
   helpUrl: 'https://github.com/conventional-changelog/commitlint/#what-is-commitlint',
 };

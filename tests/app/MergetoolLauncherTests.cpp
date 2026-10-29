@@ -673,7 +673,7 @@ int main(int argc, char **argv)
     // The reload replaces the publisher's files, which used to drop the parent's
     // staging assignment while the waiter stayed assigned. Mark resolved then
     // staged the path in the app and the launcher never got a decision.
-    suite.run("TRUCE-0100 a recovery choice made while a launcher waits hands the launched path back to it", [] {
+    suite.run("a recovery choice made while a launcher waits hands the launched path back to it", [] {
         Repository repo("launch bytes\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
         QString chosen;
@@ -719,11 +719,11 @@ int main(int argc, char **argv)
         CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
     });
-    // TRUCE-0102: a store captured tracked.txt before Git replaced it by a copy
+    // a store captured tracked.txt before Git replaced it by a copy
     // with the same bytes, and the window restored it before the launcher
     // attached. The attach used to recheck only the file, so staging the path or
     // changing core.autocrlf in between still cleared the recovery error.
-    suite.run("TRUCE-0102 a late launcher clears a copied launch path's recovery error only while its index and conversion policy match", [] {
+    suite.run("a late launcher clears a copied launch path's recovery error only while its index and conversion policy match", [] {
         for (const auto &change : {QStringLiteral("none"), QStringLiteral("staged"), QStringLiteral("autocrlf")}) {
             Repository repo("launch bytes\n", "excluded stays conflicted\n");
             ScopedEnvironment environment(repo.environment);
@@ -773,10 +773,10 @@ int main(int argc, char **argv)
             CHECK(controller.files()->hasRecoveryFailure(fileId.toStdString()));
         }
     });
-    // TRUCE-0101: a launcher that finds no window starts one on the path Git
+    // a launcher that finds no window starts one on the path Git
     // launched. That window restores through the same restoreRecovery call and
     // must reach the same adoption when the waiting launcher attaches.
-    suite.run("TRUCE-0101 a launcher-started window restores a copied launch path and Mark resolved releases the launcher", [] {
+    suite.run("a launcher-started window restores a copied launch path and Mark resolved releases the launcher", [] {
         Repository repo("launch bytes\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
         storeBeforeCopiedLaunch(repo);
@@ -805,11 +805,11 @@ int main(int argc, char **argv)
         CHECK(readFile(target) == QByteArray::fromStdString(expected));
         CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
     });
-    // TRUCE-0101: the load validated Git's copy of tracked.txt. Before the
+    // the load validated Git's copy of tracked.txt. Before the
     // launcher attached, the file changed again: a new same-byte copy, which
     // still matches the launcher's MERGED digest, or other bytes, which do not.
     // Neither file is the one validation saw, so the adoption refuses.
-    suite.run("TRUCE-0101 a copied launch path that changed after recovery validation keeps its recovery error on attach", [] {
+    suite.run("a copied launch path that changed after recovery validation keeps its recovery error on attach", [] {
         for (const auto &change : {QStringLiteral("copied"), QStringLiteral("edited")}) {
             Repository repo("launch bytes\n", "excluded stays conflicted\n");
             ScopedEnvironment environment(repo.environment);
@@ -836,12 +836,12 @@ int main(int argc, char **argv)
             checkCopiedLaunchRefused(controller, launcher, target, expected, expected);
         }
     });
-    // TRUCE-0102: an outside write lands while Git inspects the index for the
+    // an outside write lands while Git inspects the index for the
     // late attach's revalidation, after its first file check passed. The
     // revalidation's final file check, or the adoption after it, sees the
     // write, so the error stays. "none" holds Git the same way and changes
     // nothing, so the wrapper itself does not fail the check.
-    suite.run("TRUCE-0102 an outside write while the late attach revalidates keeps the recovery error", [] {
+    suite.run("an outside write while the late attach revalidates keeps the recovery error", [] {
         for (const auto &change : {QStringLiteral("none"), QStringLiteral("edited"), QStringLiteral("copied")}) {
             Repository repo("launch bytes\n", "excluded stays conflicted\n");
             ScopedEnvironment environment(repo.environment);
@@ -882,7 +882,7 @@ int main(int argc, char **argv)
             checkCopiedLaunchRefused(controller, launcher, target, outside, "launch bytes\n");
         }
     });
-    suite.run("TRUCE-0065 a session that listens after the GUI start is attached within the deadline", [] {
+    suite.run("a session that listens after the GUI start is attached within the deadline", [] {
         Repository repo("attached after the spawn\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
         ApplicationController controller(gitOnPath());
@@ -913,7 +913,7 @@ int main(int argc, char **argv)
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
         CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
     });
-    suite.run("TRUCE-0065 a started session that never listens fails after the wall-clock deadline", [] {
+    suite.run("a started session that never listens fails after the wall-clock deadline", [] {
         Repository repo("nobody listens\n", "excluded stays conflicted\n");
         SpawnedLauncher launcher(repo);
         launcher.start();
@@ -925,7 +925,7 @@ int main(int argc, char **argv)
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
         CHECK(unmerged(repo, "tracked.txt"));
     });
-    suite.run("TRUCE-0066 a leave after a longer write restores exactly the launch bytes", [] {
+    suite.run("a leave after a longer write restores exactly the launch bytes", [] {
         Repository repo("short launch\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
         ApplicationController controller(gitOnPath());
@@ -947,7 +947,7 @@ int main(int argc, char **argv)
         CHECK(QFileInfo(repo.path("tracked.txt")).size() == repo.tracked.size());
         CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
     });
-    suite.run("TRUCE-0066 a restore writes exactly the launch bytes and a failed write keeps the longer file", [] {
+    suite.run("a restore writes exactly the launch bytes and a failed write keeps the longer file", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
         const auto path = QFileInfo(directory.path()).canonicalFilePath() + QStringLiteral("/merged.txt");
@@ -972,7 +972,7 @@ int main(int argc, char **argv)
         CHECK(error == QStringLiteral("The original file could not be restored."));
         CHECK(readFile(path) == longer);
     });
-    suite.run("TRUCE-0072 the socket directory ignores TMPDIR and falls back from an unusable XDG_RUNTIME_DIR", [] {
+    suite.run("the socket directory ignores TMPDIR and falls back from an unusable XDG_RUNTIME_DIR", [] {
         const auto fallback = QStringLiteral("/tmp/branch-truce-") + QString::number(::geteuid());
         git::RepositoryContext repository;
         repository.operation = git::RepositoryOperation::Merge;
@@ -1005,7 +1005,7 @@ int main(int argc, char **argv)
         CHECK(socketFor(QStringLiteral("run/user/7"), longTemporary).first == fallback);
         CHECK(QFile::encodeName(socketFor(std::nullopt, longTemporary).second).size() <= 106);
     });
-    suite.run("TRUCE-0072 a GUI and launcher with different long TMPDIR values attach for the same worktree", [] {
+    suite.run("a GUI and launcher with different long TMPDIR values attach for the same worktree", [] {
         Repository repo("attached across TMPDIR values\n", "excluded stays conflicted\n");
         // A runtime directory at the boundary length gives a 106-byte socket path.
         QTemporaryDir runtimeRoot(QStringLiteral("/tmp/bt-XXXXXX"));
@@ -1045,7 +1045,7 @@ int main(int argc, char **argv)
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
         CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
     });
-    suite.run("TRUCE-0072 a socket that cannot listen is reported and the launcher exits non-zero", [] {
+    suite.run("a socket that cannot listen is reported and the launcher exits non-zero", [] {
         Repository repo("nobody can attach\n", "excluded stays conflicted\n");
         // Short enough for the socket path, so the file below blocks the directory the session uses.
         QTemporaryDir runtime(QStringLiteral("/tmp/bt-run-XXXXXX"));
@@ -1075,7 +1075,7 @@ int main(int argc, char **argv)
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
         CHECK(unmerged(repo, "tracked.txt"));
     });
-    suite.run("TRUCE-0072 a session socket answered by another uid is refused before the launcher sends anything", [] {
+    suite.run("a session socket answered by another uid is refused before the launcher sends anything", [] {
         Repository repo("never attached\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
         ApplicationController controller(gitOnPath());

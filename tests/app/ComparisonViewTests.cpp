@@ -155,7 +155,7 @@ public:
     // Click a control that has just appeared in a layout once the window has laid it out. The
     // control's own geometry can be final while its column has not yet moved the siblings after
     // it: under the KDE style the file toolbar still lay over the resolution confirmation, so
-    // the click saved a draft instead (TRUCE-0144).
+    // the click saved a draft instead.
     void clickLaidOut(const char *name)
     {
         auto *target = item(name);
@@ -167,7 +167,7 @@ public:
     }
     // Open a toolbar menu and click one of its entries once the menu has laid out, then wait
     // until the menu has finished closing. The KDE style fades a menu out; reopening it during
-    // that fade lets the end of the fade close the reopened menu (TRUCE-0144).
+    // that fade lets the end of the fade close the reopened menu.
     void clickMenuEntry(const char *menu, const char *entry)
     {
         click(menu);
@@ -1017,7 +1017,7 @@ public:
             settle([&] { return fixture.item("workflowStatus")->property("text").toString() == QStringLiteral("0 of 2 files resolved"); });
             CHECK(subtitle->property("text").toString() == fixture.controller.loader()->operationDescription());
         });
-        suite.run("TRUCE-0020 actual comparison keeps verified sources around the editable launch result", [] {
+        suite.run("actual comparison keeps verified sources around the editable launch result", [] {
             const std::string launch = "manual launch UTF-8 \xc3\xa9 \xf0\x9f\x98\x80\n";
             Fixture fixture(test_support::choiceFile("left capture\n", "right capture\n", launch));
             const auto before = fixture.file().current();
@@ -1041,7 +1041,7 @@ public:
             CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
             fixture.checkRecovered(before.draft);
         });
-        suite.run("TRUCE-0163 toolbar commands report a button role and only the toggles are checkable", [] {
+        suite.run("toolbar commands report a button role and only the toggles are checkable", [] {
             Fixture fixture;
             // One line per control, so a failure names every control that reports the wrong role.
             const auto describe = [&](const char *name) {
@@ -1089,7 +1089,7 @@ public:
             CHECK(differenceFace && differenceFace->role() == QAccessible::MenuItem);
             QTest::keyClick(fixture.window, Qt::Key_Escape);
         });
-        suite.run("TRUCE-0191 a named command overflows as a menu item and closes after one activation", [] {
+        suite.run("a named command overflows as a menu item and closes after one activation", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
             fixture.key(Qt::Key_A, Qt::NoModifier, "a");
             const auto onceTyped = fixture.file().current();
@@ -1123,7 +1123,7 @@ public:
             CHECK(triggered.count() == 1);
             CHECK(fixture.file().current().draft == onceTyped.draft);
         });
-        suite.run("TRUCE-0020 resizing earlier context and collapsed choices preserve current sources and manual work", [] {
+        suite.run("resizing earlier context and collapsed choices preserve current sources and manual work", [] {
             Fixture fixture;
             CHECK(fixture.controller.editResult("choices", "1", 0, 0, "manual prefix\n"));
             const auto before = fixture.file().current();
@@ -1155,7 +1155,7 @@ public:
             CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
             fixture.checkRecovered(before.draft);
         });
-        suite.run("TRUCE-0020 unavailable earlier context stays optional and leaves both current sources visible", [] {
+        suite.run("unavailable earlier context stays optional and leaves both current sources visible", [] {
             Fixture fixture(test_support::choiceFile());
             const auto before = fixture.file().current();
             CHECK(!fixture.item("showEarlier")->property("enabled").toBool());
@@ -1165,7 +1165,7 @@ public:
             CHECK(fixture.item("stage2Text")->isVisible() && fixture.item("stage3Text")->isVisible());
             CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
         });
-        suite.run("TRUCE-0020 native typing and Unicode selection replacement use command-owned undo redo and recovery", [] {
+        suite.run("native typing and Unicode selection replacement use command-owned undo redo and recovery", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "launch \xf0\x9f\x98\x80\n"));
             const auto initial = fixture.file().current();
             auto *editor = fixture.item("resultText");
@@ -1193,7 +1193,7 @@ public:
             CHECK(fixture.file().current().draft == replaced.draft && !document->isUndoAvailable());
             fixture.checkRecovered(replaced.draft);
         });
-        suite.run("TRUCE-0216 shared edit actions follow selection and clipboard state in both controls", [] {
+        suite.run("shared edit actions follow selection and clipboard state in both controls", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
             auto *actions = fixture.object("resultEditActions");
             const auto action = [&](const char *name) {
@@ -1239,7 +1239,7 @@ public:
             checkEnabled("paste", "pasteResult", "resultMenuPaste", true);
             QGuiApplication::clipboard()->clear();
         });
-        suite.run("TRUCE-0216 lossless editing gates toolbar menu and native paste together", [] {
+        suite.run("lossless editing gates toolbar menu and native paste together", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "line\xe2\x80\xa8separator\n"));
             const auto before = fixture.file().current();
             QGuiApplication::clipboard()->setText("replacement");
@@ -1257,7 +1257,7 @@ public:
             CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
             QGuiApplication::clipboard()->clear();
         });
-        suite.run("TRUCE-0020 clipboard menus and shortcuts preserve atomic history and recovery", [] {
+        suite.run("clipboard menus and shortcuts preserve atomic history and recovery", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
             const auto initial = fixture.file().current();
             CHECK(fixture.controller.resultClipboard(ResultEditorAdapter::ClipboardAction::SelectAll));
@@ -1290,7 +1290,7 @@ public:
             fixture.checkRecovered(keyboard.draft);
             QGuiApplication::clipboard()->clear();
         });
-        suite.run("TRUCE-0020 an input-method preedit stays pending and its commit is one recovered command", [] {
+        suite.run("an input-method preedit stays pending and its commit is one recovered command", [] {
             Fixture fixture(test_support::choiceFile());
             const auto before = fixture.file().current();
             auto *editor = fixture.item("resultText");
@@ -1311,7 +1311,7 @@ public:
                  std::pair{QStringLiteral("left"), ChoicePreviewFlow::NonConflicting::LeftChanges},
                  std::pair{QStringLiteral("right"), ChoicePreviewFlow::NonConflicting::RightChanges},
                  std::pair{QStringLiteral("both"), ChoicePreviewFlow::NonConflicting::BothChanges}}) {
-            suite.run("TRUCE-0018 batch preview identifies its file and source scope without changing another file " + scopeName.toStdString(), [=] {
+            suite.run("batch preview identifies its file and source scope without changing another file " + scopeName.toStdString(), [=] {
                 Fixture fixture;
                 auto captured = *test_support::batchFile().snapshots();
                 captured.path = "other.txt";
@@ -1368,7 +1368,7 @@ public:
                 fixture.checkRecovered(newer.draft);
             });
         }
-        suite.run("TRUCE-0015 Save and discard controls keep the app baseline and retry a failed Save", [] {
+        suite.run("Save and discard controls keep the app baseline and retry a failed Save", [] {
             Fixture fixture;
             auto saved = fixture.file().current().draft;
             saved.text += "saved app draft\n";
@@ -1433,7 +1433,7 @@ public:
                   == "Draft saved in Branch Truce; repository file unchanged");
             CHECK(!fixture.file().written() && !fixture.file().staged());
         });
-        suite.run("TRUCE-0058 search scope switches the pane Find selects", [] {
+        suite.run("search scope switches the pane Find selects", [] {
             Fixture fixture;
             fixture.click("openPassageSearch");
             const auto before = captureWork(fixture);
@@ -1489,7 +1489,7 @@ public:
             CHECK(earlier->property("selectionStart").toInt() == earlier->property("text").toString().indexOf("base conflict"));
             checkUnchanged(fixture, before);
         });
-        suite.run("TRUCE-0058 Find selects a passage and wraps to the earlier match", [] {
+        suite.run("Find selects a passage and wraps to the earlier match", [] {
             const std::string result = "prefix REPEAT middle REPEAT suffix\n";
             Fixture fixture(test_support::choiceFile("left\n", "right\n", result));
             fixture.click("openPassageSearch");
@@ -1518,7 +1518,7 @@ public:
             CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Editable result."));
             checkUnchanged(fixture, before);
         });
-        suite.run("TRUCE-0058 wrapping a long line changes its visual line count", [] {
+        suite.run("wrapping a long line changes its visual line count", [] {
             const std::string result(480, 'M');
             Fixture fixture(test_support::choiceFile("left\n", "right\n", result + "\n"));
             const auto before = captureWork(fixture);
@@ -1539,7 +1539,7 @@ public:
             CHECK(editor->property("wrapMode").toInt() == unwrappedMode);
             checkUnchanged(fixture, before);
         });
-        suite.run("TRUCE-0112 each line number stays on the first row of its line while wrapped and scrolled", [] {
+        suite.run("each line number stays on the first row of its line while wrapped and scrolled", [] {
             // Every seventh line is long enough to wrap onto several rows.
             std::string result;
             for (int line = 1; line <= 300; ++line)
@@ -1576,7 +1576,7 @@ public:
             settle([&] { return visualLines(editor, 6) == 1; });
             aligned("unwrapped again");
         });
-        suite.run("TRUCE-0112 tabs stop every four characters at the same column in every pane", [] {
+        suite.run("tabs stop every four characters at the same column in every pane", [] {
             const std::string shared = "abcde\n\tone\nabc\ttwo\nabcde\tthree\n\t\tfour\n";
             Fixture fixture(test_support::choiceFile(shared + "left\n", shared + "right\n", shared + "right\n"));
             settlePanes(fixture);
@@ -1597,7 +1597,7 @@ public:
                 }
             }
         });
-        suite.run("TRUCE-0112 code and line numbers use the theme's fixed-width font", [] {
+        suite.run("code and line numbers use the theme's fixed-width font", [] {
             auto sources = *test_support::choiceFile().snapshots();
             const auto earlier = sources.stage2->worktree.utf8;
             sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
@@ -1623,7 +1623,7 @@ public:
                 }
             }
         });
-        suite.run("TRUCE-0113 every coloured line has a gutter glyph of its kind", [] {
+        suite.run("every coloured line has a gutter glyph of its kind", [] {
             Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
                 "header\nright first\nshared\nright extra\ntail\n"));
             const QMap<QString, QString> glyphs{{"added", "+"}, {"changed", "~"}, {"conflict", "!"},
@@ -1677,7 +1677,7 @@ public:
             CHECK(fixture.controller.editResult("choices", revision(), at, at + 4, "LEFT"));
             expect("stage2", {"changed"});
             expect("result", {"manual", "removed"});
-            // TRUCE-0190: the right's extra line is ignored. Its glyph stays, its text
+            // the right's extra line is ignored. Its glyph stays, its text
             // takes the disabled colour, and it gets no background fill.
             expect("stage3", {"changed"});
             const auto ignoredTinted = [&] {
@@ -1707,7 +1707,7 @@ public:
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
             CHECK(gutterAnchorErrors == 0);
         });
-        suite.run("TRUCE-0143 a hand edit outside every region shows the neutral background, the m glyph and letter", [] {
+        suite.run("a hand edit outside every region shows the neutral background, the m glyph and letter", [] {
             Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
                 "header\nright first\nshared\nright extra\ntail\n"));
             const auto revision = [&] { return QString::number(fixture.file().current().id); };
@@ -1781,9 +1781,9 @@ public:
                     regionMarks("ignored", "conflict", "conflict")},
             }};
             for (const auto &choice : choices) {
-                // regionMarks gives an ignored line a tinted text and no background
-                // (TRUCE-0190), so undo also checks that the tint goes.
-                suite.run("TRUCE-0174 a scoped " + choice.name.toStdString()
+                // regionMarks gives an ignored line a tinted text and no background,
+                // so undo also checks that the tint goes.
+                suite.run("a scoped " + choice.name.toStdString()
                     + " repaints all three panes and the provenance letters, and undo restores them", [choice, launchLetters] {
                     Fixture fixture;
                     settlePanes(fixture);
@@ -1824,7 +1824,7 @@ public:
                 });
             }
         }
-        suite.run("TRUCE-0178 each non-equal passage gets a band from its source lines to its result lines", [] {
+        suite.run("each non-equal passage gets a band from its source lines to its result lines", [] {
             // In the batch fixture the left source differs from the result on lines 2
             // and 6 and the right source on lines 4 and 6, and every region is undecided.
             Fixture fixture;
@@ -1911,7 +1911,7 @@ public:
                 return fixture.item("stage2Backgrounds")->property("current") == previous;
             });
         });
-        suite.run("TRUCE-0178 band ends move with the scroll of either pane", [] {
+        suite.run("band ends move with the scroll of either pane", [] {
             // The result holds 30 lines after line 50 that the left source lacks, so the
             // left handle draws one band, a wedge on the left source's line boundary.
             Fixture fixture(insertionFile());
@@ -1938,7 +1938,7 @@ public:
             CHECK(std::abs(after.sourceTop - moved.sourceTop) < 0.5);
             CHECK(std::abs(after.resultTop - (moved.resultTop - 2 * line)) < 1);
         });
-        suite.run("TRUCE-0178 the band handles drag to resize the panes and stay out of the focus chain", [] {
+        suite.run("the band handles drag to resize the panes and stay out of the focus chain", [] {
             Fixture fixture;
             settlePanes(fixture);
             auto *handle = fixture.item("stage2Connector");
@@ -1970,7 +1970,7 @@ public:
             CHECK(std::abs(result->width() - resultWidth) < 1 && std::abs(right->width() - (rightWidth - 80)) < 2);
             expectBands(fixture, "after the drag", "stage2", {"conflict 2-3>2-3", "conflict 6-7>6-7"});
         });
-        suite.run("TRUCE-0256 each marker block folds into one labelled row behind a conflict band, keeps the buffer and shows on the toggle", [] {
+        suite.run("each marker block folds into one labelled row behind a conflict band, keeps the buffer and shows on the toggle", [] {
             // markedFile(true) writes both sections between markers with diff3 base sections:
             // blocks on lines 2-11 and 13-19, whose marker lines are 2, 5, 8, 11, 13, 15, 17 and 19.
             Fixture fixture(test_support::markedFile(true));
@@ -2048,7 +2048,7 @@ public:
             expectLook(fixture, "with the markers folded again", folded);
             checkUnchanged(fixture, before);
         });
-        suite.run("TRUCE-0257 unmapped recognized markers fold without offering unsafe choices", [] {
+        suite.run("unmapped recognized markers fold without offering unsafe choices", [] {
             Fixture fixture(test_support::underlinedBaseFile(false));
             settlePanes(fixture);
             CHECK(fixture.file().markers().blocks.size() == 1 && fixture.file().markerSections().empty());
@@ -2091,7 +2091,7 @@ public:
             checkUnchanged(fixture, redone);
             fixture.checkRecovered(edited.draft);
         });
-        suite.run("TRUCE-0256 a long marker label stays one row with wrapping enabled", [] {
+        suite.run("a long marker label stays one row with wrapping enabled", [] {
             auto marked = test_support::markedText();
             marked.replace(marked.find("<<<<<<< ours"), std::string("<<<<<<< ours").size(),
                 "<<<<<<< " + std::string(400, 'x'));
@@ -2110,7 +2110,7 @@ public:
             expectLook(fixture, "folded again with wrapping", markedFolded());
             checkUnchanged(fixture, before);
         });
-        suite.run("TRUCE-0256 keys and selections step over a folded block and its row", [] {
+        suite.run("keys and selections step over a folded block and its row", [] {
             // markedFile(): the first block is lines 2-8, folded into its row on line 2.
             Fixture fixture(test_support::markedFile());
             settlePanes(fixture);
@@ -2161,7 +2161,7 @@ public:
             expectLook(fixture, "after keyboard navigation", markedFolded());
             checkUnchanged(fixture, before);
         });
-        suite.run("TRUCE-0179 a recognizable edited end marker remains folded and can be shown", [] {
+        suite.run("a recognizable edited end marker remains folded and can be shown", [] {
             Fixture fixture(test_support::markedFile());
             settlePanes(fixture);
             const auto folded = markedFolded();
@@ -2198,7 +2198,7 @@ public:
             expectLook(fixture, "after redo", joinedFold);
             fixture.checkRecovered(fixture.file().current().draft);
         });
-        suite.run("TRUCE-0179 finding text on a folded line or going to a blocking marker shows the markers", [] {
+        suite.run("finding text on a folded line or going to a blocking marker shows the markers", [] {
             Fixture fixture(test_support::markedFile());
             fixture.click("openPassageSearch");
             settlePanes(fixture);
@@ -2223,7 +2223,7 @@ public:
             CHECK(toggle->property("checked").toBool() && foldedLines(fixture).isEmpty());
             checkUnchanged(fixture, before);
         });
-        suite.run("TRUCE-0179 deciding a section removes its fold and markersRemain, and Save writes the buffer either way", [] {
+        suite.run("deciding a section removes its fold and markersRemain, and Save writes the buffer either way", [] {
             const auto remaining = [](Fixture &fixture) {
                 QStringList found;
                 for (const auto &entry : fixture.controller.selectedFile()->regions()) {
@@ -2280,7 +2280,7 @@ public:
             CHECK(remaining(fixture) == atLaunch);
             expectLook(fixture, "after undoing the choice", markedFolded());
         });
-        suite.run("TRUCE-0192 a block around two sections split by a shared line folds until both are decided", [] {
+        suite.run("a block around two sections split by a shared line folds until both are decided", [] {
             // splitFile writes one block, lines 2-10, around two sections split by "shared";
             // its marker lines are 2, 6 and 10, and it folds into its row on line 2.
             Fixture fixture(test_support::splitFile());
@@ -2321,7 +2321,7 @@ public:
             CHECK(fixture.text() == QString::fromStdString(test_support::splitText()) && remain() == atLaunch && folded());
             settle([&] { return foldedLines(fixture) == numbers(3, 11); });
         });
-        suite.run("TRUCE-0256 Take both on a folded row previews either order, and the result gutter has none", [] {
+        suite.run("Take both on a folded row previews either order, and the result gutter has none", [] {
             Fixture fixture(test_support::markedFile());
             settlePanes(fixture);
             expectLook(fixture, "at launch", markedFolded());
@@ -2357,7 +2357,7 @@ public:
             expectLook(fixture, "with the choices hidden", markedFolded());
             checkUnchanged(fixture, before);
         });
-        suite.run("TRUCE-0058 whitespace markers paint spaces and tabs", [] {
+        suite.run("whitespace markers paint spaces and tabs", [] {
             const std::string result = "aa bb\tcc\n";
             Fixture fixture(test_support::choiceFile("left\n", "right\n", result));
             const auto before = captureWork(fixture);
@@ -2378,7 +2378,7 @@ public:
             CHECK(fixture.item("resultText")->property("text").toString().toStdString() == result);
             checkUnchanged(fixture, before);
         });
-        suite.run("TRUCE-0118 the undecided counter steps to the next undecided choice and counts down as choices are decided", [] {
+        suite.run("the undecided counter steps to the next undecided choice and counts down as choices are decided", [] {
             const std::string result = "same\nAAA\nmid\nBBB\n";
             const std::string left = "same\nleftA\nmid\nleftB\n";
             Fixture fixture(test_support::choiceFile(left, result, result));
@@ -2408,7 +2408,7 @@ public:
             settle([&] { return counter->property("text").toString() == QStringLiteral("3 conflicts left"); });
             CHECK(counter->isEnabled());
         });
-        suite.run("TRUCE-0059 revision progress, within-file navigation, unfinished files and file-list location", [] {
+        suite.run("revision progress, within-file navigation, unfinished files and file-list location", [] {
             const std::string result = "same\nAAA\nmid\nBBB\n";
             const std::string left = "same\nleftA\nmid\nleftB\n";
             Fixture fixture(test_support::choiceFile(left, result, result));
@@ -2570,7 +2570,7 @@ public:
             CHECK(stillOutside && stillOutside->support() == Support::OutsideApp);
             CHECK(stillOutside->supportDetail() == "image content" && stillOutside->current().draft.text.empty());
         });
-        suite.run("TRUCE-0132 toggling the file list restores the result viewport scroll position", [] {
+        suite.run("toggling the file list restores the result viewport scroll position", [] {
             std::string result;
             for (int line = 0; line < 200; ++line) result += std::string(240, static_cast<char>('a' + line % 26)) + "\n";
             Fixture fixture(test_support::choiceFile("left\n", result, result));
@@ -2601,7 +2601,7 @@ public:
             CHECK(viewport->property("contentY").toReal() == 600.0);
             CHECK(viewport->property("contentX").toReal() == 40.0);
         });
-        suite.run("TRUCE-0109 dragging the split handle resizes the file list within its limits and the toggle collapses it", [] {
+        suite.run("dragging the split handle resizes the file list within its limits and the toggle collapses it", [] {
             Fixture fixture;
             auto *sidebar = test_support::waitForLayout(fixture.window, QStringLiteral("fileList"), 60)->parentItem();
             auto *split = sidebar->parentItem();
@@ -2650,7 +2650,7 @@ public:
             settle([&] { return sidebar->isVisible() && sidebar->width() > 0; });
             CHECK(std::abs(sidebar->width() - chosen) < 2);
         });
-        suite.run("TRUCE-0115 scrolling the left source moves the result and the right source to the mapped lines", [] {
+        suite.run("scrolling the left source moves the result and the right source to the mapped lines", [] {
             Fixture fixture(insertionFile());
             auto *left = fixture.item("stage2Viewport");
             auto *result = fixture.item("resultViewport");
@@ -2678,7 +2678,7 @@ public:
             CHECK(std::abs(contentY(result) - (contentY(left) + 35 * line)) < 1);
             CHECK(std::abs(contentY(right) - (contentY(left) + 30 * line)) < 1);
         });
-        suite.run("TRUCE-0115 a synchronised scroll settles in the same event-loop turn without feedback", [] {
+        suite.run("a synchronised scroll settles in the same event-loop turn without feedback", [] {
             Fixture fixture(insertionFile());
             auto *left = fixture.item("stage2Viewport");
             auto *result = fixture.item("resultViewport");
@@ -2706,7 +2706,7 @@ public:
             CHECK(contentY(left) == held);
             CHECK(std::abs(contentY(result) - (held + 30 * line)) < 1);
         });
-        suite.run("TRUCE-0115 an ambiguous passage scrolls the other panes proportionally without jumping", [] {
+        suite.run("an ambiguous passage scrolls the other panes proportionally without jumping", [] {
             // 40 equal lines on the left against 20 in the result cannot be aligned line by line.
             const auto before = numberedLines("before", 1, 80);
             const auto after = numberedLines("after", 1, 200);
@@ -2746,7 +2746,7 @@ public:
             // Past the passage the result is 20 lines behind the left.
             CHECK(std::abs(contentY(resultView) - (contentY(leftView) - 20 * line)) < 1);
         });
-        suite.run("TRUCE-0115 the shown earlier version scrolls with the other panes", [] {
+        suite.run("the shown earlier version scrolls with the other panes", [] {
             auto sources = *insertionFile().snapshots();
             const auto earlier = sources.stage2->worktree.utf8;
             sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
@@ -2763,7 +2763,7 @@ public:
             // The earlier version equals the left source, so it shows the same lines.
             CHECK(std::abs(contentY(earlierView) - contentY(left)) < 1);
         });
-        suite.run("TRUCE-0164 the earlier version catches up with the other panes when it is first shown", [] {
+        suite.run("the earlier version catches up with the other panes when it is first shown", [] {
             auto sources = *insertionFile().snapshots();
             const auto earlier = sources.stage2->worktree.utf8;
             sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
@@ -2789,7 +2789,7 @@ public:
             CHECK(contentY(earlierView) > 70 * line);
             CHECK(std::abs(contentY(earlierView) - contentY(left)) < 1);
         });
-        suite.run("TRUCE-0115 Find in a source scrolls the result and the other source to the passage", [] {
+        suite.run("Find in a source scrolls the result and the other source to the passage", [] {
             Fixture fixture(insertionFile());
             fixture.click("openPassageSearch");
             auto *left = fixture.item("stage2Viewport");
@@ -2814,7 +2814,7 @@ public:
             CHECK(std::abs(contentY(result) - (contentY(left) + 30 * line)) < 1);
             CHECK(std::abs(contentY(right) - contentY(result)) < 1);
         });
-        suite.run("TRUCE-0115 within-file navigation scrolls both sources to the result's difference", [] {
+        suite.run("within-file navigation scrolls both sources to the result's difference", [] {
             const auto left = numberedLines("shared", 1, 400);
             const auto right = numberedLines("shared", 1, 50) + numberedLines("right only", 1, 30)
                 + numberedLines("shared", 51, 249) + "right late\n" + numberedLines("shared", 301, 100);
@@ -2903,13 +2903,13 @@ public:
                 throw std::runtime_error("result viewport moved from " + std::to_string(typed) + " to "
                     + std::to_string(contentY(result)) + " after " + std::to_string(frames) + " frames");
         };
-        const std::string undoRedoName = "TRUCE-0137 undo and redo keep the result cursor and scroll position, and the sources stay";
-        const std::string framesName = "TRUCE-0137 undo keeps the result viewport after the window draws";
+        const std::string undoRedoName = "undo and redo keep the result cursor and scroll position, and the sources stay";
+        const std::string framesName = "undo keeps the result viewport after the window draws";
         suite.run(undoRedoName, undoRedoKeepViewport);
         suite.run(framesName, undoKeepsViewportAfterFrames);
         display.run(undoRedoName, undoRedoKeepViewport);
         display.run(framesName, undoKeepsViewportAfterFrames);
-        suite.run("TRUCE-0137 undo keeps a result selection on the same text", [] {
+        suite.run("undo keeps a result selection on the same text", [] {
             Fixture fixture(insertionFile());
             auto *editor = fixture.item("resultText");
             auto *result = fixture.item("resultViewport");
@@ -2928,7 +2928,7 @@ public:
             CHECK(editor->property("cursorPosition").toInt() == selected - 1);
             CHECK(std::abs(contentY(result) - 10 * line) < 1);
         });
-        suite.run("TRUCE-0137 applying a choice keeps the result cursor and scroll position", [] {
+        suite.run("applying a choice keeps the result cursor and scroll position", [] {
             Fixture fixture(insertionFile());
             auto *editor = fixture.item("resultText");
             auto *result = fixture.item("resultViewport");
@@ -2946,7 +2946,7 @@ public:
             CHECK(editor->property("cursorPosition").toInt() == offset);
             CHECK(std::abs(contentY(result) - 10 * line) < 1);
         });
-        suite.run("TRUCE-0137 a choice above the result cursor keeps it on its text and in view", [] {
+        suite.run("a choice above the result cursor keeps it on its text and in view", [] {
             Fixture fixture(insertionFile());
             auto *editor = fixture.item("resultText");
             const auto line = paneLineHeight(editor);
@@ -2963,7 +2963,7 @@ public:
             CHECK(editor->property("cursorPosition").toInt() == fixture.text().indexOf(QStringLiteral("shared 120\n")));
             CHECK(cursorInView(fixture));
         });
-        suite.run("TRUCE-0142 two separate changes keep the result cursor on the unchanged text between them", [] {
+        suite.run("two separate changes keep the result cursor on the unchanged text between them", [] {
             // The sources differ on lines 20 and 350, and the result holds the right source.
             const auto first = numberedLines("shared", 1, 19);
             const auto middle = numberedLines("shared", 21, 329);
@@ -2994,7 +2994,7 @@ public:
             CHECK(fixture.text().contains(QStringLiteral("left first\n")) && fixture.text().contains(QStringLiteral("left last\n")));
             kept();
         });
-        suite.run("TRUCE-0060 a failed Discard shows the restored result and retry finishes it", [] {
+        suite.run("a failed Discard shows the restored result and retry finishes it", [] {
             Fixture fixture;
             auto saved = fixture.file().current().draft;
             saved.text += "saved app draft\n";
@@ -3045,7 +3045,7 @@ public:
             CHECK(replay.succeeded && replay.files.front().current().draft == saved);
             CHECK(!replay.files.front().written() && !replay.files.front().staged());
         });
-        suite.run("TRUCE-0026 Mark resolved confirms, rejects a stale revision and keeps a failed write visible", [] {
+        suite.run("Mark resolved confirms, rejects a stale revision and keeps a failed write visible", [] {
             Fixture fixture;
             const auto text = fixture.text();
             CHECK(fixture.file().facts().undecided > 0 && fixture.file().facts().unsaved && !fixture.file().reviewed());
@@ -3077,7 +3077,7 @@ public:
             CHECK(fixture.item("fileFailureNotice")->property("text").toString().contains(QStringLiteral("Repository write failed")));
             CHECK(!fixture.item("parentStagingState")->isVisible());
         });
-        suite.run("TRUCE-0028 closing with work outstanding opens the handoff and each route returns to its file", [] {
+        suite.run("closing with work outstanding opens the handoff and each route returns to its file", [] {
             Fixture fixture;
             auto *files = fixture.controller.files();
             CHECK(files->appendFile(namedChoiceFile("saved")));
@@ -3152,7 +3152,7 @@ public:
             QGuiApplication::setQuitOnLastWindowClosed(quitOnClose);
             CHECK(!opened() && ended == 1);
         });
-        suite.run("TRUCE-0029 a rejected insertion at the file limit leaves the editor usable", [] {
+        suite.run("a rejected insertion at the file limit leaves the editor usable", [] {
             const auto atLimit = [] {
                 std::string text;
                 text.reserve(4000 * 2);
@@ -3201,7 +3201,7 @@ public:
             fixture.checkRecovered(edited.draft);
             QGuiApplication::clipboard()->clear();
         });
-        suite.run("TRUCE-0136 notices and tooltips show a path as typed and load nothing it names", [] {
+        suite.run("notices and tooltips show a path as typed and load nothing it names", [] {
             Fixture fixture;
             QTcpServer server;
             CHECK(server.listen(QHostAddress::LocalHost));
@@ -3280,12 +3280,12 @@ public:
             CHECK(tooltip->setProperty("visible", false));
             if (!problems.isEmpty()) throw std::runtime_error(problems.join(QStringLiteral("; ")).toStdString());
         });
-        boundary.run("TRUCE-0063 Backspace and Delete shorten an exact 262144-byte line", [] {
+        boundary.run("Backspace and Delete shorten an exact 262144-byte line", [] {
             deletionAtLimit(std::string(262144, 'a'), QStringLiteral(
                 "Line of 262145 bytes exceeds the supported 262144 byte line limit. "
                 "The existing edit was kept and this change was not acknowledged."));
         });
-        boundary.run("TRUCE-0063 Backspace and Delete shorten an exact 8388608-byte buffer", [] {
+        boundary.run("Backspace and Delete shorten an exact 8388608-byte buffer", [] {
             // Lines stay below the line limit so only the buffer limit applies.
             std::string atLimit;
             atLimit.reserve(8388608);

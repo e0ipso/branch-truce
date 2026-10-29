@@ -522,7 +522,7 @@ int main(int argc, char **argv)
         CHECK(session.repo.git({"show", ":tracked.txt"}) == session.repo.manual);
         CHECK(!session.controller.files()->canFinish());
     });
-    suite.run("TRUCE-0061 a restarted retry keeps the successful write and resolves it", [] {
+    suite.run("a restarted retry keeps the successful write and resolves it", [] {
         RestartedWrite restarted;
         CHECK(restarted.controller->markResolved(restarted.id, revisionOf(openedFile(*restarted.controller)), true));
         waitFor(*restarted.controller, [&] { return openedFile(*restarted.controller).facts().resolved; });
@@ -537,7 +537,7 @@ int main(int argc, char **argv)
         CHECK(!remaining.contains("tracked.txt") && remaining.contains("excluded.txt"));
         CHECK(restarted.repo.git({"rev-parse", ":notes.txt"}).trimmed() == restarted.repo.notesObject);
     });
-    suite.run("TRUCE-0061 a destination that differs from the written revision fails closed after restart", [] {
+    suite.run("a destination that differs from the written revision fails closed after restart", [] {
         RestartedWrite restarted;
         const auto tampered = QByteArray("tampered\n");
         writeFile(restarted.repo.path("tracked.txt"), tampered);
@@ -553,7 +553,7 @@ int main(int argc, char **argv)
         CHECK(unmerged(restarted.repo).contains("tracked.txt") && unmerged(restarted.repo).contains("excluded.txt"));
         CHECK(restarted.repo.git({"rev-parse", ":notes.txt"}).trimmed() == restarted.repo.notesObject);
     });
-    suite.run("TRUCE-0062 a stale publish still allows a later Mark resolved when the disk matches", [] {
+    suite.run("a stale publish still allows a later Mark resolved when the disk matches", [] {
         Session session;
         const auto next = std::string("later resolved revision\n");
         publishWhileDraftChanges(session.controller, session.id, next);
@@ -577,7 +577,7 @@ int main(int argc, char **argv)
         CHECK(!unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
     });
-    suite.run("TRUCE-0062 a destination that differs from the published bytes fails closed", [] {
+    suite.run("a destination that differs from the published bytes fails closed", [] {
         Session session;
         const auto next = std::string("later resolved revision\n");
         publishWhileDraftChanges(session.controller, session.id, next);
@@ -595,7 +595,7 @@ int main(int argc, char **argv)
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
     });
-    suite.run("TRUCE-0067 Mark resolved republishes after Git restores the mergetool backup", [] {
+    suite.run("Mark resolved republishes after Git restores the mergetool backup", [] {
         Session session;
         const auto merged = session.repo.path("tracked.txt");
         const auto backup = session.repo.path("tracked_BACKUP_1.txt");
@@ -648,7 +648,7 @@ int main(int argc, char **argv)
         CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
     });
-    suite.run("TRUCE-0067 repository mode fails before git add when the written revision was edited outside the app", [] {
+    suite.run("repository mode fails before git add when the written revision was edited outside the app", [] {
         Session session;
         const auto merged = session.repo.path("tracked.txt");
         const QByteArray reviewed("reviewed in app\n");
@@ -690,7 +690,7 @@ int main(int argc, char **argv)
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
     });
-    suite.run("TRUCE-0074 leave refuses unrecovered input and a running resolution and finish waits for a clean handoff", [] {
+    suite.run("leave refuses unrecovered input and a running resolution and finish waits for a clean handoff", [] {
         Session session;
         SessionEnd end;
         watchSessionEnd(session.controller, end);
@@ -776,7 +776,7 @@ int main(int argc, char **argv)
         CHECK(!controller.finishSession() && !controller.leaveSession());
         CHECK(end.count == 1 && controller.sessionOutcome() == end.outcome);
     });
-    suite.run("TRUCE-0175 a marker refusal names the markers and the first line and moves the cursor there", [] {
+    suite.run("a marker refusal names the markers and the first line and moves the cursor there", [] {
         Session session;
         const auto before = session.repo.snapshot();
         const auto replace = [&](std::string text) {
@@ -824,7 +824,7 @@ int main(int argc, char **argv)
         CHECK(unmerged(session.repo).contains("tracked.txt"));
         expectUnchanged(session.repo, before);
     });
-    suite.run("TRUCE-0201 discard to staged restores the staged result behind the stale and blocked checks", [] {
+    suite.run("discard to staged restores the staged result behind the stale and blocked checks", [] {
         Session session;
         CHECK(session.controller.markResolved(session.id, session.revision(), true));
         waitFor(session.controller, [&] { return openedFile(session.controller).facts().resolved; });
@@ -876,7 +876,7 @@ int main(int argc, char **argv)
         CHECK(handoffEntry(session.controller.handoff(), session.id).value("category").toString() == "published");
         expectUnchanged(session.repo, before);
     });
-    suite.run("TRUCE-0201 discard to staged without a staged result refuses and keeps the draft", [] {
+    suite.run("discard to staged without a staged result refuses and keeps the draft", [] {
         Session unstaged;
         const auto text = openedFile(unstaged.controller).current().draft.text;
         CHECK(!unstaged.controller.discardToStaged(unstaged.id, unstaged.revision()));
@@ -887,7 +887,7 @@ int main(int argc, char **argv)
     // The messages are the ones each command showed before one guard replaced
     // its own copy of the checks. The previews never checked the current
     // revision or support themselves, so the preview reports those.
-    suite.run("TRUCE-0225 every result command refuses a stale revision, a blocked file and an unsupported file as before", [] {
+    suite.run("every result command refuses a stale revision, a blocked file and an unsupported file as before", [] {
         Session session(true);
         auto &controller = session.controller;
         const QString stale = QStringLiteral("The result changed. Select the scope again.");
@@ -964,7 +964,7 @@ int main(int argc, char **argv)
         for (const auto &command : commands) refuses(command, "tracked.txt", session.revision(), blocked);
         expectUnchanged(session.repo, before);
     });
-    suite.run("TRUCE-0226 each concern notifies through its own signal and a new message notifies nothing else", [] {
+    suite.run("each concern notifies through its own signal and a new message notifies nothing else", [] {
         Session session;
         auto &controller = session.controller;
         const auto *meta = controller.metaObject();

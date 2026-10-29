@@ -156,7 +156,7 @@ int main()
         const auto again = recoveryTransaction(file, "manual-save", transactionId);
         CHECK(again.state == transaction.state && again.payloads == transaction.payloads);
     });
-    suite.run("TRUCE-0143 hand-edited ranges outside every region round-trip through a recovery record", [] {
+    suite.run("hand-edited ranges outside every region round-trip through a recovery record", [] {
         // "header" is a line both sides share, so no choice region covers it.
         auto file = test_support::choiceFile();
         CHECK(file.editResult(1, {{0, 6}, "HEADER"}) == Transition::Applied);
@@ -211,7 +211,7 @@ int main()
         CHECK(refused(QJsonArray{QJsonObject{{"begin", 0}, {"end", 6}}}));
         CHECK(refused(QJsonArray{QJsonObject{{"begin", "0"}}}));
     });
-    suite.run("TRUCE-0253 a journal written before the marker count fixes replays its text and decisions", [] {
+    suite.run("a journal written before the marker count fixes replays its text and decisions", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
         const storage::RecoveryStore store(copiedJournal(directory.path()));
@@ -250,7 +250,7 @@ int main()
             CHECK(!state.value("current").toObject().contains("handEditedRanges"));
         CHECK(file.correspondence() && file.correspondence()->handEditedRanges().empty());
     });
-    suite.run("TRUCE-0253 replay still rejects recorded text, decisions or derived values that cannot be right", [] {
+    suite.run("replay still rejects recorded text, decisions or derived values that cannot be right", [] {
         const auto rejected = [](const auto &mutate, const QString &error) {
             QTemporaryDir directory;
             CHECK(directory.isValid());

@@ -97,7 +97,8 @@ test('a ticket ID is reported as file:line with a singular summary and exit 1', 
   assert.equal(result.stdout, '');
   assert.deepEqual(hitLines(result.stderr), ['src/a.ts:3']);
   assert.match(result.stderr, /^1 tracked line cite a ticket ID or a plan path:/);
-  assert.match(result.stderr, /add the path to EXCLUDED in scripts\/check-tracker-refs\.ts/);
+  assert.match(result.stderr, /Remove the reference/);
+  assert.doesNotMatch(result.stderr, /add the path to EXCLUDED/);
 });
 
 test('a plan path is reported and several hits across files use the plural summary', (t) => {
@@ -121,7 +122,7 @@ test('every ticket pattern edge: digit count, word boundaries and near misses', 
     `${ticket('0001')}x`, //                5 miss: letter after the digits
     `${ticket('0001')}_`, //                6 miss: underscore is a word character
     `TRUCE-`, //                            7 miss: no digits
-    `truce-0001`, //                        8 miss: pattern is case sensitive
+    ticket('0001').toLowerCase(), //        8 match: case does not bypass the rule
     `T${ticket('0001')}`, //                9 miss: extra letter
     `${ticket('')}x`, //                    10 miss
     `TRUCE 0001`, //                        11 miss: no hyphen
@@ -130,7 +131,7 @@ test('every ticket pattern edge: digit count, word boundaries and near misses', 
   track(root);
   const result = run(root);
   assert.equal(result.status, 1);
-  assert.deepEqual(hitLines(result.stderr), ['notes.txt:1', 'notes.txt:2', 'notes.txt:3']);
+  assert.deepEqual(hitLines(result.stderr), ['notes.txt:1', 'notes.txt:2', 'notes.txt:3', 'notes.txt:8']);
 });
 
 test('a partial plan path does not match', (t) => {
@@ -140,11 +141,42 @@ test('a partial plan path does not match', (t) => {
   assert.equal(run(root).status, 0);
 });
 
-test('files under the excluded paths are skipped, near-miss paths are not', (t) => {
+test('only files inside the Sift tracker may cite ticket IDs', (t) => {
   const { root, write } = repo(t);
-  const body = `cites ${ticket('0001')} and ${PLANS}/1\n`;
+  const sift = ['.ai', 'sift'].join('/');
+  for (const path of [`${sift}/open/a.md`, `${sift}/archive/a.md`, `${sift}/README.md`]) {
+    write(path, `cites ${ticket('0001')}\n`);
+  }
+  track(root);
+  const skipped = run(root);
+  assert.equal(skipped.status, 0, skipped.stderr);
+  assert.equal(skipped.stdout.trim(), CLEAN_MESSAGE);
+
+  const forbidden = [
+    '.ai/kenkeep/nodes/practice.md',
+    `${PLANS}/a.md`,
+    '.agents/skills/s/SKILL.md',
+    '.claude/settings.json',
+    '.cursor/rules/r.mdc',
+    '.codex/config.toml',
+    'tests/core/Smoke.cpp',
+    'skills-lock.json',
+    '.kkignore',
+    `${sift}-notes/a.md`,
+    `docs/${sift}/a.md`,
+    `${sift}.md`,
+  ];
+  for (const path of forbidden) write(path, `cites ${ticket('0001')}\n`);
+  track(root);
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.deepEqual(hitLines(result.stderr).sort(), forbidden.map((path) => `${path}:1`).sort());
+});
+
+test('the existing agent and test exclusions apply only to plan paths', (t) => {
+  const { root, write } = repo(t);
   for (const path of [
-    '.ai/sift/tickets/x.md',
+    '.ai/kenkeep/nodes/practice.md',
     '.agents/skills/s/SKILL.md',
     '.claude/settings.json',
     '.cursor/rules/r.mdc',
@@ -153,15 +185,13 @@ test('files under the excluded paths are skipped, near-miss paths are not', (t) 
     'skills-lock.json',
     '.kkignore',
   ]) {
-    write(path, body);
+    write(path, `see ${PLANS}/1\n`);
   }
-  write('clean.md', 'fine\n');
   track(root);
-  const skipped = run(root);
-  assert.equal(skipped.status, 0, skipped.stderr);
-  assert.equal(skipped.stdout.trim(), CLEAN_MESSAGE);
+  const result = run(root);
+  assert.equal(result.status, 0, result.stderr);
 
-  // Directory entries match by prefix only at the repository root, and file entries match exactly.
+  // Plan exclusions still match root directories and exact filenames only.
   const near = [
     '.ai-notes/x.md',
     'docs/.ai/x.md',
@@ -171,11 +201,11 @@ test('files under the excluded paths are skipped, near-miss paths are not', (t) 
     'sub/skills-lock.json',
     '.kkignore.old',
   ];
-  for (const path of near) write(path, body);
+  for (const path of near) write(path, `see ${PLANS}/1\n`);
   track(root);
-  const result = run(root);
-  assert.equal(result.status, 1);
-  assert.deepEqual(hitLines(result.stderr).sort(), near.map((path) => `${path}:1`).sort());
+  const hits = run(root);
+  assert.equal(hits.status, 1);
+  assert.deepEqual(hitLines(hits.stderr).sort(), near.map((path) => `${path}:1`).sort());
 });
 
 test('untracked and gitignored files are not scanned', (t) => {

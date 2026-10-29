@@ -533,7 +533,7 @@ public:
         recorded << QStringLiteral("checkpoint-failed") << QStringLiteral("write-failed")
                  << QStringLiteral("write-uncertain") << QStringLiteral("stage-failed");
         for (const auto &boundary : recorded) {
-            suite.run("TRUCE-0034 acknowledged " + boundary.toStdString() + " survives process exit with its text decisions and status",
+            suite.run("acknowledged " + boundary.toStdString() + " survives process exit with its text decisions and status",
                 [=] {
                     QTemporaryDir directory;
                     CHECK(directory.isValid());
@@ -551,7 +551,7 @@ public:
                         CHECK(expected.value(QStringLiteral("checkpoint")) == expected.value(QStringLiteral("text")));
                     }
                 });
-            suite.run("TRUCE-0034 termination during " + boundary.toStdString() + " leaves the prior text decisions and status",
+            suite.run("termination during " + boundary.toStdString() + " leaves the prior text decisions and status",
                 [=] {
                     QTemporaryDir directory;
                     CHECK(directory.isValid());
@@ -572,7 +572,7 @@ public:
                 });
         }
         for (const auto &boundary : durable) {
-            suite.run("TRUCE-0034 journal sync death during " + boundary.toStdString() + " keeps the completed record", [=] {
+            suite.run("journal sync death during " + boundary.toStdString() + " keeps the completed record", [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
                 const auto child = runChild(boundary, directory.path(), QStringLiteral("journal"));
@@ -582,7 +582,7 @@ public:
                 CHECK(!incomplete);
             });
         }
-        suite.run("TRUCE-0034 payload sync death during edit keeps only the acknowledged draft", [] {
+        suite.run("payload sync death during edit keeps only the acknowledged draft", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             const auto child = runChild(QStringLiteral("edit"), directory.path(), QStringLiteral("payload"));
@@ -593,12 +593,12 @@ public:
             CHECK(restored == labeled(child.output, "BEFORE"));
             CHECK(restored.value(QStringLiteral("text")) != labeled(child.output, "EXPECTED").value(QStringLiteral("text")));
         });
-        suite.run("TRUCE-0034 recovery-write retry keeps one edit and its decisions", [] {
+        suite.run("recovery-write retry keeps one edit and its decisions", [] {
             retryBoundary("edit", openBase,
                 [](SessionModel &session) { return session.replaceDraft("file", 1, savedDraft()); },
                 [](FileSession &file) { return file.replaceDraft(file.current().id, savedDraft()); });
         });
-        suite.run("TRUCE-0034 checkpoint sync failure retains the draft and retries one manual save", [] {
+        suite.run("checkpoint sync failure retains the draft and retries one manual save", [] {
             retryBoundary("checkpoint", [](SessionModel &session) {
                 openBase(session);
                 CHECK(session.replaceDraft("file", 1, savedDraft()) == Transition::Applied);
@@ -608,7 +608,7 @@ public:
                 return file.recordCheckpoint(file.current().id, Outcome::Succeeded);
             });
         });
-        suite.run("TRUCE-0034 publication sync failure retains the reviewed draft and retries one write", [] {
+        suite.run("publication sync failure retains the reviewed draft and retries one write", [] {
             retryBoundary("write", reviewSaved, [](SessionModel &session) {
                 return session.recordWrite("file", session.file("file")->current().id, Outcome::Succeeded);
             }, [](FileSession &file) {
@@ -616,7 +616,7 @@ public:
             });
         });
         // A recovery-journal fsync failure while recording a stage; the Git index is not involved.
-        suite.run("TRUCE-0034 stage outcome journal sync failure retains the written draft and retries one stage", [] {
+        suite.run("stage outcome journal sync failure retains the written draft and retries one stage", [] {
             retryBoundary("stage", writeSaved, [](SessionModel &session) {
                 return session.recordStage("file", session.file("file")->current().id, Outcome::Succeeded,
                     "verified-object", "100644");
@@ -624,7 +624,7 @@ public:
                 return file.recordStage(file.current().id, Outcome::Succeeded, "verified-object", "100644");
             });
         });
-        suite.run("TRUCE-0034 a corrupt record is not restored as success", [] {
+        suite.run("a corrupt record is not restored as success", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             requireChild(runChild(QStringLiteral("edit"), directory.path(), {}), 0);
@@ -638,7 +638,7 @@ public:
             CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
             CHECK(replay.error.contains(QStringLiteral("integrity")));
         });
-        suite.run("TRUCE-0034 an unsupported schema is not restored as success", [] {
+        suite.run("an unsupported schema is not restored as success", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             requireChild(runChild(QStringLiteral("edit"), directory.path(), {}), 0);
@@ -647,7 +647,7 @@ public:
             CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
             CHECK(replay.error.contains(QStringLiteral("schema")));
         });
-        suite.run("TRUCE-0034 an unsupported journal header is not restored as success", [] {
+        suite.run("an unsupported journal header is not restored as success", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             requireChild(runChild(QStringLiteral("edit"), directory.path(), {}), 0);
@@ -660,7 +660,7 @@ public:
             CHECK(!replay.succeeded && replay.files.empty());
             CHECK(replay.error.contains(QStringLiteral("Unknown or corrupt")));
         });
-        suite.run("TRUCE-0034 a mismatched file identity is not restored as success", [] {
+        suite.run("a mismatched file identity is not restored as success", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             requireChild(runChild(QStringLiteral("edit"), directory.path(), {}), 0);
@@ -671,7 +671,7 @@ public:
             CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
             CHECK(replay.error.contains(QStringLiteral("matching open file")));
         });
-        suite.run("TRUCE-0034 a stale destination rejects publication and keeps the acknowledged draft", [] {
+        suite.run("a stale destination rejects publication and keeps the acknowledged draft", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             const auto root = QFileInfo(directory.path()).canonicalFilePath();
@@ -703,7 +703,7 @@ public:
         });
         // Git index faults run through the real publisher; TRUCE_CRASH_FSYNC stays unset,
         // so the recovery journal syncs normally and records what the product observed.
-        suite.run("TRUCE-0068 a replaced Git index entry stops publication and replay shows the recorded write failure", [] {
+        suite.run("a replaced Git index entry stops publication and replay shows the recorded write failure", [] {
             IndexConflict conflict;
             const auto staleFile = conflict.home.path() + QStringLiteral("/stale-index-bytes");
             writeFile(staleFile, "stale index bytes\n");
@@ -733,7 +733,7 @@ public:
             CHECK(observation(restored).value(QStringLiteral("writeOutcome")).toString() == QLatin1String("failed"));
             CHECK(restored.writeOutcome() && restored.writeOutcome()->detail == file.writeOutcome()->detail);
         });
-        suite.run("TRUCE-0068 a locked Git index fails staging after the write and replay shows the recorded stage failure", [] {
+        suite.run("a locked Git index fails staging after the write and replay shows the recorded stage failure", [] {
             IndexConflict conflict;
             const auto conflicted = conflict.indexEntries();
             CHECK(conflicted.contains(" 1\tresult.txt\n") && conflicted.contains(" 2\tresult.txt\n")

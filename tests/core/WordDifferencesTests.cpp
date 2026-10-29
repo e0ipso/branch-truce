@@ -28,7 +28,7 @@ int main()
 {
     test_support::Suite suite("WordDifferencesTests");
 
-    suite.run("TRUCE-0119 a line pair with one substituted and one inserted token", [] {
+    suite.run("a line pair with one substituted and one inserted token", [] {
         const std::string left = "alpha beta gamma\n";
         const std::string right = "alpha delta gamma epsilon\n";
         std::size_t budget = kMaxWordDifferenceCells;
@@ -41,7 +41,7 @@ int main()
         CHECK(budget == kMaxWordDifferenceCells - 15);
     });
 
-    suite.run("TRUCE-0119 identical, inserted-only and multibyte pairs", [] {
+    suite.run("identical, inserted-only and multibyte pairs", [] {
         std::size_t budget = kMaxWordDifferenceCells;
         CHECK(wordDifferences("same line\n", "same line\n", budget) == WordDifferences{});
         const std::string grown = "call(x, y)\n";
@@ -59,7 +59,7 @@ int main()
         CHECK(words(indented, blanks.right) == std::vector<std::string>{"    "});
     });
 
-    suite.run("TRUCE-0119 a line over the documented limit gets no word ranges", [] {
+    suite.run("a line over the documented limit gets no word ranges", [] {
         const std::string longLeft(kMaxWordDifferenceLineBytes + 1, 'x');
         const std::string longRight(kMaxWordDifferenceLineBytes + 1, 'y');
         const auto left = longLeft + "\nshort one\n";
@@ -76,7 +76,7 @@ int main()
         CHECK(bounded.right == bounded.left);
     });
 
-    suite.run("TRUCE-0119 a pair over the comparison budget gets no ranges and keeps the budget", [] {
+    suite.run("a pair over the comparison budget gets no ranges and keeps the budget", [] {
         std::string left;
         std::string right;
         // 300 short lines a side: over 4000 tokens each, far past the pair limit.
@@ -92,7 +92,7 @@ int main()
         CHECK(small == 3);
     });
 
-    suite.run("TRUCE-0119 undecided competing sections pair with each other in the sources and the result", [] {
+    suite.run("undecided competing sections pair with each other in the sources and the result", [] {
         const auto marked = test_support::markedText();
         auto file = test_support::choiceFile("header\nleft first\nleft second\nbridge\nleft later\ntail\n",
             "header\nright first\nright second\nbridge\nright later\ntail\n", marked);
@@ -106,7 +106,7 @@ int main()
         CHECK(!found.sources.contains(SourceSide::Earlier));
     });
 
-    suite.run("TRUCE-0119 a changed passage pairs its source lines with the result lines", [] {
+    suite.run("a changed passage pairs its source lines with the result lines", [] {
         const std::string left = "header\nvalue = one\ntail\n";
         const std::string right = "header\nvalue = two\ntail\n";
         const std::string result = "header\nvalue = three\ntail\n";

@@ -42,7 +42,7 @@ public:
     int run()
     {
         test_support::Suite suite("RecoveryStoreTests");
-        suite.run("TRUCE-0013 interrupted transaction tails preserve the acknowledged prefix and retry once", [] {
+        suite.run("interrupted transaction tails preserve the acknowledged prefix and retry once", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             RecoveryStore store(directory.path() + "/recovery");
@@ -76,7 +76,7 @@ public:
             CHECK(error.isEmpty());
         });
         for (const auto point : {recovery_faults::Point::PayloadSync, recovery_faults::Point::JournalSync}) {
-            suite.run("TRUCE-0013 recovery write failure retains the prior commit and idempotent retry "
+            suite.run("recovery write failure retains the prior commit and idempotent retry "
                       + std::to_string(static_cast<int>(point)), [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
@@ -102,7 +102,7 @@ public:
                 CHECK(error.isEmpty());
             });
         }
-        suite.run("TRUCE-0029 recovery payload envelope keeps the boundary and the acknowledged journal", [] {
+        suite.run("recovery payload envelope keeps the boundary and the acknowledged journal", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             RecoveryStore store(directory.path() + "/recovery");
@@ -132,7 +132,7 @@ public:
             CHECK(store.payload(aboveHash, &error).isEmpty());
             CHECK(error.contains("missing or unsafe"));
         });
-        suite.run("TRUCE-0249 a long-lived store writes the bytes of a store that rereads every commit", [] {
+        suite.run("a long-lived store writes the bytes of a store that rereads every commit", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             RecoveryStore kept(directory.path() + "/kept");
@@ -152,7 +152,7 @@ public:
             const auto reloaded = RecoveryStore(kept.directory()).read();
             CHECK(reloaded.succeeded && reloaded.transactions.size() == 12 && reloaded.validBytes == bytes.size());
         });
-        suite.run("TRUCE-0249 another writer's records between two commits are read before the next append", [] {
+        suite.run("another writer's records between two commits are read before the next append", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             RecoveryStore store(directory.path() + "/recovery");
@@ -168,7 +168,7 @@ public:
             CHECK(reloaded.succeeded && !reloaded.incompleteTail);
             CHECK(reloaded.transactions == (QList<QJsonObject>{mine.state, theirs.state, mine.state, next.state}));
         });
-        suite.run("TRUCE-0249 a same-size change to an earlier record fails the next commit", [] {
+        suite.run("a same-size change to an earlier record fails the next commit", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             RecoveryStore store(directory.path() + "/recovery");
@@ -185,7 +185,7 @@ public:
             CHECK(!failed.succeeded && failed.error.contains("integrity"));
             CHECK(readFile(journalPath) == changed);
         });
-        suite.run("TRUCE-0249 a foreign, truncated or unsafe journal is verified before the next append", [] {
+        suite.run("a foreign, truncated or unsafe journal is verified before the next append", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             RecoveryStore store(directory.path() + "/recovery");

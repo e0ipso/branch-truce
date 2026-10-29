@@ -1,3 +1,7 @@
+Sift ticket references belong only inside Sift. Never include ticket IDs or links to
+individual tickets in source, tests, documentation, knowledge nodes, commit messages
+or other repository metadata. Describe the behavior or requirement directly.
+
 <!-- >>> kenkeep:kk-index >>> -->
 You are required to load [.ai/kenkeep/ENTRY.md](.ai/kenkeep/ENTRY.md), the small curated entry catalog for this repo. Enter there and descend using progressive disclosure principles.
 

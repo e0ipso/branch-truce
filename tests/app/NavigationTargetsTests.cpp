@@ -27,7 +27,7 @@ int main()
 {
     test_support::Suite suite("navigation-targets");
 
-    // TRUCE-0204: the target builders are pure functions of the file.
+    // the target builders are pure functions of the file.
     suite.run("a file without a correspondence or without differences has no targets", [] {
         const FileSession plain("plain", "plain.txt", {"text\n", {}, 0});
         CHECK(!plain.correspondence());

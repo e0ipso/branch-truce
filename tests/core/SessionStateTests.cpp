@@ -143,7 +143,7 @@ public:
         test_support::Suite suite("SessionStateTests");
         for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
             for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst}) {
-                suite.run("TRUCE-0017 confirmed ordered scopes preserve unrelated text and decisions "
+                suite.run("confirmed ordered scopes preserve unrelated text and decisions "
                     + std::to_string(static_cast<int>(scope)) + "/" + std::to_string(static_cast<int>(action)), [=] {
                     auto file = test_support::combinationFile(scope);
                     const auto target = test_support::choiceTarget(file, SourceSide::Stage2, scope);
@@ -185,7 +185,7 @@ public:
                 });
             }
         }
-        suite.run("TRUCE-0017 partial combinations can be reordered repeatedly without duplicating another section", [] {
+        suite.run("partial combinations can be reordered repeatedly without duplicating another section", [] {
             auto file = test_support::choiceFile();
             const auto target = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section, 1);
             for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst,
@@ -198,7 +198,7 @@ public:
                 CHECK(file.current().draft.text == std::string("header\nleft first\nleft second\nbridge\n") + suffix);
             }
         });
-        suite.run("TRUCE-0017 overlapping manual work is displayed and cancel stale or altered previews preserve it", [] {
+        suite.run("overlapping manual work is displayed and cancel stale or altered previews preserve it", [] {
             auto file = test_support::combinationFile(ChoiceScope::Line);
             const auto target = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Line);
             CHECK(file.editResult(1, {{7, 18}, "manual first\n"}) == Transition::Applied);
@@ -221,7 +221,7 @@ public:
             CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == newer.draft);
         });
         for (const auto scope : {NonConflictingScope::Left, NonConflictingScope::Right, NonConflictingScope::Both}) {
-            suite.run("TRUCE-0018 file batches apply only eligible contributions after confirmation "
+            suite.run("file batches apply only eligible contributions after confirmation "
                 + std::to_string(static_cast<int>(scope)), [=] {
                 auto file = test_support::batchFile();
                 CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
@@ -249,7 +249,7 @@ public:
                 CHECK(previewNonConflicting(file, file.current().id, scope).state == Transition::NoChange);
             });
         }
-        suite.run("TRUCE-0018 manual overlap and existing decisions are excluded while unrelated edits survive", [] {
+        suite.run("manual overlap and existing decisions are excluded while unrelated edits survive", [] {
             auto file = test_support::batchFile();
             const auto position = file.current().draft.text.find("base right\n");
             CHECK(file.editResult(1, {{position, position + 11}, "manual right\n"}) == Transition::Applied);
@@ -262,7 +262,7 @@ public:
             CHECK(previewNonConflicting(file, file.current().id).state == Transition::NoChange);
             CHECK(file.current().draft == chosen);
         });
-        suite.run("TRUCE-0018 a previously ignored eligible contribution stays ignored while the other side is batched", [] {
+        suite.run("a previously ignored eligible contribution stays ignored while the other side is batched", [] {
             auto file = test_support::batchFile();
             const auto target = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section);
             const auto ignore = previewChoice(file, 1, target.source.contributionId, ChoiceAction::Ignore);
@@ -278,7 +278,7 @@ public:
                 CHECK(file.current().draft.decisions.at(id) == before.decisions.at(id));
             }
         });
-        suite.run("TRUCE-0018 absent earlier context stale and altered batches never apply", [] {
+        suite.run("absent earlier context stale and altered batches never apply", [] {
             auto missing = test_support::choiceFile();
             const auto blocked = previewNonConflicting(missing, 1);
             CHECK(blocked.state == Transition::Blocked && blocked.detail.find("earlier version is unavailable") != std::string::npos);
@@ -293,7 +293,7 @@ public:
             CHECK(applyNonConflicting(file, preview, true) == Transition::StaleRevision);
             CHECK(file.current().id == current.id && file.current().draft == current.draft);
         });
-        suite.run("TRUCE-0018 insertions touching a competing changed range stay outstanding", [] {
+        suite.run("insertions touching a competing changed range stay outstanding", [] {
             auto captured = *test_support::choiceFile("head\ninserted\nbase\ntail\n", "head\nchanged\ntail\n").snapshots();
             const std::string earlier = "head\nbase\ntail\n";
             captured.earlier = SourceSnapshot{"base", "100644", earlier, test_support::choiceText(earlier), "base", "Earlier"};
@@ -307,7 +307,7 @@ public:
             CHECK(file.current().id == 1 && file.current().draft == before);
             for (const auto &[id, value] : before.decisions) { (void)id; CHECK(value.value == DecisionValue::Undecided); }
         });
-        suite.run("TRUCE-0018 ambiguous repeated result passages stay outstanding", [] {
+        suite.run("ambiguous repeated result passages stay outstanding", [] {
             const auto source = test_support::batchFile();
             const auto earlier = source.snapshots()->earlier->worktree.utf8;
             auto captured = *source.snapshots();
@@ -321,7 +321,7 @@ public:
             CHECK(file.current().id == 1 && file.current().draft == before);
         });
         for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
-            suite.run("TRUCE-0019 whole-file previews describe and replace exactly the selected source "
+            suite.run("whole-file previews describe and replace exactly the selected source "
                 + std::to_string(static_cast<int>(side)), [=] {
                 auto file = test_support::choiceFile();
                 CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
@@ -351,7 +351,7 @@ public:
                 CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
             });
         }
-        suite.run("TRUCE-0019 altered or stale whole-file confirmation cannot change the draft", [] {
+        suite.run("altered or stale whole-file confirmation cannot change the draft", [] {
             auto file = test_support::choiceFile();
             const auto before = file.current();
             const auto preview = previewWholeFile(file, before.id, SourceSide::Stage3);
@@ -369,7 +369,7 @@ public:
             CHECK(applyWholeFile(file, preview, true) == Transition::StaleRevision);
             CHECK(file.current().id == newer.id && file.current().draft == newer.draft);
         });
-        suite.run("TRUCE-0019 whole-file replacement retains recovered decisions without source scopes", [] {
+        suite.run("whole-file replacement retains recovered decisions without source scopes", [] {
             const auto source = test_support::choiceFile();
             const Draft legacy{"legacy manual result\n", {{"legacy-left", {DecisionValue::Accepted, 3}},
                 {"legacy-right", {DecisionValue::Ignored, {}}}}, 0};
@@ -385,7 +385,7 @@ public:
             CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == legacy);
         });
         for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
-            suite.run("TRUCE-0016 scoped Accept preserves unrelated edits and restores atomic history "
+            suite.run("scoped Accept preserves unrelated edits and restores atomic history "
                 + std::to_string(static_cast<int>(scope)), [=] {
                 auto file = test_support::choiceFile();
                 const auto target = test_support::choiceTarget(file, SourceSide::Stage2, scope);
@@ -417,7 +417,7 @@ public:
             });
         }
         for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
-            suite.run("TRUCE-0016 Ignore preserves manual text and competing decisions through undo and redo "
+            suite.run("Ignore preserves manual text and competing decisions through undo and redo "
                 + std::to_string(static_cast<int>(scope)), [=] {
                 auto file = test_support::choiceFile();
                 CHECK(file.editResult(1, {{7, 18}, "manual target\n"}) == Transition::Applied);
@@ -437,7 +437,7 @@ public:
                 CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == ignored);
             });
         }
-        suite.run("TRUCE-0016 resolve using one side decides only its section and its competitors", [] {
+        suite.run("resolve using one side decides only its section and its competitors", [] {
             auto file = test_support::choiceFile();
             CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
             const auto before = file.current().draft;
@@ -455,7 +455,7 @@ public:
             CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
             CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == resolved);
         });
-        suite.run("TRUCE-0016 stale and ambiguous scoped choices leave text decisions and history unchanged", [] {
+        suite.run("stale and ambiguous scoped choices leave text decisions and history unchanged", [] {
             auto file = test_support::choiceFile();
             const auto target = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Line);
             const auto preview = previewChoice(file, 1, target.source.contributionId, ChoiceAction::Accept);
@@ -472,7 +472,7 @@ public:
             CHECK(applyChoice(ambiguous, rejected, true) == Transition::AmbiguousTarget);
             CHECK(ambiguous.current().id == 1 && ambiguous.current().draft == unchanged && !ambiguous.canUndo());
         });
-        suite.run("TRUCE-0016 resolve using one line leaves the other section and manual edits unchanged", [] {
+        suite.run("resolve using one line leaves the other section and manual edits unchanged", [] {
             auto file = test_support::choiceFile("header\nleft\nbridge\nleft later\ntail\n",
                 "header\nright\nbridge\nright later\ntail\n");
             CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
@@ -491,7 +491,7 @@ public:
             CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
             CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
         });
-        suite.run("TRUCE-0188 each section can be decided with a different side", [] {
+        suite.run("each section can be decided with a different side", [] {
             for (const bool marked : {false, true}) {
                 for (const auto action : {ChoiceAction::ResolveUsingSide, ChoiceAction::Accept}) {
                     for (const auto first : {SourceSide::Stage2, SourceSide::Stage3}) {
@@ -516,7 +516,7 @@ public:
                 }
             }
         });
-        suite.run("TRUCE-0188 an accept still refuses accepted text it may replace", [] {
+        suite.run("an accept still refuses accepted text it may replace", [] {
             // The competing side of the same section holds the accepted text.
             auto same = test_support::choiceFile();
             CHECK(choose(same, SourceSide::Stage2, ChoiceAction::Accept) == Transition::Applied);
@@ -535,7 +535,7 @@ public:
             CHECK(refused.state == Transition::Blocked);
             CHECK(refused.detail == "Accepted text may overlap this choice. Preview an ordered combination or undo its acceptance.");
         });
-        suite.run("TRUCE-0012 correspondence is deterministic and partitions repeated inserted deleted and changed text", [] {
+        suite.run("correspondence is deterministic and partitions repeated inserted deleted and changed text", [] {
             const std::array cases{
                 std::pair{"repeat\nrepeat\n", "repeat\nrepeat\n"},
                 std::pair{"head\nold\nend\n", "head\nnew\nend\n"},
@@ -568,7 +568,7 @@ public:
                 for (int repeat = 0; repeat < 4; ++repeat) CHECK(algorithm.compare(source, result) == passages);
             }
         });
-        suite.run("TRUCE-0012 ambiguous repeated and reordered passages reject choices atomically", [] {
+        suite.run("ambiguous repeated and reordered passages reject choices atomically", [] {
             for (const auto &texts : {std::pair{"head\nrepeat\nrepeat\nend\n", "head\nrepeat\nend\n"},
                                      std::pair{"head\none\ntwo\nend\n", "head\ntwo\none\nend\n"}}) {
                 auto file = mappedFile(texts.first, texts.second);
@@ -581,7 +581,7 @@ public:
                 CHECK(file.current().id == before.id && file.current().draft == before.draft && !file.canUndo());
             }
         });
-        suite.run("TRUCE-0012 equal repeated passages keep the selected occurrence", [] {
+        suite.run("equal repeated passages keep the selected occurrence", [] {
             auto file = mappedFile("repeat\nmiddle\nrepeat\n", "manual prefix\nrepeat\nmiddle\nrepeat\n");
             CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {14, 21}}) == Transition::Applied);
             const auto issued = anchor(file);
@@ -590,7 +590,7 @@ public:
             CHECK(file.current().draft.text == "manual prefix\nrepeat\nmiddle\nselected\n");
             CHECK(file.current().draft.decisions.at("choice") == Decision{DecisionValue::Accepted, 1});
         });
-        suite.run("TRUCE-0012 UTF-8 boundaries and forged anchor identities cannot mutate a transaction", [] {
+        suite.run("UTF-8 boundaries and forged anchor identities cannot mutate a transaction", [] {
             const std::string text = "start\n\xc3\xa9\xf0\x9f\x98\x80\nend\n";
             auto file = mappedFile(text, text);
             CHECK(file.bindSourceAnchor(1, {"inside-codepoint", SourceSide::Stage2, {7, 13}}) == Transition::InvalidAnchor);
@@ -614,7 +614,7 @@ public:
             CHECK(file.replaceMapped(1, issued, "valid\n", Decision{DecisionValue::Accepted, 1}) == Transition::Applied);
             CHECK(file.current().draft.text == "start\nvalid\nend\n");
         });
-        suite.run("TRUCE-0012 source-only anchors use the deletion site and preserve inserted result passages", [] {
+        suite.run("source-only anchors use the deletion site and preserve inserted result passages", [] {
             auto file = mappedFile("head\nremoved\ntail\n", "manual prefix\nhead\ntail\nmanual suffix\n");
             CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 13}}) == Transition::Applied);
             const auto deleted = anchor(file);
@@ -624,7 +624,7 @@ public:
                 == Transition::Applied);
             CHECK(file.current().draft.text == "manual prefix\nhead\nrestored\ntail\nmanual suffix\n");
         });
-        suite.run("TRUCE-0012 anchors transform around manual insertions and deletions without losing unrelated edits", [] {
+        suite.run("anchors transform around manual insertions and deletions without losing unrelated edits", [] {
             auto file = mappedFile("head\nleft\nright\nend\n", "head\nleft\nright\nend\n");
             CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 10}}) == Transition::Applied);
             const auto stale = anchor(file);
@@ -644,7 +644,7 @@ public:
                 == Transition::Applied);
             CHECK(file.current().draft.text == prefix + "accepted\nright\nend\n" + suffix);
         });
-        suite.run("TRUCE-0012 changed manual passages require confirmation bound to the current preview", [] {
+        suite.run("changed manual passages require confirmation bound to the current preview", [] {
             auto file = mappedFile("head\nsource\nend\n", "head\nmanual\nend\n");
             CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 12}}) == Transition::Applied);
             const auto preview = anchor(file);
@@ -661,7 +661,7 @@ public:
                 == Transition::Applied);
             CHECK(file.current().draft.text == "head\naccepted\nend\n");
         });
-        suite.run("TRUCE-0012 deleted anchors and ambiguous whole-buffer edits never reattach to another repeat", [] {
+        suite.run("deleted anchors and ambiguous whole-buffer edits never reattach to another repeat", [] {
             auto file = mappedFile("head\nrepeat\nrepeat\nend\n", "head\nrepeat\nrepeat\nend\n");
             CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {12, 19}}) == Transition::Applied);
             CHECK(file.editResult(1, {{12, 19}, {}}) == Transition::Applied);
@@ -680,7 +680,7 @@ public:
                 == Transition::AmbiguousTarget);
             CHECK(file.current().draft == before);
         });
-        suite.run("TRUCE-0012 insertion anchors respect affinity and history restores text decisions and mappings", [] {
+        suite.run("insertion anchors respect affinity and history restores text decisions and mappings", [] {
             auto file = mappedFile("head\ntail\n", "head\ntail\n");
             CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 5}, InsertionAffinity::Before}) == Transition::Applied);
             CHECK(file.bindSourceAnchor(1, {"after", SourceSide::Stage2, {5, 5}, InsertionAffinity::After}) == Transition::Applied);
@@ -702,7 +702,7 @@ public:
             CHECK(anchor(file).revision == file.current().id);
             CHECK(file.replaceMapped(file.current().id, original, "stale", {}, true) == Transition::StaleRevision);
         });
-        suite.run("TRUCE-0052 correspondence succeeds when matrix-sized allocations are refused", [] {
+        suite.run("correspondence succeeds when matrix-sized allocations are refused", [] {
             std::string source;
             for (int line = 0; line < 3500; ++line) source += "unique line " + std::to_string(line) + '\n';
             const auto result = "manual prefix\n" + source + "manual suffix\n";
@@ -893,13 +893,13 @@ public:
                 CHECK(file.discardToStaged(id) == Transition::Blocked);
                 CHECK(file.beginMarkResolved(id, true) == Transition::Blocked && !file.facts().resolved);
                 CHECK(file.supportDetail() == "unavailable");
-                // TRUCE-0098: no app draft blockers for a file the app cannot edit.
+                // no app draft blockers for a file the app cannot edit.
                 const auto expected = support == Support::OutsideApp ? Blocker::OutsideApp : Blocker::Unreadable;
                 CHECK(file.facts().blockers == std::vector<Blocker>{expected});
                 CHECK(file.facts().status == (support == Support::OutsideApp ? FileStatus::OutsideApp : FileStatus::Unreadable));
             }
         });
-        suite.run("TRUCE-0172 a complete block is one typed range with line and byte bounds", [] {
+        suite.run("a complete block is one typed range with line and byte bounds", [] {
             const std::string text = "a\n<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\nz\n";
             const auto scan = scanMarkers(text);
             CHECK(scan.orphans.empty() && scan.blocks.size() == 1 && scan.count() == 1);
@@ -911,7 +911,7 @@ public:
             CHECK(text.substr(block.end.bytes.begin, block.end.bytes.end - block.end.bytes.begin) == ">>>>>>> theirs\n");
             CHECK(scan.first() == block.begin);
         });
-        suite.run("TRUCE-0172 a block with a base section keeps the base line", [] {
+        suite.run("a block with a base section keeps the base line", [] {
             const std::string text = "<<<<<<< ours\nleft\n||||||| base\nbase\n=======\nright\n>>>>>>> theirs";
             const auto scan = scanMarkers(text);
             CHECK(scan.orphans.empty() && scan.blocks.size() == 1);
@@ -921,7 +921,7 @@ public:
             // The last line has no line ending.
             CHECK(block.end.bytes == (ByteRange{50, text.size()}));
         });
-        suite.run("TRUCE-0172 each marker line alone is an orphan", [] {
+        suite.run("each marker line alone is an orphan", [] {
             const std::array<std::pair<std::string, MarkerKind>, 4> lines{{
                 {"<<<<<<< ours", MarkerKind::Begin}, {"||||||| base", MarkerKind::Base},
                 {"=======", MarkerKind::Separator}, {">>>>>>> theirs", MarkerKind::End}}};
@@ -935,7 +935,7 @@ public:
                 CHECK(file.beginMarkResolved(1) == Transition::Blocked && has(file, Blocker::UnresolvedMarkers));
             }
         });
-        suite.run("TRUCE-0172 marker-like text that is not a whole marker is ignored", [] {
+        suite.run("marker-like text that is not a whole marker is ignored", [] {
             const std::string text = "x <<<<<<< ours\n  =======\n<<<<<<<< eight\n======== heading\n"
                                      ">>>>>>>theirs\n|||||| six\nend >>>>>>> theirs\n";
             CHECK(scanMarkers(text) == MarkerScan{});
@@ -943,7 +943,7 @@ public:
             CHECK(file.current().draft.unresolvedMarkers == 0);
             CHECK(file.beginMarkResolved(1) == Transition::Applied);
         });
-        suite.run("TRUCE-0172 CRLF line endings keep the carriage return inside the marker line", [] {
+        suite.run("CRLF line endings keep the carriage return inside the marker line", [] {
             const std::string text = "<<<<<<< ours\r\nleft\r\n=======\r\nright\r\n>>>>>>> theirs\r\n";
             const auto scan = scanMarkers(text);
             CHECK(scan.orphans.empty() && scan.blocks.size() == 1);
@@ -952,7 +952,7 @@ public:
             CHECK(block.separator == (MarkerLine{MarkerKind::Separator, 2, {20, 29}}));
             CHECK(block.end == (MarkerLine{MarkerKind::End, 4, {36, text.size()}}));
         });
-        suite.run("TRUCE-0172 broken and nested blocks leave every marker line counted", [] {
+        suite.run("broken and nested blocks leave every marker line counted", [] {
             const std::string text = "<<<<<<< a\n<<<<<<< b\nleft\n=======\nright\n>>>>>>> b\n"
                                      "=======\n>>>>>>> a\n||||||| late\n";
             const auto scan = scanMarkers(text);
@@ -962,7 +962,7 @@ public:
             CHECK(orphanLines == (std::vector<std::size_t>{0, 6, 7, 8}));
             CHECK(scan.count() == 5 && scan.first()->line == 0);
         });
-        suite.run("TRUCE-0172 deleting one marker line keeps the publish blocker", [] {
+        suite.run("deleting one marker line keeps the publish blocker", [] {
             const std::string text = "a\n<<<<<<< ours\nleft\n||||||| base\nbase\n=======\nright\n>>>>>>> theirs\nz\n";
             const auto block = scanMarkers(text).blocks.at(0);
             for (const auto &line : {block.begin, *block.base, block.separator, block.end}) {
@@ -981,7 +981,7 @@ public:
             CHECK(cleared.current().draft.unresolvedMarkers == 0 && !has(cleared, Blocker::UnresolvedMarkers));
             CHECK(cleared.beginMarkResolved(cleared.current().id) == Transition::Applied);
         });
-        suite.run("TRUCE-0177 each full decision removes its section's marker lines in one undoable step", [] {
+        suite.run("each full decision removes its section's marker lines in one undoable step", [] {
             enum class Path { ResolveLeft, ResolveRight, AcceptThenIgnore, IgnoreThenAccept, LeftFirst, RightFirst, Lines };
             for (const bool base : {false, true}) {
                 const auto launch = test_support::markedText(base);
@@ -1047,7 +1047,7 @@ public:
             CHECK(file.current().draft.unresolvedMarkers == 0 && file.markerSections().empty());
             CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
         });
-        suite.run("TRUCE-0177 accept alone or ignoring both sides keeps the marker lines", [] {
+        suite.run("accept alone or ignoring both sides keeps the marker lines", [] {
             auto file = test_support::markedFile();
             const auto &left = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section);
             const auto accept = previewChoice(file, 1, left.source.contributionId, ChoiceAction::Accept);
@@ -1064,7 +1064,7 @@ public:
             CHECK(ignored.current().draft.text == test_support::markedText());
             CHECK(ignored.current().draft.unresolvedMarkers == 2 && has(ignored, Blocker::UnresolvedMarkers));
         });
-        suite.run("TRUCE-0177 a hand-edited marker line orphans its block, which is never removed", [] {
+        suite.run("a hand-edited marker line orphans its block, which is never removed", [] {
             for (const std::string line : {"<<<<<<< ours\n", "=======\n", ">>>>>>> theirs\n"}) {
                 auto file = test_support::markedFile();
                 // Still a marker line, but no longer the one Git wrote.
@@ -1089,7 +1089,7 @@ public:
             CHECK(typed.current().draft.text.find("<<<<<<< ours\nleft first\nleft second\n=======\nright typed first\n") != std::string::npos);
             CHECK(typed.current().draft.unresolvedMarkers == 2);
         });
-        suite.run("TRUCE-0192 a block around two sections split by a shared line resolves when all are decided", [] {
+        suite.run("a block around two sections split by a shared line resolves when all are decided", [] {
             enum class Path { AcceptThenIgnore, ResolveRight, LeftThenRight };
             const auto launch = test_support::splitText();
             for (const auto path : {Path::AcceptThenIgnore, Path::ResolveRight, Path::LeftThenRight}) {
@@ -1144,7 +1144,7 @@ public:
                 CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
             }
         });
-        suite.run("TRUCE-0195 a split block whose sections keep opposite sides out of order resolves in section order", [] {
+        suite.run("a split block whose sections keep opposite sides out of order resolves in section order", [] {
             const auto launch = test_support::splitText();
             // The first section keeps the right line and the second the left one, so
             // deleting cannot put them in order and the block is rebuilt.
@@ -1182,7 +1182,7 @@ public:
             CHECK(replay.current().draft == chosen && replay.markers().count() == 0);
             CHECK(replay.beginMarkResolved(replay.current().id) == Transition::Applied);
         });
-        suite.run("TRUCE-0192 a split block keeps its markers while a section keeps no side or shared text is edited", [] {
+        suite.run("a split block keeps its markers while a section keeps no side or shared text is edited", [] {
             const auto launch = test_support::splitText();
             // Ignoring both sides of one section keeps the markers, as for a single section.
             auto ignored = test_support::splitFile();
@@ -1199,7 +1199,7 @@ public:
             CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);
             CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
             CHECK(typed.current().draft.text == edited && typed.current().draft.unresolvedMarkers == 1);
-            // TRUCE-0196: Take both on a section works (see below), but a single line of one half
+            // Take both on a section works (see below), but a single line of one half
             // still cannot be joined to a line of the other half, so that stays refused and the
             // text and decisions stay as they were.
             auto both = test_support::splitFile();
@@ -1214,7 +1214,7 @@ public:
                     }
             CHECK(both.current().draft == before.draft && both.current().id == before.id);
         });
-        suite.run("TRUCE-0196 Take both on a section of a split block resolves the block in section order", [] {
+        suite.run("Take both on a section of a split block resolves the block in section order", [] {
             const auto launch = test_support::splitText();
             const std::array<std::string, 2> left{"left one\n", "left two\n"}, right{"right one\n", "right two\n"};
             enum class Other { Left, Right, LeftFirst, RightFirst };
@@ -1312,7 +1312,7 @@ public:
             CHECK(refused.detail.find("would replace an unselected contribution") != std::string::npos);
             CHECK(applyChoice(overlapping, refused, true) != Transition::Applied && overlapping.current().draft == before.draft);
         });
-        suite.run("TRUCE-0189 the deleting side of a marker section can be accepted and resolved", [] {
+        suite.run("the deleting side of a marker section can be accepted and resolved", [] {
             const auto launch = test_support::deletionFile().current().draft.text;
             const std::string accepted = "header\n<<<<<<< ours\n=======\n>>>>>>> theirs\nbridge\ntail\n";
             enum class Path { Resolve, AcceptThenIgnore, IgnoreThenAccept };
@@ -1352,7 +1352,7 @@ public:
                 CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
             }
         });
-        suite.run("TRUCE-0189 a deletion outside a marker section keeps the scope check", [] {
+        suite.run("a deletion outside a marker section keeps the scope check", [] {
             // A hand-edited end marker orphans the block, so the deletion
             // anchor after it no longer identifies the competing range.
             auto file = test_support::deletionFile();
@@ -1369,7 +1369,7 @@ public:
                 CHECK(file.current().id == edited.id && file.current().draft == edited.draft);
             }
         });
-        suite.run("TRUCE-0187 scanMarkers skips marker-like lines inside known source text", [] {
+        suite.run("scanMarkers skips marker-like lines inside known source text", [] {
             const std::string text = "Title\n=======\n<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\n";
             const auto plain = scanMarkers(text);
             CHECK(plain.blocks.size() == 1 && plain.orphans.size() == 1 && plain.orphans.front().line == 1);
@@ -1384,7 +1384,7 @@ public:
             const auto assembled = scanMarkers(inside, {{13, 27}});
             CHECK(assembled.orphans.empty() && assembled.blocks.size() == 1 && assembled.blocks.front().separator.line == 3);
         });
-        suite.run("TRUCE-0187 a heading underline both sides keep does not block Mark resolved", [] {
+        suite.run("a heading underline both sides keep does not block Mark resolved", [] {
             auto chosen = test_support::headingFile();
             // Only the conflict block counts at launch.
             CHECK(chosen.current().draft.unresolvedMarkers == 1 && chosen.markers().orphans.empty());
@@ -1405,7 +1405,7 @@ public:
             FileSession plain("id", "file", {test_support::headingFile().current().draft.text, {}, 0});
             CHECK(plain.current().draft.unresolvedMarkers == 2 && plain.markers().orphans.front().line == 1);
         });
-        suite.run("TRUCE-0187 marker lines Git inserted still block, whole or orphaned", [] {
+        suite.run("marker lines Git inserted still block, whole or orphaned", [] {
             for (const auto kind : {MarkerKind::Begin, MarkerKind::Separator, MarkerKind::End}) {
                 auto file = test_support::headingFile();
                 const auto block = file.markers().blocks.front();
@@ -1421,7 +1421,7 @@ public:
                 CHECK(has(file, Blocker::UnresolvedMarkers) && !file.reviewed());
             }
         });
-        suite.run("TRUCE-0193 scanMarkers counts earlier text as content only inside a base region", [] {
+        suite.run("scanMarkers counts earlier text as content only inside a base region", [] {
             const std::string text = "<<<<<<< ours\nleft\n||||||| base\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
             const auto plain = scanMarkers(text);
             CHECK(plain.blocks.front().separator.line == 4 && plain.orphans.size() == 1 && plain.orphans.front().line == 5);
@@ -1435,7 +1435,7 @@ public:
             CHECK(scanMarkers(heading, {}, {{0, heading.size()}}) == scanMarkers(heading));
             CHECK(scanMarkers(text, {}, {{0, 31}, {31, 45}, {53, text.size()}}) == assembled);
         });
-        suite.run("TRUCE-0193 a heading underline in the diff3 base is content and the block resolves", [] {
+        suite.run("a heading underline in the diff3 base is content and the block resolves", [] {
             auto file = test_support::underlinedBaseFile();
             const auto launch = file.current().draft;
             const auto scan = file.markers();
@@ -1461,7 +1461,7 @@ public:
             CHECK(plain.markers().blocks.front().separator.line == 7 && plain.markers().orphans.size() == 1);
             CHECK(plain.current().draft.unresolvedMarkers == 2 && plain.markerSections().empty());
         });
-        suite.run("TRUCE-0193 a diff3 block without marker-like base text is assembled as before", [] {
+        suite.run("a diff3 block without marker-like base text is assembled as before", [] {
             const std::string left = "intro\nleft line\ntail\n";
             const std::string launch = "intro\n<<<<<<< ours\nleft line\n||||||| base\nbase line\n=======\nright line\n>>>>>>> theirs\ntail\n";
             auto file = test_support::diff3File(left, "intro\nright line\ntail\n", "intro\nbase line\ntail\n", launch);
@@ -1472,7 +1472,7 @@ public:
             CHECK(file.current().draft.text == left && file.current().draft.unresolvedMarkers == 0);
             CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
         });
-        suite.run("TRUCE-0194 scanMarkers closes a base ending in a separator line where right text follows", [] {
+        suite.run("scanMarkers closes a base ending in a separator line where right text follows", [] {
             const std::string text = "<<<<<<< ours\nleft\n||||||| base\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
             const ByteRange title{31, 37}, lines{37, 53}, right{53, 59};
             // Without right-side text after the second line, the first one closes the base.
@@ -1491,7 +1491,7 @@ public:
             const std::string twoWay = "<<<<<<< ours\nleft\n=======\n=======\nright\n>>>>>>> theirs\n";
             CHECK(scanMarkers(twoWay, {}, {}, {{18, 34}}, {{34, 40}}) == scanMarkers(twoWay));
         });
-        suite.run("TRUCE-0194 a diff3 base ending in a heading underline is closed by Git's separator", [] {
+        suite.run("a diff3 base ending in a heading underline is closed by Git's separator", [] {
             for (const bool deleted : {false, true}) {
                 auto file = test_support::underlineEndedBaseFile(true, deleted);
                 const auto launch = file.current().draft;
@@ -1517,7 +1517,7 @@ public:
                 CHECK(plain.current().draft.unresolvedMarkers == 2 && plain.markerSections().empty());
             }
         });
-        suite.run("TRUCE-0252 Git's separator lies between a base ending and a right side starting with a separator line", [] {
+        suite.run("Git's separator lies between a base ending and a right side starting with a separator line", [] {
             // The base's underline sits directly above Git's separator and the right
             // side's first line directly below it, three identical lines in a row.
             const std::string left = "intro\nLeft\n-----\ntail\n";
@@ -1528,7 +1528,7 @@ public:
                             ">>>>>>> theirs\ntail\n");
             resolvesDiff3Block(left, earlier, right, merged, 7);
         });
-        suite.run("TRUCE-0254 Git's separator lies between a base ending in a separator line and left text", [] {
+        suite.run("Git's separator lies between a base ending in a separator line and left text", [] {
             // The right side starts with a line the left side has too, so both copies
             // of it are equally good matches for the right side's line, and the left
             // side's deletion lies between two lines its region shares with the right.
@@ -1540,7 +1540,7 @@ public:
                             ">>>>>>> theirs\ntail\n");
             resolvesDiff3Block(left, earlier, right, merged, 7);
         });
-        suite.run("TRUCE-0098 an outside-app file keeps its support blocker and recorded failures only", [] {
+        suite.run("an outside-app file keeps its support blocker and recorded failures only", [] {
             FileSession file("id", "file", draft());
             CHECK(file.beginMarkResolved(1) == Transition::Applied);
             CHECK(file.recordCheckpoint(1, Outcome::Succeeded) == Transition::Applied);
@@ -1656,7 +1656,7 @@ public:
         }
         for (const auto outcome : {Outcome::Succeeded, Outcome::Failed, Outcome::Uncertain}) {
             for (const bool saveBeforeReview : {false, true}) {
-                suite.run("TRUCE-0042 delayed latest-review write after newer Save "
+                suite.run("delayed latest-review write after newer Save "
                           + std::to_string(static_cast<int>(outcome)) + '/' + std::to_string(saveBeforeReview), [=] {
                     FileSession file("id", "file", draft());
                     if (saveBeforeReview) CHECK(file.recordCheckpoint(1, Outcome::Succeeded) == Transition::Applied);
@@ -1683,7 +1683,7 @@ public:
                 });
             }
         }
-        suite.run("TRUCE-0143 hand edits outside every region keep their ranges through undo, redo, choices and replay", [] {
+        suite.run("hand edits outside every region keep their ranges through undo, redo, choices and replay", [] {
             using Ranges = std::vector<ByteRange>;
             const auto ranges = [](const FileSession &file) { return file.correspondence()->handEditedRanges(); };
             // "header" and "bridge" are lines both sides share, outside every region.
@@ -1766,7 +1766,7 @@ public:
             CHECK(file.recordStage(1, Outcome::Succeeded, "earlier", "100644") == Transition::StaleRevision);
             CHECK(!file.written() && !file.staged() && file.reviewed()->revision.id == newer);
         });
-        suite.run("TRUCE-0029 text envelope rejects the next file, line and payload without dropping the buffer", [] {
+        suite.run("text envelope rejects the next file, line and payload without dropping the buffer", [] {
             const auto lines = [](std::size_t count) {
                 std::string text;
                 text.reserve(count * 2);

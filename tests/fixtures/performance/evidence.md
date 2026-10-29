@@ -78,7 +78,7 @@ Budgets are correspondence construction 1000 ms, correspondence edit 1000 ms, ed
 | recovery-bad-digest | explicit-failure | 64 | 1 | 64 | 1 | - | - | - | 28940 |
 | recovery-overload | explicit-failure | 1048576 | 1 | 1048576 | 1 | - | - | - | 29952 |
 
-## Proposed envelope for TRUCE-0029
+## Proposed resource envelope
 
 Component bounds before taking the tightest measured point: correspondence construction 4000 lines, correspondence edit 4000 lines, editor load 10000 lines, editor keystroke 20000 lines, long-line editor load 262144 bytes, long-line editor keystroke 262144 bytes, long-line correspondence construction 8388608 bytes, long-line correspondence edit 8388608 bytes, Git read 4194304 bytes, recovery commit 8388608 bytes, recovery reload 8388608 bytes.
 

@@ -191,7 +191,7 @@ public:
     {
         test_support::Suite suite("SyntaxHighlightingTests");
 #ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
-        suite.run("TRUCE-0114 app.py gets the Python definition in every pane and an unknown extension gets none", [] {
+        suite.run("app.py gets the Python definition in every pane and an unknown extension gets none", [] {
             Fixture fixture;
             settleHighlighted(fixture);
             for (const auto *pane : panes) {
@@ -208,7 +208,7 @@ public:
             for (const auto *pane : panes)
                 CHECK(fixture.highlighter(pane)->definition().name() == QStringLiteral("Python"));
         });
-        suite.run("TRUCE-0114 a format-only highlight pass creates no revision and no recovery transaction", [] {
+        suite.run("a format-only highlight pass creates no revision and no recovery transaction", [] {
             Fixture fixture;
             settleHighlighted(fixture);
             auto *result = fixture.document("resultText");
@@ -263,7 +263,7 @@ public:
             checkPythonColours(result);
         });
 #endif
-        suite.run("TRUCE-0119 changed words are tinted and underlined in every pane, and a format pass makes no revision", [] {
+        suite.run("changed words are tinted and underlined in every pane, and a format pass makes no revision", [] {
             Fixture fixture;
             auto *result = fixture.document("resultText");
             auto *left = fixture.document("stage2Text");
@@ -323,12 +323,12 @@ public:
             CHECK(formatAt(result, static_cast<int>(hello)).underlineStyle() == QTextCharFormat::NoUnderline);
             CHECK(undecorated(result, QStringLiteral("return")));
         });
-        suite.run("TRUCE-0173 a .txt file keeps one highlighter attached to every pane", [] {
+        suite.run("a .txt file keeps one highlighter attached to every pane", [] {
             Fixture fixture;
             CHECK(fixture.controller.selectFile("notes"));
             settlePlain(fixture);
         });
-        suite.run("TRUCE-0173 a decoration pass creates no revision and no recovery transaction", [] {
+        suite.run("a decoration pass creates no revision and no recovery transaction", [] {
             Fixture fixture;
             CHECK(fixture.controller.selectFile("notes"));
             settlePlain(fixture);

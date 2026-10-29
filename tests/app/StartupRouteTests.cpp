@@ -430,7 +430,7 @@ public:
     {
         test_support::Suite suite("StartupRouteTests");
         for (const bool staging : {false, true}) {
-            suite.run("TRUCE-0056 repeated successful publications reopen without an interrupted earlier revision "
+            suite.run("repeated successful publications reopen without an interrupted earlier revision "
                 + std::to_string(staging), [=] {
                 Repository repo;
                 repo.conflict("merge");
@@ -483,7 +483,7 @@ public:
             });
         }
         for (const bool laterRevision : {false, true}) {
-            suite.run("TRUCE-0056 an unmatched publication after an earlier success stays uncertain on reopen "
+            suite.run("an unmatched publication after an earlier success stays uncertain on reopen "
                 + std::to_string(laterRevision), [=] {
                 Repository repo;
                 repo.conflict("merge");
@@ -526,7 +526,7 @@ public:
                 CHECK(replay.mutations[0].completed && !replay.mutations[1].completed);
             });
         }
-        suite.run("TRUCE-0056 exact staged evidence durably recovers a missing staging completion only once", [] {
+        suite.run("exact staged evidence durably recovers a missing staging completion only once", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -570,7 +570,7 @@ public:
                 CHECK(replay.succeeded && replay.mutations.size() == 1 && replay.mutations.front().completed);
             }
         });
-        suite.run("TRUCE-0014 restart restores acknowledged unsaved work independently of Save review and resolution", [] {
+        suite.run("restart restores acknowledged unsaved work independently of Save review and resolution", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -607,7 +607,7 @@ public:
                 CHECK(!controller.files()->hasRecoveryFailures() && !controller.files()->canFinish());
             }
         });
-        suite.run("TRUCE-0014 an incomplete final record restores only acknowledged work with a pending-input diagnostic", [] {
+        suite.run("an incomplete final record restores only acknowledged work with a pending-input diagnostic", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -635,7 +635,7 @@ public:
         });
         for (const auto &condition : {QString("stale"), QString("corrupt"), QString("missing-payload"),
                                       QString("corrupt-payload"), QString("schema"), QString("locked")}) {
-            suite.run("TRUCE-0054 unadopted " + condition.toStdString() + " store keeps diagnostics and every live file editable", [=] {
+            suite.run("unadopted " + condition.toStdString() + " store keeps diagnostics and every live file editable", [=] {
                 Repository repo;
                 repo.conflict("merge");
                 ScopedEnvironment environment(repo.environment);
@@ -694,7 +694,7 @@ public:
                 }
             });
         }
-        suite.run("TRUCE-0054 manual retirement outside v1 preserves the complete store and is reversible", [] {
+        suite.run("manual retirement outside v1 preserves the complete store and is reversible", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -726,7 +726,7 @@ public:
             CHECK(controller.loader()->detail().contains("integrity") && !controller.files()->hasRecoveryFailures());
             CHECK(openedFile(controller).current().draft.text.starts_with("live edit\n"));
         });
-        suite.run("TRUCE-0083 two windows closed before any edit leave later launches able to recover", [] {
+        suite.run("two windows closed before any edit leave later launches able to recover", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -764,7 +764,7 @@ public:
                 CHECK(openedFile(controller).current().draft.text.starts_with("after two windows\n"));
             }
         });
-        suite.run("TRUCE-0083 edits from two windows block restoration until the user chooses a session", [] {
+        suite.run("edits from two windows block restoration until the user chooses a session", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -826,7 +826,7 @@ public:
             }
             CHECK(!QFileInfo::exists(second + "/set-aside") && QFileInfo::exists(first + "/set-aside"));
         });
-        suite.run("TRUCE-0097 a blocked window lists each session and restores the chosen one without a restart", [] {
+        suite.run("a blocked window lists each session and restores the chosen one without a restart", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -923,7 +923,7 @@ public:
             CHECK(adopted.succeeded && kept != adopted.files.end()
                   && kept->current().draft.text.starts_with("kept\nfirst window\n"));
         });
-        suite.run("TRUCE-0228 a recovery choice replays every store on a worker and refuses an unreadable own store later", [] {
+        suite.run("a recovery choice replays every store on a worker and refuses an unreadable own store later", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -987,7 +987,7 @@ public:
             CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
             CHECK(readOf(reads, own) && readOf(reads, first) && readOf(reads, second) && onWorkers(reads));
         });
-        suite.run("TRUCE-0099 a chosen session locked during the reload restores no other session in its place", [] {
+        suite.run("a chosen session locked during the reload restores no other session in its place", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -1046,7 +1046,7 @@ public:
             CHECK(controller.loader()->detail().contains(secondName + " was set aside, not deleted"));
             CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
         });
-        suite.run("TRUCE-0099 a recovery-session name that does not match restores no edited session in its place", [] {
+        suite.run("a recovery-session name that does not match restores no edited session in its place", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -1089,7 +1089,7 @@ public:
             CHECK(controller.files()->recoveryDirectory() == store);
             CHECK(openedFile(controller).current().draft.text.starts_with("edited\n"));
         });
-        suite.run("TRUCE-0083 the recovery-session option reaches startup recovery", [&] {
+        suite.run("the recovery-session option reaches startup recovery", [&] {
             Repository repo;
             repo.conflict("merge");
             const auto unknown = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -1097,7 +1097,7 @@ public:
             CHECK(state.value("state") == "ready");
             CHECK(state.value("detail").toString().contains("Recovery session " + unknown + " does not match this operation"));
         });
-        suite.run("TRUCE-0055 external resolution blocks only its file across reopenings choices history and mutation admission", [] {
+        suite.run("external resolution blocks only its file across reopenings choices history and mutation admission", [] {
             Repository repo;
             repo.conflict("merge");
             writeFile(repo.path("excluded.txt"), "main\n");
@@ -1163,7 +1163,7 @@ public:
                 CHECK(!fileRole(controller, failed, SessionModel::RecoveryErrorRole).toString().isEmpty());
             }
         });
-        suite.run("TRUCE-0016 earlier recovered drafts retain their decision vocabulary and direct editing", [] {
+        suite.run("earlier recovered drafts retain their decision vocabulary and direct editing", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -1203,7 +1203,7 @@ public:
         });
         for (const auto &kind : {QString("publication"), QString("staging")}) {
             for (const bool resultPresent : {false, true}) {
-                suite.run("TRUCE-0014 interrupted " + kind.toStdString() + " remains uncertain against current disk and index "
+                suite.run("interrupted " + kind.toStdString() + " remains uncertain against current disk and index "
                     + std::to_string(resultPresent), [=] {
                     Repository repo;
                     repo.conflict("merge");
@@ -1252,7 +1252,7 @@ public:
                 });
             }
         }
-        suite.run("TRUCE-0023 mixed inventory retains every exact path sources initial results and persistent outstanding reasons", [] {
+        suite.run("mixed inventory retains every exact path sources initial results and persistent outstanding reasons", [] {
             Repository repo;
             const QMap<QString, std::array<QByteArray, 3>> additional{
                 {":literal\tfile.txt", {"tab base\n", "tab main\n", "tab side\n"}},
@@ -1326,7 +1326,7 @@ public:
             }
             CHECK(repo.snapshot() == before);
         });
-        suite.run("TRUCE-0052 a large admitted file correspondence failure does not abort loading the small files", [] {
+        suite.run("a large admitted file correspondence failure does not abort loading the small files", [] {
             Repository repo;
             QByteArray large;
             // The prefix line plus this body stays at the 4000-line envelope.
@@ -1360,7 +1360,7 @@ public:
             CHECK(!controller.files()->hasPendingRecovery() && !controller.files()->canFinish());
             CHECK(repo.snapshot() == before);
         });
-        suite.run("TRUCE-0053 failed placeholder recovery keeps captured files visible blocks editing and retries the captured state", [] {
+        suite.run("failed placeholder recovery keeps captured files visible blocks editing and retries the captured state", [] {
             Repository repo;
             repo.conflict("merge");
             const auto before = repo.snapshot();
@@ -1667,12 +1667,12 @@ public:
             CHECK(state.value("state") == "no-session" && state.value("files").toArray().isEmpty());
             CHECK(!state.value("detail").toString().isEmpty() && state.value("operation").toString().isEmpty());
             CHECK(state.value("stage2").toString().isEmpty() && state.value("stage3").toString().isEmpty());
-            // TRUCE-0138: the message says no operation runs, not that one has no files left.
+            // the message says no operation runs, not that one has no files left.
             CHECK(state.value("detail").toString().contains("No merge or rebase is in progress"));
             CHECK(state.value("detail").toString().contains("Branch Truce resolves conflicts while a merge or rebase"));
             CHECK(!state.value("detail").toString().contains("no current unmerged files"));
         });
-        suite.run("TRUCE-0138 a merge whose conflicts are all resolved says it has no current unmerged files", [&] {
+        suite.run("a merge whose conflicts are all resolved says it has no current unmerged files", [&] {
             Repository repo;
             repo.conflict("merge");
             repo.git({"add", "--", "tracked.txt", "excluded.txt"});
@@ -1682,7 +1682,7 @@ public:
             CHECK(state.value("detail").toString()
                   == "This operation has no current unmerged files. Return to your Git workflow.");
         });
-        suite.run("TRUCE-0015 Save and discard leave the repository untouched and restart keeps the baseline", [] {
+        suite.run("Save and discard leave the repository untouched and restart keeps the baseline", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -1739,7 +1739,7 @@ public:
             CHECK(!restored.facts().unsaved && !restored.written() && !restored.staged());
             CHECK(repo.snapshot() == before);
         });
-        suite.run("TRUCE-0015 a failed Save retries one transaction and restart keeps it off the repository", [] {
+        suite.run("a failed Save retries one transaction and restart keeps it off the repository", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -1821,7 +1821,7 @@ public:
             CHECK(!restored.facts().unsaved && !restored.written() && !restored.staged());
             CHECK(repo.snapshot() == before);
         });
-        suite.run("TRUCE-0227 the controller runs the Git it was given, not the one on PATH", [] {
+        suite.run("the controller runs the Git it was given, not the one on PATH", [] {
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
@@ -1843,7 +1843,7 @@ public:
             CHECK(calls.contains("rev-parse\n") && calls.contains("cat-file\n"));
             CHECK(openedFile(controller).support() == Support::Supported);
         });
-        suite.run("TRUCE-0028 a deliberate leave keeps drafts, runs no Git command and ends the session once", [] {
+        suite.run("a deliberate leave keeps drafts, runs no Git command and ends the session once", [] {
             Repository repo(true);
             repo.conflict("merge");
             repo.offlineGuard();

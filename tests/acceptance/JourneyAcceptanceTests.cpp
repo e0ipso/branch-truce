@@ -1077,7 +1077,7 @@ public:
             clickFile(scene, "reading.txt");
             CHECK(scene.text("resultText").startsWith(QStringLiteral("REPEAT one\n"))
                   && scene.text("resultText").contains(QStringLiteral("<<<<<<< HEAD\n")));
-            // TRUCE-0179, TRUCE-0256: the view folds each of Git's marker blocks into one row while
+            // the view folds each of Git's marker blocks into one row while
             // the buffer keeps it, and the overflow menu's toggle shows the block without changing
             // the text, decisions or history.
             expectMarkersFolded(scene, true);
@@ -1109,7 +1109,7 @@ public:
             clickFile(scene, "removed.txt");
             CHECK(scene.item("selectedProblem")->isVisible() && !scene.item("resultText")->isVisible());
             expectContains(scene.text("selectedProblem"), "outside Branch Truce", "outside-app reason");
-            // TRUCE-0084: an outside-app file has no app draft, so neither its row nor its status calls it one.
+            // an outside-app file has no app draft, so neither its row nor its status calls it one.
             for (const auto &label : {rowText(scene, "removed.txt"), scene.text("selectedProblem")}) {
                 if (label.contains(QStringLiteral("draft"), Qt::CaseInsensitive)
                     || label.contains(QStringLiteral("Manual Save checkpoint")))
@@ -1602,7 +1602,7 @@ public:
             expectContains(blockers("locked/failing.txt"), "Repository write failed", "failure blocker");
             expectContains(blockers("written.txt"), "Git resolution failed", "stage blocker");
             expectContains(blockers("removed.txt"), "Handle this file outside Branch Truce", "outside-app blocker");
-            // TRUCE-0098: an outside-app file has no app draft to Save, mark resolved, write or stage.
+            // an outside-app file has no app draft to Save, mark resolved, write or stage.
             expectText(blockers("removed.txt"), "Handle this file outside Branch Truce", "outside-app blockers");
             CHECK(blockers("done.txt").isEmpty());
 
@@ -1643,7 +1643,7 @@ public:
             expectContains(scene.controller->loader()->workflow(), "only the work opened at launch", "session scope");
             checkOffline(scene);
         });
-        handoff.run("TRUCE-0201 a newer draft goes back to the staged result from the file toolbar and the handoff", [] {
+        handoff.run("a newer draft goes back to the staged result from the file toolbar and the handoff", [] {
             Repository repo("merge", {{"newer.txt", QByteArray("newer base\n"), QByteArray("newer left\n"),
                                        QByteArray("newer right\n"), QByteArray("newer chosen by hand\n")}});
             Scene scene(repo);
@@ -1768,7 +1768,7 @@ public:
             CHECK(!repo.unmerged("saved.txt").isEmpty() && !repo.unmerged("typed.txt").isEmpty());
             checkOffline(reopened);
         });
-        handoff.run("TRUCE-0097 a blocked startup lists each recovery session and restores the chosen one in the window", [] {
+        handoff.run("a blocked startup lists each recovery session and restores the chosen one in the window", [] {
             Repository repo("merge", {{"shared.txt", QByteArray("shared base\n"), QByteArray("shared left\n"),
                                        QByteArray("shared right\n"), QByteArray("shared chosen by hand\n")}});
             const auto id = fileId("shared.txt").toStdString();
@@ -1820,7 +1820,7 @@ public:
             CHECK(repo.snapshot() == repository && !repo.unmerged("shared.txt").isEmpty());
             checkOffline(scene);
         });
-        handoff.run("TRUCE-0087 a resolved mergetool handoff drops the waiting text and a path Git has not launched keeps it", [] {
+        handoff.run("a resolved mergetool handoff drops the waiting text and a path Git has not launched keeps it", [] {
             Repository repo("merge", {
                 {"launched.txt", QByteArray("launched base\n"), QByteArray("launched left\n"),
                  QByteArray("launched right\n"), QByteArray("launched chosen by hand\n")},
@@ -1881,7 +1881,7 @@ public:
             CHECK(scene.item("endParentSession")->isVisible());
             checkOffline(scene);
         });
-        handoff.run("TRUCE-0082 clicking the launched path again after Git attached shows the waiting state and Leave unresolved", [] {
+        handoff.run("clicking the launched path again after Git attached shows the waiting state and Leave unresolved", [] {
             Repository repo("merge", {
                 {"launched.txt", QByteArray("launched base\n"), QByteArray("launched left\n"),
                  QByteArray("launched right\n"), QByteArray("launched chosen by hand\n")},
@@ -1929,7 +1929,7 @@ public:
             settleFor("leave control gone after leaving", [&] { return !scene.item("leaveMergetool")->isVisible(); });
             checkOffline(scene);
         });
-        window.run("TRUCE-0088 a 1280x720 logical screen fits the window with every control and text pane reachable", [] {
+        window.run("a 1280x720 logical screen fits the window with every control and text pane reachable", [] {
             auto paths = journeyPaths();
             paths.push_back({"image.bin", QByteArray("base\0", 5), QByteArray("left\0", 5), QByteArray("side\0", 5), std::nullopt});
             Repository repo("merge", paths);
@@ -1996,7 +1996,7 @@ public:
             settleFor("window at 960x540", [&] { return scene.window->width() == 960 && scene.window->height() == 540; });
             checkWheelScroll(scene, "selectedPath");
 
-            // TRUCE-0084: at 1280x800 the handoff dialog wraps between words. File rows elide one
+            // at 1280x800 the handoff dialog wraps between words. File rows elide one
             // line each instead of wrapping, so nothing in the file list wraps at all.
             scene.window->resize(1280, 800);
             settleFor("window at 1280x800", [&] { return scene.window->width() == 1280 && scene.window->height() == 800; });
@@ -2011,7 +2011,7 @@ public:
             QMetaObject::invokeMethod(dialog, "close");
             settleFor("handoff closed", [&] { return !dialog->property("visible").toBool(); });
 
-            // TRUCE-0084: the source choices start shown, in the source panes' gutters, where they
+            // the source choices start shown, in the source panes' gutters, where they
             // take no height. With them the three panes keep eight lines and the panes and choices
             // stay reachable, from a roomy window down to 1280x720, and hiding them leaves every
             // text pane as high as it was. The owner waiver still excludes strict 960x540 fit.
@@ -2038,7 +2038,7 @@ public:
             }
             checkOffline(scene);
         });
-        window.run("TRUCE-0115 selecting a file shows its first undecided region in all three panes", [] {
+        window.run("selecting a file shows its first undecided region in all three panes", [] {
             QByteArray before;
             QByteArray after;
             for (int line = 1; line <= 120; ++line) before += "shared before " + QByteArray::number(line) + "\n";
@@ -2063,7 +2063,7 @@ public:
                                              + ", less than eight " + std::to_string(lineHeight) + " px lines");
                 // The file rows sit at the top of the page. The pointer still rests on long.txt, whose
                 // tooltip opens below it over short.txt under the KDE style; clickFile moves and
-                // presses at once, so the tooltip must close before the press (TRUCE-0242).
+                // presses at once, so the tooltip must close before the press.
                 scene.object("pageScroll")->setProperty("contentY", 0);
                 clickFile(scene, "short.txt");
                 clickFile(scene, "long.txt");
@@ -2072,7 +2072,7 @@ public:
             }
             checkOffline(scene);
         });
-        window.run("TRUCE-0126 a choice clears hand edits on a line deleted in the editor and on text an edit left unchanged", [] {
+        window.run("a choice clears hand edits on a line deleted in the editor and on text an edit left unchanged", [] {
             // The left side changes two lines in one section, and the user set the result to it before launch.
             const QByteArray left = "header\nleft first\nleft second\nbridge\nleft later\ntail\n";
             Repository repo("merge", {{"pair.txt", QByteArray("header\nbase first\nbase second\nbridge\nbase later\ntail\n"),
@@ -2147,7 +2147,7 @@ public:
             CHECK(noneEdited());
             checkOffline(scene);
         });
-        window.run("TRUCE-0171 lines from both sides of one multi-line conflict keep their text, decisions and undo", [] {
+        window.run("lines from both sides of one multi-line conflict keep their text, decisions and undo", [] {
             // Both sides change the same three lines, and the user set the result to the common version before launch.
             const QByteArray base = "header\nbase one\nbase two\nbase three\ntail\n";
             Repository repo("merge", {{"lines.txt", base, QByteArray("header\nleft one\nleft two\nleft three\ntail\n"),
@@ -2216,7 +2216,7 @@ public:
             states("ignored accepted undecided undecided undecided accepted");
             checkOffline(scene);
         });
-        window.run("TRUCE-0116 closing with input recovery could not keep asks to retry, and cancel keeps the window open", [] {
+        window.run("closing with input recovery could not keep asks to retry, and cancel keeps the window open", [] {
             Repository repo("merge", {{"kept.txt", QByteArray("kept base\n"), QByteArray("kept left\n"),
                                        QByteArray("kept right\n"), QByteArray("kept by hand\n")}});
             const auto launched = repo.snapshot();

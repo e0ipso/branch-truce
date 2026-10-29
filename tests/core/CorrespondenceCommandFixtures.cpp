@@ -132,7 +132,7 @@ public:
     int run()
     {
         test_support::Suite suite("CorrespondenceCommandFixtures");
-        suite.run("TRUCE-0030 correspondence partitions are deterministic for equal changed inserted deleted and ambiguous text", [] {
+        suite.run("correspondence partitions are deterministic for equal changed inserted deleted and ambiguous text", [] {
             expectPassages("repeat\nrepeat\n", "repeat\nrepeat\n",
                 {{{0, 14}, {0, 14}, PassageKind::Equal}});
             expectPassages("head\nold\nend\n", "head\nnew\nend\n", {
@@ -156,7 +156,7 @@ public:
                 {{5, 13}, {5, 13}, PassageKind::Ambiguous},
                 {{13, 17}, {13, 17}, PassageKind::Equal}});
         });
-        suite.run("TRUCE-0030 repeated text keeps a selected occurrence and manual edits transform that anchor", [] {
+        suite.run("repeated text keeps a selected occurrence and manual edits transform that anchor", [] {
             const std::string source = "repeat\nmiddle\nrepeat\n";
             const std::string result = "manual prefix\n" + source;
             auto file = mappedFile(source, result);
@@ -207,7 +207,7 @@ public:
             CHECK(*file.snapshots() == sources);
             CHECK(*edited.snapshots() == *mappedFile(same, same).snapshots());
         });
-        suite.run("TRUCE-0030 stale ambiguous and cancelled commands leave text and decisions untouched", [] {
+        suite.run("stale ambiguous and cancelled commands leave text and decisions untouched", [] {
             auto ambiguous = test_support::choiceFile("head\nrepeat\nrepeat\ntail\n",
                 "head\nchanged\nrepeat\ntail\n", "head\nrepeat\ntail\n");
             const auto ambiguousSources = *ambiguous.snapshots();
@@ -278,7 +278,7 @@ public:
             CHECK(applyWholeFile(whole, wholePreview) == Transition::ConfirmationRequired);
             expectUnchanged(whole, wholeBefore);
         });
-        suite.run("TRUCE-0030 Ignore and scoped acceptance preserve unrelated text and decisions", [] {
+        suite.run("Ignore and scoped acceptance preserve unrelated text and decisions", [] {
             const std::string prefix = "manual prefix\n";
             const std::string original = "header\nleft first\nleft second\nbridge\nleft later\ntail\n";
             auto file = test_support::choiceFile();
@@ -339,7 +339,7 @@ public:
             replay(file, steps);
             CHECK(*file.snapshots() == sources);
         });
-        suite.run("TRUCE-0171 lines inside a multi-line conflict pair by index and keep lines from both sides", [] {
+        suite.run("lines inside a multi-line conflict pair by index and keep lines from both sides", [] {
             auto file = test_support::commonVersionFile();
             const auto sources = *file.snapshots();
             const auto line = [&](SourceSide side, std::string_view text) {
@@ -404,7 +404,7 @@ public:
             replay(file, steps);
             CHECK(*file.snapshots() == sources);
         });
-        suite.run("TRUCE-0171 surplus lines insert at the end of an uneven block and the last line keeps extra result lines", [] {
+        suite.run("surplus lines insert at the end of an uneven block and the last line keeps extra result lines", [] {
             auto file = test_support::commonVersionFile("header\nl1\nl2\nl3\nl4\ntail\n", "header\nr1\nr2\ntail\n",
                 "header\nb1\nb2\nb3\ntail\n");
             const auto sources = *file.snapshots();
@@ -466,7 +466,7 @@ public:
             }
             CHECK(surplus.current().draft.text == "header\nb1\nl2\nl3\ntail\n");
         });
-        suite.run("TRUCE-0171 repeated identical lines in a multi-line conflict stay unmapped with the existing reason", [] {
+        suite.run("repeated identical lines in a multi-line conflict stay unmapped with the existing reason", [] {
             auto file = test_support::commonVersionFile("head\nrepeat\nrepeat\nmid\nleft one\nleft two\ntail\n",
                 "head\nright\ntail\n", "head\nrepeat\nmid\nbase one\nbase two\ntail\n");
             const auto sources = *file.snapshots();
@@ -504,7 +504,7 @@ public:
             expectDecision(file, leftTwo, Decision{DecisionValue::Accepted, {}});
             CHECK(*file.snapshots() == sources);
         });
-        suite.run("TRUCE-0030 ordered partial combinations preserve unrelated content and manual edits", [] {
+        suite.run("ordered partial combinations preserve unrelated content and manual edits", [] {
             const std::string prefix = "manual prefix\n";
             auto file = test_support::combinationFile(ChoiceScope::Line);
             const auto sources = *file.snapshots();
@@ -547,7 +547,7 @@ public:
             replay(file, steps);
             CHECK(*file.snapshots() == sources);
         });
-        suite.run("TRUCE-0030 non-conflicting batches and whole-file replacement undo and redo in action order", [] {
+        suite.run("non-conflicting batches and whole-file replacement undo and redo in action order", [] {
             const std::string prefix = "manual prefix\n";
             const std::string earlier = "header\nbase left\nbridge one\nbase right\nbridge two\nbase conflict\ntail\n";
             const std::string batched = prefix + "header\nleft only\nbridge one\nright only\nbridge two\nbase conflict\ntail\n";

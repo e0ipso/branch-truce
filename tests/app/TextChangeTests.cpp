@@ -29,7 +29,7 @@ int main()
         CHECK(same(changedRange(QStringLiteral("abc"), QStringLiteral("abc")), 3, 3, 3));
     });
 
-    // TRUCE-0202: a change never splits a surrogate pair.
+    // a change never splits a surrogate pair.
     suite.run("a change inside a pair's low surrogate widens back to its high surrogate", [] {
         // U+1F600 and U+1F601 share the high surrogate D83D.
         const auto old = units({u'a', 0xD83D, 0xDE00, u'b'});

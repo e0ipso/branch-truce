@@ -243,7 +243,7 @@ int main(int argc, char **argv)
         CHECK(!bands.visibleBands().isEmpty());
         CHECK(!near(before, bands.visibleBands().first().toMap().value("sourceTop").toReal()));
     });
-    suite.run("TRUCE-0221 Down crosses folded lines and keeps the column", [] {
+    suite.run("Down crosses folded lines and keeps the column", [] {
         Pane pane(between, {2, 3});
         CHECK(pane.blocks.hiddenAt(10) && pane.blocks.hiddenAt(23) && !pane.blocks.hiddenAt(31));
         CHECK(pane.blocks.settledPosition(3, 3) == 3);
@@ -252,7 +252,7 @@ int main(int argc, char **argv)
         // The next check starts from there, with no key left over.
         CHECK(pane.blocks.settledPosition(31, 31) == 31);
     });
-    suite.run("TRUCE-0221 Up crosses folded lines and keeps the column", [] {
+    suite.run("Up crosses folded lines and keeps the column", [] {
         Pane pane(between, {2, 3});
         CHECK(pane.blocks.settledPosition(32, 32) == 32);
         pane.blocks.keyPressed(Qt::Key_Up);
@@ -261,21 +261,21 @@ int main(int argc, char **argv)
         pane.blocks.keyPressed(Qt::Key_PageUp);
         CHECK(pane.blocks.settledPosition(22, 22) == 2);
     });
-    suite.run("TRUCE-0221 Home at a folded first line goes to the first shown line", [] {
+    suite.run("Home at a folded first line goes to the first shown line", [] {
         Pane pane(around, {1, 4});
         CHECK(pane.blocks.settledPosition(20, 20) == 20);
         pane.blocks.keyPressed(Qt::Key_Home);
         // Nothing is shown above, so the cursor goes on to the start of line 2.
         CHECK(pane.blocks.settledPosition(0, 0) == 13);
     });
-    suite.run("TRUCE-0221 End at a folded last line goes to the last shown line", [] {
+    suite.run("End at a folded last line goes to the last shown line", [] {
         Pane pane(around, {1, 4});
         CHECK(pane.blocks.settledPosition(13, 13) == 13);
         pane.blocks.keyPressed(Qt::Key_End);
         // Nothing is shown below, so the cursor goes back to the end of line 3.
         CHECK(pane.blocks.settledPosition(41, 41) == 26);
     });
-    suite.run("TRUCE-0221 another key goes on the way the cursor went", [] {
+    suite.run("another key goes on the way the cursor went", [] {
         Pane pane(between, {2, 3});
         CHECK(pane.blocks.settledPosition(28, 28) == 28);
         pane.blocks.keyPressed(Qt::Key_Left);
@@ -283,7 +283,7 @@ int main(int argc, char **argv)
         pane.blocks.keyPressed(Qt::Key_Right);
         CHECK(pane.blocks.settledPosition(7, 7) == 28);
     });
-    suite.run("TRUCE-0221 cursors and selections set by other code", [] {
+    suite.run("cursors and selections set by other code", [] {
         Pane pane(between, {2, 3});
         // A cursor goes to the next shown line.
         CHECK(pane.blocks.settledPosition(22, 22) == 28);
@@ -291,7 +291,7 @@ int main(int argc, char **argv)
         CHECK(pane.blocks.settledPosition(22, 2) == 6);
         CHECK(pane.blocks.settledPosition(22, 33) == 28);
     });
-    suite.run("TRUCE-0221 cursor checks wait for the change to complete and come once", [] {
+    suite.run("cursor checks wait for the change to complete and come once", [] {
         Pane pane(between, {2, 3});
         QSignalSpy due(&pane.blocks, &TextBlocks::cursorCheckDue);
         pane.blocks.queueCursorCheck();
@@ -304,7 +304,7 @@ int main(int argc, char **argv)
         QCoreApplication::processEvents();
         CHECK(due.count() == 2);
     });
-    suite.run("TRUCE-0222 markers lie on the spaces and tabs of the text", [] {
+    suite.run("markers lie on the spaces and tabs of the text", [] {
         // Line 2 starts at 6; its spaces are at 7 and 8.
         Pane pane(QStringLiteral("a b\tc\nd  e\n"), {});
         const auto markers = pane.blocks.whitespaceWithin(QRectF(0, 0, 1000, 1000), 2, 8);
@@ -316,7 +316,7 @@ int main(int argc, char **argv)
         // The tab reaches on to its tab stop, past a space's width.
         CHECK(markers.at(1).toMap().value("w").toReal() > markers.at(0).toMap().value("w").toReal());
     });
-    suite.run("TRUCE-0222 markers are relative to the area and leave out folded and outside lines", [] {
+    suite.run("markers are relative to the area and leave out folded and outside lines", [] {
         // Line 2 is folded and holds a space; line 3 starts at 17, its space is at 18.
         Pane pane(QStringLiteral("x x\n<<<<<<< HEAD\ny y\n"), {2});
         CHECK(pane.blocks.whitespaceWithin(QRectF(0, 0, 1000, 1000), 2, 8).size() == 2);

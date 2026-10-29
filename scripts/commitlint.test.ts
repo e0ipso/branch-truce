@@ -67,7 +67,7 @@ describe('commitlint.config.js', () => {
   });
 
   test('loads with both custom rules set to error and the default ignores off', () => {
-    assert.deepEqual(config.rules['no-ticket-id-in-header'], [2, 'always']);
+    assert.deepEqual(config.rules['no-ticket-references'], [2, 'always']);
     assert.deepEqual(config.rules['no-ai-generated'], [2, 'always']);
     assert.equal(config.defaultIgnores, false);
   });
@@ -89,7 +89,7 @@ describe('commitlint.config.js', () => {
   describe('ordinary commits', () => {
     test('rejects a ticket ID in the header', async () => {
       for (const message of [`feat: implement ${ID}`, `feat(${ID}): add x`]) {
-        assert.deepEqual(failedRules(await lintMessage(message)), ['no-ticket-id-in-header'], message);
+        assert.deepEqual(failedRules(await lintMessage(message)), ['no-ticket-references'], message);
       }
     });
 
@@ -99,8 +99,15 @@ describe('commitlint.config.js', () => {
       }
     });
 
-    test('accepts a ticket ID in a Refs trailer', async () => {
-      await assertPasses(`feat: add x\n\nRefs: ${ID}`);
+    test('rejects ticket IDs in bodies, trailers and comments', async () => {
+      for (const message of [
+        `feat: add x\n\nFixes ${ID}.`,
+        `feat: add x\n\nRefs: ${ID}`,
+        `feat: add x\n\n# ${ID}`,
+        `feat: add x\n\nRefs: ${ID.toLowerCase()}`,
+      ]) {
+        await assertFails(message, ['no-ticket-references']);
+      }
     });
   });
 
@@ -115,7 +122,19 @@ describe('commitlint.config.js', () => {
         `amend! feat: implement ${ID}`,
         `Merge branch '${ID}-x'`,
       ]) {
-        await assertFails(message, ['no-ticket-id-in-header']);
+        await assertFails(message, ['no-ticket-references']);
+      }
+    });
+
+    test('rejects ticket IDs in bodies of otherwise ignored messages', async () => {
+      for (const subject of [
+        'Revert "feat: add x"',
+        'fixup! feat: add x',
+        'squash! feat: add x',
+        "Merge branch 'topic'",
+        '1.4.0',
+      ]) {
+        await assertFails(`${subject}\n\nRefs: ${ID}`, ['no-ticket-references']);
       }
     });
 
@@ -135,13 +154,13 @@ describe('commitlint.config.js', () => {
     });
 
     test('rejects a message that fails both custom checks on both rules', async () => {
-      await assertFails(`Revert "feat: implement ${ID}"\n\n${CO_AUTHOR}`, ['no-ai-generated', 'no-ticket-id-in-header']);
+      await assertFails(`Revert "feat: implement ${ID}"\n\n${CO_AUTHOR}`, ['no-ai-generated', 'no-ticket-references']);
     });
 
     test('still accepts the same shapes without a ticket ID or credit', async () => {
       for (const message of [
         'Revert "feat: add x"',
-        `Revert "feat: add x"\n\nThis reverts commit 0123456789abcdef0123456789abcdef01234567.\n\nRefs: ${ID}`,
+        `Revert "feat: add x"\n\nThis reverts commit 0123456789abcdef0123456789abcdef01234567.`,
         'Reapply "feat: add x"',
         'fixup! feat: add x',
         'squash! feat: add x\n\nFold the retry into the first commit.',
@@ -252,8 +271,14 @@ describe('commit-msg hook in a throwaway repository', () => {
   test('refuses a revert with a ticket ID and accepts the clean revert', () => {
     const body = `This reverts commit ${head()}.`;
     const start = head();
-    assertRefused(commit(`Revert "feat: implement ${ID}"\n\n${body}\n`), start, ['no-ticket-id-in-header'], 'dirty');
-    assertAccepted(commit(`Revert "feat: add x"\n\n${body}\n\nRefs: ${ID}\n`), start, 'clean');
+    assertRefused(commit(`Revert "feat: implement ${ID}"\n\n${body}\n`), start, ['no-ticket-references'], 'dirty');
+    assertAccepted(commit(`Revert "feat: add x"\n\n${body}\n`), start, 'clean');
+  });
+
+  test('refuses a ticket ID in a trailer through the real hook', () => {
+    const start = head();
+    assertRefused(commit(`fix: handle z\n\nRefs: ${ID}\n`), start, ['no-ticket-references'], 'trailer');
+    assertAccepted(commit('fix: handle z\n'), start, 'clean');
   });
 
   for (const kind of ['fixup', 'squash']) {
@@ -280,7 +305,7 @@ describe('commit-msg hook in a throwaway repository', () => {
     const result = tryGit(['merge', '--no-ff', '--no-edit', branch]);
     // Abort before asserting, so a failure here leaves no merge in progress for the next test.
     tryGit(['merge', '--abort']);
-    assertRefused(result, start, ['no-ticket-id-in-header'], 'merge');
+    assertRefused(result, start, ['no-ticket-references'], 'merge');
   });
 
   test('accepts the messages git merge --no-ff and git merge --no-ff --log write', () => {
