@@ -1346,19 +1346,38 @@ public:
             auto *result = scene.item("resultText");
 
             // Repeated passages: Find walks the scoped pane and wraps to the first match.
-            scene.click("openPassageSearch");
+            clickText(scene, result);
+            keyClick(scene, Qt::Key_F, Qt::ControlModifier);
+            CHECK(scene.item("readingControls")->isVisible());
+            CHECK(scene.item("searchQuery")->hasActiveFocus());
             expectText(scene.item("searchScope")->property("currentText").toString(), "Left source", "default scope");
-            scene.click("searchQuery");
             typeText(scene, "REPEAT");
             expectText(scene.text("searchQuery"), "REPEAT", "typed query");
             const auto leftText = left->property("text").toString();
             const auto second = leftText.indexOf(QStringLiteral("REPEAT"), 1);
-            for (const int expected : {0, static_cast<int>(second), 0}) {
-                scene.click("findPassage");
+            expectContains(scene.text("searchStatus"), "1 of 2", "initial match count");
+            keyClick(scene, Qt::Key_Return);
+            CHECK(left->property("selectionStart").toInt() == 0);
+            expectText(left->property("selectedText").toString(), "REPEAT", "left match");
+            expectContains(scene.text("searchStatus"), "Passage in Left source.", "left status");
+            CHECK(result->property("selectedText").toString().isEmpty());
+            expectContains(scene.text("searchStatus"), "1 of 2", "first match count");
+            scene.click("closePassageSearch");
+            CHECK(!scene.item("readingControls")->isVisible());
+            clickText(scene, result);
+            keyClick(scene, Qt::Key_Find);
+            CHECK(scene.item("readingControls")->isVisible());
+            CHECK(scene.item("searchQuery")->hasActiveFocus());
+            expectText(scene.text("searchQuery"), "REPEAT", "retained query");
+            expectContains(scene.text("searchStatus"), "1 of 2", "retained match count");
+            keyClick(scene, Qt::Key_Return);
+            for (const int expected : {static_cast<int>(second), 0}) {
                 CHECK(left->property("selectionStart").toInt() == expected);
                 expectText(left->property("selectedText").toString(), "REPEAT", "left match");
                 expectContains(scene.text("searchStatus"), "Passage in Left source.", "left status");
+                expectContains(scene.text("searchStatus"), expected == second ? "2 of 2" : "1 of 2", "match count");
                 CHECK(result->property("selectedText").toString().isEmpty());
+                if (expected == second) scene.click("findPassage");
             }
             unchanged();
             // Choose the result scope with the mouse.
