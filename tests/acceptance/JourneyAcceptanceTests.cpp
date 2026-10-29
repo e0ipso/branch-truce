@@ -1174,11 +1174,17 @@ public:
             }
             CHECK(!scene.file("story.txt").canUndo() && !scene.item("undoCommand")->isEnabled());
             for (std::size_t step = 1; step < history.size(); ++step) {
-                if (step % 2) keyClick(scene, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
-                else scene.click("redoCommand");
+                if (step % 2) {
+                    // TextArea handles all platform redo bindings when it has focus.
+                    clickText(scene, scene.item("resultText"));
+                    CHECK(scene.item("resultText")->hasActiveFocus());
+                    keyClick(scene, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+                } else scene.click("redoCommand");
                 CHECK(work(scene, "story.txt") == history[step]);
             }
             scene.click("redoCommand");
+            clickText(scene, scene.item("resultText"));
+            CHECK(scene.item("resultText")->hasActiveFocus());
             keyClick(scene, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
             CHECK(work(scene, "story.txt") == typed && !scene.file("story.txt").canRedo());
             // Other files are untouched.
