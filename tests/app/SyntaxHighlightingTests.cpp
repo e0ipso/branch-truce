@@ -24,6 +24,7 @@ using namespace branch_truce;
 
 namespace {
 using test_support::settle;
+using test_support::settleFor;
 
 const char *const panes[] = {"stage2Text", "resultText", "stage3Text", "earlierText"};
 
@@ -230,12 +231,15 @@ public:
             unchanged();
             // A dark scheme background reaches the controller through the
             // Kirigami.Theme binding and recolours every pane.
-            auto *comparison = fixture.item("comparisonPanes")->parentItem();
-            QQmlExpression dark(qmlContext(fixture.item("comparisonPanes")), comparison,
+            // The SplitView is inside a layout Item owned by ComparisonView.
+            auto *comparison = fixture.item("comparisonPanes")->parentItem()->parentItem();
+            CHECK(comparison && comparison->property("schemeBackground").isValid());
+            QQmlExpression dark(qmlContext(comparison), comparison,
                 QStringLiteral("Kirigami.Theme.backgroundColor = \"#202326\""));
             dark.evaluate();
             if (dark.hasError()) throw std::runtime_error(dark.error().toString().toStdString());
-            settle([&] { return fixture.highlighter("resultText")->theme().name() == QStringLiteral("Breeze Dark"); });
+            CHECK(comparison->property("schemeBackground").value<QColor>() == QColor(QStringLiteral("#202326")));
+            settleFor("dark syntax theme", [&] { return fixture.highlighter("resultText")->theme().name() == QStringLiteral("Breeze Dark"); });
             for (const auto *pane : panes) {
                 CHECK(fixture.highlighter(pane)->theme().name() == QStringLiteral("Breeze Dark"));
                 checkPythonColours(fixture.document(pane));
