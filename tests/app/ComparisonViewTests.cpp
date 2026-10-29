@@ -1859,6 +1859,49 @@ public:
             expectLook(fixture, "with the markers folded again", folded);
             checkUnchanged(fixture, before);
         });
+        suite.run("TRUCE-0257 unmapped recognized markers fold without offering unsafe choices", [] {
+            Fixture fixture(test_support::underlinedBaseFile(false));
+            settlePanes(fixture);
+            CHECK(fixture.file().markers().blocks.size() == 1 && fixture.file().markerSections().empty());
+            const auto blocks = fixture.controller.selectedFile()->markerBlocks();
+            CHECK(blocks.size() == 1 && blocks.front().toMap().value("folded").toBool());
+            CHECK(blocks.front().toMap().value("sections").toStringList().isEmpty());
+            settle([&] { return foldedLines(fixture) == numbers(3, 15); });
+            CHECK(foldParts(fixture.item("resultFoldedRows")).keys() == QList<int>({2}));
+            CHECK(fixture.item("resultConflictRow-2")->property("text").toString() == "Unresolved conflict");
+            for (auto *item : fixture.item("resultFoldedRows")->findChildren<QQuickItem *>())
+                CHECK(!item->objectName().startsWith("resultTakeBoth-") || !item->isVisible());
+            const auto original = captureWork(fixture);
+            const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+            CHECK(!fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
+                QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::CombineLeftFirst));
+            checkUnchanged(fixture, original);
+            auto *toggle = fixture.object("showConflictMarkers");
+            CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
+            settle([&] { return foldedLines(fixture).isEmpty(); });
+            checkUnchanged(fixture, original);
+            // Edit the recognizable closing marker while raw lines are visible.
+            const auto end = static_cast<int>(fixture.text().indexOf("theirs") + 6);
+            fixture.select(end, end);
+            fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+            const auto edited = captureWork(fixture);
+            CHECK(edited.draft.text != original.draft.text && edited.draft.decisions == original.draft.decisions);
+            CHECK(fixture.file().markers().blocks.size() == 1 && fixture.file().markerSections().empty());
+            CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
+            settle([&] { return foldedLines(fixture) == numbers(3, 15); });
+            checkUnchanged(fixture, edited);
+            CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
+            CHECK(fixture.file().current().draft == original.draft);
+            settle([&] { return foldedLines(fixture) == numbers(3, 15); });
+            CHECK(fixture.controller.redo("choices", QString::number(fixture.file().current().id)));
+            CHECK(fixture.file().current().draft == edited.draft);
+            settle([&] { return foldedLines(fixture) == numbers(3, 15); });
+            const auto redone = captureWork(fixture);
+            CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
+            settle([&] { return foldedLines(fixture).isEmpty(); });
+            checkUnchanged(fixture, redone);
+            fixture.checkRecovered(edited.draft);
+        });
         suite.run("TRUCE-0256 a long marker label stays one row with wrapping enabled", [] {
             auto marked = test_support::markedText();
             marked.replace(marked.find("<<<<<<< ours"), std::string("<<<<<<< ours").size(),
@@ -1929,7 +1972,7 @@ public:
             expectLook(fixture, "after keyboard navigation", markedFolded());
             checkUnchanged(fixture, before);
         });
-        suite.run("TRUCE-0179 a hand edit that touches a folded line shows it and undo folds it again", [] {
+        suite.run("TRUCE-0179 a recognizable edited end marker remains folded and can be shown", [] {
             Fixture fixture(test_support::markedFile());
             settlePanes(fixture);
             const auto folded = markedFolded();
@@ -1941,20 +1984,29 @@ public:
             fixture.key(Qt::Key_Backspace);
             const auto joined = QString(launched).replace(">>>>>>> theirs\nbridge", ">>>>>>> theirsbridge");
             CHECK(fixture.text() == joined && fixture.file().current().draft.text == joined.toStdString());
-            // The first block no longer matches the one Git wrote, so all of its lines show and
-            // bridge, now on line 8, is 7 rows down; the second block, now lines 9-13, stays folded.
-            const MarkerLook shown{{10, 11, 12, 13}, numbers(1, 16, {10, 11, 12, 13}), {2, 3, 4, 5, 6, 7, 8, 9},
-                {9}, 7};
-            expectLook(fixture, "after joining a line to the end marker", shown);
-            expectCursor(fixture, "after the join", bridge - 1);
+            // The edited end marker is still recognized, but no longer maps to a choice.
+            const QList<int> hidden = numbers(3, 9) + numbers(10, 14);
+            const MarkerLook joinedFold{hidden, numbers(1, 16, hidden), {2, 9}, {2, 9}, 0};
+            expectLook(fixture, "after joining a line to the end marker", joinedFold);
+            CHECK(fixture.file().markers().blocks.size() == 2 && fixture.file().markerSections().size() == 1);
             fixture.checkRecovered(fixture.file().current().draft);
-            // Undo restores the text and its fold, and redo shows the edited block again.
+            const auto afterJoin = captureWork(fixture);
+            auto *toggle = fixture.object("showConflictMarkers");
+            CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
+            settle([&] { return foldedLines(fixture).isEmpty(); });
+            fixture.select(bridge - 1, bridge - 1);
+            expectCursor(fixture, "on the shown edited marker", bridge - 1);
+            checkUnchanged(fixture, afterJoin);
+            CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
+            expectLook(fixture, "after folding the edited marker again", joinedFold);
+            checkUnchanged(fixture, afterJoin);
+            // Undo and redo restore the bytes and their recognized folds.
             CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
             CHECK(fixture.text() == launched);
             expectLook(fixture, "after undo", folded);
             CHECK(fixture.controller.redo("choices", QString::number(fixture.file().current().id)));
             CHECK(fixture.text() == joined);
-            expectLook(fixture, "after redo", shown);
+            expectLook(fixture, "after redo", joinedFold);
             fixture.checkRecovered(fixture.file().current().draft);
         });
         suite.run("TRUCE-0179 finding text on a folded line or going to a blocking marker shows the markers", [] {

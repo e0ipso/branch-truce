@@ -93,7 +93,8 @@ QVariantMap PaneMarks::folds(const QVariantList &blocks, bool shown) const
         hidden.append(QVariantMap{{QStringLiteral("line"), first.value(QStringLiteral("line"))},
             {QStringLiteral("text"), first.value(QStringLiteral("text"))}, {QStringLiteral("last"), last.value(QStringLiteral("line"))},
             {QStringLiteral("lastText"), last.value(QStringLiteral("text"))}});
-        rows.insert(QString::number(number(first, "line")), QVariantMap{{QStringLiteral("last"), last.value(QStringLiteral("line"))}});
+        rows.insert(QString::number(number(first, "line")), QVariantMap{{QStringLiteral("last"), last.value(QStringLiteral("line"))},
+            {QStringLiteral("sections"), block.value(QStringLiteral("sections"))}});
     }
     std::sort(hidden.begin(), hidden.end(), [](const QVariant &a, const QVariant &b) { return number(a.toMap(), "line") < number(b.toMap(), "line"); });
     return {{QStringLiteral("hidden"), hidden}, {QStringLiteral("rows"), rows}};

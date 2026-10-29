@@ -240,9 +240,8 @@ void SelectedFile::project(const FileSession *file)
     }
     update(choices_, choices, &SelectedFile::choicesChanged);
     update(regions_, regions, &SelectedFile::regionsChanged);
-    // The conflict-marker lines of the current result. The view may fold the
-    // lines of a block tied to a choice section; other marker lines stay
-    // shown. A pending draft in the editor has other lines, so it gets none.
+    // Fold recognized blocks independently of whether a choice can safely
+    // target them. A pending editor draft has different lines, so it gets none.
     QVariantList markerBlocks;
     QVariantList markerOrphans;
     if (file->support() == Support::Supported && !files_.pendingDraft(file->id())) {
@@ -254,11 +253,14 @@ void SelectedFile::project(const FileSession *file)
             if (block.base) markerLines.push_back(markerLine(*block.base, draft, lines));
             markerLines.push_back(markerLine(block.separator, draft, lines));
             markerLines.push_back(markerLine(block.end, draft, lines));
-            const bool folded = std::any_of(sections.begin(), sections.end(),
-                [&](const auto &section) { return section.block == block; });
+            QStringList blockSections;
+            for (const auto &section : sections)
+                if (section.block == block)
+                    for (const auto &id : section.sections) blockSections.push_back(text(id));
             markerBlocks.push_back(QVariantMap{{QStringLiteral("resultLineBegin"), lines.line(block.begin.bytes.begin)},
                 {QStringLiteral("resultLineEnd"), lines.line(block.end.bytes.begin) + 1},
-                {QStringLiteral("folded"), folded}, {QStringLiteral("markerLines"), markerLines}});
+                {QStringLiteral("folded"), true}, {QStringLiteral("markerLines"), markerLines},
+                {QStringLiteral("sections"), blockSections}});
         }
         for (const auto &orphan : scan.orphans) markerOrphans.push_back(markerLine(orphan, draft, lines));
     }

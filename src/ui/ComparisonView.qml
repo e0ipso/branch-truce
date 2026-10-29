@@ -249,7 +249,8 @@ ColumnLayout {
                         : qsTr("%1 %2").arg(sideNames[sides[0]])
                             .arg(stateNames[section.sides[sides[0]].region.state] || "")
                 }
-            } else if (row > 0 && sides.length === 2 && section.sides.stage2.choice.combinationAvailable) {
+            } else if (row > 0 && sides.length === 2 && section.sides.stage2.choice.combinationAvailable
+                       && (fold.rows[row].sections || []).indexOf(order[i]) >= 0) {
                 if (!combinations[row])
                     combinations[row] = []
                 combinations[row].push({id: section.sides.stage2.choice.id,
