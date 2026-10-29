@@ -69,12 +69,11 @@ Item {
                     x: layer.gutter.x + layer.gutter.width + Kirigami.Units.smallSpacing
                     height: row.height
                     spacing: Kirigami.Units.largeSpacing
-                    Label {
+                    PlainLabel {
                         id: conflictLabel
                         objectName: "resultConflictRow-" + slot.line
                         Layout.alignment: Qt.AlignVCenter
                         text: qsTr("Unresolved conflict")
-                        textFormat: Text.PlainText
                         font.weight: Font.DemiBold
                         color: Kirigami.Theme.negativeTextColor
                     }

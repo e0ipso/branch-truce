@@ -22,23 +22,20 @@ Kirigami.Dialog {
     onRejected: nonConflictingDialog.controller.cancelChoice()
     PreviewBody {
         dialog: nonConflictingDialog
-        Label {
+        PlainLabel {
             Layout.fillWidth: true
             text: nonConflictingDialog.controller.nonConflictingPreview.path || ""
-            textFormat: Text.PlainText
             wrapMode: Text.WrapAnywhere
             font.bold: true
         }
-        Label {
+        PlainLabel {
             Layout.fillWidth: true
             text: nonConflictingDialog.controller.nonConflictingPreview.summary || ""
-            textFormat: Text.PlainText
             wrapMode: Text.Wrap
         }
-        Label {
+        PlainLabel {
             Layout.fillWidth: true
             text: nonConflictingDialog.controller.nonConflictingPreview.detail || ""
-            textFormat: Text.PlainText
             wrapMode: Text.Wrap
         }
         ListView {
@@ -51,10 +48,9 @@ Kirigami.Dialog {
                 id: batchChange
                 required property var modelData
                 width: ListView.view.width
-                Label {
+                PlainLabel {
                     Layout.fillWidth: true
                     text: batchChange.modelData.scope
-                    textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
                 RowLayout {

@@ -22,24 +22,21 @@ Kirigami.Dialog {
     onRejected: wholeFileDialog.controller.cancelChoice()
     PreviewBody {
         dialog: wholeFileDialog
-        Label {
+        PlainLabel {
             Layout.fillWidth: true
             text: wholeFileDialog.controller.wholeFilePreview.path || ""
-            textFormat: Text.PlainText
             wrapMode: Text.WrapAnywhere
             font.bold: true
         }
-        Label {
+        PlainLabel {
             Layout.fillWidth: true
             text: wholeFileDialog.controller.wholeFilePreview.source || ""
-            textFormat: Text.PlainText
             wrapMode: Text.WrapAnywhere
         }
-        Label {
+        PlainLabel {
             objectName: "wholeFileWarning"
             Layout.fillWidth: true
             text: wholeFileDialog.controller.wholeFilePreview.detail || ""
-            textFormat: Text.PlainText
             wrapMode: Text.Wrap
         }
         TabBar {
@@ -66,11 +63,10 @@ Kirigami.Dialog {
                 }
             }
             ColumnLayout {
-                Label {
+                PlainLabel {
                     Layout.fillWidth: true
                     visible: !!wholeFileDialog.controller.wholeFilePreview.retainedDecisions
                     text: wholeFileDialog.controller.wholeFilePreview.retainedDecisions || ""
-                    textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
                 ListView {
@@ -83,11 +79,10 @@ Kirigami.Dialog {
                         id: wholeContribution
                         required property var modelData
                         width: ListView.view.width
-                        Label {
+                        PlainLabel {
                             Layout.fillWidth: true
                             text: wholeContribution.modelData.scope + "\n"
                                 + wholeContribution.modelData.beforeState + " → " + wholeContribution.modelData.afterState
-                            textFormat: Text.PlainText
                             wrapMode: Text.Wrap
                         }
                         SnapshotPane {
@@ -101,10 +96,9 @@ Kirigami.Dialog {
                 }
             }
             ColumnLayout {
-                Label {
+                PlainLabel {
                     Layout.fillWidth: true
                     text: qsTr("All differences from the selected source are replaced, including manual and pre-existing edits. Identical text stays the same.")
-                    textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
                 ListView {
@@ -117,10 +111,9 @@ Kirigami.Dialog {
                         id: wholeDifference
                         required property var modelData
                         width: ListView.view.width
-                        Label {
+                        PlainLabel {
                             Layout.fillWidth: true
                             text: wholeDifference.modelData.scope
-                            textFormat: Text.PlainText
                             wrapMode: Text.Wrap
                         }
                         RowLayout {

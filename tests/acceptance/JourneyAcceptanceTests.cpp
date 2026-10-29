@@ -876,14 +876,11 @@ void expectSourcesAround(Scene &scene, const Repository &repo, const char *path,
 {
     clickFile(scene, path);
     expectText(scene.text("selectedPath"), QString::fromLatin1(path), "selected path");
-    // Each header is one line: the role, then the label with its commit id cut to 10 characters.
-    const auto cut = [](QString label, const QByteArray &commit) {
-        return label.replace(utf8(commit), utf8(commit).left(10));
-    };
-    expectText(scene.text("stage2Label"), "Left source · " + cut(leftLabel, repo.leftCommit), "left identity");
-    expectText(scene.text("stage3Label"), "Right source · " + cut(rightLabel, repo.rightCommit), "right identity");
-    expectText(scene.text("stage2Identity"), "Captured blob: " + utf8(repo.stageObject(2, path)).left(10), "left blob");
-    expectText(scene.text("stage3Identity"), "Captured blob: " + utf8(repo.stageObject(3, path)).left(10), "right blob");
+    // Each full identity is the label text; the UI elides it to fit.
+    expectText(scene.text("stage2Label"), "Left source · " + leftLabel, "left identity");
+    expectText(scene.text("stage3Label"), "Right source · " + rightLabel, "right identity");
+    expectText(scene.text("stage2Identity"), "Captured blob: " + utf8(repo.stageObject(2, path)), "left blob");
+    expectText(scene.text("stage3Identity"), "Captured blob: " + utf8(repo.stageObject(3, path)), "right blob");
     // The full commit and blob ids stay reachable as accessible text.
     const auto described = [&](const char *name) {
         const auto *face = QAccessible::queryAccessibleInterface(scene.item(name));
@@ -997,9 +994,9 @@ public:
             expectContains(rowText(scene, "removed.txt"), "Outside app", "outside-app row");
             const auto left = "Current checkout: " + utf8(repo.leftCommit);
             const auto right = "Merged commit: " + utf8(repo.rightCommit);
-            // The footer names each commit once, cut to 10 characters.
-            expectText(scene.text("sourceCommits"), "Current checkout: " + utf8(repo.leftCommit).left(10)
-                       + " · Merged commit: " + utf8(repo.rightCommit).left(10), "source footer");
+            // The footer retains full commit ids for its elision tooltip.
+            expectText(scene.text("sourceCommits"), "Current checkout: " + utf8(repo.leftCommit)
+                       + " · Merged commit: " + utf8(repo.rightCommit), "source footer");
             for (const auto *path : {"story.txt", "notes.txt", "reading.txt"})
                 expectSourcesAround(scene, repo, path, left, right);
             // A file edited before launch keeps that content exactly.

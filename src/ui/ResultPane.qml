@@ -56,19 +56,21 @@ ColumnLayout {
         else
             resultEditor.cursorPosition = target
     }
-    Label {
+    RowLayout {
         id: resultHeader
-        objectName: "resultLabel"
         Layout.fillWidth: true
         Layout.preferredHeight: resultPane.headerHeight
-        text: qsTr("Editable result · App draft")
-        textFormat: Text.PlainText
-        elide: Text.ElideRight
-        HoverHandler { id: resultHeaderHover }
-        ToolTip.visible: resultHeaderHover.hovered
-        ToolTip.text: qsTr("Initial content and your edits are kept")
-        ToolTip.delay: Kirigami.Units.toolTipDelay
-        Accessible.description: ToolTip.text
+        PlainLabel {
+            objectName: "resultLabel"
+            Layout.fillWidth: true
+            text: qsTr("Editable result · App draft")
+            Accessible.description: qsTr("Initial content and your edits are kept")
+        }
+        PlainLabel {
+            Layout.maximumWidth: resultPane.width / 2
+            text: qsTr("Initial content and your edits are kept")
+            color: Kirigami.Theme.disabledTextColor
+        }
     }
     Item {
         Layout.fillWidth: true

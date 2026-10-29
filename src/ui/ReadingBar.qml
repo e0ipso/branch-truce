@@ -54,11 +54,10 @@ ColumnLayout {
             objectName: "showWhitespace"
             text: qsTr("Show spaces and tabs")
         }
-        Label {
+        PlainLabel {
             objectName: "searchStatus"
             Layout.fillWidth: true
             text: readingBar.search.status
-            textFormat: Text.PlainText
             wrapMode: Text.Wrap
         }
     }

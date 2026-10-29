@@ -27,26 +27,23 @@ RowLayout {
     ColumnLayout {
         Layout.fillWidth: true
         spacing: 0
-        Label {
+        PlainLabel {
             Layout.fillWidth: true
             text: handoffEntry.modelData.path
-            textFormat: Text.PlainText
             elide: Text.ElideMiddle
         }
-        Label {
+        PlainLabel {
             Layout.fillWidth: true
             text: handoffEntry.modelData.status
-            textFormat: Text.PlainText
             wrapMode: Text.Wrap
             font: Kirigami.Theme.smallFont
         }
         Repeater {
             model: handoffEntry.modelData.blockers
-            delegate: Label {
+            delegate: PlainLabel {
                 required property string modelData
                 Layout.fillWidth: true
                 text: modelData
-                textFormat: Text.PlainText
                 wrapMode: Text.Wrap
                 font: Kirigami.Theme.smallFont
                 color: Kirigami.Theme.disabledTextColor

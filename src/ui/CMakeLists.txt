@@ -5,6 +5,7 @@ qt_add_qml_module(branch_truce_ui STATIC
     IMPORT_PATH "${PROJECT_BINARY_DIR}/src/app"
     QML_FILES
         Main.qml
+        PlainLabel.qml
         ComparisonView.qml
         ReadingBar.qml
         SourcePane.qml

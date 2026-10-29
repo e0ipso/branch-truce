@@ -48,11 +48,10 @@ Kirigami.Dialog {
         }
         Repeater {
             model: handoffDialog.summary.sessionBlockers || []
-            delegate: Label {
+            delegate: PlainLabel {
                 required property string modelData
                 Layout.fillWidth: true
                 text: modelData
-                textFormat: Text.PlainText
                 wrapMode: Text.Wrap
             }
         }
@@ -64,11 +63,11 @@ Kirigami.Dialog {
                 Layout.fillWidth: true
                 visible: modelData.entries.length > 0
                 spacing: Kirigami.Units.smallSpacing
-                Kirigami.Heading {
+                PlainLabel {
                     Layout.fillWidth: true
-                    level: 4
+                    font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.1
+                    font.weight: Font.DemiBold
                     text: qsTr("%1 (%2)").arg(handoffGroup.modelData.title).arg(handoffGroup.modelData.entries.length)
-                    textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
                 Repeater {
@@ -77,12 +76,11 @@ Kirigami.Dialog {
                 }
             }
         }
-        Label {
+        PlainLabel {
             objectName: "handoffLeaveBlocker"
             Layout.fillWidth: true
             visible: text.length > 0
             text: handoffDialog.summary.leaveBlocker || ""
-            textFormat: Text.PlainText
             wrapMode: Text.Wrap
         }
     }

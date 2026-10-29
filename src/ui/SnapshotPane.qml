@@ -12,11 +12,10 @@ ColumnLayout {
     required property string paneText
     Layout.fillWidth: true
     Layout.fillHeight: true
-    Label {
+    PlainLabel {
         objectName: pane.paneName + "Label"
         Layout.fillWidth: true
         text: pane.paneTitle
-        textFormat: Text.PlainText
         wrapMode: Text.WrapAnywhere
     }
     ScrollView {

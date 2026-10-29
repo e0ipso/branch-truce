@@ -143,7 +143,7 @@ Item {
     }
     Repeater {
         model: gutter.rowSlots
-        delegate: Text {
+        delegate: PlainLabel {
             required property int index
             readonly property var modelData: gutter.rows[index] || gutter.noRow
             x: Kirigami.Units.smallSpacing
@@ -151,7 +151,6 @@ Item {
             width: gutter.numberWidth
             height: modelData.height
             text: String(modelData.number)
-            textFormat: Text.PlainText
             font: gutter.editor.font
             color: Kirigami.Theme.disabledTextColor
             horizontalAlignment: Text.AlignRight
@@ -159,7 +158,7 @@ Item {
     }
     Repeater {
         model: gutter.provenance ? gutter.rowSlots : 0
-        delegate: Text {
+        delegate: PlainLabel {
             required property int index
             readonly property var modelData: gutter.rows[index] || gutter.noRow
             x: Kirigami.Units.smallSpacing * 2 + gutter.numberWidth
@@ -168,7 +167,6 @@ Item {
             height: modelData.height
             text: gutter.marks.letters[modelData.number] || ""
             visible: text.length > 0
-            textFormat: Text.PlainText
             font: gutter.editor.font
             color: Kirigami.Theme.disabledTextColor
         }
@@ -181,7 +179,7 @@ Item {
         height: gutter.height
         Repeater {
             model: gutter.rowSlots
-            delegate: Text {
+            delegate: PlainLabel {
                 required property int index
                 readonly property var modelData: gutter.rows[index] || gutter.noRow
                 readonly property int line: modelData.number
@@ -191,7 +189,6 @@ Item {
                 text: ({added: "+", changed: "~", conflict: "!", manual: "m",
                     accepted: "✓", ignored: "×", markers: "!"})[kind] || ""
                 visible: text.length > 0
-                textFormat: Text.PlainText
                 font: gutter.editor.font
                 color: kind === "added" || kind === "accepted" ? Kirigami.Theme.positiveTextColor
                     : kind === "changed" ? Kirigami.Theme.activeTextColor
@@ -208,7 +205,7 @@ Item {
         }
         Repeater {
             model: gutter.rowSlots
-            delegate: Text {
+            delegate: PlainLabel {
                 required property int index
                 readonly property var modelData: gutter.rows[index] || gutter.noRow
                 readonly property int line: modelData.number
@@ -217,7 +214,6 @@ Item {
                 y: modelData.top - height / 2
                 text: kind.length > 0 ? "\u2212" : ""
                 visible: text.length > 0
-                textFormat: Text.PlainText
                 font: gutter.editor.font
                 color: Kirigami.Theme.disabledTextColor
             }
@@ -260,11 +256,10 @@ Item {
                     Accessible.role: Accessible.StaticText
                     Accessible.name: text
                     Accessible.description: decisionRow.decision ? decisionRow.decision.label : ""
-                    Text {
+                    PlainLabel {
                         id: decisionText
                         anchors.centerIn: parent
                         text: decisionChip.text
-                        textFormat: Text.PlainText
                         font: Kirigami.Theme.smallFont
                         color: decisionChip.tone
                     }

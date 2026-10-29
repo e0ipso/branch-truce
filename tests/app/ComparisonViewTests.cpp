@@ -2889,6 +2889,14 @@ public:
                 FileSession("crafted", path, {launch, {}, 0}, Support::Supported, {}, std::move(sources), true)));
             const auto shown = fixture.controller.files()->displayPath("crafted");
             CHECK(shown.toStdString() == path);
+            CHECK(fixture.controller.selectFile("crafted"));
+            auto *pathLabel = fixture.item("selectedPath");
+            settle([&] { return pathLabel->property("text").toString() == shown; });
+            CHECK(pathLabel->property("textFormat").toInt() == Qt::PlainText);
+            const auto *pathDocument = pathLabel->property("textDocument").value<QQuickTextDocument *>();
+            const auto renderedPath = pathDocument ? pathDocument->textDocument()->toPlainText()
+                                                   : pathLabel->property("text").toString();
+            CHECK(renderedPath == shown);
             const auto message = QStringLiteral("Waiting for Git to stage %1.").arg(shown);
             // Every label inside the item must show the message as plain characters. A label
             // that took it as rich text reports the markup it built instead.

@@ -32,7 +32,7 @@ ColumnLayout {
     property real choiceWidth: 0
     readonly property alias choiceSlot: choiceColumn
     readonly property real headerImplicitHeight: sourceHeaderRow.implicitHeight
-    // The commit id is cut to 10 characters on the line; the tooltip keeps the full ids.
+    // Full identities remain in the labels and their elision tooltips.
     readonly property string commitId: sourcePane.source.commitId || ""
     readonly property string fullIdentity: qsTr("Verified commit: %1\nCaptured blob: %2")
         .arg(sourcePane.commitId || qsTr("unavailable"))
@@ -42,40 +42,30 @@ ColumnLayout {
     signal lineHovered(int line)
     signal scrolled(bool byUser)
     signal editorCompleted()
-    function shortCommit(label: string): string {
-        return sourcePane.commitId.length > 10
-            ? label.replace(sourcePane.commitId, sourcePane.commitId.slice(0, 10)) : label
-    }
     RowLayout {
         id: sourceHeaderRow
         Layout.fillWidth: true
         Layout.preferredHeight: sourcePane.alignHeader ? sourcePane.headerHeight : implicitHeight
         Layout.rightMargin: Kirigami.Units.largeSpacing
         spacing: Kirigami.Units.largeSpacing
-        Label {
+        PlainLabel {
             id: sourceHeader
             objectName: sourcePane.paneName + "Label"
             Layout.fillWidth: true
             text: sourcePane.paneRole + " · "
-                + sourcePane.shortCommit(sourcePane.source.label || qsTr("Source identity unavailable"))
-            textFormat: Text.PlainText
+                + (sourcePane.source.label || qsTr("Source identity unavailable"))
             elide: Text.ElideRight
             Accessible.description: sourcePane.fullIdentity
         }
-        Label {
+        PlainLabel {
             objectName: sourcePane.paneName + "Identity"
             Layout.maximumWidth: sourceHeaderRow.width / 2
             text: qsTr("Captured blob: %1").arg(sourcePane.source.objectId
-                ? sourcePane.source.objectId.slice(0, 10) : qsTr("unavailable"))
-            textFormat: Text.PlainText
+                ? sourcePane.source.objectId : qsTr("unavailable"))
             elide: Text.ElideRight
             color: Kirigami.Theme.disabledTextColor
             Accessible.description: sourcePane.fullIdentity
         }
-        HoverHandler { id: identityHover }
-        ToolTip.visible: identityHover.hovered
-        ToolTip.text: sourcePane.fullIdentity
-        ToolTip.delay: Kirigami.Units.toolTipDelay
     }
     Item {
         Layout.fillWidth: true

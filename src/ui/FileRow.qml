@@ -64,31 +64,28 @@ KirigamiDelegates.SubtitleDelegate {
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 0
-            Label {
+            PlainLabel {
                 id: titleLabel
                 Layout.fillWidth: true
                 text: row.text
-                textFormat: Text.PlainText
                 elide: Text.ElideMiddle
                 font.bold: row.current
                 color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
             }
-            Label {
+            PlainLabel {
                 id: subtitleLabel
                 Layout.fillWidth: true
                 text: row.subtitle
-                textFormat: Text.PlainText
                 maximumLineCount: 1
                 elide: Text.ElideRight
                 font: Kirigami.Theme.smallFont
                 color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
             }
         }
-        Label {
+        PlainLabel {
             Layout.alignment: Qt.AlignVCenter
             visible: row.chip.length > 0
             text: row.chip
-            textFormat: Text.PlainText
             font: Kirigami.Theme.smallFont
             leftPadding: Kirigami.Units.smallSpacing
             rightPadding: Kirigami.Units.smallSpacing

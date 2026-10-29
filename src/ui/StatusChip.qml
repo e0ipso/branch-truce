@@ -28,11 +28,10 @@ Rectangle {
             Layout.preferredWidth: Kirigami.Units.iconSizes.small
             Layout.preferredHeight: Kirigami.Units.iconSizes.small
         }
-        Label {
+        PlainLabel {
             Layout.maximumWidth: chip.maximumWidth - chip.padding
                 - (chip.framed ? Kirigami.Units.iconSizes.small + chipRow.spacing : 0)
             text: chip.modelData.text || ""
-            textFormat: Text.PlainText
             wrapMode: Text.Wrap
         }
     }

@@ -21,25 +21,22 @@ Kirigami.Dialog {
     onRejected: replacementDialog.controller.cancelChoice()
     PreviewBody {
         dialog: replacementDialog
-        Label {
+        PlainLabel {
             Layout.fillWidth: true
             text: replacementDialog.controller.commandPreview.detail || ""
-            textFormat: Text.PlainText
             wrapMode: Text.Wrap
         }
-        Label {
+        PlainLabel {
             Layout.fillWidth: true
             visible: !!replacementDialog.controller.commandPreview.orderedCombination
             text: replacementDialog.controller.commandPreview.sourceScopes || ""
-            textFormat: Text.PlainText
             wrapMode: Text.Wrap
         }
-        Label {
+        PlainLabel {
             objectName: "manualReplacementNotice"
             Layout.fillWidth: true
             visible: !!replacementDialog.controller.commandPreview.replacesManual
             text: qsTr("Manual or pre-existing edits in the current scope below will be replaced. Confirm to replace this work, or cancel to keep it.")
-            textFormat: Text.PlainText
             wrapMode: Text.Wrap
         }
         RowLayout {

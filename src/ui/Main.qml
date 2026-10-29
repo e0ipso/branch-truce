@@ -143,19 +143,15 @@ Kirigami.ApplicationWindow {
         titleDelegate: ColumnLayout {
             spacing: 0
             Layout.fillWidth: true
-            Kirigami.Heading {
+            PlainLabel {
                 objectName: "repositoryHeading"
                 Layout.fillWidth: true
-                level: 1
+                font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.5
+                font.weight: Font.DemiBold
                 text: window.controller.loader.repositoryRoot || (window.controller.loader.operation || qsTr("Open conflict session"))
-                textFormat: Text.PlainText
                 elide: Text.ElideMiddle
-                HoverHandler { id: headingHover }
-                ToolTip.text: window.controller.loader.repositoryRoot
-                ToolTip.visible: headingHover.hovered && truncated
-                ToolTip.delay: Kirigami.Units.toolTipDelay
             }
-            Label {
+            PlainLabel {
                 objectName: "repositorySubtitle"
                 Layout.fillWidth: true
                 visible: text.length > 0 && window.controller.loader.repositoryRoot.length > 0
@@ -166,7 +162,6 @@ Kirigami.ApplicationWindow {
                             .arg(window.controller.files.totalFiles).arg(window.controller.files.resolvedFiles))
                     return parts.filter(part => part.length > 0).join(" · ")
                 }
-                textFormat: Text.PlainText
                 elide: Text.ElideRight
                 font: Kirigami.Theme.smallFont
                 opacity: 0.7
@@ -197,12 +192,11 @@ Kirigami.ApplicationWindow {
                 width: pageScroll.width - (pageScroll.overflowing ? pageScrollBar.width : 0)
                 height: pageScroll.contentHeight
                 spacing: Kirigami.Units.largeSpacing
-                Label {
+                PlainLabel {
                     objectName: "sessionDetail"
                     Layout.fillWidth: true
                     visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
                     text: window.controller.loader.detail
-                    textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
                 // While the repository opens, and while the session has no files to show. A failed
@@ -228,10 +222,9 @@ Kirigami.ApplicationWindow {
                     Layout.fillWidth: true
                     spacing: Kirigami.Units.smallSpacing
                     visible: !window.controller.loader.opening && window.controller.loader.recoveryChoices.length > 0
-                    Label {
+                    PlainLabel {
                         Layout.fillWidth: true
                         text: qsTr("Choose the recovery session to restore. The other sessions are set aside, not deleted.")
-                        textFormat: Text.PlainText
                         wrapMode: Text.Wrap
                         font.bold: true
                     }
@@ -241,13 +234,12 @@ Kirigami.ApplicationWindow {
                             id: recoveryChoice
                             required property var modelData
                             Layout.fillWidth: true
-                            Label {
+                            PlainLabel {
                                 objectName: "recoveryChoiceText-" + recoveryChoice.modelData.session
                                 Layout.fillWidth: true
                                 text: qsTr("Session %1, last changed %2").arg(recoveryChoice.modelData.session)
                                     .arg(recoveryChoice.modelData.lastChanged)
                                     + "\n" + qsTr("Edited files: %1").arg(recoveryChoice.modelData.paths.join(", "))
-                                textFormat: Text.PlainText
                                 wrapMode: Text.Wrap
                             }
                             Button {
@@ -275,12 +267,11 @@ Kirigami.ApplicationWindow {
                     controller: window.controller
                     onHandoffRequested: handoffDialog.open()
                 }
-                Label {
+                PlainLabel {
                     objectName: "navigationTarget"
                     Layout.fillWidth: true
                     visible: !window.controller.loader.opening && (window.controller.navigationTarget.label || "").length > 0
                     text: window.controller.navigationTarget.label || ""
-                    textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                 }
                 SplitView {
@@ -313,11 +304,10 @@ Kirigami.ApplicationWindow {
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: Kirigami.Units.largeSpacing
-                            Label {
+                            PlainLabel {
                                 objectName: "selectedPath"
                                 Layout.maximumWidth: workArea.width / 3
                                 text: window.selectedFile.path || ""
-                                textFormat: Text.PlainText
                                 wrapMode: Text.WrapAnywhere
                                 font.bold: true
                             }

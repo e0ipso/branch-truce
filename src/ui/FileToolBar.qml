@@ -134,9 +134,8 @@ RowLayout {
             }
         ]
     }
-    Label {
+    PlainLabel {
         visible: fileToolBar.composing
         text: qsTr("Composing input · not acknowledged")
-        textFormat: Text.PlainText
     }
 }
