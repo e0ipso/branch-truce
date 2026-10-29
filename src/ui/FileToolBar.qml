@@ -17,6 +17,10 @@ RowLayout {
     readonly property alias showSourceChoices: sourceChoices.checked
     // Whether the result shows the conflict-marker lines it folds.
     property alias showMarkers: markersToggle.checked
+    property alias wrapLines: wrapAction.checked
+    property alias showWhitespace: whitespaceAction.checked
+    property alias showEarlier: earlierAction.checked
+    signal searchRequested()
     required property EditActions edits
     signal nonConflictingChosen(scope: int)
     signal wholeFileChosen(side: int)
@@ -119,6 +123,42 @@ RowLayout {
                 iconOnly: true
                 toggle: true
                 checked: true
+            },
+            NamedAction {
+                controlName: "openPassageSearch"
+                text: qsTr("Find a passage")
+                icon.name: "edit-find"
+                iconOnly: true
+                displayHint: Kirigami.DisplayHint.KeepVisible
+                onTriggered: fileToolBar.searchRequested()
+            },
+            NamedAction {
+                id: wrapAction
+                controlName: "wrapLines"
+                text: qsTr("Wrap lines")
+                icon.name: "format-justify-left"
+                iconOnly: true
+                toggle: true
+                displayHint: Kirigami.DisplayHint.KeepVisible
+            },
+            NamedAction {
+                id: whitespaceAction
+                controlName: "showWhitespace"
+                text: qsTr("Show spaces and tabs")
+                icon.name: "view-visible"
+                iconOnly: true
+                toggle: true
+                displayHint: Kirigami.DisplayHint.KeepVisible
+            },
+            NamedAction {
+                id: earlierAction
+                controlName: "showEarlier"
+                text: enabled ? qsTr("Show common earlier version") : qsTr("Common earlier version unavailable")
+                enabled: !!fileToolBar.selectedFile.earlier && !!fileToolBar.selectedFile.earlier.available
+                icon.name: "view-visible"
+                iconOnly: true
+                toggle: true
+                displayHint: Kirigami.DisplayHint.KeepVisible
             },
             // A view control that folds or shows marker lines and changes no
             // text, decision, history or progress. It is always in the overflow

@@ -364,6 +364,7 @@ Kirigami.ApplicationWindow {
                             controller: window.controller
                             selectedFile: window.selectedFile
                             composing: comparison.inputMethodComposing
+                            onSearchRequested: comparison.openSearch()
                             onNonConflictingChosen: scope => window.chooseNonConflicting(scope)
                             onWholeFileChosen: side => window.chooseWholeFile(side)
                             onDiscardToStagedChosen: discardStagedDialog.ask(window.controller.selectedFileId,
@@ -388,6 +389,9 @@ Kirigami.ApplicationWindow {
                             controller: window.controller
                             file: window.selectedFile
                             showMarkers: fileToolBar.showMarkers
+                            wrapLines: fileToolBar.wrapLines
+                            showWhitespace: fileToolBar.showWhitespace
+                            showEarlier: fileToolBar.showEarlier
                             showChoices: fileToolBar.showSourceChoices
                             onMarkersRevealed: fileToolBar.showMarkers = true
                             onChoiceChosen: (target, action) => window.choose(target, action)

@@ -664,7 +664,7 @@ const char *const mainControls[] = {
     "undecidedCounter", "nextUndecided", "navigateMenu", "toggleFileList", "fileList", "selectedPath", "selectedStatus", "saveDraft",
     "markResolved", "discardUnsaved", "undoCommand", "redoCommand", "copyResult", "pasteResult",
     "sourceChoicesMenu", "showSourceChoices",
-    "searchScope", "searchQuery", "findPassage", "wrapLines", "showWhitespace", "stage2Label", "resultLabel",
+    "openPassageSearch", "wrapLines", "showWhitespace", "stage2Label", "resultLabel",
     "stage3Label", "showEarlier", "workflowStatus",
 };
 const char *const textPanes[] = {"stage2Viewport", "resultViewport", "stage3Viewport"};
@@ -1295,6 +1295,7 @@ public:
             auto *result = scene.item("resultText");
 
             // Repeated passages: Find walks the scoped pane and wraps to the first match.
+            scene.click("openPassageSearch");
             expectText(scene.item("searchScope")->property("currentText").toString(), "Left source", "default scope");
             scene.click("searchQuery");
             typeText(scene, "REPEAT");
@@ -1305,7 +1306,7 @@ public:
                 scene.click("findPassage");
                 CHECK(left->property("selectionStart").toInt() == expected);
                 expectText(left->property("selectedText").toString(), "REPEAT", "left match");
-                expectText(scene.text("searchStatus"), "Passage in Left source.", "left status");
+                expectContains(scene.text("searchStatus"), "Passage in Left source.", "left status");
                 CHECK(result->property("selectedText").toString().isEmpty());
             }
             unchanged();
@@ -1322,7 +1323,7 @@ public:
                 return scene.item("searchScope")->property("currentText").toString() == QStringLiteral("Editable result");
             });
             scene.click("findPassage");
-            expectText(scene.text("searchStatus"), "Passage in Editable result.", "result status");
+            expectContains(scene.text("searchStatus"), "Passage in Editable result.", "result status");
             CHECK(result->property("selectionStart").toInt() == 0);
             expectText(result->property("selectedText").toString(), "REPEAT", "result match");
             unchanged();

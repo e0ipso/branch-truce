@@ -41,12 +41,17 @@ public:
     // format pass over the blocks the old or new ranges touch.
     void setDecorations(const QList<QTextLayout::FormatRange> &ranges);
     const QList<QTextLayout::FormatRange> &decorations() const { return decorations_; }
+    // Search matches share this highlighter with syntax and word differences.
+    void setSearchDecorations(const QList<QTextLayout::FormatRange> &ranges);
 
 protected:
     void highlightBlock(const QString &text) override;
 
 private:
     void decorate(int begin, int end);
+    void updateDecorations();
+    QList<QTextLayout::FormatRange> wordDecorations_;
+    QList<QTextLayout::FormatRange> searchDecorations_;
     QList<QTextLayout::FormatRange> decorations_;
     // reach_[i] is the furthest end of decorations_[0..i], so a binary search
     // finds the first range that can reach a block.

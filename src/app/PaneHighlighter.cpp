@@ -34,7 +34,22 @@ void PaneHighlighter::highlight(const KSyntaxHighlighting::Definition &definitio
 
 void PaneHighlighter::setDecorations(const QList<QTextLayout::FormatRange> &ranges)
 {
-    auto sorted = ranges;
+    if (wordDecorations_ == ranges) return;
+    wordDecorations_ = ranges;
+    updateDecorations();
+}
+
+void PaneHighlighter::setSearchDecorations(const QList<QTextLayout::FormatRange> &ranges)
+{
+    if (searchDecorations_ == ranges) return;
+    searchDecorations_ = ranges;
+    updateDecorations();
+}
+
+void PaneHighlighter::updateDecorations()
+{
+    auto sorted = wordDecorations_;
+    sorted.append(searchDecorations_);
     std::stable_sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) { return a.start < b.start; });
     if (sorted == decorations_) return;
     const auto previous = std::exchange(decorations_, std::move(sorted));
@@ -77,9 +92,7 @@ void PaneHighlighter::highlightBlock(const QString &text)
 // run of equal formats at a time, so syntax colours stay under it.
 void PaneHighlighter::decorate(int begin, int end)
 {
-    auto from = std::upper_bound(reach_.cbegin(), reach_.cend(), begin) - reach_.cbegin();
-    for (; from < decorations_.size() && decorations_[from].start < end; ++from) {
-        const auto &range = decorations_[from];
+    const auto apply = [&](const QTextLayout::FormatRange &range) {
         int at = std::max(range.start, begin) - begin;
         const int stop = std::min(range.start + range.length, end) - begin;
         while (at < stop) {
@@ -91,6 +104,13 @@ void PaneHighlighter::decorate(int begin, int end)
             setFormat(at, run - at, merged);
             at = run;
         }
-    }
+    };
+    auto from = std::upper_bound(reach_.cbegin(), reach_.cend(), begin) - reach_.cbegin();
+    for (; from < decorations_.size() && decorations_[from].start < end; ++from)
+        apply(decorations_[from]);
+    // Search backgrounds win over a word-difference background on the same text.
+    auto match = std::lower_bound(searchDecorations_.cbegin(), searchDecorations_.cend(), begin,
+        [](const auto &range, int position) { return range.start + range.length <= position; });
+    for (; match != searchDecorations_.cend() && match->start < end; ++match) apply(*match);
 }
 }

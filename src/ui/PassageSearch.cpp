@@ -1,4 +1,9 @@
 #include "PassageSearch.h"
+#include "app/PaneHighlighter.h"
+#include <QColor>
+#include <QQuickTextDocument>
+#include <QTextCharFormat>
+#include <QTextDocument>
 #include <QQuickItem>
 #include <QScopedValueRollback>
 
@@ -98,20 +103,22 @@ void PassageSearch::setDetail(const QString &detail)
 }
 
 PassageSearch::Match PassageSearch::search(const QString &text, const QString &query, int selectionStart,
-                                           int selectionEnd, bool forward)
+                                           int selectionEnd, bool forward, Qt::CaseSensitivity sensitivity)
 {
     Match match;
     if (query.isEmpty()) return match;
-    for (auto at = text.indexOf(query); at >= 0; at = text.indexOf(query, at + query.size())) ++match.count;
-    if (match.count == 0) return match;
+    QList<qsizetype> positions;
+    for (auto at = text.indexOf(query, 0, sensitivity); at >= 0; at = text.indexOf(query, at + query.size(), sensitivity))
+        positions.append(at);
+    match.count = static_cast<int>(positions.size());
+    if (positions.isEmpty()) return match;
     const bool selected = selectionEnd > selectionStart;
-    qsizetype found = -1;
-    if (forward) {
-        found = text.indexOf(query, selected ? selectionEnd : 0);
-        if (found < 0) found = text.indexOf(query);
-    } else {
-        found = selected && selectionStart > 0 ? text.lastIndexOf(query, selectionStart - 1) : -1;
-        if (found < 0) found = text.lastIndexOf(query);
+    qsizetype found = forward ? positions.first() : positions.last();
+    if (selected && forward) {
+        for (const auto at : positions) if (at >= selectionEnd) { found = at; break; }
+    } else if (selected) {
+        for (auto it = positions.crbegin(); it != positions.crend(); ++it)
+            if (*it < selectionStart) { found = *it; break; }
     }
     match.begin = static_cast<int>(found);
     match.end = static_cast<int>(found + query.size());
@@ -127,13 +134,49 @@ QVariantMap PassageSearch::find(const QString &scope, const QString &query, bool
         setDetail(tr("Search scope: %1. Enter a passage.").arg(label));
     } else {
         // A selection that holds the query is the last match, so the search goes on from it.
-        const bool continuing = editor->property("selectedText").toString() == query;
+        const bool continuing = editor->property("selectedText").toString().compare(query, caseSensitive_ ? Qt::CaseSensitive : Qt::CaseInsensitive) == 0;
         match = search(editor->property("text").toString(), query,
             continuing ? editor->property("selectionStart").toInt() : 0,
-            continuing ? editor->property("selectionEnd").toInt() : 0, forward);
+            continuing ? editor->property("selectionEnd").toInt() : 0, forward,
+            caseSensitive_ ? Qt::CaseSensitive : Qt::CaseInsensitive);
         setDetail(match.begin < 0 ? tr("No passage in %1.").arg(label) : tr("Passage in %1.").arg(label));
     }
     return {{QStringLiteral("begin"), match.begin}, {QStringLiteral("end"), match.end},
         {QStringLiteral("count"), match.count}};
 }
+void PassageSearch::update(const QString &query, bool caseSensitive, bool active)
+{
+    caseSensitive_ = caseSensitive;
+    int count = 0, index = 0;
+    const auto sensitivity = caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    const QStringList names{QStringLiteral("stage2"), QStringLiteral("result"),
+        QStringLiteral("stage3"), QStringLiteral("earlier")};
+    for (const auto &name : names) {
+        auto *editor = panes_ ? panes_->editor(name) : nullptr;
+        if (!editor) continue;
+        auto *quickDocument = editor->property("textDocument").value<QQuickTextDocument *>();
+        auto *document = quickDocument ? quickDocument->textDocument() : nullptr;
+        auto *highlighter = document ? document->findChild<PaneHighlighter *>(QString(), Qt::FindDirectChildrenOnly) : nullptr;
+        QList<QTextLayout::FormatRange> ranges;
+        if (active && name == scope() && !query.isEmpty()) {
+            const auto text = editor->property("text").toString();
+            const int selected = editor->property("selectionStart").toInt();
+            for (auto at = text.indexOf(query, 0, sensitivity); at >= 0; at = text.indexOf(query, at + query.size(), sensitivity)) {
+                ++count;
+                if (at == selected && editor->property("selectionEnd").toInt() == at + query.size()) index = count;
+                QTextCharFormat format;
+                format.setBackground(QColor(255, 210, 60, 120));
+                ranges.append(QTextLayout::FormatRange{static_cast<int>(at), static_cast<int>(query.size()), format});
+            }
+        }
+        if (highlighter) highlighter->setSearchDecorations(ranges);
+    }
+    if (count > 0 && index == 0) index = 1;
+    if (matchCount_ != count || matchIndex_ != index) {
+        matchCount_ = count;
+        matchIndex_ = index;
+        Q_EMIT matchesChanged();
+    }
+}
+
 }

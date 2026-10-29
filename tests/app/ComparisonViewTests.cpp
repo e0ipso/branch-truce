@@ -1257,17 +1257,18 @@ public:
         });
         suite.run("TRUCE-0058 search scope switches the pane Find selects", [] {
             Fixture fixture;
+            fixture.click("openPassageSearch");
             const auto before = captureWork(fixture);
             auto *scope = fixture.item("searchScope");
             auto *query = fixture.item("searchQuery");
             CHECK(scope->property("count").toInt() == 3);
             CHECK(scope->property("currentIndex").toInt() == 0);
             CHECK(scope->property("currentText").toString() == "Left source");
-            CHECK(fixture.item("searchStatus")->property("text").toString() == "Search scope: Left source.");
+            CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Search scope: Left source."));
             CHECK(query->setProperty("text", "left only"));
             fixture.click("findPassage");
             auto *left = fixture.item("stage2Text");
-            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Left source.");
+            CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Left source."));
             CHECK(left->property("selectedText").toString() == "left only");
             CHECK(left->property("selectionStart").toInt() == left->property("text").toString().indexOf("left only"));
             CHECK(fixture.item("resultText")->property("selectedText").toString().isEmpty());
@@ -1276,14 +1277,14 @@ public:
 
             CHECK(scope->setProperty("currentIndex", 2));
             CHECK(scope->property("currentText").toString() == "Right source");
-            CHECK(fixture.item("searchStatus")->property("text").toString() == "Search scope: Right source.");
+            CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Search scope: Right source."));
             fixture.click("findPassage");
-            CHECK(fixture.item("searchStatus")->property("text").toString() == "No passage in Right source.");
+            CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("No passage in Right source."));
             CHECK(fixture.item("stage3Text")->property("selectedText").toString().isEmpty());
             CHECK(query->setProperty("text", "right only"));
             fixture.click("findPassage");
             auto *right = fixture.item("stage3Text");
-            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Right source.");
+            CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Right source."));
             CHECK(right->property("selectedText").toString() == "right only");
             CHECK(right->property("selectionStart").toInt() == right->property("text").toString().indexOf("right only"));
             checkUnchanged(fixture, before);
@@ -1293,7 +1294,7 @@ public:
             CHECK(query->setProperty("text", "base conflict"));
             fixture.click("findPassage");
             auto *result = fixture.item("resultText");
-            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Editable result.");
+            CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Editable result."));
             CHECK(result->property("selectedText").toString() == "base conflict");
             CHECK(result->property("selectionStart").toInt() == result->property("text").toString().indexOf("base conflict"));
             checkUnchanged(fixture, before);
@@ -1305,7 +1306,7 @@ public:
             CHECK(scope->property("currentText").toString() == "Earlier version");
             fixture.click("findPassage");
             auto *earlier = fixture.item("earlierText");
-            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Earlier version.");
+            CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Earlier version."));
             CHECK(earlier->property("selectedText").toString() == "base conflict");
             CHECK(earlier->property("selectionStart").toInt() == earlier->property("text").toString().indexOf("base conflict"));
             checkUnchanged(fixture, before);
@@ -1313,6 +1314,7 @@ public:
         suite.run("TRUCE-0058 Find selects a passage and wraps to the earlier match", [] {
             const std::string result = "prefix REPEAT middle REPEAT suffix\n";
             Fixture fixture(test_support::choiceFile("left\n", "right\n", result));
+            fixture.click("openPassageSearch");
             const auto before = captureWork(fixture);
             auto *scope = fixture.item("searchScope");
             CHECK(scope->setProperty("currentIndex", 1));
@@ -1326,7 +1328,7 @@ public:
             fixture.click("findPassage");
             CHECK(editor->property("selectedText").toString() == "REPEAT");
             CHECK(editor->property("selectionStart").toInt() == first);
-            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Editable result.");
+            CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Editable result."));
             checkUnchanged(fixture, before);
             fixture.click("findPassage");
             CHECK(editor->property("selectionStart").toInt() == second);
@@ -1335,7 +1337,7 @@ public:
             fixture.click("findPassage");
             CHECK(editor->property("selectionStart").toInt() == first);
             CHECK(editor->property("selectedText").toString() == "REPEAT");
-            CHECK(fixture.item("searchStatus")->property("text").toString() == "Passage in Editable result.");
+            CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Editable result."));
             checkUnchanged(fixture, before);
         });
         suite.run("TRUCE-0058 wrapping a long line changes its visual line count", [] {
@@ -1921,6 +1923,7 @@ public:
         });
         suite.run("TRUCE-0179 finding text on a folded line or going to a blocking marker shows the markers", [] {
             Fixture fixture(test_support::markedFile());
+            fixture.click("openPassageSearch");
             settlePanes(fixture);
             CHECK(foldedLines(fixture) == markedFolded().hidden);
             // Find in the result selects a match on a folded end marker and shows the markers.
@@ -2507,6 +2510,7 @@ public:
         });
         suite.run("TRUCE-0115 Find in a source scrolls the result and the other source to the passage", [] {
             Fixture fixture(insertionFile());
+            fixture.click("openPassageSearch");
             auto *left = fixture.item("stage2Viewport");
             auto *result = fixture.item("resultViewport");
             auto *right = fixture.item("stage3Viewport");

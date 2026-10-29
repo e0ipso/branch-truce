@@ -108,9 +108,10 @@ A second `Kirigami.ActionToolBar` row for the selected file, in the Window colou
 2. **Terminal actions.** Save (`document-save`, flat, with label) and Mark resolved… (`dialog-ok-apply`, framed as the primary action, with label).
 3. **Separator, then Undo and Redo** (`edit-undo`, `edit-redo`, icon only).
 4. **Separator, then Find** (`edit-find`, icon only). It opens the search bar.
-5. **Overflow menu** (`overflow-menu`). It holds Discard, "Discard draft and use staged result", Copy and Paste, the Source choices menu (whole-file and all non-conflicting choices), and the reading controls as checkable entries: Wrap lines, Show spaces and tabs, Show earlier version (`view-visible`) and Show conflict markers (`view-visible`).
+5. **Reading controls.** Wrap lines, Show spaces and tabs, and Show earlier version are checkable toolbar actions.
+6. **Overflow menu** (`overflow-menu`). It holds Discard, "Discard draft and use staged result", Copy and Paste, the Source choices menu, and Show conflict markers (`view-visible`).
 
-The reading controls therefore sit in the file toolbar: Find as a button, the toggles in its overflow menu. Whole-file and "all non-conflicting" choices live in the Source choices menu, never as an always-visible row of buttons. Line and region choices live in the gutters.
+The reading controls sit in the file toolbar, and Find opens the search bar. Whole-file and "all non-conflicting" choices live in the Source choices menu, never as an always-visible row of buttons. Line and region choices live in the gutters.
 
 Mark resolved is always available for a file the app can edit, as `PRD.md:103` requires. While source choices remain undecided it opens a confirmation that names how many; once none remain it acts at once. The ellipsis in its label is there because it may open that confirmation. When the selected file is outside the app, every file action is disabled, because there is no app result to save or resolve (the binary mockups).
 

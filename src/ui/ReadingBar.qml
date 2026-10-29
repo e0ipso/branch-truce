@@ -1,5 +1,4 @@
-// The reading controls above the panes: passage search and its scope, line wrapping,
-// whitespace markers and the search status.
+// An on-demand passage search with scope, match navigation and status.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -7,58 +6,82 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-ColumnLayout {
+RowLayout {
     id: readingBar
-    // The scopes, the selected scope and the status come from the search.
     required property PassageSearch search
     readonly property string query: searchQuery.text
-    readonly property bool wrapLines: wrapLinesBox.checked
-    readonly property bool showWhitespace: showWhitespaceBox.checked
-    signal findRequested()
+    readonly property bool caseSensitive: caseToggle.checked
+    signal findRequested(bool forward)
+    signal changed()
     objectName: "readingControls"
     spacing: Kirigami.Units.smallSpacing
-    RowLayout {
-        Layout.fillWidth: true
-        ComboBox {
-            id: searchScope
-            objectName: "searchScope"
-            model: readingBar.search.scopeLabels
-            currentIndex: readingBar.search.scopeIndex
-            Accessible.name: qsTr("Search scope")
-            Layout.preferredWidth: Math.max(implicitWidth, Kirigami.Units.gridUnit * 10)
-            onCurrentIndexChanged: readingBar.search.scopeIndex = currentIndex
-        }
-        TextField {
-            id: searchQuery
-            objectName: "searchQuery"
-            Layout.fillWidth: true
-            placeholderText: qsTr("Find a passage")
-            Accessible.name: qsTr("Passage search")
-            onAccepted: readingBar.findRequested()
-        }
-        Button {
-            objectName: "findPassage"
-            text: qsTr("Find")
-            onClicked: readingBar.findRequested()
+    function open(): void {
+        visible = true
+        searchQuery.forceActiveFocus()
+    }
+    ComboBox {
+        id: searchScope
+        objectName: "searchScope"
+        model: readingBar.search.scopeLabels
+        currentIndex: readingBar.search.scopeIndex
+        Accessible.name: qsTr("Search scope")
+        Layout.preferredWidth: Math.max(implicitWidth, Kirigami.Units.gridUnit * 8)
+        onCurrentIndexChanged: {
+            readingBar.search.scopeIndex = currentIndex
+            readingBar.changed()
         }
     }
-    RowLayout {
+    TextField {
+        id: searchQuery
+        objectName: "searchQuery"
         Layout.fillWidth: true
-        CheckBox {
-            id: wrapLinesBox
-            objectName: "wrapLines"
-            text: qsTr("Wrap lines")
-        }
-        CheckBox {
-            id: showWhitespaceBox
-            objectName: "showWhitespace"
-            text: qsTr("Show spaces and tabs")
-        }
-        PlainLabel {
-            objectName: "searchStatus"
-            Layout.fillWidth: true
-            text: readingBar.search.status
-            wrapMode: Text.Wrap
-        }
+        Layout.minimumWidth: Kirigami.Units.gridUnit * 4
+        placeholderText: qsTr("Find a passage")
+        Accessible.name: qsTr("Passage search")
+        onTextChanged: readingBar.changed()
+        onAccepted: readingBar.findRequested(true)
     }
+    ToolButton {
+        objectName: "previousPassage"
+        text: qsTr("Previous")
+        icon.name: "go-up"
+        display: AbstractButton.IconOnly
+        onClicked: readingBar.findRequested(false)
+    }
+    ToolButton {
+        objectName: "findPassage"
+        text: qsTr("Next")
+        icon.name: "go-down"
+        display: AbstractButton.IconOnly
+        onClicked: readingBar.findRequested(true)
+    }
+    ToolButton {
+        id: caseToggle
+        objectName: "searchCaseSensitive"
+        text: qsTr("Match case")
+        checkable: true
+        onCheckedChanged: readingBar.changed()
+    }
+    PlainLabel {
+        id: searchStatus
+        objectName: "searchStatus"
+        Layout.preferredWidth: Math.min(implicitWidth, Kirigami.Units.gridUnit * 12)
+        text: readingBar.query.length > 0
+            ? qsTr("%1 %2 of %3").arg(readingBar.search.status)
+                .arg(readingBar.search.matchIndex).arg(readingBar.search.matchCount)
+            : readingBar.search.status
+        elide: Text.ElideRight
+    }
+    PlainLabel {
+        visible: searchStatus.truncated && readingBar.query.length > 0
+        text: qsTr("%1 of %2").arg(readingBar.search.matchIndex).arg(readingBar.search.matchCount)
+    }
+    ToolButton {
+        objectName: "closePassageSearch"
+        text: qsTr("Close search")
+        icon.name: "window-close"
+        display: AbstractButton.IconOnly
+        onClicked: readingBar.visible = false
+    }
+    onVisibleChanged: changed()
 }

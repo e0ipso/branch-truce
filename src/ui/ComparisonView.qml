@@ -15,8 +15,9 @@ ColumnLayout {
     required property SelectedFile file
     required property EditActions edits
     readonly property bool inputMethodComposing: resultPane.editor.inputMethodComposing
-    readonly property bool wrapLines: readingBar.wrapLines
-    readonly property bool showWhitespace: readingBar.showWhitespace
+    property bool wrapLines: false
+    property bool showWhitespace: false
+    property bool showEarlier: false
     // Text panes never get shorter than this many lines; on a short window the page scrolls instead.
     property int minimumPaneLines: 8
     // Shows the raw lines of every conflict-marker block instead of folding them.
@@ -118,14 +119,19 @@ ColumnLayout {
     }
     // Selects the next passage the search finds and scrolls the panes to it, showing the
     // folded markers when it lies on them.
-    function findPassage(): void {
+    function openSearch(): void { readingBar.open() }
+    function updateSearch(): void {
+        passageSearch.update(readingBar.query, readingBar.caseSensitive, readingBar.visible)
+    }
+    function findPassage(forward: bool): void {
         const name = passageSearch.scope
-        const match = passageSearch.find(name, readingBar.query, true)
+        const match = passageSearch.find(name, readingBar.query, forward)
         if (match.begin < 0)
             return
         if (name === "result" && resultPane.blocks.hiddenWithin(match.begin, match.end))
             markersRevealed()
         editorNamed(name).select(match.begin, match.end)
+        updateSearch()
         panesByRole.follow(name)
     }
     PaneMarks { id: paneMarks }
@@ -398,14 +404,32 @@ ColumnLayout {
     PassageSearch {
         id: passageSearch
         panes: panesByRole
-        earlierShown: showEarlier.enabled && showEarlier.checked
+        earlierShown: comparison.showEarlier && !!comparison.file.earlier && !!comparison.file.earlier.available
+        onScopeIndexChanged: comparison.updateSearch()
     }
 
+    Shortcut {
+        sequence: StandardKey.Find
+        onActivated: comparison.openSearch()
+    }
+    Shortcut {
+        sequence: "Esc"
+        enabled: readingBar.visible
+        onActivated: readingBar.visible = false
+    }
+    Connections {
+        target: comparison.editorNamed(passageSearch.scope) as TextEdit
+        function onTextChanged(): void { comparison.updateSearch() }
+        function onSelectionStartChanged(): void { comparison.updateSearch() }
+        function onSelectionEndChanged(): void { comparison.updateSearch() }
+    }
     ReadingBar {
         id: readingBar
         Layout.fillWidth: true
         search: passageSearch
-        onFindRequested: comparison.findPassage()
+        visible: false
+        onChanged: comparison.updateSearch()
+        onFindRequested: forward => comparison.findPassage(forward)
     }
     // The panes, with each source pane's region choices laid over the column it keeps for
     // them. The choices take no height, so showing them never shortens the panes.
@@ -517,17 +541,11 @@ ColumnLayout {
             }
         }
     }
-    CheckBox {
-        id: showEarlier
-        objectName: "showEarlier"
-        enabled: !!comparison.file.earlier && !!comparison.file.earlier.available
-        text: enabled ? qsTr("Show common earlier version") : qsTr("Common earlier version unavailable")
-    }
     SourcePane {
         id: earlierPane
         Layout.fillWidth: true
         Layout.preferredHeight: Math.min(comparison.height / 3, Kirigami.Units.gridUnit * 10)
-        visible: showEarlier.enabled && showEarlier.checked
+        visible: comparison.showEarlier && !!comparison.file.earlier && !!comparison.file.earlier.available
         paneName: "earlier"
         paneRole: qsTr("Earlier-version context · read-only")
         source: comparison.file.earlier || ({})
