@@ -11,6 +11,7 @@ class PaneMarks : public QObject {
     QML_ELEMENT
 public:
     using QObject::QObject;
+    static int rank(const QString &kind);
     Q_INVOKABLE QVariantMap marks(const QString &pane, const QVariantList &passages,
         const QVariantList &regions, const QVariantList &edited, const QVariantList &blocks,
         const QVariantList &orphans) const;

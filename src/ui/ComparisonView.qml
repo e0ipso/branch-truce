@@ -80,14 +80,10 @@ ColumnLayout {
         }
         const sides = side === "result" ? ["stage2", "stage3"] : [side]
         for (let i = 0; i < sides.length; ++i) {
-            const bands = bandsFor(sides[i], file, markerFold)
-            for (let j = 0; j < bands.length; ++j) {
-                const band = bands[j]
-                const begin = side === "result" ? band.resultBegin : band.sourceBegin
-                const end = side === "result" ? band.resultEnd : band.sourceEnd
-                if (line >= begin && line < Math.max(begin + 1, end))
-                    return bandTarget(sides[i], band)
-            }
+            const projection = sides[i] === "stage2" ? leftBands : rightBands
+            const band = projection.bandForLine(line, side === "result")
+            if (band.kind)
+                return bandTarget(sides[i], band)
         }
         return null
     }
@@ -142,98 +138,31 @@ ColumnLayout {
     function navigationRanges(pane: string, target: var): var {
         return paneMarks.current(pane, target, controller.selectedFileId, file.passages, file.regions, resultPane.blocks)
     }
-    // The connector bands between one source and the result: one per
-    // non-equal passage of that side, in order, with its source and result
-    // lines as [begin, end) ranges. The kind follows the passage: the result
-    // changes the lines, adds a result-only passage's or drops a source-only
-    // one's. The state of a region of that side on the source lines, or on
-    // the boundary of an empty passage, outranks it as it does in the panes,
-    // and a passage that meets a conflict-marker block of the result is a
-    // conflict. The passages that meet a block the fold shows as one row, equal
-    // ones inside it too, make one conflict band from all their source lines
-    // to the whole block, which ends on that row.
-    function bandsFor(side: string, file: SelectedFile, fold: var): var {
-        const rank = {removed: 0, added: 1, changed: 2, accepted: 3, ignored: 3, manual: 3, conflict: 4}
-        const lines = {}
-        const boundaries = {}
-        const decide = function(states, line, kind) {
-            if (!states[line] || rank[states[line]] < rank[kind])
-                states[line] = kind
-        }
-        const regions = file.regions || []
-        for (let i = 0; i < regions.length; ++i) {
-            const region = regions[i]
-            if (region.side !== side)
-                continue
-            const kind = region.state === "undecided" ? "conflict" : region.state
-            if (region.sourceLineBegin === region.sourceLineEnd)
-                decide(boundaries, region.sourceLineBegin, kind)
-            for (let line = region.sourceLineBegin; line < region.sourceLineEnd; ++line)
-                decide(lines, line, kind)
-        }
-        const marked = file.markerBlocks || []
-        const inBlock = function(begin, end) {
-            for (let i = 0; i < marked.length; ++i) {
-                const first = marked[i].resultLineBegin
-                const stop = marked[i].resultLineEnd
-                if (begin < end ? begin < stop && first < end : begin > first && begin < stop)
-                    return true
-            }
-            return false
-        }
-        const rows = Object.keys(fold.rows).map(Number)
-        // The row of the folded block that the result lines [begin, end) meet, or 0.
-        const rowMeeting = function(begin, end) {
-            for (let i = 0; i < rows.length; ++i) {
-                const stop = fold.rows[rows[i]].last + 1
-                if (begin < end ? begin < stop && rows[i] < end : begin > rows[i] && begin < stop)
-                    return rows[i]
-            }
-            return 0
-        }
-        const folded = {}
-        const bands = []
-        const passages = file.passages || []
-        for (let i = 0; i < passages.length; ++i) {
-            const passage = passages[i]
-            if (passage.side !== side)
-                continue
-            const row = rowMeeting(passage.resultLineBegin, passage.resultLineEnd)
-            const stop = row > 0 ? fold.rows[row].last + 1 : 0
-            if (row > 0 && (passage.kind !== "equal"
-                    || passage.resultLineBegin > row && passage.resultLineEnd <= stop)) {
-                const band = folded[row]
-                if (band) {
-                    band.sourceBegin = Math.min(band.sourceBegin, passage.sourceLineBegin)
-                    band.sourceEnd = Math.max(band.sourceEnd, passage.sourceLineEnd)
-                    band.resultBegin = Math.min(band.resultBegin, passage.resultLineBegin)
-                    band.resultEnd = Math.max(band.resultEnd, passage.resultLineEnd)
-                } else {
-                    folded[row] = {kind: "conflict", sourceBegin: passage.sourceLineBegin,
-                        sourceEnd: passage.sourceLineEnd, resultBegin: Math.min(row, passage.resultLineBegin),
-                        resultEnd: Math.max(stop, passage.resultLineEnd)}
-                    bands.push(folded[row])
-                }
-                continue
-            }
-            if (passage.kind === "equal")
-                continue
-            const begin = passage.sourceLineBegin
-            const end = passage.sourceLineEnd
-            const states = begin === end ? boundaries : lines
-            let kind = passage.kind === "result-only" ? "added" : passage.kind === "source-only" ? "removed" : "changed"
-            for (let line = begin; line < Math.max(end, begin + 1); ++line) {
-                const state = states[line]
-                if (state && rank[state] > rank[kind])
-                    kind = state
-            }
-            if (rank[kind] < rank.conflict && inBlock(passage.resultLineBegin, passage.resultLineEnd))
-                kind = "conflict"
-            bands.push({kind: kind, sourceBegin: begin, sourceEnd: end,
-                resultBegin: passage.resultLineBegin, resultEnd: passage.resultLineEnd})
-        }
-        return bands
+    // Each projection follows the two text layouts and their scrolling positions.
+    component BandProjection: ConnectorBands {
+        required property SourcePane pane
+        side: pane.paneName
+        passages: comparison.file.passages || []
+        regions: comparison.file.regions || []
+        markerBlocks: comparison.file.markerBlocks || []
+        fold: comparison.markerFold
+        current: comparison.kept("current:band:" + pane.paneName,
+            comparison.navigationRanges(pane.paneName, comparison.decorationTarget))
+        sourceBlocks: pane.blocks
+        resultBlocks: resultPane.blocks
+        sourceParentY: pane.viewport.parent.y
+        resultParentY: resultPane.viewport.parent.y
+        sourceEditorY: pane.editor.y
+        resultEditorY: resultPane.editor.y
+        sourcePadding: pane.editor.topPadding
+        resultPadding: resultPane.editor.topPadding
+        sourceScroll: pane.viewport.contentY
+        resultScroll: resultPane.viewport.contentY
+        viewportHeight: pane.viewport.height
+        rule: Kirigami.Units.smallSpacing / 2
     }
+    BandProjection { id: leftBands; pane: leftPane }
+    BandProjection { id: rightBands; pane: rightPane }
     // The choice rows of one source pane, in line order: one per line where a scope starts.
     // A section owns the row on its first line. A line choice owns the row on its line unless
     // a section starts there; then it rides in that row's extras, as does any other scope
@@ -448,10 +377,7 @@ ColumnLayout {
                 id: connectorHandle
                 result: resultPane
                 source: connectorHandle.leftSide ? leftPane : rightPane
-                bands: comparison.kept("bands:" + connectorHandle.source.paneName,
-                    comparison.bandsFor(connectorHandle.source.paneName, comparison.file, comparison.markerFold))
-                current: comparison.kept("current:band:" + connectorHandle.source.paneName,
-                    comparison.navigationRanges(connectorHandle.source.paneName, comparison.decorationTarget))
+                projection: connectorHandle.leftSide ? leftBands : rightBands
                 onBandHovered: band => comparison.setHover(connectorHandle.source.paneName + "Band",
                     band ? comparison.bandTarget(connectorHandle.source.paneName, band) : null)
             }

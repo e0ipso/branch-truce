@@ -1657,6 +1657,12 @@ public:
                 const auto undone = "after undoing " + choice.name.toStdString();
                 expectBands(fixture, undone, "stage2", left);
                 expectBands(fixture, undone, "stage3", right);
+                CHECK(fixture.controller.redo("choices", QString::number(fixture.file().current().id)));
+                expectBands(fixture, "after redo", "stage2", choice.left);
+                expectBands(fixture, "after redo", "stage3", choice.right);
+                CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
+                expectBands(fixture, "after undoing redo", "stage2", left);
+                expectBands(fixture, "after undoing redo", "stage3", right);
             }
         });
         suite.run("hover raises counterpart backgrounds and connector bands", [] {

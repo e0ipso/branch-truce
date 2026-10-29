@@ -2,8 +2,10 @@
 #include "TestHarness.h"
 #include "ui/TextBlocks.h"
 #include "ui/PaneMarks.h"
+#include "ui/ConnectorBands.h"
 #include <QAbstractTextDocumentLayout>
 #include <QGuiApplication>
+#include <QFont>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -108,6 +110,43 @@ int main(int argc, char **argv)
         block.insert("folded", false);
         ineligible[0] = block;
         CHECK(marks.folds(ineligible, false).value("hidden").toList().isEmpty());
+    });
+    suite.run("connector bands clip offscreen and follow layout", [] {
+        Pane source(QStringLiteral("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"), {});
+        Pane result(QStringLiteral("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"), {});
+        branch_truce::ConnectorBands bands;
+        bands.setSide(QStringLiteral("stage2"));
+        bands.setSourceBlocks(&source.blocks);
+        bands.setResultBlocks(&result.blocks);
+        bands.setViewportHeight(source.blocks.yAtLine(4));
+        bands.setPassages({QVariantMap{{"side", "stage2"}, {"kind", "changed"},
+            {"sourceLineBegin", 2}, {"sourceLineEnd", 3}, {"resultLineBegin", 2}, {"resultLineEnd", 3}},
+            QVariantMap{{"side", "stage2"}, {"kind", "changed"},
+            {"sourceLineBegin", 9}, {"sourceLineEnd", 10}, {"resultLineBegin", 9}, {"resultLineEnd", 10}}});
+        bands.setRegions({QVariantMap{{"side", "stage2"}, {"state", "accepted"},
+            {"sourceLineBegin", 2}, {"sourceLineEnd", 3}}});
+        CHECK(bands.bands().size() == 2);
+        CHECK(bands.visibleBands().size() == 1);
+        CHECK(bands.visibleBands().first().toMap().value("kind").toString() == "accepted");
+        bands.setMarkerBlocks({QVariantMap{{"resultLineBegin", 2}, {"resultLineEnd", 4}}});
+        bands.setFold(QVariantMap{{"rows", QVariantMap{{"2", QVariantMap{{"last", 3}}}}}});
+        const auto folded = bands.bands().first().toMap();
+        CHECK(folded.value("kind").toString() == "conflict");
+        CHECK(folded.value("resultBegin").toInt() == 2 && folded.value("resultEnd").toInt() == 4);
+        bands.setFold({});
+        bands.setMarkerBlocks({});
+        const qreal scroll = source.blocks.yAtLine(8);
+        bands.setSourceScroll(scroll);
+        bands.setResultScroll(scroll);
+        CHECK(bands.visibleBands().size() == 1);
+        CHECK(bands.visibleBands().first().toMap().value("sourceBegin").toInt() == 9);
+        const qreal before = bands.visibleBands().first().toMap().value("sourceTop").toReal();
+        auto font = source.editor->property("font").value<QFont>();
+        font.setPointSizeF(font.pointSizeF() * 1.5);
+        CHECK(source.editor->setProperty("font", font));
+        QCoreApplication::processEvents();
+        CHECK(!bands.visibleBands().isEmpty());
+        CHECK(!near(before, bands.visibleBands().first().toMap().value("sourceTop").toReal()));
     });
     suite.run("TRUCE-0221 Down crosses folded lines and keeps the column", [] {
         Pane pane(between, {2, 3});

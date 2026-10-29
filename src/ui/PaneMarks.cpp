@@ -9,7 +9,8 @@ namespace branch_truce {
 namespace {
 int number(const QVariantMap &map, const char *key) { return map.value(QLatin1String(key)).toInt(); }
 QString string(const QVariantMap &map, const char *key) { return map.value(QLatin1String(key)).toString(); }
-int rank(const QString &kind)
+}
+int PaneMarks::rank(const QString &kind)
 {
     if (kind == QLatin1String("markers")) return 5;
     if (kind == QLatin1String("conflict")) return 4;
@@ -18,6 +19,7 @@ int rank(const QString &kind)
     if (kind == QLatin1String("added")) return 1;
     return 0;
 }
+namespace {
 QVariantList range(int first, int end) { return {first, end}; }
 }
 QVariantMap PaneMarks::marks(const QString &pane, const QVariantList &passages, const QVariantList &regions,

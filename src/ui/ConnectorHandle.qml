@@ -20,88 +20,21 @@ Item {
     // leftSide picks the source: the left pane, or the right one once placed.
     required property SourcePane source
     // The source's connector bands, in order at both ends.
-    required property var bands
-    required property var current
+    required property ConnectorBands projection
     signal bandHovered(var band)
-    function isCurrent(band: var): bool {
-        for (let i = 0; i < current.length; ++i) {
-            const range = current[i]
-            if (band.sourceBegin < Math.max(range[1], range[0] + 1)
-                    && range[0] < Math.max(band.sourceEnd, band.sourceBegin + 1))
-                return true
-        }
-        return false
-    }
     function bandAt(point: point): var {
-        const y = point.y - source.viewport.parent.y
-        const ratio = leftSide ? point.x / width : 1 - point.x / width
-        for (let i = firstShown; i < endShown; ++i) {
-            const band = bands[i]
-            const top = edge(true, band.sourceBegin, band.sourceEnd, false, layoutRevision) * (1 - ratio)
-                + edge(false, band.resultBegin, band.resultEnd, false, layoutRevision) * ratio
-            const bottom = edge(true, band.sourceBegin, band.sourceEnd, true, layoutRevision) * (1 - ratio)
-                + edge(false, band.resultBegin, band.resultEnd, true, layoutRevision) * ratio
-            if (y >= top && y <= bottom)
-                return band
-        }
-        return null
+        const band = projection.bandAt(point.x, point.y, width, leftSide)
+        return band.kind ? band : null
     }
     HoverHandler {
         onHoveredChanged: connector.bandHovered(hovered ? connector.bandAt(point.position) : null)
         onPointChanged: if (hovered) connector.bandHovered(connector.bandAt(point.position))
-    }
-    // Counts relayouts of either pane's text, so the band ends follow them.
-    property int layoutRevision: 0
-    readonly property real rule: Kirigami.Units.smallSpacing / 2
-    readonly property int firstShown: shownIndex(false, layoutRevision)
-    readonly property int endShown: shownIndex(true, layoutRevision)
-    // The y in the bands of the top, or the bottom, of lines [begin, end)
-    // of the source or of the result. revision is layoutRevision, so a
-    // binding follows relayouts.
-    function edge(inSource: bool, begin: int, end: int, bottom: bool, revision: int): real {
-        const viewport = inSource ? source.viewport : result.viewport
-        const editor = inSource ? source.editor : result.editor
-        const blocks = inSource ? source.blocks : result.blocks
-        const y = viewport.parent.y - source.viewport.parent.y + editor.y + editor.topPadding
-            + blocks.yAtLine(bottom ? end : begin) - viewport.contentY
-        return begin < end ? y : y + (bottom ? rule : -rule) / 2
-    }
-    // The index of the first band not wholly above the view, or with
-    // below set, of the first band wholly below it. Both ends of the
-    // bands are in order, so each of those is a run at one end.
-    function shownIndex(below: bool, revision: int): int {
-        const extent = below ? source.viewport.height : 0
-        const sourceLine = source.blocks.lineAtY(source.viewport.contentY + extent
-            - source.editor.y - source.editor.topPadding)
-        const resultLine = result.blocks.lineAtY(result.viewport.contentY + extent
-            - result.editor.y - result.editor.topPadding)
-        let low = 0
-        let high = bands.length
-        while (low < high) {
-            const middle = (low + high) >> 1
-            const band = bands[middle]
-            const found = below ? band.sourceBegin > sourceLine && band.resultBegin > resultLine
-                : band.sourceEnd >= sourceLine || band.resultEnd >= resultLine
-            if (found)
-                high = middle
-            else
-                low = middle + 1
-        }
-        return low
     }
     objectName: source.paneName + "Connector"
     implicitWidth: Kirigami.Units.gridUnit
     Kirigami.Theme.colorSet: Kirigami.Theme.View
     Kirigami.Theme.inherit: false
     Accessible.ignored: true
-    Connections {
-        target: connector.source.blocks
-        function onLayoutChanged(): void { ++connector.layoutRevision }
-    }
-    Connections {
-        target: connector.result.blocks
-        function onLayoutChanged(): void { ++connector.layoutRevision }
-    }
     Rectangle {
         anchors.fill: parent
         color: Kirigami.Theme.highlightColor
@@ -116,7 +49,7 @@ Item {
         clip: true
         enabled: false
         Repeater {
-            model: connector.bands.slice(connector.firstShown, connector.endShown)
+            model: connector.projection.visibleBands
             delegate: Shape {
                 id: band
                 required property var modelData
@@ -125,18 +58,14 @@ Item {
                 // default Window set instead of inheriting the handle's View set.
                 Kirigami.Theme.colorSet: Kirigami.Theme.View
                 Kirigami.Theme.inherit: false
-                readonly property real sourceTop: connector.edge(true, modelData.sourceBegin,
-                    modelData.sourceEnd, false, connector.layoutRevision)
-                readonly property real sourceBottom: connector.edge(true, modelData.sourceBegin,
-                    modelData.sourceEnd, true, connector.layoutRevision)
-                readonly property real resultTop: connector.edge(false, modelData.resultBegin,
-                    modelData.resultEnd, false, connector.layoutRevision)
-                readonly property real resultBottom: connector.edge(false, modelData.resultBegin,
-                    modelData.resultEnd, true, connector.layoutRevision)
+                readonly property real sourceTop: modelData.sourceTop
+                readonly property real sourceBottom: modelData.sourceBottom
+                readonly property real resultTop: modelData.resultTop
+                readonly property real resultBottom: modelData.resultBottom
                 readonly property real sourceX: connector.leftSide ? 0 : width
                 readonly property real resultX: width - sourceX
                 // Current passages use the highlight; others use their kind's text-role tint.
-                readonly property bool current: connector.isCurrent(modelData)
+                readonly property bool current: modelData.current
                 readonly property color fill: current ? Kirigami.Theme.highlightColor : DiffStyle.textColor(kind, band)
                 width: bandLayer.width
                 height: bandLayer.height
