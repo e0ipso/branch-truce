@@ -339,7 +339,7 @@ ColumnLayout {
     }
 
     Shortcut {
-        sequence: StandardKey.Find
+        sequences: [StandardKey.Find]
         onActivated: comparison.openSearch()
     }
     Shortcut {
