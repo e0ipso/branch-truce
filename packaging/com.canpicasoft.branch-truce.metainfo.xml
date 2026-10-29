@@ -3,6 +3,10 @@
   <id>com.canpicasoft.branch-truce</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
+  <developer>
+    <name>Branch Truce contributors</name>
+  </developer>
+  <url type="homepage">https://github.com/e0ipso/branch-truce</url>
   <name>Branch Truce</name>
   <summary>Resolve Git merge and rebase text conflicts offline</summary>
   <description>

@@ -109,8 +109,7 @@ runpath=$(readelf -d "$installed" | sed -n 's/.*(\(RPATH\|RUNPATH\)).*\[\(.*\)\]
 echo "RUNPATH: ${runpath:-none}"
 [[ "$runpath" != *"$fixture"* ]] || fail "RUNPATH points into the fixture"
 run desktop-file-validate "$prefix/share/applications/$app_id.desktop"
-# No public homepage exists yet; keep that one finding visible as info.
-run appstreamcli validate --no-net --override=url-homepage-missing=info \
+run appstreamcli validate --no-net \
     "$prefix/share/metainfo/$app_id.metainfo.xml"
 pass "desktop entry and metainfo validate"
 

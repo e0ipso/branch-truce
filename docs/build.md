@@ -292,9 +292,9 @@ The session socket sits in the fixture's `XDG_RUNTIME_DIR`, under
 `/tmp/branch-truce-<uid>`, outside the fixture, so the script refuses such a
 fixture path.
 
-The metainfo has no homepage or developer yet. `appstreamcli` reports
-`url-homepage-missing` as a warning, which the script downgrades to info so
-the finding stays visible. The ID's `local` TLD is reported as info.
+The metainfo identifies Branch Truce contributors as the developer, links to
+the project homepage, and declares GPL-3.0-or-later as the project license.
+The validators run without suppressing missing-homepage warnings.
 
 On 2026-10-25 every step above passed on the development host: four files
 deployed, `RUNPATH` `$ORIGIN:$ORIGIN/../lib/x86_64-linux-gnu`, both validators

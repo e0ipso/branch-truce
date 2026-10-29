@@ -333,7 +333,7 @@ container_main() {
 
     step "Desktop metadata"
     desktop-file-validate "/usr/share/applications/$app_id.desktop" && pass "desktop entry" || fail "desktop entry"
-    appstreamcli validate --no-net --override=url-homepage-missing=info \
+    appstreamcli validate --no-net \
         "/usr/share/metainfo/$app_id.metainfo.xml" && pass "metainfo" || fail "metainfo"
 
     step "Application icon"
