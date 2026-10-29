@@ -25,8 +25,6 @@ ColumnLayout {
     required property var combinations
     // Whether the file takes choices now: it can be edited and no input is composing.
     required property bool choosing
-    // The height every aligned pane gives its header, so the texts start on one row.
-    required property real headerHeight
     required property real tabStop
     required property bool wrapLines
     required property bool showWhitespace
@@ -35,7 +33,6 @@ ColumnLayout {
     property alias editor: resultEditor
     property alias viewport: resultViewport
     property alias blocks: resultBlocks
-    readonly property real headerImplicitHeight: resultHeader.implicitHeight
     // byUser is set while the user scrolls the pane: dragging, flicking or the wheel, its
     // scroll bar, or keyboard focus in its text.
     signal lineHovered(int line)
@@ -56,21 +53,12 @@ ColumnLayout {
         else
             resultEditor.cursorPosition = target
     }
-    RowLayout {
-        id: resultHeader
+    PaneHeader {
         Layout.fillWidth: true
-        Layout.preferredHeight: resultPane.headerHeight
-        PlainLabel {
-            objectName: "resultLabel"
-            Layout.fillWidth: true
-            text: qsTr("Editable result · App draft")
-            Accessible.description: qsTr("Initial content and your edits are kept")
-        }
-        PlainLabel {
-            Layout.maximumWidth: resultPane.width / 2
-            text: qsTr("Initial content and your edits are kept")
-            color: Kirigami.Theme.disabledTextColor
-        }
+        titleName: "resultLabel"
+        title: qsTr("Editable result · App draft")
+        identity: qsTr("Initial content and your edits are kept")
+        description: identity
     }
     Item {
         Layout.fillWidth: true

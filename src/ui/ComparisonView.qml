@@ -15,8 +15,6 @@ ColumnLayout {
     required property SelectedFile file
     required property EditActions edits
     readonly property bool inputMethodComposing: resultPane.editor.inputMethodComposing
-    readonly property real headerHeight: Math.max(leftPane.headerImplicitHeight,
-        resultPane.headerImplicitHeight, rightPane.headerImplicitHeight)
     readonly property bool wrapLines: readingBar.wrapLines
     readonly property bool showWhitespace: readingBar.showWhitespace
     // Text panes never get shorter than this many lines; on a short window the page scrolls instead.
@@ -589,7 +587,6 @@ ColumnLayout {
                 marks: comparison.kept("marks:stage2", comparison.marksFor(leftPane.paneName, comparison.file))
                 current: comparison.kept("current:stage2", comparison.currentFor(leftPane.paneName,
                     comparison.decorationTarget, comparison.file))
-                headerHeight: comparison.headerHeight
                 tabStop: comparison.tabStop
                 wrapLines: comparison.wrapLines
                 showWhitespace: comparison.showWhitespace
@@ -614,7 +611,6 @@ ColumnLayout {
                 choosing: comparison.choosing
                 onChoiceChosen: (target, action) => comparison.choiceChosen(target, action)
                 onChoiceFocused: (target, active) => comparison.setFocus(target, active)
-                headerHeight: comparison.headerHeight
                 tabStop: comparison.tabStop
                 wrapLines: comparison.wrapLines
                 showWhitespace: comparison.showWhitespace
@@ -634,7 +630,6 @@ ColumnLayout {
                 marks: comparison.kept("marks:stage3", comparison.marksFor(rightPane.paneName, comparison.file))
                 current: comparison.kept("current:stage3", comparison.currentFor(rightPane.paneName,
                     comparison.decorationTarget, comparison.file))
-                headerHeight: comparison.headerHeight
                 tabStop: comparison.tabStop
                 wrapLines: comparison.wrapLines
                 showWhitespace: comparison.showWhitespace
@@ -680,14 +675,12 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.preferredHeight: Math.min(comparison.height / 3, Kirigami.Units.gridUnit * 10)
         visible: showEarlier.enabled && showEarlier.checked
-        alignHeader: false
         paneName: "earlier"
         paneRole: qsTr("Earlier-version context · read-only")
         source: comparison.file.earlier || ({})
         marks: comparison.kept("marks:earlier", comparison.marksFor(earlierPane.paneName, comparison.file))
         current: comparison.kept("current:earlier", comparison.currentFor(earlierPane.paneName,
             comparison.decorationTarget, comparison.file))
-        headerHeight: comparison.headerHeight
         tabStop: comparison.tabStop
         wrapLines: comparison.wrapLines
         showWhitespace: comparison.showWhitespace

@@ -9,6 +9,7 @@
 #include <QAccessible>
 #include <QApplication>
 #include <algorithm>
+#include <atomic>
 #include <optional>
 #include <QClipboard>
 #include <QColor>
@@ -46,6 +47,25 @@ using test_support::paintedMarkers;
 using test_support::settle;
 using test_support::settleFor;
 using test_support::visualLines;
+
+std::atomic_bool recursiveHeaderWarning{false};
+QtMessageHandler previousHeaderHandler = nullptr;
+
+void headerWarningHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
+{
+    if (message.contains(QStringLiteral("Detected recursive rearrange"))) recursiveHeaderWarning = true;
+    if (previousHeaderHandler) previousHeaderHandler(type, context, message);
+}
+
+class HeaderWarningCapture {
+public:
+    HeaderWarningCapture()
+    {
+        recursiveHeaderWarning = false;
+        previousHeaderHandler = qInstallMessageHandler(headerWarningHandler);
+    }
+    ~HeaderWarningCapture() { qInstallMessageHandler(previousHeaderHandler); }
+};
 
 class Fixture {
 public:
@@ -815,6 +835,15 @@ public:
         Group suite(results, selection == Selection::All || selection == Selection::Scenes);
         Group boundary(results, selection == Selection::All || selection == Selection::Boundary);
         Group display(results, selection == Selection::Display);
+        suite.run("pane headers do not rearrange recursively", [] {
+            HeaderWarningCapture capture;
+            Fixture fixture;
+            fixture.window->resize(960, 540);
+            settle([&] { return fixture.item("stage2Label")->width() > 0; });
+            fixture.window->resize(1500, 1100);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            CHECK(!recursiveHeaderWarning.load());
+        });
         suite.run("TRUCE-0020 actual comparison keeps verified sources around the editable launch result", [] {
             const std::string launch = "manual launch UTF-8 \xc3\xa9 \xf0\x9f\x98\x80\n";
             Fixture fixture(test_support::choiceFile("left capture\n", "right capture\n", launch));
@@ -926,7 +955,7 @@ public:
             CHECK(fixture.item("showSourceChoices")->setProperty("checked", false));
             settle([&] { return !fixture.item("scopedChoices")->isVisible(); });
             CHECK(fixture.item("showEarlier")->setProperty("checked", false));
-            auto *pane = fixture.item("stage2Label")->parentItem()->parentItem();
+            auto *pane = fixture.item("stage2Viewport")->parentItem()->parentItem();
             const auto width = pane->width();
             QQmlExpression resize(qmlContext(pane), pane,
                 QStringLiteral("SplitView.preferredWidth = %1").arg(width + 80));

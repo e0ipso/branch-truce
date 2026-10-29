@@ -16,8 +16,6 @@ ColumnLayout {
     // Line marks for the gutter and backgrounds, and the navigation target's line ranges.
     required property var marks
     required property var current
-    // The height every aligned pane gives its header, so the texts start on one row.
-    required property real headerHeight
     required property real tabStop
     required property bool wrapLines
     required property bool showWhitespace
@@ -26,12 +24,10 @@ ColumnLayout {
     property alias editor: sourceText
     property alias viewport: sourceViewport
     property alias blocks: sourceBlocks
-    property bool alignHeader: true
     // The edge that faces the result, "left" or "right", for the choice column; none without it.
     property string choiceEdge: ""
     property real choiceWidth: 0
     readonly property alias choiceSlot: choiceColumn
-    readonly property real headerImplicitHeight: sourceHeaderRow.implicitHeight
     // Full identities remain in the labels and their elision tooltips.
     readonly property string commitId: sourcePane.source.commitId || ""
     readonly property string fullIdentity: qsTr("Verified commit: %1\nCaptured blob: %2")
@@ -42,30 +38,14 @@ ColumnLayout {
     signal lineHovered(int line)
     signal scrolled(bool byUser)
     signal editorCompleted()
-    RowLayout {
-        id: sourceHeaderRow
+    PaneHeader {
         Layout.fillWidth: true
-        Layout.preferredHeight: sourcePane.alignHeader ? sourcePane.headerHeight : implicitHeight
-        Layout.rightMargin: Kirigami.Units.largeSpacing
-        spacing: Kirigami.Units.largeSpacing
-        PlainLabel {
-            id: sourceHeader
-            objectName: sourcePane.paneName + "Label"
-            Layout.fillWidth: true
-            text: sourcePane.paneRole + " · "
-                + (sourcePane.source.label || qsTr("Source identity unavailable"))
-            elide: Text.ElideRight
-            Accessible.description: sourcePane.fullIdentity
-        }
-        PlainLabel {
-            objectName: sourcePane.paneName + "Identity"
-            Layout.maximumWidth: sourceHeaderRow.width / 2
-            text: qsTr("Captured blob: %1").arg(sourcePane.source.objectId
-                ? sourcePane.source.objectId : qsTr("unavailable"))
-            elide: Text.ElideRight
-            color: Kirigami.Theme.disabledTextColor
-            Accessible.description: sourcePane.fullIdentity
-        }
+        titleName: sourcePane.paneName + "Label"
+        title: sourcePane.paneRole + " · "
+            + (sourcePane.source.label || qsTr("Source identity unavailable"))
+        identityName: sourcePane.paneName + "Identity"
+        identity: qsTr("Captured blob: %1").arg(sourcePane.source.objectId || qsTr("unavailable"))
+        description: sourcePane.fullIdentity
     }
     Item {
         Layout.fillWidth: true
