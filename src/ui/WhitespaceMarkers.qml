@@ -44,6 +44,10 @@ Item {
     onActiveChanged: schedule()
     Component.onCompleted: schedule()
     Connections {
+        target: markers.blocks
+        function onLayoutChanged(): void { markers.schedule() }
+    }
+    Connections {
         target: markers.editor
         function onTextChanged(): void { markers.schedule() }
         function onWidthChanged(): void { markers.schedule() }

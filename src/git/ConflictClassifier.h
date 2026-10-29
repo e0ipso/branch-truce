@@ -18,6 +18,8 @@ struct Conflict {
     QList<ConvertedText> sources; // Present only after every available stage passes.
     std::optional<storage::TextDocument> result; // Preserves launch-time manual edits.
     std::optional<SnapshotFileIdentity> resultIdentity; // Same stable read as result.
+    // Display-only size from the stable launch read, retained even if text admission fails.
+    qint64 launchSize = -1;
     [[nodiscard]] bool editable() const { return support == ConflictSupport::SupportedText; }
 };
 struct ConflictClassificationRequest {

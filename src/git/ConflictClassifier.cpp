@@ -223,6 +223,7 @@ public:
             auto &conflict = result.conflicts[offset];
             if (conflict.editable()) {
                 const auto read = readResult(result.repository.worktreeRoot, conflict.path, launchBytes, launchIdentity);
+                if (read == ResultRead::Success) conflict.launchSize = launchIdentity.size;
                 const auto envelope = read == ResultRead::Success ? textEnvelopeFailure(launchBytes) : QString{};
                 if (read == ResultRead::Success && envelope.isEmpty()) {
                     source = 0;

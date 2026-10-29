@@ -4,9 +4,11 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import BranchTruce.App
+import QtQuick.Controls
+import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
-Kirigami.ActionToolBar {
+RowLayout {
     id: mainToolBar
     required property ApplicationController controller
     signal handoffRequested()
@@ -16,98 +18,83 @@ Kirigami.ActionToolBar {
         return progress ? Number(progress.undecided) : 0
     }
     objectName: "mainToolBar"
-    actions: [
-        NamedAction {
-            controlName: "openHandoff"
-            text: qsTr("Review handoff…")
-            icon.name: "merge"
-            displayHint: Kirigami.DisplayHint.KeepVisible
-            onTriggered: mainToolBar.handoffRequested()
-        },
-        NamedAction {
-            controlName: "previousDifference"
-            text: qsTr("Previous difference")
-            icon.name: "go-previous"
-            iconOnly: true
-            onTriggered: mainToolBar.controller.navigate(FileNavigator.Difference, -1)
-        },
-        NamedAction {
-            controlName: "nextDifference"
-            text: qsTr("Next difference")
-            icon.name: "go-next"
-            iconOnly: true
-            onTriggered: mainToolBar.controller.navigate(FileNavigator.Difference, 1)
-        },
-        NamedAction {
-            controlName: "previousUndecided"
-            text: qsTr("Previous undecided")
-            icon.name: "arrow-up"
-            iconOnly: true
-            enabled: mainToolBar.undecided > 0
-            onTriggered: mainToolBar.controller.navigate(FileNavigator.Undecided, -1)
-        },
-        // The count of undecided choices left in the selected file. Clicking it goes to the
-        // next one, and it drops as choices are decided.
-        NamedAction {
-            controlName: "undecidedCounter"
-            text: mainToolBar.undecided > 0 ? qsTr("%n undecided", "", mainToolBar.undecided)
-                                            : qsTr("Nothing undecided")
-            tooltip: mainToolBar.undecided > 0 ? qsTr("Go to the next undecided choice in this file")
-                                               : qsTr("No undecided choices to step through")
-            icon.name: "vcs-conflicting"
-            displayHint: Kirigami.DisplayHint.KeepVisible
-            enabled: mainToolBar.undecided > 0
-            onTriggered: mainToolBar.controller.navigate(FileNavigator.Undecided, 1)
-        },
-        NamedAction {
-            controlName: "nextUndecided"
-            text: qsTr("Next undecided")
-            icon.name: "arrow-down"
-            iconOnly: true
-            enabled: mainToolBar.undecided > 0
-            onTriggered: mainToolBar.controller.navigate(FileNavigator.Undecided, 1)
-        },
-        MenuAction {
-            controlName: "navigateMenu"
-            text: qsTr("Navigate")
-            tooltip: qsTr("Move between unfinished, saved or reviewed files")
-            icon.name: "go-jump"
-            MenuEntry {
-                controlName: "previousUnfinished"
-                text: qsTr("Previous unfinished file")
-                icon.name: "go-previous-skip"
-                onTriggered: mainToolBar.controller.navigate(FileNavigator.Unfinished, -1)
+    spacing: Kirigami.Units.smallSpacing
+    Item { Layout.fillWidth: true }
+    Frame {
+        objectName: "conflictStepper"
+        padding: 0
+        contentItem: RowLayout {
+            spacing: 0
+            ToolButton {
+                objectName: "previousUndecided"
+                text: qsTr("Previous conflict")
+                icon.name: "arrow-up"
+                display: AbstractButton.IconOnly
+                enabled: mainToolBar.undecided > 0
+                Accessible.name: text
+                ToolTip.text: text
+                ToolTip.visible: hovered
+                ToolTip.delay: Kirigami.Units.toolTipDelay
+                onClicked: mainToolBar.controller.navigate(FileNavigator.Undecided, -1)
             }
-            MenuEntry {
-                controlName: "nextUnfinished"
-                text: qsTr("Next unfinished file")
-                icon.name: "go-next-skip"
-                onTriggered: mainToolBar.controller.navigate(FileNavigator.Unfinished, 1)
+            Kirigami.Separator { Layout.fillHeight: true }
+            ToolButton {
+                objectName: "undecidedCounter"
+                text: mainToolBar.undecided > 0 ? (mainToolBar.undecided === 1 ? qsTr("%n conflict left", "", mainToolBar.undecided) : qsTr("%n conflicts left", "", mainToolBar.undecided))
+                                                : qsTr("No conflicts to step through")
+                icon.name: "vcs-conflicting"
+                enabled: mainToolBar.undecided > 0
+                Accessible.name: text
+                onClicked: mainToolBar.controller.navigate(FileNavigator.Undecided, 1)
             }
-            MenuEntry {
-                controlName: "previousSavedOrReviewed"
-                text: qsTr("Previous saved or reviewed")
-                icon.name: "go-up"
-                onTriggered: mainToolBar.controller.navigate(FileNavigator.SavedOrReviewed, -1)
+            Kirigami.Separator { Layout.fillHeight: true }
+            ToolButton {
+                objectName: "nextUndecided"
+                text: qsTr("Next conflict")
+                icon.name: "arrow-down"
+                display: AbstractButton.IconOnly
+                enabled: mainToolBar.undecided > 0
+                Accessible.name: text
+                ToolTip.text: text
+                ToolTip.visible: hovered
+                ToolTip.delay: Kirigami.Units.toolTipDelay
+                onClicked: mainToolBar.controller.navigate(FileNavigator.Undecided, 1)
             }
-            MenuEntry {
-                controlName: "nextSavedOrReviewed"
-                text: qsTr("Next saved or reviewed")
-                icon.name: "go-down"
-                onTriggered: mainToolBar.controller.navigate(FileNavigator.SavedOrReviewed, 1)
-            }
-        },
-        // Checked while the list shows; the name stays "Show file list" as the text changes.
-        NamedAction {
-            controlName: "toggleFileList"
-            text: mainToolBar.controller.fileListVisible ? qsTr("Hide file list") : qsTr("Show file list")
-            accessibleName: qsTr("Show file list")
-            icon.name: "sidebar-expand-left"
-            iconOnly: true
-            displayHint: Kirigami.DisplayHint.KeepVisible
-            toggle: true
-            checked: mainToolBar.controller.fileListVisible
-            onTriggered: mainToolBar.controller.toggleFileList()
         }
-    ]
+    }
+    Kirigami.Separator { Layout.fillHeight: true }
+    ToolButton {
+        objectName: "previousUnfinished"
+        text: qsTr("Previous file")
+        icon.name: "go-previous-skip"
+        Accessible.name: text
+        onClicked: mainToolBar.controller.navigate(FileNavigator.Unfinished, -1)
+    }
+    ToolButton {
+        objectName: "nextUnfinished"
+        text: qsTr("Next file")
+        icon.name: "go-next-skip"
+        Accessible.name: text
+        onClicked: mainToolBar.controller.navigate(FileNavigator.Unfinished, 1)
+    }
+    Kirigami.Separator { Layout.fillHeight: true }
+    ToolButton {
+        objectName: "openHandoff"
+        text: qsTr("Review handoff…")
+        icon.name: "documentinfo"
+        Accessible.name: text
+        onClicked: mainToolBar.handoffRequested()
+    }
+    readonly property MenuAction applicationMenu: MenuAction {
+        controlName: "navigateMenu"
+        text: qsTr("Navigate")
+        tooltip: qsTr("Move between differences and saved or reviewed files")
+        icon.name: "application-menu"
+        iconOnly: true
+        MenuEntry { controlName: "previousDifference"; text: qsTr("Previous difference"); icon.name: "go-previous"; onTriggered: mainToolBar.controller.navigate(FileNavigator.Difference, -1) }
+        MenuEntry { controlName: "nextDifference"; text: qsTr("Next difference"); icon.name: "go-next"; onTriggered: mainToolBar.controller.navigate(FileNavigator.Difference, 1) }
+        MenuEntry { controlName: "previousSavedOrReviewed"; text: qsTr("Previous saved or reviewed"); icon.name: "go-up"; onTriggered: mainToolBar.controller.navigate(FileNavigator.SavedOrReviewed, -1) }
+        MenuEntry { controlName: "nextSavedOrReviewed"; text: qsTr("Next saved or reviewed"); icon.name: "go-down"; onTriggered: mainToolBar.controller.navigate(FileNavigator.SavedOrReviewed, 1) }
+    }
+    Loader { sourceComponent: mainToolBar.applicationMenu.displayComponent }
 }

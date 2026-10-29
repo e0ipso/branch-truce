@@ -11,6 +11,7 @@ import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: resultPane
+    spacing: 0
     required property ApplicationController controller
     required property SelectedFile file
     required property EditActions edits
@@ -56,8 +57,8 @@ ColumnLayout {
     PaneHeader {
         Layout.fillWidth: true
         titleName: "resultLabel"
-        title: qsTr("Editable result · App draft")
-        identity: qsTr("Initial content and your edits are kept")
+        title: qsTr("Result")
+        identity: qsTr("Editable")
         description: identity
     }
     Item {
@@ -72,6 +73,8 @@ ColumnLayout {
             Kirigami.Theme.colorSet: Kirigami.Theme.View
             Kirigami.Theme.inherit: false
             anchors.fill: parent
+            anchors.leftMargin: Kirigami.Units.smallSpacing
+            anchors.rightMargin: Kirigami.Units.smallSpacing
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.horizontal: ScrollBar {}
@@ -110,11 +113,17 @@ ColumnLayout {
                     disabled: Kirigami.Theme.disabledTextColor
                 })
                 tabStopDistance: resultPane.tabStop
-                leftPadding: resultGutter.width + Kirigami.Units.smallSpacing
+                leftPadding: resultGutter.width + Kirigami.Units.largeSpacing
+                rightPadding: Kirigami.Units.smallSpacing
+                topPadding: Kirigami.Units.smallSpacing
+                bottomPadding: Kirigami.Units.smallSpacing
                 width: resultPane.wrapLines ? resultViewport.width : implicitWidth
                 wrapMode: resultPane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                 Accessible.name: qsTr("Editable result")
                 Component.onCompleted: resultPane.controller.attachResultEditor(resultEditor)
+                // A document replacement must be spaced before the adapter restores
+                // its cursor and viewport against the new layout.
+                onTextChanged: resultBlocks.flushSpacing()
                 onCursorPositionChanged: resultBlocks.queueCursorCheck()
                 // Settle earlier cursor changes before recording this key's starting column.
                 // The editor still handles the key; the blocks note where it takes the cursor.
@@ -152,6 +161,7 @@ ColumnLayout {
                 width: implicitWidth
                 height: Math.max(resultEditor.height, resultViewport.height)
                 editor: resultEditor
+                rowSpacing: Kirigami.Units.smallSpacing
                 viewport: resultViewport
                 provenance: true
                 marks: resultPane.marks
@@ -169,7 +179,7 @@ ColumnLayout {
         }
         WhitespaceMarkers {
             objectName: "resultWhitespace"
-            anchors.fill: parent
+            anchors.fill: resultViewport
             anchors.leftMargin: resultGutter.width
             editor: resultEditor
             viewport: resultViewport
@@ -180,6 +190,7 @@ ColumnLayout {
     TextBlocks {
         id: resultBlocks
         document: resultEditor.textDocument
+        rowSpacing: Kirigami.Units.smallSpacing
         hidden: resultPane.fold.hidden
         // A fold can hide the line the cursor is on.
         onLayoutChanged: resultBlocks.queueCursorCheck()

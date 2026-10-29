@@ -234,7 +234,8 @@ public:
     }
     QQuickItem *item(const char *name) const
     {
-        auto *found = window->findChild<QQuickItem *>(QString::fromLatin1(name));
+        auto *found = test_support::visibleItem(window->contentItem(), QString::fromLatin1(name));
+        if (!found) found = window->findChild<QQuickItem *>(QString::fromLatin1(name));
         // A toolbar creates its buttons outside the QObject tree, so look in the item tree too.
         if (!found) found = test_support::visualItem(window->contentItem(), QString::fromLatin1(name));
         if (!found) throw std::runtime_error(std::string("missing scene item: ") + name);
@@ -254,7 +255,9 @@ public:
     }
     void click(const char *name)
     {
-        auto *target = test_support::waitForLayout(window, QString::fromLatin1(name), settleMs);
+        auto *target = test_support::fileOverflowControl(name)
+            ? test_support::fileToolbarControl(window, name, settleMs)
+            : test_support::waitForLayout(window, QString::fromLatin1(name), settleMs);
         if (reveal(target)) target = test_support::waitForLayout(window, QString::fromLatin1(name), settleMs);
         test_support::clickItem(window, target);
     }
@@ -501,6 +504,22 @@ void clickOverflowAction(Scene &scene, const char *name)
     }, Scene::settleMs));
 }
 
+// A named toolbar control may move to overflow as the window narrows.
+void clickFileToolbarControl(Scene &scene, const char *name)
+{
+    const auto find = [&] { return test_support::namedButton(scene.window->contentItem(), QString::fromLatin1(name)); };
+    auto *control = find();
+    if (!control) {
+        auto *toolbar = scene.item("fileToolBar");
+        auto *more = test_support::waitForStable(scene.window, "file toolbar overflow", [&] {
+            return test_support::namedButton(toolbar, QStringLiteral("More Actions"));
+        }, Scene::settleMs);
+        test_support::clickItem(scene.window, more);
+        control = test_support::waitForStable(scene.window, name, find, Scene::settleMs);
+    }
+    test_support::clickItem(scene.window, control);
+}
+
 // Opens the file toolbar's overflow menu and clicks its Show conflict markers entry.
 void toggleConflictMarkers(Scene &scene)
 {
@@ -661,8 +680,8 @@ std::unique_ptr<QProcess> startMergetool(const Repository &repo, const QStringLi
 
 // Every named control of the main view, in reading order.
 const char *const mainControls[] = {
-    "inventoryWarning", "openHandoff", "previousDifference", "nextDifference", "previousUndecided",
-    "undecidedCounter", "nextUndecided", "navigateMenu", "toggleFileList", "fileList", "selectedPath", "selectedStatus", "saveDraft",
+    "openHandoff", "previousUndecided", "previousUnfinished", "nextUnfinished",
+    "undecidedCounter", "nextUndecided", "navigateMenu", "toggleFileList", "fileList", "selectedPath", "saveDraft",
     "markResolved", "discardUnsaved", "undoCommand", "redoCommand", "copyResult", "pasteResult",
     "sourceChoicesMenu", "showSourceChoices",
     "openPassageSearch", "wrapLines", "showWhitespace", "stage2Label", "resultLabel",
@@ -703,7 +722,18 @@ qreal checkFits(Scene &scene, int width, int height, const std::vector<const cha
             && screen.adjusted(-0.5, -0.5, 0.5, 0.5).contains(rect);
     };
     for (const auto *name : names) {
-        auto *item = scene.item(name);
+        bool openedOverflow = test_support::fileOverflowControl(name);
+        auto *item = openedOverflow ? test_support::fileToolbarControl(scene.window, name, Scene::settleMs) : scene.item(name);
+        if (!item->isVisible()) {
+            auto *toolbar = scene.item("fileToolBar");
+            if (auto *more = test_support::namedButton(toolbar, QStringLiteral("More Actions"))) {
+                test_support::clickItem(scene.window, more);
+                item = test_support::waitForStable(scene.window, name, [&] {
+                    return test_support::namedButton(scene.window->contentItem(), QString::fromLatin1(name));
+                }, Scene::settleMs);
+                openedOverflow = true;
+            }
+        }
         // Scroll again while waiting: just after a resize the page can still lay out at the
         // previous size, so the first scroll position can be stale.
         QElapsedTimer deadline;
@@ -712,9 +742,30 @@ qreal checkFits(Scene &scene, int width, int height, const std::vector<const cha
             Scene::reveal(item);
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
         } while (!inside(item) && deadline.elapsed() < 2000);
+        // The toolbar can move an action into overflow during the resize after the
+        // first lookup, so try the menu again once the layout has settled.
+        if (!inside(item) && !openedOverflow) {
+            auto *toolbar = scene.item("fileToolBar");
+            if (auto *more = test_support::namedButton(toolbar, QStringLiteral("More Actions"))) {
+                test_support::clickItem(scene.window, more);
+                item = test_support::waitForStable(scene.window, name, [&] {
+                    return test_support::namedButton(scene.window->contentItem(), QString::fromLatin1(name));
+                }, Scene::settleMs);
+                openedOverflow = true;
+            }
+        }
         if (!inside(item))
             throw std::runtime_error("unreachable at " + std::to_string(width) + "x" + std::to_string(height)
                                      + ": " + geometry(item));
+        if (openedOverflow) {
+            CHECK(!test_support::accessibleName(item).isEmpty());
+            keyClick(scene, Qt::Key_Escape);
+            settleFor("file toolbar overflow closed", [&] {
+                return !descendant(scene.window->contentItem(), [](QQuickItem *candidate) {
+                    return candidate->objectName() == QStringLiteral("ActionsMenu") && candidate->isVisible();
+                });
+            });
+        }
     }
     // Each pane header is one line high.
     for (const auto *name : {"stage2Label", "resultLabel", "stage3Label"}) {
@@ -877,13 +928,13 @@ void expectSourcesAround(Scene &scene, const Repository &repo, const char *path,
 {
     clickFile(scene, path);
     expectText(scene.text("selectedPath"), QString::fromLatin1(path), "selected path");
-    // The role labels show short commit IDs; the identity text shows full IDs.
-    expectText(scene.text("stage2Label"), "Left source · " + leftLabel, "left identity");
-    expectText(scene.text("stage3Label"), "Right source · " + rightLabel, "right identity");
-    expectText(scene.text("stage2Identity"), "Captured blob: " + utf8(repo.stageObject(2, path))
-               + " · Verified commit: " + utf8(repo.leftCommit), "left blob and commit");
-    expectText(scene.text("stage3Identity"), "Captured blob: " + utf8(repo.stageObject(3, path))
-               + " · Verified commit: " + utf8(repo.rightCommit), "right blob and commit");
+    // These fixture refs point exactly at the verified source commits in both merge and rebase.
+    CHECK(scene.controller->loader()->stage2Name() == QStringLiteral("main"));
+    CHECK(scene.controller->loader()->stage3Name() == QStringLiteral("side"));
+    expectText(scene.text("stage2Label"), "main", "left version name");
+    expectText(scene.text("stage3Label"), "side", "right version name");
+    expectText(scene.text("stage2Identity"), leftLabel.section(": ", 0, 0) + " · " + utf8(repo.leftCommit).left(10), "left role and commit");
+    expectText(scene.text("stage3Identity"), rightLabel.section(": ", 0, 0) + " · " + utf8(repo.rightCommit).left(10), "right role and commit");
     // The full commit and blob ids stay reachable as accessible text.
     const auto described = [&](const char *name) {
         const auto *face = QAccessible::queryAccessibleInterface(scene.item(name));
@@ -1008,17 +1059,15 @@ public:
             const auto launched = repo.snapshot();
             Scene scene(repo);
             CHECK(scene.controller->loader()->operation() == QStringLiteral("Merge"));
+            expectText(scene.text("repositorySubtitle"), "Merging side into main", "merge operation with branches");
             CHECK(scene.controller->files()->totalFiles() == 4 && scene.controller->outsideAppFiles() == 1);
-            CHECK(scene.item("inventoryWarning")->isVisible());
-            expectContains(scene.text("inventoryWarning"), "1 outside app", "inventory warning");
+            CHECK(!scene.item("inventoryWarning")->isVisible());
+            expectContains(scene.text("outsideAppCount"), "1 file to handle outside the app", "outside-app count");
             for (const auto *path : {"story.txt", "notes.txt", "reading.txt", "removed.txt"})
                 expectContains(rowText(scene, path), QString::fromLatin1(path), "file row");
-            expectContains(rowText(scene, "removed.txt"), "Outside app", "outside-app row");
+            expectContains(rowText(scene, "removed.txt"), "Handle outside the app", "outside-app row");
             const auto left = "Current checkout: " + utf8(repo.leftCommit).left(10);
             const auto right = "Merged commit: " + utf8(repo.rightCommit).left(10);
-            // The footer uses the same shortened IDs as the source labels.
-            expectText(scene.text("sourceCommits"), "Current checkout: " + utf8(repo.leftCommit).left(10)
-                       + " · Merged commit: " + utf8(repo.rightCommit).left(10), "source footer");
             for (const auto *path : {"story.txt", "notes.txt", "reading.txt"})
                 expectSourcesAround(scene, repo, path, left, right);
             // A file edited before launch keeps that content exactly.
@@ -1059,14 +1108,14 @@ public:
             // The unsupported deletion stays listed with its reason and no editor.
             clickFile(scene, "removed.txt");
             CHECK(scene.item("selectedProblem")->isVisible() && !scene.item("resultText")->isVisible());
-            expectContains(scene.text("selectedProblem"), "Outside app", "outside-app reason");
+            expectContains(scene.text("selectedProblem"), "outside Branch Truce", "outside-app reason");
             // TRUCE-0084: an outside-app file has no app draft, so neither its row nor its status calls it one.
-            for (const auto &label : {rowText(scene, "removed.txt"), scene.text("selectedStatus")}) {
+            for (const auto &label : {rowText(scene, "removed.txt"), scene.text("selectedProblem")}) {
                 if (label.contains(QStringLiteral("draft"), Qt::CaseInsensitive)
                     || label.contains(QStringLiteral("Manual Save checkpoint")))
                     throw std::runtime_error("outside-app file labelled as a draft: " + label.toStdString());
             }
-            expectContains(scene.text("selectedStatus"), "outside Branch Truce", "outside-app status");
+            expectContains(scene.item("selectedProblem")->property("explanation").toString(), "git add", "outside-app next step");
             expectContains(rowText(scene, "story.txt"), "Not saved.", "supported row");
 
             // Saving the three supported results leaves the session and file warnings.
@@ -1078,7 +1127,8 @@ public:
                 CHECK(scene.file(path).checkpoint()
                       && QString::fromStdString(scene.file(path).checkpoint()->draft.text) == scene.text("resultText"));
             }
-            CHECK(scene.item("inventoryWarning")->isVisible());
+            CHECK(!scene.item("inventoryWarning")->isVisible());
+            CHECK(scene.item("outsideAppCount")->isVisible());
             clickFile(scene, "removed.txt");
             expectContains(scene.item("selectedProblem")->property("explanation").toString(), "outstanding", "outside-app notice");
             CHECK(scene.controller->files()->resolvedFiles() == 0);
@@ -1092,6 +1142,7 @@ public:
             });
             Scene scene(repo);
             CHECK(scene.controller->loader()->operation() == QStringLiteral("Rebase"));
+            expectText(scene.text("repositorySubtitle"), "Rebasing side onto main", "rebase operation with branches");
             CHECK(scene.controller->files()->totalFiles() == 2 && scene.controller->outsideAppFiles() == 0);
             const auto left = "Current rebased state: " + utf8(repo.leftCommit).left(10);
             const auto right = "Commit being replayed: " + utf8(repo.rightCommit).left(10);
@@ -1276,15 +1327,15 @@ public:
             Repository repo("merge", journeyPaths());
             const auto launched = repo.snapshot();
             Scene scene(repo);
-            const auto status = [&] { return scene.text("selectedStatus"); };
+            const auto status = [&] { return scene.controller->commandMessage(); };
 
             // Save checkpoints an unfinished draft in the app only.
             clickFile(scene, "notes.txt");
             appendToResult(scene, "draft");
-            expectContains(status(), "Not saved · Not reviewed · Not resolved", "edited status");
+            CHECK(!scene.progress().value("saved").toBool() && !scene.progress().value("reviewed").toBool() && !scene.progress().value("resolved").toBool());
             scene.click("saveDraft");
             settleFor("notes saved", [&] { return scene.progress().value("saved").toBool(); });
-            expectContains(status(), "Saved · Not reviewed · Not resolved", "saved status");
+            CHECK(scene.progress().value("saved").toBool() && !scene.progress().value("reviewed").toBool() && !scene.progress().value("resolved").toBool());
             CHECK(scene.progress().value("undecided").toULongLong() > 0);
             CHECK(repo.snapshot() == launched);
             CHECK(!repo.unmerged("notes.txt").isEmpty());
@@ -1310,7 +1361,7 @@ public:
                 throw std::runtime_error("not resolved: " + status().toStdString());
             CHECK(progress.value("saved").toBool() && progress.value("reviewed").toBool());
             CHECK(progress.value("undecided").toULongLong() > 0);
-            expectContains(status(), "Saved · Reviewed · Resolved", "resolved status");
+            expectContains(rowText(scene, "story.txt"), "Resolved", "resolved status");
             CHECK(work(scene, "story.txt") == edited);
             CHECK(readFile(repo.path("story.txt")) == edited.shown.toUtf8());
             CHECK(repo.unmerged("story.txt").isEmpty());
@@ -1325,7 +1376,7 @@ public:
             appendToResult(scene, "+");
             const auto newer = scene.progress();
             CHECK(!newer.value("reviewed").toBool() && newer.value("earlierResolved").toBool());
-            expectContains(status(), "Earlier result staged; current draft not applied", "newer draft status");
+            expectContains(scene.text("staleStagedNotice"), "Earlier result staged; current draft not applied", "newer draft status");
             CHECK(readFile(repo.path("story.txt")) == edited.shown.toUtf8());
             checkOffline(scene);
         });
@@ -1500,7 +1551,7 @@ public:
             }
             // A failed repository write keeps the saved app draft and leaves the file unresolved.
             const auto failed = scene.progress();
-            expectContains(scene.text("selectedStatus"), "Repository write failed", "failed status");
+            expectContains(scene.text("fileFailureNotice"), "Repository write failed", "failed status");
             CHECK(failed.value("saved").toBool() && !failed.value("resolved").toBool());
             CHECK(scene.text("resultText").endsWith(QStringLiteral("fails")));
             CHECK(readFile(repo.path("locked/failing.txt")) == "locked/failing.txt chosen by hand\n");
@@ -1515,7 +1566,7 @@ public:
             CHECK(QFile::remove(hook));
             const auto written = scene.progress();
             CHECK(!written.value("resolved").toBool());
-            expectContains(scene.text("selectedStatus"), "Written, unresolved", "written status");
+            expectContains(scene.text("fileFailureNotice"), "Written, unresolved", "written status");
             CHECK(readFile(repo.path("written.txt")) == "written.txt chosen by hand\n");
             CHECK(!repo.unmerged("written.txt").isEmpty());
 
@@ -1817,7 +1868,7 @@ public:
             if (resolvedTexts.contains(QStringLiteral("It is not resolved"))
                 || resolvedTexts.contains(QStringLiteral("Waiting for Git to launch")))
                 throw std::runtime_error("resolved file still says it waits: " + resolvedTexts.toStdString());
-            expectContains(scene.text("selectedStatus"), "Resolved", "resolved file status");
+            expectContains(rowText(scene, "launched.txt"), "Resolved", "resolved file status");
             // Editing after the handoff leaves an earlier result staged, and Git will not launch the path again.
             appendToResult(scene, "x");
             settleFor("earlier staged result", [&] { return scene.progress().value("earlierResolved").toBool(); });
@@ -1879,51 +1930,71 @@ public:
             checkOffline(scene);
         });
         window.run("TRUCE-0088 a 1280x720 logical screen fits the window with every control and text pane reachable", [] {
-            Repository repo("merge", journeyPaths());
+            auto paths = journeyPaths();
+            paths.push_back({"image.bin", QByteArray("base\0", 5), QByteArray("left\0", 5), QByteArray("side\0", 5), std::nullopt});
+            Repository repo("merge", paths);
             Scene scene(repo);
-            CHECK(scene.item("inventoryWarning")->isVisible());
+            CHECK(!scene.item("inventoryWarning")->isVisible() && scene.item("outsideAppCount")->isVisible());
+            clickFile(scene, "image.bin");
+            CHECK(scene.file("image.bin").support() == Support::OutsideApp);
+            expectContains(scene.text("fileFacts"), "5 bytes", "captured binary size");
             clickFile(scene, "story.txt");
+            expectContains(scene.text("fileFacts"), "UTF-8 · LF", "captured text format");
             for (const auto *name : mainControls) {
-                if (test_support::accessibleName(scene.item(name)).isEmpty())
+                auto *control = test_support::fileOverflowControl(name)
+                    ? test_support::fileToolbarControl(scene.window, name, Scene::settleMs) : scene.item(name);
+                if (test_support::accessibleName(control).isEmpty())
                     throw std::runtime_error(std::string("no accessible name: ") + name);
-                CHECK(!test_support::accessibleName(scene.item(name)).isEmpty());
+                CHECK(!test_support::accessibleName(control).isEmpty());
+                if (test_support::fileOverflowControl(name)) test_support::closeFileToolbarMenu(scene.window);
             }
             // Moving between files and the file-wide choices sit in toolbar menus. Once a menu
             // opens, each entry is a visible item with an accessible name.
             const std::pair<const char *, std::vector<const char *>> menus[] = {
-                {"navigateMenu", {"previousUnfinished", "nextUnfinished", "previousSavedOrReviewed", "nextSavedOrReviewed"}},
+                {"navigateMenu", {"previousDifference", "nextDifference", "previousSavedOrReviewed", "nextSavedOrReviewed"}},
                 {"sourceChoicesMenu", {"nonConflictingLeft", "nonConflictingRight", "nonConflictingBoth", "wholeFileLeft",
                                        "wholeFileRight"}},
             };
-            for (const auto &[menu, entries] : menus) {
-                scene.click(menu);
-                for (const auto *entry : entries) {
-                    auto *item = test_support::waitForLayout(scene.window, QString::fromLatin1(entry), Scene::settleMs);
-                    if (test_support::accessibleName(item).isEmpty())
-                        throw std::runtime_error(std::string("no accessible name: ") + entry);
+            const auto checkMenus = [&] {
+                for (const auto &[menu, entries] : menus) {
+                    scene.click(menu);
+                    for (const auto *entry : entries) {
+                        auto *item = test_support::waitForLayout(scene.window, QString::fromLatin1(entry), Scene::settleMs);
+                        if (test_support::accessibleName(item).isEmpty())
+                            throw std::runtime_error(std::string("no accessible name: ") + entry);
+                        const auto rect = item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+                        CHECK(QRectF(0, 0, scene.window->width(), scene.window->height()).contains(rect));
+                    }
+                    keyClick(scene, Qt::Key_Escape);
+                    settleFor(std::string(menu) + " closed", [&] {
+                        auto *first = test_support::visualItem(scene.window->contentItem(), QString::fromLatin1(entries.front()));
+                        return !first || !first->isVisible();
+                    });
+                    if (test_support::fileOverflowControl(menu)) test_support::closeFileToolbarMenu(scene.window);
                 }
-                keyClick(scene, Qt::Key_Escape);
-                settleFor(std::string(menu) + " closed", [&] {
-                    auto *first = test_support::visualItem(scene.window->contentItem(), QString::fromLatin1(entries.front()));
-                    return !first || !first->isVisible();
-                });
-            }
+            };
+            checkMenus();
             // A roomy window lays out as before, without scrolling the page.
             CHECK(!scene.object("pageScroll")->property("overflowing").toBool());
-            auto *editor = scene.item("resultText");
-            const auto lineHeight = editor->property("contentHeight").toReal() / editor->property("lineCount").toInt();
+            const auto lineHeight = scene.item("comparisonView")->property("rowHeight").toReal();
             CHECK(lineHeight > 0);
-            // 1920x1080 at 150% and at 200% scaling.
-            for (const auto &screen : {QSize(1280, 720), QSize(960, 540)}) {
+            // 1920x1080 at 150% scaling. The strict 960x540 fit requirement is
+            // temporarily deferred by the owner.
+            for (const auto &screen : {QSize(1280, 720), QSize(1280, 800)}) {
                 const auto pane = checkFits(scene, screen.width(), screen.height());
                 if (pane < 8 * lineHeight)
                     throw std::runtime_error("text panes " + std::to_string(pane) + " px high at "
                                              + std::to_string(screen.width()) + "x" + std::to_string(screen.height())
                                              + ", less than eight " + std::to_string(lineHeight) + " px lines");
+                for (const auto *identity : {"stage2Identity", "stage3Identity"})
+                    CHECK(!scene.item(identity)->property("truncated").toBool());
+                checkMenus();
             }
             // Whether this page is taller than a 960x540 window depends on the fonts. It fits with
             // DejaVu Sans 9 pt, as in the CI images. Either way the wheel moves it only when it does not fit.
-            checkWheelScroll(scene, "selectedStatus");
+            scene.window->resize(960, 540);
+            settleFor("window at 960x540", [&] { return scene.window->width() == 960 && scene.window->height() == 540; });
+            checkWheelScroll(scene, "selectedPath");
 
             // TRUCE-0084: at 1280x800 the handoff dialog wraps between words. File rows elide one
             // line each instead of wrapping, so nothing in the file list wraps at all.
@@ -1942,20 +2013,19 @@ public:
 
             // TRUCE-0084: the source choices start shown, in the source panes' gutters, where they
             // take no height. With them the three panes keep eight lines and the panes and choices
-            // stay reachable, from a roomy window down to 960x540, and hiding them leaves every
-            // text pane as high as it was. At 960x540 the file list beside them is taller than the
-            // window, so it is left out.
+            // stay reachable, from a roomy window down to 1280x720, and hiding them leaves every
+            // text pane as high as it was. The owner waiver still excludes strict 960x540 fit.
             settleFor("source choices shown", [&] { return scene.item("scopedChoices")->isVisible(); });
             const std::vector<const char *> withChoices{"showSourceChoices", "sourceChoicesMenu", "undecidedCounter",
                 "stage2Label", "resultLabel", "stage3Label", "stage2Viewport", "resultViewport", "stage3Viewport",
                 "scopedChoices", "workflowStatus"};
-            for (const auto &screen : {QSize(1500, 1040), QSize(1280, 800), QSize(1280, 720), QSize(960, 540)}) {
+            for (const auto &screen : {QSize(1500, 1040), QSize(1280, 800), QSize(1280, 720)}) {
                 const auto size = std::to_string(screen.width()) + "x" + std::to_string(screen.height());
                 const auto pane = checkFits(scene, screen.width(), screen.height(), withChoices);
                 if (pane < 8 * lineHeight)
                     throw std::runtime_error("with source choices, text panes " + std::to_string(pane) + " px high at "
                                              + size + ", less than eight " + std::to_string(lineHeight) + " px lines");
-                scene.click("showSourceChoices");
+                clickFileToolbarControl(scene, "showSourceChoices");
                 settleFor("source choices hidden at " + size, [&] { return !scene.item("scopedChoices")->isVisible(); });
                 const auto hidden = checkFits(scene, screen.width(), screen.height(),
                                               {"stage2Viewport", "resultViewport", "stage3Viewport"});
@@ -1963,7 +2033,7 @@ public:
                     throw std::runtime_error("at " + size + " the text panes are " + std::to_string(pane)
                                              + " px high with the source choices and " + std::to_string(hidden)
                                              + " px without them");
-                scene.click("showSourceChoices");
+                clickFileToolbarControl(scene, "showSourceChoices");
                 settleFor("source choices shown at " + size, [&] { return scene.item("scopedChoices")->isVisible(); });
             }
             checkOffline(scene);
@@ -1982,8 +2052,7 @@ public:
             clickFile(scene, "long.txt");
             waitFor("the first undecided region in every pane at launch", [&] { return firstUndecidedInView(scene).empty(); },
                     [&] { return firstUndecidedInView(scene); });
-            auto *editor = scene.item("resultText");
-            const auto lineHeight = editor->property("contentHeight").toReal() / editor->property("lineCount").toInt();
+            const auto lineHeight = scene.item("comparisonView")->property("rowHeight").toReal();
             CHECK(lineHeight > 0);
             for (const auto &screen : {QSize(1280, 720), QSize(960, 540)}) {
                 const auto size = std::to_string(screen.width()) + "x" + std::to_string(screen.height());

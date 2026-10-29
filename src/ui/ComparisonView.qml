@@ -11,6 +11,8 @@ import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: comparison
+    objectName: "comparisonView"
+    spacing: Kirigami.Units.smallSpacing
     required property ApplicationController controller
     required property SelectedFile file
     required property EditActions edits
@@ -308,7 +310,7 @@ ColumnLayout {
     onSchemeBackgroundChanged: controller.setSyntaxBackground(schemeBackground)
 
     function paneMinimumHeight(lines: int): real {
-        return Math.ceil(lines * paneFont.lineSpacing + resultPane.editor.topPadding
+        return Math.ceil(lines * rowHeight + resultPane.editor.topPadding
             + resultPane.editor.bottomPadding)
     }
     FontMetrics {
@@ -318,7 +320,13 @@ ColumnLayout {
     // Four characters, so tab-indented text lines up the same in every pane.
     readonly property real tabStop: 4 * paneFont.averageCharacterWidth
     // One text row; a gutter button is this high and wide.
-    readonly property real rowHeight: Math.ceil(paneFont.lineSpacing)
+    readonly property real rowHeight: {
+        // Reading contentHeight tracks relayout; positionToRectangle uses the editor's
+        // glyph height; Qt adds the line distance after each visual row.
+        const laidOutHeight = resultPane.editor.contentHeight
+        const row = laidOutHeight > 0 ? resultPane.editor.positionToRectangle(0).height : 0
+        return Math.ceil((row > 0 ? row : paneFont.lineSpacing) + Kirigami.Units.smallSpacing)
+    }
     // A source pane's choice column: three buttons with a small spacing between and around them.
     readonly property real choiceWidth: 3 * rowHeight + 4 * Kirigami.Units.smallSpacing
     // The panes by role, scrolled together through the file's passages.
@@ -329,7 +337,7 @@ ColumnLayout {
         right: rightPane
         earlier: earlierPane
         passages: comparison.file.passages || []
-        lineSpacing: paneFont.lineSpacing
+        lineSpacing: comparison.rowHeight
     }
     PassageSearch {
         id: passageSearch
@@ -391,6 +399,8 @@ ColumnLayout {
                 choiceEdge: "right"
                 choiceWidth: comparison.showChoices ? comparison.choiceWidth : 0
                 source: comparison.file.stage2 || ({})
+                versionName: source.commitId === comparison.controller.loader.stage2CommitId
+                    ? comparison.controller.loader.stage2Name : ""
                 marks: comparison.kept("marks:stage2", comparison.paneLineMarks(leftPane.paneName))
                 current: comparison.kept("current:stage2", comparison.navigationRanges(leftPane.paneName, comparison.decorationTarget))
                 tabStop: comparison.tabStop
@@ -432,6 +442,8 @@ ColumnLayout {
                 choiceEdge: "left"
                 choiceWidth: comparison.showChoices ? comparison.choiceWidth : 0
                 source: comparison.file.stage3 || ({})
+                versionName: source.commitId === comparison.controller.loader.stage3CommitId
+                    ? comparison.controller.loader.stage3Name : ""
                 marks: comparison.kept("marks:stage3", comparison.paneLineMarks(rightPane.paneName))
                 current: comparison.kept("current:stage3", comparison.navigationRanges(rightPane.paneName, comparison.decorationTarget))
                 tabStop: comparison.tabStop

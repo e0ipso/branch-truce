@@ -26,6 +26,8 @@ RowLayout {
     signal wholeFileChosen(side: int)
     signal discardToStagedChosen()
     Layout.fillWidth: true
+    readonly property Kirigami.Action editSeparator: Kirigami.Action { separator: true }
+    readonly property Kirigami.Action readingSeparator: Kirigami.Action { separator: true }
     readonly property NamedAction saveAction: NamedAction {
         controlName: "saveDraft"
         text: qsTr("Save")
@@ -36,7 +38,8 @@ RowLayout {
     }
     readonly property NamedAction resolveAction: NamedAction {
         controlName: "markResolved"
-        text: qsTr("Mark resolved")
+        flat: false
+        text: qsTr("Mark resolved…")
         icon.name: "dialog-ok-apply"
         displayHint: Kirigami.DisplayHint.KeepVisible
         enabled: !!fileToolBar.selectedFile.canEdit && !fileToolBar.composing && !fileToolBar.controller.resolutionBusy
@@ -44,6 +47,7 @@ RowLayout {
     }
     readonly property NamedAction discardAction: NamedAction {
         controlName: "discardUnsaved"
+        displayHint: Kirigami.DisplayHint.AlwaysHide
         text: qsTr("Discard")
         tooltip: qsTr("Discard unsaved edits")
         icon.name: "document-revert"
@@ -65,6 +69,7 @@ RowLayout {
     readonly property MenuAction choicesAction: MenuAction {
         id: fileChoices
         controlName: "sourceChoicesMenu"
+        displayHint: Kirigami.DisplayHint.AlwaysHide
         text: qsTr("Source choices")
         tooltip: qsTr("Preview non-conflicting changes or a whole side of %1 before applying")
             .arg(fileToolBar.selectedFile.path || "")
@@ -110,6 +115,8 @@ RowLayout {
     readonly property NamedAction sourceChoicesAction: NamedAction {
         id: sourceChoices
         controlName: "showSourceChoices"
+        displayHint: Kirigami.DisplayHint.AlwaysHide
+        enabled: fileToolBar.selectedFile.support === "supported"
         text: checked ? qsTr("Hide source choices") : qsTr("Show source choices")
         icon.name: "view-list-details"
         iconOnly: true
@@ -118,6 +125,7 @@ RowLayout {
     }
     readonly property NamedAction searchAction: NamedAction {
         controlName: "openPassageSearch"
+        enabled: fileToolBar.selectedFile.support === "supported"
         text: qsTr("Find a passage")
         icon.name: "edit-find"
         iconOnly: true
@@ -127,6 +135,7 @@ RowLayout {
     readonly property NamedAction wrapLinesAction: NamedAction {
         id: wrapAction
         controlName: "wrapLines"
+        enabled: fileToolBar.selectedFile.support === "supported"
         text: qsTr("Wrap lines")
         icon.name: "format-justify-left"
         iconOnly: true
@@ -136,6 +145,7 @@ RowLayout {
     readonly property NamedAction whitespaceViewAction: NamedAction {
         id: whitespaceAction
         controlName: "showWhitespace"
+        enabled: fileToolBar.selectedFile.support === "supported"
         text: qsTr("Show spaces and tabs")
         icon.name: "view-visible"
         iconOnly: true
@@ -158,11 +168,60 @@ RowLayout {
     readonly property Kirigami.Action markersAction: Kirigami.Action {
         id: markersToggle
         objectName: "showConflictMarkers"
+        enabled: fileToolBar.selectedFile.support === "supported"
         text: qsTr("Show conflict markers")
         tooltip: qsTr("Show the conflict-marker lines that the result folds. The text keeps them either way.")
         icon.name: "view-visible"
         displayHint: Kirigami.DisplayHint.AlwaysHide
         checkable: true
+    }
+    Kirigami.Icon {
+        objectName: "selectedTypeIcon"
+        source: fileToolBar.selectedFile.mimeIcon || "unknown"
+        Layout.preferredWidth: Kirigami.Units.iconSizes.small
+        Layout.preferredHeight: Kirigami.Units.iconSizes.small
+    }
+    Kirigami.Heading {
+        id: fileHeading
+        level: 5
+        font.weight: Font.DemiBold
+        Layout.fillWidth: true
+        Layout.minimumWidth: Kirigami.Units.gridUnit * 4
+        Layout.preferredWidth: Kirigami.Units.gridUnit * 12
+        Layout.maximumWidth: Kirigami.Units.gridUnit * 18
+        text: " "
+        Item {
+            id: selectedPathLabel
+            objectName: "selectedPath"
+            anchors.fill: parent
+            readonly property string text: fileToolBar.selectedFile.path || ""
+            readonly property string directory: text.slice(0, text.lastIndexOf("/") + 1)
+            readonly property string fileName: text.slice(text.lastIndexOf("/") + 1)
+            Accessible.role: Accessible.StaticText
+            Accessible.name: text
+            RowLayout {
+                anchors.fill: parent
+                spacing: 0
+                PlainLabel {
+                    visible: selectedPathLabel.directory.length > 0
+                    Layout.maximumWidth: parent.width / 2
+                    text: selectedPathLabel.directory
+                    elide: Text.ElideLeft
+                    font: Kirigami.Theme.defaultFont
+                    color: Kirigami.Theme.disabledTextColor
+                }
+                PlainLabel {
+                    Layout.fillWidth: true
+                    text: selectedPathLabel.fileName
+                    elide: Text.ElideMiddle
+                    font: fileHeading.font
+                }
+            }
+            HoverHandler { id: pathHover }
+            ToolTip.text: text
+            ToolTip.visible: pathHover.hovered
+            ToolTip.delay: Kirigami.Units.toolTipDelay
+        }
     }
     Kirigami.ActionToolBar {
         objectName: "fileToolBar"
@@ -171,12 +230,14 @@ RowLayout {
             return [
                 fileToolBar.saveAction,
                 fileToolBar.resolveAction,
+                fileToolBar.editSeparator,
                 fileToolBar.discardAction,
                 fileToolBar.discardStagedAction,
                 fileToolBar.edits.undo,
                 fileToolBar.edits.redo,
                 fileToolBar.edits.copy,
                 fileToolBar.edits.paste,
+                fileToolBar.readingSeparator,
                 fileToolBar.choicesAction,
                 fileToolBar.sourceChoicesAction,
                 fileToolBar.searchAction,

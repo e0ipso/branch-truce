@@ -29,6 +29,29 @@ y coordinates are the editor's: place an item at the y of
 near the view. Code and numbers use `Kirigami.Theme.fixedWidthFont`, and tab
 stops are four average character widths.
 
+Each visual code row, including a wrapped continuation, has the fixed-width
+font's line spacing plus `Kirigami.Units.smallSpacing`. The owning `TextBlocks`
+applies that extra distance with the public `QTextBlockFormat::LineDistanceHeight`
+to each document block, including blocks created by edits or replacement. The
+glyph and cursor rectangles retain their native height; the next visual row
+starts after the added distance. Block extents, gutter slots, folded rows,
+connectors, synchronized scrolling and the pane minimum account for that distance.
+This is row spacing, independent of the separate alignment-padding prototype;
+it inserts no text or alignment blocks.
+
+Qt reports these block-format changes as document changes, advances its own
+document revision and marks the document modified. `TextBlocks` preserves the pre-format modified flag, skips formats
+already in place, and queues reformatting after document changes. The result
+flushes that pending work when the editor reports a completed text change, before
+the adapter restores a cursor and viewport after replacing the text. A guard
+prevents formatting notifications from scheduling another formatting pass. Its opt-in spacing disables native document undo before applying formats:
+the sources are read-only and the result already uses application-owned history.
+The result adapter compares raw text before capturing a change, so formatting
+creates no draft revision, decision, recovery transaction or application undo
+entry. Clearing the spacing removes its line-height properties. No full-buffer
+text replacement is used for spacing. Text padding and gutter insets also leave
+the stored bytes unchanged.
+
 Region choices sit in the gutters too. Each source pane keeps a column on the
 edge that faces the result, and `ChoiceLane` lays one row of `ChoiceButtons` on
 the first line of each scope there: Accept and Ignore, nearest the result, and

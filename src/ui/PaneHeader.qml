@@ -12,6 +12,7 @@ Rectangle {
     property string identity: ""
     property string identityName: ""
     property string description: ""
+    property bool fixedIdentity: false
     implicitHeight: heading.implicitHeight + Kirigami.Units.mediumSpacing * 2 + separator.height
     color: Kirigami.Theme.alternateBackgroundColor
     RowLayout {
@@ -26,9 +27,12 @@ Rectangle {
         Kirigami.Heading {
             id: heading
             level: 5
-            Layout.fillWidth: true
+            Layout.minimumWidth: Math.min(Kirigami.Units.gridUnit * 2, header.width / 3)
+            Layout.preferredWidth: paneTitle.implicitWidth
+            Layout.maximumWidth: header.width / 3
             text: " "
             PlainLabel {
+                id: paneTitle
                 objectName: header.titleName
                 anchors.fill: parent
                 text: header.title
@@ -40,10 +44,11 @@ Rectangle {
             objectName: header.identityName
             visible: header.identity.length > 0
             Layout.fillWidth: true
-            Layout.preferredWidth: header.width / 2
-            Layout.maximumWidth: header.width / 2
+            Layout.minimumWidth: 0
+            Layout.preferredWidth: implicitWidth
             text: header.identity
-            font: Kirigami.Theme.smallFont
+            elide: header.fixedIdentity ? Text.ElideMiddle : Text.ElideRight
+            font: header.fixedIdentity ? Kirigami.Theme.fixedWidthFont : Kirigami.Theme.smallFont
             color: Kirigami.Theme.disabledTextColor
             Accessible.description: header.description
         }

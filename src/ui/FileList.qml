@@ -4,6 +4,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import BranchTruce.App
 import QtQuick.Controls
+import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 Rectangle {
@@ -12,14 +13,32 @@ Rectangle {
     // Builds one row from the model's roles.
     required property Component rowDelegate
     property alias currentIndex: fileList.currentIndex
+    property real headerHeight: Kirigami.Units.gridUnit * 2
     Kirigami.Theme.colorSet: Kirigami.Theme.View
     Kirigami.Theme.inherit: false
     color: Kirigami.Theme.backgroundColor
+    RowLayout {
+        id: listHeading
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Kirigami.Units.smallSpacing
+        anchors.rightMargin: Kirigami.Units.smallSpacing
+        height: Math.max(0, fileListPane.headerHeight - listSeparator.height)
+        Kirigami.Heading { Layout.fillWidth: true; level: 5; text: qsTr("Conflicted files") }
+        Pill { text: String(fileListPane.controller.files.totalFiles) }
+    }
+    Kirigami.Separator { id: listSeparator; anchors.top: listHeading.bottom; anchors.left: parent.left; anchors.right: parent.right }
     ListView {
         id: fileList
         objectName: "fileList"
         Accessible.name: qsTr("File list")
-        anchors.fill: parent
+        anchors.top: listSeparator.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        topMargin: Kirigami.Units.smallSpacing
+        bottomMargin: Kirigami.Units.smallSpacing
         activeFocusOnTab: true
         keyNavigationEnabled: true
         clip: true

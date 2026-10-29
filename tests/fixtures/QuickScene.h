@@ -51,6 +51,17 @@ inline QQuickItem *visualItem(QQuickItem *root, const QString &name)
     return nullptr;
 }
 
+// The page header may retain an inactive title delegate after a resize. Prefer the
+// live visual item while still allowing callers to inspect intentionally hidden items.
+inline QQuickItem *visibleItem(QQuickItem *root, const QString &name)
+{
+    if (!root || !root->isVisible()) return nullptr;
+    if (root->objectName() == name) return root;
+    for (auto *child : root->childItems())
+        if (auto *found = visibleItem(child, name)) return found;
+    return nullptr;
+}
+
 // The texts of the visible labels under root, in item order, joined with " · ": what a row
 // of status chips reads as one line.
 inline QString shownText(QQuickItem *root)
@@ -150,7 +161,41 @@ inline QQuickItem *waitForStable(QQuickWindow *window, const std::string &what,
 inline QQuickItem *waitForLayout(QQuickWindow *window, const QString &name, int stableMs = 0)
 {
     return waitForStable(window, name.toStdString(),
-                         [&] { return visualItem(window->contentItem(), name); }, stableMs);
+                         [&] {
+                             if (auto *visible = visibleItem(window->contentItem(), name)) return visible;
+                             return visualItem(window->contentItem(), name);
+                         }, stableMs);
+}
+
+inline bool fileOverflowControl(const char *name)
+{
+    return QStringList{QStringLiteral("discardUnsaved"), QStringLiteral("copyResult"),
+        QStringLiteral("pasteResult"), QStringLiteral("sourceChoicesMenu"),
+        QStringLiteral("showSourceChoices")}.contains(QString::fromLatin1(name));
+}
+
+// These commands deliberately live in overflow even in a wide window. Exercise their
+// actual menu controls rather than triggering the action object behind the UI.
+inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, int stableMs = 60)
+{
+    const auto controlName = QString::fromLatin1(name);
+    if (auto *button = namedButton(window->contentItem(), controlName)) return button;
+    auto *toolbar = visualItem(window->contentItem(), QStringLiteral("fileToolBar"));
+    if (!toolbar) throw std::runtime_error("missing file toolbar");
+    auto *more = waitForStable(window, "file toolbar overflow", [&] {
+        return namedButton(toolbar, QStringLiteral("More Actions"));
+    }, stableMs);
+    const auto center = more->mapToScene(QPointF(more->width() / 2, more->height() / 2)).toPoint();
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
+    return waitForLayout(window, controlName, stableMs);
+}
+
+inline void closeFileToolbarMenu(QQuickWindow *window)
+{
+    QTest::keyClick(window, Qt::Key_Escape);
+    settleFor("file toolbar overflow closed", [&] {
+        return !namedButton(window->contentItem(), QStringLiteral("copyResult"));
+    });
 }
 
 inline int visualLines(QQuickItem *editor, int blockNumber)

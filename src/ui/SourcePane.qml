@@ -10,9 +10,11 @@ import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: sourcePane
+    spacing: 0
     required property string paneName
     required property string paneRole
     required property var source
+    property string versionName: ""
     // Line marks for the gutter and backgrounds, and the navigation target's line ranges.
     required property var marks
     required property var current
@@ -45,12 +47,13 @@ ColumnLayout {
     PaneHeader {
         Layout.fillWidth: true
         titleName: sourcePane.paneName + "Label"
-        title: qsTr("%1 · %2").arg(sourcePane.paneRole)
-            .arg(sourcePane.displayIdentity)
+        title: sourcePane.versionName || sourcePane.source.label || sourcePane.paneRole
         identityName: sourcePane.paneName + "Identity"
-        identity: qsTr("Captured blob: %1 · Verified commit: %2")
-            .arg(sourcePane.source.objectId || qsTr("unavailable"))
-            .arg(sourcePane.commitId || qsTr("unavailable"))
+        identity: sourcePane.versionName.length > 0
+            ? qsTr("%1 · %2").arg(sourcePane.source.label || sourcePane.paneRole)
+                .arg(sourcePane.source.shortCommitId || qsTr("Commit unavailable"))
+            : sourcePane.source.shortCommitId || qsTr("Commit unavailable")
+        fixedIdentity: true
         description: sourcePane.fullIdentity
     }
     Item {
@@ -77,8 +80,8 @@ ColumnLayout {
             Kirigami.Theme.colorSet: Kirigami.Theme.View
             Kirigami.Theme.inherit: false
             anchors.fill: parent
-            anchors.leftMargin: sourcePane.choiceEdge === "left" ? choiceColumn.width : 0
-            anchors.rightMargin: sourcePane.choiceEdge === "right" ? choiceColumn.width : 0
+            anchors.leftMargin: (sourcePane.choiceEdge === "left" ? choiceColumn.width : 0) + Kirigami.Units.smallSpacing
+            anchors.rightMargin: (sourcePane.choiceEdge === "right" ? choiceColumn.width : 0) + Kirigami.Units.smallSpacing
             clip: true
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.horizontal: ScrollBar {}
@@ -117,7 +120,10 @@ ColumnLayout {
                     disabled: Kirigami.Theme.disabledTextColor
                 })
                 tabStopDistance: sourcePane.tabStop
-                leftPadding: sourceGutter.width + Kirigami.Units.smallSpacing
+                leftPadding: sourceGutter.width + Kirigami.Units.largeSpacing
+                rightPadding: Kirigami.Units.smallSpacing
+                topPadding: Kirigami.Units.smallSpacing
+                bottomPadding: Kirigami.Units.smallSpacing
                 width: sourcePane.wrapLines ? sourceViewport.width : implicitWidth
                 wrapMode: sourcePane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                 Accessible.name: qsTr("%1 · %2").arg(sourcePane.paneRole).arg(sourcePane.displayIdentity)
@@ -130,6 +136,7 @@ ColumnLayout {
                 width: implicitWidth
                 height: Math.max(sourceText.height, sourceViewport.height)
                 editor: sourceText
+                rowSpacing: Kirigami.Units.smallSpacing
                 viewport: sourceViewport
                 marks: sourcePane.marks
             }
@@ -154,5 +161,6 @@ ColumnLayout {
     TextBlocks {
         id: sourceBlocks
         document: sourceText.textDocument
+        rowSpacing: Kirigami.Units.smallSpacing
     }
 }

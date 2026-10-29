@@ -218,14 +218,17 @@ void startController(ApplicationController &controller, const Repository &repo, 
     CHECK(!controller.loader()->opening());
 }
 
-void openController(ApplicationController &controller, const Repository &repo, const QString &preferredFileId = {})
+void openController(ApplicationController &controller, const Repository &repo, const QString &preferredFileId = {},
+                    bool launcherAlreadyStarted = false)
 {
     startController(controller, repo, preferredFileId);
     if (controller.loader()->startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(controller.mergetool()->listening());
     CHECK(QFileInfo(checkSocketDirectory(repo)).isDir());
-    CHECK(!controller.parentSessionActive());
+    // An already-started launcher may attach before repository opening returns.
+    // Those cases wait for and verify its attachment after this helper.
+    if (!launcherAlreadyStarted) CHECK(!controller.parentSessionActive());
 }
 
 const FileSession &opened(ApplicationController &controller, const QByteArray &path)
@@ -786,7 +789,7 @@ int main(int argc, char **argv)
         CHECK(launcher.spawned());
         const auto launched = launcher.checkSpawnArguments();
         CHECK(launcher.process.state() == QProcess::Running);
-        openController(controller, repo, launched);
+        openController(controller, repo, launched, true);
         CHECK(controller.selectedFileId() == launched);
         CHECK(opened(controller, "tracked.txt").current().draft.text.starts_with("recovered edit\n"));
         pump([&] { return controller.mergetool()->waitingPath() == "tracked.txt"; }, controller.commandMessage());
@@ -894,7 +897,7 @@ int main(int argc, char **argv)
         pause.start();
         while (pause.elapsed() < 1500) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
         CHECK(launcher.process.state() == QProcess::Running);
-        openController(controller, repo, launched);
+        openController(controller, repo, launched, true);
         // The session opens on the launched path, not on the first file in the list.
         CHECK(controller.files()->data(controller.files()->index(0), SessionModel::FileIdRole).toString() != launched);
         CHECK(controller.selectedFileId() == launched);

@@ -41,6 +41,7 @@ enum class RepositoryOperation { None, Merge, Rebase, Unsupported };
 struct SourceIdentity {
     QByteArray commitId;
     QString label;
+    QString name = {}; // A unique local branch observed pointing exactly at commitId.
 };
 struct RepositoryContext {
     QString worktreeRoot;
@@ -60,6 +61,7 @@ struct RepositoryContext {
     QByteArray headName;
     QByteArray originalHead;
     QByteArray onto;
+    QString ontoName = {};
 };
 
 struct Request {

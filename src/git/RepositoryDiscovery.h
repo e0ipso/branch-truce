@@ -15,7 +15,7 @@ public:
     bool consume(const QByteArray &output, int exitCode);
 private:
     enum class Step { GitDirectory, Index, Head, Commit, MergeBase, ReplayAncestor,
-                      OntoAncestor, Tree, SourceTree, FinalIndex, FinalHead, Done };
+                      OntoAncestor, Tree, SourceTree, FinalIndex, FinalHead, Names, Done };
     struct Commit { QList<QByteArray> parents; };
     struct TreeEntry { QByteArray mode; QByteArray objectId; };
     bool captureMetadata(QMap<QString, QByteArray> &snapshot);

@@ -27,6 +27,9 @@ class SessionLoader : public QObject {
     Q_PROPERTY(bool opening READ opening NOTIFY launchChanged)
     Q_PROPERTY(QString repositoryRoot READ repositoryRoot NOTIFY launchChanged)
     Q_PROPERTY(QString operation READ operation NOTIFY launchChanged)
+    Q_PROPERTY(QString operationDescription READ operationDescription NOTIFY launchChanged)
+    Q_PROPERTY(QString stage2Name READ stage2Name NOTIFY launchChanged)
+    Q_PROPERTY(QString stage3Name READ stage3Name NOTIFY launchChanged)
     Q_PROPERTY(QString detail READ detail NOTIFY launchChanged)
     Q_PROPERTY(QVariantList recoveryChoices READ recoveryChoices NOTIFY launchChanged)
     Q_PROPERTY(QString stage2 READ stage2 NOTIFY launchChanged)
@@ -63,6 +66,9 @@ public:
     [[nodiscard]] bool opening() const { return state_ == QLatin1String("opening"); }
     [[nodiscard]] QString repositoryRoot() const { return repository_.worktreeRoot; }
     [[nodiscard]] QString operation() const { return operation_; }
+    [[nodiscard]] QString operationDescription() const;
+    [[nodiscard]] QString stage2Name() const { return repository_.stage2.name; }
+    [[nodiscard]] QString stage3Name() const { return repository_.stage3.name; }
     [[nodiscard]] QString detail() const { return detail_; }
     // Matching recovery sessions with app edits that blocked restoration at
     // this load: session, lastChanged and the display paths it edited.
@@ -75,6 +81,7 @@ public:
     [[nodiscard]] QString stage2ShortCommitId() const;
     [[nodiscard]] QString stage3ShortCommitId() const;
     [[nodiscard]] QString workflow() const;
+    Q_INVOKABLE QString launchSizeText(const QString &fileId) const;
     [[nodiscard]] const git::RepositoryContext &repository() const { return repository_; }
     // The file to select first once the load lists it; see openRepository.
     [[nodiscard]] QString preferredFileId() const { return preferredFileId_; }
@@ -125,6 +132,7 @@ private:
     const QString gitExecutable_;
     git::ConflictClassifier classifier_;
     git::RepositoryContext repository_;
+    QHash<QString, qint64> launchSizes_;
     QString state_ = QStringLiteral("idle");
     QString operation_;
     QString detail_;

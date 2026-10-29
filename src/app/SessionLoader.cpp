@@ -5,6 +5,7 @@
 #include "SessionModel.h"
 #include <QFileInfo>
 #include <QLockFile>
+#include <QLocale>
 #include <QUuid>
 #include <algorithm>
 #include <memory>
@@ -32,6 +33,23 @@ QString SessionLoader::stage2() const
     return sourceRole(repository_.stage2.label, QString::fromLatin1(repository_.stage2.commitId));
 }
 
+QString SessionLoader::operationDescription() const
+{
+    if (!repository_.supported) return operation_;
+    const auto left = stage2Name().isEmpty() ? sourceIdentity(stage2(), stage2CommitId()) : stage2Name();
+    const auto right = stage3Name().isEmpty() ? sourceIdentity(stage3(), stage3CommitId()) : stage3Name();
+    if (repository_.operation == git::RepositoryOperation::Merge)
+        return tr("Merging %1 into %2").arg(right, left);
+    if (repository_.operation == git::RepositoryOperation::Rebase) {
+        const auto branch = repository_.headName.startsWith("refs/heads/")
+            ? git::displayPath(repository_.headName.mid(11)) : right;
+        const auto onto = repository_.ontoName.isEmpty()
+            ? shortId(QString::fromLatin1(repository_.onto)) : repository_.ontoName;
+        return tr("Rebasing %1 onto %2").arg(branch, onto);
+    }
+    return operation_;
+}
+
 QString SessionLoader::stage3() const
 {
     if (!repository_.supported) return {};
@@ -57,6 +75,12 @@ QString SessionLoader::workflow() const
 {
     return tr("Continue the operation and commit in your usual Git workflow. "
               "This session covers only the work opened at launch.");
+}
+
+QString SessionLoader::launchSizeText(const QString &fileId) const
+{
+    const auto found = launchSizes_.constFind(fileId);
+    return found == launchSizes_.cend() ? QString{} : QLocale().formattedDataSize(*found);
 }
 
 QString SessionLoader::noOperationDetail()
@@ -228,6 +252,9 @@ void SessionLoader::classified(const git::ConflictClassificationResult &result)
 
 void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
 {
+    launchSizes_.clear();
+    for (const auto &file : conflicts)
+        if (file.launchSize >= 0) launchSizes_.insert(QString::fromLatin1(file.path.toHex()), file.launchSize);
     std::vector<FileSession> pending;
     for (const auto &file : conflicts) {
         pending.emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), Draft{},

@@ -13,6 +13,7 @@ Item {
     property string iconName
     property string text
     property string explanation
+    property bool viewBackground: false
     property Kirigami.Action helpfulAction: null
     // Asks the owner to set plain text on a message and each label inside it, once they exist.
     signal plainTextRequested(item: Item)
@@ -21,6 +22,15 @@ Item {
     Layout.fillWidth: true
     Layout.fillHeight: true
     Layout.minimumHeight: message.implicitHeight
+    Rectangle {
+        parent: placeholder
+        anchors.fill: parent
+        z: -1
+        visible: placeholder.viewBackground
+        Kirigami.Theme.colorSet: Kirigami.Theme.View
+        Kirigami.Theme.inherit: false
+        color: Kirigami.Theme.backgroundColor
+    }
     PlainPlaceholderMessage {
         id: message
         objectName: placeholder.messageName

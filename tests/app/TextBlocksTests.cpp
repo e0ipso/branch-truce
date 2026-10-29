@@ -13,6 +13,8 @@
 #include <QSignalSpy>
 #include <QRectF>
 #include <QTextDocument>
+#include <QTextCursor>
+#include <QTextLayout>
 #include <cmath>
 #include <memory>
 
@@ -86,6 +88,99 @@ int main(int argc, char **argv)
     QGuiApplication application(argc, argv);
     test_support::Suite suite("text-blocks");
 
+    suite.run("row spacing follows wrapped lines, edits, folds and document replacement", [] {
+        const QString original = QStringLiteral("abcdefghijabcdefghijabcdefghijabcdefghij\nnext\u00a0é");
+        Pane pane(original, {});
+        CHECK(pane.editor->setProperty("width", 80));
+        CHECK(pane.editor->setProperty("wrapMode", 3));
+        auto *quick = pane.editor->property("textDocument").value<QQuickTextDocument *>();
+        auto *doc = quick->textDocument();
+        const auto raw = doc->toRawText();
+        const qreal baseStep = pane.cursorAt(static_cast<int>(original.indexOf(QLatin1Char('\n'))) + 1).y()
+            - pane.cursorAt(static_cast<int>(original.indexOf(QLatin1Char('\n')))).y();
+        CHECK(baseStep > 0);
+        CHECK(QMetaObject::invokeMethod(pane.editor.get(), "select", Q_ARG(int, 2), Q_ARG(int, 20)));
+        const auto selectionStart = pane.editor->property("selectionStart").toInt();
+        const auto selectionEnd = pane.editor->property("selectionEnd").toInt();
+        QSignalSpy changes(doc, &QTextDocument::contentsChange);
+        const int documentRevision = doc->revision();
+        pane.blocks.setRowSpacing(6);
+        CHECK(changes.count() > 0 && doc->revision() > documentRevision);
+        CHECK(doc->toRawText() == raw && !doc->isModified());
+        CHECK(pane.editor->property("selectionStart").toInt() == selectionStart
+            && pane.editor->property("selectionEnd").toInt() == selectionEnd);
+        CHECK(!doc->isUndoRedoEnabled() && doc->availableUndoSteps() == 0);
+        auto block = doc->begin();
+        (void)doc->documentLayout()->blockBoundingRect(block);
+        CHECK(block.layout()->lineCount() > 1);
+        for (int row = 1; row < block.layout()->lineCount(); ++row) {
+            const auto previous = block.layout()->lineAt(row - 1);
+            const auto next = block.layout()->lineAt(row);
+            CHECK(near(next.y() - previous.y(), baseStep + 6));
+            CHECK(near(pane.cursorAt(block.position() + next.textStart()).y()
+                - pane.cursorAt(block.position() + previous.textStart()).y(), baseStep + 6));
+        }
+        const auto second = doc->begin().next();
+        CHECK(near(pane.cursorAt(second.position()).y() - pane.cursorAt(second.position() - 1).y(), baseStep + 6));
+        CHECK(near(pane.blocks.yAtLine(2) - pane.blocks.yAtLine(1), baseStep * block.layout()->lineCount()
+            + 6 * block.layout()->lineCount()));
+        const auto middleOfGap = pane.cursorAt(second.position()).y() - 3;
+        CHECK(pane.blocks.lineAtY(middleOfGap) < 2 && pane.blocks.lineAtY(middleOfGap) > 1);
+        const auto gap = pane.blocks.between(middleOfGap, middleOfGap + 1);
+        CHECK(gap.size() == 1 && gap.first().toMap().value("number").toInt() == 1);
+        const auto afterFormat = changes.count();
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+        CHECK(changes.count() == afterFormat);
+        auto font = pane.editor->property("font").value<QFont>();
+        font.setPointSizeF(font.pointSizeF() * 1.5);
+        CHECK(pane.editor->setProperty("font", font));
+        (void)doc->documentLayout()->blockBoundingRect(doc->begin());
+        const auto firstRow = doc->begin().layout()->lineAt(0);
+        const auto secondRow = doc->begin().layout()->lineAt(1);
+        CHECK(near(secondRow.y() - firstRow.y(), firstRow.height() + 6));
+        QTextCursor edit(doc);
+        const int insertAt = second.position();
+        edit.setPosition(insertAt);
+        edit.insertText(QStringLiteral("new\n"));
+        QCoreApplication::processEvents();
+        CHECK(doc->toRawText() == QString(raw).insert(insertAt, QStringLiteral("new\u2029")));
+        CHECK(doc->isModified() && doc->availableUndoSteps() == 0);
+        for (auto line = doc->begin(); line.isValid(); line = line.next())
+            CHECK(line.blockFormat().lineHeightType() == QTextBlockFormat::LineDistanceHeight
+                && near(line.blockFormat().lineHeight(), 6));
+        doc->setPlainText(QStringLiteral("first\nsecond\nthird"));
+        QCoreApplication::processEvents();
+        for (auto line = doc->begin(); line.isValid(); line = line.next())
+            CHECK(near(line.blockFormat().lineHeight(), 6));
+        pane.blocks.setHidden({QVariantMap{{"line", 2}, {"text", "second"}}});
+        CHECK(near(pane.blocks.yAtLine(2), pane.blocks.yAtLine(3)));
+        pane.blocks.setHidden({});
+        CHECK(pane.blocks.yAtLine(3) > pane.blocks.yAtLine(2));
+        pane.blocks.setRowSpacing(0);
+        CHECK(!doc->begin().blockFormat().hasProperty(QTextFormat::LineHeight));
+        CHECK(near(pane.cursorAt(doc->begin().next().position()).y() - pane.cursorAt(0).y(),
+            pane.cursorAt(0).height()));
+        CHECK(doc->toRawText() == QStringLiteral("first\u2029second\u2029third"));
+    });
+    suite.run("row spacing moves between documents and clears only its format", [] {
+        Pane first(QStringLiteral("one\ntwo"), {});
+        Pane second(QStringLiteral("three\nfour"), {});
+        auto *firstQuick = first.editor->property("textDocument").value<QQuickTextDocument *>();
+        auto *secondQuick = second.editor->property("textDocument").value<QQuickTextDocument *>();
+        auto *firstDoc = firstQuick->textDocument();
+        auto *secondDoc = secondQuick->textDocument();
+        first.blocks.setRowSpacing(5);
+        CHECK(near(firstDoc->begin().blockFormat().lineHeight(), 5));
+        first.blocks.setDocument(secondQuick);
+        CHECK(!firstDoc->begin().blockFormat().hasProperty(QTextFormat::LineHeight));
+        CHECK(near(secondDoc->begin().blockFormat().lineHeight(), 5));
+        CHECK(firstDoc->toRawText() == QStringLiteral("one\u2029two"));
+        CHECK(secondDoc->toRawText() == QStringLiteral("three\u2029four"));
+        CHECK(!firstDoc->isModified() && !secondDoc->isModified());
+        first.blocks.setRowSpacing(0);
+        CHECK(!secondDoc->begin().blockFormat().hasProperty(QTextFormat::LineHeight));
+    });
     suite.run("pane marks rank passages, regions and marker blocks", [] {
         branch_truce::PaneMarks marks;
         const QVariantList passages{QVariantMap{{"side", "stage2"}, {"kind", "changed"},

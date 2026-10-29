@@ -14,6 +14,9 @@ class SelectedFile : public QObject {
     Q_PROPERTY(QString path READ path NOTIFY identityChanged)
     Q_PROPERTY(QByteArray pathBytes READ pathBytes NOTIFY identityChanged)
     Q_PROPERTY(QString fileName READ fileName NOTIFY identityChanged)
+    Q_PROPERTY(QString mimeIcon READ mimeIcon NOTIFY identityChanged)
+    Q_PROPERTY(QString mimeDescription READ mimeDescription NOTIFY identityChanged)
+    Q_PROPERTY(QString formatDescription READ formatDescription NOTIFY sourcesChanged)
     Q_PROPERTY(QVariantMap stage2 READ stage2 NOTIFY sourcesChanged)
     Q_PROPERTY(QVariantMap stage3 READ stage3 NOTIFY sourcesChanged)
     Q_PROPERTY(QVariantMap earlier READ earlier NOTIFY sourcesChanged)
@@ -55,6 +58,9 @@ public:
     [[nodiscard]] QString path() const { return path_; }
     [[nodiscard]] QByteArray pathBytes() const { return pathBytes_; }
     [[nodiscard]] QString fileName() const { return fileName_; }
+    [[nodiscard]] QString mimeIcon() const;
+    [[nodiscard]] QString mimeDescription() const;
+    [[nodiscard]] QString formatDescription() const;
     [[nodiscard]] QVariantMap stage2() const { return stage2_; }
     [[nodiscard]] QVariantMap stage3() const { return stage3_; }
     [[nodiscard]] QVariantMap earlier() const { return earlier_; }

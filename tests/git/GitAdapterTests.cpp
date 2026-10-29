@@ -260,6 +260,8 @@ void checkOperationIdentity(const Result &result, const ConflictHistory &history
     CHECK(result.repository.supported && result.repository.operation == operation);
     CHECK(result.repository.unsupportedPaths.isEmpty() && result.repository.diagnostic.isEmpty());
     CHECK(result.repository.stage2.commitId == expectedHead && result.repository.stage3.commitId == history.side);
+    if (expectedHead == history.main) CHECK(result.repository.stage2.name == QStringLiteral("main"));
+    CHECK(result.repository.stage3.name == QStringLiteral("side"));
     CHECK(result.repository.baseCommitId == (earlier.isEmpty() ? history.base : earlier));
     CHECK(!result.repository.stage2.label.contains(QString::fromLatin1(expectedHead)));
     CHECK(!result.repository.stage3.label.contains(QString::fromLatin1(history.side)));
@@ -717,6 +719,19 @@ public:
                     CHECK(!original.repository.supported && original.indexEntries.isEmpty());
                 }
             }
+        });
+        suite.run("ambiguous branch names fall back to the verified commit role", [] {
+            Repository repo;
+            const auto history = conflictHistory(repo);
+            repo.git({"merge", "--no-edit", "side"}, {}, 1);
+            repo.git({"branch", "same-commit", "main"});
+            GitAdapter adapter(gitExecutable);
+            const auto result = run(adapter, repo.request(Operation::DiscoverRepository));
+            CHECK(result.outcome == Outcome::Success && result.repository.supported);
+            CHECK(result.repository.stage2.commitId == history.main);
+            CHECK(result.repository.stage2.name.isEmpty());
+            CHECK(result.repository.stage2.label == QStringLiteral("Current checkout"));
+            CHECK(result.repository.stage3.name == QStringLiteral("side"));
         });
         suite.run("unsupported and inconsistent operation metadata cannot acquire source labels", [] {
             for (int scenario = 0; scenario < 8; ++scenario) {

@@ -54,6 +54,7 @@ QList<QByteArray> RepositoryDiscovery::arguments() const
         return args;
     }
     case Step::SourceTree: return {"ls-tree", "--full-tree", "-r", "-z", treeQueue.front()};
+    case Step::Names: return {"for-each-ref", "--format=%(objectname)%00%(refname)", "refs/heads/"};
     case Step::Done: return {};
     }
     return {};
@@ -325,8 +326,10 @@ bool RepositoryDiscovery::finish()
     auto &context = result.repository;
     if (context.operation == RepositoryOperation::Merge || context.operation == RepositoryOperation::Rebase) {
         const bool rebase = context.operation == RepositoryOperation::Rebase;
-        context.stage2 = {head, rebase ? QStringLiteral("Current rebased state") : QStringLiteral("Current checkout")};
-        context.stage3 = {other, rebase ? QStringLiteral("Commit being replayed") : QStringLiteral("Merged commit")};
+        context.stage2.commitId = head;
+        context.stage2.label = rebase ? QStringLiteral("Current rebased state") : QStringLiteral("Current checkout");
+        context.stage3.commitId = other;
+        context.stage3.label = rebase ? QStringLiteral("Commit being replayed") : QStringLiteral("Merged commit");
         context.baseCommitId = base;
         context.headName = headName;
         context.originalHead = originalHead;
@@ -417,7 +420,26 @@ bool RepositoryDiscovery::consume(const QByteArray &output, int code)
         break;
     case Step::FinalHead:
         if (line(output) != head) return fail(QStringLiteral("HEAD changed during discovery; inspect again"));
+        step = Step::Names;
+        break;
+    case Step::Names: {
+        QHash<QByteArray, QList<QByteArray>> names;
+        for (const auto &record : output.split('\n')) {
+            if (record.isEmpty()) continue;
+            const auto fields = record.split('\0');
+            if (fields.size() != 2 || !objectId(fields[0]) || !branchContext(fields[1]))
+                return fail(QStringLiteral("Invalid local branch identity during discovery"));
+            names[fields[0]].append(fields[1].mid(11));
+        }
+        const auto uniqueName = [&names](const QByteArray &id) {
+            const auto found = names.value(id);
+            return found.size() == 1 ? displayPath(found.front()) : QString{};
+        };
+        result.repository.stage2.name = uniqueName(head);
+        result.repository.stage3.name = uniqueName(other);
+        result.repository.ontoName = uniqueName(onto);
         return finish();
+    }
     case Step::Done: return false;
     }
     return true;

@@ -12,6 +12,7 @@
 #include <QtQmlIntegration/qqmlintegration.h>
 
 class QAbstractTextDocumentLayout;
+class QTextDocument;
 
 namespace branch_truce {
 // Lists the document blocks of a TextEdit, one per line of the file, so a
@@ -31,6 +32,7 @@ class TextBlocks : public QObject {
     Q_OBJECT
     QML_ELEMENT
     Q_PROPERTY(QQuickTextDocument *document READ document WRITE setDocument NOTIFY documentChanged)
+    Q_PROPERTY(qreal rowSpacing READ rowSpacing WRITE setRowSpacing NOTIFY rowSpacingChanged)
     Q_PROPERTY(int blockCount READ blockCount NOTIFY blockCountChanged)
     // The lines to hide, as {line, text} maps: a 1-based line number and the
     // text that line must hold. A line is hidden only while it holds that
@@ -45,6 +47,10 @@ public:
     explicit TextBlocks(QObject *parent = nullptr);
     QQuickTextDocument *document() const;
     void setDocument(QQuickTextDocument *document);
+    qreal rowSpacing() const;
+    void setRowSpacing(qreal spacing);
+    // Finish a pending text-change relayout before the editor restores its viewport.
+    Q_INVOKABLE void flushSpacing();
     int blockCount() const;
     QVariantList hidden() const;
     void setHidden(const QVariantList &hidden);
@@ -105,6 +111,7 @@ public:
 Q_SIGNALS:
     void documentChanged();
     void blockCountChanged();
+    void rowSpacingChanged();
     void hiddenChanged();
     // The text or its layout changed, so block positions may have moved.
     void layoutChanged();
@@ -124,11 +131,20 @@ private:
     bool folded(const QTextBlock &block) const;
     // block itself or the nearest one in that direction that is not folded.
     QTextBlock reachable(QTextBlock block, bool forward) const;
+    void reconnectDocument();
+    void scheduleSpacing(int position, int removed, int added);
+    void applySpacing(QTextDocument *text, qreal spacing, int from, int to);
     void scheduleHiding();
     void applyHidden();
 
     QPointer<QQuickTextDocument> document_;
     QList<QMetaObject::Connection> connections_;
+    QMetaObject::Connection documentSwapConnection_;
+    QPointer<QTextDocument> text_;
+    qreal rowSpacing_ = 0;
+    int spacingFrom_ = -1;
+    int spacingTo_ = -1;
+    bool spacingQueued_ = false;
     QVariantList hidden_;
     QList<Fold> folds_;
     // The 1-based lines that are rows of folded blocks after the last application.

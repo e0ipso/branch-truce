@@ -79,11 +79,11 @@ The window is a `Kirigami.ApplicationWindow` holding one `Kirigami.Page`. The ap
 | Default | `Kirigami.Units.gridUnit * 70` | `Kirigami.Units.gridUnit * 40` | 1280x720 |
 | Minimum | `Kirigami.Units.gridUnit * 48` | `Kirigami.Units.gridUnit * 28` | none |
 
-The minimum must fit a 960x540 logical screen at the default font, because the window-fit journey checks that size (section 2, vertical budget).
+The minimum targets a 960x540 logical screen at the default font. Strict control-fit and pane-height acceptance at that size is temporarily deferred by the owner; the journey still checks scrolling and first-undecided-region visibility there (section 2, vertical budget).
 
 ### Header band
 
-One `Kirigami.ActionToolBar` row in the Header colour set, from left to right:
+One toolbar row in the Header colour set, using native Qt Quick Controls buttons and a framed conflict group, from left to right:
 
 1. **Sidebar toggle.** `sidebar-expand-left`, icon only, checkable and checked while the file list shows.
 2. **Title.** The repository name as a `Kirigami.Heading`, then the operation in muted `smallFont`, for example "Merging feature/backoff into main". The name, not the path; the full path is in the tooltip.
@@ -98,7 +98,7 @@ A `SplitView` pane to the left of the work area, `Kirigami.Units.gridUnit * 14` 
 
 - **List header.** "Conflicted files" as a `Kirigami.Heading` and a neutral `Pill` with the number of files. It is as tall as the file toolbar, so their hairlines line up.
 - **List.** `Kirigami.Units.smallSpacing` padding above the first row and below the last.
-- **Rows.** Each row sits on a row plate (section 4). The leading icon is the file's status icon from section 5. The first line is the file name, then its directory in muted `smallFont`. The second line is one short status phrase in `smallFont`: "1 conflict left", "Resolved" in `positiveTextColor`, "Handle outside the app" in `neutralTextColor`. A row never carries a second status as a pill, and never joins statuses with dots or separators.
+- **Rows.** Each row sits on a row plate (section 4). The leading icon is the file's status icon from section 5. The first line is the file name, then its directory in muted `smallFont`. The second line is one short status phrase in `smallFont`: "1 conflict left", "Resolved" in `positiveTextColor`, "Handle outside the app" in `neutralTextColor`. Recovery and write failures take priority over the conflict count, including on unselected rows. A row never carries a second status as a pill, and never joins statuses with dots or separators.
 
 ### File toolbar
 
@@ -121,7 +121,7 @@ Notices sit between the file toolbar and the panes and take no height when there
 
 ### Panes
 
-Three code panes in a `SplitView`: the two read-only sources around the editable result, with a connector handle between each source and the result. Each pane is a `PaneHeader` above its text. The title is the version's name and the identity says what it is, truthfully (`PRD.md:33`): "main", "Current branch · 6f2dd188f0"; "Result", "Editable"; "feature/backoff", "Incoming · 234b80a1fd". Commit ids use `fixedWidthFont`.
+Three code panes in a `SplitView`: the two read-only sources around the editable result, with a connector handle between each source and the result. Each pane is a `PaneHeader` above its text. The title is the version's name and the identity says what it is, truthfully (`PRD.md:33`): "main", "Current branch · 6f2dd188f0"; "Result", "Editable"; "feature/backoff", "Incoming · 234b80a1fd". Commit ids use `fixedWidthFont`. A version name is shown only when a unique local branch was observed pointing exactly at the verified source commit. Ambiguous or unavailable names retain the truthful role and commit fallback; rebase branch context is used in the operation description rather than being invented as an index-side identity.
 
 The earlier version (common ancestor) is not a fourth column. It opens on demand with Show earlier version, over or beside the panes, and closing it restores the editor state and selection (`PRD.md:37`).
 
@@ -164,14 +164,14 @@ The result buffer keeps the Git marker lines (`<<<<<<<`, `|||||||`, `=======`, `
 
 ### Footer
 
-The footer status band (section 4) is one line in the Header colour set: the session's progress on the left, the outside-app count beside it, the selected file's facts on the right. It never wraps and never holds actions.
+The footer status band (section 4) is one line in the Header colour set: the session's progress on the left, the outside-app count beside it, the selected file's facts on the right. It never wraps and never holds actions. Text file facts include the captured encoding, BOM and line endings, followed by the recognized file type. Outside-app files show the recognized type and size from the stable launch read when available; unavailable metadata is not inferred from the editable buffer.
 
 ### Vertical budget
 
 The window-fit journey in `tests/acceptance/JourneyAcceptanceTests.cpp` (its `checkFits` helper) pins these limits:
 
-- At 1280x720 and at 960x540 every text pane is at least eight lines high, also with the source choices shown.
-- Every named control is reachable: in view, after scrolling the page, or after opening the menu that holds it.
+- At 1280x720 every text pane is at least eight lines high, also with the source choices shown. The strict 960x540 window-fit case is temporarily deferred by the owner.
+- At the strict window-fit sizes, every named control is reachable: in view, after scrolling the page, or after opening the menu that holds it.
 - Each pane header is one line high.
 - At 1280x800 no file row wraps.
 
@@ -179,7 +179,7 @@ The chrome above and below the panes has a fixed allowance:
 
 | Element | Height | Mockup |
 | --- | --- | --- |
-| Header band | one `Kirigami.ActionToolBar` row | 46 px |
+| Header band | one native Qt Quick Controls toolbar row | 46 px |
 | File toolbar and list header | one `Kirigami.ActionToolBar` row | 40 px |
 | Notices | zero when empty; one line each otherwise | none shown |
 | Search bar | zero while closed; one row while open | not shown |

@@ -123,48 +123,67 @@ Kirigami.ApplicationWindow {
         id: replacementDialog
         controller: window.controller
     }
-    width: 1200
-    height: 850
+    width: Kirigami.Units.gridUnit * 70
+    height: Kirigami.Units.gridUnit * 40
     // Fits 1920x1080 at 200% scaling (960x540 logical pixels); the page scrolls below its content height.
-    minimumWidth: 900
-    minimumHeight: 500
+    minimumWidth: Kirigami.Units.gridUnit * 48
+    minimumHeight: Kirigami.Units.gridUnit * 28
     visible: true
     title: qsTr("Branch Truce")
     pageStack.initialPage: Kirigami.Page {
+        padding: 0
         title: window.controller.loader.operation || qsTr("Open conflict session")
         // Every attached tooltip uses one shared popup, and some name a path or a branch.
         Component.onCompleted: window.showPlainText(ToolTip.toolTip.contentItem)
-        // The header names the repository once a root is known; the operation and the
-        // file counts become its subtitle.
-        titleDelegate: ColumnLayout {
-            spacing: 0
-            Layout.fillWidth: true
+        // The header names the repository and operation; progress stays in the footer.
+        titleDelegate: RowLayout {
+            spacing: Kirigami.Units.smallSpacing
+            Kirigami.Theme.colorSet: Kirigami.Theme.Header
+            ToolButton {
+                objectName: "toggleFileList"
+                text: window.controller.fileListVisible ? qsTr("Hide file list") : qsTr("Show file list")
+                Accessible.name: qsTr("Show file list")
+                Accessible.role: Accessible.CheckBox
+                icon.name: "sidebar-expand-left"
+                display: AbstractButton.IconOnly
+                checkable: true
+                checked: window.controller.fileListVisible
+                onClicked: window.controller.toggleFileList()
+            }
             PlainLabel {
                 objectName: "repositoryHeading"
-                Layout.fillWidth: true
-                font.pointSize: Kirigami.Theme.defaultFont.pointSize * 1.5
+                Layout.minimumWidth: Kirigami.Units.gridUnit * 5
+                Layout.maximumWidth: Kirigami.Units.gridUnit * 12
+                text: {
+                    const path = window.controller.loader.repositoryRoot
+                    return path.length ? path.replace(/\/$/, "").split("/").pop() : qsTr("Open conflict session")
+                }
                 font.weight: Font.DemiBold
-                text: window.controller.loader.repositoryRoot || (window.controller.loader.operation || qsTr("Open conflict session"))
                 elide: Text.ElideMiddle
+                ToolTip.text: window.controller.loader.repositoryRoot
+                HoverHandler { id: repositoryHover }
+                ToolTip.visible: repositoryHover.hovered && ToolTip.text.length > 0
             }
             PlainLabel {
                 objectName: "repositorySubtitle"
-                Layout.fillWidth: true
-                visible: text.length > 0 && window.controller.loader.repositoryRoot.length > 0
-                text: {
-                    const operation = window.controller.loader.operation
-                    const count = window.controller.files.totalFiles
-                    if (window.controller.loader.opening || count <= 0)
-                        return operation
-                    const files = count === 1 ? qsTr("%n file in this session", "", count)
-                                              : qsTr("%n files in this session", "", count)
-                    const summary = qsTr("%1 · %2 resolved").arg(files).arg(window.controller.files.resolvedFiles)
-                    return operation.length > 0 ? qsTr("%1 · %2").arg(operation).arg(summary) : summary
-                }
-                elide: Text.ElideRight
+                Layout.preferredWidth: Math.min(implicitWidth, Kirigami.Units.gridUnit * 12)
+                Layout.minimumWidth: 0
+                text: window.controller.loader.operationDescription
                 font: Kirigami.Theme.smallFont
-                opacity: 0.7
+                color: Kirigami.Theme.disabledTextColor
+                elide: Text.ElideRight
             }
+            MainToolBar {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
+                controller: window.controller
+                onHandoffRequested: handoffDialog.open()
+            }
+        }
+        footer: SessionFooter {
+            visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
+            controller: window.controller
         }
         // On a short screen, such as 1080p at 150% or 200%, the content keeps its minimum
         // height and scrolls, so the text panes keep a usable height and nothing is cut off.
@@ -190,11 +209,11 @@ Kirigami.ApplicationWindow {
                 id: pageContent
                 width: pageScroll.width - (pageScroll.overflowing ? pageScrollBar.width : 0)
                 height: pageScroll.contentHeight
-                spacing: Kirigami.Units.largeSpacing
+                spacing: 0
                 PlainLabel {
                     objectName: "sessionDetail"
                     Layout.fillWidth: true
-                    visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
+                    visible: false
                     text: window.controller.loader.detail
                     wrapMode: Text.Wrap
                 }
@@ -255,19 +274,10 @@ Kirigami.ApplicationWindow {
                     Accessible.name: qsTr("Session warning")
                     Layout.fillWidth: true
                     visible: !window.controller.loader.opening
-                        && window.controller.outsideAppFiles + window.controller.loadErrorFiles > 0
+                        && window.controller.outsideAppFiles > 0
+                        && window.controller.files.resolvedFiles + window.controller.outsideAppFiles === window.controller.files.totalFiles
                     type: Kirigami.MessageType.Warning
-                    text: qsTr("%1 · %2. These files remain outstanding. Select a file for its reason and handle it outside Branch Truce.")
-                        .arg(qsTr("%n outside app", "", window.controller.outsideAppFiles))
-                        .arg(window.controller.loadErrorFiles === 1
-                             ? qsTr("%n load error", "", window.controller.loadErrorFiles)
-                             : qsTr("%n load errors", "", window.controller.loadErrorFiles))
-                }
-                MainToolBar {
-                    Layout.fillWidth: true
-                    visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
-                    controller: window.controller
-                    onHandoffRequested: handoffDialog.open()
+                    text: window.controller.outsideAppFiles === 1 ? qsTr("Supported text work is complete. %n file remains to handle outside the app.", "", window.controller.outsideAppFiles) : qsTr("Supported text work is complete. %n files remain to handle outside the app.", "", window.controller.outsideAppFiles)
                 }
                 PlainLabel {
                     objectName: "navigationTarget"
@@ -290,6 +300,7 @@ Kirigami.ApplicationWindow {
                         SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
                         SplitView.maximumWidth: Math.max(SplitView.minimumWidth, workSplit.width / 2)
                         controller: window.controller
+                        headerHeight: fileToolBar.height
                         rowDelegate: FileRow {
                             id: fileRow
                             controller: window.controller
@@ -302,47 +313,35 @@ Kirigami.ApplicationWindow {
                     ColumnLayout {
                         id: workArea
                         SplitView.fillWidth: true
-                        // The selected file's name, its status sentence and one chip per state.
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: Kirigami.Units.largeSpacing
-                            PlainLabel {
-                                objectName: "selectedPath"
-                                Layout.maximumWidth: workArea.width / 3
-                                text: window.selectedFile.path || ""
-                                wrapMode: Text.WrapAnywhere
-                                font.bold: true
-                            }
-                            Flow {
-                                id: selectedStatus
-                                objectName: "selectedStatus"
-                                Accessible.role: Accessible.Grouping
-                                Accessible.name: qsTr("File status")
-                                Layout.fillWidth: true
-                                visible: window.controller.selectedFileId.length > 0
-                                spacing: Kirigami.Units.smallSpacing
-                                Repeater {
-                                    model: window.selectedFile.chips || []
-                                    delegate: StatusChip {
-                                        maximumWidth: selectedStatus.width
-                                    }
-                                }
-                            }
+                        spacing: 0
+                        FileToolBar {
+                            id: fileToolBar
+                            edits: resultEdits
+                            controller: window.controller
+                            selectedFile: window.selectedFile
+                            composing: comparison.inputMethodComposing
+                            onSearchRequested: comparison.openSearch()
+                            onNonConflictingChosen: scope => window.chooseNonConflicting(scope)
+                            onWholeFileChosen: side => window.chooseWholeFile(side)
+                            onDiscardToStagedChosen: discardStagedDialog.ask(window.controller.selectedFileId,
+                                window.selectedFile.currentRevision)
+                        }
+                        Item {
+                            objectName: "selectedStatus"
+                            visible: false
                         }
                         // The reason is shown whole; it stays outstanding until it is handled outside the app.
                         CenteredPlaceholder {
                             visible: window.controller.selectedFileId.length > 0 && !window.supportedSelection
                             messageName: "selectedProblem"
+                            viewBackground: true
                             onPlainTextRequested: item => window.showPlainText(item)
                             iconName: window.selectedFile.statusIcon || ""
-                            text: window.selectedFile.support === "unreadable" ? qsTr("Load error") : qsTr("Outside app")
-                            explanation: qsTr("%1\n\nThis file remains outstanding until it is handled outside Branch Truce.")
-                                .arg(window.selectedFile.supportDetail || "")
-                            helpfulAction: Kirigami.Action {
-                                text: qsTr("Review handoff…")
-                                icon.name: "merge"
-                                onTriggered: handoffDialog.open()
-                            }
+                            text: window.selectedFile.support === "unreadable" ? qsTr("Could not load this file") : qsTr("This file must be resolved outside Branch Truce")
+                            explanation: window.selectedFile.support === "unreadable" ? window.selectedFile.supportDetail || ""
+                                : qsTr("%1\n\nResolve this file with another tool, then run git add for its path. It remains outstanding until Git reports it resolved.")
+                                    .arg(window.selectedFile.supportDetail || "")
+
                         }
                         Repeater {
                             model: FileNotices {
@@ -356,19 +355,6 @@ Kirigami.ApplicationWindow {
                                     comparison.editorNamed("result").forceActiveFocus()
                                 }
                             }
-                        }
-                        FileToolBar {
-                            id: fileToolBar
-                            edits: resultEdits
-                            visible: window.supportedSelection
-                            controller: window.controller
-                            selectedFile: window.selectedFile
-                            composing: comparison.inputMethodComposing
-                            onSearchRequested: comparison.openSearch()
-                            onNonConflictingChosen: scope => window.chooseNonConflicting(scope)
-                            onWholeFileChosen: side => window.chooseWholeFile(side)
-                            onDiscardToStagedChosen: discardStagedDialog.ask(window.controller.selectedFileId,
-                                window.selectedFile.currentRevision)
                         }
                         // Why the region choices are missing from the gutters, while they are shown.
                         PlainInlineMessage {
@@ -397,10 +383,6 @@ Kirigami.ApplicationWindow {
                             onChoiceChosen: (target, action) => window.choose(target, action)
                         }
                     }
-                }
-                SessionFooter {
-                    visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
-                    controller: window.controller
                 }
             }
         }

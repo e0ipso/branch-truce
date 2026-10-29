@@ -27,9 +27,13 @@ ObjectModel {
         objectName: "recoveryProblem"
         onPlainTextRequested: item => fileNotices.plainTextRequested(item)
         Layout.fillWidth: true
-        visible: !!fileNotices.selectedFile.recoveryError
+        visible: !!fileNotices.selectedFile.recoveryError || !!fileNotices.selectedFile.pendingInput
         type: Kirigami.MessageType.Error
-        text: fileNotices.selectedFile.recoveryError || ""
+        text: fileNotices.selectedFile.recoveryError || qsTr("Pending input needs recovery.")
+        actions: [
+            NamedAction { controlName: "retryRecovery"; text: qsTr("Retry keeping pending input"); visible: !!fileNotices.selectedFile.pendingInput && fileNotices.selectedFile.recoveryState !== "save-failed"; onTriggered: fileNotices.controller.files.retryPendingRecovery(fileNotices.controller.selectedFileId) },
+            NamedAction { controlName: "retrySave"; text: qsTr("Retry Save"); visible: fileNotices.selectedFile.recoveryState === "save-failed"; onTriggered: fileNotices.controller.files.retryPendingRecovery(fileNotices.controller.selectedFileId) }
+        ]
     }
     PlainInlineMessage {
         objectName: "commandMessage"
@@ -37,7 +41,7 @@ ObjectModel {
         type: Kirigami.MessageType.Information
         icon.name: "dialog-information"
         Layout.fillWidth: true
-        visible: fileNotices.controller.commandMessage.length > 0
+        visible: fileNotices.controller.commandMessage.length > 0 && !fileNotices.controller.resolutionConfirmation
         text: fileNotices.controller.commandMessage
         actions: [
             Kirigami.Action {
@@ -53,6 +57,24 @@ ObjectModel {
         ]
     }
     PlainInlineMessage {
+        objectName: "fileFailureNotice"
+        onPlainTextRequested: item => fileNotices.plainTextRequested(item)
+        Layout.fillWidth: true
+        visible: fileNotices.selectedFile.status === "Repository write failed"
+            || (fileNotices.selectedFile.status === "Written, unresolved"
+                && fileNotices.controller.parentStagingPath.length === 0)
+        type: Kirigami.MessageType.Error
+        text: fileNotices.selectedFile.status
+    }
+    PlainInlineMessage {
+        objectName: "staleStagedNotice"
+        onPlainTextRequested: item => fileNotices.plainTextRequested(item)
+        Layout.fillWidth: true
+        visible: !!fileNotices.selectedFile.progress && !!fileNotices.selectedFile.progress.earlierResolved
+        type: Kirigami.MessageType.Warning
+        text: qsTr("Earlier result staged; current draft not applied")
+    }
+    PlainInlineMessage {
         objectName: "parentStagingState"
         onPlainTextRequested: item => fileNotices.plainTextRequested(item)
         type: Kirigami.MessageType.Warning
@@ -60,13 +82,7 @@ ObjectModel {
         Layout.fillWidth: true
         visible: fileNotices.controller.parentStagingPath.length > 0
         text: qsTr("Written, unresolved. Waiting for Git to stage %1.").arg(fileNotices.controller.parentStagingPath)
-    }
-    Button {
-        objectName: "recheckParentStaging"
-        visible: fileNotices.controller.parentStagingPath.length > 0
-        text: qsTr("Check Git staging")
-        enabled: !fileNotices.controller.resolutionBusy
-        onClicked: fileNotices.controller.recheckParentAcknowledgment()
+        actions: [NamedAction { controlName: "recheckParentStaging"; text: qsTr("Check Git staging"); enabled: !fileNotices.controller.resolutionBusy; onTriggered: fileNotices.controller.recheckParentAcknowledgment() }]
     }
     PlainInlineMessage {
         objectName: "mergetoolHolding"
@@ -76,13 +92,7 @@ ObjectModel {
         Layout.fillWidth: true
         visible: fileNotices.controller.mergetoolWaiting
         text: qsTr("Git is waiting on this path. Mark resolved hands it back. Leave keeps the draft and returns the original file.")
-    }
-    Button {
-        objectName: "leaveMergetool"
-        visible: fileNotices.controller.mergetoolWaiting
-        enabled: !fileNotices.controller.resolutionBusy
-        text: qsTr("Leave unresolved")
-        onClicked: fileNotices.controller.leaveMergetool()
+        actions: [NamedAction { controlName: "leaveMergetool"; text: qsTr("Leave unresolved"); enabled: !fileNotices.controller.resolutionBusy; onTriggered: fileNotices.controller.leaveMergetool() }]
     }
     // A path whose result Git already staged is not waiting for a launch.
     PlainInlineMessage {
@@ -97,39 +107,27 @@ ObjectModel {
                  && !(fileNotices.selectedFile.progress && fileNotices.selectedFile.progress.earlierResolved)
         text: qsTr("Waiting for Git to launch this path. It is not resolved.")
     }
-    Button {
-        objectName: "endParentSession"
+    PlainInlineMessage {
+        objectName: "parentSessionNotice"
+        onPlainTextRequested: item => fileNotices.plainTextRequested(item)
+        Layout.fillWidth: true
         visible: fileNotices.controller.canEndParentSession
-        text: qsTr("Parent Git is finished")
-        onClicked: fileNotices.controller.endParentSession()
+        text: qsTr("The parent Git session can be finished.")
+        actions: [NamedAction { controlName: "endParentSession"; text: qsTr("Parent Git is finished"); onTriggered: fileNotices.controller.endParentSession() }]
     }
-    RowLayout {
+    PlainInlineMessage {
+        objectName: "resolutionNotice"
+        onPlainTextRequested: item => fileNotices.plainTextRequested(item)
+        Layout.fillWidth: true
+        type: Kirigami.MessageType.Warning
         visible: fileNotices.controller.resolutionConfirmation
             && fileNotices.controller.resolutionFileId === fileNotices.controller.selectedFileId
             && fileNotices.controller.resolutionRevision === fileNotices.selectedFile.currentRevision
-        Button {
-            objectName: "confirmResolution"
-            text: qsTr("Confirm resolution")
-            enabled: !fileNotices.controller.resolutionBusy && !fileNotices.composing
-            onClicked: fileNotices.controller.markResolved(fileNotices.controller.selectedFileId, fileNotices.selectedFile.currentRevision, true)
-        }
-        Button {
-            objectName: "cancelResolution"
-            text: qsTr("Cancel")
-            onClicked: fileNotices.controller.cancelResolution()
-        }
-    }
-    Button {
-        objectName: "retryRecovery"
-        visible: !!fileNotices.selectedFile.pendingInput && fileNotices.selectedFile.recoveryState !== "save-failed"
-        text: qsTr("Retry keeping pending input")
-        onClicked: fileNotices.controller.files.retryPendingRecovery(fileNotices.controller.selectedFileId)
-    }
-    Button {
-        objectName: "retrySave"
-        visible: fileNotices.selectedFile.recoveryState === "save-failed"
-        text: qsTr("Retry Save")
-        onClicked: fileNotices.controller.files.retryPendingRecovery(fileNotices.controller.selectedFileId)
+        text: fileNotices.controller.commandMessage
+        actions: [
+            NamedAction { controlName: "confirmResolution"; text: qsTr("Confirm resolution"); enabled: !fileNotices.controller.resolutionBusy && !fileNotices.composing; onTriggered: fileNotices.controller.markResolved(fileNotices.controller.selectedFileId, fileNotices.selectedFile.currentRevision, true) },
+            NamedAction { controlName: "cancelResolution"; text: qsTr("Cancel"); onTriggered: fileNotices.controller.cancelResolution() }
+        ]
     }
     SnapshotPane {
         visible: !!fileNotices.selectedFile.pendingInput && fileNotices.selectedFile.recoveryState !== "save-failed"

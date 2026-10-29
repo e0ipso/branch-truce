@@ -1,4 +1,4 @@
-// A file list row: the path, the status line and a chip for a file outside the app.
+// A file list row: a status icon, file name and directory, and one status line.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -16,15 +16,27 @@ KirigamiDelegates.SubtitleDelegate {
     required property string path
     required property string statusIcon
     required property string statusLine
+    required property int undecidedCount
+    required property string recoveryState
+    required property string status
     required property string summary
     required property ApplicationController controller
     readonly property bool current: fileId === row.controller.selectedFileId
-    readonly property string chip: support === "unreadable" ? qsTr("Load error")
-        : support === "supported" ? "" : qsTr("Outside app")
     width: ListView.view.width
     // The path alone names the row, so a screen reader reads it as the list item's name.
     text: row.path
-    subtitle: row.statusLine
+    subtitle: row.recoveryState === "failed" || row.recoveryState === "save-failed" || row.recoveryState === "blocked"
+        ? row.status
+        : row.support === "unreadable" ? qsTr("Load error")
+        : row.support !== "supported" ? qsTr("Handle outside the app")
+        : row.status === "Written and resolved" ? qsTr("Resolved")
+        : row.status === "Repository write failed" || row.status === "Written, unresolved"
+            || row.status === "Draft save failed" || row.status === "Outcome uncertain; verification required"
+            || row.status === "Earlier result staged; current draft not applied" ? row.status
+        : row.undecidedCount > 0 ? (row.undecidedCount === 1
+            ? qsTr("%n conflict left", "", row.undecidedCount)
+            : qsTr("%n conflicts left", "", row.undecidedCount))
+        : row.statusLine
     Accessible.description: row.summary
     icon.name: row.statusIcon
     highlighted: current
@@ -64,13 +76,26 @@ KirigamiDelegates.SubtitleDelegate {
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 0
-            PlainLabel {
-                id: titleLabel
+            RowLayout {
                 Layout.fillWidth: true
-                text: row.text
-                elide: Text.ElideMiddle
-                font.bold: row.current
-                color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                Layout.preferredHeight: titleLabel.implicitHeight
+                spacing: Kirigami.Units.smallSpacing
+                PlainLabel {
+                    id: titleLabel
+                    Layout.fillWidth: true
+                    text: row.path.split("/").pop() || row.path
+                    elide: Text.ElideMiddle
+                    font.bold: row.current
+                    color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                }
+                PlainLabel {
+                    Layout.maximumWidth: row.width / 3
+                    visible: row.path.lastIndexOf("/") >= 0
+                    text: row.path.slice(0, row.path.lastIndexOf("/"))
+                    elide: Text.ElideMiddle
+                    font: Kirigami.Theme.smallFont
+                    color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.disabledTextColor
+                }
             }
             PlainLabel {
                 id: subtitleLabel
@@ -79,20 +104,18 @@ KirigamiDelegates.SubtitleDelegate {
                 maximumLineCount: 1
                 elide: Text.ElideRight
                 font: Kirigami.Theme.smallFont
-                color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                color: row.highlighted ? Kirigami.Theme.highlightedTextColor : row.support !== "supported" ? Kirigami.Theme.neutralTextColor : row.status === "Written and resolved" ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.disabledTextColor
             }
         }
-        Pill {
-            Layout.alignment: Qt.AlignVCenter
-            visible: row.chip.length > 0
-            text: row.chip
-            tone: "warning"
-        }
+
     }
-    Kirigami.Separator {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        visible: row.index < row.ListView.view.count - 1
+    background: Rectangle {
+        x: Kirigami.Units.smallSpacing
+        width: row.width - 2 * Kirigami.Units.smallSpacing
+        radius: Kirigami.Units.cornerRadius
+        color: row.current ? Kirigami.Theme.highlightColor
+            : row.hovered ? Qt.alpha(Kirigami.Theme.hoverColor, 0.2) : "transparent"
+        border.width: row.activeFocus ? 1 : 0
+        border.color: Kirigami.Theme.focusColor
     }
 }

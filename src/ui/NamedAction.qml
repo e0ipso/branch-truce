@@ -20,7 +20,18 @@ Kirigami.Action {
     property string accessibleName: text
     property bool iconOnly: false
     property bool toggle: false
+    property bool flat: true
     property var alternateSequences: []
+    function ownerMenu(start: Item): Menu {
+        let item = start
+        while (item) {
+            const menu = NamedActionMenu.owner(item) as Menu
+            if (menu)
+                return menu
+            item = item.parent
+        }
+        return null
+    }
     readonly property Shortcut alternateBindings: Shortcut {
         sequences: namedAction.alternateSequences
         enabled: namedAction.enabled
@@ -31,22 +42,14 @@ Kirigami.Action {
         id: namedButton
         // Reading every visual parent keeps this binding current when Kirigami moves
         // the Loader into a menu. The menu itself is a QObject, not a visual ancestor.
-        readonly property Menu containingMenu: {
-            let item = parent
-            while (item) {
-                const menu = NamedActionMenu.owner(item) as Menu
-                if (menu)
-                    return menu
-                item = item.parent
-            }
-            return null
-        }
+        readonly property Menu containingMenu: namedAction.ownerMenu(parent)
         objectName: namedAction.controlName
         action: namedAction.toggle ? namedAction : null
         text: namedAction.text
         icon.name: namedAction.icon.name
         enabled: namedAction.enabled
         checkable: namedAction.toggle
+        flat: namedAction.flat || !!containingMenu
         onClicked: {
             const menu = containingMenu
             if (!namedAction.toggle)

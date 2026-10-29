@@ -33,6 +33,7 @@ Item {
     id: gutter
     required property TextArea editor
     required property Flickable viewport
+    property real rowSpacing: 0
     property var rows: []
     property var marks: ({lines: {}, gaps: {}, letters: {}})
     property var folds: ({})
@@ -47,7 +48,7 @@ Item {
     property real coveredTop: 0
     property real coveredBottom: -1
     z: 1
-    implicitWidth: Kirigami.Units.smallSpacing * 2 + numberWidth + letterWidth + slot.width + decisionSlot.width
+    implicitWidth: Kirigami.Units.smallSpacing * 3 + numberWidth + letterWidth + slot.width + decisionSlot.width
         + separator.width
     Kirigami.Theme.colorSet: Kirigami.Theme.View
     Kirigami.Theme.inherit: false
@@ -80,7 +81,7 @@ Item {
         for (let i = 0; i < found.length; ++i) {
             const rect = editor.positionToRectangle(found[i].position)
             const row = {number: found[i].number, position: found[i].position,
-                y: editor.y + rect.y, height: rect.height,
+                y: editor.y + rect.y, height: rect.height + rowSpacing,
                 top: editor.y + editor.topPadding + found[i].top, extent: found[i].height}
             same = same && rows[i].number === row.number && rows[i].position === row.position
                 && rows[i].y === row.y && rows[i].height === row.height
@@ -172,7 +173,7 @@ Item {
     Item {
         id: slot
         objectName: gutter.objectName + "MarkerSlot"
-        x: Kirigami.Units.smallSpacing * 2 + gutter.numberWidth + gutter.letterWidth
+        x: Kirigami.Units.smallSpacing * 3 + gutter.numberWidth + gutter.letterWidth
         width: Kirigami.Units.gridUnit
         height: gutter.height
         Repeater {
@@ -184,7 +185,9 @@ Item {
                 readonly property int line: modelData.number
                 readonly property string kind: gutter.marks.lines[line] || ""
                 y: modelData.y
+                width: slot.width
                 height: modelData.height
+                horizontalAlignment: Text.AlignHCenter
                 text: kind.length > 0 ? DiffStyle.glyph(kind) : ""
                 visible: text.length > 0
                 font: gutter.editor.font
@@ -204,6 +207,7 @@ Item {
                 readonly property string kind: gutter.marks.gaps[line] ? "removed" : ""
                 // Repeater detaches delegates before destroying them.
                 anchors.right: parent ? parent.right : undefined
+                anchors.rightMargin: Kirigami.Units.smallSpacing
                 y: modelData.top - height / 2
                 text: kind.length > 0 ? DiffStyle.glyph(kind) : ""
                 visible: text.length > 0

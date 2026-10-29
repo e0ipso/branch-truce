@@ -4,6 +4,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import BranchTruce.App
 import QtQml
+import org.kde.kirigami as Kirigami
 
 QtObject {
     id: editActions
@@ -49,6 +50,7 @@ QtObject {
     }
     readonly property NamedAction copy: NamedAction {
         controlName: "copyResult"
+        displayHint: Kirigami.DisplayHint.AlwaysHide
         text: qsTr("Copy")
         icon.name: "edit-copy"
         iconOnly: true
@@ -60,6 +62,7 @@ QtObject {
     }
     readonly property NamedAction paste: NamedAction {
         controlName: "pasteResult"
+        displayHint: Kirigami.DisplayHint.AlwaysHide
         text: qsTr("Paste")
         icon.name: "edit-paste"
         iconOnly: true

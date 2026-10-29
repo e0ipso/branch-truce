@@ -56,24 +56,123 @@ QQuickTextDocument *TextBlocks::document() const { return document_; }
 void TextBlocks::setDocument(QQuickTextDocument *document)
 {
     if (document_ == document) return;
+    disconnect(documentSwapConnection_);
+    if (text_ && rowSpacing_ > 0) applySpacing(text_, 0, 0, text_->characterCount());
+    document_ = document;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    // Qt 6.7 added replacement of the QTextDocument behind the wrapper.
+    if (document_)
+        documentSwapConnection_ = connect(document_, &QQuickTextDocument::textDocumentChanged,
+            this, &TextBlocks::reconnectDocument);
+#endif
+    reconnectDocument();
+    Q_EMIT documentChanged();
+}
+
+void TextBlocks::reconnectDocument()
+{
     for (const auto &connection : std::as_const(connections_)) disconnect(connection);
     connections_.clear();
-    document_ = document;
+    if (text_ && text_ != (document_ ? document_->textDocument() : nullptr) && rowSpacing_ > 0)
+        applySpacing(text_, 0, 0, text_->characterCount());
+    text_ = document_ ? document_->textDocument() : nullptr;
+    spacingFrom_ = spacingTo_ = -1;
     hiddenCount_ = 0;
-    if (auto *text = document ? document->textDocument() : nullptr) {
+    rows_.clear();
+    if (auto *text = text_.data()) {
         connections_.append(connect(text, &QTextDocument::contentsChanged, this, &TextBlocks::layoutChanged));
         connections_.append(connect(text, &QTextDocument::blockCountChanged, this, &TextBlocks::blockCountChanged));
-        connections_.append(connect(text, &QTextDocument::contentsChange, this, &TextBlocks::scheduleHiding));
+        connections_.append(connect(text, &QTextDocument::contentsChange, this,
+            [this](int position, int removed, int added) {
+                scheduleHiding();
+                scheduleSpacing(position, removed, added);
+            }));
         if (auto *layout = text->documentLayout())
             connections_.append(connect(layout, &QAbstractTextDocumentLayout::documentSizeChanged,
                 this, &TextBlocks::layoutChanged));
         for (auto block = text->begin(); block.isValid(); block = block.next())
             hiddenCount_ += !block.isVisible();
+        if (rowSpacing_ > 0) {
+            // The result uses application history; sources are read-only. Block
+            // formatting must never enter the native document undo stack.
+            text->setUndoRedoEnabled(false);
+            applySpacing(text, rowSpacing_, 0, text->characterCount());
+        }
     }
-    Q_EMIT documentChanged();
     Q_EMIT blockCountChanged();
     applyHidden();
     Q_EMIT layoutChanged();
+}
+
+qreal TextBlocks::rowSpacing() const { return rowSpacing_; }
+
+void TextBlocks::setRowSpacing(qreal spacing)
+{
+    spacing = std::max<qreal>(0, spacing);
+    if (qFuzzyCompare(rowSpacing_ + 1, spacing + 1)) return;
+    rowSpacing_ = spacing;
+    if (text_) {
+        if (spacing > 0) text_->setUndoRedoEnabled(false);
+        applySpacing(text_, spacing, 0, text_->characterCount());
+    }
+    Q_EMIT rowSpacingChanged();
+    Q_EMIT layoutChanged();
+}
+
+void TextBlocks::scheduleSpacing(int position, int removed, int added)
+{
+    if (applying_ || rowSpacing_ <= 0 || !text_) return;
+    if (spacingFrom_ < 0) {
+        spacingFrom_ = position;
+        spacingTo_ = position + added;
+    } else {
+        // Multiple changes before the queued pass may shift earlier ranges.
+        // Recheck from the earliest change through the end in that case.
+        spacingFrom_ = std::min(spacingFrom_, position);
+        spacingTo_ = text_->characterCount();
+    }
+    Q_UNUSED(removed);
+    if (spacingQueued_) return;
+    spacingQueued_ = true;
+    QMetaObject::invokeMethod(this, [this] {
+        spacingQueued_ = false;
+        flushSpacing();
+    }, Qt::QueuedConnection);
+}
+
+void TextBlocks::flushSpacing()
+{
+    if (applying_) return;
+    const int from = std::exchange(spacingFrom_, -1);
+    const int to = std::exchange(spacingTo_, -1);
+    if (text_ && rowSpacing_ > 0 && from >= 0) applySpacing(text_, rowSpacing_, from, to);
+}
+
+void TextBlocks::applySpacing(QTextDocument *text, qreal spacing, int from, int to)
+{
+    if (!text) return;
+    QScopedValueRollback guard(applying_, true);
+    const bool modified = text->isModified();
+    auto block = text->findBlock(std::clamp(from, 0, text->characterCount() - 1));
+    QTextCursor cursor(text);
+    cursor.beginEditBlock();
+    for (; block.isValid() && block.position() <= to; block = block.next()) {
+        auto format = block.blockFormat();
+        const bool already = spacing > 0
+            ? format.lineHeightType() == QTextBlockFormat::LineDistanceHeight && qFuzzyCompare(format.lineHeight() + 1, spacing + 1)
+            : !format.hasProperty(QTextFormat::LineHeight) && !format.hasProperty(QTextFormat::LineHeightType);
+        if (already) continue;
+        if (spacing > 0) format.setLineHeight(spacing, QTextBlockFormat::LineDistanceHeight);
+        else {
+            format.clearProperty(QTextFormat::LineHeight);
+            format.clearProperty(QTextFormat::LineHeightType);
+        }
+        cursor.setPosition(block.position());
+        cursor.setBlockFormat(format);
+    }
+    cursor.endEditBlock();
+    // Qt reports formatting as modification, although raw text did not change.
+    if (text->isModified() != modified) text->setModified(modified);
 }
 
 int TextBlocks::blockCount() const
@@ -150,6 +249,7 @@ void TextBlocks::applyHidden()
     if (changed.isEmpty()) return;
     // Setting a block's own format leaves its text alone, but the change
     // makes the layout and the TextEdit lay out and draw the block again.
+    const bool modified = text->isModified();
     QTextCursor cursor(text);
     cursor.beginEditBlock();
     for (const auto &block : std::as_const(changed)) {
@@ -161,19 +261,26 @@ void TextBlocks::applyHidden()
         cursor.setBlockFormat(format);
     }
     cursor.endEditBlock();
+    if (text->isModified() != modified) text->setModified(modified);
 }
 
 // A hidden block has no layout, so it takes no height at the top of the next
 // shown block, or below the last one.
 QRectF TextBlocks::extent(QAbstractTextDocumentLayout *layout, const QTextBlock &block) const
 {
-    if (block.isVisible()) return layout->blockBoundingRect(block);
+    if (block.isVisible()) {
+        auto rect = layout->blockBoundingRect(block);
+        const auto format = block.blockFormat();
+        if (format.lineHeightType() == QTextBlockFormat::LineDistanceHeight)
+            rect.setHeight(rect.height() + format.lineHeight());
+        return rect;
+    }
     if (const auto next = shown(block, true); next.isValid()) {
         const auto rect = layout->blockBoundingRect(next);
         return {rect.left(), rect.top(), rect.width(), 0};
     }
     if (const auto previous = shown(block, false); previous.isValid()) {
-        const auto rect = layout->blockBoundingRect(previous);
+        const auto rect = extent(layout, previous);
         return {rect.left(), rect.bottom(), rect.width(), 0};
     }
     return {};
@@ -197,9 +304,14 @@ QVariantList TextBlocks::between(qreal top, qreal bottom) const
     auto *layout = text ? text->documentLayout() : nullptr;
     if (!layout || bottom <= top) return blocks;
     const int first = layout->hitTest(QPointF(0, std::max<qreal>(0, top)), Qt::FuzzyHit);
-    for (auto block = text->findBlock(std::max(0, first)); block.isValid(); block = block.next()) {
+    auto start = text->findBlock(std::max(0, first));
+    // A fuzzy hit in the added gap can choose the following block even when
+    // the preceding block's extent still intersects the requested area.
+    const auto previous = shown(start.previous(), false);
+    if (previous.isValid() && extent(layout, previous).bottom() > top) start = previous;
+    for (auto block = start; block.isValid(); block = block.next()) {
         if (!block.isVisible()) continue;
-        const auto rect = layout->blockBoundingRect(block);
+        const auto rect = extent(layout, block);
         if (rect.top() >= bottom) break;
         if (rect.bottom() <= top) continue;
         blocks.append(QVariantMap{{QStringLiteral("number"), block.blockNumber() + 1},
@@ -229,16 +341,16 @@ qreal TextBlocks::lineAtY(qreal y) const
         block = next.isValid() ? next : shown(block, false);
     }
     if (!block.isValid()) return 1;
-    auto rect = layout->blockBoundingRect(block);
+    auto rect = extent(layout, block);
     // A fuzzy hit can land on a neighbouring block at a boundary.
     for (auto previous = shown(block.previous(), false); y < rect.top() && previous.isValid();
          previous = shown(block.previous(), false)) {
         block = previous;
-        rect = layout->blockBoundingRect(block);
+        rect = extent(layout, block);
     }
     for (auto next = shown(block.next(), true); y >= rect.bottom() && next.isValid(); next = shown(block.next(), true)) {
         block = next;
-        rect = layout->blockBoundingRect(block);
+        rect = extent(layout, block);
     }
     const auto part = rect.height() > 0 ? (y - rect.top()) / rect.height() : 0;
     return block.blockNumber() + 1 + std::clamp<qreal>(part, 0, 1);

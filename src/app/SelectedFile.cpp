@@ -1,6 +1,7 @@
 // SelectedFile keeps immutable sources indexed while projecting changed result revisions.
 #include "SelectedFile.h"
 #include "SourceIdentity.h"
+#include <QMimeDatabase>
 #include <algorithm>
 #include <set>
 
@@ -74,6 +75,32 @@ SelectedFile::SelectedFile(SessionModel &files, QObject *parent) : QObject(paren
 QVariant SelectedFile::role(int role) const
 {
     return row_ < 0 ? QVariant{} : files_.data(files_.index(row_), role);
+}
+QString SelectedFile::mimeIcon() const
+{
+    const auto icon = QMimeDatabase().mimeTypeForFile(fileName_, QMimeDatabase::MatchExtension).iconName();
+    return icon.isEmpty() ? QStringLiteral("unknown") : icon;
+}
+QString SelectedFile::mimeDescription() const
+{
+    const auto mime = QMimeDatabase().mimeTypeForFile(fileName_, QMimeDatabase::MatchExtension);
+    return mime.isDefault() ? QString{} : mime.comment();
+}
+QString SelectedFile::formatDescription() const
+{
+    const auto *file = files_.fileAt(row_);
+    const auto *snapshots = file ? file->snapshots() : nullptr;
+    if (!snapshots || file->support() != Support::Supported) return {};
+    const auto &format = snapshots->launchResult.text.format;
+    QString encoding;
+    switch (format.encoding) {
+    case SnapshotFormat::Encoding::Utf8: encoding = QStringLiteral("UTF-8"); break;
+    case SnapshotFormat::Encoding::Utf16LittleEndian: encoding = QStringLiteral("UTF-16 LE"); break;
+    case SnapshotFormat::Encoding::Utf16BigEndian: encoding = QStringLiteral("UTF-16 BE"); break;
+    }
+    if (format.bom) encoding += tr(" with BOM");
+    return encoding + QStringLiteral(" · ")
+        + (format.newline == SnapshotFormat::Newline::CrLf ? QStringLiteral("CRLF") : QStringLiteral("LF"));
 }
 bool SelectedFile::canEdit() const
 {
