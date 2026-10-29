@@ -1,3 +1,5 @@
+set_source_files_properties(DiffStyle.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
 qt_add_qml_module(branch_truce_ui STATIC
     URI BranchTruce VERSION 1.0
     OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/BranchTruce"
@@ -8,6 +10,7 @@ qt_add_qml_module(branch_truce_ui STATIC
         PlainLabel.qml
         Pill.qml
         PaneHeader.qml
+        DiffStyle.qml
         PreviewDialog.qml
         BeforeAfterPanes.qml
         ScopedChange.qml

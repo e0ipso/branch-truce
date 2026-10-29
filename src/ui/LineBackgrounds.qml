@@ -41,25 +41,24 @@ Item {
     Repeater {
         model: backgrounds.gutter.rowSlots
         delegate: Fill {
+            id: lineFill
             required property int index
             readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
             readonly property string part: "line"
             readonly property int line: modelData.number
             readonly property string kind: backgrounds.gutter.marks.lines[line] || ""
             // An ignored side gets no fill: its pane draws the text in disabledTextColor.
-            visible: kind.length > 0 && kind !== "ignored"
+            visible: kind.length > 0 && DiffStyle.hasFill(kind)
             y: modelData.top
             width: backgrounds.width
             height: modelData.extent
-            color: kind === "added" || kind === "accepted" ? Kirigami.Theme.positiveBackgroundColor
-                : kind === "changed" ? Kirigami.Theme.activeBackgroundColor
-                : kind === "conflict" || kind === "markers" ? Kirigami.Theme.negativeBackgroundColor
-                : Kirigami.Theme.neutralBackgroundColor
+            color: DiffStyle.background(kind, lineFill)
         }
     }
     Repeater {
         model: backgrounds.gutter.rowSlots
         delegate: Fill {
+            id: gapFill
             required property int index
             readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
             readonly property string part: "gap"
@@ -69,7 +68,7 @@ Item {
             y: modelData.top - height / 2
             width: backgrounds.width
             height: backgrounds.rule
-            color: Kirigami.Theme.disabledTextColor
+            color: DiffStyle.textColor(kind, gapFill)
         }
     }
     Repeater {

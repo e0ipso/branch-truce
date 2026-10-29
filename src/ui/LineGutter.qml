@@ -180,42 +180,37 @@ Item {
         Repeater {
             model: gutter.rowSlots
             delegate: PlainLabel {
+                id: kindGlyph
                 required property int index
                 readonly property var modelData: gutter.rows[index] || gutter.noRow
                 readonly property int line: modelData.number
                 readonly property string kind: gutter.marks.lines[line] || ""
                 y: modelData.y
                 height: modelData.height
-                text: ({added: "+", changed: "~", conflict: "!", manual: "m",
-                    accepted: "✓", ignored: "×", markers: "!"})[kind] || ""
+                text: kind.length > 0 ? DiffStyle.glyph(kind) : ""
                 visible: text.length > 0
                 font: gutter.editor.font
-                color: kind === "added" || kind === "accepted" ? Kirigami.Theme.positiveTextColor
-                    : kind === "changed" ? Kirigami.Theme.activeTextColor
-                    : kind === "conflict" || kind === "markers" ? Kirigami.Theme.negativeTextColor
-                    : kind === "ignored" ? Kirigami.Theme.disabledTextColor
-                    : Kirigami.Theme.neutralTextColor
+                color: DiffStyle.textColor(kind, kindGlyph)
                 Accessible.role: Accessible.StaticText
                 Accessible.name: text
-                Accessible.description: ({added: qsTr("Added line"), changed: qsTr("Changed line"),
-                    conflict: qsTr("Undecided conflict"), manual: qsTr("Hand-edited line"),
-                    accepted: qsTr("Accepted side"), ignored: qsTr("Ignored side"),
-                    markers: qsTr("Conflict markers remain")})[kind] || ""
+                Accessible.description: kind.length > 0 ? DiffStyle.description(kind) : ""
             }
         }
         Repeater {
             model: gutter.rowSlots
             delegate: PlainLabel {
+                id: gapGlyph
                 required property int index
                 readonly property var modelData: gutter.rows[index] || gutter.noRow
                 readonly property int line: modelData.number
                 readonly property string kind: gutter.marks.gaps[line] ? "removed" : ""
                 anchors.right: parent.right
                 y: modelData.top - height / 2
-                text: kind.length > 0 ? "\u2212" : ""
+                text: kind.length > 0 ? DiffStyle.glyph(kind) : ""
                 visible: text.length > 0
                 font: gutter.editor.font
-                color: Kirigami.Theme.disabledTextColor
+                color: DiffStyle.textColor(kind, gapGlyph)
+                Accessible.description: kind.length > 0 ? DiffStyle.description(kind) : ""
             }
         }
     }
@@ -242,8 +237,8 @@ Item {
                     id: decisionChip
                     readonly property string part: "decision"
                     readonly property string decision: decisionRow.decision ? decisionRow.decision.state : ""
-                    text: ({accepted: "✓", ignored: "×", manual: "m"})[decision] || ""
-                    tone: decision === "accepted" ? "positive" : decision === "manual" ? "warning" : "neutral"
+                    text: decision.length > 0 ? DiffStyle.glyph(decision) : ""
+                    tone: DiffStyle.pillTone(decision)
                     visible: text.length > 0
                     anchors.centerIn: parent
                     height: decisionRow.height

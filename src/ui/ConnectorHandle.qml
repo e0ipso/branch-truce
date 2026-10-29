@@ -135,17 +135,12 @@ Item {
                     modelData.resultEnd, true, connector.layoutRevision)
                 readonly property real sourceX: connector.leftSide ? 0 : width
                 readonly property real resultX: width - sourceX
-                // The passage's background role; removed and ignored lines get a faint tint.
+                // Current passages use the highlight; others use their kind's text-role tint.
                 readonly property bool current: connector.isCurrent(modelData)
-                readonly property color fill: current ? Kirigami.Theme.highlightColor : kind === "added" || kind === "accepted"
-                    ? Kirigami.Theme.positiveBackgroundColor
-                    : kind === "changed" ? Kirigami.Theme.activeBackgroundColor
-                    : kind === "conflict" ? Kirigami.Theme.negativeBackgroundColor
-                    : kind === "manual" ? Kirigami.Theme.neutralBackgroundColor
-                    : Kirigami.Theme.disabledTextColor
+                readonly property color fill: current ? Kirigami.Theme.highlightColor : DiffStyle.textColor(kind, band)
                 width: bandLayer.width
                 height: bandLayer.height
-                opacity: current ? 0.3 : kind === "removed" || kind === "ignored" ? 0.15 : 1
+                opacity: current ? 0.3 : DiffStyle.tint(kind)
                 preferredRendererType: Shape.CurveRenderer
                 ShapePath {
                     strokeWidth: -1
