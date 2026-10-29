@@ -20,6 +20,12 @@ Kirigami.Action {
     property string accessibleName: text
     property bool iconOnly: false
     property bool toggle: false
+    property var alternateSequences: []
+    readonly property Shortcut alternateBindings: Shortcut {
+        sequences: namedAction.alternateSequences
+        enabled: namedAction.enabled
+        onActivated: namedAction.trigger()
+    }
     checkable: toggle
     displayComponent: ToolButton {
         id: namedButton

@@ -29,7 +29,9 @@ QtObject {
         tooltip: qsTr("Undo the last edit or choice. Typing and choices share one history.")
         icon.name: "edit-undo"
         iconOnly: true
-        shortcut: StandardKey.Undo
+        readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Undo)
+        shortcut: bindings.length ? bindings[0] : ""
+        alternateSequences: bindings.slice(1)
         enabled: !!editActions.controller.resultEditable && !!editActions.file.canUndo && !editActions.composing
         onTriggered: editActions.controller.undo(editActions.controller.selectedFileId, editActions.file.currentRevision)
     }
@@ -39,7 +41,9 @@ QtObject {
         tooltip: qsTr("Redo the last undone edit or choice. Typing and choices share one history.")
         icon.name: "edit-redo"
         iconOnly: true
-        shortcut: StandardKey.Redo
+        readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Redo)
+        shortcut: bindings.length ? bindings[0] : ""
+        alternateSequences: bindings.slice(1)
         enabled: !!editActions.controller.resultEditable && !!editActions.file.canRedo && !editActions.composing
         onTriggered: editActions.controller.redo(editActions.controller.selectedFileId, editActions.file.currentRevision)
     }
@@ -48,7 +52,9 @@ QtObject {
         text: qsTr("Copy")
         icon.name: "edit-copy"
         iconOnly: true
-        shortcut: StandardKey.Copy
+        readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Copy)
+        shortcut: bindings.length ? bindings[0] : ""
+        alternateSequences: bindings.slice(1)
         enabled: !!editActions.controller.resultHasSelection
         onTriggered: editActions.controller.resultClipboard(ResultEditorAdapter.Copy)
     }
@@ -57,7 +63,9 @@ QtObject {
         text: qsTr("Paste")
         icon.name: "edit-paste"
         iconOnly: true
-        shortcut: StandardKey.Paste
+        readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Paste)
+        shortcut: bindings.length ? bindings[0] : ""
+        alternateSequences: bindings.slice(1)
         enabled: !!editActions.controller.resultEditable && !!editActions.controller.resultCanPaste
             && !editActions.composing
         onTriggered: editActions.controller.resultClipboard(ResultEditorAdapter.Paste)

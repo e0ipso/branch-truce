@@ -20,6 +20,7 @@
 #include <QFont>
 #include <QFontMetricsF>
 #include <QLockFile>
+#include <QKeySequence>
 #include <QMap>
 #include <QProcess>
 #include <QProcessEnvironment>
@@ -1165,6 +1166,27 @@ public:
 
             // Undo by shortcut and button walks back through text and decisions together.
             keyClick(scene, Qt::Key_Z, Qt::ControlModifier);
+            const auto onceUndone = work(scene, "story.txt");
+            auto *toolbarUndo = scene.item("undoCommand");
+            auto *sharedRedo = scene.object("resultEditActions")->property("redo").value<QObject *>();
+            CHECK(sharedRedo);
+            auto *menuRedo = scene.object("resultMenuRedo");
+            CHECK(menuRedo->property("action").value<QObject *>() == sharedRedo);
+            const auto redoBindings = QKeySequence::keyBindings(QKeySequence::Redo);
+            CHECK(redoBindings.contains(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z)));
+            for (const auto &binding : redoBindings) {
+                CHECK(binding.count() == 1);
+                toolbarUndo->forceActiveFocus(Qt::TabFocusReason);
+                CHECK(toolbarUndo->hasActiveFocus());
+                keyClick(scene, Qt::Key_Space);
+                CHECK(toolbarUndo->hasActiveFocus());
+                CHECK(work(scene, "story.txt") == history.back());
+                CHECK(scene.item("redoCommand")->isEnabled() && scene.file("story.txt").canRedo());
+                CHECK(sharedRedo->property("enabled").toBool() && menuRedo->property("enabled").toBool());
+                const auto key = binding[0];
+                keyClick(scene, key.key(), key.keyboardModifiers());
+                CHECK(work(scene, "story.txt") == onceUndone);
+            }
             scene.click("undoCommand");
             CHECK(work(scene, "story.txt") == history.back());
             for (std::size_t step = history.size() - 1; step-- > 0;) {
@@ -1187,6 +1209,8 @@ public:
             CHECK(scene.item("resultText")->hasActiveFocus());
             keyClick(scene, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
             CHECK(work(scene, "story.txt") == typed && !scene.file("story.txt").canRedo());
+            CHECK(!scene.item("redoCommand")->isEnabled());
+            CHECK(!sharedRedo->property("enabled").toBool() && !menuRedo->property("enabled").toBool());
             // Other files are untouched.
             CHECK(scene.file("notes.txt").current().id == notes.id && scene.file("notes.txt").current().draft == notes.draft);
             checkOffline(scene);
