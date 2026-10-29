@@ -1353,6 +1353,8 @@ public:
             expectContains(scene.text("searchStatus"), "Passage in Editable result.", "result status");
             CHECK(result->property("selectionStart").toInt() == 0);
             expectText(result->property("selectedText").toString(), "REPEAT", "result match");
+            const auto selectionStart = result->property("selectionStart").toInt();
+            const auto selectionEnd = result->property("selectionEnd").toInt();
             unchanged();
 
             // Wrapping the long line changes its layout only.
@@ -1367,16 +1369,21 @@ public:
             settleFor("unwrapped long line", [&] { return test_support::visualLines(result, longBlock) == 1; });
             unchanged();
 
-            // Whitespace display marks the space-only and tab-only differences without entering the text.
+            // The whitespace differences are inside Git's folded conflict block.
+            // Reveal the block through the toolbar before inspecting its spaces and tab.
+            expectMarkersFolded(scene, true);
+            toggleConflictMarkers(scene);
+            expectMarkersFolded(scene, false);
+            unchanged();
             auto *markers = scene.item("resultWhitespace");
             CHECK(test_support::paintedMarkers(markers) == 0);
             scene.click("showWhitespace");
-            // TRUCE-0179: a folded marker line is not drawn, so neither are its spaces.
-            QString shown;
             const auto *resultDocument = result->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+            QString shown;
             for (auto block = resultDocument->begin(); block.isValid(); block = block.next())
                 if (block.isVisible()) shown += block.text() + QLatin1Char('\n');
-            CHECK(shown.count(' ') < before.shown.count(' ') && shown.count('\t') == before.shown.count('\t'));
+            CHECK(shown.count(' ') == before.shown.count(' ') && shown.count('\t') == before.shown.count('\t'));
+            CHECK(shown.count('\t') == 1 && shown.contains(QStringLiteral("space \n")));
             settleFor("whitespace markers", [&] {
                 return test_support::markerKind(markers, true) == shown.count('\t')
                     && test_support::markerKind(markers, false) == shown.count(' ')
@@ -1384,9 +1391,13 @@ public:
             });
             CHECK(test_support::markerKind(scene.item("stage2Whitespace"), true) == 0);
             CHECK(test_support::markerKind(scene.item("stage3Whitespace"), true) == 1);
+            CHECK(result->property("selectionStart").toInt() == selectionStart
+                  && result->property("selectionEnd").toInt() == selectionEnd);
             unchanged();
             scene.click("showWhitespace");
             settleFor("whitespace hidden", [&] { return test_support::paintedMarkers(markers) == 0; });
+            CHECK(result->property("selectionStart").toInt() == selectionStart
+                  && result->property("selectionEnd").toInt() == selectionEnd);
             unchanged();
 
             // Sources accept mouse selection but not typing.
