@@ -733,6 +733,19 @@ public:
             CHECK(model.file("second")->checkpointOutcome()->detail == "disk full");
             CHECK(role(model, SessionModel::StatusRole, 1).toString() == "Draft save failed");
         });
+        suite.run("handoff counts use singular and plural file wording", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(sessionFile("first")));
+            CHECK(model.handoff().value("outcome").toString().startsWith("1 of 1 file in this session remains"));
+            resolve(model, "first");
+            CHECK(model.handoff().value("outcome").toString().startsWith("1 file in this session is written"));
+            CHECK(model.appendFile(sessionFile("second")));
+            CHECK(model.handoff().value("outcome").toString().startsWith("1 of 2 files in this session remain"));
+            resolve(model, "second");
+            CHECK(model.handoff().value("outcome").toString().startsWith("All 2 files in this session are written"));
+        });
         suite.run("TRUCE-0028 handoff puts each mixed outcome in one category and pending input stays failed until retried", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());

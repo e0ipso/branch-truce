@@ -579,10 +579,15 @@ QVariantMap SessionModel::handoff() const
     const bool clean = canFinish();
     QString outcome;
     if (files_.empty()) outcome = tr("No files are loaded in this session.");
-    else if (clean) outcome = tr("All %1 files in this session are written and resolved in Git. "
-        "Continue and commit in your usual workflow; Branch Truce has not checked the code.").arg(totalFiles());
-    else outcome = tr("%1 of %2 files in this session remain outstanding. This session is not finished.")
-        .arg(outstanding).arg(totalFiles());
+    else if (clean) outcome = totalFiles() == 1
+        ? tr("%n file in this session is written and resolved in Git. "
+            "Continue and commit in your usual workflow; Branch Truce has not checked the code.", nullptr, totalFiles())
+        : tr("All %n files in this session are written and resolved in Git. "
+            "Continue and commit in your usual workflow; Branch Truce has not checked the code.", nullptr, totalFiles());
+    else outcome = (totalFiles() == 1
+        ? tr("%1 of %n file in this session remains outstanding. This session is not finished.", nullptr, totalFiles())
+        : tr("%1 of %n files in this session remain outstanding. This session is not finished.", nullptr, totalFiles()))
+        .arg(outstanding);
     return {{QStringLiteral("clean"), clean}, {QStringLiteral("totalFiles"), totalFiles()},
             {QStringLiteral("outstandingFiles"), outstanding}, {QStringLiteral("counts"), counts},
             {QStringLiteral("groups"), groups}, {QStringLiteral("outcome"), outcome}};
