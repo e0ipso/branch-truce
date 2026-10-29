@@ -1,5 +1,5 @@
 #include "ApplicationController.h"
-#include "MergetoolLauncher.h"
+#include "mergetool/MergetoolLauncher.h"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>

@@ -1,6 +1,6 @@
 #pragma once
 #include <QtQml/qqmlregistration.h>
-#include "SyntaxHighlighting.h"
+#include "highlighting/SyntaxHighlighting.h"
 #include "WordDifferenceDecorations.h"
 #include <QColor>
 #include <QMetaObject>

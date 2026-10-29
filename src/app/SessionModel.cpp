@@ -1,5 +1,5 @@
 #include "SessionModel.h"
-#include "RecoveryRestore.h"
+#include "recovery/RecoveryRestore.h"
 #include "git/GitAdapter.h"
 #include <QStandardPaths>
 #include <QUuid>

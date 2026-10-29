@@ -1,5 +1,5 @@
-#include "SessionCoordinator.h"
-#include "RecoveryRestore.h"
+#include "session/SessionCoordinator.h"
+#include "recovery/RecoveryRestore.h"
 #include <QDir>
 #include <QFileInfo>
 #include <QFutureWatcher>

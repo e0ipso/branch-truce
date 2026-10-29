@@ -1,4 +1,4 @@
-#include "app/ConflictCapture.h"
+#include "session/ConflictCapture.h"
 #include "TestHarness.h"
 #include <functional>
 

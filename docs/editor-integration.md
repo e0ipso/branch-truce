@@ -87,7 +87,7 @@ carries `markersRemain`, true while a block that encloses its section remains.
 
 The panes highlight syntax with KF6 SyntaxHighlighting. The controller gives
 the documents of the left, right, earlier and result panes one `PaneHighlighter`
-each (`src/app/PaneHighlighter.h`). It is the only code that sets character
+each (`src/highlighting/PaneHighlighter.h`). It is the only code that sets character
 formats on those documents. Their own QML layers draw the line backgrounds and
 whitespace markers. The selected file's `fileName` picks the definition through
 `Repository::definitionForFileName`, so `app.py` gets Python and `README.md`

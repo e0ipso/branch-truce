@@ -4,7 +4,7 @@
 
 #include "app/ApplicationController.h"
 #include "fixtures/GitOnPath.h"
-#include "app/MergetoolProtocol.h"
+#include "mergetool/MergetoolProtocol.h"
 #include "fixtures/mergetool/GitGate.h"
 #include "fixtures/mergetool/RealParent.h"
 #include "TestHarness.h"

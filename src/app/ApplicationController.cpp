@@ -1,7 +1,7 @@
 #include "ApplicationController.h"
 #include "CommandGuard.h"
 #include "NavigationTargets.h"
-#include "RecoveryRestore.h"
+#include "recovery/RecoveryRestore.h"
 #include "TextPositions.h"
 #include "core/Correspondence.h"
 #include "git/GitAdapter.h"

@@ -1,4 +1,4 @@
-#include "MergetoolProtocol.h"
+#include "mergetool/MergetoolProtocol.h"
 #include "core/ResourceLimits.h"
 
 #include <QCryptographicHash>

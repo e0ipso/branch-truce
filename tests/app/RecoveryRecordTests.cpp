@@ -1,5 +1,5 @@
-#include "app/RecoveryRecord.h"
-#include "app/RecoveryRestore.h"
+#include "recovery/RecoveryRecord.h"
+#include "recovery/RecoveryRestore.h"
 #include "core/EditingCommands.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"

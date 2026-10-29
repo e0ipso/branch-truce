@@ -1,5 +1,5 @@
-#include "SyntaxHighlighting.h"
-#include "PaneHighlighter.h"
+#include "highlighting/SyntaxHighlighting.h"
+#include "highlighting/PaneHighlighter.h"
 #include <KSyntaxHighlighting/Repository>
 #include <QList>
 #include <QPointer>

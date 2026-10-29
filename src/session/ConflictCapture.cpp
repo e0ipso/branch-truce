@@ -1,4 +1,4 @@
-#include "ConflictCapture.h"
+#include "session/ConflictCapture.h"
 
 namespace branch_truce {
 Support supportFor(const git::Conflict &file)

@@ -1,6 +1,6 @@
 #include "app/ApplicationController.h"
 #include "fixtures/GitOnPath.h"
-#include "app/RecoveryRestore.h"
+#include "recovery/RecoveryRestore.h"
 #include "core/ResourceLimits.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"

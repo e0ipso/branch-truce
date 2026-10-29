@@ -1,6 +1,6 @@
 #include "app/ApplicationController.h"
 #include "fixtures/GitOnPath.h"
-#include "app/PaneHighlighter.h"
+#include "highlighting/PaneHighlighter.h"
 #include "storage/RecoveryStore.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"

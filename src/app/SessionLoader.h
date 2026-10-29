@@ -1,7 +1,7 @@
 #pragma once
 #include <QtQml/qqmlregistration.h>
-#include "MergetoolSession.h"
-#include "RecoveryRestore.h"
+#include "mergetool/MergetoolSession.h"
+#include "recovery/RecoveryRestore.h"
 #include "git/ConflictClassifier.h"
 #include <QObject>
 #include <QString>

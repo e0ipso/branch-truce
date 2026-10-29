@@ -1,4 +1,4 @@
-#include "PaneHighlighter.h"
+#include "highlighting/PaneHighlighter.h"
 #include <QTextBlock>
 #include <QTextDocument>
 #include <algorithm>

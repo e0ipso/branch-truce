@@ -1,5 +1,5 @@
 #include "WordDifferenceDecorations.h"
-#include "PaneHighlighter.h"
+#include "highlighting/PaneHighlighter.h"
 #include "SessionModel.h"
 #include "core/WordDifferences.h"
 #include <QColor>

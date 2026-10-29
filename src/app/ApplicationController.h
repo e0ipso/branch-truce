@@ -3,13 +3,13 @@
 #include "ChoicePreviewFlow.h"
 #include "CommandGuard.h"
 #include "FileNavigator.h"
-#include "MergetoolSession.h"
-#include "RecoveryRestore.h"
-#include "ResolutionPublisher.h"
+#include "mergetool/MergetoolSession.h"
+#include "recovery/RecoveryRestore.h"
+#include "publication/ResolutionPublisher.h"
 #include "ResultEditorAdapter.h"
 #include "SessionModel.h"
 #include "SelectedFile.h"
-#include "SessionCoordinator.h"
+#include "session/SessionCoordinator.h"
 #include "SessionLoader.h"
 #include <QByteArray>
 #include <QColor>

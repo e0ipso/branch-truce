@@ -1,6 +1,6 @@
-#include "RecoveryJournal.h"
-#include "RecoveryRecord.h"
-#include "RecoveryRestore.h"
+#include "recovery/RecoveryJournal.h"
+#include "recovery/RecoveryRecord.h"
+#include "recovery/RecoveryRestore.h"
 #include <QDir>
 #include <QFileInfo>
 #include <QLockFile>

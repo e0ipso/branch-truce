@@ -5,8 +5,8 @@
 // the entry point are in tests/acceptance/README.md.
 #include "app/ApplicationController.h"
 #include "fixtures/GitOnPath.h"
-#include "app/MergetoolLauncher.h"
-#include "app/MergetoolProtocol.h"
+#include "mergetool/MergetoolLauncher.h"
+#include "mergetool/MergetoolProtocol.h"
 #include "TestHarness.h"
 #include "fixtures/QuickScene.h"
 #include <QAccessible>

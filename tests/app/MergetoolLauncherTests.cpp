@@ -1,8 +1,8 @@
 #include "app/ApplicationController.h"
 #include "fixtures/GitOnPath.h"
-#include "app/MergetoolLauncher.h"
-#include "app/MergetoolProtocol.h"
-#include "app/RecoveryRestore.h"
+#include "mergetool/MergetoolLauncher.h"
+#include "mergetool/MergetoolProtocol.h"
+#include "recovery/RecoveryRestore.h"
 #include "fixtures/mergetool/GitGate.h"
 #include "TestHarness.h"
 

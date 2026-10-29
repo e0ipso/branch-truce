@@ -1,6 +1,6 @@
 #include "app/ApplicationController.h"
 #include "fixtures/GitOnPath.h"
-#include "app/RecoveryRestore.h"
+#include "recovery/RecoveryRestore.h"
 #include "app/SessionModel.h"
 #include "storage/DestinationWriter.h"
 #include "TestHarness.h"

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SessionCoordinator.h"
+#include "session/SessionCoordinator.h"
 #include "git/TextConversion.h"
 #include "storage/DestinationWriter.h"
 #include <QByteArray>

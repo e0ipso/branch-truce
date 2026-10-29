@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ResolutionPublisher.h"
-#include "SessionCoordinator.h"
+#include "publication/ResolutionPublisher.h"
+#include "session/SessionCoordinator.h"
 #include "git/GitAdapter.h"
 #include <QByteArray>
 #include <QHash>

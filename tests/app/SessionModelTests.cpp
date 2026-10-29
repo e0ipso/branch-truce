@@ -1,5 +1,5 @@
 #include "app/SessionModel.h"
-#include "app/RecoveryRestore.h"
+#include "recovery/RecoveryRestore.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/RecoveryJournal.h"

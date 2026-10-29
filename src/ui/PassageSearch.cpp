@@ -1,5 +1,5 @@
 #include "PassageSearch.h"
-#include "app/PaneHighlighter.h"
+#include "highlighting/PaneHighlighter.h"
 #include <QColor>
 #include <QQuickTextDocument>
 #include <QTextCharFormat>

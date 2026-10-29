@@ -1,7 +1,7 @@
 #include "SessionLoader.h"
 #include "SourceIdentity.h"
-#include "ConflictCapture.h"
-#include "SessionCoordinator.h"
+#include "session/ConflictCapture.h"
+#include "session/SessionCoordinator.h"
 #include "SessionModel.h"
 #include <QFileInfo>
 #include <QLockFile>

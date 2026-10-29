@@ -19,7 +19,7 @@
 // file that names a missing icon, and pass that list.
 #include "app/ApplicationController.h"
 #include "fixtures/GitOnPath.h"
-#include "app/PaneHighlighter.h"
+#include "highlighting/PaneHighlighter.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/QuickScene.h"

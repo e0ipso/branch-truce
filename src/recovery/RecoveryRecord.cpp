@@ -1,4 +1,4 @@
-#include "RecoveryRecord.h"
+#include "recovery/RecoveryRecord.h"
 #include "storage/TextFormat.h"
 #include <QJsonArray>
 #include <QUuid>

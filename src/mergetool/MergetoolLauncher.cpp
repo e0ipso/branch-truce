@@ -1,5 +1,5 @@
-#include "MergetoolLauncher.h"
-#include "MergetoolProtocol.h"
+#include "mergetool/MergetoolLauncher.h"
+#include "mergetool/MergetoolProtocol.h"
 
 #include <climits>
 #include <optional>

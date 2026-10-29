@@ -1,4 +1,4 @@
-#include "ResolutionPublisher.h"
+#include "publication/ResolutionPublisher.h"
 
 #include <QHash>
 #include <QPointer>

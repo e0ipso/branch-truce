@@ -1,7 +1,7 @@
-#include "MergetoolSession.h"
-#include "MergetoolProtocol.h"
-#include "RecoveryRestore.h"
-#include "SessionModel.h"
+#include "mergetool/MergetoolSession.h"
+#include "mergetool/MergetoolProtocol.h"
+#include "recovery/RecoveryRestore.h"
+#include "app/SessionModel.h"
 
 #include <QCryptographicHash>
 #include <QFileInfo>

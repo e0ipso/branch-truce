@@ -1,7 +1,6 @@
 #pragma once
-#include <QtQml/qqmlregistration.h>
 
-#include "SessionModel.h"
+#include "app/SessionModel.h"
 #include "git/GitAdapter.h"
 #include <QByteArray>
 #include <QObject>
@@ -68,8 +67,6 @@ private:
 // QProcess implementation and shares the worker mutation queue.
 class SessionCoordinator final : public QObject {
     Q_OBJECT
-    QML_ELEMENT
-    QML_UNCREATABLE("Owned by ApplicationController")
 public:
     using Work = std::function<TaskResult(const TaskInput &, const TaskControl &)>;
     // Inspect must observe the destination without writing it. It runs even

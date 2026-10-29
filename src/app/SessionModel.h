@@ -3,7 +3,7 @@
 
 #include "core/SessionState.h"
 #include "core/EditingCommands.h"
-#include "RecoveryJournal.h"
+#include "recovery/RecoveryJournal.h"
 #include <QAbstractListModel>
 #include <QByteArray>
 #include <QHash>
