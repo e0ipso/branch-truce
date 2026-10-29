@@ -946,8 +946,27 @@ std::string firstUndecidedInView(Scene &scene)
         if (pane.position >= 0)
             CHECK(QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, rect),
                                             Q_ARG(int, pane.position)));
-        const auto top = editor->y() + rect.top() - view->property("contentY").toReal();
-        if (pane.position < 0 || top < 0 || top + rect.height() > view->height())
+        auto top = editor->y() + rect.top() - view->property("contentY").toReal();
+        auto height = rect.height();
+        bool shown = pane.position >= 0;
+        // A result line inside a folded marker block is represented by its visible
+        // conflict row, not by the hidden QTextBlock's positionToRectangle.
+        if (std::strcmp(pane.side, "result") == 0 && shown) {
+            for (const auto &value : scene.controller->selectedFile()->markerBlocks()) {
+                const auto block = value.toMap();
+                const int first = block.value(QStringLiteral("resultLineBegin")).toInt();
+                const int end = block.value(QStringLiteral("resultLineEnd")).toInt();
+                if (!block.value(QStringLiteral("folded")).toBool() || pane.line < first || pane.line >= end) continue;
+                auto *row = test_support::visualItem(scene.item("resultFoldedRows"), QStringLiteral("resultConflictRow-") + QString::number(first));
+                shown = row && row->isVisible();
+                if (shown) {
+                    top = sceneOrigin(row).y() - sceneOrigin(view).y();
+                    height = row->height();
+                }
+                break;
+            }
+        }
+        if (!shown || top < 0 || top + height > view->height())
             failures += std::string(failures.empty() ? "" : "; ") + pane.side + " line " + std::to_string(pane.line)
                 + " at " + std::to_string(top) + " of " + std::to_string(view->height());
     }

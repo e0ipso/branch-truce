@@ -15,7 +15,7 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 Item {
-    id: layer
+    id: foldedRows
     required property LineGutter gutter
     // Take both offers by row line, each a list of {id, label}.
     property var combinations: ({})
@@ -30,21 +30,21 @@ Item {
     Kirigami.Theme.inherit: false
 
     Item {
-        objectName: layer.objectName + "Rows"
+        objectName: foldedRows.objectName + "Rows"
         anchors.fill: parent
         Repeater {
-            model: layer.gutter.rowSlots
+            model: foldedRows.gutter.rowSlots
             delegate: Loader {
                 id: slot
                 required property int index
-                readonly property var modelData: layer.gutter.rows[index] || layer.gutter.noRow
+                readonly property var modelData: foldedRows.gutter.rows[index] || foldedRows.gutter.noRow
                 readonly property int line: modelData.number
-                readonly property var fold: layer.gutter.folds[line] || null
-                readonly property var offers: layer.combinations[line] || []
+                readonly property var fold: foldedRows.gutter.folds[line] || null
+                readonly property var offers: foldedRows.combinations[line] || []
                 active: fold !== null
                 visible: active
                 y: modelData.top
-                width: layer.width
+                width: foldedRows.width
                 height: modelData.extent
                 sourceComponent: Rectangle {
                     id: row
@@ -56,13 +56,13 @@ Item {
                         .arg(slot.line).arg(slot.fold ? slot.fold.last : slot.line)
                     Rectangle {
                         anchors.fill: parent
-                        visible: !!slot.fold && paneMarks.overlaps(layer.current, slot.line, slot.fold.last)
+                        visible: !!slot.fold && paneMarks.overlaps(foldedRows.current, slot.line, slot.fold.last)
                         color: Kirigami.Theme.highlightColor
                         opacity: 0.3
                     }
                     RowLayout {
                         // At the left edge of the text in view, however far the pane is scrolled.
-                        x: layer.gutter.x + layer.gutter.width + Kirigami.Units.smallSpacing
+                        x: foldedRows.gutter.x + foldedRows.gutter.width + Kirigami.Units.smallSpacing
                         height: row.height
                         spacing: Kirigami.Units.largeSpacing
                         PlainLabel {
@@ -83,7 +83,7 @@ Item {
                                 objectName: "resultTakeBoth-" + target
                                 Layout.alignment: Qt.AlignVCenter
                                 Layout.preferredHeight: row.height
-                                enabled: layer.choosing
+                                enabled: foldedRows.choosing
                                 flat: false
                                 focusPolicy: Qt.StrongFocus
                                 topPadding: 0
@@ -99,21 +99,21 @@ Item {
                                 ToolTip.text: label
                                 ToolTip.visible: hovered && !takeBothMenu.visible
                                 ToolTip.delay: Kirigami.Units.toolTipDelay
-                                onActiveFocusChanged: layer.choiceFocused(target, activeFocus)
+                                onActiveFocusChanged: foldedRows.choiceFocused(target, activeFocus)
                                 onClicked: takeBothMenu.popup(takeBoth, 0, takeBoth.height)
                                 Menu {
                                     id: takeBothMenu
                                     MenuItem {
                                         objectName: "resultTakeBothLeftFirst-" + takeBoth.target
                                         text: qsTr("Take both, Left then Right")
-                                        enabled: layer.choosing
-                                        onTriggered: layer.combinationChosen(takeBoth.target, ChoicePreviewFlow.CombineLeftFirst)
+                                        enabled: foldedRows.choosing
+                                        onTriggered: foldedRows.combinationChosen(takeBoth.target, ChoicePreviewFlow.CombineLeftFirst)
                                     }
                                     MenuItem {
                                         objectName: "resultTakeBothRightFirst-" + takeBoth.target
                                         text: qsTr("Take both, Right then Left")
-                                        enabled: layer.choosing
-                                        onTriggered: layer.combinationChosen(takeBoth.target, ChoicePreviewFlow.CombineRightFirst)
+                                        enabled: foldedRows.choosing
+                                        onTriggered: foldedRows.combinationChosen(takeBoth.target, ChoicePreviewFlow.CombineRightFirst)
                                     }
                                 }
                             }
