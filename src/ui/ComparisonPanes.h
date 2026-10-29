@@ -68,6 +68,8 @@ public:
     // Maps a fractional line through one side's passages, from the source to
     // the result when toResult is set and back otherwise. fromLines and
     // toLines are the line counts of the two texts, for a side without passages.
+    // At an empty passage, the boundary maps after the inserted lines, so a
+    // following equal line still maps to its corresponding line.
     static qreal mapLine(const QList<Span> &spans, qreal line, bool toResult, int fromLines, int toLines);
     // The line of the pane named to that matches line of the pane named from,
     // through the result. The counts are the lines of from, the result and to.

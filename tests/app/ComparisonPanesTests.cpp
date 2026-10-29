@@ -150,12 +150,23 @@ int main(int argc, char **argv)
         CHECK(near(ComparisonPanes::mapLine(spans, 12, true, 13, 15), 14));
     });
     suite.run("TRUCE-0219 an empty passage does not divide by its length", [] {
-        // Three result-only lines inserted above source line 4.
+        // Source A B C D E F G becomes A B C X Y Z D E F G.
+        // The half-open equal passages put source D (line 4) at result line 7.
         const Spans spans{{1, 4, 1, 4}, {4, 4, 4, 7}, {4, 8, 7, 11}};
-        CHECK(near(ComparisonPanes::mapLine(spans, 4, true, 7, 10), 4));
+        CHECK(near(ComparisonPanes::mapLine(spans, 3.5, true, 7, 10), 3.5));
+        CHECK(near(ComparisonPanes::mapLine(spans, 4, true, 7, 10), 7));
+        CHECK(near(ComparisonPanes::mapLine(spans, 4.5, true, 7, 10), 7.5));
         CHECK(near(ComparisonPanes::mapLine(spans, 5, true, 7, 10), 8));
+        CHECK(near(ComparisonPanes::mapLine(spans, 4, false, 10, 7), 4));
         CHECK(near(ComparisonPanes::mapLine(spans, 5, false, 10, 7), 4));
+        CHECK(near(ComparisonPanes::mapLine(spans, 7, false, 10, 7), 4));
         CHECK(near(ComparisonPanes::mapLine(spans, 8, false, 10, 7), 5));
+        // The same boundary rule applies when traversing a source-only passage backwards.
+        const Spans sourceOnly{{1, 4, 1, 4}, {4, 7, 4, 4}, {7, 11, 4, 8}};
+        CHECK(near(ComparisonPanes::mapLine(sourceOnly, 3.5, false, 7, 10), 3.5));
+        CHECK(near(ComparisonPanes::mapLine(sourceOnly, 4, false, 7, 10), 7));
+        CHECK(near(ComparisonPanes::mapLine(sourceOnly, 4.5, false, 7, 10), 7.5));
+        CHECK(near(ComparisonPanes::mapLine(sourceOnly, 5, true, 10, 7), 4));
     });
     suite.run("TRUCE-0219 a side without passages maps over the whole text", [] {
         CHECK(near(ComparisonPanes::mapLine({}, 5, true, 10, 20), 9));
