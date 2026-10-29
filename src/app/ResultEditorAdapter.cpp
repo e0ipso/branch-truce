@@ -7,6 +7,8 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QKeySequence>
+#include <QMetaMethod>
+#include <QMetaProperty>
 #include <QMouseEvent>
 #include <QQuickItem>
 #include <QQuickTextDocument>
@@ -75,16 +77,36 @@ const FileSession *ResultEditorAdapter::selectedFile() const
 void ResultEditorAdapter::attach(QObject *editor)
 {
     disconnect(documentConnection_);
+    for (const auto &connection : stateConnections_) disconnect(connection);
+    stateConnections_.clear();
     if (editor_) editor_->removeEventFilter(this);
     editor_ = editor;
-    if (editor) editor->installEventFilter(this);
+    if (editor) {
+        editor->installEventFilter(this);
+        stateConnections_.push_back(connect(editor, &QObject::destroyed, this, [this] {
+            editable_ = false;
+            Q_EMIT stateChanged();
+        }));
+        // The selection and the paste offer reach the toolbar and the menu through stateChanged.
+        const auto changed = QMetaMethod::fromSignal(&ResultEditorAdapter::stateChanged);
+        for (const char *name : {"selectedText", "canPaste"}) {
+            const auto property = editor->metaObject()->property(editor->metaObject()->indexOfProperty(name));
+            if (property.hasNotifySignal())
+                stateConnections_.push_back(connect(editor, property.notifySignal(), this, changed));
+        }
+    }
     document_ = textDocument(editor);
-    if (!document_) return;
+    if (!document_) {
+        editable_ = false;
+        Q_EMIT stateChanged();
+        return;
+    }
     document_->setUndoRedoEnabled(false);
     syntax_.attach(document_);
     documentConnection_ = connect(document_, &QTextDocument::contentsChange, this, &ResultEditorAdapter::capture);
     words_.attach(editor, document_);
     sync();
+    Q_EMIT stateChanged();
 }
 
 void ResultEditorAdapter::attachSource(QObject *editor)
@@ -107,6 +129,23 @@ void ResultEditorAdapter::setSyntaxBackground(const QColor &background)
 bool ResultEditorAdapter::composing() const
 {
     return editor_ && editor_->property("inputMethodComposing").toBool();
+}
+
+bool ResultEditorAdapter::hasSelection() const
+{
+    return editor_ && !editor_->property("selectedText").toString().isEmpty();
+}
+
+bool ResultEditorAdapter::canPaste() const
+{
+    return editor_ && editor_->property("canPaste").toBool();
+}
+
+void ResultEditorAdapter::setEditable(bool editable)
+{
+    if (editable_ == editable) return;
+    editable_ = editable;
+    Q_EMIT stateChanged();
 }
 
 ResultEditorAdapter::Caret ResultEditorAdapter::caret() const
@@ -164,7 +203,7 @@ bool ResultEditorAdapter::clipboard(const QString &action)
     else if (action == QLatin1String("paste")) method = "paste";
     else return false;
     if ((action == QLatin1String("cut") || action == QLatin1String("paste"))
-        && (editor_->property("readOnly").toBool() || composing()))
+        && (!editable_ || composing()))
         return false;
     if (action == QLatin1String("paste")) {
         const auto clip = QGuiApplication::clipboard()->text();
@@ -216,17 +255,14 @@ bool ResultEditorAdapter::eventFilter(QObject *watched, QEvent *event)
     }
     if (watched == editor_ && (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)) {
         auto *key = static_cast<QKeyEvent *>(event);
-        const bool backwards = key->matches(QKeySequence::Undo);
-        const bool forwards = key->matches(QKeySequence::Redo);
-        if (backwards || forwards) {
+        QString action;
+        if (key->matches(QKeySequence::Undo)) action = QStringLiteral("undo");
+        else if (key->matches(QKeySequence::Redo)) action = QStringLiteral("redo");
+        else if (key->matches(QKeySequence::Copy)) action = QStringLiteral("copy");
+        else if (key->matches(QKeySequence::Paste)) action = QStringLiteral("paste");
+        if (!action.isEmpty()) {
             event->accept();
-            if (event->type() == QEvent::KeyPress) {
-                if (const auto *file = selectedFile()) {
-                    const auto revision = QString::number(file->current().id);
-                    if (backwards) Q_EMIT undoRequested(selectedFileId_(), revision);
-                    else Q_EMIT redoRequested(selectedFileId_(), revision);
-                }
-            }
+            if (event->type() == QEvent::KeyPress) Q_EMIT editActionRequested(action);
             return true;
         }
     }
@@ -256,7 +292,7 @@ void ResultEditorAdapter::sync()
         syncing_ = true;
         document_->setPlainText({});
         text_.clear();
-        editor_->setProperty("readOnly", true);
+        setEditable(false);
         syncing_ = false;
         words_.refresh();
         Q_EMIT loadRefused(rejection);
@@ -273,8 +309,8 @@ void ResultEditorAdapter::sync()
     const auto loaded = documentText(*document_);
     const bool lossless = loaded == desired && !desired.contains(QChar(0x2028))
         && !desired.contains(QChar(0x2029)) && !desired.contains(QLatin1Char('\r'));
-    editor_->setProperty("readOnly", !file || file->support() != Support::Supported || !lossless
-        || files_.hasPendingRecovery() || files_.hasRecoveryFailure(file->id()));
+    setEditable(file && file->support() == Support::Supported && lossless && !files_.hasPendingRecovery()
+        && !files_.hasRecoveryFailure(file->id()));
     if (!lossless && file && file->support() == Support::Supported)
         Q_EMIT notice(tr("This text cannot be edited losslessly by the current editor. Its captured result is retained."));
     syncing_ = false;

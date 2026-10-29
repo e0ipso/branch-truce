@@ -16,6 +16,7 @@ RowLayout {
     readonly property alias showSourceChoices: sourceChoices.checked
     // Whether the result shows the conflict-marker lines it folds.
     property alias showMarkers: markersToggle.checked
+    required property EditActions edits
     signal nonConflictingChosen(scope: string)
     signal wholeFileChosen(side: string)
     signal discardToStagedChosen()
@@ -60,39 +61,10 @@ RowLayout {
                 enabled: !!fileToolBar.selectedFile.canEdit && !fileToolBar.composing && !fileToolBar.controller.resolutionBusy
                 onTriggered: fileToolBar.discardToStagedChosen()
             },
-            NamedAction {
-                controlName: "undoCommand"
-                text: qsTr("Undo")
-                tooltip: qsTr("Undo the last edit or choice. Typing and choices share one history.")
-                icon.name: "edit-undo"
-                iconOnly: true
-                enabled: !!fileToolBar.selectedFile.canEdit && !!fileToolBar.selectedFile.canUndo && !fileToolBar.composing
-                onTriggered: fileToolBar.controller.undo(fileToolBar.controller.selectedFileId, fileToolBar.selectedFile.currentRevision)
-            },
-            NamedAction {
-                controlName: "redoCommand"
-                text: qsTr("Redo")
-                tooltip: qsTr("Redo the last undone edit or choice. Typing and choices share one history.")
-                icon.name: "edit-redo"
-                iconOnly: true
-                enabled: !!fileToolBar.selectedFile.canEdit && !!fileToolBar.selectedFile.canRedo && !fileToolBar.composing
-                onTriggered: fileToolBar.controller.redo(fileToolBar.controller.selectedFileId, fileToolBar.selectedFile.currentRevision)
-            },
-            NamedAction {
-                controlName: "copyResult"
-                text: qsTr("Copy")
-                icon.name: "edit-copy"
-                iconOnly: true
-                onTriggered: fileToolBar.controller.resultClipboard("copy")
-            },
-            NamedAction {
-                controlName: "pasteResult"
-                text: qsTr("Paste")
-                icon.name: "edit-paste"
-                iconOnly: true
-                enabled: !!fileToolBar.selectedFile.canEdit && !fileToolBar.composing
-                onTriggered: fileToolBar.controller.resultClipboard("paste")
-            },
+            fileToolBar.edits.undo,
+            fileToolBar.edits.redo,
+            fileToolBar.edits.copy,
+            fileToolBar.edits.paste,
             MenuAction {
                 id: fileChoices
                 controlName: "sourceChoicesMenu"

@@ -12,6 +12,7 @@ ColumnLayout {
     id: comparison
     required property var controller
     required property var file
+    required property EditActions edits
     readonly property bool inputMethodComposing: resultPane.editor.inputMethodComposing
     readonly property real headerHeight: Math.max(leftPane.headerImplicitHeight,
         resultPane.headerImplicitHeight, rightPane.headerImplicitHeight)
@@ -486,6 +487,7 @@ ColumnLayout {
             }
             ResultPane {
                 id: resultPane
+                edits: comparison.edits
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 10
                 SplitView.preferredWidth: panes.width / 3
                 controller: comparison.controller

@@ -116,15 +116,11 @@ Kirigami.ApplicationWindow {
         id: nonConflictingDialog
         controller: window.controller
     }
-    Shortcut {
-        sequences: [StandardKey.Undo]
-        enabled: !!window.selectedFile.canUndo && !!window.selectedFile.canEdit && !comparison.inputMethodComposing
-        onActivated: window.controller.undo(window.controller.selectedFileId, window.selectedFile.currentRevision)
-    }
-    Shortcut {
-        sequences: [StandardKey.Redo]
-        enabled: !!window.selectedFile.canRedo && !!window.selectedFile.canEdit && !comparison.inputMethodComposing
-        onActivated: window.controller.redo(window.controller.selectedFileId, window.selectedFile.currentRevision)
+    EditActions {
+        id: resultEdits
+        controller: window.controller
+        file: window.selectedFile
+        composing: comparison.inputMethodComposing
     }
     ReplacementDialog {
         id: replacementDialog
@@ -370,6 +366,7 @@ Kirigami.ApplicationWindow {
                         }
                         FileToolBar {
                             id: fileToolBar
+                            edits: resultEdits
                             visible: window.supportedSelection
                             controller: window.controller
                             selectedFile: window.selectedFile
@@ -391,6 +388,7 @@ Kirigami.ApplicationWindow {
                         }
                         ComparisonView {
                             id: comparison
+                            edits: resultEdits
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             visible: window.supportedSelection

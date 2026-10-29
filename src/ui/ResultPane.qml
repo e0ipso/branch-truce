@@ -12,6 +12,7 @@ ColumnLayout {
     id: resultPane
     required property var controller
     required property var file
+    required property EditActions edits
     // Line marks for the gutter and backgrounds, and the navigation target's line ranges.
     required property var marks
     required property var current
@@ -88,8 +89,8 @@ ColumnLayout {
             TextArea.flickable: TextArea {
                 id: resultEditor
                 objectName: "resultText"
-                // Only the adapter enables editing after loading durable captures.
-                readOnly: true
+                // The adapter permits edits only after a lossless, durable load.
+                readOnly: !resultPane.controller.resultEditable
                 selectByMouse: true
                 persistentSelection: true
                 textFormat: TextEdit.PlainText
@@ -124,7 +125,7 @@ ColumnLayout {
                 ResultContextMenu {
                     id: resultMenu
                     controller: resultPane.controller
-                    file: resultPane.file
+                    edits: resultPane.edits
                     editor: resultEditor
                 }
             }

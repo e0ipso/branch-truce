@@ -8,6 +8,7 @@
 #include <QString>
 #include <QVariantMap>
 #include <functional>
+#include <vector>
 
 class QTextDocument;
 
@@ -43,6 +44,14 @@ public:
     void sync();
 
     [[nodiscard]] bool attached() const { return !editor_.isNull(); }
+    // Whether the result takes edits: the selected file is supported, its recovery is
+    // clear and the editor shows its text losslessly. The editor's readOnly binds to the
+    // inverse, so this is the only rule for editing the result.
+    [[nodiscard]] bool editable() const { return editable_; }
+    // Whether the editor has selected text. False without one.
+    [[nodiscard]] bool hasSelection() const;
+    // Whether the editor would paste the clipboard now. False without one.
+    [[nodiscard]] bool canPaste() const;
     // Whether an input method is composing in the editor. False without one.
     [[nodiscard]] bool composing() const;
     // All zero without an editor.
@@ -60,8 +69,7 @@ public:
 Q_SIGNALS:
     // A native edit of the selected file, as editResult arguments.
     void edited(const QString &fileId, const QString &revision, int begin, int end, const QString &replacement);
-    void undoRequested(const QString &fileId, const QString &revision);
-    void redoRequested(const QString &fileId, const QString &revision);
+    void editActionRequested(const QString &name);
     // The editor text no longer matched the file's current revision.
     void editRejected();
     // Shown as the command message.
@@ -70,6 +78,8 @@ Q_SIGNALS:
     void loadRefused(const QString &message);
     // A newly selected file was loaded and its cursor moved to placement().
     void placed();
+    // editable(), hasSelection() or canPaste() may have changed.
+    void stateChanged();
 
 private:
     struct Location {
@@ -85,6 +95,7 @@ private:
     };
     bool eventFilter(QObject *watched, QEvent *event) override;
     void capture();
+    void setEditable(bool editable);
     void place(const FileSession *file, const QString &loaded);
     [[nodiscard]] Location location() const;
     void keepPlace(const Location &place, const QString &before, const QString &after);
@@ -98,12 +109,14 @@ private:
     QPointer<QObject> editor_;
     QPointer<QTextDocument> document_;
     QMetaObject::Connection documentConnection_;
+    std::vector<QMetaObject::Connection> stateConnections_;
     QString text_;
     // The file the editor last placed, and whether it was supported then. A
     // file opens as an unsupported placeholder until its captures load.
     QString placedFileId_;
     bool placedSupported_ = false;
     QVariantMap placement_;
+    bool editable_ = false;
     bool syncing_ = false;
     bool processingEvent_ = false;
     Location heldLocation_;

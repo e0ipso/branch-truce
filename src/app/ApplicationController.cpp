@@ -136,14 +136,14 @@ ApplicationController::ApplicationController(QString gitExecutable, QObject *par
           [this](const QString &message) { showMessage(message); }}, this)
 {
     connect(&editor_, &ResultEditorAdapter::edited, this, &ApplicationController::editResult);
-    connect(&editor_, &ResultEditorAdapter::undoRequested, this, &ApplicationController::undo);
-    connect(&editor_, &ResultEditorAdapter::redoRequested, this, &ApplicationController::redo);
+    connect(&editor_, &ResultEditorAdapter::editActionRequested, this, &ApplicationController::resultEditActionRequested);
     connect(&editor_, &ResultEditorAdapter::editRejected, this, [this] { commandResult(Transition::InvalidAnchor); });
     connect(&editor_, &ResultEditorAdapter::notice, this, &ApplicationController::showMessage);
     connect(&editor_, &ResultEditorAdapter::loadRefused, this, [this](const QString &message) {
         if (commandMessage_ != message) showMessage(message);
     });
     connect(&editor_, &ResultEditorAdapter::placed, this, &ApplicationController::editorPlaced);
+    connect(&editor_, &ResultEditorAdapter::stateChanged, this, &ApplicationController::resultEditorChanged);
     connect(&navigator_, &FileNavigator::changed, this, &ApplicationController::navigationChanged);
     connect(&choices_, &ChoicePreviewFlow::changed, this, [this](ChoicePreviewFlow::Scope scope) {
         switch (scope) {

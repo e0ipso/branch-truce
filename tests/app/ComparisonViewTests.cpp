@@ -934,6 +934,70 @@ public:
             CHECK(fixture.file().current().draft == replaced.draft && !document->isUndoAvailable());
             fixture.checkRecovered(replaced.draft);
         });
+        suite.run("TRUCE-0216 shared edit actions follow selection and clipboard state in both controls", [] {
+            Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
+            auto *actions = fixture.object("resultEditActions");
+            const auto action = [&](const char *name) {
+                auto *result = actions->property(name).value<QObject *>();
+                CHECK(result);
+                return result;
+            };
+            const auto checkEnabled = [&](const char *name, const char *button, const char *entry, bool enabled) {
+                auto *shared = action(name);
+                CHECK(shared->property("enabled").toBool() == enabled);
+                CHECK(fixture.item(button)->isEnabled() == enabled);
+                CHECK(fixture.object(entry)->property("action").value<QObject *>() == shared);
+                CHECK(fixture.object(entry)->property("enabled").toBool() == enabled);
+            };
+            QGuiApplication::clipboard()->setText("clipboard");
+            CHECK(fixture.controller.resultEditable());
+            CHECK(!fixture.item("resultText")->property("readOnly").toBool());
+            checkEnabled("copy", "copyResult", "resultMenuCopy", false);
+            checkEnabled("paste", "pasteResult", "resultMenuPaste", true);
+            fixture.key(Qt::Key_C, Qt::ControlModifier);
+            CHECK(QGuiApplication::clipboard()->text() == "clipboard");
+            fixture.select(0, 4);
+            checkEnabled("copy", "copyResult", "resultMenuCopy", true);
+            CHECK(QMetaObject::invokeMethod(fixture.object("resultContextMenu"), "open"));
+            settle([&] { return fixture.object("resultContextMenu")->property("opened").toBool(); });
+            CHECK(fixture.item("resultMenuCopy")->isEnabled());
+            CHECK(QMetaObject::invokeMethod(fixture.object("resultContextMenu"), "close"));
+            settle([&] { return !fixture.object("resultContextMenu")->property("visible").toBool(); });
+            fixture.key(Qt::Key_C, Qt::ControlModifier);
+            CHECK(QGuiApplication::clipboard()->text() == "orig");
+            fixture.select(0, 0);
+            checkEnabled("copy", "copyResult", "resultMenuCopy", false);
+            QGuiApplication::clipboard()->clear();
+            checkEnabled("paste", "pasteResult", "resultMenuPaste", false);
+            CHECK(fixture.controller.files()->appendFile(
+                FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+            CHECK(fixture.controller.selectFile("outside"));
+            CHECK(!fixture.controller.resultEditable());
+            CHECK(fixture.item("resultText")->property("readOnly").toBool());
+            CHECK(!action("paste")->property("enabled").toBool());
+            CHECK(fixture.controller.selectFile("choices"));
+            QGuiApplication::clipboard()->setText("clipboard");
+            checkEnabled("paste", "pasteResult", "resultMenuPaste", true);
+            QGuiApplication::clipboard()->clear();
+        });
+        suite.run("TRUCE-0216 lossless editing gates toolbar menu and native paste together", [] {
+            Fixture fixture(test_support::choiceFile("left\n", "right\n", "line\xe2\x80\xa8separator\n"));
+            const auto before = fixture.file().current();
+            QGuiApplication::clipboard()->setText("replacement");
+            CHECK(!fixture.controller.resultEditable());
+            CHECK(fixture.item("resultText")->property("readOnly").toBool());
+            CHECK(!fixture.item("pasteResult")->isEnabled());
+            CHECK(!fixture.object("resultMenuPaste")->property("enabled").toBool());
+            CHECK(QMetaObject::invokeMethod(fixture.object("resultContextMenu"), "open"));
+            settle([&] { return fixture.object("resultContextMenu")->property("opened").toBool(); });
+            CHECK(!fixture.item("resultMenuPaste")->isEnabled());
+            CHECK(QMetaObject::invokeMethod(fixture.object("resultContextMenu"), "close"));
+            settle([&] { return !fixture.object("resultContextMenu")->property("visible").toBool(); });
+            CHECK(!fixture.controller.resultClipboard("paste"));
+            fixture.key(Qt::Key_V, Qt::ControlModifier);
+            CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
+            QGuiApplication::clipboard()->clear();
+        });
         suite.run("TRUCE-0020 clipboard menus and shortcuts preserve atomic history and recovery", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
             const auto initial = fixture.file().current();

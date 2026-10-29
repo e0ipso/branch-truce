@@ -48,6 +48,9 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(QVariantMap editorPlacement READ editorPlacement NOTIFY editorPlaced)
     Q_PROPERTY(QVariantMap handoff READ handoff NOTIFY handoffChanged)
     Q_PROPERTY(QString sessionOutcome READ sessionOutcome NOTIFY handoffChanged)
+    Q_PROPERTY(bool resultEditable READ resultEditable NOTIFY resultEditorChanged)
+    Q_PROPERTY(bool resultHasSelection READ resultHasSelection NOTIFY resultEditorChanged)
+    Q_PROPERTY(bool resultCanPaste READ resultCanPaste NOTIFY resultEditorChanged)
 public:
     // gitExecutable is the Git every collaborator and worker task runs; main
     // resolves it once. Empty when Git is not on PATH.
@@ -89,6 +92,10 @@ public:
     // Where the editor put a newly selected file: its first undecided region,
     // in the keys of navigationTarget, with count 0 when it has none.
     [[nodiscard]] QVariantMap editorPlacement() const { return editor_.placement(); }
+    // Whether the result editor takes edits; its readOnly binds to the inverse.
+    [[nodiscard]] bool resultEditable() const { return editor_.editable(); }
+    [[nodiscard]] bool resultHasSelection() const { return editor_.hasSelection(); }
+    [[nodiscard]] bool resultCanPaste() const { return editor_.canPaste(); }
     Q_INVOKABLE bool previewWholeFile(const QString &fileId, const QString &revision, const QString &side);
     Q_INVOKABLE bool applyWholeFile();
     Q_INVOKABLE bool previewChoice(const QString &fileId, const QString &revision,
@@ -170,6 +177,10 @@ Q_SIGNALS:
     // The editor loaded a newly selected file and moved its cursor to the start
     // of editorPlacement, so the view can scroll the panes there.
     void editorPlaced();
+    // resultEditable, resultHasSelection or resultCanPaste may have changed.
+    void resultEditorChanged();
+    // A native editor key requests the same action used by menus and the toolbar.
+    void resultEditActionRequested(const QString &name);
     void handoffChanged();
     // Emitted once by finishSession or leaveSession; the outcome text is final.
     void sessionEnded(const QString &outcome, bool clean);
