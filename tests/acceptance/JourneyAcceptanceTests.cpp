@@ -876,11 +876,13 @@ void expectSourcesAround(Scene &scene, const Repository &repo, const char *path,
 {
     clickFile(scene, path);
     expectText(scene.text("selectedPath"), QString::fromLatin1(path), "selected path");
-    // Each label shows a shortened identity; the full commit remains available separately.
+    // The role labels show short commit IDs; the identity text shows full IDs.
     expectText(scene.text("stage2Label"), "Left source · " + leftLabel, "left identity");
     expectText(scene.text("stage3Label"), "Right source · " + rightLabel, "right identity");
-    expectText(scene.text("stage2Identity"), "Captured blob: " + utf8(repo.stageObject(2, path)).left(10), "left blob");
-    expectText(scene.text("stage3Identity"), "Captured blob: " + utf8(repo.stageObject(3, path)).left(10), "right blob");
+    expectText(scene.text("stage2Identity"), "Captured blob: " + utf8(repo.stageObject(2, path))
+               + " · Verified commit: " + utf8(repo.leftCommit), "left blob and commit");
+    expectText(scene.text("stage3Identity"), "Captured blob: " + utf8(repo.stageObject(3, path))
+               + " · Verified commit: " + utf8(repo.rightCommit), "right blob and commit");
     // The full commit and blob ids stay reachable as accessible text.
     const auto described = [&](const char *name) {
         const auto *face = QAccessible::queryAccessibleInterface(scene.item(name));
