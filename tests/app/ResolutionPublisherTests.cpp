@@ -239,8 +239,17 @@ struct Session {
     ScopedEnvironment environment;
     ApplicationController controller{gitOnPath()};
     QString id;
-    explicit Session() : environment(repo.environment)
+    explicit Session(bool unsupportedResult = false) : environment(repo.environment)
     {
+        if (unsupportedResult) {
+            // Keep the source stages as text, but make the captured launch result binary.
+            const QByteArray bytes("unsupported\0data\n", 17);
+            writeFile(repo.path("excluded.txt"), bytes);
+            CHECK(readFile(repo.path("excluded.txt")) == bytes && bytes.size() == 17);
+            CHECK(repo.git({"check-attr", "text", "eol", "ident", "working-tree-encoding", "--", "excluded.txt"})
+                  == "excluded.txt: text: unspecified\nexcluded.txt: eol: unspecified\n"
+                     "excluded.txt: ident: unspecified\nexcluded.txt: working-tree-encoding: unspecified\n");
+        }
         openController(controller, repo);
         id = selectTracked(controller);
         CHECK(openedFile(controller).facts().unsaved);
@@ -879,7 +888,7 @@ int main(int argc, char **argv)
     // its own copy of the checks. The previews never checked the current
     // revision or support themselves, so the preview reports those.
     suite.run("TRUCE-0225 every result command refuses a stale revision, a blocked file and an unsupported file as before", [] {
-        Session session;
+        Session session(true);
         auto &controller = session.controller;
         const QString stale = QStringLiteral("The result changed. Select the scope again.");
         const QString blocked = QStringLiteral("Command not completed. Check pending recovery and the selected scope.");
