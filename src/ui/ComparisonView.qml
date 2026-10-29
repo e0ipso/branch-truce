@@ -136,36 +136,27 @@ ColumnLayout {
             letters[line] = ["", "L", "R", "B", "m"][from[line]]
         return {lines: lines, gaps: gaps, letters: letters}
     }
-    // The result's folded marker lines: those of every block tied to a choice
-    // section, unless the raw markers are shown. The buffer keeps them. hidden
-    // lists them as {line, text} for TextBlocks. boundaries maps the first line
-    // below each run of hidden lines to the run's size, and sets chip on a run
-    // that opens a block, where the gutter says that markers remain.
+    // The result's folded conflict-marker blocks: every block tied to a choice
+    // section, unless the raw markers are shown. The buffer keeps all of their
+    // lines. hidden lists each block for TextBlocks as {line, text, last,
+    // lastText}, its opening and closing marker lines, so the block shows as
+    // one row on its opening line. rows maps that line to the block's {last}
+    // line.
     function foldFor(file: var, shown: bool): var {
         const hidden = []
-        const opening = {}
+        const rows = {}
         const blocks = shown ? [] : file.markerBlocks || []
         for (let i = 0; i < blocks.length; ++i) {
             const lines = blocks[i].markerLines
-            if (!blocks[i].folded || lines.length === 0)
+            if (!blocks[i].folded || lines.length < 2)
                 continue
-            opening[lines[0].line] = true
-            for (let j = 0; j < lines.length; ++j)
-                hidden.push(lines[j])
+            const first = lines[0]
+            const last = lines[lines.length - 1]
+            hidden.push({line: first.line, text: first.text, last: last.line, lastText: last.text})
+            rows[first.line] = {last: last.line}
         }
         hidden.sort((a, b) => a.line - b.line)
-        const boundaries = {}
-        for (let first = 0; first < hidden.length;) {
-            let last = first
-            while (last + 1 < hidden.length && hidden[last + 1].line === hidden[last].line + 1)
-                ++last
-            let chip = false
-            for (let i = first; i <= last; ++i)
-                chip = chip || !!opening[hidden[i].line]
-            boundaries[hidden[last].line + 1] = {count: last - first + 1, chip: chip}
-            first = last + 1
-        }
-        return {hidden: hidden, boundaries: boundaries}
+        return {hidden: hidden, rows: rows}
     }
     // The connector bands between one source and the result: one per
     // non-equal passage of that side, in order, with its source and result
@@ -174,8 +165,10 @@ ColumnLayout {
     // one's. The state of a region of that side on the source lines, or on
     // the boundary of an empty passage, outranks it as it does in the panes,
     // and a passage that meets a conflict-marker block of the result is a
-    // conflict, so the band covers the block's folded marker lines.
-    function bandsFor(side: string, file: var): var {
+    // conflict. The passages that meet a block the fold shows as one row, equal
+    // ones inside it too, make one conflict band from all their source lines
+    // to the whole block, which ends on that row.
+    function bandsFor(side: string, file: var, fold: var): var {
         const rank = {removed: 0, added: 1, changed: 2, accepted: 3, ignored: 3, manual: 3, conflict: 4}
         const lines = {}
         const boundaries = {}
@@ -204,11 +197,42 @@ ColumnLayout {
             }
             return false
         }
+        const rows = Object.keys(fold.rows).map(Number)
+        // The row of the folded block that the result lines [begin, end) meet, or 0.
+        const rowMeeting = function(begin, end) {
+            for (let i = 0; i < rows.length; ++i) {
+                const stop = fold.rows[rows[i]].last + 1
+                if (begin < end ? begin < stop && rows[i] < end : begin > rows[i] && begin < stop)
+                    return rows[i]
+            }
+            return 0
+        }
+        const folded = {}
         const bands = []
         const passages = file.passages || []
         for (let i = 0; i < passages.length; ++i) {
             const passage = passages[i]
-            if (passage.side !== side || passage.kind === "equal")
+            if (passage.side !== side)
+                continue
+            const row = rowMeeting(passage.resultLineBegin, passage.resultLineEnd)
+            const stop = row > 0 ? fold.rows[row].last + 1 : 0
+            if (row > 0 && (passage.kind !== "equal"
+                    || passage.resultLineBegin > row && passage.resultLineEnd <= stop)) {
+                const band = folded[row]
+                if (band) {
+                    band.sourceBegin = Math.min(band.sourceBegin, passage.sourceLineBegin)
+                    band.sourceEnd = Math.max(band.sourceEnd, passage.sourceLineEnd)
+                    band.resultBegin = Math.min(band.resultBegin, passage.resultLineBegin)
+                    band.resultEnd = Math.max(band.resultEnd, passage.resultLineEnd)
+                } else {
+                    folded[row] = {kind: "conflict", sourceBegin: passage.sourceLineBegin,
+                        sourceEnd: passage.sourceLineEnd, resultBegin: Math.min(row, passage.resultLineBegin),
+                        resultEnd: Math.max(stop, passage.resultLineEnd)}
+                    bands.push(folded[row])
+                }
+                continue
+            }
+            if (passage.kind === "equal")
                 continue
             const begin = passage.sourceLineBegin
             const end = passage.sourceLineEnd
@@ -255,14 +279,20 @@ ColumnLayout {
         }
         return Object.keys(byLine).map(Number).sort((a, b) => a - b).map(line => byLine[line])
     }
-    // The result gutter's section actions, keyed by the first result line of each section
-    // with a side mapped there: its state once no side is undecided, or a Take both offer
-    // while one is and the sides can be combined. A key on a folded marker line moves to the
-    // next shown line, the row the fold leaves.
+    // The result's section actions. decisions maps the first result line of each section
+    // with a side mapped there to its state once no side is undecided, for the gutter; a
+    // section in a folded block puts it on the block's row. combinations maps the row of a
+    // folded block to a Take both offer for each section in it that is undecided and whose
+    // sides can be combined.
     function resultSectionsFor(file: var, fold: var): var {
-        const hidden = {}
-        for (let i = 0; i < fold.hidden.length; ++i)
-            hidden[fold.hidden[i].line] = true
+        const rows = Object.keys(fold.rows).map(Number)
+        const rowOf = function(line) {
+            for (let i = 0; i < rows.length; ++i) {
+                if (line >= rows[i] && line <= fold.rows[rows[i]].last)
+                    return rows[i]
+            }
+            return 0
+        }
         const choices = file.choices || []
         const regions = file.regions || []
         const sections = {}
@@ -290,22 +320,23 @@ ColumnLayout {
             const section = sections[order[i]]
             if (section.first < 0)
                 continue
-            let line = section.first
-            while (hidden[line])
-                ++line
-            if (decisions[line] || combinations[line])
-                continue
+            const row = rowOf(section.first)
+            const line = row > 0 ? row : section.first
             const sides = ["stage2", "stage3"].filter(side => !!section.sides[side])
             const states = sides.map(side => section.sides[side].region.state)
             if (states.indexOf("undecided") < 0) {
+                if (decisions[line])
+                    continue
                 decisions[line] = {
                     state: states.indexOf("manual") >= 0 ? "manual" : states.indexOf("accepted") >= 0 ? "accepted" : "ignored",
                     label: sides.map(side => qsTr("%1 %2").arg(sideNames[side])
                         .arg(stateNames[section.sides[side].region.state] || "")).join(", ")
                 }
-            } else if (sides.length === 2 && section.sides.stage2.choice.combinationAvailable) {
-                combinations[line] = {id: section.sides.stage2.choice.id,
-                    label: sides.map(side => section.sides[side].choice.label).join(qsTr(" and "))}
+            } else if (row > 0 && sides.length === 2 && section.sides.stage2.choice.combinationAvailable) {
+                if (!combinations[row])
+                    combinations[row] = []
+                combinations[row].push({id: section.sides.stage2.choice.id,
+                    label: sides.map(side => section.sides[side].choice.label).join(qsTr(" and "))})
             }
         }
         return {decisions: decisions, combinations: combinations}
@@ -463,7 +494,7 @@ ColumnLayout {
                 result: resultPane
                 source: connectorHandle.leftSide ? leftPane : rightPane
                 bands: comparison.kept("bands:" + connectorHandle.source.paneName,
-                    comparison.bandsFor(connectorHandle.source.paneName, comparison.file))
+                    comparison.bandsFor(connectorHandle.source.paneName, comparison.file, comparison.markerFold))
             }
             SourcePane {
                 id: leftPane

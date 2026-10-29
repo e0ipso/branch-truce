@@ -1,11 +1,11 @@
 #pragma once
-#include <QHash>
 #include <QList>
 #include <QMetaObject>
 #include <QObject>
 #include <QPointer>
 #include <QQuickTextDocument>
 #include <QRectF>
+#include <QSet>
 #include <QString>
 #include <QTextBlock>
 #include <QVariantList>
@@ -22,6 +22,11 @@ namespace branch_truce {
 // the layout leaves them out. A hidden line has no height and lies at the
 // top of the next shown line. One TextBlocks per document sets hidden; the
 // geometry of every TextBlocks on that document skips the hidden lines.
+//
+// A folded block keeps its first line in the layout as the row the view
+// draws over in the block's place. That row counts as hidden for the cursor
+// and the other queries of the TextBlocks that sets hidden, but its geometry
+// is a shown line's.
 class TextBlocks : public QObject {
     Q_OBJECT
     QML_ELEMENT
@@ -31,6 +36,10 @@ class TextBlocks : public QObject {
     // text that line must hold. A line is hidden only while it holds that
     // text, so an entry that no longer matches the document hides nothing.
     // Edits and replaced text keep the lines hidden that still match.
+    //
+    // An entry with last and lastText folds the block of lines from line to
+    // last, while line holds text and last holds lastText. The lines after
+    // line are hidden and line becomes the block's row.
     Q_PROPERTY(QVariantList hidden READ hidden WRITE setHidden NOTIFY hiddenChanged)
 public:
     explicit TextBlocks(QObject *parent = nullptr);
@@ -56,11 +65,12 @@ public:
     Q_INVOKABLE qreal yAtLine(qreal line) const;
     // The position of the first character of a 1-based line, or 0 without a document.
     Q_INVOKABLE int positionOf(int line) const;
-    // True when the character at position is on a hidden line.
+    // True when the character at position is on a hidden line or a folded
+    // block's row.
     Q_INVOKABLE bool hiddenAt(int position) const;
-    // True when a hidden line holds any character of [begin, end).
+    // True when a hidden line or a folded block's row holds any character of [begin, end).
     Q_INVOKABLE bool hiddenWithin(int begin, int end) const;
-    // Where a cursor at position goes so that it is not on a hidden line:
+    // Where a cursor at position goes so that it is not on a hidden line or a row:
     // position itself when its line is shown. Otherwise forward takes the
     // next shown line and backward the previous one, or the other one at
     // either end of the text. With from at 0 or more the cursor keeps the x
@@ -68,7 +78,7 @@ public:
     // by lines would; otherwise it goes to the line's near edge, the start
     // of a following line or the end of a preceding one.
     Q_INVOKABLE int shownPosition(int position, bool forward, int from = -1) const;
-    // The space and tab markers on the shown lines that meet area, in document
+    // The space and tab markers on the shown lines other than rows that meet area, in document
     // coordinates, as {x, y, w, h, tab} maps relative to area's top left. A
     // marker covers its character's advance and its row's height, and is at
     // least stroke wide and high. Where the next position starts another row,
@@ -102,14 +112,27 @@ Q_SIGNALS:
     void cursorCheckDue();
 
 private:
+    // One entry of hidden: a single line when last is 0, otherwise a block.
+    struct Fold {
+        int line = 0;
+        QString text;
+        int last = 0;
+        QString lastText;
+    };
     QRectF extent(QAbstractTextDocumentLayout *layout, const QTextBlock &block) const;
+    // A hidden line or a folded block's row, where the cursor never rests.
+    bool folded(const QTextBlock &block) const;
+    // block itself or the nearest one in that direction that is not folded.
+    QTextBlock reachable(QTextBlock block, bool forward) const;
     void scheduleHiding();
     void applyHidden();
 
     QPointer<QQuickTextDocument> document_;
     QList<QMetaObject::Connection> connections_;
     QVariantList hidden_;
-    QHash<int, QString> hiddenText_;
+    QList<Fold> folds_;
+    // The 1-based lines that are rows of folded blocks after the last application.
+    QSet<int> rows_;
     // Hidden blocks after the last application. Without one no edit makes a
     // hidden block, so an empty hidden list then has nothing to apply.
     int hiddenCount_ = 0;

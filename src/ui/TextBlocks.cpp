@@ -86,14 +86,17 @@ QVariantList TextBlocks::hidden() const { return hidden_; }
 
 void TextBlocks::setHidden(const QVariantList &hidden)
 {
-    QHash<int, QString> lines;
+    QList<Fold> folds;
     for (const auto &entry : hidden) {
         const auto map = entry.toMap();
-        const int line = map.value(QStringLiteral("line")).toInt();
-        if (line > 0) lines.insert(line, map.value(QStringLiteral("text")).toString());
+        Fold fold{map.value(QStringLiteral("line")).toInt(), map.value(QStringLiteral("text")).toString(),
+            map.value(QStringLiteral("last")).toInt(), map.value(QStringLiteral("lastText")).toString()};
+        if (fold.line <= 0) continue;
+        if (fold.last <= fold.line) fold.last = 0;
+        folds.append(fold);
     }
     hidden_ = hidden;
-    hiddenText_ = lines;
+    folds_ = folds;
     applyHidden();
     Q_EMIT hiddenChanged();
 }
@@ -103,7 +106,7 @@ void TextBlocks::setHidden(const QVariantList &hidden)
 // rather than editing the document while it reports the change.
 void TextBlocks::scheduleHiding()
 {
-    if (applying_ || hidingQueued_ || (hiddenText_.isEmpty() && hiddenCount_ == 0)) return;
+    if (applying_ || hidingQueued_ || (folds_.isEmpty() && hiddenCount_ == 0 && rows_.isEmpty())) return;
     hidingQueued_ = true;
     QMetaObject::invokeMethod(this, [this] {
         if (hidingQueued_) applyHidden();
@@ -114,15 +117,32 @@ void TextBlocks::applyHidden()
 {
     hidingQueued_ = false;
     auto *text = document_ ? document_->textDocument() : nullptr;
-    if (!text || (hiddenText_.isEmpty() && hiddenCount_ == 0)) return;
+    const auto previousRows = std::exchange(rows_, {});
+    if (!text || (folds_.isEmpty() && hiddenCount_ == 0 && previousRows.isEmpty())) return;
     QScopedValueRollback guard(applying_, true);
+    const auto holds = [text](int line, const QString &wanted) {
+        const auto block = text->findBlockByNumber(line - 1);
+        return block.isValid() && block.text() == wanted;
+    };
+    QSet<int> hide;
+    for (const auto &fold : std::as_const(folds_)) {
+        if (!holds(fold.line, fold.text) || (fold.last > 0 && !holds(fold.last, fold.lastText))) continue;
+        if (fold.last == 0) {
+            hide.insert(fold.line);
+            continue;
+        }
+        rows_.insert(fold.line);
+        for (int line = fold.line + 1; line <= fold.last; ++line) hide.insert(line);
+    }
+    // A row hidden by another entry is no row.
+    rows_.removeIf([&hide](int line) { return hide.contains(line); });
     QList<QTextBlock> changed;
     int count = 0;
     for (auto block = text->begin(); block.isValid(); block = block.next()) {
-        const auto wanted = hiddenText_.constFind(block.blockNumber() + 1);
-        const bool show = wanted == hiddenText_.cend() || block.text() != *wanted;
+        const bool show = !hide.contains(block.blockNumber() + 1);
         count += !show;
-        if (block.isVisible() == show) continue;
+        const int line = block.blockNumber() + 1;
+        if (block.isVisible() == show && rows_.contains(line) == previousRows.contains(line)) continue;
         block.setVisible(show);
         changed.append(block);
     }
@@ -134,7 +154,11 @@ void TextBlocks::applyHidden()
     cursor.beginEditBlock();
     for (const auto &block : std::as_const(changed)) {
         cursor.setPosition(block.position());
-        cursor.setBlockFormat(cursor.blockFormat());
+        auto format = cursor.blockFormat();
+        // The opening marker may include a long branch name. Its presentation
+        // row must stay one line even while ordinary result lines wrap.
+        format.setNonBreakableLines(rows_.contains(block.blockNumber() + 1));
+        cursor.setBlockFormat(format);
     }
     cursor.endEditBlock();
 }
@@ -153,6 +177,17 @@ QRectF TextBlocks::extent(QAbstractTextDocumentLayout *layout, const QTextBlock 
         return {rect.left(), rect.bottom(), rect.width(), 0};
     }
     return {};
+}
+
+bool TextBlocks::folded(const QTextBlock &block) const
+{
+    return !block.isVisible() || rows_.contains(block.blockNumber() + 1);
+}
+
+QTextBlock TextBlocks::reachable(QTextBlock block, bool forward) const
+{
+    while (block.isValid() && folded(block)) block = forward ? block.next() : block.previous();
+    return block;
 }
 
 QVariantList TextBlocks::between(qreal top, qreal bottom) const
@@ -230,17 +265,18 @@ int TextBlocks::positionOf(int line) const
 bool TextBlocks::hiddenAt(int position) const
 {
     const auto *text = document_ ? document_->textDocument() : nullptr;
-    if (!text || hiddenCount_ == 0 || position < 0 || position >= text->characterCount()) return false;
-    return !text->findBlock(position).isVisible();
+    if (!text || (hiddenCount_ == 0 && rows_.isEmpty()) || position < 0 || position >= text->characterCount())
+        return false;
+    return folded(text->findBlock(position));
 }
 
 bool TextBlocks::hiddenWithin(int begin, int end) const
 {
     const auto *text = document_ ? document_->textDocument() : nullptr;
-    if (!text || hiddenCount_ == 0 || end <= begin) return false;
+    if (!text || (hiddenCount_ == 0 && rows_.isEmpty()) || end <= begin) return false;
     for (auto block = text->findBlock(std::max(0, begin)); block.isValid() && block.position() < end;
          block = block.next()) {
-        if (!block.isVisible()) return true;
+        if (folded(block)) return true;
     }
     return false;
 }
@@ -250,14 +286,14 @@ int TextBlocks::shownPosition(int position, bool forward, int from) const
     auto *text = document_ ? document_->textDocument() : nullptr;
     if (!text || !hiddenAt(position)) return position;
     const auto block = text->findBlock(position);
-    const auto after = shown(block, true);
-    const auto before = shown(block, false);
+    const auto after = reachable(block, true);
+    const auto before = reachable(block, false);
     const bool down = forward ? after.isValid() : !before.isValid();
     const auto target = down ? after : before;
     if (!target.isValid()) return position;
     const int edge = down ? target.position() : target.position() + target.length() - 1;
     const auto source = from >= 0 ? text->findBlock(from) : QTextBlock{};
-    if (!source.isValid() || !source.isVisible() || !source.layout()) return edge;
+    if (!source.isValid() || folded(source) || !source.layout()) return edge;
     const auto sourceLine = source.layout()->lineForTextPosition(from - source.position());
     // Laying out the document gives the target block its lines.
     (void)text->documentLayout()->blockBoundingRect(target);
@@ -278,7 +314,7 @@ QVariantList TextBlocks::whitespaceWithin(const QRectF &area, qreal stroke, qrea
         if (!block.isVisible()) continue;
         const auto rect = layout->blockBoundingRect(block);
         if (rect.top() >= area.bottom()) break;
-        if (rect.bottom() < area.top()) continue;
+        if (rect.bottom() < area.top() || folded(block)) continue;
         appendWhitespace(markers, block, rect.topLeft(), area, stroke, tabWidth);
     }
     return markers;

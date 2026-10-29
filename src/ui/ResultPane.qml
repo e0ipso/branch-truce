@@ -1,6 +1,6 @@
 // The editable result as a pane: its header above the text, with line numbers and
-// provenance, diff colours, whitespace markers, the folded conflict-marker lines, and a
-// gutter column with each section's decision or its Take both menu.
+// provenance, diff colours, whitespace markers, a gutter column with each decided
+// section's state, and the folded conflict-marker blocks as rows with their Take both menus.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -16,10 +16,11 @@ ColumnLayout {
     // Line marks for the gutter and backgrounds, and the navigation target's line ranges.
     required property var marks
     required property var current
-    // The folded conflict-marker lines: hidden for the blocks, boundaries for the gutter.
+    // The folded conflict-marker blocks: hidden for the blocks, rows for the gutter and rows.
     required property var fold
-    // The gutter's section decisions and Take both offers by line; see LineGutter.
+    // The gutter's section decisions by line; see LineGutter.
     required property var decisions
+    // The Take both offers of the folded rows by row line; see FoldedRows.
     required property var combinations
     // Whether the file takes choices now: it can be edited and no input is composing.
     required property bool choosing
@@ -129,6 +130,16 @@ ColumnLayout {
                     editor: resultEditor
                 }
             }
+            FoldedRows {
+                objectName: "resultFoldedRows"
+                width: Math.max(resultEditor.width, resultViewport.width)
+                height: resultGutter.height
+                gutter: resultGutter
+                combinations: resultPane.combinations
+                choosing: resultPane.choosing
+                current: resultPane.current
+                onCombinationChosen: (target, action) => resultPane.choiceChosen(target, action)
+            }
             LineGutter {
                 id: resultGutter
                 objectName: "resultGutter"
@@ -139,12 +150,9 @@ ColumnLayout {
                 viewport: resultViewport
                 provenance: true
                 marks: resultPane.marks
-                folds: resultPane.fold.boundaries
+                folds: resultPane.fold.rows
                 decisionColumn: true
                 decisions: resultPane.decisions
-                combinations: resultPane.combinations
-                choosing: resultPane.choosing
-                onCombinationChosen: (target, action) => resultPane.choiceChosen(target, action)
             }
             LineBackgrounds {
                 objectName: "resultBackgrounds"

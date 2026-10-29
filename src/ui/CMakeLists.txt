@@ -11,6 +11,7 @@ qt_add_qml_module(branch_truce_ui STATIC
         ConnectorHandle.qml
         LineGutter.qml
         LineBackgrounds.qml
+        FoldedRows.qml
         WhitespaceMarkers.qml
         HandoffDialog.qml
         HandoffRow.qml

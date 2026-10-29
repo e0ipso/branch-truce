@@ -57,22 +57,6 @@ Item {
                 : Kirigami.Theme.neutralBackgroundColor
         }
     }
-    // A rule where folded marker lines are, so the sides of a block stay apart.
-    Repeater {
-        model: backgrounds.gutter.rowSlots
-        delegate: Fill {
-            required property int index
-            readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
-            readonly property string part: "fold"
-            readonly property int line: modelData.number
-            readonly property string kind: backgrounds.gutter.folds[line] ? "markers" : ""
-            visible: kind.length > 0
-            y: modelData.top - height / 2
-            width: backgrounds.width
-            height: backgrounds.rule
-            color: Kirigami.Theme.negativeTextColor
-        }
-    }
     Repeater {
         model: backgrounds.gutter.rowSlots
         delegate: Fill {

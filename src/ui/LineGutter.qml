@@ -10,18 +10,15 @@
 // editor.positionToRectangle(position); rows lists the blocks near the view
 // as {number, position, y, height, top, extent}, where top and extent span
 // the whole block. With provenance set, a column before the slot shows the
-// letter in marks.letters. folds maps the first line below each run of
-// folded lines to that run; on a run that opens a conflict-marker block the
-// slot shows a chip saying that markers remain, in place of the line's
-// glyph.
+// letter in marks.letters. folds maps the row of each folded
+// conflict-marker block, its opening line, to the block's {last} line; the
+// row keeps its number and glyph, and the layers over the text read folds
+// to draw it.
 //
 // With decisionColumn set, a column after the slot holds the result's
-// section actions, keyed by line. decisions maps a line to the {state,
+// section decisions, keyed by line. decisions maps a line to the {state,
 // label} of the section that starts there once both its sides are decided,
-// and the column shows that state as a chip. combinations maps a line to
-// the {id, label} of an undecided section whose sides can be taken
-// together, and the column shows a Take both menu that asks to combine
-// them in either order through combinationChosen.
+// and the column shows that state as a chip.
 //
 // rowSlots holds one entry per row. A Repeater over it, with each delegate
 // reading rows[index], keeps its delegates when a refresh changes rows but
@@ -43,10 +40,6 @@ Item {
     property bool provenance: false
     property bool decisionColumn: false
     property var decisions: ({})
-    property var combinations: ({})
-    // Whether the file takes choices now: it can be edited and no input is composing.
-    property bool choosing: false
-    signal combinationChosen(target: string, action: string)
     readonly property alias markerSlot: slot
     readonly property int digits: Math.max(2, String(blocks.blockCount).length)
     readonly property real numberWidth: Math.ceil(digits * gutterFont.averageCharacterWidth)
@@ -135,6 +128,19 @@ Item {
         anchors.fill: parent
         color: Kirigami.Theme.backgroundColor
     }
+    // Carry the folded row's background through its line number and ! glyph.
+    Repeater {
+        model: gutter.rowSlots
+        delegate: Rectangle {
+            required property int index
+            readonly property var modelData: gutter.rows[index] || gutter.noRow
+            visible: !!gutter.folds[modelData.number]
+            y: modelData.top
+            width: gutter.width
+            height: modelData.extent
+            color: Kirigami.Theme.negativeBackgroundColor
+        }
+    }
     Repeater {
         model: gutter.rowSlots
         delegate: Text {
@@ -184,7 +190,7 @@ Item {
                 height: modelData.height
                 text: ({added: "+", changed: "~", conflict: "!", manual: "m",
                     accepted: "✓", ignored: "×", markers: "!"})[kind] || ""
-                visible: text.length > 0 && !(gutter.folds[line] && gutter.folds[line].chip)
+                visible: text.length > 0
                 textFormat: Text.PlainText
                 font: gutter.editor.font
                 color: kind === "added" || kind === "accepted" ? Kirigami.Theme.positiveTextColor
@@ -198,38 +204,6 @@ Item {
                     conflict: qsTr("Undecided conflict"), manual: qsTr("Hand-edited line"),
                     accepted: qsTr("Accepted side"), ignored: qsTr("Ignored side"),
                     markers: qsTr("Conflict markers remain")})[kind] || ""
-            }
-        }
-        Repeater {
-            model: gutter.rowSlots
-            delegate: Rectangle {
-                id: chip
-                required property int index
-                readonly property var modelData: gutter.rows[index] || gutter.noRow
-                readonly property int line: modelData.number
-                readonly property var fold: gutter.folds[line] || null
-                readonly property string part: "chip"
-                readonly property string kind: fold && fold.chip ? "markers" : ""
-                readonly property string text: kind.length > 0 ? "!" : ""
-                visible: kind.length > 0
-                y: modelData.y
-                width: Math.max(chipText.implicitWidth + Kirigami.Units.smallSpacing, height / 2)
-                height: modelData.height
-                radius: Kirigami.Units.cornerRadius
-                color: Kirigami.Theme.negativeBackgroundColor
-                Accessible.role: Accessible.StaticText
-                Accessible.name: text
-                Accessible.description: !fold ? ""
-                    : fold.count === 1 ? qsTr("Conflict markers remain: 1 marker line hidden above")
-                    : qsTr("Conflict markers remain: %1 marker lines hidden above").arg(fold.count)
-                Text {
-                    id: chipText
-                    anchors.centerIn: parent
-                    text: chip.text
-                    textFormat: Text.PlainText
-                    font: gutter.editor.font
-                    color: Kirigami.Theme.negativeTextColor
-                }
             }
         }
         Repeater {
@@ -264,7 +238,6 @@ Item {
                 readonly property var modelData: gutter.rows[index] || gutter.noRow
                 readonly property int line: modelData.number
                 readonly property var decision: gutter.decisions[line] || null
-                readonly property var combination: gutter.combinations[line] || null
                 y: modelData.y
                 width: decisionSlot.width
                 height: modelData.height
@@ -294,44 +267,6 @@ Item {
                         textFormat: Text.PlainText
                         font: Kirigami.Theme.smallFont
                         color: decisionChip.tone
-                    }
-                }
-                ToolButton {
-                    id: takeBoth
-                    readonly property string target: decisionRow.combination ? decisionRow.combination.id : ""
-                    objectName: "resultTakeBoth-" + target
-                    visible: target.length > 0
-                    enabled: gutter.choosing
-                    anchors.centerIn: parent
-                    width: decisionRow.height
-                    height: decisionRow.height
-                    padding: 0
-                    flat: false
-                    display: AbstractButton.IconOnly
-                    text: decisionRow.combination ? qsTr("Take both: %1").arg(decisionRow.combination.label) : ""
-                    icon.name: "merge"
-                    icon.width: Math.min(Kirigami.Units.iconSizes.small, height)
-                    icon.height: Math.min(Kirigami.Units.iconSizes.small, height)
-                    down: pressed || takeBothMenu.visible
-                    Accessible.role: Accessible.ButtonMenu
-                    ToolTip.text: text
-                    ToolTip.visible: hovered && !takeBothMenu.visible
-                    ToolTip.delay: Kirigami.Units.toolTipDelay
-                    onClicked: takeBothMenu.popup(takeBoth, 0, takeBoth.height)
-                    Menu {
-                        id: takeBothMenu
-                        MenuItem {
-                            objectName: "resultTakeBothLeftFirst-" + takeBoth.target
-                            text: qsTr("Take both, Left then Right")
-                            enabled: gutter.choosing
-                            onTriggered: gutter.combinationChosen(takeBoth.target, "left-first")
-                        }
-                        MenuItem {
-                            objectName: "resultTakeBothRightFirst-" + takeBoth.target
-                            text: qsTr("Take both, Right then Left")
-                            enabled: gutter.choosing
-                            onTriggered: gutter.combinationChosen(takeBoth.target, "right-first")
-                        }
                     }
                 }
             }

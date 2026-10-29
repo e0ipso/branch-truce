@@ -36,11 +36,13 @@ a `merge` menu with Resolve using this side and Take both in either order. A
 section owns the row on its first line, so the line choice that starts on the
 same line is in that row's menu. A decided scope loses its buttons and the
 glyph column shows the decision. The result gutter adds a column after
-`markerSlot` with a chip for each fully decided section and, while a section is
-undecided, a Take both menu on its first shown line, which for a folded marker
-block is the row below the fold. Both lanes sit in one `scopedChoices` item
-laid over the panes, so showing or hiding the choices changes only the panes'
-widths, never their heights.
+`markerSlot` with a chip for each fully decided section. The folded conflict
+row carries a framed Take both button for each undecided section whose sides
+can be combined. Its menu previews Left then Right or Right then Left through
+the existing replacement dialog, and its button accepts keyboard focus. Both
+source lanes sit in one `scopedChoices` item laid over the panes. Hiding the
+choices hides their buttons and the folded rows' Take both buttons, changing
+only the panes' widths, never their heights.
 
 Diff colours come from the selected file's `passages` and `regions`. Each line
 gets one kind. It is added when the compared text lacks it, changed, conflict
@@ -58,26 +60,27 @@ navigation target in all panes with `highlightColor`. Source lines come from the
 target's region, or else from mapping its result lines through that source's
 passages. The highlight stays when the result selection changes.
 
-The result folds the marker lines of each block that `markerBlocks` marks
-`folded`: a block of the current revision that `FileSession::markerSections`
-ties to the choice sections it encloses, so its marker lines are still the
-ones Git wrote.
-`TextBlocks.hidden` hides those document blocks with `QTextBlock::setVisible`
-and then sets each block's own format, which changes no text but makes the
-TextEdit lay it out again. A line is hidden only while it holds the text the
-controller listed for it. The buffer, positions and line numbers stay the
-document's, so the gutter skips the numbers of folded lines, and Save, recovery
-and Mark resolved see the same text either way. A chip with the `!` glyph on
-`negativeBackgroundColor` opens each folded block, a rule marks each run of
-folded lines, the lines between the markers take the markers kind, and a band
-that meets a block is a conflict band. The cursor never rests on a folded line:
-a key steps over it, a move by lines keeps its column, and a selection set by
-code ends on its anchor's side. A hand edit that changes a folded line's text
-or joins it to a neighbour unties its block from its sections, so the block's
-lines show; undo restores the text and the fold with it. Show conflict markers
-in the file toolbar's overflow menu shows every marker line, and Find or Go to
-line on a folded line turns it on. Each region also carries `markersRemain`,
-true while a block that encloses its section remains.
+The result folds each block that `markerBlocks` marks `folded` into one row:
+a block of the current revision that `FileSession::markerSections` ties to the
+choice sections it encloses, so its marker lines are still the ones Git wrote.
+`TextBlocks.hidden` receives the opening and closing marker lines and their
+expected text. While both endpoints match, it hides every block after the
+opening line through the closing line with `QTextBlock::setVisible`. The opening
+line stays in the layout as a single non-wrapping row, covered by `FoldedRows`
+with the label "Unresolved conflict" in DemiBold and `negativeTextColor`, and
+its Take both buttons. The gutter keeps the opening line's number and `!` glyph
+on `negativeBackgroundColor`; the next number skips the rest of the block.
+Block formatting refreshes layout without editing text. The buffer, positions
+and line numbers stay the document's, so Save, recovery and Mark resolved see
+the same text either way. Each side's passages inside the folded block share
+one conflict band ending on its row. The cursor skips both the row and its
+hidden lines: a key steps over them, a move by lines keeps its column, and a
+selection set by code ends on its anchor's side. A hand edit that changes a
+marker line's text or joins it to a neighbour unties its block from its
+sections, so the block's lines show; undo restores the text and the fold with
+it. Show conflict markers in the file toolbar's overflow menu shows every raw
+block, and Find or Go to line on a folded line turns it on. Each region also
+carries `markersRemain`, true while a block that encloses its section remains.
 
 The panes highlight syntax with KF6 SyntaxHighlighting. The controller gives
 the documents of the left, right, earlier and result panes one `PaneHighlighter`

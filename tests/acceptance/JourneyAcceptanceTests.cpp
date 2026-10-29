@@ -444,35 +444,41 @@ Work work(Scene &scene, const char *path)
     return {scene.text("resultText"), scene.file(path).current().draft};
 }
 
-// Waits until the result folds every line that starts like a conflict marker, or shows them
-// all, with a "markers remain" chip in the gutter only while they are folded. The line
-// numbers are the buffer's, so a folded line takes its number with it.
+// Waits until the result folds each conflict-marker block into one row, its opening marker
+// line, with every later line of the block hidden, or shows every line. The folded rows layer
+// draws a row only while the blocks are folded. The line numbers are the buffer's, so the
+// line after a folded block keeps its own number.
 void expectMarkersFolded(Scene &scene, bool folded)
 {
     const auto *document = scene.item("resultText")->property("textDocument").value<QQuickTextDocument *>()->textDocument();
     const auto look = [&] {
-        int markers = 0;
+        int blocks = 0;
+        bool inside = false;
         QList<int> expected;
         for (auto block = document->begin(); block.isValid(); block = block.next()) {
             const auto line = block.text();
-            const bool marker = line.startsWith(QStringLiteral("<<<<<<< ")) || line.startsWith(QStringLiteral("||||||| "))
-                || line == QStringLiteral("=======") || line.startsWith(QStringLiteral(">>>>>>> "));
-            markers += marker;
-            if (block.isVisible() == (marker && folded)) return false;
-            if (!marker || !folded) expected.push_back(block.blockNumber() + 1);
+            const bool hidden = folded && inside;
+            if (line.startsWith(QStringLiteral("<<<<<<< "))) {
+                inside = true;
+                ++blocks;
+            } else if (line.startsWith(QStringLiteral(">>>>>>> "))) {
+                inside = false;
+            }
+            if (block.isVisible() == hidden) return false;
+            if (!hidden) expected.push_back(block.blockNumber() + 1);
         }
         QList<int> numbered;
-        int chips = 0;
+        int rows = 0;
         for (auto *child : scene.item("resultGutter")->childItems()) {
             bool number = false;
             const auto value = child->property("text").toString().toInt(&number);
             if (number && child->isVisible()) numbered.push_back(value);
         }
-        for (auto *child : scene.item("resultGutterMarkerSlot")->childItems())
-            chips += child->isVisible() && child->property("part").toString() == QStringLiteral("chip");
+        for (auto *child : scene.item("resultFoldedRows")->childItems())
+            rows += child->isVisible() && child->property("part").toString() == QStringLiteral("row");
         std::sort(numbered.begin(), numbered.end());
         // The gutter numbers the lines near the view, which here is the whole file.
-        return markers > 0 && numbered == expected && (chips > 0) == folded;
+        return blocks > 0 && numbered == expected && rows == (folded ? blocks : 0);
     };
     settleFor(folded ? "folded conflict markers" : "shown conflict markers", look);
 }
@@ -1003,8 +1009,9 @@ public:
             clickFile(scene, "reading.txt");
             CHECK(scene.text("resultText").startsWith(QStringLiteral("REPEAT one\n"))
                   && scene.text("resultText").contains(QStringLiteral("<<<<<<< HEAD\n")));
-            // TRUCE-0179: the view folds Git's marker lines while the buffer keeps them, and the
-            // overflow menu's toggle shows them without changing the text, decisions or history.
+            // TRUCE-0179, TRUCE-0256: the view folds each of Git's marker blocks into one row while
+            // the buffer keeps it, and the overflow menu's toggle shows the block without changing
+            // the text, decisions or history.
             expectMarkersFolded(scene, true);
             const auto reading = work(scene, "reading.txt");
             const auto readingProgress = scene.progress();
