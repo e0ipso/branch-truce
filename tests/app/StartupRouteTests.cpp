@@ -1287,7 +1287,7 @@ public:
                     const auto expected = path == "binary.dat" ? "outside-app" : "unreadable";
                     CHECK(selected->support() == QLatin1String(expected));
                     CHECK(!selected->supportDetail().isEmpty());
-                    CHECK(!selected.contains("stage2") && !selected.contains("initialResult"));
+                    CHECK(selected->stage2().isEmpty() && selected->initialResult().isEmpty());
                     CHECK(model->replaceDraft(id.toStdString(), 1, {"unsafe edit", {}, 0}) == Transition::Blocked);
                     continue;
                 }
