@@ -188,23 +188,19 @@ bool FileNavigator::navigateAcrossFiles(const QString &mode, int direction)
     std::vector<Stop> stops;
     const bool unfinished = mode == QLatin1String("unfinished");
     for (int row = 0; row < files_.totalFiles(); ++row) {
-        const auto id = files_.data(files_.index(row), SessionModel::FileIdRole).toString();
-        const auto *file = files_.file(id.toStdString());
+        const auto *file = files_.fileAt(row);
         if (!file) continue;
-        const bool pending = files_.pendingDraft(file->id()) != nullptr;
-        const bool failed = files_.hasRecoveryFailure(file->id());
-        const auto facts = file->facts();
-        const bool saved = !pending && !facts.unsaved;
-        const bool reviewed = file->reviewed() && file->reviewed()->revision.id == file->current().id;
-        const bool resolved = !pending && !failed && facts.resolved;
+        const auto id = QString::fromStdString(file->id());
+        const auto progress = files_.progress(row);
         const bool outside = file->support() != Support::Supported;
         if (unfinished) {
-            if (!pending && !failed && facts.resolved && !outside) continue;
-        } else if (!saved && !reviewed) continue;
+            if (progress.resolved && !outside) continue;
+        } else if (!progress.saved && !progress.reviewed) continue;
         QString support = QStringLiteral("supported");
         if (file->support() == Support::OutsideApp) support = QStringLiteral("outside-app");
         else if (file->support() == Support::Unreadable) support = QStringLiteral("unreadable");
-        stops.push_back({row, id, owners_.displayPath(id), support, saved, reviewed, resolved, facts.earlierStaged, outside});
+        stops.push_back({row, id, owners_.displayPath(id), support, progress.saved, progress.reviewed, progress.resolved,
+            progress.earlierStaged, outside});
     }
     if (stops.empty()) {
         target_ = {{QStringLiteral("mode"), mode},

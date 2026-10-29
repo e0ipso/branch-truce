@@ -160,8 +160,7 @@ void ResolutionPublisher::captureBaselines(const git::RepositoryContext &reposit
     repository_ = repository;
     baselines_.clear();
     for (int row = 0; row < files_.totalFiles(); ++row) {
-        const auto id = files_.data(files_.index(row), SessionModel::FileIdRole).toString().toStdString();
-        const auto *session = files_.file(id);
+        const auto *session = files_.fileAt(row);
         if (!session || session->support() != Support::Supported || !session->snapshots()) continue;
         Baseline baseline;
         const auto captured = storage::captureDestination(repository.worktreeRoot,
@@ -172,7 +171,7 @@ void ResolutionPublisher::captureBaselines(const git::RepositoryContext &reposit
             || captured.destination->bytes().toStdString() != launch.text.bytes) {
             baseline.diagnostic = tr("The repository file no longer matches the captured launch result.");
         } else baseline.destination = captured.destination;
-        baselines_.emplace(id, std::move(baseline));
+        baselines_.emplace(session->id(), std::move(baseline));
     }
 }
 
@@ -198,8 +197,7 @@ bool ResolutionPublisher::assignParentStaging(const QByteArray &path)
         return true;
     }
     for (int row = 0; row < files_.totalFiles(); ++row) {
-        const auto id = files_.data(files_.index(row), SessionModel::FileIdRole).toString().toStdString();
-        const auto *session = files_.file(id);
+        const auto *session = files_.fileAt(row);
         if (!session || session->support() != Support::Supported || QByteArray::fromStdString(session->path()) != path)
             continue;
         parentPath_ = path;

@@ -335,6 +335,16 @@ int SessionModel::rowOf(const std::string &id) const
     return found == rows_.end() ? -1 : static_cast<int>(found->second);
 }
 
+const FileSession *SessionModel::fileAt(int row) const
+{
+    return row < 0 || static_cast<std::size_t>(row) >= files_.size() ? nullptr : &files_[static_cast<std::size_t>(row)];
+}
+
+SessionModel::Progress SessionModel::progress(int row) const
+{
+    return progressAt(static_cast<std::size_t>(row));
+}
+
 int SessionModel::supportCount(Support support) const
 {
     return static_cast<int>(std::count_if(files_.begin(), files_.end(),

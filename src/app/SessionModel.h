@@ -66,6 +66,19 @@ public:
     [[nodiscard]] const FileSession *file(const std::string &id) const;
     // The row of a file ID, or -1.
     [[nodiscard]] int rowOf(const std::string &id) const;
+    // The file in a row, or null outside 0 to totalFiles().
+    [[nodiscard]] const FileSession *fileAt(int row) const;
+    // The progress facts of a row, with pending input and recovery errors applied.
+    struct Progress {
+        std::size_t undecided;
+        bool saved;
+        bool reviewed;
+        bool resolved;
+        bool earlierStaged;
+    };
+    // The progress rule the status, chips and progress role use, for a row
+    // inside 0 to totalFiles().
+    [[nodiscard]] Progress progress(int row) const;
     [[nodiscard]] int supportCount(Support support) const;
     // The escaped label of a file's path, empty for an unknown ID. A label only.
     [[nodiscard]] QString displayPath(const std::string &id) const;
@@ -125,14 +138,6 @@ private:
         QString category;
         QString action;
         QString actionLabel;
-    };
-    // The progress facts of a row, with pending input and recovery errors applied.
-    struct Progress {
-        std::size_t undecided;
-        bool saved;
-        bool reviewed;
-        bool resolved;
-        bool earlierStaged;
     };
     bool commitCandidate(std::size_t row, FileSession candidate, const QString &action);
     // Stores a row's file and recomputes its cached facts.
