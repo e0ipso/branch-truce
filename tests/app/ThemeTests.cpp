@@ -288,8 +288,10 @@ int checkRoles(const QString &scheme, const QString &other)
 std::set<int> colouredLines(QQuickItem *backgrounds)
 {
     std::set<int> lines;
-    for (auto *child : backgrounds->childItems()) {
-        if (child->property("part").toString() != QStringLiteral("line") || !child->isVisible()) continue;
+    auto *fills = backgrounds->findChild<QQuickItem *>(backgrounds->objectName() + QStringLiteral("Lines"));
+    if (!fills) throw std::runtime_error("missing line backgrounds");
+    for (auto *child : fills->childItems()) {
+        if (!child->isVisible() || !child->property("line").isValid()) continue;
         if (child->width() <= 0 || child->height() <= 0 || child->opacity() <= 0) continue;
         lines.insert(child->property("line").toInt());
     }

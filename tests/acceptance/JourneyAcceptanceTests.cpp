@@ -223,7 +223,7 @@ public:
         const auto socket = mergetoolSocketDirectory();
         if (socket != sandbox->runtime.path() + QStringLiteral("/branch-truce"))
             throw std::runtime_error("socket directory outside the private runtime directory: " + socket.toStdString());
-        CHECK(controller->mergetoolListening() && QFileInfo(socket).isDir());
+        CHECK(controller->mergetool()->listening() && QFileInfo(socket).isDir());
     }
     ~Scene()
     {
@@ -474,8 +474,8 @@ void expectMarkersFolded(Scene &scene, bool folded)
             const auto value = child->property("text").toString().toInt(&number);
             if (number && child->isVisible()) numbered.push_back(value);
         }
-        for (auto *child : scene.item("resultFoldedRows")->childItems())
-            rows += child->isVisible() && child->property("part").toString() == QStringLiteral("row");
+        for (auto *child : scene.item("resultFoldedRowsRows")->childItems())
+            rows += child->isVisible() && child->property("line").isValid();
         std::sort(numbered.begin(), numbered.end());
         // The gutter numbers the lines near the view, which here is the whole file.
         return blocks > 0 && numbered == expected && rows == (folded ? blocks : 0);
@@ -1342,7 +1342,7 @@ public:
 
             // Whitespace display marks the space-only and tab-only differences without entering the text.
             auto *markers = scene.item("resultWhitespace");
-            CHECK(markers->property("markerCount").toInt() == 0);
+            CHECK(test_support::paintedMarkers(markers) == 0);
             scene.click("showWhitespace");
             // TRUCE-0179: a folded marker line is not drawn, so neither are its spaces.
             QString shown;
@@ -1703,13 +1703,13 @@ public:
                 return texts.join('\n');
             };
             const auto state = [&] {
-                return "waiting=" + scene.controller->mergetoolWaitingPath().toStdString() + " staging="
+                return "waiting=" + scene.controller->mergetool()->waitingPath().toStdString() + " staging="
                     + scene.controller->parentStagingPath().toStdString() + " message="
                     + scene.controller->commandMessage().toStdString();
             };
             auto parent = startMergetool(repo, {"launched.txt"});
             waitFor("Git to launch launched.txt",
-                    [&] { return scene.controller->mergetoolWaitingPath() == QByteArray("launched.txt"); }, state);
+                    [&] { return scene.controller->mergetool()->waitingPath() == QByteArray("launched.txt"); }, state);
             CHECK(scene.controller->parentSessionActive());
 
             // A path Git has not launched yet says so while Git is still running.
@@ -1758,7 +1758,7 @@ public:
             });
             Scene scene(repo);
             const auto state = [&] {
-                return "waiting=" + scene.controller->mergetoolWaitingPath().toStdString() + " selected="
+                return "waiting=" + scene.controller->mergetool()->waitingPath().toStdString() + " selected="
                     + scene.controller->selectedFileId().toStdString() + " message="
                     + scene.controller->commandMessage().toStdString();
             };
@@ -1770,7 +1770,7 @@ public:
             const auto launchBytes = readFile(repo.path("launched.txt"));
             auto parent = startMergetool(repo, {"launched.txt"});
             waitFor("Git to launch launched.txt",
-                    [&] { return scene.controller->mergetoolWaitingPath() == QByteArray("launched.txt"); }, state);
+                    [&] { return scene.controller->mergetool()->waitingPath() == QByteArray("launched.txt"); }, state);
             settleFor("waiting state on the selected launched path", waitingShown);
 
             // Git is not waiting on the other file, so it has no Leave control.
@@ -1783,7 +1783,7 @@ public:
             clickFile(scene, "launched.txt");
             settleFor("waiting state after re-selecting the launched path", waitingShown);
             CHECK(scene.controller->mergetoolWaiting());
-            CHECK(scene.controller->mergetoolWaitingPath() == QByteArray("launched.txt"));
+            CHECK(scene.controller->mergetool()->waitingPath() == QByteArray("launched.txt"));
             CHECK(scene.item("leaveMergetool")->isEnabled());
             expectText(scene.text("leaveMergetool"), QStringLiteral("Leave unresolved"), "leave control");
             CHECK(parent->state() != QProcess::NotRunning);

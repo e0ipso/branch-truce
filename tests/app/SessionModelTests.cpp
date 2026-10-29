@@ -572,7 +572,7 @@ public:
             CHECK(model.pendingDraft("recoverable") && *model.pendingDraft("recoverable") == unsavedDraft());
             CHECK(role(model, SessionModel::PendingInputRole).toBool());
             CHECK(role(model, SessionModel::PendingTextRole).toString().toUtf8() == QByteArray::fromStdString(unsavedDraft().text));
-            CHECK(role(model, SessionModel::PendingDecisionsRole).toList().size() == 2);
+            CHECK(model.pendingDraft("recoverable")->decisions.size() == 2);
             CHECK(role(model, SessionModel::RecoveryStateRole).toString() == "failed");
             CHECK(role(model, SessionModel::RecoveryErrorRole).toString().contains("retry"));
             CHECK(!role(model, SessionModel::CanUndoRole).toBool() && !model.canFinish());
@@ -644,15 +644,10 @@ public:
             unicode.decisions["right"] = {DecisionValue::Ignored, {}};
             const std::string path = std::string(":literal\t\n") + static_cast<char>(0xff);
             CHECK(model.appendFile(FileSession("id", path, unicode)));
-            CHECK(role(model, SessionModel::PathBytesRole).toByteArray()
-                  == QByteArray(path.data(), static_cast<qsizetype>(path.size())));
-            CHECK(role(model, SessionModel::ResultTextRole).toString().toUtf8()
-                  == QByteArray(unicode.text.data(), static_cast<qsizetype>(unicode.text.size())));
-            for (const auto value : {SessionModel::CurrentRevisionRole, SessionModel::ResultRevisionRole,
-                                     SessionModel::DecisionRevisionRole}) {
-                CHECK(role(model, value).metaType() == QMetaType::fromType<QString>());
-                CHECK(role(model, value).toString() == "1");
-            }
+            CHECK(model.file("id")->path() == path);
+            CHECK(model.file("id")->current().draft.text == unicode.text);
+            CHECK(role(model, SessionModel::CurrentRevisionRole).toString() == "1");
+            CHECK(model.file("id")->current().result == 1 && model.file("id")->current().decisions == 1);
             const auto decisions = role(model, SessionModel::DecisionsRole).toList();
             CHECK(decisions.size() == 2);
             CHECK(decisions[0].toMap().value("value").toString() == "accepted");
@@ -672,8 +667,6 @@ public:
                 CHECK(!it.value().isEmpty() && !unique.contains(it.value()));
                 unique.insert(it.value());
             }
-            CHECK(names.value(SessionModel::CheckpointRole) == "manualCheckpoint");
-            CHECK(names.value(SessionModel::WriteOutcomeRole) == "writeOutcome");
         });
         suite.run("row insertion and notifications occur only for applied commands", [] {
             SessionModel model;
@@ -715,14 +708,14 @@ public:
             CHECK(model.recordCheckpoint("first", 1, Outcome::Succeeded) == Transition::Applied);
             CHECK(!role(model, SessionModel::UnsavedRole).toBool());
             CHECK(role(model, SessionModel::ReviewNeededRole).toBool());
-            CHECK(role(model, SessionModel::ReviewedRole).toMap().isEmpty());
-            CHECK(role(model, SessionModel::WrittenRole).toMap().isEmpty());
-            CHECK(role(model, SessionModel::StagedRole).toMap().isEmpty());
-            CHECK(role(model, SessionModel::CheckpointRole).toMap().value("text").toString() == "result\n");
+            CHECK(!model.file("first")->reviewed());
+            CHECK(!model.file("first")->written());
+            CHECK(!model.file("first")->staged());
+            CHECK(model.file("first")->checkpoint()->draft.text == "result\n");
             resolve(model, "first");
             CHECK(model.canFinish() && model.resolvedFiles() == 1 && model.finishBlockers().isEmpty());
-            CHECK(role(model, SessionModel::StagedRole).toMap().value("objectId").toString() == "verified-object");
-            CHECK(role(model, SessionModel::StagedRole).toMap().value("mode").toString() == "100644");
+            CHECK(model.file("first")->staged()->objectId == "verified-object");
+            CHECK(model.file("first")->staged()->mode == "100644");
             CHECK(model.appendFile(FileSession("second", "b", draft(), Support::OutsideApp, "binary")));
             CHECK(model.totalFiles() == 2 && model.resolvedFiles() == 1 && !model.canFinish());
             CHECK(role(model, SessionModel::SupportRole, 1).toString() == "outside-app");
@@ -737,7 +730,7 @@ public:
             CHECK(model.canFinish() && model.resolvedFiles() == 2);
             CHECK(model.recordCheckpoint("second", 1, Outcome::Failed, "disk full") == Transition::Applied);
             CHECK(!model.canFinish() && model.resolvedFiles() == 1);
-            CHECK(role(model, SessionModel::CheckpointOutcomeRole, 1).toMap().value("detail").toString() == "disk full");
+            CHECK(model.file("second")->checkpointOutcome()->detail == "disk full");
             CHECK(role(model, SessionModel::StatusRole, 1).toString() == "Draft save failed");
         });
         suite.run("TRUCE-0028 handoff puts each mixed outcome in one category and pending input stays failed until retried", [] {
@@ -918,8 +911,7 @@ public:
             CHECK(at("bytes", SessionModel::PathRole).toString() == escaped);
             CHECK(at("bytes", Qt::DisplayRole).toString() == escaped);
             CHECK(model.displayPath("bytes") == escaped && model.displayPath("missing").isEmpty());
-            CHECK(at("bytes", SessionModel::PathBytesRole).toByteArray()
-                  == QByteArray(bytes.data(), static_cast<qsizetype>(bytes.size())));
+            CHECK(model.file("bytes")->path() == bytes);
             CHECK(handoffEntries(model.handoff()).value("bytes").value("path").toString() == escaped);
             bool blocked = false;
             for (const auto &entry : model.finishBlockers()) {
@@ -937,18 +929,18 @@ public:
             changed.decisions["left"] = {DecisionValue::Ignored, {}};
             CHECK(model.replaceDraft("id", 1, changed) == Transition::Applied);
             CHECK(role(model, SessionModel::CanUndoRole).toBool());
-            CHECK(role(model, SessionModel::EarlierStagedRole).toBool() && !model.canFinish());
+            CHECK(model.file("id")->facts().earlierStaged && !model.canFinish());
             CHECK(model.undo("id", 2) == Transition::Applied);
-            CHECK(role(model, SessionModel::ResultTextRole).toString() == "result\n");
+            CHECK(model.file("id")->current().draft.text == "result\n");
             CHECK(role(model, SessionModel::DecisionsRole).toList()[0].toMap().value("value").toString() == "accepted");
             CHECK(role(model, SessionModel::CanRedoRole).toBool());
             CHECK(role(model, SessionModel::ReviewNeededRole).toBool() && !model.canFinish());
             CHECK(model.redo("id", 3) == Transition::Applied);
-            CHECK(role(model, SessionModel::ResultTextRole).toString() == "new result");
+            CHECK(model.file("id")->current().draft.text == "new result");
             CHECK(role(model, SessionModel::DecisionsRole).toList()[0].toMap().value("value").toString() == "ignored");
             CHECK(model.discardToCheckpoint("id", 4) == Transition::Applied);
             CHECK(model.recordCheckpoint("id", 2, Outcome::Succeeded) == Transition::StaleRevision);
-            CHECK(role(model, SessionModel::CheckpointRole).toMap().value("revision").toString() == "1");
+            CHECK(model.file("id")->checkpoint()->id == 1);
             CHECK(model.discardToStaged("id", 5) == Transition::Applied);
             CHECK(model.canFinish() && role(model, SessionModel::CurrentRevisionRole).toString() == "1");
             CHECK(model.recordCheckpoint("id", 4, Outcome::Failed) == Transition::StaleRevision);
@@ -1056,10 +1048,10 @@ public:
             int changes = 0;
             QObject::connect(&model, &SessionModel::summaryChanged, &model, [&] { ++changes; });
             CHECK(model.beginMarkResolved("id", 1) == Transition::ConfirmationRequired);
-            CHECK(changes == 0 && role(model, SessionModel::ReviewedRole).toMap().isEmpty());
+            CHECK(changes == 0 && !model.file("id")->reviewed());
             CHECK(role(model, SessionModel::UndecidedRole).toULongLong() == 1);
             CHECK(model.beginMarkResolved("id", 1, true) == Transition::Applied);
-            CHECK(role(model, SessionModel::ReviewedRole).toMap().value("confirmedUndecided").toBool());
+            CHECK(model.file("id")->reviewed()->confirmedUndecided);
             undecided.text = "=======\n";
             CHECK(model.replaceDraft("id", 1, undecided) == Transition::Applied);
             CHECK(model.beginMarkResolved("id", 2, true) == Transition::Blocked);
@@ -1079,20 +1071,19 @@ public:
                 QObject::connect(&model, &SessionModel::summaryChanged, &model, [&] { ++changes; });
                 CHECK(model.recordWrite("id", 1, outcome, "delayed diagnostic") == Transition::Applied);
                 CHECK(changes == 1);
-                const auto result = role(model, SessionModel::WriteOutcomeRole).toMap();
-                const auto name = outcome == Outcome::Succeeded ? "succeeded" : outcome == Outcome::Failed ? "failed" : "uncertain";
+                const auto &result = *model.file("id")->writeOutcome();
                 const auto status = outcome == Outcome::Succeeded ? "Written, unresolved" : outcome == Outcome::Failed
                     ? "Repository write failed" : "Outcome uncertain; verification required";
-                CHECK(result.value("revision").toString() == "1");
-                CHECK(result.value("outcome").toString() == name && result.value("detail").toString() == "delayed diagnostic");
+                CHECK(result.revision == 1);
+                CHECK(result.outcome == outcome && result.detail == "delayed diagnostic");
                 CHECK(role(model, SessionModel::StatusRole).toString() == status);
                 CHECK(role(model, SessionModel::CurrentRevisionRole).toString() == "2");
-                CHECK(role(model, SessionModel::CheckpointRole).toMap().value("revision").toString() == "2");
-                CHECK(role(model, SessionModel::ReviewedRole).toMap().value("revision").toString() == "1");
+                CHECK(model.file("id")->checkpoint()->id == 2);
+                CHECK(model.file("id")->reviewed()->revision.id == 1);
                 CHECK(!role(model, SessionModel::UnsavedRole).toBool() && role(model, SessionModel::ReviewNeededRole).toBool());
                 CHECK(!model.canFinish() && model.resolvedFiles() == 0 && !model.finishBlockers().isEmpty());
-                const auto written = role(model, SessionModel::WrittenRole).toMap();
-                CHECK(outcome == Outcome::Succeeded ? written.value("revision").toString() == "1" : written.isEmpty());
+                const auto &written = model.file("id")->written();
+                CHECK(outcome == Outcome::Succeeded ? written && written->id == 1 : !written);
             });
         }
         suite.run("TRUCE-0015 manual Save and discard stay distinct from recovery and publication", [] {
@@ -1156,8 +1147,7 @@ public:
             CHECK(role(model, SessionModel::StatusRole).toString() == "Draft save failed");
             CHECK(role(model, SessionModel::UnsavedRole).toBool());
             CHECK(role(model, SessionModel::RecoveryStateRole).toString() == "save-failed");
-            CHECK(role(model, SessionModel::ResultTextRole).toString().toUtf8()
-                  == QByteArray::fromStdString(unsavedDraft().text));
+            CHECK(model.file("recoverable")->current().draft.text == unsavedDraft().text);
             CHECK(role(model, SessionModel::FinishBlockersRole).toStringList()
                   .contains("Draft save failed; the edited result is still available"));
             CHECK(!model.file("recoverable")->written() && !model.file("recoverable")->staged());
@@ -1244,8 +1234,7 @@ public:
                   && !model.file("recoverable")->staged());
             CHECK(role(model, SessionModel::StatusRole).toString() == "Draft save failed");
             CHECK(role(model, SessionModel::RecoveryStateRole).toString() == "save-failed");
-            CHECK(role(model, SessionModel::ResultTextRole).toString().toUtf8()
-                  == QByteArray::fromStdString(unsavedDraft().text));
+            CHECK(model.file("recoverable")->current().draft.text == unsavedDraft().text);
             CHECK(model.replaceDraft("other", otherEdited.id, draft("must stay blocked")) == Transition::Blocked);
             CHECK(model.undo("recoverable", editedRevision) == Transition::Blocked);
             CHECK(model.discardToCheckpoint("recoverable", editedRevision) == Transition::Blocked);

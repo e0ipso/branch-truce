@@ -164,7 +164,9 @@ inline int visualLines(QQuickItem *editor, int blockNumber)
 inline int paintedMarkers(QQuickItem *markers)
 {
     int count = 0;
-    for (auto *child : markers->childItems()) {
+    auto *spots = markers->findChild<QQuickItem *>(markers->objectName() + QStringLiteral("Spots"));
+    if (!spots) throw std::runtime_error("missing whitespace spots");
+    for (auto *child : spots->childItems()) {
         if (child->isVisible() && child->width() >= 2.0 && child->height() >= 2.0)
             ++count;
     }

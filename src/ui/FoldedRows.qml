@@ -29,89 +29,92 @@ Item {
     Kirigami.Theme.colorSet: Kirigami.Theme.View
     Kirigami.Theme.inherit: false
 
-    Repeater {
-        model: layer.gutter.rowSlots
-        delegate: Loader {
-            id: slot
-            required property int index
-            readonly property var modelData: layer.gutter.rows[index] || layer.gutter.noRow
-            readonly property string part: "row"
-            readonly property int line: modelData.number
-            readonly property var fold: layer.gutter.folds[line] || null
-            readonly property var offers: layer.combinations[line] || []
-            active: fold !== null
-            visible: active
-            y: modelData.top
-            width: layer.width
-            height: modelData.extent
-            sourceComponent: Rectangle {
-                id: row
-                // Covers the opening marker line, which the buffer keeps.
-                color: Kirigami.Theme.negativeBackgroundColor
-                Accessible.role: Accessible.StaticText
-                Accessible.name: conflictLabel.text
-                Accessible.description: qsTr("Lines %1 to %2 are folded. Show conflict markers shows them.")
-                    .arg(slot.line).arg(slot.fold ? slot.fold.last : slot.line)
-                Rectangle {
-                    anchors.fill: parent
-                    visible: !!slot.fold && paneMarks.overlaps(layer.current, slot.line, slot.fold.last)
-                    color: Kirigami.Theme.highlightColor
-                    opacity: 0.3
-                }
-                RowLayout {
-                    // At the left edge of the text in view, however far the pane is scrolled.
-                    x: layer.gutter.x + layer.gutter.width + Kirigami.Units.smallSpacing
-                    height: row.height
-                    spacing: Kirigami.Units.largeSpacing
-                    PlainLabel {
-                        id: conflictLabel
-                        objectName: "resultConflictRow-" + slot.line
-                        Layout.alignment: Qt.AlignVCenter
-                        text: qsTr("Unresolved conflict")
-                        font.weight: Font.DemiBold
-                        color: Kirigami.Theme.negativeTextColor
+    Item {
+        objectName: layer.objectName + "Rows"
+        anchors.fill: parent
+        Repeater {
+            model: layer.gutter.rowSlots
+            delegate: Loader {
+                id: slot
+                required property int index
+                readonly property var modelData: layer.gutter.rows[index] || layer.gutter.noRow
+                readonly property int line: modelData.number
+                readonly property var fold: layer.gutter.folds[line] || null
+                readonly property var offers: layer.combinations[line] || []
+                active: fold !== null
+                visible: active
+                y: modelData.top
+                width: layer.width
+                height: modelData.extent
+                sourceComponent: Rectangle {
+                    id: row
+                    // Covers the opening marker line, which the buffer keeps.
+                    color: Kirigami.Theme.negativeBackgroundColor
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: conflictLabel.text
+                    Accessible.description: qsTr("Lines %1 to %2 are folded. Show conflict markers shows them.")
+                        .arg(slot.line).arg(slot.fold ? slot.fold.last : slot.line)
+                    Rectangle {
+                        anchors.fill: parent
+                        visible: !!slot.fold && paneMarks.overlaps(layer.current, slot.line, slot.fold.last)
+                        color: Kirigami.Theme.highlightColor
+                        opacity: 0.3
                     }
-                    Repeater {
-                        model: slot.offers
-                        delegate: ToolButton {
-                            id: takeBoth
-                            required property var modelData
-                            readonly property string target: modelData.id
-                            readonly property string label: qsTr("Take both: %1").arg(modelData.label)
-                            objectName: "resultTakeBoth-" + target
+                    RowLayout {
+                        // At the left edge of the text in view, however far the pane is scrolled.
+                        x: layer.gutter.x + layer.gutter.width + Kirigami.Units.smallSpacing
+                        height: row.height
+                        spacing: Kirigami.Units.largeSpacing
+                        PlainLabel {
+                            id: conflictLabel
+                            objectName: "resultConflictRow-" + slot.line
                             Layout.alignment: Qt.AlignVCenter
-                            Layout.preferredHeight: row.height
-                            enabled: layer.choosing
-                            flat: false
-                            focusPolicy: Qt.StrongFocus
-                            topPadding: 0
-                            bottomPadding: 0
-                            display: AbstractButton.TextBesideIcon
-                            text: qsTr("Take both")
-                            icon.name: "merge"
-                            icon.width: Math.min(Kirigami.Units.iconSizes.small, row.height)
-                            icon.height: Math.min(Kirigami.Units.iconSizes.small, row.height)
-                            down: pressed || takeBothMenu.visible
-                            Accessible.role: Accessible.ButtonMenu
-                            Accessible.name: label
-                            ToolTip.text: label
-                            ToolTip.visible: hovered && !takeBothMenu.visible
-                            ToolTip.delay: Kirigami.Units.toolTipDelay
-                            onActiveFocusChanged: layer.choiceFocused(target, activeFocus)
-                            onClicked: takeBothMenu.popup(takeBoth, 0, takeBoth.height)
-                            Menu {
-                                id: takeBothMenu
-                                MenuItem {
-                                    objectName: "resultTakeBothLeftFirst-" + takeBoth.target
-                                    text: qsTr("Take both, Left then Right")
-                                    enabled: layer.choosing
-                                    onTriggered: layer.combinationChosen(takeBoth.target, ChoicePreviewFlow.CombineLeftFirst)
-                                }
-                                MenuItem {
-                                    objectName: "resultTakeBothRightFirst-" + takeBoth.target
-                                    text: qsTr("Take both, Right then Left")
-                                    enabled: layer.choosing
-                                    onTriggered: layer.combinationChosen(takeBoth.target, ChoicePreviewFlow.CombineRightFirst)
+                            text: qsTr("Unresolved conflict")
+                            font.weight: Font.DemiBold
+                            color: Kirigami.Theme.negativeTextColor
+                        }
+                        Repeater {
+                            model: slot.offers
+                            delegate: ToolButton {
+                                id: takeBoth
+                                required property var modelData
+                                readonly property string target: modelData.id
+                                readonly property string label: qsTr("Take both: %1").arg(modelData.label)
+                                objectName: "resultTakeBoth-" + target
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredHeight: row.height
+                                enabled: layer.choosing
+                                flat: false
+                                focusPolicy: Qt.StrongFocus
+                                topPadding: 0
+                                bottomPadding: 0
+                                display: AbstractButton.TextBesideIcon
+                                text: qsTr("Take both")
+                                icon.name: "merge"
+                                icon.width: Math.min(Kirigami.Units.iconSizes.small, row.height)
+                                icon.height: Math.min(Kirigami.Units.iconSizes.small, row.height)
+                                down: pressed || takeBothMenu.visible
+                                Accessible.role: Accessible.ButtonMenu
+                                Accessible.name: label
+                                ToolTip.text: label
+                                ToolTip.visible: hovered && !takeBothMenu.visible
+                                ToolTip.delay: Kirigami.Units.toolTipDelay
+                                onActiveFocusChanged: layer.choiceFocused(target, activeFocus)
+                                onClicked: takeBothMenu.popup(takeBoth, 0, takeBoth.height)
+                                Menu {
+                                    id: takeBothMenu
+                                    MenuItem {
+                                        objectName: "resultTakeBothLeftFirst-" + takeBoth.target
+                                        text: qsTr("Take both, Left then Right")
+                                        enabled: layer.choosing
+                                        onTriggered: layer.combinationChosen(takeBoth.target, ChoicePreviewFlow.CombineLeftFirst)
+                                    }
+                                    MenuItem {
+                                        objectName: "resultTakeBothRightFirst-" + takeBoth.target
+                                        text: qsTr("Take both, Right then Left")
+                                        enabled: layer.choosing
+                                        onTriggered: layer.combinationChosen(takeBoth.target, ChoicePreviewFlow.CombineRightFirst)
+                                    }
                                 }
                             }
                         }

@@ -28,20 +28,13 @@ class SessionModel final : public QAbstractListModel {
     QML_UNCREATABLE("Owned by ApplicationController")
     Q_PROPERTY(int totalFiles READ totalFiles NOTIFY summaryChanged)
     Q_PROPERTY(int resolvedFiles READ resolvedFiles NOTIFY summaryChanged)
-    Q_PROPERTY(bool canFinish READ canFinish NOTIFY summaryChanged)
-    Q_PROPERTY(QVariantList finishBlockers READ finishBlockers NOTIFY summaryChanged)
-    Q_PROPERTY(QVariantMap handoff READ handoff NOTIFY summaryChanged)
     Q_PROPERTY(bool hasPendingRecovery READ hasPendingRecovery NOTIFY summaryChanged)
-    Q_PROPERTY(bool hasRecoveryFailures READ hasRecoveryFailures NOTIFY summaryChanged)
 public:
     enum Role {
-        FileIdRole = Qt::UserRole + 1, PathRole, PathBytesRole, ResultTextRole, DecisionsRole,
-        CurrentRevisionRole, ResultRevisionRole, DecisionRevisionRole,
-        CheckpointRole, ReviewedRole, WrittenRole, StagedRole,
-        CheckpointOutcomeRole, WriteOutcomeRole, StageOutcomeRole,
+        FileIdRole = Qt::UserRole + 1, PathRole, DecisionsRole, CurrentRevisionRole,
         SupportRole, SupportDetailRole, UndecidedRole, UnsavedRole, ReviewNeededRole,
-        EarlierStagedRole, ResolvedRole, StatusRole, FinishBlockersRole, CanUndoRole, CanRedoRole,
-        PendingInputRole, PendingTextRole, PendingDecisionsRole, RecoveryStateRole, RecoveryErrorRole,
+        ResolvedRole, StatusRole, FinishBlockersRole, CanUndoRole, CanRedoRole,
+        PendingInputRole, PendingTextRole, RecoveryStateRole, RecoveryErrorRole,
         ProgressRole, StatusIconRole, StatusLineRole, ChipsRole, SummaryRole
     };
     Q_ENUM(Role)
@@ -117,7 +110,6 @@ public:
     bool appendFile(FileSession file);
     Transition replaceDraft(const std::string &id, RevisionId expected, Draft draft);
     Transition editResult(const std::string &id, RevisionId expected, ResultEdit edit);
-    Transition applyCommand(const std::string &id, const EditingCommand &command, bool confirmReplacement = false);
     Transition applyChoice(const std::string &id, const ChoicePreview &preview, bool confirmReplacement = false);
     Transition applyNonConflicting(const std::string &id, const NonConflictingPreview &preview, bool confirm = false);
     Transition applyWholeFile(const std::string &id, const WholeFilePreview &preview, bool confirm = false);

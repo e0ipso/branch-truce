@@ -14,7 +14,6 @@ Item {
     required property TextBlocks blocks
     property bool active: false
     property var spots: []
-    readonly property int markerCount: spots.length
     readonly property color ink: editor.color.a > 0 ? editor.color : Kirigami.Theme.textColor
     readonly property real stroke: Kirigami.Units.smallSpacing / 2
     readonly property real inset: Kirigami.Units.smallSpacing / 4
@@ -57,40 +56,44 @@ Item {
         function onWidthChanged(): void { markers.schedule() }
         function onHeightChanged(): void { markers.schedule() }
     }
-    Repeater {
-        model: markers.spots
-        delegate: Item {
-            id: spot
-            required property var modelData
-            x: modelData.x
-            y: modelData.y
-            width: Math.max(markers.stroke, modelData.w)
-            height: Math.max(markers.stroke, modelData.h)
-            Rectangle {
-                visible: !spot.modelData.tab
-                width: Math.min(Kirigami.Units.smallSpacing, Math.max(markers.stroke, spot.height * markers.dotShare))
-                height: width
-                radius: width / 2
-                color: markers.ink
-                anchors.centerIn: parent
-            }
-            Rectangle {
-                visible: spot.modelData.tab
-                x: markers.inset
-                height: markers.stroke
-                width: Math.max(markers.inset, parent.width - Kirigami.Units.largeSpacing)
-                anchors.verticalCenter: parent.verticalCenter
-                color: markers.ink
-            }
-            Rectangle {
-                visible: spot.modelData.tab
-                width: Kirigami.Units.smallSpacing + markers.inset
-                height: width
-                radius: markers.inset
-                anchors.right: parent.right
-                anchors.rightMargin: markers.inset
-                anchors.verticalCenter: parent.verticalCenter
-                color: markers.ink
+    Item {
+        objectName: markers.objectName + "Spots"
+        anchors.fill: parent
+        Repeater {
+            model: markers.spots
+            delegate: Item {
+                id: spot
+                required property var modelData
+                x: modelData.x
+                y: modelData.y
+                width: Math.max(markers.stroke, modelData.w)
+                height: Math.max(markers.stroke, modelData.h)
+                Rectangle {
+                    visible: !spot.modelData.tab
+                    width: Math.min(Kirigami.Units.smallSpacing, Math.max(markers.stroke, spot.height * markers.dotShare))
+                    height: width
+                    radius: width / 2
+                    color: markers.ink
+                    anchors.centerIn: parent
+                }
+                Rectangle {
+                    visible: spot.modelData.tab
+                    x: markers.inset
+                    height: markers.stroke
+                    width: Math.max(markers.inset, parent.width - Kirigami.Units.largeSpacing)
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: markers.ink
+                }
+                Rectangle {
+                    visible: spot.modelData.tab
+                    width: Kirigami.Units.smallSpacing + markers.inset
+                    height: width
+                    radius: markers.inset
+                    anchors.right: parent.right
+                    anchors.rightMargin: markers.inset
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: markers.ink
+                }
             }
         }
     }

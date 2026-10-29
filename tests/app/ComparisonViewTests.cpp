@@ -534,8 +534,8 @@ QMap<int, QString> tintedLines(QQuickItem *editor)
 PaneMarks paintedMarks(Fixture &fixture, const std::string &pane)
 {
     PaneMarks found;
-    for (auto *fill : fixture.item((pane + "Backgrounds").c_str())->childItems()) {
-        if (fill->isVisible() && fill->property("part").toString() == "line")
+    for (auto *fill : fixture.item((pane + "BackgroundsLines").c_str())->childItems()) {
+        if (fill->isVisible() && fill->property("line").isValid())
             found.backgrounds.insert(fill->property("line").toInt(), fill->property("kind").toString());
     }
     for (auto *glyph : fixture.item((pane + "GutterMarkerSlot").c_str())->childItems()) {
@@ -643,8 +643,8 @@ std::pair<qreal, qreal> paintedSpan(Fixture &fixture, const std::string &pane, i
 {
     std::optional<qreal> top;
     std::optional<qreal> bottom;
-    for (auto *fill : fixture.item((pane + "Backgrounds").c_str())->childItems()) {
-        if (!fill->isVisible() || fill->property("part").toString() != (begin == end ? "gap" : "line")) continue;
+    for (auto *fill : fixture.item((pane + (begin == end ? "BackgroundsGaps" : "BackgroundsLines")).c_str())->childItems()) {
+        if (!fill->isVisible()) continue;
         const auto line = fill->property("line").toInt();
         const auto y = fill->mapToScene(QPointF()).y();
         if (line == begin) top = y;
@@ -715,11 +715,13 @@ QList<int> linesStarting(Fixture &fixture, const QStringList &prefixes)
 
 // The visible items of one part of a pane layer, by line, such as the "row"s of
 // the result's folded rows layer.
-QMap<int, QQuickItem *> foldParts(QQuickItem *layer, const QString &part)
+QMap<int, QQuickItem *> foldParts(QQuickItem *layer)
 {
     QMap<int, QQuickItem *> found;
-    for (auto *child : layer->childItems())
-        if (child->isVisible() && child->property("part").toString() == part) found.insert(child->property("line").toInt(), child);
+    auto *rows = layer->findChild<QQuickItem *>(layer->objectName() + QStringLiteral("Rows"));
+    if (!rows) throw std::runtime_error("missing folded rows");
+    for (auto *child : rows->childItems())
+        if (child->isVisible() && child->property("line").isValid()) found.insert(child->property("line").toInt(), child);
     return found;
 }
 
@@ -759,7 +761,7 @@ MarkerLook markerLook(Fixture &fixture)
     const auto marks = paintedMarks(fixture, "result");
     for (auto it = marks.backgrounds.begin(); it != marks.backgrounds.end(); ++it)
         if (it.value() == "markers" && marks.glyphs.value(it.key()) == "markers") look.marked.push_back(it.key());
-    look.rows = foldParts(fixture.item("resultFoldedRows"), "row").keys();
+    look.rows = foldParts(fixture.item("resultFoldedRows")).keys();
     auto *editor = fixture.item("resultText");
     const auto first = sceneRectangle(editor, 0);
     const auto bridge = sceneRectangle(editor, static_cast<int>(fixture.text().indexOf("bridge")));
@@ -1462,13 +1464,14 @@ public:
                         shown.insert({glyph->property("line").toInt(), glyph->property("kind").toString()},
                             glyph->property("text").toString());
                 }
-                for (auto *fill : fixture.item((pane + "Backgrounds").c_str())->childItems()) {
-                    const auto part = fill->property("part").toString();
-                    if (!fill->isVisible() || (part != "line" && part != "gap")) continue;
+                for (const auto *suffix : {"BackgroundsLines", "BackgroundsGaps"}) {
+                  for (auto *fill : fixture.item((pane + suffix).c_str())->childItems()) {
+                    if (!fill->isVisible() || !fill->property("line").isValid()) continue;
                     const auto kind = fill->property("kind").toString();
                     found.kinds.insert(kind);
                     const auto glyph = shown.value({fill->property("line").toInt(), kind});
                     if (glyph.isEmpty() || glyph != glyphs.value(kind)) ++found.unmarked;
+                  }
                 }
                 return found;
             };
@@ -1528,8 +1531,8 @@ public:
             CHECK(header("manual", "manual", "m"));
             // The fill is the theme's neutral background.
             int filled = 0;
-            for (auto *fill : fixture.item("resultBackgrounds")->childItems()) {
-                if (!fill->isVisible() || fill->property("part").toString() != "line" || fill->property("line").toInt() != 1)
+            for (auto *fill : fixture.item("resultBackgroundsLines")->childItems()) {
+                if (!fill->isVisible() || fill->property("line").toInt() != 1)
                     continue;
                 ++filled;
                 CHECK(fill->property("color").value<QColor>()
@@ -1674,8 +1677,8 @@ public:
             const auto highlighted = [&](const char *name, int line) {
                 auto *layer = fixture.item(name);
                 const auto color = qmlValue(layer, "Kirigami.Theme.highlightColor").value<QColor>();
-                for (auto *fill : layer->childItems()) {
-                    if (fill->property("part").toString() == "current" && fill->isVisible()
+                for (auto *fill : fixture.item((std::string(name) + "Current").c_str())->childItems()) {
+                    if (fill->isVisible()
                         && fill->property("line").toInt() == line
                         && fill->property("color").value<QColor>() == color) return true;
                 }
@@ -1782,8 +1785,8 @@ public:
             const auto theme = [&](const char *layer, const char *role) {
                 return qmlValue(fixture.item(layer), QStringLiteral("Kirigami.Theme.") + QLatin1String(role)).value<QColor>();
             };
-            for (auto *fill : fixture.item("resultBackgrounds")->childItems()) {
-                if (fill->isVisible() && fill->property("kind").toString() == "markers" && fill->property("part").toString() == "line")
+            for (auto *fill : fixture.item("resultBackgroundsLines")->childItems()) {
+                if (fill->isVisible() && fill->property("kind").toString() == "markers")
                     CHECK(fill->property("color").value<QColor>() == theme("resultBackgrounds", "negativeBackgroundColor"));
             }
             for (auto *glyph : fixture.item("resultGutterMarkerSlot")->childItems()) {
@@ -1792,7 +1795,7 @@ public:
                     CHECK(glyph->property("color").value<QColor>() == theme("resultGutterMarkerSlot", "negativeTextColor"));
                 }
             }
-            for (auto *row : foldParts(fixture.item("resultFoldedRows"), "row")) {
+            for (auto *row : foldParts(fixture.item("resultFoldedRows"))) {
                 auto *fill = row->property("item").value<QQuickItem *>();
                 CHECK(fill && fill->property("color").value<QColor>() == theme("resultFoldedRows", "negativeBackgroundColor"));
                 // The row covers its whole line, from the gutter to the right edge.
@@ -1802,7 +1805,7 @@ public:
             CHECK(label->isVisible() && label->property("text").toString() == "Unresolved conflict");
             CHECK(label->property("color").value<QColor>() == theme("resultFoldedRows", "negativeTextColor"));
             CHECK(label->property("font").value<QFont>().weight() == QFont::DemiBold);
-            const auto described = qmlValue(foldParts(fixture.item("resultFoldedRows"), "row").value(2)->property("item")
+            const auto described = qmlValue(foldParts(fixture.item("resultFoldedRows")).value(2)->property("item")
                 .value<QQuickItem *>(), QStringLiteral("Accessible.description")).toString();
             if (described != "Lines 2 to 11 are folded. Show conflict markers shows them.")
                 throw std::runtime_error("first row described as " + described.toStdString());
@@ -2083,17 +2086,17 @@ public:
             auto *markers = fixture.item("resultWhitespace");
             auto *toggle = fixture.item("showWhitespace");
             CHECK(!toggle->property("checked").toBool());
-            settle([&] { return markers->property("markerCount").toInt() == 0 && paintedMarkers(markers) == 0; });
+            settle([&] { return paintedMarkers(markers) == 0; });
             CHECK(markerKind(markers, false) == 0 && markerKind(markers, true) == 0);
             CHECK(toggle->setProperty("checked", true));
-            settle([&] { return markers->property("markerCount").toInt() == 2 && paintedMarkers(markers) == 2; });
+            settle([&] { return paintedMarkers(markers) == 2; });
             CHECK(markerKind(markers, false) == 1 && markerKind(markers, true) == 1);
-            CHECK(fixture.item("stage2Whitespace")->property("markerCount").toInt() == 0);
-            CHECK(fixture.item("stage3Whitespace")->property("markerCount").toInt() == 0);
+            CHECK(paintedMarkers(fixture.item("stage2Whitespace")) == 0);
+            CHECK(paintedMarkers(fixture.item("stage3Whitespace")) == 0);
             CHECK(fixture.item("resultText")->property("text").toString().toStdString() == result);
             checkUnchanged(fixture, before);
             CHECK(toggle->setProperty("checked", false));
-            settle([&] { return markers->property("markerCount").toInt() == 0 && paintedMarkers(markers) == 0; });
+            settle([&] { return paintedMarkers(markers) == 0; });
             CHECK(fixture.item("resultText")->property("text").toString().toStdString() == result);
             checkUnchanged(fixture, before);
         });

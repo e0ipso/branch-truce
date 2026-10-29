@@ -25,53 +25,62 @@ Item {
         Kirigami.Theme.colorSet: Kirigami.Theme.View
         Kirigami.Theme.inherit: false
     }
-    Repeater {
-        model: backgrounds.gutter.rowSlots
-        delegate: Fill {
-            id: lineFill
-            required property int index
-            readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
-            readonly property string part: "line"
-            readonly property int line: modelData.number
-            readonly property string kind: backgrounds.gutter.marks.lines[line] || ""
-            // An ignored side gets no fill: its pane draws the text in disabledTextColor.
-            visible: kind.length > 0 && DiffStyle.hasFill(kind)
-            y: modelData.top
-            width: backgrounds.width
-            height: modelData.extent
-            color: DiffStyle.background(kind, lineFill)
+    Item {
+        objectName: backgrounds.objectName + "Lines"
+        anchors.fill: parent
+        Repeater {
+            model: backgrounds.gutter.rowSlots
+            delegate: Fill {
+                id: lineFill
+                required property int index
+                readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
+                readonly property int line: modelData.number
+                readonly property string kind: backgrounds.gutter.marks.lines[line] || ""
+                // An ignored side gets no fill: its pane draws the text in disabledTextColor.
+                visible: kind.length > 0 && DiffStyle.hasFill(kind)
+                y: modelData.top
+                width: backgrounds.width
+                height: modelData.extent
+                color: DiffStyle.background(kind, lineFill)
+            }
         }
     }
-    Repeater {
-        model: backgrounds.gutter.rowSlots
-        delegate: Fill {
-            id: gapFill
-            required property int index
-            readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
-            readonly property string part: "gap"
-            readonly property int line: modelData.number
-            readonly property string kind: backgrounds.gutter.marks.gaps[line] ? "removed" : ""
-            visible: kind.length > 0
-            y: modelData.top - height / 2
-            width: backgrounds.width
-            height: backgrounds.rule
-            color: DiffStyle.textColor(kind, gapFill)
+    Item {
+        objectName: backgrounds.objectName + "Gaps"
+        anchors.fill: parent
+        Repeater {
+            model: backgrounds.gutter.rowSlots
+            delegate: Fill {
+                id: gapFill
+                required property int index
+                readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
+                readonly property int line: modelData.number
+                readonly property string kind: backgrounds.gutter.marks.gaps[line] ? "removed" : ""
+                visible: kind.length > 0
+                y: modelData.top - height / 2
+                width: backgrounds.width
+                height: backgrounds.rule
+                color: DiffStyle.textColor(kind, gapFill)
+            }
         }
     }
-    Repeater {
-        model: backgrounds.gutter.rowSlots
-        delegate: Fill {
-            required property int index
-            readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
-            readonly property string part: "current"
-            readonly property int line: modelData.number
-            readonly property bool gap: paneMarks.gap(backgrounds.current, line)
-            visible: gap || paneMarks.contains(backgrounds.current, line)
-            y: gap ? modelData.top - height / 2 : modelData.top
-            width: backgrounds.width
-            height: gap ? backgrounds.rule * 2 : modelData.extent
-            color: Kirigami.Theme.highlightColor
-            opacity: 0.3
+    Item {
+        objectName: backgrounds.objectName + "Current"
+        anchors.fill: parent
+        Repeater {
+            model: backgrounds.gutter.rowSlots
+            delegate: Fill {
+                required property int index
+                readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
+                readonly property int line: modelData.number
+                readonly property bool gap: paneMarks.gap(backgrounds.current, line)
+                visible: gap || paneMarks.contains(backgrounds.current, line)
+                y: gap ? modelData.top - height / 2 : modelData.top
+                width: backgrounds.width
+                height: gap ? backgrounds.rule * 2 : modelData.extent
+                color: Kirigami.Theme.highlightColor
+                opacity: 0.3
+            }
         }
     }
 }

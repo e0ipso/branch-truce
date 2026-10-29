@@ -4,10 +4,9 @@
 // the text. Where it is used, x follows contentX to keep it at the left edge,
 // width is implicitWidth and the editor pads its text by that width.
 //
-// markerSlot is a column between the numbers and the text. It shows the
+// A column between the numbers and the text shows the
 // glyph of each line in marks.lines, and the gaps in marks.gaps on its
-// right edge. Place an item in it at the y of
-// editor.positionToRectangle(position); rows lists the blocks near the view
+// right edge. rows lists the blocks near the view
 // as {number, position, y, height, top, extent}, where top and extent span
 // the whole block. With provenance set, a column before the slot shows the
 // letter in marks.letters. folds maps the row of each folded
@@ -40,7 +39,6 @@ Item {
     property bool provenance: false
     property bool decisionColumn: false
     property var decisions: ({})
-    readonly property alias markerSlot: slot
     readonly property int digits: Math.max(2, String(blocks.blockCount).length)
     readonly property real numberWidth: Math.ceil(digits * gutterFont.averageCharacterWidth)
     readonly property real letterWidth: provenance
@@ -235,7 +233,6 @@ Item {
                 // The decided section's state as a short tag in its role's colour.
                 Pill {
                     id: decisionChip
-                    readonly property string part: "decision"
                     readonly property string decision: decisionRow.decision ? decisionRow.decision.state : ""
                     text: decision.length > 0 ? DiffStyle.glyph(decision) : ""
                     tone: DiffStyle.pillTone(decision)

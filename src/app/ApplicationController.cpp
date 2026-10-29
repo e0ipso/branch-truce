@@ -393,10 +393,6 @@ std::optional<ResolutionPublisher::Offer> ApplicationController::parentStagingOf
     return publisher_.parentStagingOffer(fileId.toStdString());
 }
 
-bool ApplicationController::mergetoolListening() const { return mergetool_.listening(); }
-QByteArray ApplicationController::mergetoolWaitingPath() const { return mergetool_.waitingPath(); }
-bool ApplicationController::mergetoolHasWaiter(const QByteArray &path) const { return mergetool_.hasWaiter(path); }
-QStringList ApplicationController::mergetoolIntakes() const { return mergetool_.intakes(); }
 
 bool ApplicationController::leaveMergetool()
 {

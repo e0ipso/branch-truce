@@ -36,30 +36,6 @@ QVariantList decisionData(const Draft &draft)
     return result;
 }
 
-QVariantMap revisionData(const Revision &revision)
-{
-    return {{QStringLiteral("revision"), revisionText(revision.id)},
-            {QStringLiteral("resultRevision"), revisionText(revision.result)},
-            {QStringLiteral("decisionRevision"), revisionText(revision.decisions)},
-            {QStringLiteral("text"), text(revision.draft.text)},
-            {QStringLiteral("decisions"), decisionData(revision.draft)},
-            {QStringLiteral("unresolvedMarkers"), QVariant::fromValue(
-                static_cast<qulonglong>(revision.draft.unresolvedMarkers))}};
-}
-
-QVariantMap outcomeData(const std::optional<OperationOutcome> &outcome)
-{
-    if (!outcome) return {};
-    QString status;
-    switch (outcome->outcome) {
-    case Outcome::Succeeded: status = QStringLiteral("succeeded"); break;
-    case Outcome::Failed: status = QStringLiteral("failed"); break;
-    case Outcome::Uncertain: status = QStringLiteral("uncertain"); break;
-    }
-    return {{QStringLiteral("revision"), revisionText(outcome->revision)},
-            {QStringLiteral("outcome"), status}, {QStringLiteral("detail"), text(outcome->detail)}};
-}
-
 QStringList blockerData(const FileFacts &facts)
 {
     QStringList result;
@@ -242,30 +218,8 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case FileIdRole: return text(file.id());
     case Qt::DisplayRole:
     case PathRole: return pathText(file.path());
-    case PathBytesRole: return QByteArray(file.path().data(), static_cast<qsizetype>(file.path().size()));
-    case ResultTextRole: return text(file.current().draft.text);
     case DecisionsRole: return decisionData(file.current().draft);
     case CurrentRevisionRole: return revisionText(file.current().id);
-    case ResultRevisionRole: return revisionText(file.current().result);
-    case DecisionRevisionRole: return revisionText(file.current().decisions);
-    case CheckpointRole: return file.checkpoint() ? revisionData(*file.checkpoint()) : QVariantMap{};
-    case ReviewedRole: {
-        if (!file.reviewed()) return QVariantMap{};
-        auto result = revisionData(file.reviewed()->revision);
-        result.insert(QStringLiteral("confirmedUndecided"), file.reviewed()->confirmedUndecided);
-        return result;
-    }
-    case WrittenRole: return file.written() ? revisionData(*file.written()) : QVariantMap{};
-    case StagedRole: {
-        if (!file.staged()) return QVariantMap{};
-        auto result = revisionData(file.staged()->revision);
-        result.insert(QStringLiteral("objectId"), text(file.staged()->objectId));
-        result.insert(QStringLiteral("mode"), text(file.staged()->mode));
-        return result;
-    }
-    case CheckpointOutcomeRole: return outcomeData(file.checkpointOutcome());
-    case WriteOutcomeRole: return outcomeData(file.writeOutcome());
-    case StageOutcomeRole: return outcomeData(file.stageOutcome());
     case SupportRole:
         switch (file.support()) {
         case Support::Supported: return QStringLiteral("supported");
@@ -277,7 +231,6 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case UndecidedRole: return QVariant::fromValue(static_cast<qulonglong>(facts.undecided));
     case UnsavedRole: return pendingInput || facts.unsaved;
     case ReviewNeededRole: return facts.needsReview;
-    case EarlierStagedRole: return facts.earlierStaged;
     case ResolvedRole: return resolvedAt(row);
     case StatusRole: return statusAt(row);
     case FinishBlockersRole: return blockersAt(row);
@@ -285,7 +238,6 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case CanRedoRole: return !pendingInput && !recoveryFailed && file.canRedo();
     case PendingInputRole: return pendingInput;
     case PendingTextRole: return pendingInput ? text(pending->candidate.current().draft.text) : QString{};
-    case PendingDecisionsRole: return pendingInput ? decisionData(pending->candidate.current().draft) : QVariantList{};
     case RecoveryStateRole:
         if (recoveryFailed) return QStringLiteral("blocked");
         if (pendingInput && pending->action == QLatin1String("manual-save"))
@@ -304,20 +256,13 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
 
 QHash<int, QByteArray> SessionModel::roleNames() const
 {
-    return {{FileIdRole, "fileId"}, {PathRole, "path"}, {PathBytesRole, "pathBytes"},
-            {ResultTextRole, "resultText"}, {DecisionsRole, "decisions"},
-            {CurrentRevisionRole, "currentRevision"}, {ResultRevisionRole, "resultRevision"},
-            {DecisionRevisionRole, "decisionRevision"}, {CheckpointRole, "manualCheckpoint"},
-            {ReviewedRole, "reviewed"}, {WrittenRole, "written"}, {StagedRole, "staged"},
-            {CheckpointOutcomeRole, "checkpointOutcome"}, {WriteOutcomeRole, "writeOutcome"},
-            {StageOutcomeRole, "stageOutcome"}, {SupportRole, "support"},
+    return {{FileIdRole, "fileId"}, {PathRole, "path"}, {DecisionsRole, "decisions"},
+            {CurrentRevisionRole, "currentRevision"}, {SupportRole, "support"},
             {SupportDetailRole, "supportDetail"}, {UndecidedRole, "undecidedCount"},
-            {UnsavedRole, "unsaved"}, {ReviewNeededRole, "reviewNeeded"},
-            {EarlierStagedRole, "earlierStaged"}, {ResolvedRole, "resolved"},
+            {UnsavedRole, "unsaved"}, {ReviewNeededRole, "reviewNeeded"}, {ResolvedRole, "resolved"},
             {StatusRole, "status"}, {FinishBlockersRole, "finishBlockers"},
-            {CanUndoRole, "canUndo"}, {CanRedoRole, "canRedo"},
-            {PendingInputRole, "pendingInput"}, {PendingTextRole, "pendingText"},
-            {PendingDecisionsRole, "pendingDecisions"}, {RecoveryStateRole, "recoveryState"},
+            {CanUndoRole, "canUndo"}, {CanRedoRole, "canRedo"}, {PendingInputRole, "pendingInput"},
+            {PendingTextRole, "pendingText"}, {RecoveryStateRole, "recoveryState"},
             {RecoveryErrorRole, "recoveryError"}, {ProgressRole, "progress"},
             {StatusIconRole, "statusIcon"}, {StatusLineRole, "statusLine"}, {ChipsRole, "chips"},
             {SummaryRole, "summary"}};
@@ -661,10 +606,6 @@ Transition SessionModel::undo(const std::string &id, RevisionId expected)
 Transition SessionModel::editResult(const std::string &id, RevisionId expected, ResultEdit edit)
 {
     return update(id, QStringLiteral("replace-draft"), [&](auto &file) { return file.editResult(expected, std::move(edit)); });
-}
-Transition SessionModel::applyCommand(const std::string &id, const EditingCommand &command, bool confirmReplacement)
-{
-    return update(id, QStringLiteral("replace-draft"), [&](auto &file) { return file.applyCommand(command, confirmReplacement); });
 }
 Transition SessionModel::applyChoice(const std::string &id, const ChoicePreview &preview, bool confirmReplacement)
 {

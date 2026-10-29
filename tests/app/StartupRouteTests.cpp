@@ -1277,7 +1277,7 @@ public:
             QSet<QByteArray> actualPaths;
             for (int row = 0; row < model->totalFiles(); ++row) {
                 const auto index = model->index(row);
-                const auto path = model->data(index, SessionModel::PathBytesRole).toByteArray();
+                const auto path = QByteArray::fromStdString(model->fileAt(row)->path());
                 const auto id = model->data(index, SessionModel::FileIdRole).toString();
                 actualPaths.insert(path);
                 CHECK(id.toLatin1() == path.toHex() && controller.selectFile(id));

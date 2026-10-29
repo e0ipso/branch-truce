@@ -111,7 +111,7 @@ int main(int argc, char *argv[])
                     {QStringLiteral("path"), controller.files()->data(index, Model::PathRole).toString()},
                     {QStringLiteral("support"), controller.files()->data(index, Model::SupportRole).toString()},
                     {QStringLiteral("detail"), controller.files()->data(index, Model::SupportDetailRole).toString()},
-                    {QStringLiteral("text"), controller.files()->data(index, Model::ResultTextRole).toString()}});
+                    {QStringLiteral("text"), QString::fromUtf8(QByteArray::fromStdString(controller.files()->fileAt(row)->current().draft.text))}});
             }
             const QJsonObject state{{QStringLiteral("state"), loader->startupState()},
                 {QStringLiteral("repository"), loader->repositoryRoot()},

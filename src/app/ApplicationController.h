@@ -25,9 +25,7 @@ class ApplicationController final : public QObject {
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Owned by ApplicationController")
-    Q_PROPERTY(QString version READ version CONSTANT)
     Q_PROPERTY(branch_truce::SessionModel *files READ files CONSTANT)
-    Q_PROPERTY(branch_truce::SessionCoordinator *coordinator READ coordinator CONSTANT)
     Q_PROPERTY(branch_truce::SessionLoader *loader READ loader CONSTANT)
     Q_PROPERTY(QString selectedFileId READ selectedFileId NOTIFY selectedFileChanged)
     Q_PROPERTY(branch_truce::SelectedFile *selectedFile READ selectedFile CONSTANT)
@@ -103,7 +101,7 @@ public:
     Q_INVOKABLE bool applyChoice(bool confirmReplacement = false);
     Q_INVOKABLE void cancelChoice();
     // Editor offsets are UTF-16 units and must identify scalar boundaries.
-    Q_INVOKABLE bool editResult(const QString &fileId, const QString &revision,
+    bool editResult(const QString &fileId, const QString &revision,
                                int begin, int end, const QString &replacement);
     Q_INVOKABLE bool undo(const QString &fileId, const QString &revision);
     Q_INVOKABLE bool redo(const QString &fileId, const QString &revision);
@@ -118,10 +116,6 @@ public:
     bool assignParentStaging(const QByteArray &path);
     bool verifyParentAcknowledgment(const QString &fileId, const QString &revision);
     [[nodiscard]] std::optional<ResolutionPublisher::Offer> parentStagingOffer(const QString &fileId) const;
-    [[nodiscard]] bool mergetoolListening() const;
-    [[nodiscard]] QByteArray mergetoolWaitingPath() const;
-    [[nodiscard]] bool mergetoolHasWaiter(const QByteArray &path) const;
-    [[nodiscard]] QStringList mergetoolIntakes() const;
     Q_INVOKABLE bool leaveMergetool();
     Q_INVOKABLE bool endParentSession();
     Q_INVOKABLE bool recheckParentAcknowledgment();
