@@ -17,6 +17,7 @@ Row {
     required property var modelData
     // The pane edge that faces the result: "right" in the left pane, "left" in the right one.
     required property string edge
+    readonly property bool pointsRight: edge === "right"
     required property real rowHeight
     // Whether the file takes choices now: it can be edited and no input is composing.
     required property bool choosing
@@ -56,7 +57,7 @@ Row {
     }
     readonly property bool hasEntries: entries.some(entry => entry.enabled)
     spacing: Kirigami.Units.smallSpacing
-    layoutDirection: edge === "right" ? Qt.RightToLeft : Qt.LeftToRight
+    layoutDirection: pointsRight ? Qt.RightToLeft : Qt.LeftToRight
     // A scope that cannot take a choice says why while the pointer rests on its disabled buttons.
     HoverHandler {
         id: rowHover
@@ -92,7 +93,7 @@ Row {
         visible: !!buttons.choice.undecided
         enabled: buttons.choosing && !!buttons.choice.available
         text: qsTr("Accept %1").arg(buttons.choice.label)
-        icon.name: buttons.edge === "right" ? "arrow-right" : "arrow-left"
+        icon.name: buttons.pointsRight ? "arrow-right" : "arrow-left"
         icon.color: Kirigami.Theme.activeTextColor
         onClicked: buttons.chosen(buttons.choice.id, ChoicePreviewFlow.Accept)
     }
