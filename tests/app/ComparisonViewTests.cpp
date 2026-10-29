@@ -637,22 +637,33 @@ std::vector<std::string> bandLines(Fixture &fixture, const std::string &side)
     return lines;
 }
 
-// The scene top and bottom of what a pane's backgrounds paint for lines
-// [begin, end): their fills, or for an empty range the gap rule on its boundary.
-std::pair<qreal, qreal> paintedSpan(Fixture &fixture, const std::string &pane, int begin, int end)
+// The scene top and bottom of the pane's laid-out lines [begin, end).
+// Ignored lines have tinted text and no background fill, so their geometry
+// must come from the gutter's rows rather than from a visible fill. Empty
+// ranges instead use the gap rule actually painted at the boundary.
+std::optional<std::pair<qreal, qreal>> paintedSpan(Fixture &fixture, const std::string &pane, int begin, int end)
 {
-    std::optional<qreal> top;
-    std::optional<qreal> bottom;
-    for (auto *fill : fixture.item((pane + (begin == end ? "BackgroundsGaps" : "BackgroundsLines")).c_str())->childItems()) {
-        if (!fill->isVisible()) continue;
-        const auto line = fill->property("line").toInt();
-        const auto y = fill->mapToScene(QPointF()).y();
-        if (line == begin) top = y;
-        if (line == std::max(begin, end - 1)) bottom = y + fill->height();
+    if (begin == end) {
+        for (auto *fill : fixture.item((pane + "BackgroundsGaps").c_str())->childItems()) {
+            if (fill->isVisible() && fill->property("line").toInt() == begin) {
+                const auto top = fill->mapToScene(QPointF()).y();
+                return std::pair{top, top + fill->height()};
+            }
+        }
+        return std::nullopt;
     }
-    if (!top || !bottom)
-        throw std::runtime_error(pane + " paints nothing for lines " + std::to_string(begin) + "-" + std::to_string(end));
-    return {*top, *bottom};
+    auto *gutter = fixture.item((pane + "Gutter").c_str());
+    const auto rowIndex = [&](int line) {
+        return qmlValue(gutter, QStringLiteral("rows.findIndex(row => row.number === %1)").arg(line)).toInt();
+    };
+    const int first = rowIndex(begin), last = rowIndex(end - 1);
+    if (first < 0 || last < 0) return std::nullopt;
+    const auto rowValue = [&](int index, const char *field) {
+        return qmlValue(gutter, QStringLiteral("rows[%1].%2").arg(index).arg(QLatin1String(field))).toReal();
+    };
+    const auto top = gutter->mapToScene(QPointF(0, rowValue(first, "top"))).y();
+    const auto bottom = gutter->mapToScene(QPointF(0, rowValue(last, "top") + rowValue(last, "extent"))).y();
+    return std::pair{top, bottom};
 }
 
 // Waits until one side's handle draws the expected bands, each with its ends
@@ -665,13 +676,14 @@ void expectBands(Fixture &fixture, const std::string &when, const std::string &s
         for (const auto &band : paintedBands(fixture, side)) {
             const auto source = paintedSpan(fixture, side, band.sourceBegin, band.sourceEnd);
             const auto result = paintedSpan(fixture, "result", band.resultBegin, band.resultEnd);
+            if (!source || !result) return "line geometry not ready";
             const auto off = [](qreal a, qreal b) { return std::abs(a - b) > 0.5; };
-            if (off(band.sourceTop, source.first) || off(band.sourceBottom, source.second)
-                    || off(band.resultTop, result.first) || off(band.resultBottom, result.second))
+            if (off(band.sourceTop, source->first) || off(band.sourceBottom, source->second)
+                    || off(band.resultTop, result->first) || off(band.resultBottom, result->second))
                 return "a band at " + std::to_string(band.sourceTop) + "-" + std::to_string(band.sourceBottom) + ">"
                     + std::to_string(band.resultTop) + "-" + std::to_string(band.resultBottom) + " over lines at "
-                    + std::to_string(source.first) + "-" + std::to_string(source.second) + ">"
-                    + std::to_string(result.first) + "-" + std::to_string(result.second);
+                    + std::to_string(source->first) + "-" + std::to_string(source->second) + ">"
+                    + std::to_string(result->first) + "-" + std::to_string(result->second);
         }
         return {};
     };
