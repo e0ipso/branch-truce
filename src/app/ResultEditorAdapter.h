@@ -22,7 +22,7 @@ class SessionModel;
 // as domain edits, loads the selected file's text, keeps the cursor and scroll
 // position across text replacements, and attaches syntax highlighting and
 // word-level differences to the result and source panes.
-class ResultEditorAdapter final : public QObject {
+class ResultEditorAdapter : public QObject {
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Owned by ApplicationController")

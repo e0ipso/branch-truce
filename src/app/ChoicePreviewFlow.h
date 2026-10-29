@@ -16,7 +16,7 @@ class TextPositions;
 // Previews a replacement of the selected file's result and applies exactly
 // that preview: one choice scope, the non-conflicting changes, or the whole
 // file from one side. One preview is pending at a time.
-class ChoicePreviewFlow final : public QObject {
+class ChoicePreviewFlow : public QObject {
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Owned by ApplicationController")

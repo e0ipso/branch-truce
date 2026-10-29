@@ -22,7 +22,7 @@
 namespace branch_truce {
 struct RecoveryRestore;
 
-class SessionModel final : public QAbstractListModel {
+class SessionModel : public QAbstractListModel {
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Owned by ApplicationController")

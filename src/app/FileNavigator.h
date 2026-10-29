@@ -18,7 +18,7 @@ class SessionModel;
 // step in the same mode continues from the last stop while the file, its
 // revision and the editor selection are unchanged; otherwise the walk starts
 // again from the cursor.
-class FileNavigator final : public QObject {
+class FileNavigator : public QObject {
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Owned by ApplicationController")

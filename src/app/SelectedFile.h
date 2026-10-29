@@ -6,7 +6,7 @@
 #include <map>
 
 namespace branch_truce {
-class SelectedFile final : public QObject {
+class SelectedFile : public QObject {
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Owned by ApplicationController")

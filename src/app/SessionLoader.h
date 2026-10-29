@@ -19,7 +19,7 @@ class SessionModel;
 // files and their recovery records off the GUI thread, and reloads with a
 // recovery session the user chooses. It owns the launch state the window shows
 // until the session is ready.
-class SessionLoader final : public QObject {
+class SessionLoader : public QObject {
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Owned by ApplicationController")

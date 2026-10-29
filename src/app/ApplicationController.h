@@ -21,7 +21,7 @@
 #include <string>
 
 namespace branch_truce {
-class ApplicationController final : public QObject {
+class ApplicationController : public QObject {
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Owned by ApplicationController")
