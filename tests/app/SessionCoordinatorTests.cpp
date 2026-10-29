@@ -388,6 +388,36 @@ public:
             CHECK(controller.files()->applyChoice("choices", preview) == Transition::Applied);
             CHECK(identity.count() == 0 && sources.count() == 0 && result.count() == 1 && decisions.count() == 1);
         });
+        test("accepted controller edit keeps source signals and row status in sync", [] {
+            ApplicationController controller(gitOnPath());
+            CHECK(controller.files()->appendFile(viewFile()));
+            CHECK(controller.selectFile("choices"));
+            auto *selected = controller.selectedFile();
+            const auto row = controller.files()->index(0);
+            const auto originalSource = selected->stage2();
+            const auto originalText = selected->resultText();
+            const auto originalRevision = selected->currentRevision();
+            QSignalSpy sources(selected, &SelectedFile::sourcesChanged);
+            QSignalSpy identity(selected, &SelectedFile::identityChanged);
+            QSignalSpy result(selected, &SelectedFile::resultTextChanged);
+            QSignalSpy status(selected, &SelectedFile::statusChanged);
+            QSignalSpy rows(controller.files(), &QAbstractItemModel::dataChanged);
+            CHECK(sources.isValid() && identity.isValid() && result.isValid()
+                  && status.isValid() && rows.isValid());
+            CHECK(controller.editResult("choices", originalRevision, 0, 0, QString::fromUtf8("é ")));
+            CHECK(controller.selectedFile() == selected && selected->stage2() == originalSource);
+            CHECK(sources.count() == 0 && identity.count() == 0 && result.count() == 1);
+            CHECK(status.count() == 1 && rows.count() == 1);
+            CHECK(selected->resultText() == QString::fromUtf8("é ") + originalText);
+            CHECK(controller.files()->file("choices")->current().draft.text
+                  == selected->resultText().toUtf8().toStdString());
+            CHECK(selected->currentRevision() == row.data(SessionModel::CurrentRevisionRole).toString());
+            CHECK(selected->status() == row.data(SessionModel::StatusRole).toString());
+            CHECK(selected->progress() == row.data(SessionModel::ProgressRole).toMap());
+            CHECK(!controller.editResult("choices", originalRevision, 0, 0, "stale"));
+            CHECK(sources.count() == 0 && identity.count() == 0 && result.count() == 1
+                  && status.count() == 1 && rows.count() == 1);
+        });
         test("selected file ranges, kinds and region states follow each new revision", [] {
             ApplicationController controller(gitOnPath());
             CHECK(controller.files()->appendFile(viewFile()));
@@ -694,25 +724,25 @@ public:
                 RegionView restored(replay.files.front());
                 const auto file = restored.file();
                 CHECK(handEdits(file) == handEdits(live.file()) && regionStates(file) == regionStates(live.file()));
-                return file;
+                return std::make_pair(handEdits(file), regionStates(file));
             };
             type("base conflict", "hand ");
-            CHECK(handEdits(replayed()) == conflictLineEdited);
+            CHECK(replayed().first == conflictLineEdited);
             const auto leftConflict = test_support::choiceTarget(
                 *model.file("choices"), SourceSide::Stage2, ChoiceScope::Line, 2).source.contributionId;
             CHECK(model.applyChoice("choices", previewChoice(*model.file("choices"), revision(), leftConflict,
                 ChoiceAction::Accept), true) == Transition::Applied);
             // Replay applies the choice as a whole-draft replacement, which must not count as typing.
-            auto file = replayed();
-            CHECK(handEdits(file) == noHandEdits && regionStates(file)[6] == "accepted");
+            auto snapshot = replayed();
+            CHECK(snapshot.first == noHandEdits && snapshot.second[6] == "accepted");
             type("left conflict", "hand ");
             type("base removed", "hand ");
             CHECK(model.undo("choices", revision()) == Transition::Applied);
-            file = replayed();
-            CHECK(handEdits(file) == conflictLineEdited && regionStates(file)[6] == "manual");
+            snapshot = replayed();
+            CHECK(snapshot.first == conflictLineEdited && snapshot.second[6] == "manual");
             CHECK(model.redo("choices", revision()) == Transition::Applied);
-            file = replayed();
-            CHECK(handEdits(file) == std::vector<bool>{false, false, false, true, true, false, true, true, true, true});
+            snapshot = replayed();
+            CHECK(snapshot.first == std::vector<bool>{false, false, false, true, true, false, true, true, true, true});
         });
         test("journals without recorded hand edits replay with none and unknown anchors are rejected", [] {
             QTemporaryDir directory;

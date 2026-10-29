@@ -34,3 +34,39 @@ Larger sizes in a group are skipped after a smaller size misses a stall ceiling:
 ## What the profiles cover
 
 The evidence profile repeats representative line counts, adverse long lines, Git reads through 8 MiB, and recovery payloads through 8 MiB. It also runs one identical-buffer correspondence control, a Git read above 8 MiB, a Git input above 8 MiB, a recovery commit with a bad digest, and a recovery commit under `RLIMIT_FSIZE`. The gate profile is the small end of that matrix plus the four failure probes.
+
+## Accepted controller edit with a QML consumer
+
+`tests/performance/AcceptedEditProbe.cpp` uses the same line generator as the
+workload above: 4,000 lines, 375,900 initial result bytes, two distinct source
+variants and a third result variant. It creates the real controller, binds a live
+QML object to selected-file result text, source text, passages and revision,
+and inserts `x` at offset zero ten times. Every sample checks acceptance,
+controller and bound result bytes, unchanged source, nonempty passages, and a
+new revision. Timing starts before `ApplicationController::editResult` and
+ends after processing queued Qt events. This includes the old lazy selected-file
+map conversion and its QML consumers. Initial construction is excluded.
+
+Build the controller in two existing, independently configured checkouts with
+matching Debug settings; then compile the *same* probe source against each
+checkout's generated coordinator test build flags and controller libraries:
+
+```sh
+cmake --build "$BEFORE/build/desktop" --target branch_truce_controller --parallel 2
+cmake --build "$AFTER/build/desktop" --target branch_truce_controller --parallel 2
+python3 "$AFTER/tests/performance/build-accepted-edit-probe.py" "$BEFORE" \
+  "$AFTER/tests/performance/AcceptedEditProbe.cpp" /tmp/accepted-before
+python3 "$AFTER/tests/performance/build-accepted-edit-probe.py" "$AFTER" \
+  "$AFTER/tests/performance/AcceptedEditProbe.cpp" /tmp/accepted-after
+/tmp/accepted-before
+/tmp/accepted-after
+```
+
+On the development host, the historical tree `a3a3ff3883471d87f64d81f54c33a8cadaa69a55`
+(preceding the selected-file change) and the current tree were measured
+serially using Qt 6.10.2 Debug builds. Ten edits measured 1,904.92 ms median
+(range 1,897.14–1,909.86) before and 1,826.57 ms median (range
+1,818.96–1,872.07) after. These are single-process sequential samples on one
+host, not independent process repetitions or a Release performance claim.
+The probe has two sources and no real rendered editor; it does not measure
+physical desktop interaction or set a performance budget.
