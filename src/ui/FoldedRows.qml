@@ -23,6 +23,7 @@ Item {
     property bool choosing: false
     property var current: []
     signal combinationChosen(target: string, action: int)
+    signal choiceFocused(target: string, active: bool)
     z: 1
     function isCurrent(line: int, last: int): bool {
         for (let i = 0; i < current.length; ++i) {
@@ -103,6 +104,7 @@ Item {
                             ToolTip.text: label
                             ToolTip.visible: hovered && !takeBothMenu.visible
                             ToolTip.delay: Kirigami.Units.toolTipDelay
+                            onActiveFocusChanged: layer.choiceFocused(target, activeFocus)
                             onClicked: takeBothMenu.popup(takeBoth, 0, takeBoth.height)
                             Menu {
                                 id: takeBothMenu

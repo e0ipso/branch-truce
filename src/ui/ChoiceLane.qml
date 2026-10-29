@@ -16,6 +16,8 @@ Item {
     // Whether the file takes choices now: it can be edited and no input is composing.
     required property bool choosing
     signal chosen(target: string, action: int)
+    signal hovered(target: string)
+    signal focused(target: string, active: bool)
     // Counts relayouts of the pane's text, so the rows follow them.
     property int layoutRevision: 0
     // The pane's choice column in this lane's parent. The arguments are the geometry the
@@ -53,6 +55,8 @@ Item {
             x: edge === "right" ? lane.width - width - Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing
             y: top
             visible: top >= 0 && top + lane.rowHeight <= lane.height
+            onHovered: target => lane.hovered(target)
+            onFocused: (target, active) => lane.focused(target, active)
             onChosen: (target, action) => lane.chosen(target, action)
         }
     }

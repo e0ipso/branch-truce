@@ -22,6 +22,8 @@ Row {
     required property bool choosing
     // A choice of action for a scope; the owner previews it when it needs confirming.
     signal chosen(target: string, action: int)
+    signal hovered(target: string)
+    signal focused(target: string, active: bool)
     readonly property var choice: modelData.choice
     readonly property real iconSize: Math.min(Kirigami.Units.iconSizes.small, rowHeight)
     // The menu entries: this scope's two-sided choices, then each other scope's choices.
@@ -56,7 +58,12 @@ Row {
     spacing: Kirigami.Units.smallSpacing
     layoutDirection: edge === "right" ? Qt.RightToLeft : Qt.LeftToRight
     // A scope that cannot take a choice says why while the pointer rests on its disabled buttons.
-    HoverHandler { id: rowHover }
+    HoverHandler {
+        id: rowHover
+        onHoveredChanged: buttons.hovered(hovered ? buttons.choice.id : "")
+    }
+    readonly property bool choiceFocused: accept.activeFocus || ignore.activeFocus || more.activeFocus
+    onChoiceFocusedChanged: focused(choice.id, choiceFocused)
     ToolTip.text: buttons.choice.detail || ""
     ToolTip.visible: rowHover.hovered && !more.hovered && buttons.choice.undecided && !buttons.choice.available
         && ToolTip.text.length > 0
@@ -78,6 +85,7 @@ Row {
         ToolTip.delay: Kirigami.Units.toolTipDelay
     }
     GutterButton {
+        id: accept
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
         objectName: "choiceAccept-" + buttons.choice.id
@@ -89,6 +97,7 @@ Row {
         onClicked: buttons.chosen(buttons.choice.id, ChoicePreviewFlow.Accept)
     }
     GutterButton {
+        id: ignore
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
         objectName: "choiceIgnore-" + buttons.choice.id

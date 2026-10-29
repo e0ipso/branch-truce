@@ -1615,6 +1615,51 @@ public:
                 expectBands(fixture, undone, "stage3", right);
             }
         });
+        suite.run("hover raises counterpart backgrounds and connector bands", [] {
+            Fixture fixture;
+            settlePanes(fixture);
+            const auto bands = paintedBands(fixture, "stage2");
+            CHECK(!bands.empty());
+            const auto band = bands.front();
+            auto *source = fixture.item("stage2Viewport");
+            auto *editor = fixture.item("resultText");
+            fixture.select(0, 3);
+            const auto selectionStart = editor->property("selectionStart");
+            const auto selectionEnd = editor->property("selectionEnd");
+            const auto cursor = editor->property("cursorPosition");
+            const auto before = fixture.file().current();
+            const auto point = source->mapToScene(QPointF(source->width() / 2,
+                (band.sourceTop + band.sourceBottom) / 2 - source->mapToScene(QPointF()).y())).toPoint();
+            const auto previous = fixture.item("stage2Backgrounds")->property("current");
+            QTest::mouseMove(fixture.window, point);
+            const auto highlighted = [&](const char *name, int line) {
+                auto *layer = fixture.item(name);
+                const auto color = qmlValue(layer, "Kirigami.Theme.highlightColor").value<QColor>();
+                for (auto *fill : layer->childItems()) {
+                    if (fill->property("part").toString() == "current" && fill->isVisible()
+                        && fill->property("line").toInt() == line
+                        && fill->property("color").value<QColor>() == color) return true;
+                }
+                return false;
+            };
+            settleFor("hover counterpart", [&] {
+                return highlighted("stage2Backgrounds", band.sourceBegin)
+                    && highlighted("resultBackgrounds", band.resultBegin);
+            });
+            bool raisedBand = false;
+            for (auto *item : fixture.item("stage2Bands")->childItems())
+                raisedBand |= item->property("current").toBool();
+            CHECK(raisedBand);
+            CHECK(editor->property("selectionStart") == selectionStart);
+            CHECK(editor->property("selectionEnd") == selectionEnd);
+            CHECK(editor->property("cursorPosition") == cursor);
+            CHECK(fixture.file().current().id == before.id);
+            CHECK(fixture.file().current().draft == before.draft);
+            QTest::mouseMove(fixture.window, QPoint(1, 1));
+            settleFor("hover clears", [&] {
+                return fixture.item("stage2Backgrounds")->property("current") == previous;
+            });
+        });
         suite.run("TRUCE-0178 band ends move with the scroll of either pane", [] {
             // The result holds 30 lines after line 50 that the left source lacks, so the
             // left handle draws one band, a wedge on the left source's line boundary.

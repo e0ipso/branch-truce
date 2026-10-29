@@ -34,6 +34,75 @@ ColumnLayout {
     // The controller picks Breeze Light or Breeze Dark syntax colours from its lightness.
     readonly property color schemeBackground: Kirigami.Theme.backgroundColor
 
+    // Pointer and focus are temporary decoration; navigation remains untouched.
+    property string hoverOwner: ""
+    property var hoverTarget: null
+    property var focusTarget: null
+    property string focusOwner: ""
+    onFileChanged: {
+        hoverOwner = ""
+        hoverTarget = null
+        focusOwner = ""
+        focusTarget = null
+    }
+    function setFocus(id: string, active: bool): void {
+        if (active) {
+            focusOwner = id
+            focusTarget = choiceTarget(id)
+        } else if (focusOwner === id) {
+            focusOwner = ""
+            focusTarget = null
+        }
+    }
+    readonly property var decorationTarget: hoverTarget || focusTarget || controller.navigationTarget
+    function setHover(owner: string, target: var): void {
+        if (target) {
+            hoverOwner = owner
+            hoverTarget = target
+        } else if (hoverOwner === owner) {
+            hoverOwner = ""
+            hoverTarget = null
+        }
+    }
+    function bandTarget(side: string, band: var): var {
+        return {scope: "decoration", side: side, sourceBegin: band.sourceBegin,
+            sourceEnd: band.sourceEnd, resultBegin: band.resultBegin, resultEnd: band.resultEnd}
+    }
+    function targetAt(side: string, line: int): var {
+        const regions = file.regions || []
+        for (let i = 0; i < regions.length; ++i) {
+            const region = regions[i]
+            if (side !== "result" && region.side !== side || side === "result" && !region.mapped)
+                continue
+            const begin = side === "result" ? region.resultLineBegin : region.sourceLineBegin
+            const end = side === "result" ? region.resultLineEnd : region.sourceLineEnd
+            if (line >= begin && line < Math.max(begin + 1, end))
+                return choiceTarget(region.id)
+        }
+        const sides = side === "result" ? ["stage2", "stage3"] : [side]
+        for (let i = 0; i < sides.length; ++i) {
+            const bands = bandsFor(sides[i], file, markerFold)
+            for (let j = 0; j < bands.length; ++j) {
+                const band = bands[j]
+                const begin = side === "result" ? band.resultBegin : band.sourceBegin
+                const end = side === "result" ? band.resultEnd : band.sourceEnd
+                if (line >= begin && line < Math.max(begin + 1, end))
+                    return bandTarget(sides[i], band)
+            }
+        }
+        return null
+    }
+    function choiceTarget(id: string): var {
+        const regions = file.regions || []
+        for (let i = 0; i < regions.length; ++i) {
+            const region = regions[i]
+            if (region.id === id)
+                return {scope: "decoration", side: region.side, sourceBegin: region.sourceLineBegin,
+                    sourceEnd: region.sourceLineEnd, resultBegin: region.mapped ? region.resultLineBegin : -1,
+                    resultEnd: region.mapped ? region.resultLineEnd : -1}
+        }
+        return null
+    }
     // The last value of each kept binding, with its JSON text.
     readonly property var keptValues: ({})
     // Derived marks, ranges, bands and folds retain their identity when their contents
@@ -346,10 +415,18 @@ ColumnLayout {
     // ranges. An empty range marks the line boundary at first.
     function currentFor(pane: string, target: var, file: SelectedFile): var {
         const ranges = []
-        if (!target || target.fileId !== comparison.controller.selectedFileId || !(target.count > 0))
+        if (!target)
             return ranges
-        let first = -1
-        let end = -1
+        if (target.scope === "decoration") {
+            if (pane === target.side)
+                return [[target.sourceBegin, target.sourceEnd]]
+            if (pane === "result")
+                return target.resultBegin > 0 ? [[target.resultBegin, target.resultEnd]] : ranges
+        } else if (target.fileId !== comparison.controller.selectedFileId || !(target.count > 0)) {
+            return ranges
+        }
+        let first = target.scope === "decoration" ? target.resultBegin : -1
+        let end = target.scope === "decoration" ? target.resultEnd : -1
         if (target.scope === "result" && target.utf16Begin >= 0) {
             first = resultPane.blocks.lineAt(target.utf16Begin)
             end = target.utf16End > target.utf16Begin ? resultPane.blocks.lineAt(target.utf16End - 1) + 1 : first
@@ -495,6 +572,10 @@ ColumnLayout {
                 source: connectorHandle.leftSide ? leftPane : rightPane
                 bands: comparison.kept("bands:" + connectorHandle.source.paneName,
                     comparison.bandsFor(connectorHandle.source.paneName, comparison.file, comparison.markerFold))
+                current: comparison.kept("current:band:" + connectorHandle.source.paneName,
+                    comparison.currentFor(connectorHandle.source.paneName, comparison.decorationTarget, comparison.file))
+                onBandHovered: band => comparison.setHover(connectorHandle.source.paneName + "Band",
+                    band ? comparison.bandTarget(connectorHandle.source.paneName, band) : null)
             }
             SourcePane {
                 id: leftPane
@@ -507,12 +588,13 @@ ColumnLayout {
                 source: comparison.file.stage2 || ({})
                 marks: comparison.kept("marks:stage2", comparison.marksFor(leftPane.paneName, comparison.file))
                 current: comparison.kept("current:stage2", comparison.currentFor(leftPane.paneName,
-                    comparison.controller.navigationTarget, comparison.file))
+                    comparison.decorationTarget, comparison.file))
                 headerHeight: comparison.headerHeight
                 tabStop: comparison.tabStop
                 wrapLines: comparison.wrapLines
                 showWhitespace: comparison.showWhitespace
                 minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
+                onLineHovered: line => comparison.setHover("stage2", line > 0 ? comparison.targetAt("stage2", line) : null)
                 onScrolled: byUser => panesByRole.paneScrolled(leftPane.paneName, byUser)
                 onEditorCompleted: comparison.controller.attachSourceEditor(leftPane.editor)
             }
@@ -525,17 +607,19 @@ ColumnLayout {
                 file: comparison.file
                 marks: comparison.kept("marks:result", comparison.marksFor("result", comparison.file))
                 current: comparison.kept("current:result", comparison.currentFor("result",
-                    comparison.controller.navigationTarget, comparison.file))
+                    comparison.decorationTarget, comparison.file))
                 fold: comparison.markerFold
                 decisions: comparison.resultSections.decisions
                 combinations: comparison.showChoices ? comparison.resultSections.combinations : ({})
                 choosing: comparison.choosing
                 onChoiceChosen: (target, action) => comparison.choiceChosen(target, action)
+                onChoiceFocused: (target, active) => comparison.setFocus(target, active)
                 headerHeight: comparison.headerHeight
                 tabStop: comparison.tabStop
                 wrapLines: comparison.wrapLines
                 showWhitespace: comparison.showWhitespace
                 minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
+                onLineHovered: line => comparison.setHover("result", line > 0 ? comparison.targetAt("result", line) : null)
                 onScrolled: byUser => panesByRole.paneScrolled("result", byUser)
             }
             SourcePane {
@@ -549,12 +633,13 @@ ColumnLayout {
                 source: comparison.file.stage3 || ({})
                 marks: comparison.kept("marks:stage3", comparison.marksFor(rightPane.paneName, comparison.file))
                 current: comparison.kept("current:stage3", comparison.currentFor(rightPane.paneName,
-                    comparison.controller.navigationTarget, comparison.file))
+                    comparison.decorationTarget, comparison.file))
                 headerHeight: comparison.headerHeight
                 tabStop: comparison.tabStop
                 wrapLines: comparison.wrapLines
                 showWhitespace: comparison.showWhitespace
                 minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
+                onLineHovered: line => comparison.setHover("stage3", line > 0 ? comparison.targetAt("stage3", line) : null)
                 onScrolled: byUser => panesByRole.paneScrolled(rightPane.paneName, byUser)
                 onEditorCompleted: comparison.controller.attachSourceEditor(rightPane.editor)
             }
@@ -569,6 +654,8 @@ ColumnLayout {
                 rows: comparison.kept("choices:stage2", comparison.choiceRowsFor(leftPane.paneName, comparison.file))
                 rowHeight: comparison.rowHeight
                 choosing: comparison.choosing
+                onHovered: target => comparison.setHover("stage2Choice", target ? comparison.choiceTarget(target) : null)
+                onFocused: (target, active) => comparison.setFocus(target, active)
                 onChosen: (target, action) => comparison.choiceChosen(target, action)
             }
             ChoiceLane {
@@ -576,6 +663,8 @@ ColumnLayout {
                 rows: comparison.kept("choices:stage3", comparison.choiceRowsFor(rightPane.paneName, comparison.file))
                 rowHeight: comparison.rowHeight
                 choosing: comparison.choosing
+                onHovered: target => comparison.setHover("stage3Choice", target ? comparison.choiceTarget(target) : null)
+                onFocused: (target, active) => comparison.setFocus(target, active)
                 onChosen: (target, action) => comparison.choiceChosen(target, action)
             }
         }
@@ -597,7 +686,7 @@ ColumnLayout {
         source: comparison.file.earlier || ({})
         marks: comparison.kept("marks:earlier", comparison.marksFor(earlierPane.paneName, comparison.file))
         current: comparison.kept("current:earlier", comparison.currentFor(earlierPane.paneName,
-            comparison.controller.navigationTarget, comparison.file))
+            comparison.decorationTarget, comparison.file))
         headerHeight: comparison.headerHeight
         tabStop: comparison.tabStop
         wrapLines: comparison.wrapLines

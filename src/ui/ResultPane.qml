@@ -38,9 +38,11 @@ ColumnLayout {
     readonly property real headerImplicitHeight: resultHeader.implicitHeight
     // byUser is set while the user scrolls the pane: dragging, flicking or the wheel, its
     // scroll bar, or keyboard focus in its text.
+    signal lineHovered(int line)
     signal scrolled(bool byUser)
     // A Take both order for a section; the owner previews it.
     signal choiceChosen(target: string, action: int)
+    signal choiceFocused(target: string, active: bool)
     // Moves the cursor off a folded line to where the blocks say it goes.
     function settleCursor(): void {
         const position = resultEditor.cursorPosition
@@ -85,6 +87,15 @@ ColumnLayout {
             ScrollBar.horizontal: ScrollBar {}
             ScrollBar.vertical: ScrollBar {
                 id: resultBar
+            }
+            HoverHandler {
+                id: textHover
+                function updateLine(): void {
+                    const y = point.position.y + resultViewport.contentY - resultEditor.y - resultEditor.topPadding
+                    resultPane.lineHovered(hovered ? Math.floor(resultBlocks.lineAtY(y)) : -1)
+                }
+                onHoveredChanged: updateLine()
+                onPointChanged: if (hovered) updateLine()
             }
             onContentYChanged: resultPane.scrolled(moving || !!resultBar && resultBar.pressed
                 || resultEditor.activeFocus)
@@ -140,6 +151,7 @@ ColumnLayout {
                 choosing: resultPane.choosing
                 current: resultPane.current
                 onCombinationChosen: (target, action) => resultPane.choiceChosen(target, action)
+                onChoiceFocused: (target, active) => resultPane.choiceFocused(target, active)
             }
             LineGutter {
                 id: resultGutter

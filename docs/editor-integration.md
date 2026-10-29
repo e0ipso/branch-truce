@@ -58,7 +58,10 @@ adds a provenance letter: `L`, `R` or `B` for a line equal to the left, right or
 both sources, `m` for a hand edit. The same layer highlights the lines of the
 navigation target in all panes with `highlightColor`. Source lines come from the
 target's region, or else from mapping its result lines through that source's
-passages. The highlight stays when the result selection changes.
+passages. The highlight stays when the result selection changes. Hovering a
+coloured passage, its connector band or a source choice temporarily uses that
+same highlight. Keyboard focus on a choice does the same; leaving restores the
+navigation highlight. These decorations do not move the cursor or alter choices.
 
 The result folds each block that `markerBlocks` marks `folded` into one row:
 a block of the current revision that `FileSession::markerSections` ties to the

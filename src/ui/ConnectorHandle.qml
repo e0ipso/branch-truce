@@ -21,6 +21,35 @@ Item {
     required property SourcePane source
     // The source's connector bands, in order at both ends.
     required property var bands
+    required property var current
+    signal bandHovered(var band)
+    function isCurrent(band: var): bool {
+        for (let i = 0; i < current.length; ++i) {
+            const range = current[i]
+            if (band.sourceBegin < Math.max(range[1], range[0] + 1)
+                    && range[0] < Math.max(band.sourceEnd, band.sourceBegin + 1))
+                return true
+        }
+        return false
+    }
+    function bandAt(point: point): var {
+        const y = point.y - source.viewport.parent.y
+        const ratio = leftSide ? point.x / width : 1 - point.x / width
+        for (let i = firstShown; i < endShown; ++i) {
+            const band = bands[i]
+            const top = edge(true, band.sourceBegin, band.sourceEnd, false, layoutRevision) * (1 - ratio)
+                + edge(false, band.resultBegin, band.resultEnd, false, layoutRevision) * ratio
+            const bottom = edge(true, band.sourceBegin, band.sourceEnd, true, layoutRevision) * (1 - ratio)
+                + edge(false, band.resultBegin, band.resultEnd, true, layoutRevision) * ratio
+            if (y >= top && y <= bottom)
+                return band
+        }
+        return null
+    }
+    HoverHandler {
+        onHoveredChanged: connector.bandHovered(hovered ? connector.bandAt(point.position) : null)
+        onPointChanged: if (hovered) connector.bandHovered(connector.bandAt(point.position))
+    }
     // Counts relayouts of either pane's text, so the band ends follow them.
     property int layoutRevision: 0
     readonly property real rule: Kirigami.Units.smallSpacing / 2
@@ -107,7 +136,8 @@ Item {
                 readonly property real sourceX: connector.leftSide ? 0 : width
                 readonly property real resultX: width - sourceX
                 // The passage's background role; removed and ignored lines get a faint tint.
-                readonly property color fill: kind === "added" || kind === "accepted"
+                readonly property bool current: connector.isCurrent(modelData)
+                readonly property color fill: current ? Kirigami.Theme.highlightColor : kind === "added" || kind === "accepted"
                     ? Kirigami.Theme.positiveBackgroundColor
                     : kind === "changed" ? Kirigami.Theme.activeBackgroundColor
                     : kind === "conflict" ? Kirigami.Theme.negativeBackgroundColor
@@ -115,7 +145,7 @@ Item {
                     : Kirigami.Theme.disabledTextColor
                 width: bandLayer.width
                 height: bandLayer.height
-                opacity: kind === "removed" || kind === "ignored" ? 0.15 : 1
+                opacity: current ? 0.3 : kind === "removed" || kind === "ignored" ? 0.15 : 1
                 preferredRendererType: Shape.CurveRenderer
                 ShapePath {
                     strokeWidth: -1

@@ -39,6 +39,7 @@ ColumnLayout {
         .arg(sourcePane.source.objectId || qsTr("unavailable"))
     // byUser is set while the user scrolls the pane: dragging, flicking or the wheel, its
     // scroll bar, or keyboard focus in its text.
+    signal lineHovered(int line)
     signal scrolled(bool byUser)
     signal editorCompleted()
     function shortCommit(label: string): string {
@@ -107,6 +108,15 @@ ColumnLayout {
             ScrollBar.horizontal: ScrollBar {}
             ScrollBar.vertical: ScrollBar {
                 id: sourceBar
+            }
+            HoverHandler {
+                id: textHover
+                function updateLine(): void {
+                    const y = point.position.y + sourceViewport.contentY - sourceText.y - sourceText.topPadding
+                    sourcePane.lineHovered(hovered ? Math.floor(sourceBlocks.lineAtY(y)) : -1)
+                }
+                onHoveredChanged: updateLine()
+                onPointChanged: if (hovered) updateLine()
             }
             onContentYChanged: sourcePane.scrolled(moving || !!sourceBar && sourceBar.pressed
                 || sourceText.activeFocus)
