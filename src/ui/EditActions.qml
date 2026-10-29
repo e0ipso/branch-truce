@@ -2,13 +2,14 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQml
 
 QtObject {
     id: editActions
     objectName: "resultEditActions"
     required property var controller
-    required property var file
+    required property SelectedFile file
     required property bool composing
     function trigger(name: string): void {
         const action = ({undo: undo, redo: redo, copy: copy, paste: paste})[name]

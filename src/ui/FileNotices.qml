@@ -3,6 +3,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQml.Models
@@ -14,7 +15,7 @@ import org.kde.kirigami as Kirigami
 ObjectModel {
     id: fileNotices
     required property var controller
-    required property var selectedFile
+    required property SelectedFile selectedFile
     required property bool supportedSelection
     // True while an input method composes text that the result has not acknowledged.
     required property bool composing

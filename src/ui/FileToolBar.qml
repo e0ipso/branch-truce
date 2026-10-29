@@ -2,6 +2,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
@@ -9,7 +10,7 @@ import org.kde.kirigami as Kirigami
 RowLayout {
     id: fileToolBar
     required property var controller
-    required property var selectedFile
+    required property SelectedFile selectedFile
     // True while an input method composes text that the result has not acknowledged.
     required property bool composing
     // Whether the region choices show in the source panes' gutters.

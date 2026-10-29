@@ -280,7 +280,7 @@ public:
     }
     // Positions must hold this long before a click; see test_support::waitForStable.
     static constexpr int settleMs = 60;
-    QVariantMap progress() const { return controller->selectedFile().value(QStringLiteral("progress")).toMap(); }
+    QVariantMap progress() const { return controller->selectedFile()->progress(); }
 
     const Repository &repo;
     std::unique_ptr<ApplicationController> controller;
@@ -308,7 +308,7 @@ QQuickItem *descendant(QQuickItem *root, const std::function<bool(QQuickItem *)>
 
 QVariantList choiceRows(Scene &scene)
 {
-    return scene.controller->selectedFile().value(QStringLiteral("choices")).toList();
+    return scene.controller->selectedFile()->choices();
 }
 
 QVariantMap choiceRow(Scene &scene, const QString &label)
@@ -322,7 +322,7 @@ QVariantMap choiceRow(Scene &scene, const QString &label)
 QVariantMap regionFor(Scene &scene, const QString &label)
 {
     const auto id = choiceRow(scene, label).value(QStringLiteral("id"));
-    for (const auto &value : scene.controller->selectedFile().value(QStringLiteral("regions")).toList())
+    for (const auto &value : scene.controller->selectedFile()->regions())
         if (value.toMap().value(QStringLiteral("id")) == id) return value.toMap();
     throw std::runtime_error("missing region for " + label.toStdString());
 }
@@ -342,7 +342,7 @@ QString rowOwner(Scene &scene, const QVariantMap &region)
 {
     const auto id = region.value(QStringLiteral("id")).toString();
     if (region.value(QStringLiteral("scope")).toString() == QStringLiteral("section")) return id;
-    for (const auto &value : scene.controller->selectedFile().value(QStringLiteral("regions")).toList()) {
+    for (const auto &value : scene.controller->selectedFile()->regions()) {
         const auto other = value.toMap();
         if (other.value(QStringLiteral("scope")).toString() == QStringLiteral("section")
             && other.value(QStringLiteral("side")) == region.value(QStringLiteral("side"))
@@ -927,7 +927,7 @@ std::string firstUndecidedInView(Scene &scene)
     };
     Pane panes[] = {{"stage2", "stage2Viewport", "stage2Text"}, {"result", "resultViewport", "resultText"},
                     {"stage3", "stage3Viewport", "stage3Text"}};
-    for (const auto &value : scene.controller->selectedFile().value(QStringLiteral("regions")).toList()) {
+    for (const auto &value : scene.controller->selectedFile()->regions()) {
         const auto region = value.toMap();
         if (region.value(QStringLiteral("state")).toString() != QStringLiteral("undecided")) continue;
         for (auto &pane : panes) {
@@ -1171,14 +1171,14 @@ public:
             Repository repo("merge", journeyPaths());
             Scene scene(repo);
             clickFile(scene, "story.txt");
-            CHECK(scene.controller->selectedFile().value(QStringLiteral("fileName")).toString() == QStringLiteral("story.txt"));
+            CHECK(scene.controller->selectedFile()->fileName() == QStringLiteral("story.txt"));
             const auto region = [&](const char *label) { return regionFor(scene, QString::fromUtf8(label)); };
             const auto edited = [&](const char *label) {
                 return region(label).value(QStringLiteral("handEdited")).toBool();
             };
 
             // The launch result differs from both sides, but nobody has typed in it yet.
-            const auto launched = scene.controller->selectedFile().value(QStringLiteral("regions")).toList();
+            const auto launched = scene.controller->selectedFile()->regions();
             CHECK(!launched.isEmpty());
             for (const auto &value : launched) {
                 CHECK(!value.toMap().value(QStringLiteral("handEdited")).toBool());
@@ -1937,7 +1937,7 @@ public:
                 return region(label).value(QStringLiteral("handEdited")).toBool();
             };
             const auto noneEdited = [&] {
-                const auto regions = scene.controller->selectedFile().value(QStringLiteral("regions")).toList();
+                const auto regions = scene.controller->selectedFile()->regions();
                 return std::none_of(regions.begin(), regions.end(), [](const QVariant &value) {
                     return value.toMap().value(QStringLiteral("handEdited")).toBool();
                 });
@@ -1987,14 +1987,14 @@ public:
             expectText(scene.text("resultText"), utf8(left), "typed and deleted");
             CHECK(!noneEdited());
             const auto manual = work(scene, "pair.txt");
-            const auto manualRegions = scene.controller->selectedFile().value(QStringLiteral("regions"));
+            const auto manualRegions = scene.controller->selectedFile()->regions();
             // The same whole-file choice keeps the text and decisions but replaces the edit.
             wholeLeft();
             expectText(scene.text("resultText"), utf8(left), "whole left again");
             CHECK(noneEdited() && scene.file("pair.txt").current().draft == manual.draft);
             scene.click("undoCommand");
             CHECK(work(scene, "pair.txt") == manual);
-            CHECK(scene.controller->selectedFile().value(QStringLiteral("regions")) == manualRegions);
+            CHECK(scene.controller->selectedFile()->regions() == manualRegions);
             scene.click("redoCommand");
             CHECK(noneEdited());
             checkOffline(scene);

@@ -1,6 +1,6 @@
 add_library(branch_truce_controller STATIC ApplicationController.cpp ApplicationController.h
     ChoicePreviewFlow.cpp ChoicePreviewFlow.h CommandGuard.cpp CommandGuard.h FileNavigator.cpp FileNavigator.h
-    NavigationTargets.cpp NavigationTargets.h TextPositions.h
+    NavigationTargets.cpp NavigationTargets.h TextPositions.h SelectedFile.cpp SelectedFile.h
     SessionModel.cpp SessionModel.h RecoveryJournal.cpp RecoveryJournal.h RecoveryRecord.cpp RecoveryRecord.h
     RecoveryRestore.cpp RecoveryRestore.h
     SessionCoordinator.cpp SessionCoordinator.h ResolutionPublisher.cpp ResolutionPublisher.h
@@ -9,6 +9,11 @@ add_library(branch_truce_controller STATIC ApplicationController.cpp Application
     ResultEditorAdapter.cpp ResultEditorAdapter.h TextChange.cpp TextChange.h
     SessionLoader.cpp SessionLoader.h ConflictCapture.cpp ConflictCapture.h
     WordDifferenceDecorations.cpp WordDifferenceDecorations.h)
+qt_add_qml_module(branch_truce_controller
+    URI BranchTruce.App VERSION 1.0
+    OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/BranchTruce/App"
+    SOURCES SelectedFile.h)
+set_target_properties(branch_truce_controller PROPERTIES QT_QMLCACHEGEN_ARGUMENTS "--only-bytecode")
 target_include_directories(branch_truce_controller PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_link_libraries(branch_truce_controller PUBLIC Qt6::Core Qt6::Network Qt6::Quick branch_truce_core branch_truce_git
     PRIVATE branch_truce_storage branch_truce_build_options)

@@ -4,6 +4,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
@@ -11,7 +12,7 @@ import org.kde.kirigami as Kirigami
 ColumnLayout {
     id: comparison
     required property var controller
-    required property var file
+    required property SelectedFile file
     required property EditActions edits
     readonly property bool inputMethodComposing: resultPane.editor.inputMethodComposing
     readonly property real headerHeight: Math.max(leftPane.headerImplicitHeight,
@@ -35,9 +36,8 @@ ColumnLayout {
 
     // The last value of each kept binding, with its JSON text.
     readonly property var keptValues: ({})
-    // Each revision gives the file a new map, so the marks, ranges, bands and fold made from it
-    // are new objects too. One equal to the last value under key is that value instead, so the
-    // panes and their line delegates are not told of a change when typing leaves it the same.
+    // Derived marks, ranges, bands and folds retain their identity when their contents
+    // stay equal, so the panes and line delegates only receive changed projections.
     function kept(key: string, value: var): var {
         const text = JSON.stringify(value)
         const last = keptValues[key]
@@ -71,7 +71,7 @@ ColumnLayout {
     // compared text has lines this pane lacks. letters holds the result's
     // provenance: L, R or B for a line equal to the left, right or both
     // sources, m for a hand edit.
-    function marksFor(pane: string, file: var): var {
+    function marksFor(pane: string, file: SelectedFile): var {
         const lines = {}
         const gaps = {}
         const letters = {}
@@ -142,7 +142,7 @@ ColumnLayout {
     // lastText}, its opening and closing marker lines, so the block shows as
     // one row on its opening line. rows maps that line to the block's {last}
     // line.
-    function foldFor(file: var, shown: bool): var {
+    function foldFor(file: SelectedFile, shown: bool): var {
         const hidden = []
         const rows = {}
         const blocks = shown ? [] : file.markerBlocks || []
@@ -168,7 +168,7 @@ ColumnLayout {
     // conflict. The passages that meet a block the fold shows as one row, equal
     // ones inside it too, make one conflict band from all their source lines
     // to the whole block, which ends on that row.
-    function bandsFor(side: string, file: var, fold: var): var {
+    function bandsFor(side: string, file: SelectedFile, fold: var): var {
         const rank = {removed: 0, added: 1, changed: 2, accepted: 3, ignored: 3, manual: 3, conflict: 4}
         const lines = {}
         const boundaries = {}
@@ -254,7 +254,7 @@ ColumnLayout {
     // A section owns the row on its first line. A line choice owns the row on its line unless
     // a section starts there; then it rides in that row's extras, as does any other scope
     // that starts on a taken line. Each choice gains its region's undecided state.
-    function choiceRowsFor(side: string, file: var): var {
+    function choiceRowsFor(side: string, file: SelectedFile): var {
         const choices = file.choices || []
         const regions = file.regions || []
         const scoped = []
@@ -284,7 +284,7 @@ ColumnLayout {
     // section in a folded block puts it on the block's row. combinations maps the row of a
     // folded block to a Take both offer for each section in it that is undecided and whose
     // sides can be combined.
-    function resultSectionsFor(file: var, fold: var): var {
+    function resultSectionsFor(file: SelectedFile, fold: var): var {
         const rows = Object.keys(fold.rows).map(Number)
         const rowOf = function(line) {
             for (let i = 0; i < rows.length; ++i) {
@@ -344,7 +344,7 @@ ColumnLayout {
     readonly property var resultSections: kept("sections:result", resultSectionsFor(file, markerFold))
     // The lines of one pane that the navigation target covers, as [first, end)
     // ranges. An empty range marks the line boundary at first.
-    function currentFor(pane: string, target: var, file: var): var {
+    function currentFor(pane: string, target: var, file: SelectedFile): var {
         const ranges = []
         if (!target || target.fileId !== comparison.controller.selectedFileId || !(target.count > 0))
             return ranges

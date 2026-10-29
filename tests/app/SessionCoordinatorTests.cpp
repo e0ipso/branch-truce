@@ -14,6 +14,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSemaphore>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QThreadPool>
@@ -124,15 +125,15 @@ struct ExpectedPassage {
 
 // Every differing passage, in order, after checking that each side's passages
 // partition both its source and the result from line 1 to the end.
-void checkPassages(const QVariantMap &file, const std::vector<ExpectedPassage> &expected)
+void checkPassages(const SelectedFile *file, const std::vector<ExpectedPassage> &expected)
 {
-    const auto result = file.value("resultText").toString();
+    const auto result = file->resultText();
     std::vector<QVariantMap> differing;
     for (const auto *side : {"stage2", "stage3", "earlier"}) {
-        const auto source = file.value(side).toMap().value("text").toString();
+        const auto source = file->property(side).toMap().value("text").toString();
         int sourceLine = 1;
         int resultLine = 1;
-        for (const auto &value : file.value("passages").toList()) {
+        for (const auto &value : file->passages()) {
             const auto passage = value.toMap();
             if (passage.value("side").toString() != QLatin1String(side)) continue;
             CHECK(passage.value("sourceLineBegin").toInt() == sourceLine);
@@ -165,10 +166,10 @@ struct ExpectedRegion {
 };
 
 // Regions follow the scoped choices one for one, in the same order.
-void checkRegions(const QVariantMap &file, const std::vector<ExpectedRegion> &expected)
+void checkRegions(const SelectedFile *file, const std::vector<ExpectedRegion> &expected)
 {
-    const auto regions = file.value("regions").toList();
-    const auto choices = file.value("choices").toList();
+    const auto regions = file->regions();
+    const auto choices = file->choices();
     CHECK(regions.size() == static_cast<qsizetype>(expected.size()) && choices.size() == regions.size());
     for (std::size_t i = 0; i < expected.size(); ++i) {
         const auto region = regions[static_cast<qsizetype>(i)].toMap();
@@ -179,14 +180,14 @@ void checkRegions(const QVariantMap &file, const std::vector<ExpectedRegion> &ex
         CHECK(region.value("state").toString() == QLatin1String(want.state));
         CHECK(region.value("mapped").toBool() && !region.value("section").toString().isEmpty());
         CHECK(region.value("decisionIds").toStringList().size() == 1);
-        checkRange(region, "source", file.value(want.side).toMap().value("text").toString(), want.sourceBegin, want.sourceEnd);
-        checkRange(region, "result", file.value("resultText").toString(), want.resultBegin, want.resultEnd);
+        checkRange(region, "source", file->property(want.side).toMap().value("text").toString(), want.sourceBegin, want.sourceEnd);
+        checkRange(region, "result", file->resultText(), want.resultBegin, want.resultEnd);
     }
 }
 
-QString regionId(const QVariantMap &file, const char *side, const char *scope, int sourceLine)
+QString regionId(const SelectedFile *file, const char *side, const char *scope, int sourceLine)
 {
-    for (const auto &value : file.value("regions").toList()) {
+    for (const auto &value : file->regions()) {
         const auto region = value.toMap();
         if (region.value("side").toString() == QLatin1String(side) && region.value("scope").toString() == QLatin1String(scope)
             && region.value("sourceLineBegin").toInt() == sourceLine) return region.value("id").toString();
@@ -195,10 +196,10 @@ QString regionId(const QVariantMap &file, const char *side, const char *scope, i
 }
 
 // The hand-edit flag of each region, in region order.
-std::vector<bool> handEdits(const QVariantMap &file)
+std::vector<bool> handEdits(const SelectedFile *file)
 {
     std::vector<bool> result;
-    for (const auto &value : file.value("regions").toList()) {
+    for (const auto &value : file->regions()) {
         const auto flag = value.toMap().value("handEdited");
         CHECK(flag.typeId() == QMetaType::Bool);
         result.push_back(flag.toBool());
@@ -206,17 +207,17 @@ std::vector<bool> handEdits(const QVariantMap &file)
     return result;
 }
 
-QVariantMap region(const QVariantMap &file, const QString &id)
+QVariantMap region(const SelectedFile *file, const QString &id)
 {
-    for (const auto &value : file.value("regions").toList())
+    for (const auto &value : file->regions())
         if (value.toMap().value("id").toString() == id) return value.toMap();
     throw std::runtime_error("fixture has no such region");
 }
 
-QStringList regionStates(const QVariantMap &file)
+QStringList regionStates(const SelectedFile *file)
 {
     QStringList result;
-    for (const auto &value : file.value("regions").toList()) result.push_back(value.toMap().value("state").toString());
+    for (const auto &value : file->regions()) result.push_back(value.toMap().value("state").toString());
     return result;
 }
 
@@ -233,31 +234,31 @@ struct RegionView {
     }
     RevisionId revision() { return controller.files()->file("choices")->current().id; }
     const std::string &text() { return controller.files()->file("choices")->current().draft.text; }
-    QVariantMap file() const { return controller.selectedFile(); }
-    QVariantMap edit(ResultEdit edit)
+    SelectedFile *file() { return controller.selectedFile(); }
+    SelectedFile *edit(ResultEdit edit)
     {
         CHECK(controller.files()->editResult("choices", revision(), std::move(edit)) == Transition::Applied);
         return file();
     }
     // Types at an offset into the first occurrence of some result text.
-    QVariantMap type(const std::string &near, std::size_t offset, std::string typed)
+    SelectedFile *type(const std::string &near, std::size_t offset, std::string typed)
     {
         const auto at = text().find(near);
         CHECK(at != std::string::npos);
         return edit({{at + offset, at + offset}, std::move(typed)});
     }
-    QVariantMap choose(const QString &id, ChoiceAction action)
+    SelectedFile *choose(const QString &id, ChoiceAction action)
     {
         const auto preview = previewChoice(*controller.files()->file("choices"), revision(), id.toStdString(), action);
         CHECK(controller.files()->applyChoice("choices", preview, true) == Transition::Applied);
         return file();
     }
-    QVariantMap undo()
+    SelectedFile *undo()
     {
         CHECK(controller.files()->undo("choices", revision()) == Transition::Applied);
         return file();
     }
-    QVariantMap redo()
+    SelectedFile *redo()
     {
         CHECK(controller.files()->redo("choices", revision()) == Transition::Applied);
         return file();
@@ -347,10 +348,10 @@ public:
             CHECK(controller.files()->appendFile(viewFile()));
             CHECK(controller.selectFile("choices"));
             const auto file = controller.selectedFile();
-            CHECK(file.value("fileName").toString() == "choices.cpp" && file.value("path").toString() == "src/view/choices.cpp");
-            CHECK(file.value("pathBytes").toByteArray() == "src/view/choices.cpp" && file.value("currentRevision").toString() == "1");
-            CHECK(file.value("decisions") == controller.files()->data(controller.files()->index(0), SessionModel::DecisionsRole));
-            CHECK(file.value("decisions").toList().size() == 6);
+            CHECK(file->fileName() == "choices.cpp" && file->path() == "src/view/choices.cpp");
+            CHECK(file->pathBytes() == "src/view/choices.cpp" && file->currentRevision() == "1");
+            CHECK(file->decisions() == controller.files()->data(controller.files()->index(0), SessionModel::DecisionsRole).toList());
+            CHECK(file->decisions().size() == 6);
             checkPassages(file, {{"stage2", "source-only", 2, 3, 2, 2}, {"stage2", "changed", 6, 7, 5, 6},
                 {"stage3", "result-only", 3, 3, 3, 4}, {"stage3", "changed", 4, 5, 5, 6}});
             checkRegions(file, {{"stage2", "section", "undecided", 2, 3, 2, 2}, {"stage2", "line", "undecided", 2, 3, 2, 2},
@@ -359,9 +360,33 @@ public:
                 {"stage3", "section", "undecided", 3, 3, 4, 4},
                 {"stage2", "section", "undecided", 6, 7, 5, 6}, {"stage2", "line", "undecided", 6, 7, 5, 6},
                 {"stage3", "section", "undecided", 4, 5, 5, 6}, {"stage3", "line", "undecided", 4, 5, 5, 6}});
-            const auto choices = file.value("choices").toList();
+            const auto choices = file->choices();
             CHECK(choices[6].toMap().value("label").toString() == QString::fromUtf8("Left section, lines 6–6"));
             CHECK(choices[6].toMap().value("state").toString() == "undecided");
+        });
+        test("selected file notifies changed parts without re-emitting sources on edits", [] {
+            ApplicationController controller(gitOnPath());
+            CHECK(controller.files()->appendFile(viewFile()));
+            CHECK(controller.selectFile("choices"));
+            auto *selected = controller.selectedFile();
+            QSignalSpy identity(selected, &SelectedFile::identityChanged);
+            QSignalSpy sources(selected, &SelectedFile::sourcesChanged);
+            QSignalSpy result(selected, &SelectedFile::resultTextChanged);
+            QSignalSpy decisions(selected, &SelectedFile::decisionsChanged);
+            CHECK(identity.isValid() && sources.isValid() && result.isValid() && decisions.isValid());
+            const auto source = selected->stage2();
+            const auto revision = [&] { return controller.files()->file("choices")->current().id; };
+            CHECK(controller.files()->editResult("choices", revision(), {{0, 0}, "typed "}) == Transition::Applied);
+            CHECK(controller.selectedFile() == selected);
+            CHECK(identity.count() == 0 && sources.count() == 0 && result.count() == 1 && decisions.count() == 0);
+            CHECK(selected->stage2() == source && selected->resultText().startsWith("typed "));
+            CHECK(selected->currentRevision()
+                == controller.files()->data(controller.files()->index(0), SessionModel::CurrentRevisionRole).toString());
+            const auto target = regionId(selected, "stage2", "line", 6);
+            const auto preview = previewChoice(*controller.files()->file("choices"), revision(),
+                                               target.toStdString(), ChoiceAction::Ignore);
+            CHECK(controller.files()->applyChoice("choices", preview) == Transition::Applied);
+            CHECK(identity.count() == 0 && sources.count() == 0 && result.count() == 1 && decisions.count() == 1);
         });
         test("selected file ranges, kinds and region states follow each new revision", [] {
             ApplicationController controller(gitOnPath());
@@ -373,7 +398,7 @@ public:
 
             CHECK(controller.files()->editResult("choices", revision(), {{0, 0}, "inserted é\U0001F600\n"}) == Transition::Applied);
             auto file = controller.selectedFile();
-            CHECK(changes > 0 && file.value("currentRevision").toString() == "2");
+            CHECK(changes > 0 && file->currentRevision() == "2");
             checkPassages(file, {{"stage2", "result-only", 1, 1, 1, 2}, {"stage2", "source-only", 2, 3, 3, 3},
                 {"stage2", "changed", 6, 7, 6, 7}, {"stage3", "result-only", 1, 1, 1, 2},
                 {"stage3", "result-only", 3, 3, 4, 5}, {"stage3", "changed", 4, 5, 6, 7},
@@ -393,8 +418,8 @@ public:
             choose(regionId(file, "stage2", "line", 6), ChoiceAction::Accept);
             choose(regionId(file, "stage2", "line", 2), ChoiceAction::Ignore);
             file = controller.selectedFile();
-            CHECK(changes > 0 && file.value("currentRevision").toString() == "4");
-            CHECK(file.value("decisions") == controller.files()->data(controller.files()->index(0), SessionModel::DecisionsRole));
+            CHECK(changes > 0 && file->currentRevision() == "4");
+            CHECK(file->decisions() == controller.files()->data(controller.files()->index(0), SessionModel::DecisionsRole).toList());
             // The accepted left line now equals the result, so only the right side still differs there.
             checkPassages(file, {{"stage2", "result-only", 1, 1, 1, 2}, {"stage2", "source-only", 2, 3, 3, 3},
                 {"stage3", "result-only", 1, 1, 1, 2}, {"stage3", "result-only", 3, 3, 4, 5},
@@ -411,15 +436,15 @@ public:
             const auto at = controller.files()->file("choices")->current().draft.text.find("left conflict") + 5;
             CHECK(controller.files()->editResult("choices", revision(), {{at, at}, "hand "}) == Transition::Applied);
             file = controller.selectedFile();
-            CHECK(file.value("currentRevision").toString() == "5");
-            const auto regions = file.value("regions").toList();
+            CHECK(file->currentRevision() == "5");
+            const auto regions = file->regions();
             CHECK(regions[6].toMap().value("state").toString() == "manual" && regions[7].toMap().value("state").toString() == "manual");
             CHECK(regions[8].toMap().value("state").toString() == "undecided" && regions[9].toMap().value("state").toString() == "undecided");
-            checkRange(regions[6].toMap(), "result", file.value("resultText").toString(), 6, 7);
+            checkRange(regions[6].toMap(), "result", file->resultText(), 6, 7);
             CHECK(controller.files()->undo("choices", revision()) == Transition::Applied);
             file = controller.selectedFile();
-            CHECK(file.value("regions").toList()[6].toMap().value("state").toString() == "accepted");
-            CHECK(file.value("resultText").toString().contains("\nleft conflict\n"));
+            CHECK(file->regions()[6].toMap().value("state").toString() == "accepted");
+            CHECK(file->resultText().contains("\nleft conflict\n"));
         });
         test("no region reports a hand edit at launch, even where the result already differs", [] {
             // The earlier version, the left side, and conflict markers around both sides.
@@ -436,7 +461,7 @@ public:
                 CHECK(!edits.empty() && std::none_of(edits.begin(), edits.end(), [](bool edited) { return edited; }));
                 CHECK(!regionStates(file).contains("manual"));
                 // Replacing launch text that differs from its source still needs confirmation.
-                for (const auto &value : file.value("regions").toList()) {
+                for (const auto &value : file->regions()) {
                     const auto *anchor = view.controller.files()->file("choices")->correspondence()
                         ->anchor(value.toMap().value("id").toString().toStdString());
                     if (anchor && anchor->manualOverlap) ++overlapping;
@@ -448,25 +473,25 @@ public:
             RegionView view(test_support::markedFile());
             auto file = view.file();
             const auto preview = [&](const char *side, const char *action) {
-                return view.controller.previewChoice("choices", file.value("currentRevision").toString(),
+                return view.controller.previewChoice("choices", file->currentRevision(),
                                                      regionId(file, side, "section", 2), QString::fromLatin1(action));
             };
             CHECK(preview("stage2", "accept"));
             CHECK(view.controller.commandMessage() == "Accept changes only this scope and leaves the other side undecided.");
             CHECK(view.controller.applyChoice());
             file = view.file();
-            CHECK(file.value("resultText").toString() == QString::fromStdString(test_support::markedText()));
+            CHECK(file->resultText() == QString::fromStdString(test_support::markedText()));
             CHECK(preview("stage3", "ignore"));
             CHECK(view.controller.commandMessage().contains("marker lines and ignored text are removed"));
             CHECK(view.controller.applyChoice());
             file = view.file();
             const auto resolved = QStringLiteral("header\nleft first\nleft second\nbridge\n"
                 "<<<<<<< ours\nleft later\n=======\nright later\n>>>>>>> theirs\ntail\n");
-            CHECK(file.value("resultText").toString() == resolved);
+            CHECK(file->resultText() == resolved);
             CHECK(region(file, regionId(file, "stage2", "section", 2)).value("state").toString() == "accepted");
             CHECK(view.controller.files()->file("choices")->current().draft.unresolvedMarkers == 1);
-            CHECK(view.undo().value("resultText").toString() == QString::fromStdString(test_support::markedText()));
-            CHECK(view.redo().value("resultText").toString() == resolved);
+            CHECK(view.undo()->resultText() == QString::fromStdString(test_support::markedText()));
+            CHECK(view.redo()->resultText() == resolved);
         });
         test("a hand edit marks the regions containing it in every decision state until a choice replaces it", [] {
             RegionView view;
@@ -491,7 +516,7 @@ public:
             file = view.choose(rightConflict, ChoiceAction::CombineLeftFirst);
             for (const int i : {6, 7, 8, 9}) expected[i] = "accepted";
             CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
-            CHECK(file.value("resultText").toString().contains("\nleft conflict\nright conflict\n"));
+            CHECK(file->resultText().contains("\nleft conflict\nright conflict\n"));
 
             // Combined.
             file = view.type("right conflict", 6, "hand ");
@@ -500,7 +525,7 @@ public:
             file = view.choose(leftConflict, ChoiceAction::CombineRightFirst);
             for (const int i : {6, 7, 8, 9}) expected[i] = "accepted";
             CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
-            CHECK(file.value("resultText").toString().contains("\nright conflict\nleft conflict\n"));
+            CHECK(file->resultText().contains("\nright conflict\nleft conflict\n"));
 
             // Ignored. Ignoring keeps the text, so only accepting the deletion replaces the edit.
             file = view.choose(removed, ChoiceAction::Ignore);
@@ -514,7 +539,7 @@ public:
             expected[3] = expected[4] = "ignored";
             expected[5] = "accepted";
             CHECK(handEdits(file) == noHandEdits && regionStates(file) == expected);
-            CHECK(!file.value("resultText").toString().contains("removed"));
+            CHECK(!file->resultText().contains("removed"));
         });
         test("typing across a region boundary marks it and a whole-file choice clears every hand edit", [] {
             RegionView crossing;
@@ -522,7 +547,7 @@ public:
             const auto at = crossing.text().find("two\nleft conflict");
             CHECK(at != std::string::npos);
             file = crossing.edit({{at, at + 8}, "2\nright"});
-            const auto regions = file.value("regions").toList();
+            const auto regions = file->regions();
             CHECK(handEdits(file) == conflictLineEdited && !regions[6].toMap().value("mapped").toBool());
             CHECK(regionStates(file)[6] == "manual" && regionStates(file)[8] == "undecided");
 
@@ -546,17 +571,17 @@ public:
             CHECK(handEdits(file) == noHandEdits && regionStates(file)[6] == "accepted");
             file = view.undo();
             CHECK(handEdits(file) == conflictLineEdited && regionStates(file)[6] == "undecided");
-            CHECK(file.value("resultText").toString().contains("\nbase hand conflict\n"));
+            CHECK(file->resultText().contains("\nbase hand conflict\n"));
             file = view.undo();
-            CHECK(handEdits(file) == noHandEdits && file.value("resultText").toString().contains("\nbase conflict\n"));
+            CHECK(handEdits(file) == noHandEdits && file->resultText().contains("\nbase conflict\n"));
             file = view.redo();
-            CHECK(handEdits(file) == conflictLineEdited && file.value("resultText").toString().contains("\nbase hand conflict\n"));
+            CHECK(handEdits(file) == conflictLineEdited && file->resultText().contains("\nbase hand conflict\n"));
             file = view.redo();
             CHECK(handEdits(file) == noHandEdits && regionStates(file)[6] == "accepted");
-            CHECK(file.value("resultText").toString().contains("\nleft conflict\n"));
+            CHECK(file->resultText().contains("\nleft conflict\n"));
         });
         test("a choice clears hand edits on a deleted line it restores and on text an edit left unchanged", [] {
-            const auto none = [](const QVariantMap &file) {
+            const auto none = [](const SelectedFile *file) {
                 const auto edits = handEdits(file);
                 return std::none_of(edits.begin(), edits.end(), [](bool edited) { return edited; });
             };

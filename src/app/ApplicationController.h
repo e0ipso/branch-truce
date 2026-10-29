@@ -7,11 +7,11 @@
 #include "ResolutionPublisher.h"
 #include "ResultEditorAdapter.h"
 #include "SessionModel.h"
+#include "SelectedFile.h"
 #include "SessionCoordinator.h"
 #include "SessionLoader.h"
 #include <QByteArray>
 #include <QColor>
-#include <QJSValue>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -27,7 +27,7 @@ class ApplicationController final : public QObject {
     Q_PROPERTY(branch_truce::SessionCoordinator *coordinator READ coordinator CONSTANT)
     Q_PROPERTY(branch_truce::SessionLoader *loader READ loader CONSTANT)
     Q_PROPERTY(QString selectedFileId READ selectedFileId NOTIFY selectedFileChanged)
-    Q_PROPERTY(QJSValue selectedFile READ selectedFileScript NOTIFY selectedFileChanged)
+    Q_PROPERTY(branch_truce::SelectedFile *selectedFile READ selectedFile CONSTANT)
     Q_PROPERTY(int outsideAppFiles READ outsideAppFiles NOTIFY inventoryChanged)
     Q_PROPERTY(int loadErrorFiles READ loadErrorFiles NOTIFY inventoryChanged)
     Q_PROPERTY(QVariantMap commandPreview READ commandPreview NOTIFY commandPreviewChanged)
@@ -63,10 +63,7 @@ public:
     // Waiting mergetool launchers and the copied launch paths they can clear.
     [[nodiscard]] MergetoolSession *mergetool() noexcept { return &mergetool_; }
     [[nodiscard]] QString selectedFileId() const { return selectedFileId_; }
-    [[nodiscard]] QVariantMap selectedFile() const;
-    // selectedFile as plain script objects and arrays, for QML. A QVariantMap property reaches
-    // QML as a reference that reads the property again and converts each value it is asked for.
-    [[nodiscard]] QJSValue selectedFileScript() const;
+    [[nodiscard]] SelectedFile *selectedFile() noexcept { return &selectedFile_; }
     [[nodiscard]] int outsideAppFiles() const;
     [[nodiscard]] int loadErrorFiles() const;
     [[nodiscard]] QVariantMap commandPreview() const;
@@ -194,6 +191,7 @@ private:
     void showMessage(const QString &message);
     [[nodiscard]] QVariantMap firstUndecidedPlacement(const FileSession *file, const QString &loaded) const;
     SessionModel files_;
+    SelectedFile selectedFile_;
     SessionCoordinator coordinator_;
     ResolutionPublisher publisher_;
     MergetoolSession mergetool_;

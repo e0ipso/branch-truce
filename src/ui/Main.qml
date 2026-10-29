@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
@@ -8,7 +9,7 @@ import org.kde.kirigami as Kirigami
 Kirigami.ApplicationWindow {
     id: window
     required property var controller
-    readonly property var selectedFile: controller.selectedFile
+    readonly property SelectedFile selectedFile: controller.selectedFile
     readonly property bool supportedSelection: selectedFile.support === "supported"
     function choose(target: string, action: string): void {
         if (!controller.previewChoice(controller.selectedFileId, selectedFile.currentRevision, target, action))

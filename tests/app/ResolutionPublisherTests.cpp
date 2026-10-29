@@ -209,7 +209,7 @@ void waitFor(ApplicationController &controller, const std::function<bool()> &rea
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     if (!ready())
         throw std::runtime_error((controller.commandMessage() + " | "
-            + controller.selectedFile().value("status").toString() + " | busy="
+            + controller.selectedFile()->status() + " | busy="
             + QString::number(controller.resolutionBusy())).toStdString());
 }
 
@@ -463,8 +463,8 @@ int main(int argc, char **argv)
         expectUnchanged(session.repo, before, true);
         CHECK(unmerged(session.repo).contains("tracked.txt"));
         CHECK(session.controller.commandMessage().contains(QStringLiteral("unresolved"))
-            || session.controller.selectedFile().value("status").toString().contains(QStringLiteral("unresolved"))
-            || session.controller.selectedFile().value("status").toString().contains(QStringLiteral("uncertain")));
+            || session.controller.selectedFile()->status().contains(QStringLiteral("unresolved"))
+            || session.controller.selectedFile()->status().contains(QStringLiteral("uncertain")));
     });
     suite.run("Mark resolved publishes one unsaved path and leaves the other conflict", [] {
         Session session;
@@ -473,7 +473,7 @@ int main(int argc, char **argv)
         waitFor(session.controller, [&] { return openedFile(session.controller).facts().resolved; });
         CHECK(openedFile(session.controller).checkpoint());
         CHECK(openedFile(session.controller).facts().status == FileStatus::Resolved);
-        CHECK(session.controller.selectedFile().value("status").toString() == "Written and resolved");
+        CHECK(session.controller.selectedFile()->status() == "Written and resolved");
         CHECK(session.repo.git({"show", ":tracked.txt"}) == session.repo.manual);
         CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
         const auto remaining = unmerged(session.repo);
@@ -831,7 +831,7 @@ int main(int argc, char **argv)
             openedFile(session.controller).current().id, edited) == Transition::Applied);
         const auto draftRevision = session.revision();
         CHECK(openedFile(session.controller).facts().status == FileStatus::EarlierStaged);
-        CHECK(session.controller.selectedFile().value("progress").toMap().value("earlierResolved").toBool());
+        CHECK(session.controller.selectedFile()->progress().value("earlierResolved").toBool());
 
         // A stale revision is refused like every other command and keeps the draft.
         CHECK(!session.controller.discardToStaged(session.id, stagedRevision));
@@ -863,7 +863,7 @@ int main(int argc, char **argv)
         CHECK(openedFile(session.controller).current().draft.text == stagedText);
         CHECK(openedFile(session.controller).facts().resolved);
         CHECK(!openedFile(session.controller).facts().earlierStaged);
-        CHECK(session.controller.selectedFile().value("status").toString() == "Written and resolved");
+        CHECK(session.controller.selectedFile()->status() == "Written and resolved");
         CHECK(handoffEntry(session.controller.handoff(), session.id).value("category").toString() == "published");
         expectUnchanged(session.repo, before);
     });

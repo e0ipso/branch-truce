@@ -221,7 +221,7 @@ WorkSnapshot captureWork(Fixture &fixture)
     const auto &current = fixture.file().current();
     const auto facts = fixture.file().facts();
     return {current.id, current.draft, fixture.file().canUndo(), fixture.file().canRedo(),
-        fixture.controller.selectedFile().value(QStringLiteral("progress")),
+        QVariant(fixture.controller.selectedFile()->progress()),
         facts.undecided, facts.unsaved, facts.resolved, facts.needsReview, facts.status,
         fixture.item("resultText")->property("text").toString(),
         fixture.item("stage2Text")->property("text").toString(),
@@ -248,7 +248,7 @@ void expectProgress(Fixture &fixture, bool saved, bool reviewed, bool resolved, 
                     qulonglong undecided)
 {
     CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
-    const auto progress = fixture.controller.selectedFile().value(QStringLiteral("progress")).toMap();
+    const auto progress = fixture.controller.selectedFile()->progress();
     const auto describe = [&] {
         return std::string("progress saved=") + std::to_string(progress.value(QStringLiteral("saved")).toBool())
             + " reviewed=" + std::to_string(progress.value(QStringLiteral("reviewed")).toBool())
@@ -829,7 +829,7 @@ public:
                 CHECK(label.startsWith(side == SourceSide::Stage2 ? "Left source · " : "Right source · "));
                 CHECK(label.contains(QString::fromStdString(source->label)));
                 CHECK(fixture.item((std::string(prefix) + "Identity").c_str())->property("text").toString().contains(QString::fromStdString(source->objectId).left(10)));
-                const auto projected = fixture.controller.selectedFile().value(prefix).toMap();
+                const auto projected = fixture.controller.selectedFile()->property(prefix).toMap();
                 CHECK(projected.value("commitId").toString().toStdString() == *source->commitId);
             }
             CHECK(!fixture.item("resultText")->property("readOnly").toBool());
@@ -1156,7 +1156,7 @@ public:
             saved.text += "saved app draft\n";
             saved.decisions["kept"] = {DecisionValue::Accepted, 4};
             CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, saved) == Transition::Applied);
-            settle([&] { return fixture.controller.selectedFile().value("unsaved").toBool(); });
+            settle([&] { return fixture.controller.selectedFile()->unsaved(); });
             fixture.click("saveDraft");
             CHECK(fixture.controller.commandMessage() == "Draft saved in Branch Truce; repository file unchanged.");
             CHECK(test_support::shownText(fixture.item("selectedStatus"))
@@ -1173,7 +1173,7 @@ public:
             discarded.text += "discarded edit\n";
             discarded.decisions["kept"] = {DecisionValue::Ignored, {}};
             CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, discarded) == Transition::Applied);
-            settle([&] { return fixture.controller.selectedFile().value("unsaved").toBool(); });
+            settle([&] { return fixture.controller.selectedFile()->unsaved(); });
             CHECK(fixture.file().checkpoint()->draft == saved);
             fixture.click("discardUnsaved");
             CHECK(fixture.file().current().draft == saved && fixture.file().current().draft != discarded);
@@ -1195,7 +1195,7 @@ public:
                 recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
                 fixture.click("saveDraft");
             }
-            settle([&] { return fixture.controller.selectedFile().value("recoveryState").toString() == "save-failed"; });
+            settle([&] { return fixture.controller.selectedFile()->recoveryState() == "save-failed"; });
             CHECK(fixture.file().current().draft == edited && fixture.file().facts().unsaved);
             CHECK(fixture.file().checkpoint()->draft == saved);
             CHECK(fixture.text().toStdString() == edited.text);
@@ -1207,10 +1207,10 @@ public:
             CHECK(fixture.item("undoCommand")->isVisible() && !fixture.item("undoCommand")->isEnabled());
             CHECK(!fixture.file().written() && !fixture.file().staged());
             fixture.click("retrySave");
-            settle([&] { return !fixture.controller.selectedFile().value("unsaved").toBool(); });
+            settle([&] { return !fixture.controller.selectedFile()->unsaved(); });
             CHECK(fixture.file().checkpoint() && fixture.file().checkpoint()->draft == edited);
             CHECK(!fixture.file().facts().unsaved && !fixture.item("retrySave")->isVisible());
-            CHECK(fixture.controller.selectedFile().value("status").toString()
+            CHECK(fixture.controller.selectedFile()->status()
                   == "Draft saved in Branch Truce; repository file unchanged");
             CHECK(!fixture.file().written() && !fixture.file().staged());
         });
@@ -1549,7 +1549,7 @@ public:
                     if (choice.resultChanges) CHECK(fixture.text().contains(QStringLiteral("\nleft only\n")));
                     // Both scopes of a region share its decisions, so they end in the same state.
                     int chosen = 0;
-                    for (const auto &entry : fixture.controller.selectedFile().value("regions").toList()) {
+                    for (const auto &entry : fixture.controller.selectedFile()->regions()) {
                         const auto region = entry.toMap();
                         const bool left = region.value("side").toString() == "stage2";
                         const bool here = region.value("sourceLineBegin").toInt() == 2;
@@ -1858,7 +1858,7 @@ public:
         suite.run("TRUCE-0179 deciding a section removes its fold and markersRemain, and Save writes the buffer either way", [] {
             const auto remaining = [](Fixture &fixture) {
                 QStringList found;
-                for (const auto &entry : fixture.controller.selectedFile().value("regions").toList()) {
+                for (const auto &entry : fixture.controller.selectedFile()->regions()) {
                     const auto region = entry.toMap();
                     found << region.value("side").toString() + ":" + region.value("section").toString() + "="
                         + (region.value("markersRemain").toBool() ? "remain" : "gone");
@@ -1878,7 +1878,7 @@ public:
                 const auto header = static_cast<int>(fixture.text().indexOf("header"));
                 fixture.select(header, header);
                 fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
-                settle([&] { return fixture.controller.selectedFile().value("unsaved").toBool(); });
+                settle([&] { return fixture.controller.selectedFile()->unsaved(); });
                 fixture.click("saveDraft");
                 CHECK(fixture.file().checkpoint());
                 const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()));
@@ -1893,7 +1893,7 @@ public:
             settlePanes(fixture);
             const auto atLaunch = remaining(fixture);
             CHECK(atLaunch.size() >= 4 && atLaunch.filter("=gone").isEmpty());
-            CHECK(fixture.controller.selectedFile().value("markerBlocks").toList().size() == 2);
+            CHECK(fixture.controller.selectedFile()->markerBlocks().size() == 2);
             // Resolving the first section with the left side removes its markers, so only the
             // second block stays folded and only its regions still have markers.
             const auto &first = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
@@ -1902,7 +1902,7 @@ public:
                 QString::fromStdString(first.source.contributionId), "resolve"));
             CHECK(fixture.controller.applyChoice(true));
             CHECK(!fixture.text().contains(QStringLiteral(">>>>>>> theirs\nbridge")));
-            CHECK(fixture.controller.selectedFile().value("markerBlocks").toList().size() == 1);
+            CHECK(fixture.controller.selectedFile()->markerBlocks().size() == 1);
             for (const auto &entry : remaining(fixture))
                 CHECK(entry.endsWith(entry.contains(":" + section + "=") ? "=gone" : "=remain"));
             // The second block, now lines 5-9, folds into its row on line 5.
@@ -1921,12 +1921,12 @@ public:
             // Whether each region still has markers, in the controller's order.
             const auto remain = [&] {
                 QList<bool> found;
-                for (const auto &entry : fixture.controller.selectedFile().value("regions").toList())
+                for (const auto &entry : fixture.controller.selectedFile()->regions())
                     found.push_back(entry.toMap().value("markersRemain").toBool());
                 return found;
             };
             const auto folded = [&] {
-                const auto blocks = fixture.controller.selectedFile().value("markerBlocks").toList();
+                const auto blocks = fixture.controller.selectedFile()->markerBlocks();
                 return blocks.size() == 1 && blocks.front().toMap().value("folded").toBool();
             };
             const auto atLaunch = remain();
@@ -1945,7 +1945,7 @@ public:
             // Deciding the second removes the block, so nothing folds and no region has markers.
             resolve(SourceSide::Stage3, 1);
             CHECK(fixture.text() == QStringLiteral("header\nleft one\nshared\nright two\ntail\n"));
-            CHECK(fixture.controller.selectedFile().value("markerBlocks").toList().isEmpty());
+            CHECK(fixture.controller.selectedFile()->markerBlocks().isEmpty());
             CHECK(remain().size() == atLaunch.size() && !remain().contains(true));
             settle([&] { return foldedLines(fixture).isEmpty(); });
             // One undo brings back the block and its fold.
@@ -2346,7 +2346,7 @@ public:
             result += after;
             Fixture fixture(test_support::choiceFile(left, result, result));
             bool ambiguous = false;
-            for (const auto &value : fixture.controller.selectedFile().value("passages").toList()) {
+            for (const auto &value : fixture.controller.selectedFile()->passages()) {
                 const auto passage = value.toMap();
                 ambiguous = ambiguous || (passage.value("side") == "stage2" && passage.value("kind") == "ambiguous"
                     && passage.value("sourceLineBegin").toInt() <= 81 && passage.value("sourceLineEnd").toInt() >= 121);
@@ -2627,13 +2627,13 @@ public:
             saved.text += "saved app draft\n";
             saved.decisions["kept"] = {DecisionValue::Accepted, 4};
             CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, saved) == Transition::Applied);
-            settle([&] { return fixture.controller.selectedFile().value("unsaved").toBool(); });
+            settle([&] { return fixture.controller.selectedFile()->unsaved(); });
             fixture.click("saveDraft");
             auto discarded = saved;
             discarded.text += "discarded edit\n";
             discarded.decisions["kept"] = {DecisionValue::Ignored, {}};
             CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, discarded) == Transition::Applied);
-            settle([&] { return fixture.controller.selectedFile().value("unsaved").toBool(); });
+            settle([&] { return fixture.controller.selectedFile()->unsaved(); });
             {
                 recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
                 fixture.click("discardUnsaved");
@@ -2644,10 +2644,10 @@ public:
             CHECK(message == "Discard was not completed. The restored result is shown until retry finishes it.");
             CHECK(!message.contains(QStringLiteral("edited result is unchanged")));
             CHECK(fixture.text().toStdString() == saved.text);
-            CHECK(fixture.controller.selectedFile().value("pendingText").toString().toStdString() == saved.text);
+            CHECK(fixture.controller.selectedFile()->pendingText().toStdString() == saved.text);
             CHECK(fixture.item("pendingInputText")->property("text").toString().toStdString() == saved.text);
             CHECK(fixture.file().current().draft == discarded);
-            CHECK(fixture.controller.selectedFile().value("resultText").toString().toStdString() == discarded.text);
+            CHECK(fixture.controller.selectedFile()->resultText().toStdString() == discarded.text);
             CHECK(fixture.item("retryRecovery")->isVisible() && fixture.item("retryRecovery")->isEnabled());
             CHECK(!fixture.item("discardUnsaved")->isEnabled() && !fixture.item("markResolved")->isEnabled());
             storage::RecoveryStore store(fixture.controller.files()->recoveryDirectory());
@@ -2691,7 +2691,7 @@ public:
             fixture.click("markResolved");
             fixture.clickLaidOut("confirmResolution");
             settle([&] {
-                return fixture.controller.selectedFile().value(QStringLiteral("status")).toString()
+                return fixture.controller.selectedFile()->status()
                     == QStringLiteral("Repository write failed");
             });
             CHECK(fixture.text() == text);

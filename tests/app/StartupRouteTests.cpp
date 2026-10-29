@@ -686,7 +686,7 @@ public:
                     const auto &selected = openedFile(controller, path);
                     CHECK(!controller.files()->hasRecoveryFailure(selected.id()));
                     const auto id = QString::fromStdString(selected.id());
-                    CHECK(controller.selectFile(id) && controller.selectedFile().value("canEdit").toBool());
+                    CHECK(controller.selectFile(id) && controller.selectedFile()->canEdit());
                     CHECK(controller.editResult(id, QString::number(selected.current().id), 0, 0, "live manual edit\n"));
                     CHECK(controller.undo(id, QString::number(selected.current().id)));
                     CHECK(controller.redo(id, QString::number(selected.current().id)));
@@ -1129,7 +1129,7 @@ public:
                 CHECK(!fileRole(controller, failed, SessionModel::PendingInputRole).toBool());
                 CHECK(!fileRole(controller, failed, SessionModel::CanUndoRole).toBool());
                 const auto id = QString::fromStdString(failed.id());
-                CHECK(controller.selectFile(id) && !controller.selectedFile().value("canEdit").toBool());
+                CHECK(controller.selectFile(id) && !controller.selectedFile()->canEdit());
                 CHECK(!controller.editResult(id, QString::number(failed.current().id), 0, 0, "forbidden"));
                 CHECK(!controller.undo(id, QString::number(failed.current().id)));
                 CHECK(!controller.redo(id, QString::number(failed.current().id)));
@@ -1143,7 +1143,7 @@ public:
                 CHECK(model->undo(failed.id(), failed.current().id) == Transition::Blocked);
                 CHECK(model->redo(failed.id(), failed.current().id) == Transition::Blocked);
                 const auto healthyId = QString::fromStdString(healthy.id());
-                CHECK(controller.selectFile(healthyId) && controller.selectedFile().value("canEdit").toBool());
+                CHECK(controller.selectFile(healthyId) && controller.selectedFile()->canEdit());
                 CHECK(controller.editResult(healthyId, QString::number(healthy.current().id), 0, 0, "healthy manual edit\n"));
                 const auto before = healthy.current().draft;
                 const auto healthyTarget = test_support::choiceTarget(healthy, SourceSide::Stage2, ChoiceScope::Line);
@@ -1190,9 +1190,9 @@ public:
                 const auto target = test_support::choiceTarget(restored, SourceSide::Stage2, ChoiceScope::Section);
                 CHECK(previewChoice(restored, restored.current().id, target.source.contributionId, ChoiceAction::Accept).state == Transition::Blocked);
                 const auto id = QString::fromStdString(restored.id());
-                CHECK(controller.selectFile(id) && controller.selectedFile().value("canEdit").toBool());
-                CHECK(controller.selectedFile().value("choices").toList().isEmpty());
-                CHECK(!controller.selectedFile().value("choiceNotice").toString().isEmpty());
+                CHECK(controller.selectFile(id) && controller.selectedFile()->canEdit());
+                CHECK(controller.selectedFile()->choices().isEmpty());
+                CHECK(!controller.selectedFile()->choiceNotice().isEmpty());
                 CHECK(!controller.previewChoice(id, QString::number(restored.current().id),
                     QString::fromStdString(target.source.contributionId), "accept"));
                 CHECK(controller.editResult(id, QString::number(restored.current().id), 0, 0, "legacy manual edit\n"));
@@ -1282,23 +1282,23 @@ public:
                 actualPaths.insert(path);
                 CHECK(id.toLatin1() == path.toHex() && controller.selectFile(id));
                 const auto selected = controller.selectedFile();
-                CHECK(selected.value("pathBytes").toByteArray() == path && selected.value("fileId").toString() == id);
+                CHECK(selected->pathBytes() == path && selected->fileId() == id);
                 if (path == "binary.dat" || path == "missing.txt") {
                     const auto expected = path == "binary.dat" ? "outside-app" : "unreadable";
-                    CHECK(selected.value("support").toString() == QLatin1String(expected));
-                    CHECK(!selected.value("supportDetail").toString().isEmpty());
+                    CHECK(selected->support() == QLatin1String(expected));
+                    CHECK(!selected->supportDetail().isEmpty());
                     CHECK(!selected.contains("stage2") && !selected.contains("initialResult"));
                     CHECK(model->replaceDraft(id.toStdString(), 1, {"unsafe edit", {}, 0}) == Transition::Blocked);
                     continue;
                 }
-                CHECK(selected.value("support").toString() == "supported");
+                CHECK(selected->support() == "supported");
                 const auto versions = additional.value(QString::fromUtf8(path), {"base\n", "main\n", "side\n"});
-                CHECK(selected.value("earlier").toMap().value("text").toString().toUtf8() == versions[0]);
-                CHECK(selected.value("stage2").toMap().value("text").toString().toUtf8() == versions[1]);
-                CHECK(selected.value("stage3").toMap().value("text").toString().toUtf8() == versions[2]);
+                CHECK(selected->earlier().value("text").toString().toUtf8() == versions[0]);
+                CHECK(selected->stage2().value("text").toString().toUtf8() == versions[1]);
+                CHECK(selected->stage3().value("text").toString().toUtf8() == versions[2]);
                 const auto initial = readFile(repo.path(QString::fromUtf8(path)));
-                CHECK(selected.value("initialResult").toMap().value("text").toString().toUtf8() == initial);
-                CHECK(selected.value("resultText").toString().toUtf8() == initial);
+                CHECK(selected->initialResult().value("text").toString().toUtf8() == initial);
+                CHECK(selected->resultText().toUtf8() == initial);
                 CHECK(!controller.selectFile(QString::fromUtf8(path)) && controller.selectedFileId() == id);
             }
             CHECK(actualPaths == expectedPaths);
@@ -1322,7 +1322,7 @@ public:
                 const auto &outstanding = openedFile(controller, path);
                 CHECK(!outstanding.supportDetail().empty() && !outstanding.facts().resolved);
                 CHECK(controller.selectFile(QString::fromStdString(outstanding.id())));
-                CHECK(!controller.selectedFile().value("supportDetail").toString().isEmpty());
+                CHECK(!controller.selectedFile()->supportDetail().isEmpty());
             }
             CHECK(repo.snapshot() == before);
         });
@@ -1355,7 +1355,7 @@ public:
                 CHECK(small.snapshots()->stage2->worktree.utf8 == "main\n" && small.snapshots()->stage3->worktree.utf8 == "side\n");
                 CHECK(small.current().draft.text == (QByteArray(path) == "tracked.txt" ? repo.manual : smallOther).toStdString());
                 CHECK(controller.selectFile(QString::fromStdString(small.id())));
-                CHECK(controller.selectedFile().value("stage2").toMap().value("text").toString() == "main\n");
+                CHECK(controller.selectedFile()->stage2().value("text").toString() == "main\n");
             }
             CHECK(!controller.files()->hasPendingRecovery() && !controller.files()->canFinish());
             CHECK(repo.snapshot() == before);
@@ -1393,8 +1393,8 @@ public:
                     CHECK(loaded.current().draft.text == readFile(repo.path(path)).toStdString());
                     CHECK(loaded.snapshots()->stage2->worktree.utf8 == "main\n" && loaded.snapshots()->stage3->worktree.utf8 == "side\n");
                     CHECK(controller.selectFile(QString::fromStdString(loaded.id())));
-                    CHECK(controller.selectedFile().value("stage2").toMap().value("text").toString() == "main\n");
-                    CHECK(controller.selectedFile().value("resultText").toString().toStdString() == loaded.current().draft.text);
+                    CHECK(controller.selectedFile()->stage2().value("text").toString() == "main\n");
+                    CHECK(controller.selectedFile()->resultText().toStdString() == loaded.current().draft.text);
                     if (failRecovery) {
                         CHECK(model->pendingDraft(loaded.id()) && *model->pendingDraft(loaded.id()) == loaded.current().draft);
                         CHECK(model->retryRecovery(loaded.id()) == Transition::Blocked);
@@ -1707,7 +1707,7 @@ public:
                 CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).written()
                       && !openedFile(controller).staged() && !openedFile(controller).reviewed());
                 CHECK(controller.commandMessage() == "Draft saved in Branch Truce; repository file unchanged.");
-                CHECK(controller.selectedFile().value("status").toString()
+                CHECK(controller.selectedFile()->status()
                       == "Draft saved in Branch Truce; repository file unchanged");
                 CHECK(repo.snapshot() == before);
                 auto edited = baseline;
@@ -1781,9 +1781,9 @@ public:
                 CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == baseline);
                 CHECK(openedFile(controller).facts().unsaved && !openedFile(controller).written()
                       && !openedFile(controller).staged());
-                CHECK(controller.selectedFile().value("status").toString() == "Draft save failed");
-                CHECK(controller.selectedFile().value("recoveryState").toString() == "save-failed");
-                CHECK(!controller.selectedFile().value("canEdit").toBool());
+                CHECK(controller.selectedFile()->status() == "Draft save failed");
+                CHECK(controller.selectedFile()->recoveryState() == "save-failed");
+                CHECK(!controller.selectedFile()->canEdit());
                 CHECK(!controller.undo(id, revision) && !controller.discardUnsaved(id, revision));
                 CHECK(openedFile(controller).current().draft == edited);
                 CHECK(repo.snapshot() == before);
@@ -1799,9 +1799,9 @@ public:
                 CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == edited);
                 CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).written()
                       && !openedFile(controller).staged());
-                CHECK(controller.selectedFile().value("status").toString()
+                CHECK(controller.selectedFile()->status()
                       == "Draft saved in Branch Truce; repository file unchanged");
-                CHECK(controller.selectedFile().value("canEdit").toBool());
+                CHECK(controller.selectedFile()->canEdit());
                 const auto committed = storage::RecoveryStore(controller.files()->recoveryDirectory()).read();
                 CHECK(committed.succeeded && committed.transactions.size() == records);
                 CHECK(committed.transactions.back().value("transactionId").toString() == request);

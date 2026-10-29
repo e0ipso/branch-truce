@@ -4,6 +4,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
@@ -11,7 +12,7 @@ import org.kde.kirigami as Kirigami
 ColumnLayout {
     id: resultPane
     required property var controller
-    required property var file
+    required property SelectedFile file
     required property EditActions edits
     // Line marks for the gutter and backgrounds, and the navigation target's line ranges.
     required property var marks
