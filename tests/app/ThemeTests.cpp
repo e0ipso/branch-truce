@@ -58,6 +58,7 @@ using namespace branch_truce;
 namespace {
 constexpr int kSkipped = 77;
 
+#ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
 // The limits docs/resource-limits.md records for the cost workload: the median CPU time, in
 // milliseconds, that the process spends from one key press, or one wheel notch, to the next
 // rendered frame. CPU time rather than wall time, so time other processes hold the CPU does not count.
@@ -70,6 +71,7 @@ constexpr int kRegionEvery = 20;
 constexpr int kRepeats = 3;
 constexpr int kKeysPerRepeat = 6;
 constexpr int kNotchesPerRepeat = 15;
+#endif
 
 // As src/app/main.cpp: the KDE style when it is installed, with Fusion for the controls it lacks,
 // and otherwise Fusion. QT_QUICK_CONTROLS_STYLE wins.
@@ -353,6 +355,7 @@ int checkCues()
 
 // --- cost ----------------------------------------------------------------------------------
 
+#ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
 // A C++ file with a function every 10 lines. Every kRegionEvery lines, one statement differs
 // between the left side, the right side and the common earlier version.
 std::string workloadSource(const char *side)
@@ -444,6 +447,7 @@ std::string join(const std::vector<qint64> &values)
     for (const auto value : values) text += (text.empty() ? "" : " ") + std::to_string(value);
     return text;
 }
+#endif
 
 int checkCost()
 {
