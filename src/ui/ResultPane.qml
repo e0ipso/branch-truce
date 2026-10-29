@@ -116,8 +116,10 @@ ColumnLayout {
                 Accessible.name: qsTr("Editable result")
                 Component.onCompleted: resultPane.controller.attachResultEditor(resultEditor)
                 onCursorPositionChanged: resultBlocks.queueCursorCheck()
-                // The editor still handles the key; the blocks note where it is taking the cursor.
+                // Settle earlier cursor changes before recording this key's starting column.
+                // The editor still handles the key; the blocks note where it takes the cursor.
                 Keys.onPressed: (event) => {
+                    resultPane.settleCursor()
                     resultBlocks.keyPressed(event.key)
                     event.accepted = false
                 }

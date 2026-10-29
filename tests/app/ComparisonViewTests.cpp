@@ -1884,6 +1884,7 @@ public:
             settlePanes(fixture);
             expectLook(fixture, "at launch", markedFolded());
             const auto text = fixture.text();
+            const auto before = captureWork(fixture);
             const auto at = [&](const char *line) { return static_cast<int>(text.indexOf(QLatin1String(line))); };
             auto *editor = fixture.item("resultText");
             const auto selection = [&] {
@@ -1907,6 +1908,16 @@ public:
             fixture.key(Qt::Key_Down, Qt::ShiftModifier);
             expectCursor(fixture, "shift+down over the block", at("bridge"));
             CHECK(selection() == std::pair(0, at("bridge")));
+            // Consecutive keys can arrive before the queued cursor check. Each uses the
+            // preceding visible position and keeps the original selection anchor.
+            fixture.select(3, 3);
+            fixture.key(Qt::Key_Down, Qt::ShiftModifier);
+            fixture.key(Qt::Key_Down, Qt::ShiftModifier);
+            expectCursor(fixture, "two shift+down keys", at("tail") + 3);
+            CHECK(selection() == std::pair(3, at("tail") + 3));
+            fixture.key(Qt::Key_Up, Qt::ShiftModifier);
+            expectCursor(fixture, "shift+up from tail", at("bridge") + 3);
+            CHECK(selection() == std::pair(3, at("bridge") + 3));
             // A selection set by code that ends in a folded block ends before its row instead.
             fixture.select(0, at("======="));
             expectCursor(fixture, "after selecting into the block", at("header") + 6);
@@ -1915,6 +1926,8 @@ public:
             fixture.select(at("<<<<<<< ours") + 2, at("<<<<<<< ours") + 2);
             expectCursor(fixture, "after placing the cursor on the row", at("bridge"));
             CHECK(fixture.text() == text);
+            expectLook(fixture, "after keyboard navigation", markedFolded());
+            checkUnchanged(fixture, before);
         });
         suite.run("TRUCE-0179 a hand edit that touches a folded line shows it and undo folds it again", [] {
             Fixture fixture(test_support::markedFile());
