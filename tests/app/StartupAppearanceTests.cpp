@@ -216,7 +216,14 @@ int main(int argc, char **argv)
         CHECK(state.value("displayName") == "Branch Truce");
     });
     suite.run("TRUCE-0248 an installed application icon is preferred over the bundled symbol", [&] {
+        QTemporaryDir dataDirs;
+        CHECK(dataDirs.isValid());
+        isolateIconThemes(dataDirs.path());
         Launch launch(probe);
+        // Plain offscreen Qt exposes only :/icons. The KDE platform theme supplies
+        // the XDG icon search paths used by an installed desktop application.
+        launch.environment.insert("QT_QPA_PLATFORMTHEME", "kde");
+        launch.environment.insert("XDG_DATA_DIRS", dataDirs.path());
         installThemedApplicationIcon(launch.home.path() + "/data");
         const auto state = launch.appearance(binary);
         const auto icon = state.value("windowIcon").toObject();
