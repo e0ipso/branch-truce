@@ -28,8 +28,8 @@ class ConnectorBands : public QObject {
     BAND_PROPERTY(qreal, viewportHeight, ViewportHeight)
     BAND_PROPERTY(qreal, rule, Rule)
 #undef BAND_PROPERTY
-    Q_PROPERTY(TextBlocks *sourceBlocks READ sourceBlocks WRITE setSourceBlocks NOTIFY inputsChanged)
-    Q_PROPERTY(TextBlocks *resultBlocks READ resultBlocks WRITE setResultBlocks NOTIFY inputsChanged)
+    Q_PROPERTY(branch_truce::TextBlocks *sourceBlocks READ sourceBlocks WRITE setSourceBlocks NOTIFY inputsChanged)
+    Q_PROPERTY(branch_truce::TextBlocks *resultBlocks READ resultBlocks WRITE setResultBlocks NOTIFY inputsChanged)
     Q_PROPERTY(QVariantList bands READ bands NOTIFY changed)
     Q_PROPERTY(QVariantList visibleBands READ visibleBands NOTIFY changed)
 public:
