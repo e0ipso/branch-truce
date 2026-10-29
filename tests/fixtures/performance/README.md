@@ -47,20 +47,36 @@ new revision. Timing starts before `ApplicationController::editResult` and
 ends after processing queued Qt events. This includes the old lazy selected-file
 map conversion and its QML consumers. Initial construction is excluded.
 
-Build the controller in two existing, independently configured checkouts with
-matching Debug settings; then compile the *same* probe source against each
-checkout's generated coordinator test build flags and controller libraries:
+Configure two existing checkouts into fresh, independent build directories with
+matching Debug settings. Build the coordinator test target in each: its link
+dependencies include the controller libraries and the Qt-generated controller
+resource object in the current tree. Building `branch_truce_controller` alone
+does not produce that object. Compile the *same* probe source against each build's generated
+coordinator test flags and libraries:
 
 ```sh
-cmake --build "$BEFORE/build/desktop" --target branch_truce_controller --parallel 2
-cmake --build "$AFTER/build/desktop" --target branch_truce_controller --parallel 2
+cmake -S "$BEFORE" -B "$BEFORE_BUILD" -G 'Unix Makefiles' \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+  -DBRANCH_TRUCE_WARNINGS_AS_ERRORS=ON -DBRANCH_TRUCE_BUILD_DESKTOP=ON \
+  -DBRANCH_TRUCE_SANITIZERS=OFF
+cmake -S "$AFTER" -B "$AFTER_BUILD" -G 'Unix Makefiles' \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+  -DBRANCH_TRUCE_WARNINGS_AS_ERRORS=ON -DBRANCH_TRUCE_BUILD_DESKTOP=ON \
+  -DBRANCH_TRUCE_SANITIZERS=OFF
+cmake --build "$BEFORE_BUILD" --target branch_truce_coordinator_tests --parallel 2
+cmake --build "$AFTER_BUILD" --target branch_truce_coordinator_tests --parallel 2
 python3 "$AFTER/tests/performance/build-accepted-edit-probe.py" "$BEFORE" \
-  "$AFTER/tests/performance/AcceptedEditProbe.cpp" /tmp/accepted-before
+  "$AFTER/tests/performance/AcceptedEditProbe.cpp" /tmp/accepted-before "$BEFORE_BUILD"
 python3 "$AFTER/tests/performance/build-accepted-edit-probe.py" "$AFTER" \
-  "$AFTER/tests/performance/AcceptedEditProbe.cpp" /tmp/accepted-after
+  "$AFTER/tests/performance/AcceptedEditProbe.cpp" /tmp/accepted-after "$AFTER_BUILD"
 /tmp/accepted-before
 /tmp/accepted-after
 ```
+
+Use absolute paths for the checkout and build variables. The build directory
+argument is optional and defaults to `CHECKOUT/build/desktop`.
+Keep the source checkouts and generated builds paired; the helper uses the build's
+absolute compiler flags and link inputs.
 
 On the development host, the historical tree `a3a3ff3883471d87f64d81f54c33a8cadaa69a55`
 (preceding the selected-file change) and the current tree were measured

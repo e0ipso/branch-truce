@@ -5,10 +5,11 @@ import shlex
 import subprocess
 import sys
 
-if len(sys.argv) != 4:
-    sys.exit("usage: build-accepted-edit-probe.py CHECKOUT SOURCE OUTPUT")
-root, source, output = map(pathlib.Path, sys.argv[1:])
-build_tests = root / "build/desktop/tests"
+if len(sys.argv) not in (4, 5):
+    sys.exit("usage: build-accepted-edit-probe.py CHECKOUT SOURCE OUTPUT [BUILD_DIR]")
+root, source, output = map(pathlib.Path, sys.argv[1:4])
+build = pathlib.Path(sys.argv[4]) if len(sys.argv) == 5 else root / "build/desktop"
+build_tests = build.resolve() / "tests"
 flags_file = build_tests / "CMakeFiles/branch_truce_coordinator_tests.dir/flags.make"
 flags = {}
 for line in flags_file.read_text().splitlines():
