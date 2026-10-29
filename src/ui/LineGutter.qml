@@ -202,7 +202,8 @@ Item {
                 readonly property var modelData: gutter.rows[index] || gutter.noRow
                 readonly property int line: modelData.number
                 readonly property string kind: gutter.marks.gaps[line] ? "removed" : ""
-                anchors.right: parent.right
+                // Repeater detaches delegates before destroying them.
+                anchors.right: parent ? parent.right : undefined
                 y: modelData.top - height / 2
                 text: kind.length > 0 ? DiffStyle.glyph(kind) : ""
                 visible: text.length > 0

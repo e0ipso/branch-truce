@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <optional>
 #include <QClipboard>
 #include <QColor>
@@ -65,6 +66,27 @@ public:
         previousHeaderHandler = qInstallMessageHandler(headerWarningHandler);
     }
     ~HeaderWarningCapture() { qInstallMessageHandler(previousHeaderHandler); }
+};
+
+std::atomic_int gutterAnchorErrors{0};
+QtMessageHandler previousGutterHandler = nullptr;
+
+void gutterWarningHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
+{
+    if (message.contains(QStringLiteral("LineGutter.qml"))
+        && message.contains(QStringLiteral("Cannot read property 'right' of null"))) ++gutterAnchorErrors;
+    if (previousGutterHandler) previousGutterHandler(type, context, message);
+    else std::fprintf(stderr, "%s\n", qPrintable(message));
+}
+
+class GutterWarningCapture {
+public:
+    GutterWarningCapture()
+    {
+        gutterAnchorErrors = 0;
+        previousGutterHandler = qInstallMessageHandler(gutterWarningHandler);
+    }
+    ~GutterWarningCapture() { qInstallMessageHandler(previousGutterHandler); }
 };
 
 class Fixture {
@@ -1497,6 +1519,15 @@ public:
             expect("stage2", {"conflict"});
             expect("result", {"conflict", "removed"});
             expect("stage3", {"conflict"});
+            auto *slot = fixture.item("resultGutterMarkerSlot");
+            int gaps = 0;
+            for (auto *glyph : slot->childItems()) {
+                if (glyph->isVisible() && glyph->property("kind").toString() == "removed") {
+                    ++gaps;
+                    CHECK(std::abs(glyph->x() + glyph->width() - slot->width()) < 0.01);
+                }
+            }
+            CHECK(gaps > 0);
             // Taking the left side decides every region, and typing in an accepted line marks it manual.
             // The edited region shows its passage colours again; the right's extra line stays ignored.
             const auto revision = [&] { return QString::number(fixture.file().current().id); };
@@ -1517,6 +1548,24 @@ public:
             };
             settleFor("stage3 ignored tint", ignoredTinted);
             CHECK(ignoredTinted());
+        });
+        suite.run("gutter delegates detach without anchor errors", [] {
+            GutterWarningCapture warnings;
+            {
+                Fixture fixture;
+                settlePanes(fixture);
+                auto *gutter = fixture.item("resultGutter");
+                CHECK(qmlValue(gutter, QStringLiteral("rowSlots.count")).toInt() > 0);
+                qmlValue(gutter, QStringLiteral("rowSlots.clear()"));
+                CHECK(qmlValue(gutter, QStringLiteral("rowSlots.count")).toInt() == 0);
+                qmlValue(gutter, QStringLiteral("rows = []"));
+                qmlValue(gutter, QStringLiteral("invalidate()"));
+                settleFor("gutter rows restored", [&] {
+                    return qmlValue(gutter, QStringLiteral("rowSlots.count")).toInt() > 0;
+                });
+            }
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            CHECK(gutterAnchorErrors == 0);
         });
         suite.run("TRUCE-0143 a hand edit outside every region shows the neutral background, the m glyph and letter", [] {
             Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
