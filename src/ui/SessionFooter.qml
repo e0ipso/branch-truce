@@ -17,7 +17,9 @@ RowLayout {
         objectName: "sourceCommits"
         Layout.maximumWidth: sessionFooter.width / 2
         visible: sessionFooter.controller.loader.stage2.length > 0
-        text: sessionFooter.controller.loader.stage2 + " · " + sessionFooter.controller.loader.stage3
+        text: qsTr("%1: %2 · %3: %4").arg(sessionFooter.controller.loader.stage2)
+            .arg(sessionFooter.controller.loader.stage2ShortCommitId).arg(sessionFooter.controller.loader.stage3)
+            .arg(sessionFooter.controller.loader.stage3ShortCommitId)
     }
     PlainLabel {
         objectName: "workflowStatus"

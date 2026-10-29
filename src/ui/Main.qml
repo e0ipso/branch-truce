@@ -27,10 +27,6 @@ Kirigami.ApplicationWindow {
         if (controller.previewWholeFile(controller.selectedFileId, selectedFile.currentRevision, side))
             wholeFileDialog.open();
     }
-    // A source label with its commit id cut to 10 characters; the full id stays in the tooltip.
-    function shortCommit(label: string, commitId: string): string {
-        return commitId.length > 10 ? label.replace(commitId, commitId.slice(0, 10)) : label
-    }
     // The placeholder for a session with nothing to list: an empty session, an unsupported
     // operation and a failed open are three different messages.
     function sessionPlaceholderIcon(state: string): string {
@@ -156,11 +152,14 @@ Kirigami.ApplicationWindow {
                 Layout.fillWidth: true
                 visible: text.length > 0 && window.controller.loader.repositoryRoot.length > 0
                 text: {
-                    const parts = [window.controller.loader.operation]
-                    if (!window.controller.loader.opening && window.controller.files.totalFiles > 0)
-                        parts.push(qsTr("%1 files in this session · %2 resolved")
-                            .arg(window.controller.files.totalFiles).arg(window.controller.files.resolvedFiles))
-                    return parts.filter(part => part.length > 0).join(" · ")
+                    const operation = window.controller.loader.operation
+                    const count = window.controller.files.totalFiles
+                    if (window.controller.loader.opening || count <= 0)
+                        return operation
+                    const files = count === 1 ? qsTr("%n file in this session", "", count)
+                                              : qsTr("%n files in this session", "", count)
+                    const summary = qsTr("%1 · %2 resolved").arg(files).arg(window.controller.files.resolvedFiles)
+                    return operation.length > 0 ? qsTr("%1 · %2").arg(operation).arg(summary) : summary
                 }
                 elide: Text.ElideRight
                 font: Kirigami.Theme.smallFont
@@ -237,9 +236,9 @@ Kirigami.ApplicationWindow {
                             PlainLabel {
                                 objectName: "recoveryChoiceText-" + recoveryChoice.modelData.session
                                 Layout.fillWidth: true
-                                text: qsTr("Session %1, last changed %2").arg(recoveryChoice.modelData.session)
-                                    .arg(recoveryChoice.modelData.lastChanged)
-                                    + "\n" + qsTr("Edited files: %1").arg(recoveryChoice.modelData.paths.join(", "))
+                                text: qsTr("Session %1, last changed %2\nEdited files: %3")
+                                    .arg(recoveryChoice.modelData.session).arg(recoveryChoice.modelData.lastChanged)
+                                    .arg(recoveryChoice.modelData.paths.join(qsTr(", ")))
                                 wrapMode: Text.Wrap
                             }
                             Button {
@@ -258,8 +257,11 @@ Kirigami.ApplicationWindow {
                     visible: !window.controller.loader.opening
                         && window.controller.outsideAppFiles + window.controller.loadErrorFiles > 0
                     type: Kirigami.MessageType.Warning
-                    text: qsTr("%1 outside app · %2 load errors. These files remain outstanding. Select a file for its reason and handle it outside Branch Truce.")
-                        .arg(window.controller.outsideAppFiles).arg(window.controller.loadErrorFiles)
+                    text: qsTr("%1 · %2. These files remain outstanding. Select a file for its reason and handle it outside Branch Truce.")
+                        .arg(qsTr("%n outside app", "", window.controller.outsideAppFiles))
+                        .arg(window.controller.loadErrorFiles === 1
+                             ? qsTr("%n load error", "", window.controller.loadErrorFiles)
+                             : qsTr("%n load errors", "", window.controller.loadErrorFiles))
                 }
                 MainToolBar {
                     Layout.fillWidth: true
@@ -334,8 +336,8 @@ Kirigami.ApplicationWindow {
                             onPlainTextRequested: item => window.showPlainText(item)
                             iconName: window.selectedFile.statusIcon || ""
                             text: window.selectedFile.support === "unreadable" ? qsTr("Load error") : qsTr("Outside app")
-                            explanation: (window.selectedFile.supportDetail || "") + "\n\n"
-                                + qsTr("This file remains outstanding until it is handled outside Branch Truce.")
+                            explanation: qsTr("%1\n\nThis file remains outstanding until it is handled outside Branch Truce.")
+                                .arg(window.selectedFile.supportDetail || "")
                             helpfulAction: Kirigami.Action {
                                 text: qsTr("Review handoff…")
                                 icon.name: "merge"

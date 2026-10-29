@@ -33,6 +33,8 @@ class SessionLoader final : public QObject {
     Q_PROPERTY(QString stage3 READ stage3 NOTIFY launchChanged)
     Q_PROPERTY(QString stage2CommitId READ stage2CommitId NOTIFY launchChanged)
     Q_PROPERTY(QString stage3CommitId READ stage3CommitId NOTIFY launchChanged)
+    Q_PROPERTY(QString stage2ShortCommitId READ stage2ShortCommitId NOTIFY launchChanged)
+    Q_PROPERTY(QString stage3ShortCommitId READ stage3ShortCommitId NOTIFY launchChanged)
     Q_PROPERTY(QString workflow READ workflow CONSTANT)
 public:
     // What the loader needs from the window's other owners. A finished load
@@ -65,11 +67,13 @@ public:
     // Matching recovery sessions with app edits that blocked restoration at
     // this load: session, lastChanged and the display paths it edited.
     [[nodiscard]] QVariantList recoveryChoices() const;
-    // Each source's label, which already names its commit.
+    // The source roles and shortened commit IDs for display.
     [[nodiscard]] QString stage2() const;
     [[nodiscard]] QString stage3() const;
     [[nodiscard]] QString stage2CommitId() const;
     [[nodiscard]] QString stage3CommitId() const;
+    [[nodiscard]] QString stage2ShortCommitId() const;
+    [[nodiscard]] QString stage3ShortCommitId() const;
     [[nodiscard]] QString workflow() const;
     [[nodiscard]] const git::RepositoryContext &repository() const { return repository_; }
     // The file to select first once the load lists it; see openRepository.

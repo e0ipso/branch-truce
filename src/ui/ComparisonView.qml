@@ -396,8 +396,12 @@ ColumnLayout {
                     continue
                 decisions[line] = {
                     state: states.indexOf("manual") >= 0 ? "manual" : states.indexOf("accepted") >= 0 ? "accepted" : "ignored",
-                    label: sides.map(side => qsTr("%1 %2").arg(sideNames[side])
-                        .arg(stateNames[section.sides[side].region.state] || "")).join(", ")
+                    label: sides.length === 2
+                        ? qsTr("%1 %2, %3 %4").arg(sideNames[sides[0]])
+                            .arg(stateNames[section.sides[sides[0]].region.state] || "")
+                            .arg(sideNames[sides[1]]).arg(stateNames[section.sides[sides[1]].region.state] || "")
+                        : qsTr("%1 %2").arg(sideNames[sides[0]])
+                            .arg(stateNames[section.sides[sides[0]].region.state] || "")
                 }
             } else if (row > 0 && sides.length === 2 && section.sides.stage2.choice.combinationAvailable) {
                 if (!combinations[row])

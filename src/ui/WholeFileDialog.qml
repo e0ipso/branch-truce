@@ -60,8 +60,8 @@ PreviewDialog {
                     width: ListView.view.width
                     PlainLabel {
                         Layout.fillWidth: true
-                        text: wholeContribution.modelData.scope + "\n"
-                            + wholeContribution.modelData.beforeState + " → " + wholeContribution.modelData.afterState
+                        text: qsTr("%1\n%2 → %3").arg(wholeContribution.modelData.scope)
+                            .arg(wholeContribution.modelData.beforeState).arg(wholeContribution.modelData.afterState)
                         wrapMode: Text.Wrap
                     }
                     SnapshotPane {

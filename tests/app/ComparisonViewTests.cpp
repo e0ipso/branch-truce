@@ -844,6 +844,14 @@ public:
             QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
             CHECK(!recursiveHeaderWarning.load());
         });
+        suite.run("session subtitle uses singular and plural file counts", [] {
+            Fixture fixture;
+            auto *subtitle = fixture.item("repositorySubtitle");
+            CHECK(subtitle->property("text").toString().contains("1 file in this session"));
+            CHECK(fixture.controller.files()->appendFile(
+                FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+            settle([&] { return subtitle->property("text").toString().contains("2 files in this session"); });
+        });
         suite.run("TRUCE-0020 actual comparison keeps verified sources around the editable launch result", [] {
             const std::string launch = "manual launch UTF-8 \xc3\xa9 \xf0\x9f\x98\x80\n";
             Fixture fixture(test_support::choiceFile("left capture\n", "right capture\n", launch));

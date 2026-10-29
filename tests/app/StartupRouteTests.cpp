@@ -419,8 +419,8 @@ void ready(const Repository &repo, const QJsonObject &state, const QString &oper
     CHECK(file(state, "tracked.txt").value("support") == "supported");
     CHECK(file(state, "tracked.txt").value("text").toString().toUtf8() == repo.manual);
     CHECK(file(state, "tracked.txt").value("detail").toString().isEmpty());
-    CHECK(state.value("stage2").toString().contains(QString::fromLatin1(repo.main)));
-    CHECK(state.value("stage3").toString().contains(QString::fromLatin1(repo.side)));
+    CHECK(state.value("stage2CommitId").toString() == QString::fromLatin1(repo.main));
+    CHECK(state.value("stage3CommitId").toString() == QString::fromLatin1(repo.side));
 }
 } // namespace
 
@@ -1463,8 +1463,8 @@ public:
                 CHECK(expected.stage2->commitId == provenance.stage2CommitId);
                 CHECK(expected.stage3->commitId == provenance.stage3CommitId);
                 CHECK(expected.earlier->label == "Common earlier version");
-                CHECK(expected.stage2->label.starts_with(rebase ? "Current rebased state:" : "Current checkout:"));
-                CHECK(expected.stage3->label.starts_with(rebase ? "Commit being replayed:" : "Merged commit:"));
+                CHECK(expected.stage2->label.starts_with(rebase ? "Current rebased state" : "Current checkout"));
+                CHECK(expected.stage3->label.starts_with(rebase ? "Commit being replayed" : "Merged commit"));
                 const std::array<const SourceSnapshot *, 3> sources{
                     &*expected.earlier, &*expected.stage2, &*expected.stage3};
                 for (std::size_t i = 0; i < sources.size(); ++i) {
@@ -1609,11 +1609,11 @@ public:
             for (const auto &arguments : QList<QStringList>{{repo.root}, {repo.path("nested")}, {}}) {
                 const auto state = repo.launch(application, arguments, repo.path("nested"));
                 ready(repo, state, "Merge");
-                CHECK(state.value("stage2").toString().startsWith("Current checkout:"));
-                CHECK(state.value("stage3").toString().startsWith("Merged commit:"));
-                // The label names its commit once; the controller used to append the id again.
-                CHECK(state.value("stage2").toString().count(QString::fromLatin1(repo.main)) == 1);
-                CHECK(state.value("stage3").toString().count(QString::fromLatin1(repo.side)) == 1);
+                CHECK(state.value("stage2").toString() == "Current checkout");
+                CHECK(state.value("stage3").toString() == "Merged commit");
+                // Roles and full commit identities stay separate.
+                CHECK(state.value("stage2CommitId").toString() == QString::fromLatin1(repo.main));
+                CHECK(state.value("stage3CommitId").toString() == QString::fromLatin1(repo.side));
                 CHECK(file(state, "excluded.txt").value("support") == "supported");
             }
         });
@@ -1623,8 +1623,8 @@ public:
                 repo.conflict(operation);
                 const auto state = repo.launch(application, {repo.root});
                 ready(repo, state, "Rebase");
-                CHECK(state.value("stage2").toString().startsWith("Current rebased state:"));
-                CHECK(state.value("stage3").toString().startsWith("Commit being replayed:"));
+                CHECK(state.value("stage2").toString() == "Current rebased state");
+                CHECK(state.value("stage3").toString() == "Commit being replayed");
             }
         });
         suite.run("unsupported cherry-pick keeps the inventory outside app without side labels", [&] {

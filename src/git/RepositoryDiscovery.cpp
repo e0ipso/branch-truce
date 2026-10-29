@@ -325,10 +325,8 @@ bool RepositoryDiscovery::finish()
     auto &context = result.repository;
     if (context.operation == RepositoryOperation::Merge || context.operation == RepositoryOperation::Rebase) {
         const bool rebase = context.operation == RepositoryOperation::Rebase;
-        context.stage2 = {head, (rebase ? QStringLiteral("Current rebased state: ") : QStringLiteral("Current checkout: "))
-                                   + QString::fromLatin1(head)};
-        context.stage3 = {other, (rebase ? QStringLiteral("Commit being replayed: ") : QStringLiteral("Merged commit: "))
-                                    + QString::fromLatin1(other)};
+        context.stage2 = {head, rebase ? QStringLiteral("Current rebased state") : QStringLiteral("Current checkout")};
+        context.stage3 = {other, rebase ? QStringLiteral("Commit being replayed") : QStringLiteral("Merged commit")};
         context.baseCommitId = base;
         context.headName = headName;
         context.originalHead = originalHead;

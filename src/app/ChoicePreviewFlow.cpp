@@ -1,4 +1,5 @@
 #include "ChoicePreviewFlow.h"
+#include "SourceIdentity.h"
 #include "CommandGuard.h"
 #include "ResultEditorAdapter.h"
 #include "SessionModel.h"
@@ -195,8 +196,8 @@ QVariantMap ChoicePreviewFlow::choiceView(const ChoicePreview &preview, const Fi
     Sources sources(*file.snapshots());
     QStringList scopes;
     for (const auto &scope : preview.sourceOrder) {
-        scopes.push_back(rangeLabel(sideLabel(scope.side), sources.lines(scope.side), scope.range)
-            + QStringLiteral(" · ") + text(sources.at(scope.side).label));
+        scopes.push_back(tr("%1 · %2").arg(rangeLabel(sideLabel(scope.side), sources.lines(scope.side), scope.range),
+                sourceIdentity(text(sources.at(scope.side).label), sources.at(scope.side).commitId ? text(*sources.at(scope.side).commitId) : QString{})));
     }
     return {{QStringLiteral("before"), text(preview.before)},
         {QStringLiteral("replacement"), text(preview.replacement)},
@@ -217,7 +218,7 @@ QVariantMap ChoicePreviewFlow::nonConflictingView(const NonConflictingPreview &p
         for (const auto &source : change.sources) {
             const auto side = sideLabel(source.side);
             const auto &lines = sources.lines(source.side);
-            const auto label = text(sources.at(source.side).label);
+            const auto label = sourceIdentity(text(sources.at(source.side).label), sources.at(source.side).commitId ? text(*sources.at(source.side).commitId) : QString{});
             scopes.push_back(source.range.begin == source.range.end
                 ? tr("%1 deletion at line %2 · %3").arg(side).arg(lines.line(source.range.begin)).arg(label)
                 : tr("%1 lines %2–%3 · %4").arg(side).arg(lines.line(source.range.begin))
@@ -243,7 +244,7 @@ QVariantMap ChoicePreviewFlow::wholeFileView(const WholeFilePreview &preview, co
     const auto decisionLabel = [](const Decision &decision) {
         auto label = decision.value == DecisionValue::Accepted ? tr("accepted")
             : decision.value == DecisionValue::Ignored ? tr("ignored") : tr("undecided");
-        if (decision.order) label += tr(" · order %1").arg(*decision.order);
+        if (decision.order) label = tr("%1 · order %2").arg(label).arg(*decision.order);
         return label;
     };
     Sources sources(captured);
@@ -252,8 +253,8 @@ QVariantMap ChoicePreviewFlow::wholeFileView(const WholeFilePreview &preview, co
         const auto side = contribution.source.side;
         const auto &value = sources.at(side).worktree.utf8;
         contributions.push_back(QVariantMap{
-            {QStringLiteral("scope"), rangeLabel(sideLabel(side), sources.lines(side), contribution.source.range)
-                + QStringLiteral(" · ") + text(sources.at(side).label)},
+            {QStringLiteral("scope"), tr("%1 · %2").arg(rangeLabel(sideLabel(side), sources.lines(side), contribution.source.range),
+                sourceIdentity(text(sources.at(side).label), sources.at(side).commitId ? text(*sources.at(side).commitId) : QString{}))},
             {QStringLiteral("sourceText"), text(value.substr(contribution.source.range.begin,
                 contribution.source.range.end - contribution.source.range.begin))},
             {QStringLiteral("beforeState"), decisionLabel(contribution.before)},
@@ -264,14 +265,14 @@ QVariantMap ChoicePreviewFlow::wholeFileView(const WholeFilePreview &preview, co
     QVariantList differences;
     for (const auto &passage : preview.differences) {
         differences.push_back(QVariantMap{
-            {QStringLiteral("scope"), rangeLabel(tr("Current result"), before, passage.result)
-                + QStringLiteral(" → ") + rangeLabel(tr("Selected source"), replacement, passage.source)},
+            {QStringLiteral("scope"), tr("%1 → %2").arg(rangeLabel(tr("Current result"), before, passage.result),
+                rangeLabel(tr("Selected source"), replacement, passage.source))},
             {QStringLiteral("before"), text(preview.before.substr(passage.result.begin, passage.result.end - passage.result.begin))},
             {QStringLiteral("replacement"), text(preview.replacement.substr(passage.source.begin, passage.source.end - passage.source.begin))}});
     }
     return {{QStringLiteral("path"), owners_.displayPath(fileId_)},
         {QStringLiteral("side"), sideLabel(preview.side)},
-        {QStringLiteral("source"), text(selected->label) + QStringLiteral("\n") + text(selected->objectId)},
+        {QStringLiteral("source"), tr("%1\n%2").arg(sourceIdentity(text(selected->label), selected->commitId ? text(*selected->commitId) : QString{}), text(selected->objectId))},
         {QStringLiteral("before"), text(preview.before)}, {QStringLiteral("replacement"), text(preview.replacement)},
         {QStringLiteral("detail"), text(preview.detail)}, {QStringLiteral("contributions"), contributions},
         {QStringLiteral("differences"), differences},

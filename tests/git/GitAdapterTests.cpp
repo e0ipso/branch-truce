@@ -261,16 +261,16 @@ void checkOperationIdentity(const Result &result, const ConflictHistory &history
     CHECK(result.repository.unsupportedPaths.isEmpty() && result.repository.diagnostic.isEmpty());
     CHECK(result.repository.stage2.commitId == expectedHead && result.repository.stage3.commitId == history.side);
     CHECK(result.repository.baseCommitId == (earlier.isEmpty() ? history.base : earlier));
-    CHECK(result.repository.stage2.label.contains(QString::fromLatin1(expectedHead)));
-    CHECK(result.repository.stage3.label.contains(QString::fromLatin1(history.side)));
+    CHECK(!result.repository.stage2.label.contains(QString::fromLatin1(expectedHead)));
+    CHECK(!result.repository.stage3.label.contains(QString::fromLatin1(history.side)));
     if (operation == RepositoryOperation::Rebase) {
-        CHECK(result.repository.stage2.label.startsWith("Current rebased state:"));
-        CHECK(result.repository.stage3.label.startsWith("Commit being replayed:"));
+        CHECK(result.repository.stage2.label.startsWith("Current rebased state"));
+        CHECK(result.repository.stage3.label.startsWith("Commit being replayed"));
         CHECK(result.repository.headName == "refs/heads/side");
         CHECK(result.repository.originalHead == history.side && result.repository.onto == history.main);
     } else {
-        CHECK(result.repository.stage2.label.startsWith("Current checkout:"));
-        CHECK(result.repository.stage3.label.startsWith("Merged commit:"));
+        CHECK(result.repository.stage2.label.startsWith("Current checkout"));
+        CHECK(result.repository.stage3.label.startsWith("Merged commit"));
         CHECK(result.repository.headName.isEmpty() && result.repository.originalHead.isEmpty() && result.repository.onto.isEmpty());
     }
 }

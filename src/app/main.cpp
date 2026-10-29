@@ -118,6 +118,7 @@ int main(int argc, char *argv[])
                 {QStringLiteral("operation"), loader->operation()},
                 {QStringLiteral("detail"), loader->detail()},
                 {QStringLiteral("stage2"), loader->stage2()}, {QStringLiteral("stage3"), loader->stage3()},
+                {QStringLiteral("stage2CommitId"), loader->stage2CommitId()}, {QStringLiteral("stage3CommitId"), loader->stage3CommitId()},
                 {QStringLiteral("workflow"), loader->workflow()},
                 {QStringLiteral("resolved"), controller.files()->resolvedFiles()}, {QStringLiteral("files"), files}};
             QTextStream(stdout) << "BRANCH_TRUCE_SESSION=" << QJsonDocument(state).toJson(QJsonDocument::Compact) << Qt::endl;

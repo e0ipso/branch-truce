@@ -1,4 +1,5 @@
 #include "SessionLoader.h"
+#include "SourceIdentity.h"
 #include "ConflictCapture.h"
 #include "SessionCoordinator.h"
 #include "SessionModel.h"
@@ -28,13 +29,13 @@ SessionLoader::SessionLoader(SessionModel &files, SessionCoordinator &coordinato
 QString SessionLoader::stage2() const
 {
     if (!repository_.supported) return {};
-    return repository_.stage2.label;
+    return sourceRole(repository_.stage2.label, QString::fromLatin1(repository_.stage2.commitId));
 }
 
 QString SessionLoader::stage3() const
 {
     if (!repository_.supported) return {};
-    return repository_.stage3.label;
+    return sourceRole(repository_.stage3.label, QString::fromLatin1(repository_.stage3.commitId));
 }
 
 QString SessionLoader::stage2CommitId() const
@@ -48,6 +49,9 @@ QString SessionLoader::stage3CommitId() const
     if (!repository_.supported) return {};
     return QString::fromLatin1(repository_.stage3.commitId);
 }
+
+QString SessionLoader::stage2ShortCommitId() const { return shortId(stage2CommitId()); }
+QString SessionLoader::stage3ShortCommitId() const { return shortId(stage3CommitId()); }
 
 QString SessionLoader::workflow() const
 {

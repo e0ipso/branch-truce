@@ -1,5 +1,6 @@
 // SelectedFile keeps immutable sources indexed while projecting changed result revisions.
 #include "SelectedFile.h"
+#include "SourceIdentity.h"
 #include <algorithm>
 #include <set>
 
@@ -19,8 +20,11 @@ QString baseName(const std::string &path)
 QVariantMap sourceData(const std::optional<SourceSnapshot> &source)
 {
     if (!source) return {};
+    const auto commitId = source->commitId ? text(*source->commitId) : QString{};
     return {{QStringLiteral("available"), true}, {QStringLiteral("text"), text(source->worktree.utf8)},
-            {QStringLiteral("label"), text(source->label)}, {QStringLiteral("objectId"), text(source->objectId)},
+            {QStringLiteral("label"), sourceRole(text(source->label), commitId)},
+            {QStringLiteral("shortCommitId"), shortId(commitId)},
+            {QStringLiteral("shortObjectId"), shortId(text(source->objectId))}, {QStringLiteral("objectId"), text(source->objectId)},
             {QStringLiteral("commitId"), source->commitId ? text(*source->commitId) : QString{}},
             {QStringLiteral("mode"), text(source->mode)}};
 }

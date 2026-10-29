@@ -28,11 +28,15 @@ ColumnLayout {
     property string choiceEdge: ""
     property real choiceWidth: 0
     readonly property alias choiceSlot: choiceColumn
-    // Full identities remain in the labels and their elision tooltips.
+    // Full identities remain available in the tooltips and accessibility descriptions.
     readonly property string commitId: sourcePane.source.commitId || ""
     readonly property string fullIdentity: qsTr("Verified commit: %1\nCaptured blob: %2")
         .arg(sourcePane.commitId || qsTr("unavailable"))
         .arg(sourcePane.source.objectId || qsTr("unavailable"))
+    readonly property string displayIdentity: (sourcePane.source.shortCommitId || "").length > 0
+        ? qsTr("%1: %2").arg(sourcePane.source.label || qsTr("Source identity unavailable"))
+            .arg(sourcePane.source.shortCommitId)
+        : (sourcePane.source.label || qsTr("Source identity unavailable"))
     // byUser is set while the user scrolls the pane: dragging, flicking or the wheel, its
     // scroll bar, or keyboard focus in its text.
     signal lineHovered(int line)
@@ -41,10 +45,10 @@ ColumnLayout {
     PaneHeader {
         Layout.fillWidth: true
         titleName: sourcePane.paneName + "Label"
-        title: sourcePane.paneRole + " · "
-            + (sourcePane.source.label || qsTr("Source identity unavailable"))
+        title: qsTr("%1 · %2").arg(sourcePane.paneRole)
+            .arg(sourcePane.displayIdentity)
         identityName: sourcePane.paneName + "Identity"
-        identity: qsTr("Captured blob: %1").arg(sourcePane.source.objectId || qsTr("unavailable"))
+        identity: qsTr("Captured blob: %1").arg(sourcePane.source.shortObjectId || qsTr("unavailable"))
         description: sourcePane.fullIdentity
     }
     Item {
@@ -114,7 +118,7 @@ ColumnLayout {
                 leftPadding: sourceGutter.width + Kirigami.Units.smallSpacing
                 width: sourcePane.wrapLines ? sourceViewport.width : implicitWidth
                 wrapMode: sourcePane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
-                Accessible.name: sourcePane.paneRole + " · " + (sourcePane.source.label || "")
+                Accessible.name: qsTr("%1 · %2").arg(sourcePane.paneRole).arg(sourcePane.displayIdentity)
                 Component.onCompleted: sourcePane.editorCompleted()
             }
             LineGutter {
