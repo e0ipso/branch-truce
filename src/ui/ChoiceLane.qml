@@ -48,13 +48,13 @@ Item {
         model: lane.rows
         delegate: ChoiceButtons {
             id: row
-            readonly property real top: lane.lineTop(row.modelData.line, lane.layoutRevision, lane.pane.viewport.contentY)
+            readonly property real rowTop: lane.lineTop(row.modelData.line, lane.layoutRevision, lane.pane.viewport.contentY)
             edge: lane.pane.choiceEdge
             rowHeight: lane.rowHeight
             choosing: lane.choosing
             x: edge === "right" ? lane.width - width - Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing
-            y: top
-            visible: top >= 0 && top + lane.rowHeight <= lane.height
+            y: rowTop
+            visible: rowTop >= 0 && rowTop + lane.rowHeight <= lane.height
             onHovered: target => lane.hovered(target)
             onFocused: (target, active) => lane.focused(target, active)
             onChosen: (target, action) => lane.chosen(target, action)
