@@ -2093,6 +2093,8 @@ public:
             const auto button = "resultTakeBoth-" + id;
             for (const bool leftFirst : {true, false}) {
                 const auto entry = std::string(leftFirst ? "resultTakeBothLeftFirst-" : "resultTakeBothRightFirst-") + id;
+                // Closing the preview can move this row while its modal overlay fades out.
+                test_support::waitForLayout(fixture.window, QString::fromStdString(button), 60);
                 fixture.clickMenuEntry(button.c_str(), entry.c_str());
                 // The order goes through the same replacement preview as the source gutters' menus.
                 auto *dialog = fixture.object("replacementDialog");
@@ -2104,6 +2106,8 @@ public:
                     throw std::runtime_error("the " + entry + " preview replaces with " + replacement.toStdString());
                 CHECK(QMetaObject::invokeMethod(dialog, "reject"));
                 CHECK(fixture.controller.commandPreview().isEmpty());
+                // Rejection clears the preview immediately; the modal closes asynchronously.
+                settle([&] { return !dialog->property("visible").toBool(); });
                 checkUnchanged(fixture, before);
             }
             // Hiding the source choices hides Take both too; the row stays.
