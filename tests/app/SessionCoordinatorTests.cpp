@@ -472,16 +472,16 @@ public:
         test("TRUCE-0177 deciding both sides of a marked section removes its marker lines from the shown result", [] {
             RegionView view(test_support::markedFile());
             auto file = view.file();
-            const auto preview = [&](const char *side, const char *action) {
+            const auto preview = [&](const char *side, ChoicePreviewFlow::Action action) {
                 return view.controller.previewChoice("choices", file->currentRevision(),
-                                                     regionId(file, side, "section", 2), QString::fromLatin1(action));
+                                                     regionId(file, side, "section", 2), action);
             };
-            CHECK(preview("stage2", "accept"));
+            CHECK(preview("stage2", ChoicePreviewFlow::Action::Accept));
             CHECK(view.controller.commandMessage() == "Accept changes only this scope and leaves the other side undecided.");
             CHECK(view.controller.applyChoice());
             file = view.file();
             CHECK(file->resultText() == QString::fromStdString(test_support::markedText()));
-            CHECK(preview("stage3", "ignore"));
+            CHECK(preview("stage3", ChoicePreviewFlow::Action::Ignore));
             CHECK(view.controller.commandMessage().contains("marker lines and ignored text are removed"));
             CHECK(view.controller.applyChoice());
             file = view.file();

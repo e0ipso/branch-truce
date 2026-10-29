@@ -1,4 +1,5 @@
 #pragma once
+#include <QtQml/qqmlregistration.h>
 #include "SyntaxHighlighting.h"
 #include "WordDifferenceDecorations.h"
 #include <QColor>
@@ -23,7 +24,11 @@ class SessionModel;
 // word-level differences to the result and source panes.
 class ResultEditorAdapter final : public QObject {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Owned by ApplicationController")
 public:
+    enum class ClipboardAction { Copy, Cut, Paste, SelectAll };
+    Q_ENUM(ClipboardAction)
     // Where a newly loaded file puts its cursor: the keys of editorPlacement,
     // with utf16Begin as the cursor when it is not negative.
     using Placement = std::function<QVariantMap(const FileSession *file, const QString &loaded)>;
@@ -39,7 +44,7 @@ public:
     void attachSource(QObject *editor);
     void setSyntaxFileName(const QString &fileName);
     void setSyntaxBackground(const QColor &background);
-    bool clipboard(const QString &action);
+    bool clipboard(ClipboardAction action);
     // Loads the selected file's text, or its pending draft, into the editor.
     void sync();
 

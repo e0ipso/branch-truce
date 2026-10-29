@@ -2,6 +2,7 @@ qt_add_qml_module(branch_truce_ui STATIC
     URI BranchTruce VERSION 1.0
     OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/BranchTruce"
     IMPORTS BranchTruce.App
+    IMPORT_PATH "${PROJECT_BINARY_DIR}/src/app"
     QML_FILES
         Main.qml
         ComparisonView.qml

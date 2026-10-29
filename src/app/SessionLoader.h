@@ -1,4 +1,5 @@
 #pragma once
+#include <QtQml/qqmlregistration.h>
 #include "MergetoolSession.h"
 #include "RecoveryRestore.h"
 #include "git/ConflictClassifier.h"
@@ -20,6 +21,8 @@ class SessionModel;
 // until the session is ready.
 class SessionLoader final : public QObject {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Owned by ApplicationController")
     Q_PROPERTY(QString startupState READ startupState NOTIFY launchChanged)
     Q_PROPERTY(bool opening READ opening NOTIFY launchChanged)
     Q_PROPERTY(QString repositoryRoot READ repositoryRoot NOTIFY launchChanged)

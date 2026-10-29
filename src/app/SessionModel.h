@@ -1,4 +1,5 @@
 #pragma once
+#include <QtQml/qqmlregistration.h>
 
 #include "core/SessionState.h"
 #include "core/EditingCommands.h"
@@ -23,6 +24,8 @@ struct RecoveryRestore;
 
 class SessionModel final : public QAbstractListModel {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Owned by ApplicationController")
     Q_PROPERTY(int totalFiles READ totalFiles NOTIFY summaryChanged)
     Q_PROPERTY(int resolvedFiles READ resolvedFiles NOTIFY summaryChanged)
     Q_PROPERTY(bool canFinish READ canFinish NOTIFY summaryChanged)

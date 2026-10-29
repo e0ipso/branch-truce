@@ -8,10 +8,10 @@ import org.kde.kirigami as Kirigami
 
 Kirigami.ApplicationWindow {
     id: window
-    required property var controller
+    required property ApplicationController controller
     readonly property SelectedFile selectedFile: controller.selectedFile
     readonly property bool supportedSelection: selectedFile.support === "supported"
-    function choose(target: string, action: string): void {
+    function choose(target: string, action: int): void {
         if (!controller.previewChoice(controller.selectedFileId, selectedFile.currentRevision, target, action))
             return;
         if (controller.commandPreview.confirmationRequired)
@@ -19,11 +19,11 @@ Kirigami.ApplicationWindow {
         else
             controller.applyChoice(false);
     }
-    function chooseNonConflicting(scope: string): void {
+    function chooseNonConflicting(scope: int): void {
         if (controller.previewNonConflicting(controller.selectedFileId, selectedFile.currentRevision, scope))
             nonConflictingDialog.open();
     }
-    function chooseWholeFile(side: string): void {
+    function chooseWholeFile(side: int): void {
         if (controller.previewWholeFile(controller.selectedFileId, selectedFile.currentRevision, side))
             wholeFileDialog.open();
     }

@@ -190,7 +190,7 @@ bool ApplicationController::commandResult(Transition result)
 }
 
 bool ApplicationController::previewChoice(const QString &fileId, const QString &revision,
-                                         const QString &target, const QString &action)
+                                         const QString &target, ChoicePreviewFlow::Action action)
 {
     return choices_.preview(ChoicePreviewFlow::Scope::Choice, fileId, revision, action, target);
 }
@@ -205,7 +205,7 @@ QVariantMap ApplicationController::nonConflictingPreview() const
     return choices_.view(ChoicePreviewFlow::Scope::NonConflicting);
 }
 
-bool ApplicationController::previewNonConflicting(const QString &fileId, const QString &revision, const QString &scope)
+bool ApplicationController::previewNonConflicting(const QString &fileId, const QString &revision, ChoicePreviewFlow::NonConflicting scope)
 {
     return choices_.preview(ChoicePreviewFlow::Scope::NonConflicting, fileId, revision, scope);
 }
@@ -220,7 +220,7 @@ QVariantMap ApplicationController::wholeFilePreview() const
     return choices_.view(ChoicePreviewFlow::Scope::WholeFile);
 }
 
-bool ApplicationController::previewWholeFile(const QString &fileId, const QString &revision, const QString &side)
+bool ApplicationController::previewWholeFile(const QString &fileId, const QString &revision, ChoicePreviewFlow::Side side)
 {
     return choices_.preview(ChoicePreviewFlow::Scope::WholeFile, fileId, revision, side);
 }
@@ -554,7 +554,7 @@ void ApplicationController::setSyntaxBackground(const QColor &background)
     editor_.setSyntaxBackground(background);
 }
 
-bool ApplicationController::resultClipboard(const QString &action)
+bool ApplicationController::resultClipboard(ResultEditorAdapter::ClipboardAction action)
 {
     return editor_.clipboard(action);
 }
@@ -599,7 +599,7 @@ bool ApplicationController::toggleFileList()
     return preserved;
 }
 
-bool ApplicationController::navigate(const QString &mode, int direction)
+bool ApplicationController::navigate(FileNavigator::Mode mode, int direction)
 {
     return navigator_.navigate(mode, direction);
 }

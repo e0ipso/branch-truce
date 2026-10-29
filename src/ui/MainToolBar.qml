@@ -3,11 +3,12 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import org.kde.kirigami as Kirigami
 
 Kirigami.ActionToolBar {
     id: mainToolBar
-    required property var controller
+    required property ApplicationController controller
     signal handoffRequested()
     // The selected file's undecided choices; the stepper steps through them.
     readonly property int undecided: {
@@ -28,14 +29,14 @@ Kirigami.ActionToolBar {
             text: qsTr("Previous difference")
             icon.name: "go-previous"
             iconOnly: true
-            onTriggered: mainToolBar.controller.navigate("difference", -1)
+            onTriggered: mainToolBar.controller.navigate(FileNavigator.Difference, -1)
         },
         NamedAction {
             controlName: "nextDifference"
             text: qsTr("Next difference")
             icon.name: "go-next"
             iconOnly: true
-            onTriggered: mainToolBar.controller.navigate("difference", 1)
+            onTriggered: mainToolBar.controller.navigate(FileNavigator.Difference, 1)
         },
         NamedAction {
             controlName: "previousUndecided"
@@ -43,7 +44,7 @@ Kirigami.ActionToolBar {
             icon.name: "arrow-up"
             iconOnly: true
             enabled: mainToolBar.undecided > 0
-            onTriggered: mainToolBar.controller.navigate("undecided", -1)
+            onTriggered: mainToolBar.controller.navigate(FileNavigator.Undecided, -1)
         },
         // The count of undecided choices left in the selected file. Clicking it goes to the
         // next one, and it drops as choices are decided.
@@ -56,7 +57,7 @@ Kirigami.ActionToolBar {
             icon.name: "vcs-conflicting"
             displayHint: Kirigami.DisplayHint.KeepVisible
             enabled: mainToolBar.undecided > 0
-            onTriggered: mainToolBar.controller.navigate("undecided", 1)
+            onTriggered: mainToolBar.controller.navigate(FileNavigator.Undecided, 1)
         },
         NamedAction {
             controlName: "nextUndecided"
@@ -64,7 +65,7 @@ Kirigami.ActionToolBar {
             icon.name: "arrow-down"
             iconOnly: true
             enabled: mainToolBar.undecided > 0
-            onTriggered: mainToolBar.controller.navigate("undecided", 1)
+            onTriggered: mainToolBar.controller.navigate(FileNavigator.Undecided, 1)
         },
         MenuAction {
             controlName: "navigateMenu"
@@ -75,25 +76,25 @@ Kirigami.ActionToolBar {
                 controlName: "previousUnfinished"
                 text: qsTr("Previous unfinished file")
                 icon.name: "go-previous-skip"
-                onTriggered: mainToolBar.controller.navigate("unfinished", -1)
+                onTriggered: mainToolBar.controller.navigate(FileNavigator.Unfinished, -1)
             }
             MenuEntry {
                 controlName: "nextUnfinished"
                 text: qsTr("Next unfinished file")
                 icon.name: "go-next-skip"
-                onTriggered: mainToolBar.controller.navigate("unfinished", 1)
+                onTriggered: mainToolBar.controller.navigate(FileNavigator.Unfinished, 1)
             }
             MenuEntry {
                 controlName: "previousSavedOrReviewed"
                 text: qsTr("Previous saved or reviewed")
                 icon.name: "go-up"
-                onTriggered: mainToolBar.controller.navigate("saved-or-reviewed", -1)
+                onTriggered: mainToolBar.controller.navigate(FileNavigator.SavedOrReviewed, -1)
             }
             MenuEntry {
                 controlName: "nextSavedOrReviewed"
                 text: qsTr("Next saved or reviewed")
                 icon.name: "go-down"
-                onTriggered: mainToolBar.controller.navigate("saved-or-reviewed", 1)
+                onTriggered: mainToolBar.controller.navigate(FileNavigator.SavedOrReviewed, 1)
             }
         },
         // Checked while the list shows; the name stays "Show file list" as the text changes.

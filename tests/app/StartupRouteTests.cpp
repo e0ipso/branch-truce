@@ -1135,7 +1135,7 @@ public:
                 CHECK(!controller.redo(id, QString::number(failed.current().id)));
                 const auto target = test_support::choiceTarget(failed, SourceSide::Stage2, ChoiceScope::Section);
                 CHECK(!controller.previewChoice(id, QString::number(failed.current().id),
-                    QString::fromStdString(target.source.contributionId), "accept"));
+                    QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::Accept));
                 const auto preview = previewChoice(failed, failed.current().id, target.source.contributionId, ChoiceAction::Accept);
                 CHECK(model->applyChoice(failed.id(), preview, true) == Transition::Blocked);
                 CHECK(model->replaceDraft(failed.id(), failed.current().id, {"forbidden", {}, 0}) == Transition::Blocked);
@@ -1148,7 +1148,7 @@ public:
                 const auto before = healthy.current().draft;
                 const auto healthyTarget = test_support::choiceTarget(healthy, SourceSide::Stage2, ChoiceScope::Line);
                 CHECK(controller.previewChoice(healthyId, QString::number(healthy.current().id),
-                    QString::fromStdString(healthyTarget.source.contributionId), "accept"));
+                    QString::fromStdString(healthyTarget.source.contributionId), ChoicePreviewFlow::Action::Accept));
                 CHECK(controller.applyChoice(true));
                 const auto chosen = healthy.current().draft;
                 CHECK(chosen != before && chosen.text == before.text);
@@ -1194,7 +1194,7 @@ public:
                 CHECK(controller.selectedFile()->choices().isEmpty());
                 CHECK(!controller.selectedFile()->choiceNotice().isEmpty());
                 CHECK(!controller.previewChoice(id, QString::number(restored.current().id),
-                    QString::fromStdString(target.source.contributionId), "accept"));
+                    QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::Accept));
                 CHECK(controller.editResult(id, QString::number(restored.current().id), 0, 0, "legacy manual edit\n"));
                 CHECK(restored.current().draft.decisions == vocabulary);
                 CHECK(controller.undo(id, QString::number(restored.current().id)));

@@ -3,12 +3,13 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 
 Menu {
     id: resultMenu
     objectName: "resultContextMenu"
-    required property var controller
+    required property ApplicationController controller
     required property TextArea editor
     required property EditActions edits
     MenuItem {
@@ -26,7 +27,7 @@ Menu {
         icon.name: "edit-cut"
         enabled: !!resultMenu.controller.resultEditable && !!resultMenu.controller.resultHasSelection
             && !resultMenu.editor.inputMethodComposing
-        onTriggered: resultMenu.controller.resultClipboard("cut")
+        onTriggered: resultMenu.controller.resultClipboard(ResultEditorAdapter.Cut)
     }
     MenuItem {
         objectName: "resultMenuCopy"
@@ -40,6 +41,6 @@ Menu {
         objectName: "resultMenuSelectAll"
         text: qsTr("Select all")
         icon.name: "edit-select-all"
-        onTriggered: resultMenu.controller.resultClipboard("selectAll")
+        onTriggered: resultMenu.controller.resultClipboard(ResultEditorAdapter.SelectAll)
     }
 }

@@ -2,13 +2,14 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 Kirigami.Dialog {
     id: nonConflictingDialog
-    required property var controller
+    required property ApplicationController controller
     objectName: "nonConflictingDialog"
     title: qsTr("Apply non-conflicting changes · %1").arg(nonConflictingDialog.controller.nonConflictingPreview.scope || "")
     preferredWidth: Kirigami.Units.gridUnit * 42

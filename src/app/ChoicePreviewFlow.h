@@ -1,4 +1,5 @@
 #pragma once
+#include <QtQml/qqmlregistration.h>
 #include "core/EditingCommands.h"
 #include <QObject>
 #include <QString>
@@ -17,8 +18,18 @@ class TextPositions;
 // file from one side. One preview is pending at a time.
 class ChoicePreviewFlow final : public QObject {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Owned by ApplicationController")
 public:
     enum class Scope { Choice, NonConflicting, WholeFile };
+    Q_ENUM(Scope)
+    enum class Action { Accept, Ignore, ResolveUsingSide, CombineLeftFirst, CombineRightFirst };
+    Q_ENUM(Action)
+    enum class NonConflicting { LeftChanges, RightChanges, BothChanges };
+    Q_ENUM(NonConflicting)
+    enum class Side { LeftSide, RightSide };
+    Q_ENUM(Side)
+    using Option = std::variant<Action, NonConflicting, Side>;
     // What the flow needs from the window.
     struct Owners {
         std::function<QString()> selectedFileId;
@@ -32,12 +43,10 @@ public:
     };
     ChoicePreviewFlow(SessionModel &files, ResultEditorAdapter &editor, Owners owners, QObject *parent = nullptr);
 
-    // Replaces any pending preview. option is the choice action (accept,
-    // ignore, resolve, left-first or right-first) for Choice, with target the
-    // choice's contribution ID; left, right or both for NonConflicting; left
-    // or right for WholeFile. False when nothing is left pending.
+    // Replaces any pending preview. The option must match the scope, with target
+    // the choice's contribution ID for Choice. False when nothing is left pending.
     bool preview(Scope scope, const QString &fileId, const QString &revision,
-                 const QString &option, const QString &target = {});
+                 Option option, const QString &target = {});
     // Applies the pending preview of scope to the selected file. confirm
     // allows a replacement the preview asked to confirm.
     bool apply(Scope scope, bool confirm);

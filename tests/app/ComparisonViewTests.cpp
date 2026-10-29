@@ -1038,7 +1038,7 @@ public:
             CHECK(!fixture.item("resultMenuPaste")->isEnabled());
             CHECK(QMetaObject::invokeMethod(fixture.object("resultContextMenu"), "close"));
             settle([&] { return !fixture.object("resultContextMenu")->property("visible").toBool(); });
-            CHECK(!fixture.controller.resultClipboard("paste"));
+            CHECK(!fixture.controller.resultClipboard(ResultEditorAdapter::ClipboardAction::Paste));
             fixture.key(Qt::Key_V, Qt::ControlModifier);
             CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
             QGuiApplication::clipboard()->clear();
@@ -1046,18 +1046,18 @@ public:
         suite.run("TRUCE-0020 clipboard menus and shortcuts preserve atomic history and recovery", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
             const auto initial = fixture.file().current();
-            CHECK(fixture.controller.resultClipboard("selectAll"));
-            CHECK(fixture.controller.resultClipboard("copy"));
+            CHECK(fixture.controller.resultClipboard(ResultEditorAdapter::ClipboardAction::SelectAll));
+            CHECK(fixture.controller.resultClipboard(ResultEditorAdapter::ClipboardAction::Copy));
             CHECK(QGuiApplication::clipboard()->text() == "original\n" && fixture.file().current().id == initial.id);
             QGuiApplication::clipboard()->setText(QString::fromUtf8("paste\t\xf0\x9f\x98\x80\n"));
-            CHECK(fixture.controller.resultClipboard("paste"));
+            CHECK(fixture.controller.resultClipboard(ResultEditorAdapter::ClipboardAction::Paste));
             const auto pasted = fixture.file().current();
             CHECK(pasted.id == initial.id + 1 && pasted.draft.text == "paste\t\xf0\x9f\x98\x80\n");
             fixture.checkRecovered(pasted.draft);
             fixture.select(0, 5);
             fixture.key(Qt::Key_C, Qt::ControlModifier);
             CHECK(QGuiApplication::clipboard()->text() == "paste" && fixture.file().current().id == pasted.id);
-            CHECK(fixture.controller.resultClipboard("cut"));
+            CHECK(fixture.controller.resultClipboard(ResultEditorAdapter::ClipboardAction::Cut));
             const auto cut = fixture.file().current();
             CHECK(cut.id == pasted.id + 1 && cut.draft.text == "\t\xf0\x9f\x98\x80\n");
             fixture.checkRecovered(cut.draft);
@@ -1093,8 +1093,11 @@ public:
             fixture.key(Qt::Key_Z, Qt::ControlModifier);
             CHECK(fixture.file().current().draft == before.draft);
         });
-        for (const auto &scope : {QStringLiteral("left"), QStringLiteral("right"), QStringLiteral("both")}) {
-            suite.run("TRUCE-0018 batch preview identifies its file and source scope without changing another file " + scope.toStdString(), [=] {
+        for (const auto &[scopeName, scope] : {
+                 std::pair{QStringLiteral("left"), ChoicePreviewFlow::NonConflicting::LeftChanges},
+                 std::pair{QStringLiteral("right"), ChoicePreviewFlow::NonConflicting::RightChanges},
+                 std::pair{QStringLiteral("both"), ChoicePreviewFlow::NonConflicting::BothChanges}}) {
+            suite.run("TRUCE-0018 batch preview identifies its file and source scope without changing another file " + scopeName.toStdString(), [=] {
                 Fixture fixture;
                 auto captured = *test_support::batchFile().snapshots();
                 captured.path = "other.txt";
@@ -1104,11 +1107,11 @@ public:
                 CHECK(fixture.controller.previewNonConflicting("choices", "1", scope));
                 const auto preview = fixture.controller.nonConflictingPreview();
                 CHECK(preview.value("path").toString() == "choices.txt");
-                CHECK(preview.value("scope").toString() == (scope == "left" ? "Left" : scope == "right" ? "Right" : "Left and Right"));
-                CHECK(preview.value("changes").toList().size() == (scope == "both" ? 2 : 1));
+                CHECK(preview.value("scope").toString() == (scopeName == "left" ? "Left" : scopeName == "right" ? "Right" : "Left and Right"));
+                CHECK(preview.value("changes").toList().size() == (scopeName == "both" ? 2 : 1));
                 for (const auto &change : preview.value("changes").toList()) {
                     const auto label = change.toMap().value("scope").toString();
-                    CHECK(label.startsWith(scope == "right" ? "Right" : "Left") || (scope == "both" && label.startsWith("Right")));
+                    CHECK(label.startsWith(scopeName == "right" ? "Right" : "Left") || (scopeName == "both" && label.startsWith("Right")));
                 }
                 CHECK(fixture.controller.applyNonConflicting());
                 CHECK(fixture.controller.files()->file("other")->current().id == other.id);
@@ -1127,10 +1130,11 @@ public:
                 const auto open = [&] {
                     if (operation == 0)
                         CHECK(QMetaObject::invokeMethod(fixture.window, "choose", Q_ARG(QString, QString::fromStdString(target.source.contributionId)),
-                            Q_ARG(QString, QStringLiteral("right-first"))));
+                            Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Action::CombineRightFirst))));
                     else
                         CHECK(QMetaObject::invokeMethod(fixture.window, operation == 1 ? "chooseNonConflicting" : "chooseWholeFile",
-                            Q_ARG(QString, operation == 1 ? QStringLiteral("both") : QStringLiteral("right"))));
+                            Q_ARG(int, operation == 1 ? static_cast<int>(ChoicePreviewFlow::NonConflicting::BothChanges)
+                                : static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
                 };
                 const auto apply = [&] { return operation == 0 ? fixture.controller.applyChoice(true)
                     : operation == 1 ? fixture.controller.applyNonConflicting() : fixture.controller.applyWholeFile(); };
@@ -1440,7 +1444,7 @@ public:
             // Taking the left side decides every region, and typing in an accepted line marks it manual.
             // The edited region shows its passage colours again; the right's extra line stays ignored.
             const auto revision = [&] { return QString::number(fixture.file().current().id); };
-            CHECK(fixture.controller.previewWholeFile("choices", revision(), "left"));
+            CHECK(fixture.controller.previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
             CHECK(fixture.controller.applyWholeFile());
             const auto at = static_cast<int>(fixture.text().indexOf("left first"));
             CHECK(fixture.controller.editResult("choices", revision(), at, at + 4, "LEFT"));
@@ -1462,7 +1466,7 @@ public:
             Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
                 "header\nright first\nshared\nright extra\ntail\n"));
             const auto revision = [&] { return QString::number(fixture.file().current().id); };
-            CHECK(fixture.controller.previewWholeFile("choices", revision(), "left"));
+            CHECK(fixture.controller.previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
             CHECK(fixture.controller.applyWholeFile());
             // Line 1 is the header both sides share, so no choice region covers it.
             const auto header = [&](const QString &background, const QString &glyph, const QString &letter) {
@@ -1506,7 +1510,8 @@ public:
             // regions on lines 4 and 6 stay undecided and keep their conflict marks. A
             // decided side is marked accepted or ignored on its source lines.
             struct Choice {
-                QString action;
+                QString name;
+                ChoicePreviewFlow::Action action;
                 QString leftState;
                 QString rightState;
                 bool resultChanges;
@@ -1517,23 +1522,23 @@ public:
             const std::array<Choice, 3> choices{{
                 // The left line now matches the result. The result line stays a
                 // conflict while the right contribution is undecided.
-                {"accept", "accepted", "undecided", true, regionMarks("accepted", "conflict", "conflict"),
+                {"accept", ChoicePreviewFlow::Action::Accept, "accepted", "undecided", true, regionMarks("accepted", "conflict", "conflict"),
                     regionMarks("conflict", "conflict", "conflict", leftLetters),
                     regionMarks("conflict", "conflict", "conflict")},
                 // Ignore leaves the result alone, so the left line still differs from it.
-                {"ignore", "ignored", "undecided", false, regionMarks("ignored", "conflict", "conflict"),
+                {"ignore", ChoicePreviewFlow::Action::Ignore, "ignored", "undecided", false, regionMarks("ignored", "conflict", "conflict"),
                     regionMarks("conflict", "conflict", "conflict", launchLetters),
                     regionMarks("conflict", "conflict", "conflict")},
                 // Resolving using the left side decides both contributions, so the
                 // result line is only a change against the right source.
-                {"resolve", "accepted", "ignored", true, regionMarks("accepted", "conflict", "conflict"),
+                {"resolve", ChoicePreviewFlow::Action::ResolveUsingSide, "accepted", "ignored", true, regionMarks("accepted", "conflict", "conflict"),
                     regionMarks("changed", "conflict", "conflict", leftLetters),
                     regionMarks("ignored", "conflict", "conflict")},
             }};
             for (const auto &choice : choices) {
                 // regionMarks gives an ignored line a tinted text and no background
                 // (TRUCE-0190), so undo also checks that the tint goes.
-                suite.run("TRUCE-0174 a scoped " + choice.action.toStdString()
+                suite.run("TRUCE-0174 a scoped " + choice.name.toStdString()
                     + " repaints all three panes and the provenance letters, and undo restores them", [choice, launchLetters] {
                     Fixture fixture;
                     settlePanes(fixture);
@@ -1560,14 +1565,14 @@ public:
                                 + region.value("state").toString().toStdString() + ", not " + expected.toStdString());
                     }
                     CHECK(chosen == 2);
-                    const auto when = "after " + choice.action.toStdString();
+                    const auto when = "after " + choice.name.toStdString();
                     expectMarks(fixture, when, "stage2", choice.stage2);
                     expectMarks(fixture, when, "result", choice.result);
                     expectMarks(fixture, when, "stage3", choice.stage3);
                     // Undo returns every pane to the undecided look of launch.
                     CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
                     CHECK(fixture.text() == before);
-                    const auto undone = "after undoing " + choice.action.toStdString();
+                    const auto undone = "after undoing " + choice.name.toStdString();
                     expectMarks(fixture, undone, "stage2", regionMarks("conflict", "conflict", "conflict"));
                     expectMarks(fixture, undone, "result", regionMarks("conflict", "conflict", "conflict", launchLetters));
                     expectMarks(fixture, undone, "stage3", regionMarks("conflict", "conflict", "conflict"));
@@ -1587,24 +1592,25 @@ public:
             // passages, and undo restores them. Accepting makes the left line equal to
             // the result, so its band goes, and the right line now differs from it.
             struct Choice {
-                QString action;
+                QString name;
+                ChoicePreviewFlow::Action action;
                 std::vector<std::string> left;
                 std::vector<std::string> right;
             };
             const std::array<Choice, 2> choices{{
-                {"accept", {"conflict 6-7>6-7"}, {"conflict 2-3>2-3", "conflict 4-5>4-5", "conflict 6-7>6-7"}},
-                {"ignore", {"ignored 2-3>2-3", "conflict 6-7>6-7"}, right},
+                {"accept", ChoicePreviewFlow::Action::Accept, {"conflict 6-7>6-7"}, {"conflict 2-3>2-3", "conflict 4-5>4-5", "conflict 6-7>6-7"}},
+                {"ignore", ChoicePreviewFlow::Action::Ignore, {"ignored 2-3>2-3", "conflict 6-7>6-7"}, right},
             }};
             for (const auto &choice : choices) {
                 const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
                 CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
                     QString::fromStdString(target.source.contributionId), choice.action));
                 CHECK(fixture.controller.applyChoice(true));
-                const auto when = "after " + choice.action.toStdString();
+                const auto when = "after " + choice.name.toStdString();
                 expectBands(fixture, when, "stage2", choice.left);
                 expectBands(fixture, when, "stage3", choice.right);
                 CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
-                const auto undone = "after undoing " + choice.action.toStdString();
+                const auto undone = "after undoing " + choice.name.toStdString();
                 expectBands(fixture, undone, "stage2", left);
                 expectBands(fixture, undone, "stage3", right);
             }
@@ -1899,7 +1905,7 @@ public:
             const auto &first = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
             const auto section = QString::fromStdString(first.section);
             CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                QString::fromStdString(first.source.contributionId), "resolve"));
+                QString::fromStdString(first.source.contributionId), ChoicePreviewFlow::Action::ResolveUsingSide));
             CHECK(fixture.controller.applyChoice(true));
             CHECK(!fixture.text().contains(QStringLiteral(">>>>>>> theirs\nbridge")));
             CHECK(fixture.controller.selectedFile()->markerBlocks().size() == 1);
@@ -1935,7 +1941,7 @@ public:
             const auto resolve = [&](SourceSide side, std::size_t at) {
                 const auto &target = test_support::choiceTarget(fixture.file(), side, ChoiceScope::Section, at);
                 CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                    QString::fromStdString(target.source.contributionId), "resolve"));
+                    QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::ResolveUsingSide));
                 CHECK(fixture.controller.applyChoice(true));
             };
             // Deciding the first section keeps the block, its fold and every region's markers.
@@ -2030,7 +2036,7 @@ public:
             // Ignoring the left side of the first region decides one choice.
             const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
             CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                QString::fromStdString(target.source.contributionId), "ignore"));
+                QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::Ignore));
             CHECK(fixture.controller.applyChoice(true));
             CHECK(fixture.file().facts().undecided == 3);
             settle([&] { return counter->property("text").toString() == QStringLiteral("3 undecided"); });
@@ -2566,7 +2572,7 @@ public:
             const auto before = fixture.text();
             const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
             CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                QString::fromStdString(target.source.contributionId), QStringLiteral("resolve")));
+                QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::ResolveUsingSide));
             CHECK(fixture.controller.applyChoice(true));
             CHECK(fixture.text() != before && !fixture.text().contains(QStringLiteral("right only")));
             settleReplacement();
@@ -2582,7 +2588,7 @@ public:
             CHECK(cursorInView(fixture));
             const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
             CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                QString::fromStdString(target.source.contributionId), QStringLiteral("resolve")));
+                QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::ResolveUsingSide));
             CHECK(fixture.controller.applyChoice(true));
             CHECK(!fixture.text().contains(QStringLiteral("right only")));
             settleReplacement();
@@ -2610,7 +2616,7 @@ public:
                 CHECK(editor->property("selectionStart").toInt() == editor->property("selectionEnd").toInt());
                 CHECK(std::abs(contentY(result) - 140 * line) < 1);
             };
-            CHECK(fixture.controller.previewWholeFile("choices", revision(), QStringLiteral("left")));
+            CHECK(fixture.controller.previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
             CHECK(fixture.controller.applyWholeFile());
             CHECK(fixture.text().contains(QStringLiteral("left first\n")) && fixture.text().contains(QStringLiteral("left last\n")));
             kept();
@@ -2795,7 +2801,7 @@ public:
             CHECK(editor->property("selectionStart").toInt() == 0
                 && editor->property("selectionEnd").toInt() == 0);
             QGuiApplication::clipboard()->setText(QStringLiteral("\n"));
-            CHECK(!fixture.controller.resultClipboard("paste"));
+            CHECK(!fixture.controller.resultClipboard(ResultEditorAdapter::ClipboardAction::Paste));
             CHECK(fixture.file().current().id == before.id && fixture.text().toStdString() == atLimit);
             CHECK(!editor->property("readOnly").toBool());
             CHECK(fixture.controller.commandMessage() == rejection);

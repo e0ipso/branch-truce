@@ -891,14 +891,14 @@ int main(int argc, char **argv)
         };
         const std::vector<Command> commands{
             {"previewChoice", [&](const QString &id, const QString &revision) {
-                return controller.previewChoice(id, revision, QStringLiteral("unknown"), QStringLiteral("accept"));
+                return controller.previewChoice(id, revision, QStringLiteral("unknown"), ChoicePreviewFlow::Action::Accept);
             }, stale, QStringLiteral("This file cannot be edited in Branch Truce.")},
             {"previewNonConflicting", [&](const QString &id, const QString &revision) {
-                return controller.previewNonConflicting(id, revision, QStringLiteral("both"));
+                return controller.previewNonConflicting(id, revision, ChoicePreviewFlow::NonConflicting::BothChanges);
             }, QStringLiteral("The result changed. Preview the batch again."),
                 QStringLiteral("This file cannot apply non-conflicting changes.")},
             {"previewWholeFile", [&](const QString &id, const QString &revision) {
-                return controller.previewWholeFile(id, revision, QStringLiteral("left"));
+                return controller.previewWholeFile(id, revision, ChoicePreviewFlow::Side::LeftSide);
             }, QStringLiteral("The result changed. Inspect a new whole-file preview."),
                 QStringLiteral("This file has no editable captured source.")},
             {"saveDraft", [&](const QString &id, const QString &revision) { return controller.saveDraft(id, revision); },
@@ -981,7 +981,7 @@ int main(int argc, char **argv)
         }
 
         // A pending preview, so a preview notification would have something to say.
-        CHECK(controller.previewWholeFile(session.id, session.revision(), QStringLiteral("left")));
+        CHECK(controller.previewWholeFile(session.id, session.revision(), ChoicePreviewFlow::Side::LeftSide));
         CHECK(!controller.wholeFilePreview().isEmpty());
         std::map<std::string, int> emitted;
         const auto count = [&](const char *name, auto signal) {

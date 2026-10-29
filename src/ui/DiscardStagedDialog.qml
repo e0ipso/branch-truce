@@ -3,13 +3,14 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 Kirigami.PromptDialog {
     id: discardDialog
-    required property var controller
+    required property ApplicationController controller
     // The file and revision the user confirms; the controller refuses a newer revision as stale.
     property string fileId: ""
     property string path: ""

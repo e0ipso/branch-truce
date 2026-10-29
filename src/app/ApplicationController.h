@@ -1,4 +1,5 @@
 #pragma once
+#include <QtQml/qqmlregistration.h>
 #include "ChoicePreviewFlow.h"
 #include "CommandGuard.h"
 #include "FileNavigator.h"
@@ -22,6 +23,8 @@
 namespace branch_truce {
 class ApplicationController final : public QObject {
     Q_OBJECT
+    QML_ELEMENT
+    QML_UNCREATABLE("Owned by ApplicationController")
     Q_PROPERTY(QString version READ version CONSTANT)
     Q_PROPERTY(branch_truce::SessionModel *files READ files CONSTANT)
     Q_PROPERTY(branch_truce::SessionCoordinator *coordinator READ coordinator CONSTANT)
@@ -81,7 +84,7 @@ public:
     [[nodiscard]] bool parentSessionActive() const;
     [[nodiscard]] bool canEndParentSession() const;
     [[nodiscard]] QVariantMap nonConflictingPreview() const;
-    Q_INVOKABLE bool previewNonConflicting(const QString &fileId, const QString &revision, const QString &scope);
+    Q_INVOKABLE bool previewNonConflicting(const QString &fileId, const QString &revision, ChoicePreviewFlow::NonConflicting scope);
     Q_INVOKABLE bool applyNonConflicting();
     [[nodiscard]] QVariantMap wholeFilePreview() const;
     [[nodiscard]] bool fileListVisible() const { return fileListVisible_; }
@@ -93,10 +96,10 @@ public:
     [[nodiscard]] bool resultEditable() const { return editor_.editable(); }
     [[nodiscard]] bool resultHasSelection() const { return editor_.hasSelection(); }
     [[nodiscard]] bool resultCanPaste() const { return editor_.canPaste(); }
-    Q_INVOKABLE bool previewWholeFile(const QString &fileId, const QString &revision, const QString &side);
+    Q_INVOKABLE bool previewWholeFile(const QString &fileId, const QString &revision, ChoicePreviewFlow::Side side);
     Q_INVOKABLE bool applyWholeFile();
     Q_INVOKABLE bool previewChoice(const QString &fileId, const QString &revision,
-                                  const QString &target, const QString &action);
+                                  const QString &target, ChoicePreviewFlow::Action action);
     Q_INVOKABLE bool applyChoice(bool confirmReplacement = false);
     Q_INVOKABLE void cancelChoice();
     // Editor offsets are UTF-16 units and must identify scalar boundaries.
@@ -131,17 +134,16 @@ public:
     Q_INVOKABLE void attachSourceEditor(QObject *editor);
     // The Kirigami colour scheme background; its lightness picks the syntax theme.
     Q_INVOKABLE void setSyntaxBackground(const QColor &background);
-    Q_INVOKABLE bool resultClipboard(const QString &action);
+    Q_INVOKABLE bool resultClipboard(ResultEditorAdapter::ClipboardAction action);
     // Select by the exact byte-derived file ID, never by a display path.
     Q_INVOKABLE bool selectFile(const QString &fileId);
     Q_INVOKABLE int selectedRow() const;
     // Hide or show the file list without changing the selected file, editor
     // location or unsaved result.
     Q_INVOKABLE bool toggleFileList();
-    // mode is difference, undecided, unfinished or saved-or-reviewed.
     // direction is -1 or 1. Difference and undecided stay inside the selected
     // file; the file modes walk the session inventory.
-    Q_INVOKABLE bool navigate(const QString &mode, int direction);
+    Q_INVOKABLE bool navigate(FileNavigator::Mode mode, int direction);
     // The file handoff plus session-level blockers (running resolution,
     // launched paths Git is still waiting on). clean is the only success claim.
     [[nodiscard]] QVariantMap handoff() const;

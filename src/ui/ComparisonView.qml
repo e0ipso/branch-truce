@@ -11,7 +11,7 @@ import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: comparison
-    required property var controller
+    required property ApplicationController controller
     required property SelectedFile file
     required property EditActions edits
     readonly property bool inputMethodComposing: resultPane.editor.inputMethodComposing
@@ -28,7 +28,7 @@ ColumnLayout {
     // Shows the region choices in the source panes' gutters and the result's Take both menus.
     property bool showChoices: true
     // A choice of action for a source scope; the owner previews it when it needs confirming.
-    signal choiceChosen(target: string, action: string)
+    signal choiceChosen(target: string, action: int)
     readonly property bool choosing: !!file.canEdit && !inputMethodComposing
     readonly property var markerFold: kept("fold", foldFor(file, showMarkers))
     // The controller picks Breeze Light or Breeze Dark syntax colours from its lightness.

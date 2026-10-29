@@ -11,7 +11,7 @@ import org.kde.kirigami as Kirigami
 
 ColumnLayout {
     id: resultPane
-    required property var controller
+    required property ApplicationController controller
     required property SelectedFile file
     required property EditActions edits
     // Line marks for the gutter and backgrounds, and the navigation target's line ranges.
@@ -40,7 +40,7 @@ ColumnLayout {
     // scroll bar, or keyboard focus in its text.
     signal scrolled(bool byUser)
     // A Take both order for a section; the owner previews it.
-    signal choiceChosen(target: string, action: string)
+    signal choiceChosen(target: string, action: int)
     // Moves the cursor off a folded line to where the blocks say it goes.
     function settleCursor(): void {
         const position = resultEditor.cursorPosition

@@ -3,13 +3,14 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 RowLayout {
     id: sessionFooter
-    required property var controller
+    required property ApplicationController controller
     // A source label with its commit id cut to 10 characters; the full id stays in the tooltip.
     function shortCommit(label: string, commitId: string): string {
         return commitId.length > 10 ? label.replace(commitId, commitId.slice(0, 10)) : label

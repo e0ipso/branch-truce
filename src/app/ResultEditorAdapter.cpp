@@ -193,19 +193,19 @@ void ResultEditorAdapter::capture()
     sync();
 }
 
-bool ResultEditorAdapter::clipboard(const QString &action)
+bool ResultEditorAdapter::clipboard(ClipboardAction action)
 {
     if (!editor_ || processingEvent_) return false;
     const char *method = nullptr;
-    if (action == QLatin1String("copy")) method = "copy";
-    else if (action == QLatin1String("selectAll")) method = "selectAll";
-    else if (action == QLatin1String("cut")) method = "cut";
-    else if (action == QLatin1String("paste")) method = "paste";
+    if (action == ClipboardAction::Copy) method = "copy";
+    else if (action == ClipboardAction::SelectAll) method = "selectAll";
+    else if (action == ClipboardAction::Cut) method = "cut";
+    else if (action == ClipboardAction::Paste) method = "paste";
     else return false;
-    if ((action == QLatin1String("cut") || action == QLatin1String("paste"))
+    if ((action == ClipboardAction::Cut || action == ClipboardAction::Paste)
         && (!editable_ || composing()))
         return false;
-    if (action == QLatin1String("paste")) {
+    if (action == ClipboardAction::Paste) {
         const auto clip = QGuiApplication::clipboard()->text();
         const auto selection = caret();
         const int from = std::clamp(std::min(selection.selectionStart, selection.selectionEnd), 0,

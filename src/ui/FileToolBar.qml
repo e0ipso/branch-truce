@@ -9,7 +9,7 @@ import org.kde.kirigami as Kirigami
 
 RowLayout {
     id: fileToolBar
-    required property var controller
+    required property ApplicationController controller
     required property SelectedFile selectedFile
     // True while an input method composes text that the result has not acknowledged.
     required property bool composing
@@ -18,8 +18,8 @@ RowLayout {
     // Whether the result shows the conflict-marker lines it folds.
     property alias showMarkers: markersToggle.checked
     required property EditActions edits
-    signal nonConflictingChosen(scope: string)
-    signal wholeFileChosen(side: string)
+    signal nonConflictingChosen(scope: int)
+    signal wholeFileChosen(side: int)
     signal discardToStagedChosen()
     Layout.fillWidth: true
     Kirigami.ActionToolBar {
@@ -79,35 +79,35 @@ RowLayout {
                     text: qsTr("Preview non-conflicting Left")
                     icon.name: "arrow-left"
                     enabled: fileChoices.enabled
-                    onTriggered: fileToolBar.nonConflictingChosen("left")
+                    onTriggered: fileToolBar.nonConflictingChosen(ChoicePreviewFlow.LeftChanges)
                 }
                 MenuEntry {
                     controlName: "nonConflictingRight"
                     text: qsTr("Preview non-conflicting Right")
                     icon.name: "arrow-right"
                     enabled: fileChoices.enabled
-                    onTriggered: fileToolBar.nonConflictingChosen("right")
+                    onTriggered: fileToolBar.nonConflictingChosen(ChoicePreviewFlow.RightChanges)
                 }
                 MenuEntry {
                     controlName: "nonConflictingBoth"
                     text: qsTr("Preview non-conflicting Both")
                     icon.name: "merge"
                     enabled: fileChoices.enabled
-                    onTriggered: fileToolBar.nonConflictingChosen("both")
+                    onTriggered: fileToolBar.nonConflictingChosen(ChoicePreviewFlow.BothChanges)
                 }
                 MenuEntry {
                     controlName: "wholeFileLeft"
                     text: qsTr("Preview whole file from Left")
                     icon.name: "arrow-left-double"
                     enabled: fileChoices.enabled
-                    onTriggered: fileToolBar.wholeFileChosen("left")
+                    onTriggered: fileToolBar.wholeFileChosen(ChoicePreviewFlow.LeftSide)
                 }
                 MenuEntry {
                     controlName: "wholeFileRight"
                     text: qsTr("Preview whole file from Right")
                     icon.name: "arrow-right-double"
                     enabled: fileChoices.enabled
-                    onTriggered: fileToolBar.wholeFileChosen("right")
+                    onTriggered: fileToolBar.wholeFileChosen(ChoicePreviewFlow.RightSide)
                 }
             },
             // The region choices start shown; hiding them gives the source text their column.

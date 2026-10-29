@@ -6,18 +6,30 @@
 #include <vector>
 
 namespace branch_truce {
+namespace {
+QString modeName(FileNavigator::Mode mode)
+{
+    switch (mode) {
+    case FileNavigator::Mode::Difference: return QStringLiteral("difference");
+    case FileNavigator::Mode::Undecided: return QStringLiteral("undecided");
+    case FileNavigator::Mode::Unfinished: return QStringLiteral("unfinished");
+    case FileNavigator::Mode::SavedOrReviewed: return QStringLiteral("saved-or-reviewed");
+    }
+    return {};
+}
+}
 FileNavigator::FileNavigator(SessionModel &files, ResultEditorAdapter &editor, Owners owners, QObject *parent)
     : QObject(parent), files_(files), editor_(editor), owners_(std::move(owners))
 {
 }
 
-bool FileNavigator::navigate(const QString &mode, int direction)
+bool FileNavigator::navigate(Mode mode, int direction)
 {
     if (direction != -1 && direction != 1) return false;
     if (editor_.composing()) return false;
-    if (mode == QLatin1String("difference") || mode == QLatin1String("undecided"))
+    if (mode == Mode::Difference || mode == Mode::Undecided)
         return navigateWithinFile(mode, direction);
-    if (mode == QLatin1String("unfinished") || mode == QLatin1String("saved-or-reviewed"))
+    if (mode == Mode::Unfinished || mode == Mode::SavedOrReviewed)
         return navigateAcrossFiles(mode, direction);
     return false;
 }
@@ -29,7 +41,7 @@ void FileNavigator::selectionChanged()
 
 void FileNavigator::clear()
 {
-    mode_.clear();
+    mode_.reset();
     fileId_.clear();
     revision_ = 0;
     index_ = -1;
@@ -45,25 +57,25 @@ void FileNavigator::clear()
     Q_EMIT changed();
 }
 
-bool FileNavigator::navigateWithinFile(const QString &mode, int direction)
+bool FileNavigator::navigateWithinFile(Mode mode, int direction)
 {
     const auto selectedFileId = owners_.selectedFileId();
     const auto *file = files_.file(selectedFileId.toStdString());
     const auto fail = [&](const QString &label) {
-        target_ = {{QStringLiteral("mode"), mode},
+        target_ = {{QStringLiteral("mode"), modeName(mode)},
             {QStringLiteral("fileId"), selectedFileId},
             {QStringLiteral("count"), 0},
             {QStringLiteral("label"), label}};
-        mode_.clear();
+        mode_.reset();
         index_ = -1;
         Q_EMIT changed();
         return false;
     };
     if (!file || file->support() != Support::Supported)
         return fail(tr("This file has no editor differences."));
-    const auto targets = mode == QLatin1String("difference") ? differenceTargets(*file) : undecidedTargets(*file);
+    const auto targets = mode == Mode::Difference ? differenceTargets(*file) : undecidedTargets(*file);
     if (targets.empty()) {
-        return fail(mode == QLatin1String("difference")
+        return fail(mode == Mode::Difference
             ? tr("No differences in this file.") : tr("No undecided work in this file."));
     }
     const auto &result = file->current().draft.text;
@@ -141,7 +153,7 @@ bool FileNavigator::navigateWithinFile(const QString &mode, int direction)
     }
     const auto side = target.side == SourceSide::Stage2 ? tr("Left") : tr("Right");
     QString label;
-    if (mode == QLatin1String("difference")) {
+    if (mode == Mode::Difference) {
         label = tr("Difference %1 of %2 · result bytes %3-%4")
             .arg(index + 1).arg(count)
             .arg(static_cast<qulonglong>(target.byteBegin))
@@ -157,7 +169,7 @@ bool FileNavigator::navigateWithinFile(const QString &mode, int direction)
             .arg(static_cast<qulonglong>(target.byteBegin))
             .arg(static_cast<qulonglong>(target.byteEnd));
     }
-    target_ = {{QStringLiteral("mode"), mode},
+    target_ = {{QStringLiteral("mode"), modeName(mode)},
         {QStringLiteral("fileId"), selectedFileId},
         {QStringLiteral("scope"), target.resultRange ? QStringLiteral("result") : QStringLiteral("unmapped-source")},
         {QStringLiteral("byteBegin"), QVariant::fromValue(static_cast<qulonglong>(target.byteBegin))},
@@ -172,7 +184,7 @@ bool FileNavigator::navigateWithinFile(const QString &mode, int direction)
     return true;
 }
 
-bool FileNavigator::navigateAcrossFiles(const QString &mode, int direction)
+bool FileNavigator::navigateAcrossFiles(Mode mode, int direction)
 {
     struct Stop {
         int row = 0;
@@ -186,7 +198,7 @@ bool FileNavigator::navigateAcrossFiles(const QString &mode, int direction)
         bool outside = false;
     };
     std::vector<Stop> stops;
-    const bool unfinished = mode == QLatin1String("unfinished");
+    const bool unfinished = mode == Mode::Unfinished;
     for (int row = 0; row < files_.totalFiles(); ++row) {
         const auto *file = files_.fileAt(row);
         if (!file) continue;
@@ -203,7 +215,7 @@ bool FileNavigator::navigateAcrossFiles(const QString &mode, int direction)
             progress.earlierStaged, outside});
     }
     if (stops.empty()) {
-        target_ = {{QStringLiteral("mode"), mode},
+        target_ = {{QStringLiteral("mode"), modeName(mode)},
             {QStringLiteral("count"), 0},
             {QStringLiteral("label"), unfinished ? tr("No unfinished files.") : tr("No saved or reviewed files.")}};
         Q_EMIT changed();
@@ -231,7 +243,7 @@ bool FileNavigator::navigateAcrossFiles(const QString &mode, int direction)
         ? tr("Unfinished file · outside the editor · %1").arg(stop.path)
         : unfinished ? tr("Unfinished file · %1").arg(stop.path)
                      : tr("Saved or reviewed file · %1").arg(stop.path);
-    target_ = {{QStringLiteral("mode"), mode},
+    target_ = {{QStringLiteral("mode"), modeName(mode)},
         {QStringLiteral("fileId"), stop.id},
         {QStringLiteral("scope"), scope},
         {QStringLiteral("support"), stop.support},

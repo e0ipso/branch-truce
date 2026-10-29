@@ -2,12 +2,13 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import org.kde.kirigami as Kirigami
 
 Rectangle {
     id: fileListPane
-    required property var controller
+    required property ApplicationController controller
     // Builds one row from the model's roles.
     required property Component rowDelegate
     property alias currentIndex: fileList.currentIndex

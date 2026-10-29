@@ -9,6 +9,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
@@ -21,7 +22,7 @@ Item {
     // Whether the file takes choices now: it can be edited and no input is composing.
     property bool choosing: false
     property var current: []
-    signal combinationChosen(target: string, action: string)
+    signal combinationChosen(target: string, action: int)
     z: 1
     function isCurrent(line: int, last: int): bool {
         for (let i = 0; i < current.length; ++i) {
@@ -109,13 +110,13 @@ Item {
                                     objectName: "resultTakeBothLeftFirst-" + takeBoth.target
                                     text: qsTr("Take both, Left then Right")
                                     enabled: layer.choosing
-                                    onTriggered: layer.combinationChosen(takeBoth.target, "left-first")
+                                    onTriggered: layer.combinationChosen(takeBoth.target, ChoicePreviewFlow.CombineLeftFirst)
                                 }
                                 MenuItem {
                                     objectName: "resultTakeBothRightFirst-" + takeBoth.target
                                     text: qsTr("Take both, Right then Left")
                                     enabled: layer.choosing
-                                    onTriggered: layer.combinationChosen(takeBoth.target, "right-first")
+                                    onTriggered: layer.combinationChosen(takeBoth.target, ChoicePreviewFlow.CombineRightFirst)
                                 }
                             }
                         }

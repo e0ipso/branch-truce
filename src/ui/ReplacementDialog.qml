@@ -2,13 +2,14 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 Kirigami.Dialog {
     id: replacementDialog
-    required property var controller
+    required property ApplicationController controller
     objectName: "replacementDialog"
     title: replacementDialog.controller.commandPreview.orderedCombination
         ? qsTr("Preview %1").arg(replacementDialog.controller.commandPreview.order)

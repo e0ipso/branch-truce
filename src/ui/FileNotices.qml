@@ -14,7 +14,7 @@ import org.kde.kirigami as Kirigami
 // wrapping column would take a spacing and a share of the height even with nothing to show.
 ObjectModel {
     id: fileNotices
-    required property var controller
+    required property ApplicationController controller
     required property SelectedFile selectedFile
     required property bool supportedSelection
     // True while an input method composes text that the result has not acknowledged.

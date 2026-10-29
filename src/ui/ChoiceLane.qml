@@ -15,7 +15,7 @@ Item {
     required property real rowHeight
     // Whether the file takes choices now: it can be edited and no input is composing.
     required property bool choosing
-    signal chosen(target: string, action: string)
+    signal chosen(target: string, action: int)
     // Counts relayouts of the pane's text, so the rows follow them.
     property int layoutRevision: 0
     // The pane's choice column in this lane's parent. The arguments are the geometry the

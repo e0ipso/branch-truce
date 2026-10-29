@@ -4,6 +4,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
@@ -11,7 +12,7 @@ import org.kde.kirigami as Kirigami
 RowLayout {
     id: handoffEntry
     required property var modelData
-    required property var controller
+    required property ApplicationController controller
     signal routed()
     // The file is selected; the owner confirms before the draft is discarded.
     signal discardStagedRequested()

@@ -2,13 +2,14 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 Kirigami.Dialog {
     id: handoffDialog
-    required property var controller
+    required property ApplicationController controller
     // Asks the owner to set plain text on a message and each label inside it, once they exist.
     signal plainTextRequested(item: Item)
     // Builds one entry of a group from its handoff entry.

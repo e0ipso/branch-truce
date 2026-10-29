@@ -6,6 +6,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import org.kde.kirigami as Kirigami
 
@@ -20,21 +21,21 @@ Row {
     // Whether the file takes choices now: it can be edited and no input is composing.
     required property bool choosing
     // A choice of action for a scope; the owner previews it when it needs confirming.
-    signal chosen(target: string, action: string)
+    signal chosen(target: string, action: int)
     readonly property var choice: modelData.choice
     readonly property real iconSize: Math.min(Kirigami.Units.iconSizes.small, rowHeight)
     // The menu entries: this scope's two-sided choices, then each other scope's choices.
     readonly property var entries: {
         const list = []
         const twoSided = function(scope, named) {
-            list.push({name: "choiceResolve-" + scope.id, target: scope.id, action: "resolve",
+            list.push({name: "choiceResolve-" + scope.id, target: scope.id, action: ChoicePreviewFlow.ResolveUsingSide,
                 enabled: !!scope.available,
                 text: named ? qsTr("Resolve %1 using this side").arg(scope.label) : qsTr("Resolve using this side")})
-            list.push({name: "choicePreviewLeftFirst-" + scope.id, target: scope.id, action: "left-first",
+            list.push({name: "choicePreviewLeftFirst-" + scope.id, target: scope.id, action: ChoicePreviewFlow.CombineLeftFirst,
                 enabled: !!scope.combinationAvailable,
                 text: named ? qsTr("Take both for %1, Left then Right").arg(scope.label)
                             : qsTr("Take both, Left then Right")})
-            list.push({name: "choicePreviewRightFirst-" + scope.id, target: scope.id, action: "right-first",
+            list.push({name: "choicePreviewRightFirst-" + scope.id, target: scope.id, action: ChoicePreviewFlow.CombineRightFirst,
                 enabled: !!scope.combinationAvailable,
                 text: named ? qsTr("Take both for %1, Right then Left").arg(scope.label)
                             : qsTr("Take both, Right then Left")})
@@ -43,9 +44,9 @@ Row {
         const extras = modelData.extras || []
         for (let i = 0; i < extras.length; ++i) {
             const extra = extras[i]
-            list.push({name: "choiceAccept-" + extra.id, target: extra.id, action: "accept",
+            list.push({name: "choiceAccept-" + extra.id, target: extra.id, action: ChoicePreviewFlow.Accept,
                 enabled: !!extra.available, text: qsTr("Accept %1 only").arg(extra.label)})
-            list.push({name: "choiceIgnore-" + extra.id, target: extra.id, action: "ignore",
+            list.push({name: "choiceIgnore-" + extra.id, target: extra.id, action: ChoicePreviewFlow.Ignore,
                 enabled: !!extra.available, text: qsTr("Ignore %1 only").arg(extra.label)})
             twoSided(extra, true)
         }
@@ -85,7 +86,7 @@ Row {
         text: qsTr("Accept %1").arg(buttons.choice.label)
         icon.name: buttons.edge === "right" ? "arrow-right" : "arrow-left"
         icon.color: Kirigami.Theme.activeTextColor
-        onClicked: buttons.chosen(buttons.choice.id, "accept")
+        onClicked: buttons.chosen(buttons.choice.id, ChoicePreviewFlow.Accept)
     }
     GutterButton {
         size: buttons.rowHeight
@@ -96,7 +97,7 @@ Row {
         text: qsTr("Ignore %1").arg(buttons.choice.label)
         icon.name: "edit-delete-remove"
         icon.color: Kirigami.Theme.negativeTextColor
-        onClicked: buttons.chosen(buttons.choice.id, "ignore")
+        onClicked: buttons.chosen(buttons.choice.id, ChoicePreviewFlow.Ignore)
     }
     GutterButton {
         id: more

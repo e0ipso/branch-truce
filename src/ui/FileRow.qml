@@ -2,6 +2,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
@@ -16,7 +17,7 @@ KirigamiDelegates.SubtitleDelegate {
     required property string statusIcon
     required property string statusLine
     required property string summary
-    required property var controller
+    required property ApplicationController controller
     readonly property bool current: fileId === row.controller.selectedFileId
     readonly property string chip: support === "unreadable" ? qsTr("Load error")
         : support === "supported" ? "" : qsTr("Outside app")

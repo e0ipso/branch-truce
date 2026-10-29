@@ -13,28 +13,34 @@ QString text(const std::string &value)
     return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size()));
 }
 
-std::optional<ChoiceAction> choiceAction(const QString &action)
+std::optional<ChoiceAction> choiceAction(ChoicePreviewFlow::Action action)
 {
-    if (action == QLatin1String("accept")) return ChoiceAction::Accept;
-    if (action == QLatin1String("ignore")) return ChoiceAction::Ignore;
-    if (action == QLatin1String("resolve")) return ChoiceAction::ResolveUsingSide;
-    if (action == QLatin1String("left-first")) return ChoiceAction::CombineLeftFirst;
-    if (action == QLatin1String("right-first")) return ChoiceAction::CombineRightFirst;
+    switch (action) {
+    case ChoicePreviewFlow::Action::Accept: return ChoiceAction::Accept;
+    case ChoicePreviewFlow::Action::Ignore: return ChoiceAction::Ignore;
+    case ChoicePreviewFlow::Action::ResolveUsingSide: return ChoiceAction::ResolveUsingSide;
+    case ChoicePreviewFlow::Action::CombineLeftFirst: return ChoiceAction::CombineLeftFirst;
+    case ChoicePreviewFlow::Action::CombineRightFirst: return ChoiceAction::CombineRightFirst;
+    }
     return std::nullopt;
 }
 
-std::optional<NonConflictingScope> nonConflictingScope(const QString &scope)
+std::optional<NonConflictingScope> nonConflictingScope(ChoicePreviewFlow::NonConflicting scope)
 {
-    if (scope == QLatin1String("left")) return NonConflictingScope::Left;
-    if (scope == QLatin1String("right")) return NonConflictingScope::Right;
-    if (scope == QLatin1String("both")) return NonConflictingScope::Both;
+    switch (scope) {
+    case ChoicePreviewFlow::NonConflicting::LeftChanges: return NonConflictingScope::Left;
+    case ChoicePreviewFlow::NonConflicting::RightChanges: return NonConflictingScope::Right;
+    case ChoicePreviewFlow::NonConflicting::BothChanges: return NonConflictingScope::Both;
+    }
     return std::nullopt;
 }
 
-std::optional<SourceSide> wholeFileSide(const QString &side)
+std::optional<SourceSide> wholeFileSide(ChoicePreviewFlow::Side side)
 {
-    if (side == QLatin1String("left")) return SourceSide::Stage2;
-    if (side == QLatin1String("right")) return SourceSide::Stage3;
+    switch (side) {
+    case ChoicePreviewFlow::Side::LeftSide: return SourceSide::Stage2;
+    case ChoicePreviewFlow::Side::RightSide: return SourceSide::Stage3;
+    }
     return std::nullopt;
 }
 
@@ -74,7 +80,7 @@ std::optional<ChoicePreviewFlow::Scope> ChoicePreviewFlow::pendingScope() const
 }
 
 bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QString &revision,
-                                const QString &option, const QString &target)
+                                Option option, const QString &target)
 {
     cancel();
     const auto checked = checkCommand(files_, owners_.selectedFileId(), editor_.composing(), fileId, revision,
@@ -86,7 +92,8 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
     bool accepted = false;
     switch (scope) {
     case Scope::Choice: {
-        const auto action = choiceAction(option);
+        const auto *value = std::get_if<Action>(&option);
+        const auto action = value ? choiceAction(*value) : std::nullopt;
         if (!action) return owners_.report(Transition::InvalidAnchor);
         auto preview = previewChoice(*file, expected, target.toStdString(), *action);
         message = text(preview.detail);
@@ -95,7 +102,8 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
         break;
     }
     case Scope::NonConflicting: {
-        const auto kind = nonConflictingScope(option);
+        const auto *value = std::get_if<NonConflicting>(&option);
+        const auto kind = value ? nonConflictingScope(*value) : std::nullopt;
         if (!kind) return owners_.report(Transition::InvalidAnchor);
         auto preview = previewNonConflicting(*file, expected, *kind);
         message = (preview.state == Transition::NoChange ? tr("No eligible non-conflicting changes. ") : QString{})
@@ -105,7 +113,8 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
         break;
     }
     case Scope::WholeFile: {
-        const auto side = wholeFileSide(option);
+        const auto *value = std::get_if<Side>(&option);
+        const auto side = value ? wholeFileSide(*value) : std::nullopt;
         if (!side) return owners_.report(Transition::InvalidAnchor);
         auto preview = previewWholeFile(*file, expected, *side);
         message = text(preview.detail);

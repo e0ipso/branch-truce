@@ -2,13 +2,14 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 Kirigami.Dialog {
     id: wholeFileDialog
-    required property var controller
+    required property ApplicationController controller
     objectName: "wholeFileDialog"
     title: qsTr("Replace whole file from %1").arg(wholeFileDialog.controller.wholeFilePreview.side || "")
     preferredWidth: Kirigami.Units.gridUnit * 52

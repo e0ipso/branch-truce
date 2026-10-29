@@ -8,7 +8,7 @@ import QtQml
 QtObject {
     id: editActions
     objectName: "resultEditActions"
-    required property var controller
+    required property ApplicationController controller
     required property SelectedFile file
     required property bool composing
     function trigger(name: string): void {
@@ -50,7 +50,7 @@ QtObject {
         iconOnly: true
         shortcut: StandardKey.Copy
         enabled: !!editActions.controller.resultHasSelection
-        onTriggered: editActions.controller.resultClipboard("copy")
+        onTriggered: editActions.controller.resultClipboard(ResultEditorAdapter.Copy)
     }
     readonly property NamedAction paste: NamedAction {
         controlName: "pasteResult"
@@ -60,6 +60,6 @@ QtObject {
         shortcut: StandardKey.Paste
         enabled: !!editActions.controller.resultEditable && !!editActions.controller.resultCanPaste
             && !editActions.composing
-        onTriggered: editActions.controller.resultClipboard("paste")
+        onTriggered: editActions.controller.resultClipboard(ResultEditorAdapter.Paste)
     }
 }
