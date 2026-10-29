@@ -1,6 +1,6 @@
 {
   "name": "branch-truce",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Standalone offline Linux/KDE desktop application for resolving Git merge and rebase text conflicts",
   "type": "module",
