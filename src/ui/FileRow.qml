@@ -82,18 +82,11 @@ KirigamiDelegates.SubtitleDelegate {
                 color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
             }
         }
-        PlainLabel {
+        Pill {
             Layout.alignment: Qt.AlignVCenter
             visible: row.chip.length > 0
             text: row.chip
-            font: Kirigami.Theme.smallFont
-            leftPadding: Kirigami.Units.smallSpacing
-            rightPadding: Kirigami.Units.smallSpacing
-            color: Kirigami.Theme.neutralTextColor
-            background: Rectangle {
-                color: Kirigami.Theme.neutralBackgroundColor
-                radius: Kirigami.Units.cornerRadius
-            }
+            tone: "warning"
         }
     }
     Kirigami.Separator {

@@ -6,6 +6,7 @@ qt_add_qml_module(branch_truce_ui STATIC
     QML_FILES
         Main.qml
         PlainLabel.qml
+        Pill.qml
         ComparisonView.qml
         ReadingBar.qml
         SourcePane.qml

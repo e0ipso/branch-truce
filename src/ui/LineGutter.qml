@@ -238,31 +238,19 @@ Item {
                 width: decisionSlot.width
                 height: modelData.height
                 // The decided section's state as a short tag in its role's colour.
-                Rectangle {
+                Pill {
                     id: decisionChip
                     readonly property string part: "decision"
                     readonly property string decision: decisionRow.decision ? decisionRow.decision.state : ""
-                    readonly property color tone: decision === "accepted" ? Kirigami.Theme.positiveTextColor
-                        : decision === "manual" ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.disabledTextColor
-                    readonly property string text: ({accepted: "✓", ignored: "×", manual: "m"})[decision] || ""
+                    text: ({accepted: "✓", ignored: "×", manual: "m"})[decision] || ""
+                    tone: decision === "accepted" ? "positive" : decision === "manual" ? "warning" : "neutral"
                     visible: text.length > 0
                     anchors.centerIn: parent
                     height: decisionRow.height
-                    width: Math.max(height, decisionText.implicitWidth + Kirigami.Units.smallSpacing)
-                    radius: height / 2
-                    color: Qt.rgba(tone.r, tone.g, tone.b, 0.14)
-                    border.width: 1
-                    border.color: Qt.rgba(tone.r, tone.g, tone.b, 0.4)
+                    width: Math.max(height, implicitWidth)
                     Accessible.role: Accessible.StaticText
                     Accessible.name: text
                     Accessible.description: decisionRow.decision ? decisionRow.decision.label : ""
-                    PlainLabel {
-                        id: decisionText
-                        anchors.centerIn: parent
-                        text: decisionChip.text
-                        font: Kirigami.Theme.smallFont
-                        color: decisionChip.tone
-                    }
                 }
             }
         }
