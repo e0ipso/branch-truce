@@ -1,6 +1,7 @@
 // Unit tests for TextBlocks: where the cursor goes around folded lines and where the whitespace markers lie.
 #include "TestHarness.h"
 #include "ui/TextBlocks.h"
+#include "ui/PaneMarks.h"
 #include <QAbstractTextDocumentLayout>
 #include <QGuiApplication>
 #include <QQmlComponent>
@@ -83,6 +84,31 @@ int main(int argc, char **argv)
     QGuiApplication application(argc, argv);
     test_support::Suite suite("text-blocks");
 
+    suite.run("pane marks rank passages, regions and marker blocks", [] {
+        branch_truce::PaneMarks marks;
+        const QVariantList passages{QVariantMap{{"side", "stage2"}, {"kind", "changed"},
+            {"resultLineBegin", 1}, {"resultLineEnd", 5}, {"sourceLineBegin", 1}, {"sourceLineEnd", 5}}};
+        const QVariantList regions{QVariantMap{{"side", "stage2"}, {"state", "undecided"}, {"mapped", true},
+            {"resultLineBegin", 2}, {"resultLineEnd", 4}, {"sourceLineBegin", 2}, {"sourceLineEnd", 4}}};
+        const QVariantList blocks{QVariantMap{{"resultLineBegin", 3}, {"resultLineEnd", 4}, {"folded", true},
+            {"markerLines", QVariantList{QVariantMap{{"line", 3}, {"text", "<<<<<<<"}},
+                                          QVariantMap{{"line", 4}, {"text", ">>>>>>>"}}}}}};
+        const auto result = marks.marks("result", passages, regions, {}, blocks, {});
+        const auto lines = result.value("lines").toMap();
+        CHECK(lines.value("1").toString() == "changed");
+        CHECK(lines.value("2").toString() == "conflict");
+        CHECK(lines.value("3").toString() == "markers");
+        CHECK(lines.value("4").toString() == "changed");
+        const auto source = marks.marks("stage2", passages, regions, {}, blocks, {}).value("lines").toMap();
+        CHECK(source.value("2").toString() == "conflict");
+        CHECK(marks.folds(blocks, false).value("hidden").toList().size() == 1);
+        CHECK(marks.folds(blocks, true).value("hidden").toList().isEmpty());
+        auto ineligible = blocks;
+        auto block = ineligible.first().toMap();
+        block.insert("folded", false);
+        ineligible[0] = block;
+        CHECK(marks.folds(ineligible, false).value("hidden").toList().isEmpty());
+    });
     suite.run("TRUCE-0221 Down crosses folded lines and keeps the column", [] {
         Pane pane(between, {2, 3});
         CHECK(pane.blocks.hiddenAt(10) && pane.blocks.hiddenAt(23) && !pane.blocks.hiddenAt(31));

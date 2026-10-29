@@ -25,13 +25,7 @@ Item {
     signal combinationChosen(target: string, action: int)
     signal choiceFocused(target: string, active: bool)
     z: 1
-    function isCurrent(line: int, last: int): bool {
-        for (let i = 0; i < current.length; ++i) {
-            if (current[i][0] <= last && line < Math.max(current[i][1], current[i][0] + 1))
-                return true
-        }
-        return false
-    }
+    PaneMarks { id: paneMarks }
     Kirigami.Theme.colorSet: Kirigami.Theme.View
     Kirigami.Theme.inherit: false
 
@@ -60,7 +54,7 @@ Item {
                     .arg(slot.line).arg(slot.fold ? slot.fold.last : slot.line)
                 Rectangle {
                     anchors.fill: parent
-                    visible: !!slot.fold && layer.isCurrent(slot.line, slot.fold.last)
+                    visible: !!slot.fold && paneMarks.overlaps(layer.current, slot.line, slot.fold.last)
                     color: Kirigami.Theme.highlightColor
                     opacity: 0.3
                 }

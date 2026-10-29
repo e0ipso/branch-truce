@@ -17,20 +17,7 @@ Item {
     enabled: false
     Kirigami.Theme.colorSet: Kirigami.Theme.View
     Kirigami.Theme.inherit: false
-    function isCurrent(line: int): bool {
-        for (let i = 0; i < current.length; ++i) {
-            if (line >= current[i][0] && line < current[i][1])
-                return true
-        }
-        return false
-    }
-    function isCurrentGap(line: int): bool {
-        for (let i = 0; i < current.length; ++i) {
-            if (current[i][0] === line && current[i][1] === line)
-                return true
-        }
-        return false
-    }
+    PaneMarks { id: paneMarks }
     // Kirigami stops a disabled item from inheriting its parent's theme and gives
     // it the default Window set, so each fill under this disabled layer names
     // the View set itself.
@@ -78,8 +65,8 @@ Item {
             readonly property var modelData: backgrounds.gutter.rows[index] || backgrounds.gutter.noRow
             readonly property string part: "current"
             readonly property int line: modelData.number
-            readonly property bool gap: backgrounds.isCurrentGap(line)
-            visible: gap || backgrounds.isCurrent(line)
+            readonly property bool gap: paneMarks.gap(backgrounds.current, line)
+            visible: gap || paneMarks.contains(backgrounds.current, line)
             y: gap ? modelData.top - height / 2 : modelData.top
             width: backgrounds.width
             height: gap ? backgrounds.rule * 2 : modelData.extent

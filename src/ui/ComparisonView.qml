@@ -28,7 +28,7 @@ ColumnLayout {
     // A choice of action for a source scope; the owner previews it when it needs confirming.
     signal choiceChosen(target: string, action: int)
     readonly property bool choosing: !!file.canEdit && !inputMethodComposing
-    readonly property var markerFold: kept("fold", foldFor(file, showMarkers))
+    readonly property var markerFold: kept("fold", paneMarks.folds(file.markerBlocks, showMarkers))
     // The controller picks Breeze Light or Breeze Dark syntax colours from its lightness.
     readonly property color schemeBackground: Kirigami.Theme.backgroundColor
 
@@ -128,102 +128,13 @@ ColumnLayout {
         editorNamed(name).select(match.begin, match.end)
         panesByRole.follow(name)
     }
-    // Line marks for one pane, keyed by 1-based line. lines holds the kind of
-    // each coloured line: "added" when the compared text lacks it, "changed",
-    // "conflict" inside an undecided region, "manual" inside a hand-edited
-    // result region or on a result line typed by hand outside every region,
-    // "accepted" and "ignored" inside a decided region of a
-    // source pane, or "markers" on the lines of a conflict-marker block or a
-    // stray marker line of the result. gaps holds the lines above which the
-    // compared text has lines this pane lacks. letters holds the result's
-    // provenance: L, R or B for a line equal to the left, right or both
-    // sources, m for a hand edit.
-    function marksFor(pane: string, file: SelectedFile): var {
-        const lines = {}
-        const gaps = {}
-        const letters = {}
-        const rank = {added: 1, changed: 2, accepted: 3, ignored: 3, manual: 3, conflict: 4, markers: 5}
-        const mark = function(first, end, kind) {
-            for (let line = first; line < end; ++line) {
-                if (!lines[line] || rank[lines[line]] < rank[kind])
-                    lines[line] = kind
-            }
-        }
-        const result = pane === "result"
-        const from = {}
-        const passages = file.passages || []
-        for (let i = 0; i < passages.length; ++i) {
-            const passage = passages[i]
-            if (result ? passage.side === "earlier" : passage.side !== pane)
-                continue
-            const first = result ? passage.resultLineBegin : passage.sourceLineBegin
-            const end = result ? passage.resultLineEnd : passage.sourceLineEnd
-            if (passage.kind === "equal") {
-                for (let line = first; result && line < end; ++line)
-                    from[line] = (from[line] || 0) | (passage.side === "stage2" ? 1 : 2)
-            } else if (passage.kind === (result ? "source-only" : "result-only")) {
-                gaps[first] = true
-            } else {
-                mark(first, end, passage.kind === "changed" || passage.kind === "ambiguous" ? "changed" : "added")
-            }
-        }
-        const regions = file.regions || []
-        for (let i = 0; i < regions.length; ++i) {
-            const region = regions[i]
-            if (result && region.mapped) {
-                if (region.state === "undecided")
-                    mark(region.resultLineBegin, region.resultLineEnd, "conflict")
-                else if (region.state === "manual")
-                    mark(region.resultLineBegin, region.resultLineEnd, "manual")
-                for (let line = region.resultLineBegin; region.handEdited && line < region.resultLineEnd; ++line)
-                    from[line] = 4
-            } else if (!result && region.side === pane && region.state !== "manual") {
-                mark(region.sourceLineBegin, region.sourceLineEnd,
-                    region.state === "undecided" ? "conflict" : region.state)
-            }
-        }
-        if (result) {
-            // An empty range is a deletion, which marks the line it joined.
-            const edited = file.handEditedLines || []
-            for (let i = 0; i < edited.length; ++i) {
-                const first = edited[i].resultLineBegin
-                const end = Math.max(edited[i].resultLineEnd, first + 1)
-                mark(first, end, "manual")
-                for (let line = first; line < end; ++line)
-                    from[line] = 4
-            }
-            const blocks = file.markerBlocks || []
-            for (let i = 0; i < blocks.length; ++i)
-                mark(blocks[i].resultLineBegin, blocks[i].resultLineEnd, "markers")
-            const orphans = file.markerOrphans || []
-            for (let i = 0; i < orphans.length; ++i)
-                mark(orphans[i].line, orphans[i].line + 1, "markers")
-        }
-        for (const line in from)
-            letters[line] = ["", "L", "R", "B", "m"][from[line]]
-        return {lines: lines, gaps: gaps, letters: letters}
+    PaneMarks { id: paneMarks }
+    function paneLineMarks(pane: string): var {
+        return paneMarks.marks(pane, file.passages, file.regions, file.handEditedLines,
+                               file.markerBlocks, file.markerOrphans)
     }
-    // The result's folded conflict-marker blocks: every block tied to a choice
-    // section, unless the raw markers are shown. The buffer keeps all of their
-    // lines. hidden lists each block for TextBlocks as {line, text, last,
-    // lastText}, its opening and closing marker lines, so the block shows as
-    // one row on its opening line. rows maps that line to the block's {last}
-    // line.
-    function foldFor(file: SelectedFile, shown: bool): var {
-        const hidden = []
-        const rows = {}
-        const blocks = shown ? [] : file.markerBlocks || []
-        for (let i = 0; i < blocks.length; ++i) {
-            const lines = blocks[i].markerLines
-            if (!blocks[i].folded || lines.length < 2)
-                continue
-            const first = lines[0]
-            const last = lines[lines.length - 1]
-            hidden.push({line: first.line, text: first.text, last: last.line, lastText: last.text})
-            rows[first.line] = {last: last.line}
-        }
-        hidden.sort((a, b) => a.line - b.line)
-        return {hidden: hidden, rows: rows}
+    function navigationRanges(pane: string, target: var): var {
+        return paneMarks.current(pane, target, controller.selectedFileId, file.passages, file.regions, resultPane.blocks)
     }
     // The connector bands between one source and the result: one per
     // non-equal passage of that side, in order, with its source and result
@@ -413,65 +324,6 @@ ColumnLayout {
         return {decisions: decisions, combinations: combinations}
     }
     readonly property var resultSections: kept("sections:result", resultSectionsFor(file, markerFold))
-    // The lines of one pane that the navigation target covers, as [first, end)
-    // ranges. An empty range marks the line boundary at first.
-    function currentFor(pane: string, target: var, file: SelectedFile): var {
-        const ranges = []
-        if (!target)
-            return ranges
-        if (target.scope === "decoration") {
-            if (pane === target.side)
-                return [[target.sourceBegin, target.sourceEnd]]
-            if (pane === "result")
-                return target.resultBegin > 0 ? [[target.resultBegin, target.resultEnd]] : ranges
-        } else if (target.fileId !== comparison.controller.selectedFileId || !(target.count > 0)) {
-            return ranges
-        }
-        let first = target.scope === "decoration" ? target.resultBegin : -1
-        let end = target.scope === "decoration" ? target.resultEnd : -1
-        if (target.scope === "result" && target.utf16Begin >= 0) {
-            first = resultPane.blocks.lineAt(target.utf16Begin)
-            end = target.utf16End > target.utf16Begin ? resultPane.blocks.lineAt(target.utf16End - 1) + 1 : first
-        }
-        if (pane === "result") {
-            if (first > 0)
-                ranges.push([first, end])
-            return ranges
-        }
-        const regions = file.regions || []
-        for (let i = 0; i < regions.length; ++i) {
-            if (regions[i].id === target.contributionId && regions[i].side === pane) {
-                ranges.push([regions[i].sourceLineBegin, regions[i].sourceLineEnd])
-                return ranges
-            }
-        }
-        if (first <= 0)
-            return ranges
-        // Map the result lines through this source's passages: equal lines
-        // one to one, any other passage the range meets as a whole.
-        const passages = file.passages || []
-        for (let i = 0; i < passages.length; ++i) {
-            const passage = passages[i]
-            if (passage.side !== pane)
-                continue
-            const begin = passage.resultLineBegin
-            const stop = passage.resultLineEnd
-            const meets = stop > begin
-                ? begin < Math.max(end, first + 1) && first < stop
-                : begin >= first && begin <= end
-            if (!meets)
-                continue
-            if (passage.kind === "equal") {
-                const low = Math.max(first, begin)
-                const high = Math.min(end, stop)
-                ranges.push([passage.sourceLineBegin + low - begin, passage.sourceLineBegin + high - begin])
-            } else {
-                ranges.push([passage.sourceLineBegin, passage.sourceLineEnd])
-            }
-        }
-        return ranges
-    }
-
     // Showing the earlier version brings it to the result's position.
     function followEarlier(): void {
         panesByRole.paneShown(earlierPane.paneName)
@@ -490,7 +342,7 @@ ColumnLayout {
         // The result first, then a source for a region the result does not map.
         const leads = ["result", leftPane.paneName, rightPane.paneName]
         for (let i = 0; i < leads.length; ++i) {
-            const ranges = currentFor(leads[i], target, file)
+            const ranges = navigationRanges(leads[i], target)
             if (ranges.length > 0) {
                 panesByRole.place(leads[i], ranges[0][0])
                 return
@@ -575,7 +427,7 @@ ColumnLayout {
                 bands: comparison.kept("bands:" + connectorHandle.source.paneName,
                     comparison.bandsFor(connectorHandle.source.paneName, comparison.file, comparison.markerFold))
                 current: comparison.kept("current:band:" + connectorHandle.source.paneName,
-                    comparison.currentFor(connectorHandle.source.paneName, comparison.decorationTarget, comparison.file))
+                    comparison.navigationRanges(connectorHandle.source.paneName, comparison.decorationTarget))
                 onBandHovered: band => comparison.setHover(connectorHandle.source.paneName + "Band",
                     band ? comparison.bandTarget(connectorHandle.source.paneName, band) : null)
             }
@@ -588,9 +440,8 @@ ColumnLayout {
                 choiceEdge: "right"
                 choiceWidth: comparison.showChoices ? comparison.choiceWidth : 0
                 source: comparison.file.stage2 || ({})
-                marks: comparison.kept("marks:stage2", comparison.marksFor(leftPane.paneName, comparison.file))
-                current: comparison.kept("current:stage2", comparison.currentFor(leftPane.paneName,
-                    comparison.decorationTarget, comparison.file))
+                marks: comparison.kept("marks:stage2", comparison.paneLineMarks(leftPane.paneName))
+                current: comparison.kept("current:stage2", comparison.navigationRanges(leftPane.paneName, comparison.decorationTarget))
                 tabStop: comparison.tabStop
                 wrapLines: comparison.wrapLines
                 showWhitespace: comparison.showWhitespace
@@ -606,9 +457,8 @@ ColumnLayout {
                 SplitView.preferredWidth: panes.width / 3
                 controller: comparison.controller
                 file: comparison.file
-                marks: comparison.kept("marks:result", comparison.marksFor("result", comparison.file))
-                current: comparison.kept("current:result", comparison.currentFor("result",
-                    comparison.decorationTarget, comparison.file))
+                marks: comparison.kept("marks:result", comparison.paneLineMarks("result"))
+                current: comparison.kept("current:result", comparison.navigationRanges("result", comparison.decorationTarget))
                 fold: comparison.markerFold
                 decisions: comparison.resultSections.decisions
                 combinations: comparison.showChoices ? comparison.resultSections.combinations : ({})
@@ -631,9 +481,8 @@ ColumnLayout {
                 choiceEdge: "left"
                 choiceWidth: comparison.showChoices ? comparison.choiceWidth : 0
                 source: comparison.file.stage3 || ({})
-                marks: comparison.kept("marks:stage3", comparison.marksFor(rightPane.paneName, comparison.file))
-                current: comparison.kept("current:stage3", comparison.currentFor(rightPane.paneName,
-                    comparison.decorationTarget, comparison.file))
+                marks: comparison.kept("marks:stage3", comparison.paneLineMarks(rightPane.paneName))
+                current: comparison.kept("current:stage3", comparison.navigationRanges(rightPane.paneName, comparison.decorationTarget))
                 tabStop: comparison.tabStop
                 wrapLines: comparison.wrapLines
                 showWhitespace: comparison.showWhitespace
@@ -682,9 +531,8 @@ ColumnLayout {
         paneName: "earlier"
         paneRole: qsTr("Earlier-version context · read-only")
         source: comparison.file.earlier || ({})
-        marks: comparison.kept("marks:earlier", comparison.marksFor(earlierPane.paneName, comparison.file))
-        current: comparison.kept("current:earlier", comparison.currentFor(earlierPane.paneName,
-            comparison.decorationTarget, comparison.file))
+        marks: comparison.kept("marks:earlier", comparison.paneLineMarks(earlierPane.paneName))
+        current: comparison.kept("current:earlier", comparison.navigationRanges(earlierPane.paneName, comparison.decorationTarget))
         tabStop: comparison.tabStop
         wrapLines: comparison.wrapLines
         showWhitespace: comparison.showWhitespace
