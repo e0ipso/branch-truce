@@ -1925,7 +1925,7 @@ public:
             const auto inputBlock = QByteArray::fromHex("2d4e").repeated(39) + QByteArray::fromHex("0a00");
             const auto canonicalBlock = QByteArray::fromHex("e4b8ad").repeated(39) + '\n';
             GitAdapter adapter(gitExecutable);
-            for (const auto inputSize : {2000000, 3000000}) {
+            for (const auto inputSize : {2000000, 3000000, 6000000}) {
                 auto request = repo.request(Operation::CanonicalizeText, "tracked.txt");
                 request.input = inputBlock.repeated(inputSize / inputBlock.size());
                 CHECK(request.input.size() == inputSize);
@@ -1936,9 +1936,12 @@ public:
                     CHECK(result.outcome == Outcome::Success);
                     CHECK(result.standardOutput == request.input && result.canonicalBytes == expected);
                     CHECK(result.canonicalObjectId == repo.git({"hash-object", "--no-filters", "--stdin"}, expected).trimmed());
-                } else {
+                } else if (inputSize == 3000000) {
                     CHECK(result.outcome == Outcome::Rejected && result.canonicalBytes.isEmpty());
                     CHECK(result.diagnostic.contains("4425000 bytes") && result.diagnostic.contains("4194304 byte output limit"));
+                } else {
+                    CHECK(result.outcome == Outcome::Rejected && result.canonicalBytes.isEmpty());
+                    CHECK(result.diagnostic.contains("6000000 bytes") && result.diagnostic.contains("4194304 byte input limit"));
                 }
                 CHECK(repo.git({"count-objects", "-v"}) == objects);
                 CHECK(repo.git({"ls-files", "--stage", "-z"}) == index);

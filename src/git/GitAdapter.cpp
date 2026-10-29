@@ -57,8 +57,13 @@ void GitAdapter::State::begin()
     const bool objectRequired = r.operation == Operation::ReadObject || r.operation == Operation::MaterializeSource;
     if ((pathRequired && !relativeFile(r.path)) || (!pathRequired && !r.path.isEmpty())
         || (objectRequired && !objectId(r.objectId)) || (!objectRequired && !r.objectId.isEmpty())
-        || (r.operation != Operation::CanonicalizeText && !r.input.isEmpty()) || r.input.size() > outputLimit) {
+        || (r.operation != Operation::CanonicalizeText && !r.input.isEmpty())) {
         reject(QStringLiteral("Invalid operands for the named Git operation"));
+        return;
+    }
+    if (r.input.size() > outputLimit) {
+        reject(QStringLiteral("Canonicalization input has %1 bytes, exceeding the %2 byte input limit")
+            .arg(r.input.size()).arg(outputLimit));
         return;
     }
     deadline.start(deadlineMs);
