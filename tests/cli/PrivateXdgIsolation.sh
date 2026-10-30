@@ -65,17 +65,24 @@ assertions=$((assertions + 1))
 # A terminated run still removes its private directories and stops the command.
 mkdir "$scratch/tmp-term" "$scratch/data-term"
 # CTest signals the process group, so the test does too.
-TMPDIR="$scratch/tmp-term" XDG_DATA_HOME="$scratch/data-term" setsid "$wrapper" sleep 60 2>/dev/null &
+ready="$scratch/term-ready"
+TMPDIR="$scratch/tmp-term" XDG_DATA_HOME="$scratch/data-term" setsid "$wrapper" \
+    bash -c 'printf "%s\n" "$$" >"$1"; exec sleep 60' bash "$ready" 2>/dev/null &
 pid=$!
 for _ in $(seq 1 100); do
-    [[ -n $(ls -A "$scratch/tmp-term") ]] && break
+    # Directory creation precedes the wrapper's traps and child launch. Wait for
+    # the actual child so TERM cannot land before that child joins the group.
+    [[ -s "$ready" ]] && break
     sleep 0.05
 done
+[[ -s "$ready" ]] || fail 'the wrapper never started its command'
+child=$(cat "$ready")
 [[ -n $(ls -A "$scratch/tmp-term") ]] || fail 'the wrapper never created its private directory'
 kill -TERM -- "-$pid"
 if wait "$pid"; then status=0; else status=$?; fi
 [[ "$status" == 143 ]] || fail "expected exit 143 after SIGTERM, got $status"
 [[ -z $(ls -A "$scratch/tmp-term") ]] || fail 'private directories survived SIGTERM'
+! kill -0 "$child" 2>/dev/null || fail 'the wrapped command survived SIGTERM'
 assertions=$((assertions + 1))
 
 printf '%s private XDG isolation assertions passed\n' "$assertions"

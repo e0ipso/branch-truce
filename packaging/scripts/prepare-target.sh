@@ -1,24 +1,10 @@
 #!/usr/bin/env bash
-# Prepares a disposable container as a packaging target for Branch Truce.
-#
-#   prepare-target.sh --format kubuntu-deb|tuxedo-deb [--build-deps] [--refresh]
-#
-# kubuntu-deb: an ubuntu:26.04 (Kubuntu 26.04 LTS) system needs only its
-#              standard package lists.
-# tuxedo-deb:  an ubuntu:24.04 (noble) system configured with the Tuxedo OS
-#              24.04 vendor repositories and archive keyring so its Qt 6.10+
-#              and KDE Frameworks 6.24+ packages are used instead of stock
-#              noble's Qt 6.4.
-# --build-deps also installs the build dependencies from packaging/debian/control.
-# Without it the system stays clean apart from the package lists, ready for
-# packaging/scripts/check-package.sh. --refresh fetches the package lists again.
-#
-# Run as root inside a disposable container only.
-
+# Prepare only disposable native release containers. Developer artifact tooling
+# uses its separate provisioning path under tools/ and packaging/<base>/.
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 --format kubuntu-deb|tuxedo-deb [--build-deps] [--refresh]" >&2
+    echo "usage: $0 --format kubuntu-deb|fedora-rpm|arch-pkg [--build-deps] [--refresh]" >&2
     exit 2
 }
 
@@ -35,45 +21,32 @@ while [ $# -gt 0 ]; do
 done
 
 case "$format" in
-    kubuntu-deb|tuxedo-deb) ;;
+    kubuntu-deb|fedora-rpm|arch-pkg) ;;
     *) usage ;;
 esac
 
 packaging_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DEBIAN_FRONTEND=noninteractive
 
-if [ "$format" = tuxedo-deb ] && [ ! -f /etc/apt/sources.list.d/tuxedo-os.sources ]; then
-    apt-get update -q
-    apt-get install -y -q --no-install-recommends ca-certificates
-    install -d -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
-    install -m 0644 "$packaging_dir/ci/tuxedo-archive-keyring.gpg" /usr/share/keyrings/tuxedo-archive-keyring.gpg
-    cat > /etc/apt/sources.list.d/tuxedo-os.sources <<'EOF'
-Types: deb
-URIs: https://deb.tuxedocomputers.com/ubuntu
-Suites: noble
-Components: main
-Signed-By: /usr/share/keyrings/tuxedo-archive-keyring.gpg
-
-Types: deb
-URIs: https://txos.tuxedocomputers.com/ubuntu
-Suites: noble
-Components: main
-Signed-By: /usr/share/keyrings/tuxedo-archive-keyring.gpg
-
-Types: deb
-URIs: https://txos.tuxedocomputers.com/ubuntu-plasma
-Suites: noble noble-updates
-Components: main
-Signed-By: /usr/share/keyrings/tuxedo-archive-keyring.gpg
-
-Types: deb
-URIs: https://txos-extra.tuxedocomputers.com/ubuntu
-Suites: noble
-Components: main
-Signed-By: /usr/share/keyrings/tuxedo-archive-keyring.gpg
-EOF
-    refresh=true
-fi
+case "$format" in
+    fedora-rpm)
+        $refresh && dnf makecache --refresh -y
+        if $build_deps; then
+            dnf install -y --setopt=install_weak_deps=False rpm-build
+            dnf builddep -y --setopt=install_weak_deps=False -D 'branch_truce_version 0.0.0' \
+                -D 'branch_truce_native_version 0.0.0' "$packaging_dir/rpm/branch-truce.spec"
+        fi
+        exit 0 ;;
+    arch-pkg)
+        # Refresh the entire rolling base; never perform a partial upgrade.
+        $refresh && pacman -Syu --noconfirm
+        if $build_deps; then
+            pacman -S --needed --noconfirm base-devel cmake ninja extra-cmake-modules git \
+                qt6-base qt6-declarative qt6-svg qt6-wayland kirigami syntax-highlighting \
+                qqc2-desktop-style breeze breeze-icons hicolor-icon-theme
+        fi
+        exit 0 ;;
+esac
 
 if $refresh || ! compgen -G "/var/lib/apt/lists/*_Packages*" > /dev/null; then
     apt-get update -q

@@ -102,8 +102,12 @@
             "label": "branch-truce DEB for Kubuntu 26.04 (amd64)"
           },
           {
-            "path": "dist/kde/branch-truce_*_amd64-tuxedo24.04.deb",
-            "label": "branch-truce DEB for Tuxedo OS 24.04 (amd64)"
+            "path": "dist/kde/branch-truce-*-1.fc44.x86_64.rpm",
+            "label": "branch-truce RPM for Fedora 44 (x86_64)"
+          },
+          {
+            "path": "dist/kde/branch-truce-*-1-x86_64.pkg.tar.zst",
+            "label": "branch-truce package for Arch Linux (x86_64)"
           }
         ],
         "successComment": false,

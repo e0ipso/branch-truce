@@ -37,6 +37,13 @@ set(private_xdg "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/with-private-x
 add_test(NAME lifecycle.private-xdg-isolation
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/PrivateXdgIsolation.sh")
 set_tests_properties(lifecycle.private-xdg-isolation PROPERTIES TIMEOUT 30)
+# Native helper contracts run without container or package-manager mutations.
+foreach(native_check IN ITEMS NativeIntegration DebianPreflight FedoraPackaging ArchPackaging)
+    add_test(NAME packaging.${native_check}
+        COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/${native_check}.sh")
+    set_tests_properties(packaging.${native_check} PROPERTIES TIMEOUT 30)
+endforeach()
+
 # Host side of the .deb build and inspection scripts against a stub container engine (about 1 s).
 add_test(NAME packaging.artifact-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ArtifactTooling.sh")
@@ -201,7 +208,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # build has BRANCH_TRUCE_SYNTAX_HIGHLIGHTING off. The timeout is twice the slowest of twelve
     # runs on the development host: 50.6 to 52.3 s alone or three at once, 81.0 to 90.7 s six at once.
     add_test(NAME performance.highlighted-editor COMMAND branch_truce_theme_tests cost)
-    set_tests_properties(performance.highlighted-editor PROPERTIES TIMEOUT 200 LABELS "ui;performance"
+    # CPU medians must not compete with other CTest processes.
+    set_tests_properties(performance.highlighted-editor PROPERTIES TIMEOUT 200 RUN_SERIAL TRUE LABELS "ui;performance"
         SKIP_RETURN_CODE 77 ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     # PRD observable acceptance examples, driven through the real Main scene and a real Git merge.
@@ -323,7 +331,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     qt_add_resources(branch_truce_workload_measurements workload_editor PREFIX "/" BASE "${editor_fixture}"
         FILES "${editor_fixture}/Editor.qml")
     add_test(NAME performance.workloads COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_workload_measurements> --profile gate)
-    set_tests_properties(performance.workloads PROPERTIES TIMEOUT 180
+    # Wall-clock budgets must not compete with other CTest processes.
+    set_tests_properties(performance.workloads PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS performance
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     # Rebuilds a Release copy in a fixture under ${TMPDIR:-/tmp}, installs it, launches only the
@@ -336,7 +345,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # qmllint exits nonzero on any warning (src/ui/.qmllint.ini), so the generated lint target is the check.
     add_test(NAME ui.qmllint
         COMMAND "${CMAKE_COMMAND}" --build "${CMAKE_BINARY_DIR}" --target branch_truce_ui_qmllint)
-    set_tests_properties(ui.qmllint PROPERTIES TIMEOUT 120 LABELS ui)
+    # This invokes the build tool and may regenerate shared QML metadata. Keep it
+    # exclusive of all tests reading build outputs, including the icon-name list.
+    set_tests_properties(ui.qmllint PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE LABELS ui)
 
     add_test(NAME desktop.startup COMMAND ${private_xdg} $<TARGET_FILE:branch-truce> --smoke-test)
     set_tests_properties(desktop.startup PROPERTIES TIMEOUT 30

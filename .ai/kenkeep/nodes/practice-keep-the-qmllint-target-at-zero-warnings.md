@@ -17,7 +17,7 @@ kk_relates_to:
 kk_depends_on: []
 kk_confidence: high
 ---
-`cmake --build build/desktop --target branch_truce_ui_qmllint` (see [docs/build.md](../../../docs/build.md)) fails on any qmllint warning. The target that `qt_add_qml_module` generates takes no extra arguments, so [src/ui/.qmllint.ini](../../../src/ui/.qmllint.ini) sets the policy with `MaxWarnings=0` and disables no warning category. The ctest `ui.qmllint` (label `ui`) runs the target.
+`cmake --build build/desktop --target branch_truce_ui_qmllint` (see [docs/build.md](../../../docs/build.md)) fails on any qmllint warning. The target that `qt_add_qml_module` generates takes no extra arguments, so [src/ui/.qmllint.ini](../../../src/ui/.qmllint.ini) sets the policy with `MaxWarnings=0` and disables no warning category. The ctest `ui.qmllint` (label `ui`) runs the target once in the native CI path. It has `RUN_SERIAL` because it can regenerate shared build-tree metadata. `install.prefix` and both performance gates are also exclusive; other audited tests may overlap at parallel level two. Never run another build or CTest process against the same tree concurrently.
 
 Type QML properties with the concrete type the code uses. The whitespace overlay in [ComparisonView.qml](../../../src/ui/ComparisonView.qml) declares `required property TextEdit editor`; as `Item`, qmllint cannot resolve `color`, `text`, `positionAt` or `positionToRectangle` and reports `missing-property`.
 

@@ -317,8 +317,14 @@ ColumnLayout {
         id: paneFont
         font: resultPane.editor.font
     }
-    // Four characters, so tab-indented text lines up the same in every pane.
-    readonly property real tabStop: 4 * paneFont.averageCharacterWidth
+    TextMetrics {
+        id: tabMetrics
+        font: resultPane.editor.font
+        text: "    "
+    }
+    // Measure actual spaces and update when the desktop's fixed-width font changes.
+    // Some font files report a different average width from their glyph advances.
+    readonly property real tabStop: tabMetrics.advanceWidth
     // One text row; a gutter button is this high and wide.
     readonly property real rowHeight: {
         // Reading contentHeight tracks relayout; positionToRectangle uses the editor's

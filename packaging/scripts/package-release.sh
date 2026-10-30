@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Builds the branch-truce DEB package for a target OS base in a throwaway
+# Builds the branch-truce native release package for a target OS base in a throwaway
 # source tree.
 #
-#   package-release.sh --version <version> --format kubuntu-deb|tuxedo-deb --output <dir>
+#   package-release.sh --version <version> --format kubuntu-deb|fedora-rpm|arch-pkg --output <dir>
 #
-# Prints the absolute path of the produced .deb on the last line.
+# Prints the absolute path of the produced native package on the last line.
 
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 --version <version> --format kubuntu-deb|tuxedo-deb --output <dir>" >&2
+    echo "usage: $0 --version <version> --format kubuntu-deb|fedora-rpm|arch-pkg --output <dir>" >&2
     exit 2
 }
 
@@ -26,21 +26,19 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$version" ] && [ -n "$format" ] && [ -n "$output" ] || usage
 
-case "$format" in
-    kubuntu-deb)
-        suite=resolute
-        suffix=-ubuntu26.04
-        ;;
-    tuxedo-deb)
-        suite=noble
-        suffix=-tuxedo24.04
-        ;;
-    *) usage ;;
-esac
-
 packaging_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 root_dir="$(cd "$packaging_dir/.." && pwd)"
-native_version="$("$packaging_dir/scripts/native-version.sh" "$version")" || exit 2
+# package_info assigns these outputs for its Bash callers.
+package_filename=''
+package_native_version=''
+source "$packaging_dir/scripts/package-info.sh"
+package_info "$format" "$version" || exit 2
+case "$format" in
+    fedora-rpm) exec "$packaging_dir/scripts/package-fedora.sh" --version "$version" --output "$output" ;;
+    arch-pkg) exec "$packaging_dir/scripts/package-arch.sh" --version "$version" --output "$output" ;;
+esac
+suite=resolute
+native_version="$package_native_version"
 mkdir -p "$output"
 output="$(cd "$output" && pwd)"
 work="$(mktemp -d)"
@@ -69,9 +67,19 @@ branch-truce ($native_version) $suite; urgency=medium
  -- Branch Truce contributors <contributors@example.invalid>  $(TZ=UTC date -R ${SOURCE_DATE_EPOCH:+-d "@$SOURCE_DATE_EPOCH"})
 EOF
 
-(cd "$tree" && BRANCH_TRUCE_VERSION="$version" dpkg-buildpackage -b --no-sign)
+source "$packaging_dir/scripts/compiler-cache.sh"
+cache_prepare
+cache_begin native-deb-distro "$work"
+build_status=0
+(cd "$tree" && BRANCH_TRUCE_VERSION="$version" dpkg-buildpackage -b --no-sign) || build_status=$?
+cache_end
+[ "$build_status" -eq 0 ] || exit "$build_status"
 
 deb="branch-truce_${native_version}_amd64.deb"
-name="branch-truce_${native_version}_amd64${suffix}.deb"
+name="$package_filename"
+[ "$(dpkg-deb -f "$work/$deb" Package)" = branch-truce ] \
+    && [ "$(dpkg-deb -f "$work/$deb" Version)" = "$native_version" ] \
+    && [ "$(dpkg-deb -f "$work/$deb" Architecture)" = amd64 ] \
+    || { echo 'error: built DEB identity mismatch' >&2; exit 1; }
 cp "$work/$deb" "$output/$name"
 echo "$output/$name"
