@@ -14,11 +14,8 @@ RUN dnf install -y --setopt=install_weak_deps=False rpm-build \
     && dnf builddep -y --setopt=install_weak_deps=False -D 'branch_truce_version 0.0.0' \
         -D 'branch_truce_native_version 0.0.0' /opt/branch-truce/rpm/branch-truce.spec \
     && dnf clean all
-# Repositories are rolling within Fedora 44. Record the resolved toolchain.
-RUN { cat /etc/os-release; \
-        rpm -q gcc-c++ cmake extra-cmake-modules qt6-qtbase qt6-qtdeclarative \
-            kf6-kirigami kf6-syntax-highlighting git rpm rpm-build redhat-rpm-config; \
-    } > /opt/branch-truce/baseline.txt \
+COPY ci/baseline.sh /opt/branch-truce/ci/
+RUN /opt/branch-truce/ci/baseline.sh --format fedora-rpm > /opt/branch-truce/baseline.txt \
     && cat /opt/branch-truce/baseline.txt
 
 FROM build AS test

@@ -7,7 +7,8 @@ FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a
 ENV LANG=C.UTF-8
 ARG BRANCH_TRUCE_KDE_CI_REFRESH=
 COPY scripts/prepare-target.sh /opt/branch-truce/scripts/
-RUN /opt/branch-truce/scripts/prepare-target.sh --format kubuntu-deb
+RUN /opt/branch-truce/scripts/prepare-target.sh --format kubuntu-deb \
+    && apt-get install -y -q --no-install-recommends appstream desktop-file-utils binutils
 
 FROM target AS build
 COPY debian/control /opt/branch-truce/debian/

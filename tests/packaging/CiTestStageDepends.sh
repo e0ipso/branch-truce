@@ -27,7 +27,7 @@ mapfile -t build_depends < <(field_names Build-Depends)
 
 failures=0
 checked=0
-for format in kubuntu tuxedo; do
+for format in kubuntu; do
     dockerfile=$root/packaging/ci/$format.Dockerfile
     mapfile -t installed < <(test_stage_words "$dockerfile")
     ((${#installed[@]} > 0)) || { echo "FAIL: no test stage in $dockerfile" >&2; failures=$((failures + 1)); continue; }

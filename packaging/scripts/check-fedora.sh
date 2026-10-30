@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run as root in a disposable Fedora 44 target container, never on a desktop.
-# Only this script, native-version.sh and RPM inputs need mounting. The installed
+# Supply helpers, expected branding exports and RPM inputs only. The installed
 # binary runs with private HOME/XDG directories and no source/build tree.
 set -euo pipefail
 usage() { echo "usage: $0 --version <application-semver> --package <file> [--previous <file>]" >&2; exit 2; }
@@ -17,7 +17,7 @@ check_identity() {
         || die "RPM identity mismatch: $got"
 }
 main() {
-    local version= package= previous= native_version previous_version previous_release got deps dep path files payload_files
+    local version='' package='' previous='' native_version previous_version previous_release got deps dep path files payload_files
     while [ $# -gt 0 ]; do
         [ $# -ge 2 ] || usage
         case "$1" in
@@ -77,6 +77,8 @@ main() {
     local work cleanup_command
     work="$(mktemp -d /tmp/bt-fedora-check.XXXXXX)"
     printf -v cleanup_command 'rm -rf -- %q' "$work"
+    # Capture the quoted path while the local work variable is in scope.
+    # shellcheck disable=SC2064
     trap "$cleanup_command" EXIT
     mkdir -p "$work/user/.config" "$work/user/.local/share/branch-truce/recovery"
     printf '[General]\nwrapLines=true\n' > "$work/user/.config/branch-trucerc"
@@ -112,13 +114,23 @@ main() {
             XDG_CACHE_HOME="$work/version-home/cache" XDG_RUNTIME_DIR="$work/version-home/runtime" \
             QT_QPA_PLATFORM=offscreen "$binary" --version)"
         [ "$out" = "Branch Truce $version" ] || die "wrong application version: $out"
+        local branding rel
+        branding="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/assets/branding/platform/linux/hicolor"
+        for path in "${expected_files[@]}"; do
+            case "$path" in
+                /usr/share/icons/hicolor/*)
+                    rel="${path#/usr/share/icons/hicolor/}"
+                    cmp -s "$branding/$rel" "$path" || die "icon bytes differ for $rel" ;;
+            esac
+        done
+        appstreamcli validate --no-net "/usr/share/metainfo/$app_id.metainfo.xml"
         echo "ok: installed $want, file integrity, icons, native libraries, bytecode ABI and hardening"
     }
     smoke() {
-        local repo="$work/repo" home="$work/runtime-home" out
-        rm -rf "$repo" "$home"
-        mkdir -p "$repo" "$home/data" "$home/config" "$home/cache" "$home/runtime"
-        chmod 700 "$home/runtime"
+        local repo="$work/repo" runtime_home="$work/runtime-home" out
+        rm -rf "$repo" "$runtime_home"
+        mkdir -p "$repo" "$runtime_home/data" "$runtime_home/config" "$runtime_home/cache" "$runtime_home/runtime"
+        chmod 700 "$runtime_home/runtime"
         (
             cd "$repo"
             git init --quiet --initial-branch=main
@@ -137,8 +149,8 @@ main() {
             if git merge --no-edit side > "$work/merge.log" 2>&1; then die 'fixture merge did not conflict'; fi
             [ "$(git diff --name-only --diff-filter=U)" = tracked.txt ] || die 'fixture conflict missing'
         )
-        out="$(env -i PATH=/usr/bin:/bin HOME="$home" LC_ALL=C.UTF-8 \
-            XDG_DATA_HOME="$home/data" XDG_CONFIG_HOME="$home/config" XDG_CACHE_HOME="$home/cache" XDG_RUNTIME_DIR="$home/runtime" \
+        out="$(env -i PATH=/usr/bin:/bin HOME="$runtime_home" LC_ALL=C.UTF-8 \
+            XDG_DATA_HOME="$runtime_home/data" XDG_CONFIG_HOME="$runtime_home/config" XDG_CACHE_HOME="$runtime_home/cache" XDG_RUNTIME_DIR="$runtime_home/runtime" \
             GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
             QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
             timeout 60 "$binary" --smoke-test "$repo")"

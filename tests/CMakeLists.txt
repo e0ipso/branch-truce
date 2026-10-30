@@ -37,6 +37,13 @@ set(private_xdg "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/with-private-x
 add_test(NAME lifecycle.private-xdg-isolation
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/PrivateXdgIsolation.sh")
 set_tests_properties(lifecycle.private-xdg-isolation PROPERTIES TIMEOUT 30)
+# Native helper contracts run without container or package-manager mutations.
+foreach(native_check IN ITEMS NativeIntegration DebianPreflight FedoraPackaging ArchPackaging)
+    add_test(NAME packaging.${native_check}
+        COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/${native_check}.sh")
+    set_tests_properties(packaging.${native_check} PROPERTIES TIMEOUT 30)
+endforeach()
+
 # Host side of the .deb build and inspection scripts against a stub container engine (about 1 s).
 add_test(NAME packaging.artifact-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ArtifactTooling.sh")

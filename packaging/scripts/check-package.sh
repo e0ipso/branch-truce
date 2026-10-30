@@ -5,7 +5,7 @@
 #   check-package.sh --version <version> --package <file> [--previous <file>]
 #
 # Run as root on a disposable target container with the distribution's
-# repositories configured (Kubuntu 26.04 or Tuxedo OS 24.04). Never run on a
+# repositories configured (Kubuntu 26.04). Never run on a
 # real desktop.
 
 set -euo pipefail
@@ -179,6 +179,8 @@ check_installed() {
         expect "installed $path" "missing installed $path" [ -f "$path" ]
     done
     check_icons
+    expect "desktop metadata validates" "invalid desktop metadata" desktop-file-validate "$desktop_file"
+    expect "AppStream metadata validates" "invalid AppStream metadata" appstreamcli validate --no-net "$metainfo_file"
 
     ldd_out="$(ldd "$binary_file" 2>&1)" || ldd_status=$?
     if [ "$ldd_status" -ne 0 ]; then
@@ -204,12 +206,12 @@ check_installed() {
 }
 
 check_loads() {
-    local work repo home smoke record
+    local work repo runtime_home smoke record
     work="$(mktemp -d /tmp/bt-pkg-smoke.XXXXXX)"
     repo="$work/repo"
-    home="$work/home"
-    mkdir -p "$home/data" "$home/config" "$home/cache" "$home/runtime" "$repo"
-    chmod 700 "$home/runtime"
+    runtime_home="$work/home"
+    mkdir -p "$runtime_home/data" "$runtime_home/config" "$runtime_home/cache" "$runtime_home/runtime" "$repo"
+    chmod 700 "$runtime_home/runtime"
     (
         cd "$repo"
         git init --quiet --initial-branch=main
@@ -224,9 +226,9 @@ check_loads() {
         printf 'main\n' > tracked.txt && git commit --quiet -am main
         git merge --no-edit side >/dev/null 2>&1 || true
     )
-    smoke="$(env -i PATH=/usr/bin:/bin HOME="$home" LC_ALL=C.UTF-8 \
-        XDG_DATA_HOME="$home/data" XDG_CONFIG_HOME="$home/config" \
-        XDG_CACHE_HOME="$home/cache" XDG_RUNTIME_DIR="$home/runtime" \
+    smoke="$(env -i PATH=/usr/bin:/bin HOME="$runtime_home" LC_ALL=C.UTF-8 \
+        XDG_DATA_HOME="$runtime_home/data" XDG_CONFIG_HOME="$runtime_home/config" \
+        XDG_CACHE_HOME="$runtime_home/cache" XDG_RUNTIME_DIR="$runtime_home/runtime" \
         GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
         QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
         "$binary_file" --smoke-test "$repo")" || {
@@ -284,14 +286,6 @@ check_removed() {
     fi
 }
 
-fixture_home="$(mktemp -d /home/branch-truce-check.XXXXXX)"
-fixture_sums="$(mktemp)"
-trap 'rm -rf "$fixture_home" "$fixture_sums"' EXIT
-mkdir -p "$fixture_home/.config" "$fixture_home/.local/share/branch-truce/recovery"
-printf '[General]\nwrapLines=true\n' > "$fixture_home/.config/branch-trucerc"
-head -c 256 /dev/urandom > "$fixture_home/.local/share/branch-truce/recovery/session.journal"
-(cd "$fixture_home" && find . -type f -exec sha256sum {} +) > "$fixture_sums"
-
 [ -z "$(installed_version)" ] || { echo "error: branch-truce is already installed; use a clean system" >&2; exit 1; }
 
 inspect "$package" "$native_version"
@@ -320,6 +314,16 @@ check_previous() {
 }
 previous_version=""
 [ -z "$previous" ] || check_previous
+
+[ "$failures" -eq 0 ] || { echo 'error: invalid candidate metadata; target unchanged' >&2; exit 1; }
+
+fixture_home="$(mktemp -d /home/branch-truce-check.XXXXXX)"
+fixture_sums="$(mktemp)"
+trap 'rm -rf "$fixture_home" "$fixture_sums"' EXIT
+mkdir -p "$fixture_home/.config" "$fixture_home/.local/share/branch-truce/recovery"
+printf '[General]\nwrapLines=true\n' > "$fixture_home/.config/branch-trucerc"
+head -c 256 /dev/urandom > "$fixture_home/.local/share/branch-truce/recovery/session.journal"
+(cd "$fixture_home" && find . -type f -exec sha256sum {} +) > "$fixture_sums"
 
 step "clean install of $native_version"
 install_file "$package"

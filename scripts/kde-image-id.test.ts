@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { appendFileSync, chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,8 +16,9 @@ const FILES = execFileSync('git', ['ls-files', '--cached', '--others', '--exclud
   encoding: 'utf8',
 })
   .trim()
-  .split('\n');
-const DOCKERFILE = { 'kubuntu-deb': 'ci/kubuntu.Dockerfile', 'tuxedo-deb': 'ci/tuxedo.Dockerfile' } as const;
+  .split('\n').filter((file) => existsSync(join(ROOT, file)));
+const RECIPE = { 'kubuntu-deb': 'debian/control', 'fedora-rpm': 'rpm/branch-truce.spec', 'arch-pkg': 'arch/PKGBUILD' } as const;
+const DOCKERFILE = { 'kubuntu-deb': 'ci/kubuntu.Dockerfile', 'fedora-rpm': 'ci/fedora.Dockerfile', 'arch-pkg': 'ci/arch.Dockerfile' } as const;
 
 /** The sources of the Dockerfile's COPY instructions, relative to packaging/. */
 function copied(format: keyof typeof DOCKERFILE): string[] {
@@ -48,7 +49,7 @@ function tree(t: { after: (fn: () => void) => void }) {
   return { packaging, id, touch };
 }
 
-for (const format of ['kubuntu-deb', 'tuxedo-deb'] as const) {
+for (const format of ['kubuntu-deb', 'fedora-rpm', 'arch-pkg'] as const) {
   test(`${format}: the identity is stable when nothing that goes into the images changes`, (t) => {
     const box = tree(t);
     const before = box.id(format, '2026-W42');
@@ -69,7 +70,7 @@ for (const format of ['kubuntu-deb', 'tuxedo-deb'] as const) {
 
   test(`${format}: the identity changes with the Dockerfile and with each file it copies`, (t) => {
     const sources = copied(format);
-    assert.ok(sources.includes('ci/baseline.sh') && sources.length >= 3, `unexpected COPY sources: ${sources.join(', ')}`);
+    assert.ok(sources.includes('ci/baseline.sh') && sources.includes(RECIPE[format]) && sources.length >= (format === 'kubuntu-deb' ? 3 : 2), `unexpected COPY sources: ${sources.join(', ')}`);
     const box = tree(t);
     const seen = new Set([box.id(format)]);
     for (const file of [DOCKERFILE[format], ...sources]) {
@@ -90,7 +91,7 @@ for (const format of ['kubuntu-deb', 'tuxedo-deb'] as const) {
   });
 }
 
-test('the Kubuntu and Tuxedo images have different identities', (t) => {
+test('native targets have distinct image identities', (t) => {
   const box = tree(t);
-  assert.notEqual(box.id('kubuntu-deb'), box.id('tuxedo-deb'));
+  assert.equal(new Set(Object.keys(DOCKERFILE).map((format) => box.id(format as keyof typeof DOCKERFILE))).size, 3);
 });

@@ -10,14 +10,16 @@ RUN pacman -Syu --noconfirm --needed archlinux-keyring \
     && cat /opt/branch-truce-target-baseline.txt
 
 FROM target AS build
+COPY arch/PKGBUILD /opt/branch-truce/arch/
 RUN pacman -S --noconfirm --needed base-devel cmake ninja extra-cmake-modules \
         git qt6-base qt6-declarative qt6-svg qt6-wayland kirigami \
         syntax-highlighting qqc2-desktop-style breeze breeze-icons hicolor-icon-theme \
     && useradd --create-home --uid 1000 builder \
     && pacman -Q > /opt/branch-truce-build-baseline.txt \
-    && { c++ --version; cmake --version; git --version; makepkg --version; \
-         cat /opt/branch-truce-build-baseline.txt; } > /opt/branch-truce-baseline.txt \
-    && cat /opt/branch-truce-baseline.txt
+    && cat /opt/branch-truce-build-baseline.txt
+COPY ci/baseline.sh /opt/branch-truce/ci/
+RUN /opt/branch-truce/ci/baseline.sh --format arch-pkg > /opt/branch-truce/baseline.txt \
+    && cat /opt/branch-truce/baseline.txt
 
 FROM build AS test
 # Startup appearance checks use the Plasma platform plugin; glib2 supplies gio.
