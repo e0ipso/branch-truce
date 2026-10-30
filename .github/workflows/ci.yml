@@ -119,6 +119,7 @@ jobs:
   kde:
     name: kde (${{ matrix.target }})
     needs: select
+    if: "!cancelled() && needs.select.result == 'success'"
     runs-on: ubuntu-latest
     permissions:
       contents: read

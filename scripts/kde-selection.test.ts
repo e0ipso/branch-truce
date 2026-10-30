@@ -55,11 +55,18 @@ test('event dependency graphs retain all validation legs, fail closed on analysi
       const scheduled: string[] = [];
       for (const [id, job] of Object.entries(jobs) as [string, any][]) {
         const deps: string[] = typeof job.needs === 'string' ? [job.needs] : job.needs || [];
+        // GitHub's implicit success() also examines skipped ancestors, even
+        // when an immediate dependency explicitly allowed that ancestor.
+        const dependencySucceeded = (id: string): boolean => {
+          const parent = jobs[id];
+          const ancestors: string[] = typeof parent.needs === 'string' ? [parent.needs] : parent.needs || [];
+          return needs[id]?.result === 'success' && ancestors.every(dependencySucceeded);
+        };
         const expression = (job.if || 'true').replace(/^\$\{\{\s*|\s*\}\}$/g, '');
         const allowed = runInNewContext(expressionForJS(expression), { github: { event_name: event, ref: 'refs/heads/main' }, needs,
-          cancelled: () => false, always: () => true, success: () => deps.every(dep => needs[dep]?.result === 'success') });
+          cancelled: () => false, always: () => true, success: () => deps.every(dependencySucceeded) });
         const explicitStatus = /always\(|cancelled\(|success\(|failure\(/.test(expression);
-        const active = Boolean(allowed) && (explicitStatus || deps.every(dep => needs[dep]?.result === 'success'));
+        const active = Boolean(allowed) && (explicitStatus || deps.every(dependencySucceeded));
         needs[id] = { result: active ? 'success' : 'skipped', outputs: { publish: String(publish) } };
         if (active) scheduled.push(id);
         if (event === 'pull_request' && active) assert.notEqual(job.permissions?.contents, 'write', `${id} grants PR write access`);
