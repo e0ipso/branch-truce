@@ -48,8 +48,7 @@ and configures that checkout; it never installs packages.
 ```sh
 ./tools/prepare-worktree.sh desktop
 cmake --build build/desktop --parallel 2
-ctest --test-dir build/desktop --output-on-failure
-cmake --build build/desktop --target branch_truce_ui_qmllint
+ctest --test-dir build/desktop --parallel 2 --output-on-failure
 
 ./tools/prepare-worktree.sh core
 cmake --build build/core --parallel 2
@@ -64,7 +63,13 @@ ctest --test-dir build/sanitize --output-on-failure
 
 The QML lint target fails on any qmllint warning, because
 `src/ui/.qmllint.ini` sets `MaxWarnings=0`. The desktop CTest run includes it
-as `ui.qmllint`.
+as `ui.qmllint`, so a complete CTest run invokes lint once. For lint alone, use
+`cmake --build build/desktop --target branch_truce_ui_qmllint`.
+
+Two independent desktop tests may overlap. `install.prefix`, `ui.qmllint`,
+`performance.highlighted-editor` and `performance.workloads` have `RUN_SERIAL`.
+Do not run a second build or CTest process against that build tree concurrently.
+Run GUI/permission tests as an unprivileged user; retain reported skips as skips.
 
 CTest entries that start the real binary or load Qt Quick outside the unit harness run through
 `tests/with-private-xdg.sh`. It gives them a private `HOME` and XDG directories, removes
@@ -140,6 +145,79 @@ cannot justify a complete build/runtime dependency declaration. The normalized
 shell syntax command above has a separate stamp covering env, Bash and their
 linked libraries. That stamp is empty when exported loader overrides are present,
 so the evidence helper must treat its declaration as incomplete in that case.
+
+## Native CI and release packages
+
+The single `kde` matrix in `.github/workflows/ci.yml` checks out the selected
+revision and runs the complete desktop, CTest, install-prefix and native package
+lifecycle once for each of `kubuntu-deb`, `fedora-rpm` and `arch-pkg`. PRs and
+main pushes without a release validate the repository version. Release-producing
+main pushes select the semantic-release candidate before compilation. Analysis
+errors fail selection. Publishing waits for lightweight checks and every matrix
+leg, then verifies the exact three packages and manifests for version, native
+metadata, revision, workflow run and SHA-256 before changing release metadata.
+It publishes the validated bytes. PR jobs have read-only contents access;
+superseded runs cancel only for the same PR. Main publishing remains serialized.
+
+With Docker available, run the same pipeline locally:
+
+```sh
+BRANCH_TRUCE_COMPILER_CACHE="$HOME/.cache/branch-truce/compiler" \
+  packaging/scripts/container-check.sh --format all --version 1.2.3 --output /tmp/branch-truce-packages
+# Or select one format. For a verified downloaded predecessor:
+packaging/scripts/container-check.sh --format fedora-rpm --version 1.2.3 \
+  --previous-package /absolute/path/to/previous.rpm --output /tmp/branch-truce-rpm
+packaging/scripts/package-info.sh --format arch-pkg --version 1.2.3
+```
+
+`CONTAINER_ENGINE` selects another compatible engine. Image preparation needs
+network access. Installed-target checks mount only helper/branding inputs and
+package files, with no application source, build tree or compiler cache. They
+check native metadata, declared dependencies, integrity, installed version and
+smoke loading, upgrade and removal; Debian also checks purge. Compilation runs
+as an unprivileged user where required. Baselines record resolved compiler,
+Qt/KDE, Git and native package-tool versions. A pinned base does not freeze the
+repositories consulted during image preparation.
+
+CI selects a strictly older platform-matching published predecessor and verifies
+its label, size and SHA-256. Unavailable releases/assets visibly fall back to a
+real synthetic `0.0.0` build and upgrade. A corrupt downloaded asset fails.
+Candidate packages alone enter the release staging directory. Raw output also
+contains `previous/`, CTest reports under `tests/<format>/`, compiler statistics
+under `cache/<format>/`, and actual container logs/statuses under `containers/`.
+Diagnostic artifacts retain these separately from release assets, including on
+failure. Preserve those records when investigating a client disconnect; a host
+shell status does not replace the actual container exit status.
+
+### Compiler and dependency-image caches
+
+`BRANCH_TRUCE_COMPILER_CACHE` is an optional absolute host directory. The runner
+mounts its format/architecture/image-input subtree only into compilation stages.
+Actual image IDs further separate toolchains, with independent namespaces for
+Debug, install-prefix Release and each native distro configuration. Candidate
+and synthetic predecessor builds share the native namespace while version
+inputs still invalidate affected compilations. ccache enforces a 2 GB total
+limit per mounted subtree across those namespaces. Safe source/debug prefix
+maps allow disposable paths to change; normal compiler/header correctness checks
+remain enabled. Missing ccache or an unwritable directory uses direct compilation.
+The actual compilation user must pass a write/remove probe before caching starts.
+
+Workflow restores use `compiler-v1-<format>-<arch>-<image-inputs>-`, independent
+of source revision, and save with a fresh SHA/run/attempt suffix only after the
+complete build/check step succeeds. GitHub keeps PR saves in their merge-ref
+scope. The separate `BRANCH_TRUCE_KDE_CI_IMAGE_CACHE` directory stores dependency
+image archives. CI refreshes image inputs using the selected commit's ISO week;
+set `BRANCH_TRUCE_KDE_CI_REFRESH` locally to invalidate dependency layers.
+Caches never replace tests or clean installed-runtime checks.
+
+Each compilation records hits, misses and uncacheable calls in separate `.stats`,
+`.summary`, `.config` and raw log files. Debug and install-prefix records live
+under `tests/<format>/cache/`; native predecessor and candidate records live
+under `cache/<format>/`. Debian and Fedora use distro flags, not CMake
+RelWithDebInfo; Arch uses None. The install-prefix build remains Release.
+Actual GitHub cross-run cache reuse, cancellation and publication require a
+post-rollout workflow observation. Local compiler hits alone do not measure a
+hosted-run speedup.
 
 ## Node tooling and commit messages
 
@@ -345,10 +423,12 @@ core CTest each passed 1/1. QML lint completed without diagnostics. The same
 checks passed in a disposable detached worktree, which stayed clean and was
 removed afterward. These are scaffold checks only.
 The install-prefix check under [Install](#install) passed on this host.
-Separate Kubuntu 26.04 and Tuxedo OS 24.04 packages are built and inspected
-in containers of each base, as [target-platforms.md](target-platforms.md)
-records. Installing them on the real desktops, Wayland, theme/scaling and
-accessibility checks remain required before platform compatibility claims.
-Build separate artifacts on each OS base. A user-owned prefix via
+The current release pipeline builds Kubuntu DEB, Fedora 44 RPM and pinned Arch
+pkg.tar.zst artifacts. The earlier per-base Kubuntu/Tuxedo developer artifacts
+remain historical evidence in [target-platforms.md](target-platforms.md).
+The user reports the Kubuntu release DEB works on Tuxedo OS. Real desktop
+Wayland, theme/scaling and accessibility coverage remains limited to the dated
+[platform validation record](platform-validation.md).
+A user-owned prefix via
 `CMAKE_PREFIX_PATH` can supply compatible Qt/KDE packages, but must keep their ABI
 and runtime modules consistent; no such alternate toolchain was needed here.

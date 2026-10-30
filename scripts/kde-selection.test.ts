@@ -110,3 +110,68 @@ test('matrix recording copies only the exact native candidate and binds manifest
     assert.equal(manifest.sha256, createHash('sha256').update(readFileSync(join(dir, info.filename))).digest('hex'));
   }
 });
+
+test('workflow compilation cache reaches the build and reuses compatible revisions with isolated fresh saves', t => {
+  const box = repository(t);
+  const steps = workflow.jobs.kde.steps;
+  const identify = steps.find((step: any) => step.id === 'images');
+  const restore = steps.find((step: any) => step.id === 'restore-compiler');
+  const save = steps.find((step: any) => step.name === 'Save compiler cache');
+  const build = steps.find((step: any) => step.name === 'Test, package and check');
+  assert.ok(restore && save, 'workflow never restores or saves compiled results');
+  const expand = (value: string, context: object) => value.replace(/\$\{\{\s*(.*?)\s*\}\}/g,
+    (_, expression) => String(runInNewContext(expressionForJS(expression), context)));
+  for (const format of formats) {
+    const envFile = join(box.cwd, `${format}.env`);
+    const outputFile = join(box.cwd, `${format}.output`);
+    execFileSync('bash', ['-euo', 'pipefail', '-c', identify.run], { env: {
+      PATH: process.env.PATH, FORMAT: format, GITHUB_ENV: envFile, GITHUB_OUTPUT: outputFile,
+    } });
+    const outputs = Object.fromEntries(readFileSync(outputFile, 'utf8').trim().split('\n').map(line => {
+      const index = line.indexOf('=');
+      return [line.slice(0, index), line.slice(index + 1)];
+    }));
+    const keys: string[] = [];
+    let prefix = '';
+    for (const [sha, runId, attempt] of [['a'.repeat(40), '101', '1'], ['b'.repeat(40), '102', '1'], ['b'.repeat(40), '102', '2']]) {
+      const context = { runner: { temp: box.cwd }, matrix: { format }, steps: { images: { outputs } },
+        github: { sha, run_id: runId, run_attempt: attempt, event_name: 'pull_request', ref: 'refs/pull/7/merge' } };
+      const currentPrefix = expand(restore.with['restore-keys'], context).trim();
+      assert.match(currentPrefix, new RegExp(`^compiler-v1-${format}-${outputs.arch}-${outputs.id}-$`));
+      assert.equal(prefix || currentPrefix, currentPrefix, 'source revision prevents compatible restore');
+      prefix = currentPrefix;
+      const key = expand(save.with.key, context);
+      assert.equal(expand(restore.with.key, context), key);
+      assert.equal(key, `${prefix}${sha}-${runId}-${attempt}`);
+      keys.push(key);
+      const cachePath = expand(build.env.BRANCH_TRUCE_COMPILER_CACHE, context);
+      assert.equal(expand(restore.with.path, context), cachePath);
+      assert.equal(expand(save.with.path, context), cachePath);
+      assert.ok(cachePath.startsWith(`${box.cwd}/`));
+      assert.notEqual(cachePath, join(box.cwd, 'kde-images'));
+      // Invoke the real workflow shell boundary. Native compiler/mount behavior
+      // is exercised separately by CompilerCacheMounts and the real-image runs.
+      const adapter = join(box.cwd, 'packaging/scripts');
+      mkdirSync(adapter, { recursive: true });
+      writeFileSync(join(adapter, 'container-check.sh'), '#!/bin/bash\nset -euo pipefail\n' +
+        'test "$BRANCH_TRUCE_COMPILER_CACHE" = "$EXPECTED_CACHE"\n' +
+        'test "$*" = "--version $VERSION --format $FORMAT --output $OUTPUT"\n' +
+        'mkdir -p "$BRANCH_TRUCE_COMPILER_CACHE"\nprintf compiled > "$BRANCH_TRUCE_COMPILER_CACHE/fixture"\n', { mode: 0o755 });
+      execFileSync('bash', ['-euo', 'pipefail', '-c', build.run], { cwd: box.cwd, env: {
+        PATH: process.env.PATH, BRANCH_TRUCE_COMPILER_CACHE: cachePath, EXPECTED_CACHE: cachePath,
+        FORMAT: format, VERSION: '1.2.3', OUTPUT: join(box.cwd, 'raw'), PREVIOUS: '',
+      } });
+      assert.equal(readFileSync(join(cachePath, 'fixture'), 'utf8'), 'compiled');
+    }
+    assert.equal(new Set(keys).size, 3, 'immutable cache key prevents accumulation');
+    for (const outcome of ['success', 'failure', 'cancelled']) {
+      const enabled = runInNewContext(expressionForJS(save.if.replace(/^\$\{\{\s*|\s*\}\}$/g, '')), {
+        success: () => outcome === 'success', steps: { build: { outcome } },
+      });
+      assert.equal(Boolean(enabled), outcome === 'success', 'failed build can save cache');
+    }
+  }
+  assert.equal(workflow.jobs.kde.permissions.contents, 'read');
+  assert.equal(restore.with.ref, undefined);
+  assert.equal(save.with.ref, undefined, 'PR cache must keep GitHub merge-ref scope');
+});

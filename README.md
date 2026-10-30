@@ -45,21 +45,26 @@ Your work survives closing the window or a crash. Branch Truce restores edits an
 
 ## Install
 
-Download the `.deb` for your system from the [latest release](https://github.com/e0ipso/branch-truce/releases/latest).
+Release targets are Kubuntu 26.04, Fedora 44 and Arch Linux, all on x86_64. Download the matching asset from the [latest release](https://github.com/e0ipso/branch-truce/releases/latest) when available.
 
 | System | Package |
 | --- | --- |
 | Kubuntu 26.04 | `branch-truce_<version>_amd64-ubuntu26.04.deb` |
-| Tuxedo OS 24.04 | `branch-truce_<version>_amd64-tuxedo24.04.deb` |
+| Fedora 44 | `branch-truce-<native-version>-1.fc44.x86_64.rpm` |
+| Arch Linux | `branch-truce-<native-version>-1-x86_64.pkg.tar.zst` |
 
-Install the downloaded package. Apt also installs the dependencies:
+Install the downloaded package with your system's package manager:
 
 ```sh
+# Kubuntu
 sudo apt install ./branch-truce_*_amd64-ubuntu26.04.deb
-# On Tuxedo OS, use the downloaded *_amd64-tuxedo24.04.deb instead.
+# Fedora
+sudo dnf install ./branch-truce-*.fc44.x86_64.rpm
+# Arch Linux
+sudo pacman -U ./branch-truce-*-x86_64.pkg.tar.zst
 ```
 
-Packages have run in containers of both systems. Real desktop validation is still pending. See [platform validation](docs/platform-validation.md) for details, or [build from source](docs/build.md).
+The native packages pass offscreen container install, smoke, upgrade and removal checks. The user reports that the Kubuntu DEB also installs and works on Tuxedo OS; there is no separate Tuxedo release build. Container checks and that report do not establish compatibility across real desktop versions. See [target platforms](docs/target-platforms.md), the dated [desktop validation record](docs/platform-validation.md), or [build from source](docs/build.md).
 
 ## Use it
 

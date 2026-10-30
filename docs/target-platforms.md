@@ -1,12 +1,65 @@
 # Target platforms and artifacts
 
-Branch Truce ships one `.deb` per OS base. Each is built in a container from
-that base's own archive and inspected on a clean copy of the same base.
-Neither package is assumed to install on the other base. Installation and
-runtime compatibility on the real desktops stay pending until both artifacts
-are validated on those desktops.
+## Current native release targets
 
-## OS bases
+CI builds one package per target from the same selected revision and application
+version. There is no separate Tuxedo release build.
+
+| Target | Native artifact | Image definition |
+| --- | --- | --- |
+| Kubuntu 26.04 LTS, amd64 | `branch-truce_<version>_amd64-ubuntu26.04.deb` | [kubuntu.Dockerfile](../packaging/ci/kubuntu.Dockerfile) |
+| Fedora 44, x86_64 | `branch-truce-<native-version>-1.fc44.x86_64.rpm` | [fedora.Dockerfile](../packaging/ci/fedora.Dockerfile) |
+| Arch Linux rolling, x86_64 | `branch-truce-<native-version>-1-x86_64.pkg.tar.zst` | [arch.Dockerfile](../packaging/ci/arch.Dockerfile) |
+
+The definitions pin base-image digests. Arch uses the official x86_64 base
+manifest and a full `pacman -Syu`; Fedora uses native rpmbuild and Arch uses
+unprivileged makepkg. All recipes retain QML bytecode, distro hardening, Git,
+QML modules, KDE style/icons, SVG and Wayland runtime dependencies. Debian/RPM
+prereleases use tilde ordering; Arch uses its native alphabetic prerelease form.
+[package-info.sh](../packaging/scripts/package-info.sh) supplies the exact
+filename, native version and architecture. [README installation commands](../README.md#install)
+and [build instructions](build.md#native-ci-and-release-packages) describe usage.
+
+Resolved container baselines on 2026-10-30 include Kubuntu GCC 15.2/Qt 6.10.2/KF
+6.24/Git 2.53, Fedora GCC 16.2/Qt 6.11.2/KF 6.31/Git 2.56 and Arch GCC 16.2/Qt
+6.12/KF 6.31/Git 2.56. The image's `/opt/branch-truce/baseline.txt` records exact
+packages and package-tool versions. Mutable distro repositories mean subsequent
+refreshes can resolve newer packages.
+
+On 2026-10-30, the compiler-cache integration evidence records the same 53 CTest
+names per target: Kubuntu 52 passed and one existing missing-jq tooling skip;
+Fedora and Arch each 53 passed. Each ran lint once, the independent install-prefix
+check and four exclusive gates. Native install, metadata/dependency/integrity,
+version/smoke, synthetic upgrade and removal passed. Kubuntu also passed purge.
+Arch's original clean-runtime attempt failed on a mirror timeout; a strict
+runtime-only retry passed using the same candidate and predecessor bytes.
+The original failed attempt remains a failure. These are offscreen container
+results, not real desktop compatibility measurements.
+
+Extended serial and repeated parallel checks later exposed two unresolved
+intermittent failures: Fedora startup snapshot-file reading and an Arch
+coordinator timeout that left fixture files. Later passes do not establish a
+root-cause fix. Stable repeated outcomes across every target remain unproven.
+
+The user reports that the Kubuntu DEB installs and works on Tuxedo OS. That is a
+reported desktop observation, with no claim about every Tuxedo version. On 2026-10-30 the same validated Kubuntu DEB also installed in a clean Tuxedo
+vendor-repository runtime container, returned its exact version, opened a real
+merge conflict through offscreen smoke testing and was purged. It was not rebuilt.
+The first probe omitted offscreen settings for the version launch and failed on
+headless XCB initialization; a fresh correctly configured runtime probe passed.
+This container result remains separate from that desktop report. Historical
+per-base developer artifacts and headless desktop checks below use different
+bytes and do not prove the current Kubuntu DEB works on Tuxedo.
+
+## Historical and developer per-base Debian tooling
+
+The remaining sections retain the dated 2026-10-25 measurements and the separate
+`tools/build-artifact.sh` / `tools/inspect-artifact.sh` developer path. That path
+still builds a DEB per Kubuntu/Tuxedo base with a base-specific version suffix.
+It does not produce the three current release assets or their release manifests.
+The archived measurements are not current release or desktop compatibility claims.
+
+### Developer OS bases
 
 | | Kubuntu 26.04 LTS | Tuxedo OS 24.04 |
 | --- | --- | --- |
@@ -31,7 +84,7 @@ comes from the Tuxedo sources after `apt-get dist-upgrade`. The one exception
 is `ca-certificates`, which is fetched from stock noble first because the
 Tuxedo repositories use HTTPS.
 
-## Toolchains and Qt/KDE packages
+### Historical toolchains and Qt/KDE packages
 
 Resolved in the build images on 2026-10-25. Each artifact's `.manifest` keeps
 the same list for its build.
@@ -169,20 +222,15 @@ spec's initial candidate. Flatpak would need its own design for Git access.
   points at `/usr/share/common-licenses/GPL-3`. The AppStream metainfo
   declares `GPL-3.0-or-later` as its `project_license` and CC0-1.0 for the
   metadata. The packages built here are local validation artifacts.
-- CI builds the release packages with
-  `packaging/scripts/container-check.sh`, which also checks installation,
-  smoke-test loading, upgrade and removal in a container of each base.
-  semantic-release attaches them to the GitHub release as
-  `branch-truce_<version>_amd64-ubuntu26.04.deb` and
-  `branch-truce_<version>_amd64-tuxedo24.04.deb` when the commits pushed to
-  `main` call for a new version. The container validation in
+- Current release packaging uses the three native targets above, with one
+  validation/package pipeline per target. The dated container validation in
   [platform-validation.md](platform-validation.md) used packages from
-  `tools/build-artifact.sh`, not release packages.
+  `tools/build-artifact.sh`, not those release packages.
 - The binary keeps the `RUNPATH` `$ORIGIN:$ORIGIN/../lib/x86_64-linux-gnu`
   that the CMake build sets. Under `/usr/bin` it points at system directories
   only.
 
-## Build and inspect
+## Build and inspect developer artifacts
 
 Docker or another engine named by `CONTAINER_ENGINE` is required. Nothing is
 installed on the host.
@@ -276,9 +324,9 @@ report kept beside each artifact lists the full closure with versions.
 `url-homepage-missing` and `developer-info-missing`, which stay open until the
 application identity and metadata are confirmed before publishing.
 
-## Compatibility status
+## Historical compatibility status
 
-Pending. These results come from containers of each base, not from Kubuntu
+As of 2026-10-25, pending. These results come from containers of each base, not from Kubuntu
 or Tuxedo OS desktops. The smoke test runs offscreen, without Plasma,
 Wayland, the KDE style or a display, and the containers' runtime closure is
 what `--no-install-recommends` installs on a minimal base. Each artifact
