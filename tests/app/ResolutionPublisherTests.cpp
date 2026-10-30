@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "mergetool/MergetoolProtocol.h"
 #include "fixtures/GitOnPath.h"
 #include "TestHarness.h"
 #include "fixtures/RecoveryFaults.h"
@@ -77,13 +78,15 @@ class Repository {
 public:
     Repository()
     {
-        CHECK(directory.isValid() && executables.isValid());
+        CHECK(directory.isValid() && executables.isValid() && runtime.isValid());
+        CHECK(QFile::setPermissions(runtime.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
         root = QFileInfo(directory.path()).canonicalFilePath();
         environment.insert("PATH", "/usr/bin:/bin");
         environment.insert("HOME", executables.path());
         environment.insert("XDG_CONFIG_HOME", executables.path() + "/config");
         environment.insert("XDG_CACHE_HOME", executables.path() + "/cache");
         environment.insert("XDG_DATA_HOME", executables.path() + "/data");
+        environment.insert("XDG_RUNTIME_DIR", runtime.path());
         environment.insert("LC_ALL", "C");
         environment.insert("GIT_CONFIG_NOSYSTEM", "1");
         environment.insert("GIT_CONFIG_GLOBAL", "/dev/null");
@@ -135,6 +138,8 @@ public:
     }
     QTemporaryDir directory;
     QTemporaryDir executables;
+    // Keep session sockets private even when TMPDIR exceeds the Unix socket path limit.
+    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
     QString root;
     QProcessEnvironment environment;
     QByteArray notesObject;
@@ -146,7 +151,7 @@ public:
     explicit ScopedEnvironment(const QProcessEnvironment &environment)
     {
         for (const auto name : {"HOME", "PATH", "LC_ALL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME",
-                                "XDG_DATA_HOME", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_TERMINAL_PROMPT"}) {
+                                "XDG_DATA_HOME", "XDG_RUNTIME_DIR", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_TERMINAL_PROMPT"}) {
             previous.insert(name, qEnvironmentVariableIsSet(name)
                 ? std::optional<QByteArray>(qgetenv(name)) : std::nullopt);
             qputenv(name, environment.value(QString::fromLatin1(name)).toUtf8());
@@ -399,6 +404,22 @@ int main(int argc, char **argv)
     QCoreApplication::setOrganizationName(QStringLiteral("branch-truce"));
     QCoreApplication::setApplicationName(QStringLiteral("branch-truce-resolution-tests"));
     test_support::Suite suite("resolution");
+    suite.run("controller fixtures contain and remove their session sockets and restore the runtime environment", [] {
+        const auto previous = qgetenv("XDG_RUNTIME_DIR");
+        const auto wasSet = qEnvironmentVariableIsSet("XDG_RUNTIME_DIR");
+        QString runtime;
+        {
+            Session session;
+            runtime = session.repo.environment.value(QStringLiteral("XDG_RUNTIME_DIR"));
+            CHECK(QDir::isAbsolutePath(runtime));
+            CHECK(qEnvironmentVariable("XDG_RUNTIME_DIR") == runtime);
+            CHECK(mergetoolSocketDirectory() == runtime + QStringLiteral("/branch-truce"));
+            CHECK(QFileInfo::exists(mergetoolSocketDirectory()));
+        }
+        CHECK(qEnvironmentVariableIsSet("XDG_RUNTIME_DIR") == wasSet);
+        CHECK(qgetenv("XDG_RUNTIME_DIR") == previous);
+        CHECK(!QFileInfo::exists(runtime));
+    });
     suite.run("confirmation, cancellation and a stale revision leave the repository unpublished", [] {
         Session session;
         const auto before = session.repo.snapshot();

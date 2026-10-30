@@ -11,6 +11,30 @@ NamedAction {
     // Keep our named button in overflow too. Kirigami otherwise turns Action.children
     // into its own unnamed submenu and bypasses this action's display component.
     default property list<MenuEntry> entries
+    property Menu containingMenu: null
+    // Overflow display delegates can be replaced while a popup is open. The action
+    // owns the popup so its entries survive those layout and focus changes.
+    readonly property Menu entryMenu: Menu {
+        id: entryPopup
+        focus: true
+        z: menuAction.containingMenu ? menuAction.containingMenu.z + 1 : Kirigami.OverlayZStacking.z
+        onOpened: forceActiveFocus()
+        Instantiator {
+            model: menuAction.entries
+            delegate: MenuItem {
+                required property MenuEntry modelData
+                objectName: modelData.controlName
+                action: modelData
+                onTriggered: {
+                    entryPopup.dismiss()
+                    if (menuAction.containingMenu)
+                        menuAction.containingMenu.dismiss()
+                }
+            }
+            onObjectAdded: (index, entry) => entryPopup.insertItem(index, entry as MenuItem)
+            onObjectRemoved: (index, entry) => entryPopup.removeItem(entry as MenuItem)
+        }
+    }
     displayComponent: ToolButton {
         id: menuButton
         readonly property Menu containingMenu: menuAction.ownerMenu(parent)
@@ -19,30 +43,17 @@ NamedAction {
         icon.name: menuAction.icon.name
         enabled: menuAction.enabled
         display: menuAction.iconOnly && !containingMenu ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon
-        down: pressed || entries.visible
+        down: pressed || entryPopup.visible
         Accessible.role: containingMenu ? Accessible.MenuItem : Accessible.ButtonMenu
         Accessible.name: menuAction.accessibleName
         ToolTip.text: menuAction.tooltip
-        ToolTip.visible: hovered && !entries.visible && ToolTip.text.length > 0
+        ToolTip.visible: hovered && !entryPopup.visible && ToolTip.text.length > 0
         ToolTip.delay: Kirigami.Units.toolTipDelay
-        onClicked: entries.popup(menuButton, 0, menuButton.height)
-        Menu {
-            id: entries
-            Instantiator {
-                model: menuAction.entries
-                delegate: MenuItem {
-                    required property MenuEntry modelData
-                    objectName: modelData.controlName
-                    action: modelData
-                    onTriggered: {
-                        entries.dismiss()
-                        if (menuButton.containingMenu)
-                            menuButton.containingMenu.dismiss()
-                    }
-                }
-                onObjectAdded: (index, entry) => entries.insertItem(index, entry as MenuItem)
-                onObjectRemoved: (index, entry) => entries.removeItem(entry as MenuItem)
-            }
+        onClicked: {
+            menuAction.containingMenu = containingMenu
+            const overlay = Overlay.overlay
+            const position = menuButton.mapToItem(overlay, 0, menuButton.height)
+            entryPopup.popup(overlay, position.x, position.y)
         }
     }
 }

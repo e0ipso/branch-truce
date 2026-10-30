@@ -1583,19 +1583,29 @@ public:
             // The text after the tabs, its column in the line, and the tab stops it sits on.
             const std::array<std::tuple<QString, int, int>, 4> lines{{
                 {"\tone", 1, 1}, {"abc\ttwo", 4, 1}, {"abcde\tthree", 6, 2}, {"\t\tfour", 2, 2}}};
-            // Four characters as drawn in the result.
-            const auto four = columnOffset(fixture.item("resultText"), QStringLiteral("abcde\n"), 4);
-            CHECK(four > 0);
-            for (const auto *name : {"stage2Text", "resultText", "stage3Text"}) {
-                auto *editor = fixture.item(name);
-                CHECK(std::abs(columnOffset(editor, QStringLiteral("abcde\n"), 4) - four) < 0.01);
-                for (const auto &[text, column, stops] : lines) {
-                    const auto offset = columnOffset(editor, text, column);
-                    if (std::abs(offset - stops * four) > 0.5)
-                        throw std::runtime_error(std::string(name) + ": text after the tab in " + text.toStdString()
-                            + " starts at " + std::to_string(offset) + ", not " + std::to_string(stops * four));
+            const auto checkTabs = [&] {
+                // Four characters as drawn in the result, independent of font metrics metadata.
+                const auto four = columnOffset(fixture.item("resultText"), QStringLiteral("abcde\n"), 4);
+                CHECK(four > 0);
+                for (const auto *name : {"stage2Text", "resultText", "stage3Text"}) {
+                    auto *editor = fixture.item(name);
+                    CHECK(std::abs(columnOffset(editor, QStringLiteral("abcde\n"), 4) - four) < 0.01);
+                    for (const auto &[text, column, stops] : lines) {
+                        const auto offset = columnOffset(editor, text, column);
+                        if (std::abs(offset - stops * four) > 0.5)
+                            throw std::runtime_error(std::string(name) + ": text after the tab in " + text.toStdString()
+                                + " starts at " + std::to_string(offset) + ", not " + std::to_string(stops * four));
+                    }
                 }
-            }
+            };
+            checkTabs();
+            // Theme fonts may arrive after creation or change while the window is open.
+            auto larger = fixture.item("resultText")->property("font").value<QFont>();
+            larger.setPointSizeF(larger.pointSizeF() + 3);
+            for (const auto *name : {"stage2Text", "resultText", "stage3Text"})
+                CHECK(fixture.item(name)->setProperty("font", larger));
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            checkTabs();
         });
         suite.run("code and line numbers use the theme's fixed-width font", [] {
             auto sources = *test_support::choiceFile().snapshots();
