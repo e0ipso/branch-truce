@@ -1,7 +1,7 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:ff0d279b7743e4acac6b324cd205ddac2e879f27815258b005d01f0a7e4fbf3d'
-node_count: 31
+nodes_hash: 'sha256:75ef65d82bb1634cdbaf1d7e268267933d0ffc33e43d7ad88ead811c63b3512b'
+node_count: 32
 ---
 # kenkeep
 
@@ -29,12 +29,13 @@ _None._
 - Open [**Wait for layout before clicking offscreen dialog items**](nodes/practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) to learn about: In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles. #testing #qml #ui #offscreen
 - Open [**Follow the UI design brief for the KDE-native window**](nodes/practice-follow-the-ui-design-brief-for-the-kde-native-window.md) to learn about: docs/ui-design.md sets layout, actions and colour roles; panes get the space and red marks only ranges that need a decision. #ui #design #kde #kirigami #qml
 - Open [**Hold a Git call to test racing repository changes**](nodes/practice-hold-a-git-call-to-test-racing-repository-changes.md) to learn about: GitGate holds one git subcommand on one path so a write lands mid-inspection; keep a race test only if it fails without its guard. #testing #git #concurrency #mergetool
+- Open [**Keep repository documentation about current state**](nodes/practice-keep-repository-documentation-about-current-state.md) to learn about: Describe current behavior and durable conventions; keep historical run reports and implementation narratives out of repository docs. #documentation #conventions
 - Open [**Keep the qmllint target at zero warnings**](nodes/practice-keep-the-qmllint-target-at-zero-warnings.md) to learn about: src/ui/.qmllint.ini makes branch_truce_ui_qmllint fail on any warning; type QML properties concretely, anchor at use sites. #qml #lint #ui #ci
 - Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](nodes/practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) to learn about: Sift ticket references stay inside Sift; commitlint and check:tracker-refs enforce this for commit messages and tracked files. #git #commits #ci #conventions #release
 
 ## Components (what exists)
 - Open [**Branch Truce desktop implementation baseline**](nodes/map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack on Kubuntu 26.04; native release packages also target Fedora 44 and pinned Arch Linux. #architecture #desktop #platform #cpp
-- Open [**Mergetool session socket and real Git parent**](nodes/map-mergetool-session-socket-and-real-git-parent.md) to learn about: The session socket sits under XDG_RUNTIME_DIR or /tmp/branch-truce-<uid>; real Git 2.43 parent tests bound the compatibility claim. #mergetool #git #transport #compatibility
+- Open [**Mergetool session socket and real Git parent**](nodes/map-mergetool-session-socket-and-real-git-parent.md) to learn about: The session socket sits under XDG_RUNTIME_DIR or /tmp/branch-truce-<uid>; real-parent tests exercise staging and launcher handoff. #mergetool #git #transport #compatibility
 - Open [**Branch Truce first-release scope**](nodes/map-branch-truce-first-release-scope.md) to learn about: PRD.md defines a standalone, offline Linux app for text conflicts during merges and rebases. #product #scope #workflow
 - Open [**Journey acceptance suite**](nodes/map-journey-acceptance-suite.md) to learn about: ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard. #testing #acceptance #qml #offscreen #git
 - Open [**Per-base Debian artifacts and container inspection**](nodes/map-per-base-debian-artifacts-and-container-inspection.md) to learn about: Developer per-base DEBs are separate from Kubuntu DEB, Fedora RPM and Arch release packages, each validated in a clean native target. #packaging #platform #debian #containers #compatibility

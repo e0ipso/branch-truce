@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:ff0d279b7743e4acac6b324cd205ddac2e879f27815258b005d01f0a7e4fbf3d'
-node_count: 31
+nodes_hash: 'sha256:75ef65d82bb1634cdbaf1d7e268267933d0ffc33e43d7ad88ead811c63b3512b'
+node_count: 32
 ---
 # kenkeep Graph
 
-Total nodes: 31
+Total nodes: 32
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -159,6 +159,13 @@ Total nodes: 31
 - **title:** Keep PRD.md focused on user needs
 - **path:** practice-keep-prd-focused-on-user-needs.md
 - **tags:** product, prd, documentation
+
+## practice-keep-repository-documentation-about-current-state
+
+- **kind:** practice
+- **title:** Keep repository documentation about current state
+- **path:** practice-keep-repository-documentation-about-current-state.md
+- **tags:** documentation, conventions
 
 ## practice-keep-session-captures-immutable-across-revisions
 

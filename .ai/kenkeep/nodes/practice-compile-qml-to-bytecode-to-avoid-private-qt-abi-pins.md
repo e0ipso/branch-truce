@@ -21,9 +21,7 @@ kk_confidence: high
 ---
 [src/ui/CMakeLists.txt](../../../src/ui/CMakeLists.txt) sets `QT_QMLCACHEGEN_ARGUMENTS` to `--only-bytecode` on `branch_truce_ui`. Keep it. The executable then embeds the QML as bytecode and the QML engine runs the bindings.
 
-By default `qmlcachegen` also compiles bindings and functions to C++. That C++ calls `QQmlPrivate::AOTCompiledContext::mark`, which carries the `Qt_6_PRIVATE_API` symbol version, and Qt keeps private API stable only within one release. On Kubuntu, `dpkg-shlibdeps` turned it into exact `qt6-base-private-abi` and `qt6-declarative-private-abi` pins on Qt 6.10.2, so any Qt update would have made the package uninstallable until a rebuild. Tuxedo's Qt packages declare no private ABI, so the Tuxedo package got no pin and would have installed after a Qt update and could then fail to start. With bytecode only, neither binary has a private Qt symbol and Kubuntu's `libqt6qml6` floor drops from 6.10.2 to 6.6.0.
-
-Smoke-test startup on the development host was the same within run-to-run spread. Startup on Kubuntu and the cost of running bindings in the engine during interaction were not measured. The figures are in [docs/target-platforms.md](../../../docs/target-platforms.md#qml-bytecode-instead-of-compiled-c).
+By default `qmlcachegen` also compiles bindings and functions to C++. That C++ can call private Qt APIs carrying the `Qt_6_PRIVATE_API` symbol version. Qt keeps private API stable only within one release, so native packages that use it require an exact private-ABI dependency or risk failing after a Qt update. Bytecode-only compilation avoids those private symbols. See the [packaging rationale](../../../docs/target-platforms.md#qml-bytecode-instead-of-compiled-c).
 
 [tools/inspect-artifact.sh](../../../tools/inspect-artifact.sh) fails a binary that has `Qt_6_PRIVATE_API` symbols unless `Depends` pins a Qt private ABI to an exact version. Code that brings private Qt symbols back fails that check on Tuxedo, where `dpkg-shlibdeps` produces no pin, and on Kubuntu it ties the package to one Qt release.
 

@@ -64,7 +64,10 @@ sudo dnf install ./branch-truce-*.fc44.x86_64.rpm
 sudo pacman -U ./branch-truce-*-x86_64.pkg.tar.zst
 ```
 
-The native packages pass offscreen container install, smoke, upgrade and removal checks. The user reports that the Kubuntu DEB also installs and works on Tuxedo OS; there is no separate Tuxedo release build. Container checks and that report do not establish compatibility across real desktop versions. See [target platforms](docs/target-platforms.md), the dated [desktop validation record](docs/platform-validation.md), or [build from source](docs/build.md).
+Native package checks run in offscreen containers. Physical desktop, theme,
+scaling and accessibility behavior require separate validation. See
+[target platforms](docs/target-platforms.md), the [platform validation
+procedure](docs/platform-validation.md), or [build from source](docs/build.md).
 
 ## Use it
 

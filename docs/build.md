@@ -334,8 +334,7 @@ application ID is `com.canpicasoft.branch-truce`, using the reverse-DNS form of
 the organization domain `canpicasoft.com`. The GUI sets it as its desktop file
 name, which is how Plasma matches a window to the entry and icon. For a prefix
 outside the system data directories, add `<prefix>/share` to `XDG_DATA_DIRS` so
-menus and icon lookup find the files. The per-OS `.deb` packages, their build containers and
-their inspection are described in [target-platforms.md](target-platforms.md).
+menus and icon lookup find the files. The native release packages and developer artifact tooling are described in [target-platforms.md](target-platforms.md).
 
 ```sh
 cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
@@ -379,23 +378,15 @@ The metainfo identifies Branch Truce contributors as the developer, links to
 the project homepage, and declares GPL-3.0-or-later as the project license.
 The validators run without suppressing missing-homepage warnings.
 
-On 2026-10-25 every step above passed on the development host: four files
-deployed, `RUNPATH` `$ORIGIN:$ORIGIN/../lib/x86_64-linux-gnu`, both validators
-passed, the smoke test opened the merge session, the desktop-launched and the
-launcher-started GUIs each held their launcher until they closed (exit 1,
-file unmerged), and the protocol suite passed 7/7 against the installed
-executable. A Plasma menu launch, Wayland and a physical display were not
-exercised.
+## Worktree setup
 
-## Coordinator setup hook
-
-After this scaffold lands, run from the newly prepared checkout:
+Configure a prepared checkout with:
 
 ```sh
 ./tools/prepare-worktree.sh desktop
 ```
 
-After committing the scaffold, verify clean preparation with:
+Verify preparation in a clean checkout with:
 
 ```sh
 ./tools/verify-clean-worktree.sh
@@ -410,25 +401,4 @@ directories inside the fixture checkout, including the setup hook's
 the caller.
 
 The desktop preparation above is the per-worktree setup command to register with Sift. It configures;
-checks remain separate `cmake --build` and `ctest` commands above. Hook registration
-belongs to the coordinator and is deliberately deferred.
-
-## Platform evidence
-
-Development verification runs on Tuxedo OS 24.04.4 with GCC 13.3.0, CMake 4.2.3,
-Git 2.43.0, Qt 6.10.2 and ECM/Kirigami 6.24.0. No system packages were changed.
-The provisioning check and repeated install-mode reruns report no changes on this
-prepared host. Desktop CTest passed 2/2 canaries; independent core and sanitized
-core CTest each passed 1/1. QML lint completed without diagnostics. The same
-checks passed in a disposable detached worktree, which stayed clean and was
-removed afterward. These are scaffold checks only.
-The install-prefix check under [Install](#install) passed on this host.
-The current release pipeline builds Kubuntu DEB, Fedora 44 RPM and pinned Arch
-pkg.tar.zst artifacts. The earlier per-base Kubuntu/Tuxedo developer artifacts
-remain historical evidence in [target-platforms.md](target-platforms.md).
-The user reports the Kubuntu release DEB works on Tuxedo OS. Real desktop
-Wayland, theme/scaling and accessibility coverage remains limited to the dated
-[platform validation record](platform-validation.md).
-A user-owned prefix via
-`CMAKE_PREFIX_PATH` can supply compatible Qt/KDE packages, but must keep their ABI
-and runtime modules consistent; no such alternate toolchain was needed here.
+checks remain separate `cmake --build` and `ctest` commands above. The coordinator owns hook registration.

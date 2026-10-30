@@ -6,19 +6,6 @@ that the real-parent tests pass with, and explains who writes and who stages
 the file at each step. The transport and the full list of tested behaviours
 are in [mergetool-launcher.md](mergetool-launcher.md).
 
-What has been run:
-
-- The `git.mergetool-parent` test suite runs `/usr/bin/git mergetool`
-  against the launcher built from this repository. Only Git 2.43.0 on a
-  Tuxedo OS 24.04 host has been tested.
-- The installed package's `/usr/bin/branch-truce` ran under a real
-  `git mergetool` in containers of both OS bases, with Git 2.53.0 on the
-  Kubuntu 26.04 base and Git 2.43.0 on the Tuxedo OS 24.04 base. See
-  [platform-validation.md](platform-validation.md#mergetool-handoff-with-real-git).
-
-Neither is a claim that the tool works on a Kubuntu 26.04 or Tuxedo OS
-desktop. No real desktop has been tested.
-
 ## Register the tool
 
 Run these once. They write to your global Git configuration (normally
@@ -163,12 +150,9 @@ real `git mergetool`. See
 
 ## Limits
 
-- The real-parent suite has run only Git 2.43.0. The container runs add
-  two Git 2.53.0 handoffs on the Kubuntu 26.04 base, one resolved and one
-  with the window killed.
-- No Kubuntu 26.04 or Tuxedo OS desktop has run the tool. The Plasma menu,
-  KWin scaling, input methods and screen readers are untested; see the
-  status table in [platform-validation.md](platform-validation.md#status).
+- Physical desktop integration requires separate validation of Plasma menus,
+  KWin scaling, input methods and screen readers. See the
+  [platform validation procedure](platform-validation.md#physical-desktop-checks).
 - The launcher and the window talk over a socket in
   `$XDG_RUNTIME_DIR/branch-truce`, or `/tmp/branch-truce-<uid>` when that path
   is too long. Both must run as the same user.

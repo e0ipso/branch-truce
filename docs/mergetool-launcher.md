@@ -82,13 +82,12 @@ opens on that file. The started GUI's standard input, output and error go to
 `/dev/null`, so it writes nothing into the `git mergetool` terminal.
 `BRANCH_TRUCE_MERGETOOL_NO_SPAWN` disables that start.
 
-## Tested with a real parent
+## Real-parent test contract
 
 `git.mergetool-parent` (`tests/git/MergetoolParentTests.cpp`, fixture
 `tests/fixtures/mergetool/RealParent.h`) runs `/usr/bin/git mergetool
 --no-prompt --tool=<tool>` against the `branch-truce` launcher and a session
-in the test process. Only Git 2.43.0 (Ubuntu package 1:2.43.0-1ubuntu7.4)
-on TUXEDO OS 24.04 was exercised, on 2026-10-25. No other Git version was run.
+in the test process.
 
 Each case creates a throwaway repository with a real `git merge` conflict.
 `HOME`, the XDG directories and `GIT_CONFIG_GLOBAL` point into temporary
@@ -118,7 +117,7 @@ parent's shell. `truce-gated` records the launcher's exit status and holds
 the parent before Git stages or restores. `truce-tamper` overwrites `MERGED`
 after a successful launcher exit. Neither is a recommended setup.
 
-These behaviours pass and are the compatibility declaration:
+The suite enforces these behaviors:
 
 - Save writes a checkpoint in the app store only. While Git stays inside
   the tool command, `MERGED` keeps its launch bytes and `git ls-files
