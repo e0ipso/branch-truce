@@ -1,3 +1,66 @@
+## [1.1.0](https://github.com/e0ipso/branch-truce/compare/v1.0.0...v1.1.0) (2026-10-30)
+
+### Features
+
+* add on-demand passage search ([df36d46](https://github.com/e0ipso/branch-truce/commit/df36d460065819d7057ffc47f336509fe363848a))
+* **app:** fall back to the bundled symbol when the theme has no app icon ([1bf3f84](https://github.com/e0ipso/branch-truce/commit/1bf3f84f23f24a19fa41d08b074ca38574257d10))
+* **app:** underline and tint the words that differ in changed lines ([78f9764](https://github.com/e0ipso/branch-truce/commit/78f9764bc881ba6cdf62096721031cf3bf966d4d))
+* highlight corresponding passages ([36c8ba1](https://github.com/e0ipso/branch-truce/commit/36c8ba11bfaa0d8f3a963b6304e2a196f0227727))
+* **tools:** capture previews at a chosen logical screen size ([70a060f](https://github.com/e0ipso/branch-truce/commit/70a060f1ba45ebfae36f3de80ae1a4ac94212bea))
+* **ui:** apply the approved window redesign ([04366b0](https://github.com/e0ipso/branch-truce/commit/04366b0415aac43baef40d9c4413914c04b84ff9))
+* **ui:** fold conflicts into labelled rows ([de6bb6c](https://github.com/e0ipso/branch-truce/commit/de6bb6c7225308ee664c12313fbca2d48c1fc2f3))
+* **ui:** put region choices in the source gutters with an undecided counter ([8d5e437](https://github.com/e0ipso/branch-truce/commit/8d5e4379820e49ff1e38ae95734f4b79d1027e59))
+
+### Bug Fixes
+
+* allow QML registration of app types ([087ad25](https://github.com/e0ipso/branch-truce/commit/087ad25cb58f12b4b6ae20c54086b7b1b8863c83))
+* **app:** read the own recovery store on the worker when choosing ([e2e96ba](https://github.com/e0ipso/branch-truce/commit/e2e96ba51b460faaff45c09cd0bce9e9478eb8f3))
+* **app:** say no merge or rebase is in progress when none is ([573b453](https://github.com/e0ipso/branch-truce/commit/573b4539a5c032c7c20744e24acb66950923d420))
+* **app:** source file icons, status and paths from the session model ([5ccdd56](https://github.com/e0ipso/branch-truce/commit/5ccdd56af28deb0a135b63d43f9fc5d70bf0f4ad))
+* **app:** use the Canpicasoft application ID ([a717c11](https://github.com/e0ipso/branch-truce/commit/a717c11895170a7f6f8a86f8311371fdd3e3f106))
+* avoid choice row anchor property collision ([f27fdec](https://github.com/e0ipso/branch-truce/commit/f27fdec7532522a98f453b52d73b51e0043c40d6))
+* bind all standard find shortcuts ([85eb31a](https://github.com/e0ipso/branch-truce/commit/85eb31ac379dc8b8cd8a5456e1d5bac4a490911c))
+* **branding:** name Linux icon exports after the application ID ([1e8fb54](https://github.com/e0ipso/branch-truce/commit/1e8fb5424d1fa75600dd3550b68101c4f30e963a))
+* build accepted edit probe prerequisites ([993335d](https://github.com/e0ipso/branch-truce/commit/993335d440efb68cc8ea23ff3c61f6ead029fec6))
+* complete AppStream metadata ([eb63e62](https://github.com/e0ipso/branch-truce/commit/eb63e621b51dc84f894a9d63dee35b750f9e6de2))
+* confine ticket references to Sift ([174af7a](https://github.com/e0ipso/branch-truce/commit/174af7add93bb9d4a229e0f6ee4b77db3463b23d))
+* **core:** find Git's separator among repeated separator lines ([7706a6f](https://github.com/e0ipso/branch-truce/commit/7706a6fa547767db103beace065722c438396d38))
+* **core:** let Take both combine one section of a split conflict block ([5ca7e71](https://github.com/e0ipso/branch-truce/commit/5ca7e71f0146c946595656d9a244b8ff4c9d3a4c))
+* **core:** mark hand edits outside choice regions as manual ([1dc3108](https://github.com/e0ipso/branch-truce/commit/1dc31089d570c6e32676013265de7252dcd5fa42))
+* **core:** tie a deletion between shared lines to its marker block ([c56bc44](https://github.com/e0ipso/branch-truce/commit/c56bc44fa2fa59cde0d1880da3ac92298bf6bdff))
+* explain oversized canonicalization input ([3dd968f](https://github.com/e0ipso/branch-truce/commit/3dd968f2747a5e85e6e7ab150b124774ecc8c4a5))
+* expose full source identities on hover ([a9655dc](https://github.com/e0ipso/branch-truce/commit/a9655dc8404b8241a5ee6fa7db7ceb4af6077a41))
+* expose highlighting requirements to UI ([49cce66](https://github.com/e0ipso/branch-truce/commit/49cce66109f3a6d98d6ae200d4fd3a8cc2a00011))
+* fold recognized conflict blocks ([fe2abfa](https://github.com/e0ipso/branch-truce/commit/fe2abfa7dea9996ed2afd645c838509fefeacfe9))
+* guard detached gutter anchors ([64ec6d0](https://github.com/e0ipso/branch-truce/commit/64ec6d089d3ee34ecaa8e0848b004476ee246301))
+* guard highlighting-only theme helpers ([c763a7c](https://github.com/e0ipso/branch-truce/commit/c763a7c9147637158c82c949198bbc77707da20c))
+* identify choice arrow icons accurately ([1a67839](https://github.com/e0ipso/branch-truce/commit/1a67839001f6b4795e9154caec7ef22ae6c75bb8))
+* install hooks in prepared worktrees ([8aea318](https://github.com/e0ipso/branch-truce/commit/8aea31812bf57216fd067df7217c3ef230276e58))
+* make source messages translatable ([110da4c](https://github.com/e0ipso/branch-truce/commit/110da4c0e05fe647f7e8255183ee9d5230c52d67))
+* **packaging:** depend on qml6-module-qtqml-models ([f90709c](https://github.com/e0ipso/branch-truce/commit/f90709cf30b97b22dd347eeecd0417da2d90cbc8))
+* pluralize handoff file counts ([34723f0](https://github.com/e0ipso/branch-truce/commit/34723f08248fc0558a9bd5f8022158352f939c9f))
+* qualify connector block property types ([77092ac](https://github.com/e0ipso/branch-truce/commit/77092acde45236547e7945a7d3ee5d7eb236b43c))
+* **recovery:** replay journals that counted conflict markers differently ([7cffe72](https://github.com/e0ipso/branch-truce/commit/7cffe722c3234f1746104fbbe7fe7b73f8ea51fd))
+* repair shared toolbar action list ([a1edfbc](https://github.com/e0ipso/branch-truce/commit/a1edfbc0e7963cf9afa63748679a08f9c2861d6b))
+* restore folded conflict row bindings ([e738c66](https://github.com/e0ipso/branch-truce/commit/e738c662b9aa5e49c6cc5276ca18a9bc05a9d1b4))
+* route alternate edit shortcuts ([e094aec](https://github.com/e0ipso/branch-truce/commit/e094aecf4974197580b6a386d73f10291620b254))
+* settle cursor before navigation keys ([d97b8f3](https://github.com/e0ipso/branch-truce/commit/d97b8f317ff09d6804678c71de15895a2a09106b))
+* **tools:** give preview launches a load budget for busy hosts ([05c9595](https://github.com/e0ipso/branch-truce/commit/05c9595f7077f2beb51191b4b9169eb26a08d5ba))
+* **tools:** make preview captures repeat from run to run ([a196474](https://github.com/e0ipso/branch-truce/commit/a19647407257d65ed44d468f5262107cc0193f58))
+* **tools:** provision the SVG icon engine and Wayland plugin ([cac08fb](https://github.com/e0ipso/branch-truce/commit/cac08fb6b19d434c0c5fefd324786702574576fb))
+* **ui:** close a file row tooltip as soon as its row loses the pointer ([18cf890](https://github.com/e0ipso/branch-truce/commit/18cf89041ea1533e8f40200bc1e9a23488d11a7d))
+* **ui:** dismiss named actions in overflow menus ([590ea56](https://github.com/e0ipso/branch-truce/commit/590ea56a947235c656b52e8e23337a71cfd2663d))
+* **ui:** let users discard a newer draft back to the staged result ([f73e022](https://github.com/e0ipso/branch-truce/commit/f73e0229d80878b088db4fd1d0f7f08dba4aec80))
+* **ui:** paint line fills and connector bands with the View colours ([d5336ff](https://github.com/e0ipso/branch-truce/commit/d5336ff6deb813e7c45b6f3be34cac3f6fc0270c))
+* **ui:** paint the comparison panes with the View background ([e23b311](https://github.com/e0ipso/branch-truce/commit/e23b3110a1fa9fa3bd45ab62f845bfe9b3d3a4b8))
+* **ui:** share result edit actions and state ([bf273dd](https://github.com/e0ipso/branch-truce/commit/bf273dd6a69d5cecaa5bd8e603f7050c91d81589))
+* **ui:** tint the text of an ignored side instead of its background ([953a054](https://github.com/e0ipso/branch-truce/commit/953a0540344d0bbffe83d55ab21ec51ff57346df))
+
+### Performance Improvements
+
+* **storage:** reread the recovery journal only when it changed ([1ef2c3d](https://github.com/e0ipso/branch-truce/commit/1ef2c3dc3874f309bb8b2817852c905426b1c6e7))
+* **ui:** keep line delegates and unchanged pane data across edits ([80fac5a](https://github.com/e0ipso/branch-truce/commit/80fac5ac69146eb80aee031b90ccb7b94add557a))
+
 ## 1.0.0 (2026-10-28)
 
 ### Features
