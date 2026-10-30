@@ -1,0 +1,27 @@
+{
+  "retained_date": "2026-10-30",
+  "preservation_sha256": "4b00fc1700037baaca2b99a01b19b070c18529ee314b3c3d7dd94d327e1cd19d",
+  "files": [
+    {
+      "file": "expected-left.cpp",
+      "sha256": "6a1a7ab3b307da6f8e0ac1dce5dc62b1d39e935273781ebd2211e3f000f5c290",
+      "bytes": 512,
+      "retained_file": "fixture/expected-left.cpp",
+      "retained_sha256": "6a1a7ab3b307da6f8e0ac1dce5dc62b1d39e935273781ebd2211e3f000f5c290"
+    },
+    {
+      "file": "expected-right.cpp",
+      "sha256": "c8c46bf9293efb2709c61c81478dc86a2d77a4dcc193f3a004b505c889518f23",
+      "bytes": 516,
+      "retained_file": "fixture/expected-right.cpp",
+      "retained_sha256": "c8c46bf9293efb2709c61c81478dc86a2d77a4dcc193f3a004b505c889518f23"
+    },
+    {
+      "file": "expected-result.cpp",
+      "sha256": "e3bdf49d613e586149cac8d368b9b2b3c2e822d770e4e875beb1308bc851a60a",
+      "bytes": 640,
+      "retained_file": "matched-light-text-state.json",
+      "retained_sha256": "b8c6e4a36466cd4e485b5dce29182cd4470e9965d89a568f9794f357c0950109"
+    }
+  ]
+}

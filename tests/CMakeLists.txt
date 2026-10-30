@@ -55,6 +55,14 @@ set_tests_properties(packaging.provisioning-depends PROPERTIES TIMEOUT 30)
 add_test(NAME packaging.installed-validation-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/InstalledValidationTooling.sh")
 set_tests_properties(packaging.installed-validation-tooling PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+# Native replay tooling uses only Python's standard library. Its Qt driver has a
+# separate build under tools/native-replay and is never linked into the app.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME tooling.native-replay
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/NativeReplayTests.py")
+    set_tests_properties(tooling.native-replay PROPERTIES TIMEOUT 30)
+endif()
 if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_text_format_tests storage/TextFormatTests.cpp)
     target_include_directories(branch_truce_text_format_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
