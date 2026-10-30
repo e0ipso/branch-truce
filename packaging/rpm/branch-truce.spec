@@ -60,7 +60,7 @@ unfinished work. Built for Fedora 44 x86_64 with native Qt and KDE libraries.
 %build
 # Fedora's CMake macros supply the distribution compiler/linker hardening.
 # The source's --only-bytecode QML setting avoids private Qt ABI linkage.
-%cmake -DBRANCH_TRUCE_VERSION=%{branch_truce_version} -DBRANCH_TRUCE_BUILD_DESKTOP=ON -DBRANCH_TRUCE_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=OFF
+%cmake -DBRANCH_TRUCE_VERSION=%{branch_truce_version} -DBRANCH_TRUCE_BUILD_DESKTOP=ON -DBRANCH_TRUCE_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=OFF -DCMAKE_PROJECT_TOP_LEVEL_INCLUDES="${BRANCH_TRUCE_CACHE_CMAKE_INCLUDE:-}"
 %cmake_build
 
 %install

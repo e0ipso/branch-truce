@@ -55,13 +55,34 @@ arch_package_main() {
     printf '\nsha256sums=(%q)\n' "${checksum%% *}" >> "$work/PKGBUILD"
     export BRANCH_TRUCE_VERSION="$version" BRANCH_TRUCE_ARCH_PKGVER="$native"
     export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
+    source "$root/packaging/scripts/compiler-cache.sh"
+    cache_prepare
     if [ "$(id -u)" -eq 0 ]; then
         id builder >/dev/null 2>&1 || { echo 'error: the image must provide an unprivileged builder user' >&2; return 2; }
-        chown -R builder:builder "$work"
-        (cd "$work" && runuser -u builder -- makepkg --noconfirm --clean)
-    else
-        (cd "$work" && makepkg --noconfirm --clean)
+        if [ -n "${BRANCH_TRUCE_COMPILER_CACHE_DIR:-}" ]; then
+            # Probe as makepkg's compiler user, not just the container root.
+            if ! runuser -u builder -- bash -euc '
+                id
+                cache_builder_probe="$(mktemp "$BRANCH_TRUCE_COMPILER_CACHE_DIR/.builder-write.XXXXXXXX")"
+                rm -f "$cache_builder_probe"
+            '; then
+                echo 'compiler cache unavailable to builder; compiling directly' >&2
+                export BRANCH_TRUCE_COMPILER_CACHE_DIR=''
+            fi
+        fi
     fi
+    cache_begin native-arch-None "$work"
+    local build_status=0
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R builder:builder "$work"
+        # The stats log is written by makepkg's actual compiler user.
+        [ -z "$cache_report" ] || chown builder:builder "$cache_report"*
+        (cd "$work" && runuser -u builder -- makepkg --noconfirm --clean) || build_status=$?
+    else
+        (cd "$work" && makepkg --noconfirm --clean) || build_status=$?
+    fi
+    cache_end
+    [ "$build_status" -eq 0 ] || return "$build_status"
     package="branch-truce-$native-1-x86_64.pkg.tar.zst"
     cp "$work/$package" "$output/$package"
     printf '%s\n' "$output/$package"

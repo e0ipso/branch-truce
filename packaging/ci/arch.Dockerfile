@@ -11,10 +11,10 @@ RUN pacman -Syu --noconfirm --needed archlinux-keyring \
 
 FROM target AS build
 COPY arch/PKGBUILD /opt/branch-truce/arch/
-RUN pacman -S --noconfirm --needed base-devel cmake ninja extra-cmake-modules \
+RUN pacman -S --noconfirm --needed base-devel cmake ninja ccache extra-cmake-modules \
         git qt6-base qt6-declarative qt6-svg qt6-wayland kirigami \
         syntax-highlighting qqc2-desktop-style breeze breeze-icons hicolor-icon-theme \
-    && useradd --create-home --uid 1000 builder \
+    && useradd --create-home --uid 1000 --groups root builder \
     && pacman -Q > /opt/branch-truce-build-baseline.txt \
     && cat /opt/branch-truce-build-baseline.txt
 COPY ci/baseline.sh /opt/branch-truce/ci/

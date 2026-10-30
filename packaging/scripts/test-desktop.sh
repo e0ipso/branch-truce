@@ -22,6 +22,12 @@ if [ -z "$test_user" ]; then
     useradd --uid "$test_uid" --gid "$test_gid" --no-create-home bt-test
     test_user=bt-test
 fi
+if [ -n "${BRANCH_TRUCE_COMPILER_CACHE_DIR:-}" ]; then
+    source /src/packaging/scripts/compiler-cache.sh
+    cache_prepare
+    # Group zero owns the rootless bind mount without changing its host owner.
+    usermod -a -G root "$test_user"
+fi
 chown -R "$test_uid:$test_gid" "$work" /reports
 runuser -u "$test_user" -- env HOME="$work/home" bash -euc '
     work="$1"; version="$2"
@@ -29,11 +35,19 @@ runuser -u "$test_user" -- env HOME="$work/home" bash -euc '
     test -w /reports
     : > /reports/write-probe
     rm /reports/write-probe
+    if command -v ccache >/dev/null; then
+        bash "$work/repo/tests/packaging/CompilerCache.sh"
+    fi
+    source "$work/repo/packaging/scripts/compiler-cache.sh"
+    cache_begin desktop-Debug "$work"
     cmake -S "$work/repo" -B "$work/build" -G "Unix Makefiles" \
         -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
         -DBRANCH_TRUCE_BUILD_DESKTOP=ON -DBRANCH_TRUCE_WARNINGS_AS_ERRORS=ON \
-        -DBRANCH_TRUCE_VERSION="$version"
-    cmake --build "$work/build" --parallel 2
+        -DBRANCH_TRUCE_VERSION="$version" "${cache_cmake_args[@]}"
+    build_status=0
+    cmake --build "$work/build" --parallel 2 || build_status=$?
+    cache_end
+    [ "$build_status" -eq 0 ] || exit "$build_status"
     ctest --test-dir "$work/build" --show-only=json-v1 > /reports/tests.json
     result=0
     ctest --test-dir "$work/build" --parallel 2 --output-on-failure --output-junit /reports/ctest.xml || result=$?

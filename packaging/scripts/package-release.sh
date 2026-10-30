@@ -67,7 +67,13 @@ branch-truce ($native_version) $suite; urgency=medium
  -- Branch Truce contributors <contributors@example.invalid>  $(TZ=UTC date -R ${SOURCE_DATE_EPOCH:+-d "@$SOURCE_DATE_EPOCH"})
 EOF
 
-(cd "$tree" && BRANCH_TRUCE_VERSION="$version" dpkg-buildpackage -b --no-sign)
+source "$packaging_dir/scripts/compiler-cache.sh"
+cache_prepare
+cache_begin native-deb-distro "$work"
+build_status=0
+(cd "$tree" && BRANCH_TRUCE_VERSION="$version" dpkg-buildpackage -b --no-sign) || build_status=$?
+cache_end
+[ "$build_status" -eq 0 ] || exit "$build_status"
 
 deb="branch-truce_${native_version}_amd64.deb"
 name="$package_filename"

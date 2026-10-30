@@ -69,6 +69,10 @@ engine="${CONTAINER_ENGINE:-docker}"
 image="${BRANCH_TRUCE_KDE_CI_IMAGE:-branch-truce-kde-ci}"
 image_cache="${BRANCH_TRUCE_KDE_CI_IMAGE_CACHE:-}"
 inputs_label=org.branch-truce.kde-ci.inputs
+# Optional persistent compiler results. Workflow restore/save owns branch scope;
+# the source revision belongs in save keys, never the compatible restore prefix.
+compiler_cache="${BRANCH_TRUCE_COMPILER_CACHE:-}"
+cache_env=()
 mkdir -p "$output/previous"
 output="$(cd "$output" && pwd)"
 if [ -n "$previous_package" ]; then
@@ -178,11 +182,32 @@ stage_images() {
     run_container "$image:$format-build" cat /opt/branch-truce/baseline.txt
 }
 
+prepare_compiler_cache() {
+    local stage="$1" directory image_identity
+    cache_env=()
+    [ -n "$compiler_cache" ] || return 0
+    directory="$compiler_cache/$format-$(uname -m)-$inputs"
+    if ! mkdir -p "$directory"; then
+        echo "compiler cache unavailable on host; compiling directly: $directory" >&2
+        return 0
+    fi
+    if ! directory="$(cd "$directory" && pwd)"; then
+        echo 'compiler cache path unavailable on host; compiling directly' >&2
+        return 0
+    fi
+    image_identity="$("$engine" image inspect --format '{{.Id}}' "$image:$format-$stage")" || return 1
+    cache_env=(-v "$directory:/compiler-cache"
+        -e BRANCH_TRUCE_COMPILER_CACHE_DIR=/compiler-cache
+        -e "BRANCH_TRUCE_COMPILER_CACHE_NAMESPACE=v1-$format-$(uname -m)-$inputs-$image_identity")
+}
+
 stage_test() {
     echo "== $format: build and bounded CTest (including ui.qmllint) for $version"
     mkdir -p "$output/tests/$format"
+    prepare_compiler_cache test || return 1
     run_container \
         -v "$root_dir:/src:ro" -v "$output/tests/$format:/reports" \
+        "${cache_env[@]}" -e BRANCH_TRUCE_COMPILER_CACHE_REPORT_DIR=/reports/cache \
         "$image:$format-test" /src/packaging/scripts/test-desktop.sh "$version" "$test_uid" "$test_gid"
 }
 
@@ -195,10 +220,12 @@ stage_package() {
         echo "== $format: previous package $previous_version, a build of this source; package $previous_version and $version"
         build_previous="$previous_version"
     fi
+    prepare_compiler_cache build || return 1
     # shellcheck disable=SC2016
     run_container \
         -v "$root_dir:/src:ro" -v "$output:/out" \
-        "${build_env[@]}" \
+        "${build_env[@]}" "${cache_env[@]}" \
+        -e "BRANCH_TRUCE_COMPILER_CACHE_REPORT_DIR=/out/cache/$format" \
         "$image:$format-build" bash -euc '
             if [ -n "$2" ]; then
                 /src/packaging/scripts/package-release.sh --version "$2" --format "$1" --output /out/previous

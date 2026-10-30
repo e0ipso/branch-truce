@@ -12,7 +12,8 @@ RUN /opt/branch-truce/scripts/prepare-target.sh --format kubuntu-deb \
 
 FROM target AS build
 COPY debian/control /opt/branch-truce/debian/
-RUN /opt/branch-truce/scripts/prepare-target.sh --format kubuntu-deb --build-deps
+RUN /opt/branch-truce/scripts/prepare-target.sh --format kubuntu-deb --build-deps \
+    && apt-get install -y -q --no-install-recommends ccache
 COPY ci/baseline.sh /opt/branch-truce/ci/
 RUN /opt/branch-truce/ci/baseline.sh --format kubuntu-deb > /opt/branch-truce/baseline.txt \
     && cat /opt/branch-truce/baseline.txt

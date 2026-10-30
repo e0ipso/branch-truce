@@ -2,7 +2,7 @@
 # Run inside the Fedora 44 build image. Last line is the validated RPM path.
 set -euo pipefail
 usage() { echo "usage: $0 --version <application-semver> --output <dir>" >&2; exit 2; }
-version= output=
+version='' output=''
 while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || usage
     case "$1" in
@@ -31,11 +31,17 @@ cp -a "$packaging_dir/CMakeLists.txt" "$packaging_dir/com.canpicasoft.branch-tru
 cp -a "$root_dir/assets/branding/platform/linux" "$tree/assets/branding/platform/"
 cp -a "$root_dir/assets/branding/svg" "$tree/assets/branding/"
 tar -C "$work" -czf "$work/rpmbuild/SOURCES/$name.tar.gz" "$name"
+source "$packaging_dir/scripts/compiler-cache.sh"
+cache_prepare
+cache_begin native-rpm-distro "$work"
+build_status=0
 rpmbuild -bb --define "_topdir $work/rpmbuild" \
     --define "_smp_mflags -j${CMAKE_BUILD_PARALLEL_LEVEL:-2}" \
     --define "branch_truce_version $version" \
     --define "branch_truce_native_version $native_version" \
-    "$packaging_dir/rpm/branch-truce.spec"
+    "$packaging_dir/rpm/branch-truce.spec" || build_status=$?
+cache_end
+[ "$build_status" -eq 0 ] || exit "$build_status"
 # Never rename an RPM to conceal metadata drift.
 rpm_file="$work/rpmbuild/RPMS/x86_64/$name-1.fc44.x86_64.rpm"
 [ -f "$rpm_file" ] || { echo "error: expected RPM $rpm_file was not built" >&2; exit 1; }
