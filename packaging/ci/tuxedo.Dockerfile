@@ -19,9 +19,11 @@ RUN /opt/branch-truce/ci/baseline.sh --format tuxedo-deb > /opt/branch-truce/bas
     && cat /opt/branch-truce/baseline.txt
 
 FROM build AS test
+# app.startup-appearance also exercises the KDE platform theme plugin.
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
         appstream desktop-file-utils hicolor-icon-theme kde-style-breeze \
         kf6-breeze-icon-theme libasan8 libglib2.0-bin libubsan1 \
+        plasma-integration \
         qml6-module-org-kde-desktop qml6-module-org-kde-kirigami \
         qml6-module-qtqml-models qml6-module-qtqml-workerscript \
         qml6-module-qtquick \
