@@ -192,7 +192,9 @@ Item {
                 color: DiffStyle.textColor(kind, kindGlyph)
                 Accessible.role: Accessible.StaticText
                 Accessible.name: text
-                Accessible.description: kind.length > 0 ? DiffStyle.description(kind) : ""
+                Accessible.description: gutter.decisions[line]
+                    ? DiffStyle.description(kind) + ": " + gutter.decisions[line].label
+                    : kind.length > 0 ? DiffStyle.description(kind) : ""
             }
         }
         Repeater {
@@ -239,7 +241,9 @@ Item {
                     readonly property string decision: decisionRow.decision ? decisionRow.decision.state : ""
                     text: decision.length > 0 ? DiffStyle.glyph(decision) : ""
                     tone: DiffStyle.pillTone(decision)
-                    visible: text.length > 0
+                    // The line glyph already conveys this decision. Keep the
+                    // section description there instead of drawing a second check.
+                    visible: text.length > 0 && gutter.marks.lines[decisionRow.line] !== decision
                     anchors.centerIn: parent
                     height: decisionRow.height
                     width: Math.max(height, implicitWidth)

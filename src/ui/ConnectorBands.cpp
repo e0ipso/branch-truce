@@ -67,7 +67,7 @@ void ConnectorBands::update()
             if (!states.contains(line) || PaneMarks::rank(states.value(line)) < PaneMarks::rank(kind)) states[line] = kind;
         };
         const auto conflicts = PaneMarks::conflictingLines(passages_);
-        for (const auto &value : regions_) {
+        for (const auto &value : PaneMarks::stylingRegions(regions_)) {
             const auto region = value.toMap();
             if (string(region, "side") != side_) continue;
             const auto state = string(region, "state");
@@ -79,7 +79,39 @@ void ConnectorBands::update()
         }
         const auto rows = fold_.value(QStringLiteral("rows")).toMap();
         QMap<int, int> folded;
+        QVariantList projected;
         for (const auto &value : PaneMarks::decoratedPassages(passages_)) {
+            const auto passage = value.toMap();
+            if (string(passage, "side") != side_) continue;
+            const int sb = number(passage, "sourceLineBegin"), se = number(passage, "sourceLineEnd");
+            const int rb = number(passage, "resultLineBegin"), re = number(passage, "resultLineEnd");
+            const auto kind = string(passage, "kind");
+            const bool equal = passage.value(QStringLiteral("comparisonKind"), kind).toString() == QLatin1String("equal");
+            if (!equal || sb >= se || se - sb != re - rb) {
+                projected.append(value);
+                continue;
+            }
+            // Equal correspondence is exact line by line. Split it at decision
+            // boundaries so accepting one line never tints its equal neighbours.
+            const auto kindAt = [&](int line) {
+                const auto state = lines.value(line);
+                return PaneMarks::rank(state) > PaneMarks::rank(kind) ? state : kind;
+            };
+            for (int first = sb; first < se;) {
+                const auto state = kindAt(first);
+                int stop = first + 1;
+                while (stop < se && kindAt(stop) == state) ++stop;
+                auto part = passage;
+                part[QStringLiteral("kind")] = state;
+                part[QStringLiteral("sourceLineBegin")] = first;
+                part[QStringLiteral("sourceLineEnd")] = stop;
+                part[QStringLiteral("resultLineBegin")] = rb + first - sb;
+                part[QStringLiteral("resultLineEnd")] = rb + stop - sb;
+                projected.append(part);
+                first = stop;
+            }
+        }
+        for (const auto &value : projected) {
             const auto passage = value.toMap();
             if (string(passage, "side") != side_) continue;
             const auto passageKind = string(passage, "kind");

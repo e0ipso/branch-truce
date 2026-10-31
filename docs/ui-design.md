@@ -337,6 +337,8 @@ Colour never carries meaning alone (`PRD.md:35`, `PRD.md:73`). Every coloured ra
 
 **Decided regions.** When a region is decided, its gutter buttons are replaced by the decision glyph: `✓` for the accepted side, `×` for the ignored side. Undo is the way back (`PRD.md:43`); the buttons return when the decision is undone. The ignored side keeps its text, only muted, so the user can still read what was declined.
 
+Accepted source lines, their mapped result lines and exact correspondence bands use the accepted role instead of the underlying added or changed role. Precise line decisions take precedence over a decided section's aggregate state. Genuine conflicts and remaining markers retain their warning role; manual edits take precedence over acceptance. Ignoring a source does not mark the unchanged result as ignored. The result keeps its provenance letters and section descriptions, but omits a duplicate decision chip when its line glyph already conveys that decision.
+
 Within a changed line, word-level highlights use the same role as the line at a stronger weight, and carry no separate control (`PRD.md:35`).
 
 ## 7. Typography and sizing

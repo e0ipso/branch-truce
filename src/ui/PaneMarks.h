@@ -14,6 +14,7 @@ public:
     using QObject::QObject;
     static int rank(const QString &kind);
     static QVariantList decoratedPassages(const QVariantList &passages);
+    static QVariantList stylingRegions(const QVariantList &regions);
     static QSet<int> conflictingLines(const QVariantList &passages);
     static bool conflictingRegion(const QVariantMap &region, const QSet<int> &lines);
     Q_INVOKABLE QVariantMap marks(const QString &pane, const QVariantList &passages,

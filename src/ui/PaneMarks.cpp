@@ -12,15 +12,37 @@ QString string(const QVariantMap &map, const char *key) { return map.value(QLati
 }
 int PaneMarks::rank(const QString &kind)
 {
-    if (kind == QLatin1String("markers")) return 5;
-    if (kind == QLatin1String("conflict")) return 4;
-    if (kind == QLatin1String("accepted") || kind == QLatin1String("ignored") || kind == QLatin1String("manual")) return 3;
+    if (kind == QLatin1String("markers")) return 6;
+    if (kind == QLatin1String("conflict")) return 5;
+    if (kind == QLatin1String("manual")) return 4;
+    if (kind == QLatin1String("accepted") || kind == QLatin1String("ignored")) return 3;
     if (kind == QLatin1String("changed")) return 2;
     if (kind == QLatin1String("added")) return 1;
     return 0;
 }
 namespace {
 QVariantList range(int first, int end) { return {first, end}; }
+}
+QVariantList PaneMarks::stylingRegions(const QVariantList &regions)
+{
+    QSet<QString> lineSections;
+    for (const auto &value : regions) {
+        const auto r = value.toMap();
+        if (string(r, "scope") == QLatin1String("line"))
+            lineSections.insert(string(r, "side") + QLatin1Char(':') + string(r, "section"));
+    }
+    QVariantList styled;
+    for (const auto &value : regions) {
+        const auto r = value.toMap();
+        const auto state = string(r, "state");
+        // A fully decided section may contain both accepted and ignored lines.
+        // Its aggregate state must not repaint those precise decisions.
+        if (string(r, "scope") == QLatin1String("section")
+            && (state == QLatin1String("accepted") || state == QLatin1String("ignored"))
+            && lineSections.contains(string(r, "side") + QLatin1Char(':') + string(r, "section"))) continue;
+        styled.append(value);
+    }
+    return styled;
 }
 QVariantList PaneMarks::decoratedPassages(const QVariantList &passages)
 {
@@ -118,7 +140,7 @@ QVariantMap PaneMarks::marks(const QString &pane, const QVariantList &passages, 
                   ? QStringLiteral("changed") : QStringLiteral("added"));
     }
     const auto conflicts = conflictingLines(passages);
-    for (const auto &value : regions) {
+    for (const auto &value : stylingRegions(regions)) {
         const auto r = value.toMap();
         const auto state = string(r, "state");
         // Optional contributions remain inspectable in regions and choices.
@@ -127,6 +149,7 @@ QVariantMap PaneMarks::marks(const QString &pane, const QVariantList &passages, 
             const int first = number(r, "resultLineBegin"), end = number(r, "resultLineEnd");
             if (state == QLatin1String("undecided")) mark(first, end, QStringLiteral("conflict"));
             else if (state == QLatin1String("manual")) mark(first, end, QStringLiteral("manual"));
+            else if (state == QLatin1String("accepted")) mark(first, end, QStringLiteral("accepted"));
             if (r.value(QStringLiteral("handEdited")).toBool()) for (int line = first; line < end; ++line) from[line] = 4;
         } else if (!result && string(r, "side") == pane && state != QLatin1String("manual")) {
             mark(number(r, "sourceLineBegin"), number(r, "sourceLineEnd"),
