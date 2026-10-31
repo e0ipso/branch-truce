@@ -1,3 +1,4 @@
+// Conflict marker parsing identifies unresolved marker blocks in the result text.
 #include "ConflictMarkers.h"
 
 #include <algorithm>

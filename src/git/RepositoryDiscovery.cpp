@@ -1,3 +1,4 @@
+// Repository discovery verifies merge or rebase sources and their paths before the app presents them.
 #include "RepositoryDiscovery.h"
 #include "GitParsing.h"
 

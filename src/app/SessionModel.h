@@ -1,3 +1,4 @@
+// The session model presents each file's draft, decisions and resolution state to the window.
 #pragma once
 #include <QtQml/qqmlregistration.h>
 
@@ -22,6 +23,7 @@
 namespace branch_truce {
 struct RecoveryRestore;
 
+// Lists session files and owns their result histories, recovery boundaries and observable status.
 class SessionModel : public QAbstractListModel {
     Q_OBJECT
     QML_ELEMENT

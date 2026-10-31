@@ -1,3 +1,4 @@
+// The session coordinator schedules guarded save and publication work and reconciles cancelled mutations.
 #pragma once
 
 #include "app/SessionModel.h"

@@ -1,3 +1,4 @@
+// Outside-app messages explain captured file exclusions and format safe staging guidance.
 #pragma once
 
 #include <QByteArray>

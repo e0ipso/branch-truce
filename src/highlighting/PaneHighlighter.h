@@ -1,3 +1,4 @@
+// Pane highlighting combines syntax colours and word decorations without editing document text.
 #pragma once
 #include <QList>
 #include <QTextLayout>

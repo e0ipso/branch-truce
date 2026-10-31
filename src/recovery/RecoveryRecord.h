@@ -1,3 +1,4 @@
+// Recovery records encode and read a complete text-and-decision state at an acknowledgment boundary.
 #pragma once
 
 #include "core/SessionState.h"

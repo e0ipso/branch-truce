@@ -1,3 +1,4 @@
+// Word difference decorations highlight changed words without changing the result text.
 #include "WordDifferenceDecorations.h"
 #include "highlighting/PaneHighlighter.h"
 #include "SessionModel.h"

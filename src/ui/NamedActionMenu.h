@@ -1,3 +1,4 @@
+// Named action menus let toolbar overflow entries find and dismiss their containing popup.
 #pragma once
 
 #include <QObject>

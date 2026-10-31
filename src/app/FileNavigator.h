@@ -1,3 +1,4 @@
+// File and conflict navigation keeps the selected file and result cursor on the requested work.
 #pragma once
 #include <QtQml/qqmlregistration.h>
 #include "core/RevisionId.h"

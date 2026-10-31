@@ -1,3 +1,4 @@
+// The session footer shows resolved-file progress, outside-app work and captured file facts.
 pragma ComponentBehavior: Bound
 import QtQuick
 import BranchTruce.App

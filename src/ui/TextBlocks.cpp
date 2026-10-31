@@ -1,3 +1,4 @@
+// Text block geometry keeps line numbers, folds and comparison decorations aligned with the editor.
 #include "TextBlocks.h"
 #include <QAbstractTextDocumentLayout>
 #include <QQuickTextDocument>

@@ -1,3 +1,4 @@
+// Word comparisons locate changed tokens within corresponding source and result passages.
 #include "WordDifferences.h"
 #include "EditingCommands.h"
 #include <algorithm>

@@ -1,3 +1,4 @@
+// The Git adapter inspects repository state and performs guarded operations for conflict resolution.
 #pragma once
 
 #include <QByteArray>

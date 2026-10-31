@@ -43,23 +43,23 @@ Keep QObject, QML, editor-widget types, subprocess handles and filesystem mechan
 
 A future desktop implementation can retain or adapt the domain contracts and supply its own native UI and platform adapters. Shared UI code is not required. Describe future technical designs through the same screens, components and contracts.
 
-Initial source layout:
+Source layout, with directory responsibilities described in [src/README.md](src/README.md):
 
 ```text
 src/
-  app/          # Bootstrap, session controller, Qt-facing models
-  core/         # Merge state, correspondence, commands and history
-  git/          # Git CLI adapter and repository metadata
-  storage/      # Result writer and recovery store
-  ui/           # QML, editor adapter and KDE integration
-tests/
-  core/
-  git/
-  storage/
-  ui/
+  app/          # Startup, controller, Qt-facing models and result editor adapter
+  core/         # Qt-free merge state, correspondence, choices and history
+  git/          # Repository discovery, classification, conversion and Git operations
+  highlighting/ # Syntax formatting and word decorations
+  mergetool/    # Git launcher, local session protocol and parent handoff
+  publication/  # Reviewed result writing and verified staging coordination
+  recovery/     # Recovery transactions, replay and mutation reconciliation
+  session/      # Conflict capture and background operation coordination
+  storage/      # Text formats, guarded destination writes and journal storage
+  ui/           # QML components, pane geometry and native control helpers
 ```
 
-These are proposed implementation directories, not existing code.
+Tests live under `tests/`, grouped by core, app, Git, storage, acceptance and tooling responsibilities. There is no separate UI test directory; `tests/app/` exercises the QML comparison scene and `tests/acceptance/` drives user journeys.
 
 ## Screens and interface components
 

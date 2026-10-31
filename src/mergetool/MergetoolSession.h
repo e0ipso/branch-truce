@@ -1,3 +1,4 @@
+// The mergetool session connects waiting Git launchers to the window and tracks their published results.
 #pragma once
 
 #include "publication/ResolutionPublisher.h"

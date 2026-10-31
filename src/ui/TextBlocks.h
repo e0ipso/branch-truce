@@ -1,3 +1,4 @@
+// Text block geometry keeps line numbers, folds and comparison decorations aligned with the editor.
 #pragma once
 #include <QList>
 #include <QMetaObject>

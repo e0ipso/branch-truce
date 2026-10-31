@@ -1,3 +1,4 @@
+// Recovery restore rebuilds saved sessions and reconciles interrupted repository mutations before editing resumes.
 #pragma once
 
 #include "recovery/RecoveryRecord.h"

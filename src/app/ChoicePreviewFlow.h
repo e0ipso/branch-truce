@@ -1,3 +1,4 @@
+// Choice previews show how a source action would change the result before the user confirms it.
 #pragma once
 #include <QtQml/qqmlregistration.h>
 #include "core/EditingCommands.h"

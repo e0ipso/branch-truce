@@ -1,3 +1,4 @@
+// Passage search finds text within the selected comparison scope and highlights its matches.
 #pragma once
 #include "ComparisonPanes.h"
 #include <QList>

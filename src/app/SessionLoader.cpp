@@ -1,3 +1,4 @@
+// Session loading discovers conflicted files and offers recoverable work without silently replacing it.
 #include "SessionLoader.h"
 #include "SourceIdentity.h"
 #include "session/ConflictCapture.h"

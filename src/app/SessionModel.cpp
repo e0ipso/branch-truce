@@ -1,3 +1,4 @@
+// The session model presents each file's draft, decisions and resolution state to the window.
 #include "SessionModel.h"
 #include "recovery/RecoveryRestore.h"
 #include "git/GitAdapter.h"

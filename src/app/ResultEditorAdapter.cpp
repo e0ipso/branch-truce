@@ -1,3 +1,4 @@
+// The result editor adapter journals text edits and connects native editing actions to file history.
 #include "ResultEditorAdapter.h"
 #include "SessionModel.h"
 #include "TextChange.h"

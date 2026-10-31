@@ -1,3 +1,4 @@
+// Navigation targets translate conflict ranges into positions the result editor can reveal.
 #pragma once
 #include "core/EditingCommands.h"
 #include <cstddef>

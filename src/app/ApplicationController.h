@@ -1,3 +1,4 @@
+// The application controller connects conflict review, result editing and session completion to the window.
 #pragma once
 #include <QtQml/qqmlregistration.h>
 #include "ChoicePreviewFlow.h"
@@ -21,6 +22,7 @@
 #include <string>
 
 namespace branch_truce {
+// Owns the window's collaborators and dispatches revision-bound review, editing and completion commands.
 class ApplicationController : public QObject {
     Q_OBJECT
     QML_ELEMENT

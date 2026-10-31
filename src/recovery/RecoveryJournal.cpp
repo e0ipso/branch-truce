@@ -1,3 +1,4 @@
+// The recovery journal keeps acknowledged edits durable and retains failed input for retry.
 #include "recovery/RecoveryJournal.h"
 #include "recovery/RecoveryRecord.h"
 #include "recovery/RecoveryRestore.h"

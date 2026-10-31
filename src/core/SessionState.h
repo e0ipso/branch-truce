@@ -1,3 +1,4 @@
+// Session state keeps result revisions, decisions and undo history separate from immutable sources.
 #pragma once
 
 #include "ConflictMarkers.h"

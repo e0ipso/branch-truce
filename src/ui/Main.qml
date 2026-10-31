@@ -1,3 +1,4 @@
+// The main window brings the session sidebar, comparison workspace and completion dialogs together.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -74,7 +75,6 @@ Kirigami.ApplicationWindow {
             pending.push(...next.children);
         }
     }
-    // Retries every file's pending recovery, then closes again if none is left.
     function retryPendingRecoveryAndClose(): void {
         for (const group of controller.handoff.groups || [])
             for (const entry of group.entries)
@@ -170,7 +170,7 @@ Kirigami.ApplicationWindow {
     }
     width: Kirigami.Units.gridUnit * 70
     height: Kirigami.Units.gridUnit * 40
-    // Fits 1920x1080 at 200% scaling (960x540 logical pixels); the page scrolls below its content height.
+    // Native grid units let the minimum follow the desktop font size.
     minimumWidth: Kirigami.Units.gridUnit * 48
     minimumHeight: Kirigami.Units.gridUnit * 28
     visible: true
@@ -230,8 +230,7 @@ Kirigami.ApplicationWindow {
             visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
             controller: window.controller
         }
-        // On a short screen, such as 1080p at 150% or 200%, the content keeps its minimum
-        // height and scrolls, so the text panes keep a usable height and nothing is cut off.
+        // Keep the panes' reading height when the work area needs vertical scrolling.
         Flickable {
             id: pageScroll
             objectName: "pageScroll"

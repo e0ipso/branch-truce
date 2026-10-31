@@ -1,3 +1,4 @@
+// Text positions connect captured source lines and byte ranges to the editor's character offsets.
 #pragma once
 #include "core/FileSnapshot.h"
 #include "core/Correspondence.h"

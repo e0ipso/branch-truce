@@ -1,3 +1,4 @@
+// Navigation targets translate conflict ranges into positions the result editor can reveal.
 #include "NavigationTargets.h"
 #include <QString>
 #include <algorithm>

@@ -1,3 +1,4 @@
+// The Git mergetool launcher waits for the reviewed result to be handed back to its parent process.
 #include "mergetool/MergetoolLauncher.h"
 #include "mergetool/MergetoolProtocol.h"
 

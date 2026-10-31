@@ -1,3 +1,4 @@
+// Source choice commands apply accept, ignore and combined-side decisions to a result revision.
 #include "EditingCommands.h"
 
 #include <algorithm>

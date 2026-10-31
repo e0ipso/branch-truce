@@ -1,3 +1,4 @@
+// The source menu host routes desktop context-menu gestures from a read-only editor to its range choices.
 #pragma once
 
 #include <QPointer>

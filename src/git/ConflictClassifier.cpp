@@ -1,3 +1,4 @@
+// Conflict classification separates editable text conflicts from files that need another tool.
 #include "ConflictClassifier.h"
 #include "GitParsing.h"
 #include "core/ResourceLimits.h"

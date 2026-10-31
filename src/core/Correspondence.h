@@ -1,3 +1,4 @@
+// Passage correspondence maps captured source ranges to one revision of the editable result.
 #pragma once
 
 #include "FileSnapshot.h"

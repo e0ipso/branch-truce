@@ -1,3 +1,4 @@
+// The mergetool protocol identifies local sessions and carries verified handoff messages to waiting launchers.
 #include "mergetool/MergetoolProtocol.h"
 #include "core/ResourceLimits.h"
 

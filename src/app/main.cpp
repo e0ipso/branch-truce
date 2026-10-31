@@ -1,3 +1,4 @@
+// The desktop entry point selects the native appearance and opens repository or Git mergetool sessions.
 #include "ApplicationController.h"
 #include "mergetool/MergetoolLauncher.h"
 #include <QApplication>

@@ -1,3 +1,4 @@
+// Build information supplies the application version used by the desktop and command line.
 #include "BuildInfo.h"
 
 #ifndef BRANCH_TRUCE_VERSION_STRING

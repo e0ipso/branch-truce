@@ -1,3 +1,4 @@
+// Word comparisons locate changed tokens within corresponding source and result passages.
 #pragma once
 
 #include "Correspondence.h"

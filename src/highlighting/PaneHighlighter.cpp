@@ -1,3 +1,4 @@
+// Pane highlighting combines syntax colours and word decorations without editing document text.
 #include "highlighting/PaneHighlighter.h"
 #include <QTextBlock>
 #include <QTextDocument>

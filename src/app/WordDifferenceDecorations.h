@@ -1,3 +1,4 @@
+// Word difference decorations highlight changed words without changing the result text.
 #pragma once
 #include <QList>
 #include <QObject>

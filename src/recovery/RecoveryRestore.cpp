@@ -1,3 +1,4 @@
+// Recovery restore rebuilds saved sessions and reconciles interrupted repository mutations before editing resumes.
 #include "recovery/RecoveryRestore.h"
 #include "storage/DestinationWriter.h"
 #include "storage/TextFormat.h"

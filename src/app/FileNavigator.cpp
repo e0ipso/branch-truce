@@ -1,3 +1,4 @@
+// File and conflict navigation keeps the selected file and result cursor on the requested work.
 #include "FileNavigator.h"
 #include "NavigationTargets.h"
 #include "ResultEditorAdapter.h"

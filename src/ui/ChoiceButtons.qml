@@ -1,8 +1,4 @@
-// The choices on one row of a source pane's choice column: Accept and Ignore for the scope
-// that starts on the row, and a context menu with Resolve using this side, Take both in either order,
-// and every precise line choice in that actual source range.
-// Accept sits nearest the result. Once the scope is decided its
-// buttons go and the pane's glyph column shows the decision; undo brings them back.
+// Compact source controls accept or ignore a range and offer precise and ordered choices in its menu.
 pragma ComponentBehavior: Bound
 
 import QtQuick

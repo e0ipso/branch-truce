@@ -1,3 +1,4 @@
+// Syntax highlighting selects language definitions and theme colours for comparison documents.
 #pragma once
 #include <QColor>
 #include <QString>

@@ -1,3 +1,4 @@
+// Standard key bindings expose the desktop's editing shortcuts to shared window actions.
 #pragma once
 
 #include <QKeySequence>

@@ -1,3 +1,4 @@
+// Destination writing preserves file identity and metadata while safely publishing reviewed result bytes.
 #include "DestinationWriter.h"
 
 #include <QFile>

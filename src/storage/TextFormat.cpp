@@ -1,3 +1,4 @@
+// Text formatting decodes captured files and serializes results with their retained encoding and line endings.
 #include "TextFormat.h"
 
 #include <string>

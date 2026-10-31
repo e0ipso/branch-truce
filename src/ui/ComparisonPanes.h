@@ -1,3 +1,4 @@
+// Comparison panes keep source and result scroll positions aligned through their passage correspondence.
 #pragma once
 #include <QHash>
 #include <QList>

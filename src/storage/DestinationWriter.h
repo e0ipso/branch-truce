@@ -1,3 +1,4 @@
+// Destination writing preserves file identity and metadata while safely publishing reviewed result bytes.
 #pragma once
 
 #include "core/FileSnapshot.h"

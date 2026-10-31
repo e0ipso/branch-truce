@@ -1,3 +1,4 @@
+// Text conversion checks Git attributes and prepares source or result bytes under the captured policy.
 #pragma once
 
 #include "GitAdapter.h"

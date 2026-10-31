@@ -1,3 +1,4 @@
+// Choice previews show how a source action would change the result before the user confirms it.
 #include "ChoicePreviewFlow.h"
 #include "SourceIdentity.h"
 #include "CommandGuard.h"

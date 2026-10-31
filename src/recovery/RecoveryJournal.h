@@ -1,3 +1,4 @@
+// The recovery journal keeps acknowledged edits durable and retains failed input for retry.
 #pragma once
 
 #include "core/SessionState.h"

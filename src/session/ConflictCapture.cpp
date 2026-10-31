@@ -1,3 +1,4 @@
+// Conflict capture turns inspected Git sources into immutable session snapshots and support decisions.
 #include "session/ConflictCapture.h"
 
 namespace branch_truce {

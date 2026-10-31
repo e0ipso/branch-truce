@@ -15,9 +15,7 @@ Rectangle {
     property string description: ""
     property string identityRole: ""
     property string identityHash: ""
-    // The historical native header used largeSpacing alone for the side inset.
-    // Compose the reference's wider inset from font-scaled native units while
-    // retaining the smaller title-to-identity gap and the shared text baseline.
+    // Font-scaled native units keep the wider side inset and shared text baseline.
     readonly property real sideInset: Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing
     readonly property real titleIdentitySpacing: Kirigami.Units.largeSpacing
     implicitHeight: heading.implicitHeight + Kirigami.Units.mediumSpacing * 2 + separator.height

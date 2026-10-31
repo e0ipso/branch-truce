@@ -115,8 +115,6 @@ ColumnLayout {
     function editorNamed(name: string): Item {
         return panesByRole.editor(name)
     }
-    // Selects the next passage the search finds and scrolls the panes to it, showing the
-    // folded markers when it lies on them.
     function openSearch(): void { readingBar.open() }
     function updateSearch(): void {
         passageSearch.update(readingBar.query, readingBar.caseSensitive, readingBar.visible)
@@ -266,7 +264,6 @@ ColumnLayout {
         return {decisions: decisions, combinations: combinations}
     }
     readonly property var resultSections: kept("sections:result", resultSectionsFor(file, markerFold))
-    // Showing the earlier version brings it to the result's position.
     function followEarlier(): void {
         panesByRole.paneShown(earlierPane.paneName)
     }
