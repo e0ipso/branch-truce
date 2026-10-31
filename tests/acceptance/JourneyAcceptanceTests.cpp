@@ -2089,8 +2089,31 @@ public:
                     auto *hash = scene.item((std::string(identity) + "Hash").c_str());
                     QQmlExpression smallFont(qmlContext(role), role, "Kirigami.Theme.smallFont");
                     QQmlExpression fixedFont(qmlContext(hash), hash, "Kirigami.Theme.fixedWidthFont");
-                    CHECK(role->property("font").value<QFont>() == smallFont.evaluate().value<QFont>());
-                    CHECK(hash->property("font").value<QFont>() == fixedFont.evaluate().value<QFont>());
+                    const auto expectedRole = smallFont.evaluate().value<QFont>();
+                    const auto expectedHash = fixedFont.evaluate().value<QFont>();
+                    const auto inspectFont = [&](QQuickItem *item, const QFont &expected) {
+                        const auto actual = item->property("font").value<QFont>();
+                        if (actual == expected) return;
+                        const auto fields = [](const QFont &font) {
+                            return QJsonObject{{"key", font.key()}, {"family", font.family()},
+                                {"styleName", font.styleName()}, {"pointSize", font.pointSizeF()},
+                                {"pixelSize", font.pixelSize()}, {"weight", font.weight()}, {"style", font.style()},
+                                {"styleHint", font.styleHint()}, {"styleStrategy", int(font.styleStrategy())},
+                                {"stretch", font.stretch()}, {"kerning", font.kerning()},
+                                {"fixedPitch", font.fixedPitch()}, {"hinting", font.hintingPreference()},
+                                {"capitalization", font.capitalization()}, {"letterSpacing", font.letterSpacing()},
+                                {"wordSpacing", font.wordSpacing()}, {"underline", font.underline()},
+                                {"overline", font.overline()}, {"strikeOut", font.strikeOut()}};
+                        };
+                        const auto diagnostic = QJsonDocument(QJsonObject{{"control", item->objectName()},
+                            {"actual", fields(actual)}, {"expected", fields(expected)},
+                            {"expressionError", smallFont.hasError() || fixedFont.hasError()}}).toJson(QJsonDocument::Compact);
+                        std::fprintf(stderr, "IDENTITY_FONT_DIAGNOSTIC=%s\n", diagnostic.constData());
+                    };
+                    inspectFont(role, expectedRole);
+                    inspectFont(hash, expectedHash);
+                    CHECK(role->property("font").value<QFont>() == expectedRole);
+                    CHECK(hash->property("font").value<QFont>() == expectedHash);
                     CHECK(text.contains(role->property("text").toString()));
                     CHECK(text.contains(hash->property("text").toString()));
                     CHECK(!hash->property("text").toString().isEmpty());

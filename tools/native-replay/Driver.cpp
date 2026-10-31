@@ -160,10 +160,17 @@ QJsonObject snapshot() {
             for (const auto *key : {"text", "path", "fileId", "contentY", "cursorPosition", "checked", "rows", "folds",
                                    "rowHeight", "lineSpacing", "color", "schemeBackground", "line", "kind",
                                    "truncated", "explanation", "implicitWidth", "baselineOffset", "textFormat", "readOnly",
+                                   "selectByMouse", "selectByKeyboard",
                                    "sourceTop", "sourceBottom", "resultTop", "resultBottom",
                                    "sourceX", "resultX", "middleX", "radius", "orientation"}) {
                 const auto property = item->property(key);
                 if (property.isValid()) row[key] = value(property);
+            }
+            const auto textFormat = item->property("textFormat");
+            if (textFormat.isValid()) {
+                bool converted = false;
+                const auto format = textFormat.toInt(&converted);
+                row["plainText"] = converted && format == int(Qt::PlainText);
             }
             if (item->property("font").isValid()) row["font"] = item->property("font").value<QFont>().toString();
             if (item->objectName().endsWith("Label") && item->parentItem() && item->parentItem()->parentItem()) {

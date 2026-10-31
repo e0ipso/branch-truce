@@ -2691,6 +2691,9 @@ public:
             auto *viewport = fixture.item("resultViewport");
             settle([&] { return viewport->property("contentHeight").toReal() > viewport->height() * 2
                 && viewport->property("contentWidth").toReal() > viewport->width() * 2; });
+            // Let the initial file placement run before establishing the scroll
+            // position whose preservation this test exercises.
+            test_support::waitForStable(fixture.window, "initial result viewport", [&] { return viewport; }, 60);
             // Keep the cursor at the top so that scrolling away leaves it out of view.
             fixture.select(0, 0);
             CHECK(viewport->setProperty("contentY", 600.0));

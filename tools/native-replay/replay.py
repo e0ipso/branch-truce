@@ -381,7 +381,7 @@ def capture_one(args, driver, out, theme, repeat):
                     diagnostic = item(details, 'selectedProblemDiagnostic')
                     require(diagnostic['text'] == details['supportDetail'] and 'UTF-8' in diagnostic['text'],
                             'Technical details changed or lost the captured decoder diagnostic')
-                    require(diagnostic['readOnly'] and diagnostic['textFormat'] == 0,
+                    require(diagnostic['readOnly'] and diagnostic['plainText'] and diagnostic['selectByMouse'],
                             'Technical details must remain selectable plain text')
                     write_json(out / 'binary-details-state.json', details)
                     client.command('escape')

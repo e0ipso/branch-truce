@@ -8,6 +8,9 @@
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QColor>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QQmlApplicationEngine>
 #include <QQmlExpression>
@@ -431,7 +434,36 @@ public:
                 &document, [&] { ++notifications; });
             const auto laidOut = QObject::connect(document.documentLayout(), &QAbstractTextDocumentLayout::update,
                 &document, [&](const QRectF &) { ++updates; });
+            const auto formatState = [](const QList<QTextLayout::FormatRange> &formats) {
+                QJsonArray state;
+                for (const auto &range : formats) {
+                    QJsonArray properties;
+                    const auto values = range.format.properties();
+                    for (auto it = values.cbegin(); it != values.cend(); ++it)
+                        properties.append(QJsonObject{{"property", it.key()}, {"value", QJsonValue::fromVariant(it.value())}});
+                    state.append(QJsonObject{{"start", range.start}, {"length", range.length},
+                        {"underline", range.format.fontUnderline()}, {"underlineStyle", static_cast<int>(range.format.underlineStyle())},
+                        {"properties", properties}});
+                }
+                return state;
+            };
+            const auto blockState = [&] {
+                QJsonArray state;
+                for (const auto &block : decorated) {
+                    if (!block.isValid()) {
+                        state.append(QJsonObject{{"valid", false}});
+                        continue;
+                    }
+                    state.append(QJsonObject{{"valid", block.isValid()}, {"number", block.blockNumber()},
+                        {"position", block.position()}, {"revision", block.revision()}, {"text", block.text()},
+                        {"currentIdentity", document.findBlockByNumber(block.blockNumber()) == block},
+                        {"formats", formatState(block.layout()->formats())}});
+                }
+                return state;
+            };
             for (const auto &prefix : {QStringLiteral("prefix "), QStringLiteral("new line\n")}) {
+                const auto beforeEdit = blockState();
+                const auto previousRanges = formatState(highlighter.decorations());
                 QTextCursor edit(&document);
                 edit.insertText(prefix);
                 const auto text = document.toPlainText();
@@ -439,8 +471,21 @@ public:
                 const auto modified = document.isModified();
                 const auto undo = document.isUndoAvailable(), redo = document.isRedoAvailable();
                 const int anchor = selection.anchor(), position = selection.position();
+                const auto afterEdit = blockState();
+                const auto wanted = ranges();
+                const int nativeNotifications = notifications, nativeUpdates = updates;
                 notifications = updates = 0;
-                highlighter.setDecorations(ranges());
+                highlighter.setDecorations(wanted);
+                if (notifications != 0 || updates != 0) {
+                    const QJsonObject diagnostic{{"qt", qVersion()}, {"prefix", prefix},
+                        {"notifications", notifications}, {"layoutUpdates", updates},
+                        {"notificationsBeforeRangeUpdate", nativeNotifications}, {"layoutUpdatesBeforeRangeUpdate", nativeUpdates},
+                        {"documentRevisionBeforeRangeUpdate", revision}, {"documentRevisionAfterRangeUpdate", document.revision()},
+                        {"beforeEdit", beforeEdit}, {"afterEdit", afterEdit}, {"afterRangeUpdate", blockState()},
+                        {"previousRanges", previousRanges}, {"wantedRanges", formatState(wanted)}};
+                    std::cerr << "DECORATION_SHIFT_DIAGNOSTIC="
+                              << QJsonDocument(diagnostic).toJson(QJsonDocument::Compact).constData() << '\n';
+                }
                 CHECK(notifications == 0 && updates == 0);
                 CHECK(document.revision() == revision);
                 CHECK(document.toPlainText() == text && document.isModified() == modified);

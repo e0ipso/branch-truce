@@ -1,6 +1,7 @@
 // The source menu host routes desktop context-menu gestures from a read-only editor to its range choices.
 #include "SourceContextMenuHost.h"
 
+#include <QContextMenuEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 
@@ -71,6 +72,15 @@ void SourceContextMenuHost::mouseUngrabEvent()
 
 bool SourceContextMenuHost::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_editor && event->type() == QEvent::ContextMenu) {
+        // Newer Qt versions also deliver a separate context-menu event after
+        // the right press. Its default text menu would take our release grab.
+        // The pointer path opens the range menu when that release arrives.
+        event->accept();
+        if (static_cast<QContextMenuEvent *>(event)->reason() == QContextMenuEvent::Keyboard)
+            emit keyboardMenuRequested();
+        return true;
+    }
     if (watched != m_editor || (event->type() != QEvent::KeyPress
         && event->type() != QEvent::KeyRelease && event->type() != QEvent::ShortcutOverride))
         return false;
