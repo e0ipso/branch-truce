@@ -79,7 +79,10 @@ Item {
             choosing: lane.choosing
             contextEditor: lane.pane.editor
             edits: lane.pane.edits
-            x: edge === "right" ? lane.width - width - Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing
+            // The native scrollbar keeps its whole hit area; only the overlay
+            // shifts inward, without removing any width from source text.
+            x: edge === "right" ? lane.width - lane.pane.verticalScrollBarWidth - width
+                - Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing
             y: rowTop
             visible: rowTop >= 0 && rowTop + lane.rowHeight <= lane.height
             onHovered: target => lane.hovered(target)

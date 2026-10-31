@@ -132,6 +132,7 @@ Row {
 
     // A small framed icon button within one row; its text names the action and the scope.
     component ChoiceButton: ToolButton {
+        id: choiceButton
         required property real size
         required property real glyphSize
         width: glyphSize
@@ -139,6 +140,14 @@ Row {
         padding: 0
         flat: false
         activeFocusOnTab: true
+        // Opacity preserves keyboard traversal, while the mask lets idle touch
+        // taps reach the source text instead of activating invisible choices.
+        containmentMask: QtObject {
+            function contains(position: point): bool {
+                return buttons.revealed && position.x >= 0 && position.y >= 0
+                    && position.x < choiceButton.width && position.y < choiceButton.height
+            }
+        }
         display: AbstractButton.IconOnly
         icon.width: glyphSize
         icon.height: glyphSize

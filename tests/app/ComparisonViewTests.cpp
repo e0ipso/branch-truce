@@ -966,14 +966,29 @@ public:
             QTest::mouseMove(fixture.window, QPoint(5, 5));
             fixture.item("resultText")->forceActiveFocus();
             settle([&] { return !test_support::painted(button); });
+            const auto center = QPointF(button->width() / 2, button->height() / 2);
+            CHECK(!button->contains(center));
+            static auto *touch = QTest::createTouchDevice();
+            const auto point = button->mapToScene(center).toPoint();
+            QTest::touchEvent(fixture.window, touch).press(0, point, fixture.window);
+            QTest::touchEvent(fixture.window, touch).release(0, point, fixture.window);
+            checkUnchanged(fixture, before);
             CHECK(test_support::hoverChoiceControl(fixture.window, lanes, name) == button);
             CHECK(test_support::painted(button));
+            CHECK(button->contains(center));
+            auto *bar = fixture.item("stage2VerticalScrollBar");
+            if (bar->isVisible())
+                CHECK(button->mapRectToScene(button->boundingRect()).right()
+                    <= bar->mapRectToScene(bar->boundingRect()).left());
             QTest::mouseMove(fixture.window, QPoint(5, 5));
             settle([&] { return !test_support::painted(button); });
             // Traverse the real native Tab chain; opacity must not remove the target.
-            for (int tab = 0; tab < 100 && !button->hasActiveFocus(); ++tab)
-                QTest::keyClick(fixture.window, Qt::Key_Tab);
-            CHECK(button->hasActiveFocus());
+            auto *previous = button->nextItemInFocusChain(false);
+            CHECK(previous && previous != button);
+            CHECK(previous != fixture.item("resultText"));
+            previous->forceActiveFocus(Qt::TabFocusReason);
+            QTest::keyClick(fixture.window, Qt::Key_Tab);
+            settle([&] { return button->hasActiveFocus(); });
             CHECK(test_support::painted(button));
             QTest::keyClick(fixture.window, Qt::Key_Menu);
             auto *menu = fixture.object(("choiceMore-" + choice.source.contributionId).c_str());

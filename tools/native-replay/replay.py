@@ -356,7 +356,7 @@ def capture_one(args, driver, out, theme, repeat):
             client.command('click-path', target='src/net/retry.cpp')
             client.command(path='src/net/retry.cpp')
             client.toolbar('undoCommand')
-            undone = client.command()
+            undone = client.command(target='choiceIgnore-section/2/392/450')
             write_json(out / 'undo-state.json', undone)
             require(any(row['name'] == 'choiceIgnore-section/2/392/450' and row.get('onScreen', True)
                         for row in undone['items']), 'Undo must restore undecided controls')

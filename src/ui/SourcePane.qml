@@ -26,6 +26,7 @@ ColumnLayout {
     property alias editor: sourceText
     property alias viewport: sourceViewport
     property alias blocks: sourceBlocks
+    readonly property real verticalScrollBarWidth: sourceBar.visible ? sourceBar.width : 0
     property EditActions edits: null
     // A comparison pane overrides this method to offer its source-range menu.
     function openChoicesAt(line: int, x: real, y: real): bool {
@@ -104,6 +105,7 @@ ColumnLayout {
             }
             ScrollBar.vertical: ScrollBar {
                 id: sourceBar
+                objectName: sourcePane.paneName + "VerticalScrollBar"
             }
             HoverHandler {
                 id: textHover
