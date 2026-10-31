@@ -399,6 +399,20 @@ void clickChoice(Scene &scene, const QString &label, const char *kind, int menuK
             for (auto *child : item->childItems()) self(self, child);
         };
         visit(visit, scene.window->contentItem());
+        for (auto *other : QGuiApplication::topLevelWindows()) {
+            if (other == scene.window || !other->isVisible()) continue;
+            menus += " [window=" + std::string(other->metaObject()->className())
+                + " " + other->objectName().toStdString() + "]";
+            if (auto *quick = qobject_cast<QQuickWindow *>(other)) visit(visit, quick->contentItem());
+        }
+        for (auto *popup : scene.window->findChildren<QObject *>()) {
+            if (!popup->objectName().startsWith(QStringLiteral("choiceMore-"))
+                && !popup->objectName().endsWith(QStringLiteral("ContextMenu"))) continue;
+            menus += " [popup=" + popup->objectName().toStdString()
+                + " visible=" + std::to_string(popup->property("visible").toBool())
+                + " opened=" + std::to_string(popup->property("opened").toBool())
+                + " type=" + std::to_string(popup->property("popupType").toInt()) + "]";
+        }
         throw std::runtime_error(std::string(error.what()) + "; source=" + side
             + " cursor=" + std::to_string(editor->property("cursorPosition").toInt())
             + " focus=" + std::to_string(editor->hasActiveFocus())

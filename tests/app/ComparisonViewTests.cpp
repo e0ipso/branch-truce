@@ -138,7 +138,11 @@ public:
     void click(const char *name)
     {
         auto *target = test_support::fileOverflowControl(name)
-            ? test_support::fileToolbarControl(window, name) : item(name);
+            ? test_support::fileToolbarControl(window, name)
+            : test_support::waitForStable(window, name, [&] {
+                auto *candidate = item(name);
+                return test_support::reachable(window, candidate) ? candidate : nullptr;
+            }, 60);
         if (!target->isVisible() || !target->isEnabled() || target->width() <= 0 || target->height() <= 0)
             throw std::runtime_error(std::string("unavailable control: ") + name);
         const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();

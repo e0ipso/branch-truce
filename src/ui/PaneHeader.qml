@@ -87,7 +87,10 @@ Rectangle {
                 Layout.alignment: Qt.AlignBaseline
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                Layout.maximumWidth: implicitWidth
+                // Layouts round allocated widths to pixels. Reserve the whole
+                // text width so rounding cannot elide a fitting identity.
+                Layout.preferredWidth: Math.ceil(implicitWidth)
+                Layout.maximumWidth: Math.ceil(implicitWidth)
                 font: Kirigami.Theme.smallFont
                 color: Kirigami.Theme.disabledTextColor
                 Accessible.ignored: true
@@ -109,7 +112,8 @@ Rectangle {
                 Layout.alignment: Qt.AlignBaseline
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                Layout.maximumWidth: implicitWidth
+                Layout.preferredWidth: Math.ceil(implicitWidth)
+                Layout.maximumWidth: Math.ceil(implicitWidth)
                 font: Kirigami.Theme.fixedWidthFont
                 elide: Text.ElideMiddle
                 color: Kirigami.Theme.disabledTextColor

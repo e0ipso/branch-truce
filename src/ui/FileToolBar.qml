@@ -228,9 +228,12 @@ RowLayout {
         // ActionToolBar prefers zero width by default. Give the actions their
         // native width before the path consumes the remaining space, and keep
         // its own minimum so KeepVisible actions cannot disappear into overflow.
-        Layout.preferredWidth: maximumContentWidth
+        // maximumContentWidth excludes the overflow button. Always-hidden
+        // commands still need that button beside the complete visible actions.
+        readonly property real nativeWidth: maximumContentWidth + Layout.minimumWidth + Kirigami.Units.smallSpacing
+        Layout.preferredWidth: nativeWidth
         // The path gets spare width; actions keep their native width and can overflow.
-        Layout.maximumWidth: implicitWidth
+        Layout.maximumWidth: nativeWidth
         // Keep one native control row with breathing room shared by the list header.
         Layout.minimumHeight: implicitHeight + Kirigami.Units.mediumSpacing
         actions: {
