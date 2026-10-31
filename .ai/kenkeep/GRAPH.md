@@ -1,6 +1,6 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:83702a6ea734e5286d9760e53606c0b2ed9023c672400c946066034bf4d7cf6f'
+nodes_hash: 'sha256:0891f7f57ca1ab526482365b560e7874cff8b26ea493b5f6c85d6aec8b290b9f'
 node_count: 33
 ---
 # kenkeep Graph
@@ -71,7 +71,7 @@ Total nodes: 33
 - **path:** map-recovery-journal-and-acknowledgment-boundary.md
 - **tags:** recovery, storage, editing, failures
 - **relates_to:** practice-recover-unfinished-work-without-changing-its-status, practice-keep-session-captures-immutable-across-revisions, practice-keep-failed-work-outstanding, map-mergetool-session-socket-and-real-git-parent
-- **derived_from:** docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md, src/storage/RecoveryStore.cpp, src/app/ApplicationController.cpp, src/app/main.cpp, src/ui/Main.qml
+- **derived_from:** docs/recovery-journal.md, src/recovery/RecoveryRestore.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md, src/storage/RecoveryStore.cpp, src/app/ApplicationController.cpp, src/app/main.cpp, src/ui/Main.qml
 
 ## map-repository-discovery-and-verified-source-identities
 
@@ -237,7 +237,7 @@ Total nodes: 33
 - **title:** Recover unfinished work without changing its status
 - **path:** practice-recover-unfinished-work-without-changing-its-status.md
 - **tags:** product, recovery, editing, progress
-- **derived_from:** PRD.md, docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/ResolutionPublisher.cpp
+- **derived_from:** PRD.md, docs/recovery-journal.md, src/recovery/RecoveryRestore.cpp, src/publication/ResolutionPublisher.cpp
 
 ## practice-separate-save-from-mark-resolved
 
@@ -245,7 +245,7 @@ Total nodes: 33
 - **title:** Separate Save from Mark resolved
 - **path:** practice-separate-save-from-mark-resolved.md
 - **tags:** product, saving, resolution, review
-- **derived_from:** PRD.md, src/app/ResolutionPublisher.cpp
+- **derived_from:** PRD.md, src/publication/ResolutionPublisher.cpp
 
 ## practice-treat-mergetool-file-state-as-live-evidence
 
