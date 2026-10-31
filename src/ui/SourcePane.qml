@@ -27,8 +27,10 @@ ColumnLayout {
     property alias viewport: sourceViewport
     property alias blocks: sourceBlocks
     property EditActions edits: null
-    // Optional source-range context menu supplied by the comparison's choice lane.
-    property var openChoicesAt: null
+    // A comparison pane overrides this method to offer its source-range menu.
+    function openChoicesAt(line: int, x: real, y: real): bool {
+        return false
+    }
     // The edge that faces the result, "left" or "right", for the choice column; none without it.
     property string choiceEdge: ""
     property real choiceWidth: 0
@@ -197,7 +199,7 @@ ColumnLayout {
                 Accessible.name: qsTr("%1 · %2").arg(sourcePane.paneRole).arg(sourcePane.displayIdentity)
                 function openContextMenu(line: int, x: real, y: real): void {
                     sourceText.forceActiveFocus(Qt.PopupFocusReason)
-                    if (sourcePane.openChoicesAt && sourcePane.openChoicesAt(line, x, y))
+                    if (sourcePane.openChoicesAt(line, x, y))
                         return
                     sourceMenu.popup(sourceText, x, y)
                 }

@@ -402,7 +402,9 @@ ColumnLayout {
             SourcePane {
                 id: leftPane
                 edits: comparison.edits
-                openChoicesAt: (line, x, y) => leftChoices.openMenuForLine(line, x, y)
+                function openChoicesAt(line: int, x: real, y: real): bool {
+                    return leftChoices.openMenuForLine(line, x, y)
+                }
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
                 SplitView.preferredWidth: panes.defaultPaneWidth
                 paneName: "stage2"
@@ -447,7 +449,9 @@ ColumnLayout {
             SourcePane {
                 id: rightPane
                 edits: comparison.edits
-                openChoicesAt: (line, x, y) => rightChoices.openMenuForLine(line, x, y)
+                function openChoicesAt(line: int, x: real, y: real): bool {
+                    return rightChoices.openMenuForLine(line, x, y)
+                }
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
                 SplitView.preferredWidth: panes.defaultPaneWidth
                 paneName: "stage3"
