@@ -190,6 +190,10 @@ Row {
         id: entryMenu
         objectName: "choiceMore-" + buttons.choice.id
         title: buttons.menuLabel
+        onAboutToHide: {
+            if (buttons.contextEditor)
+                buttons.contextEditor.forceActiveFocus(Qt.PopupFocusReason)
+        }
         Accessible.name: buttons.menuLabel
         MenuItem {
             text: buttons.choice.label

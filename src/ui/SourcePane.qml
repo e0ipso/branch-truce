@@ -61,13 +61,23 @@ ColumnLayout {
         identityHash: sourcePane.source.shortCommitId || ""
         description: sourcePane.fullIdentity
     }
-    Rectangle {
+    SourceContextMenuHost {
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.minimumHeight: sourcePane.minimumTextHeight
         Kirigami.Theme.colorSet: Kirigami.Theme.View
         Kirigami.Theme.inherit: false
-        color: Kirigami.Theme.backgroundColor
+        editor: sourceText
+        onPointerMenuRequested: position => sourceText.openContextMenu(
+            sourceBlocks.lineAt(sourceText.positionAt(position.x, position.y)), position.x, position.y)
+        onKeyboardMenuRequested: {
+            const rect = sourceText.cursorRectangle
+            sourceText.openContextMenu(sourceBlocks.lineAt(sourceText.cursorPosition), rect.x, rect.y + rect.height)
+        }
+        Rectangle {
+            anchors.fill: parent
+            color: Kirigami.Theme.backgroundColor
+        }
         Rectangle {
             id: choiceColumn
             objectName: sourcePane.paneName + "ChoiceColumn"
@@ -159,15 +169,10 @@ ColumnLayout {
                 wrapMode: sourcePane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                 Accessible.name: qsTr("%1 · %2").arg(sourcePane.paneRole).arg(sourcePane.displayIdentity)
                 function openContextMenu(line: int, x: real, y: real): void {
+                    sourceText.forceActiveFocus(Qt.PopupFocusReason)
                     if (sourcePane.openChoicesAt && sourcePane.openChoicesAt(line, x, y))
                         return
                     sourceMenu.popup(sourceText, x, y)
-                }
-                TapHandler {
-                    acceptedButtons: Qt.RightButton
-                    onTapped: point => sourceText.openContextMenu(
-                        sourceBlocks.lineAt(sourceText.positionAt(point.position.x, point.position.y)),
-                        point.position.x, point.position.y)
                 }
                 TapHandler {
                     id: touchContext
@@ -177,16 +182,10 @@ ColumnLayout {
                         sourceBlocks.lineAt(sourceText.positionAt(touchContext.point.position.x, touchContext.point.position.y)),
                         touchContext.point.position.x, touchContext.point.position.y)
                 }
-                Keys.onPressed: event => {
-                    if (event.key === Qt.Key_Menu || event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier)) {
-                        const rect = sourceText.cursorRectangle
-                        sourceText.openContextMenu(sourceBlocks.lineAt(sourceText.cursorPosition), rect.x, rect.y + rect.height)
-                        event.accepted = true
-                    }
-                }
                 Menu {
                     id: sourceMenu
                     objectName: sourcePane.paneName + "ContextMenu"
+                    onAboutToHide: sourceText.forceActiveFocus(Qt.PopupFocusReason)
                     MenuItem {
                         visible: !!sourcePane.edits
                         action: sourcePane.edits ? sourcePane.edits.undo : null
