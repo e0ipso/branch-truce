@@ -7,10 +7,13 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QQmlExpression>
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
+#include <QSignalSpy>
 #include <QStringList>
 #include <QTest>
 #include <QTextBlock>
@@ -19,6 +22,7 @@
 #include <QtQml/qqml.h>
 #include <algorithm>
 #include <functional>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -271,11 +275,83 @@ inline void settleFileToolbarMenu(QQuickItem *more)
 inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, int stableMs = 60)
 {
     const auto controlName = QString::fromLatin1(name);
+    QElapsedTimer traceClock;
+    traceClock.start();
+    QStringList transitions;
+    QString lastState;
+    std::unique_ptr<QSignalSpy> aboutToHideSpy;
+    std::unique_ptr<QSignalSpy> closedSpy;
+    std::unique_ptr<QQmlExpression> popupState;
+    const auto record = [&](const QString &phase) {
+        auto state = popupState ? popupState->evaluate().toString() : QStringLiteral("unbound");
+        if (popupState && popupState->hasError()) state = popupState->error().toString();
+        if (phase == QStringLiteral("notify") && state == lastState) return;
+        lastState = state;
+        auto *focus = window->activeFocusItem();
+        const auto row = QStringLiteral("%1ms %2 state=%3 focus=%4:%5 aboutToHideCount=%6 closedCount=%7")
+            .arg(traceClock.elapsed()).arg(phase, state,
+                focus ? QString::fromLatin1(focus->metaObject()->className()) : QStringLiteral("none"),
+                focus ? focus->objectName() : QString())
+            .arg(aboutToHideSpy ? aboutToHideSpy->count() : 0)
+            .arg(closedSpy ? closedSpy->count() : 0);
+        if (transitions.size() < 32) transitions.append(row);
+        else transitions.back() = row;
+    };
+    // Observe public window events without accepting or changing their route.
+    class InputTrace final : public QObject {
+    public:
+        std::function<void(const QString &)> observe;
+        bool eventFilter(QObject *, QEvent *event) override
+        {
+            switch (event->type()) {
+            case QEvent::MouseButtonPress:
+            case QEvent::MouseButtonRelease: {
+                const auto *mouse = static_cast<QMouseEvent *>(event);
+                observe(QStringLiteral("window-mouse-%1 button=%2 x=%3 y=%4")
+                    .arg(static_cast<int>(event->type())).arg(static_cast<int>(mouse->button()))
+                    .arg(mouse->position().x()).arg(mouse->position().y()));
+                break;
+            }
+            case QEvent::KeyPress:
+            case QEvent::KeyRelease:
+                observe(QStringLiteral("window-key-%1 key=%2").arg(static_cast<int>(event->type()))
+                    .arg(static_cast<QKeyEvent *>(event)->key()));
+                break;
+            case QEvent::FocusIn:
+            case QEvent::FocusOut:
+            case QEvent::WindowActivate:
+            case QEvent::WindowDeactivate:
+            case QEvent::Hide:
+                observe(QStringLiteral("window-event-%1").arg(static_cast<int>(event->type())));
+                break;
+            default: break;
+            }
+            return false;
+        }
+    } inputTrace;
+    inputTrace.observe = record;
+    window->installEventFilter(&inputTrace);
+    QObject::connect(window, &QQuickWindow::activeFocusItemChanged, &inputTrace,
+        [&] { record(QStringLiteral("active focus changed")); });
     try {
         auto *toolbar = visibleItem(window->contentItem(), QStringLiteral("fileToolBar"));
         if (!toolbar) throw std::runtime_error("missing file toolbar");
-        if (auto *more = reachableButton(window, toolbar, QStringLiteral("More Actions")))
+        if (auto *more = reachableButton(window, toolbar, QStringLiteral("More Actions"))) {
+            if (auto *menu = more->property("menu").value<QObject *>()) {
+                aboutToHideSpy = std::make_unique<QSignalSpy>(menu, SIGNAL(aboutToHide()));
+                closedSpy = std::make_unique<QSignalSpy>(menu, SIGNAL(closed()));
+            }
+            // Array order: button visible/checked/pressed, menu visible/opened.
+            // Notifications preserve transition order, including a transient
+            // button hide or menu dismissal between readiness polls.
+            popupState = std::make_unique<QQmlExpression>(qmlContext(more), more,
+                QStringLiteral("JSON.stringify([visible, checked, pressed, menu ? menu.visible : false, menu ? menu.opened : false])"));
+            popupState->setNotifyOnValueChanged(true);
+            QObject::connect(popupState.get(), &QQmlExpression::valueChanged, popupState.get(),
+                [&] { record(QStringLiteral("notify")); });
+            record(QStringLiteral("begin"));
             settleFileToolbarMenu(more);
+        }
         if (reachableButton(window, window->contentItem(), controlName)) {
             try {
                 return waitForStable(window, controlName.toStdString(), [&] {
@@ -292,12 +368,16 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
             return reachableButton(window, toolbar, QStringLiteral("More Actions"));
         }, stableMs);
         const auto center = more->mapToScene(QPointF(more->width() / 2, more->height() / 2)).toPoint();
+        record(QStringLiteral("before overflow click"));
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
+        record(QStringLiteral("after overflow click"));
         return waitForStable(window, controlName.toStdString() + " in native overflow", [&] {
             return reachableButton(window, window->contentItem(), controlName);
         }, stableMs);
     } catch (const std::exception &error) {
-        throw std::runtime_error(std::string(error.what()) + "; " + controlGeometry(window, controlName));
+        record(QStringLiteral("failure"));
+        throw std::runtime_error(std::string(error.what()) + "; " + controlGeometry(window, controlName)
+            + "; popup-trace [" + transitions.join(QStringLiteral("; ")).toStdString() + "]");
     }
 }
 
