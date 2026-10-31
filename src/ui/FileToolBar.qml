@@ -157,7 +157,7 @@ RowLayout {
         controlName: "showEarlier"
         text: enabled ? qsTr("Show common earlier version") : qsTr("Common earlier version unavailable")
         enabled: !!fileToolBar.selectedFile.earlier && !!fileToolBar.selectedFile.earlier.available
-        icon.name: "view-visible"
+        icon.name: "view-history"
         iconOnly: true
         toggle: true
         displayHint: Kirigami.DisplayHint.KeepVisible

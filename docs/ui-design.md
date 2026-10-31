@@ -288,7 +288,8 @@ All names are Breeze icon names, used through `Kirigami.Icon` or an action's `ic
 | Accept from the left / right side | `arrow-right` / `arrow-left` |
 | Ignore a contribution | `dialog-cancel` or `edit-delete-remove` |
 | Take both sides | `merge` |
-| Show earlier version | `view-visible` |
+| Show spaces and tabs | `view-visible` |
+| Show earlier version | `view-history` |
 | Show conflict markers | `view-visible` |
 | Selected file's type | the file's MIME-type icon, `unknown` when none |
 | File: conflicting | `vcs-conflicting` |
