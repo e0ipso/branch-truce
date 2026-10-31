@@ -38,6 +38,10 @@ Item {
     property var marks: ({lines: {}, gaps: {}, letters: {}})
     property var folds: ({})
     property var decisions: ({})
+    // Source passages continue through this opaque cover, which also keeps
+    // horizontally scrolled code from showing through the line numbers.
+    property bool fillPassages: false
+    property var current: []
     readonly property int digits: Math.max(2, String(blocks.blockCount).length)
     readonly property real numberWidth: Math.ceil(digits * gutterFont.averageCharacterWidth)
     function lineKind(line: int): string {
@@ -147,6 +151,14 @@ Item {
     Rectangle {
         anchors.fill: parent
         color: Kirigami.Theme.backgroundColor
+    }
+    LineBackgrounds {
+        width: gutter.width
+        height: gutter.height
+        gutter: parent as LineGutter
+        current: gutter.current
+        visible: gutter.fillPassages
+        z: 0
     }
     // Carry the folded row's background through its line number and ! glyph.
     Repeater {

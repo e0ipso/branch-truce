@@ -62,6 +62,7 @@ ColumnLayout {
         description: sourcePane.fullIdentity
     }
     SourceContextMenuHost {
+        id: sourceSurface
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.minimumHeight: sourcePane.minimumTextHeight
@@ -78,7 +79,7 @@ ColumnLayout {
             anchors.fill: parent
             color: Kirigami.Theme.backgroundColor
         }
-        Rectangle {
+        Item {
             id: choiceColumn
             objectName: sourcePane.paneName + "ChoiceColumn"
             Kirigami.Theme.colorSet: Kirigami.Theme.View
@@ -88,7 +89,33 @@ ColumnLayout {
             x: sourcePane.choiceEdge === "right" ? parent.width - width : 0
             width: sourcePane.choiceEdge.length > 0 ? sourcePane.choiceWidth : 0
             visible: width > 0
-            color: Kirigami.Theme.backgroundColor
+        }
+        // Extend the viewport's row fills through its outer padding and action
+        // lane. Each strip meets the viewport exactly and uses the same laid-out
+        // rows and scroll offset; horizontal text scrolling never moves it.
+        // Separate clips keep fills out of the native horizontal scrollbar row.
+        component EdgeFills: Item {
+            id: edgeFills
+            y: sourceViewport.y
+            height: sourceViewport.height
+            clip: true
+            LineBackgrounds {
+                objectName: edgeFills.objectName + "Backgrounds"
+                y: -sourceViewport.contentY
+                width: edgeFills.width
+                height: sourceGutter.height
+                gutter: sourceGutter
+                current: sourcePane.current
+            }
+        }
+        EdgeFills {
+            objectName: sourcePane.paneName + "LeftEdge"
+            width: sourceViewport.x
+        }
+        EdgeFills {
+            objectName: sourcePane.paneName + "RightEdge"
+            x: sourceViewport.x + sourceViewport.width
+            width: sourceSurface.width - x
         }
         Flickable {
             id: sourceViewport
@@ -216,6 +243,8 @@ ColumnLayout {
                 blocks: sourceBlocks
                 viewport: sourceViewport
                 marks: sourcePane.marks
+                fillPassages: true
+                current: sourcePane.current
             }
             LineBackgrounds {
                 objectName: sourcePane.paneName + "Backgrounds"
