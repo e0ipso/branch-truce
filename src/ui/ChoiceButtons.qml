@@ -1,5 +1,5 @@
 // The choices on one row of a source pane's choice column: Accept and Ignore for the scope
-// that starts on the row, and a menu with Resolve using this side, Take both in either order,
+// that starts on the row, and a context menu with Resolve using this side, Take both in either order,
 // and the choices of any other scope that starts on the same line, such as the line choice on
 // a section's first line. Accept sits nearest the result. Once the scope is decided its
 // buttons go and the pane's glyph column shows the decision; undo brings them back.
@@ -56,6 +56,12 @@ Row {
         return list
     }
     readonly property bool hasEntries: entries.some(entry => entry.enabled)
+    readonly property string menuLabel: qsTr("More choices for %1").arg(choice.label)
+    readonly property string menuHint: qsTr("Right-click, hold, or press Menu or Shift+F10 for more choices.")
+    function openMenu(): void {
+        if (choosing && hasEntries)
+            entryMenu.popup(buttons, 0, rowHeight)
+    }
     spacing: Kirigami.Units.smallSpacing
     layoutDirection: pointsRight ? Qt.RightToLeft : Qt.LeftToRight
     // A scope that cannot take a choice says why while the pointer rests on its disabled buttons.
@@ -63,27 +69,40 @@ Row {
         id: rowHover
         onHoveredChanged: buttons.hovered(hovered ? buttons.choice.id : "")
     }
-    readonly property bool choiceFocused: accept.activeFocus || ignore.activeFocus || more.activeFocus
+    readonly property bool choiceFocused: accept.activeFocus || ignore.activeFocus || more.activeFocus || entryMenu.visible
     onChoiceFocusedChanged: focused(choice.id, choiceFocused)
     ToolTip.text: buttons.choice.detail || ""
-    ToolTip.visible: rowHover.hovered && !more.hovered && buttons.choice.undecided && !buttons.choice.available
+    ToolTip.visible: rowHover.hovered && !entryMenu.visible && buttons.choice.undecided && !buttons.choice.available
         && ToolTip.text.length > 0
     ToolTip.delay: Kirigami.Units.toolTipDelay
 
-    // A small framed icon button one row high; its text names the action and the scope.
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: buttons.openMenu()
+    }
+    Keys.onPressed: event => {
+        if (event.key === Qt.Key_Menu || event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier)) {
+            buttons.openMenu()
+            event.accepted = true
+        }
+    }
+
+    // A small framed icon button within one row; its text names the action and the scope.
     component GutterButton: ToolButton {
         required property real size
         required property real glyphSize
-        width: size
+        width: glyphSize
         height: size
         padding: 0
         flat: false
         display: AbstractButton.IconOnly
         icon.width: glyphSize
         icon.height: glyphSize
-        ToolTip.text: text
-        ToolTip.visible: hovered
+        Accessible.description: buttons.menuHint
+        ToolTip.text: text + "\n" + buttons.menuHint
+        ToolTip.visible: hovered && !entryMenu.visible
         ToolTip.delay: Kirigami.Units.toolTipDelay
+        onPressAndHold: buttons.openMenu()
     }
     GutterButton {
         id: accept
@@ -113,29 +132,33 @@ Row {
         id: more
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
-        objectName: "choiceMore-" + buttons.choice.id
-        visible: buttons.hasEntries
+        // A decided owner can still have line choices on its first line. Keep those
+        // reachable in the same slot after its Accept and Ignore buttons disappear.
+        objectName: "choiceMenu-" + buttons.choice.id
+        visible: !buttons.choice.undecided && buttons.hasEntries
         enabled: buttons.choosing
-        text: qsTr("More choices for %1").arg(buttons.choice.label)
-        icon.name: "merge"
+        text: buttons.menuLabel
+        icon.name: "overflow-menu"
         down: pressed || entryMenu.visible
         Accessible.role: Accessible.ButtonMenu
-        ToolTip.visible: hovered && !entryMenu.visible
-        onClicked: entryMenu.popup(more, 0, more.height)
-        Menu {
-            id: entryMenu
-            Instantiator {
-                model: buttons.entries
-                delegate: MenuItem {
-                    required property var modelData
-                    objectName: modelData.name
-                    text: modelData.text
-                    enabled: buttons.choosing && modelData.enabled
-                    onTriggered: buttons.chosen(modelData.target, modelData.action)
-                }
-                onObjectAdded: (index, entry) => entryMenu.insertItem(index, entry as MenuItem)
-                onObjectRemoved: (index, entry) => entryMenu.removeItem(entry as MenuItem)
+        onClicked: buttons.openMenu()
+    }
+    Menu {
+        id: entryMenu
+        objectName: "choiceMore-" + buttons.choice.id
+        title: buttons.menuLabel
+        Accessible.name: buttons.menuLabel
+        Instantiator {
+            model: buttons.entries
+            delegate: MenuItem {
+                required property var modelData
+                objectName: modelData.name
+                text: modelData.text
+                enabled: buttons.choosing && modelData.enabled
+                onTriggered: buttons.chosen(modelData.target, modelData.action)
             }
+            onObjectAdded: (index, entry) => entryMenu.insertItem(index, entry as MenuItem)
+            onObjectRemoved: (index, entry) => entryMenu.removeItem(entry as MenuItem)
         }
     }
 }

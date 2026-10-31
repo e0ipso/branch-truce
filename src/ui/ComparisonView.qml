@@ -319,7 +319,7 @@ ColumnLayout {
     }
     // Four characters, so tab-indented text lines up the same in every pane.
     readonly property real tabStop: 4 * paneFont.averageCharacterWidth
-    // One text row; a gutter button is this high and wide.
+    // One text row; gutter buttons fit within this height.
     readonly property real rowHeight: {
         // Reading contentHeight tracks relayout; positionToRectangle uses the editor's
         // glyph height; Qt adds the line distance after each visual row.
@@ -327,8 +327,10 @@ ColumnLayout {
         const row = laidOutHeight > 0 ? resultPane.editor.positionToRectangle(0).height : 0
         return Math.ceil((row > 0 ? row : paneFont.lineSpacing) + Kirigami.Units.smallSpacing)
     }
-    // A source pane's choice column: three buttons with a small spacing between and around them.
-    readonly property real choiceWidth: 3 * rowHeight + 4 * Kirigami.Units.smallSpacing
+    // Two small icons, with native spacing between them and at both column edges.
+    // Broader choices use the row's context menu and reserve no additional width.
+    readonly property real choiceWidth: 2 * Math.min(Kirigami.Units.iconSizes.small, rowHeight)
+        + 3 * Kirigami.Units.smallSpacing
     // The panes by role, scrolled together through the file's passages.
     ComparisonPanes {
         id: panesByRole

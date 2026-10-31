@@ -359,7 +359,8 @@ QString rowOwner(Scene &scene, const QVariantMap &region)
 // Click one scoped choice in the source gutters. kind is the part of the control's objectName
 // before the choice ID: Accept, Ignore, Resolve, PreviewLeftFirst or PreviewRightFirst. Accept
 // and Ignore of the scope that owns a gutter row are buttons on that row; every other choice
-// is an entry of the row's menu, choiceMore-<owner ID>.
+// is an entry of the row's context menu, choiceMore-<owner ID>. Open that menu with
+// a real right-click on the owner's Accept button, or its menu button once decided.
 void clickChoice(Scene &scene, const QString &label, const char *kind)
 {
     auto *lanes = scene.item("scopedChoices");
@@ -375,9 +376,13 @@ void clickChoice(Scene &scene, const QString &label, const char *kind)
         return;
     }
     const auto more = QStringLiteral("choiceMore-") + owner;
-    auto *menuButton = stable(scene, (label + " " + more).toStdString(),
-                              [&] { return test_support::namedButton(lanes, more); });
-    test_support::clickItem(scene.window, menuButton);
+    auto *menuTarget = stable(scene, (label + " " + more + " context target").toStdString(), [&] {
+        if (auto *accept = test_support::namedButton(lanes, QStringLiteral("choiceAccept-") + owner))
+            return accept;
+        return test_support::namedButton(lanes, QStringLiteral("choiceMenu-") + owner);
+    });
+    const auto center = menuTarget->mapToScene(QPointF(menuTarget->width() / 2.0, menuTarget->height() / 2.0)).toPoint();
+    QTest::mouseClick(scene.window, Qt::RightButton, Qt::NoModifier, center);
     auto *entry = stable(scene, (label + " " + name).toStdString(),
                          [&] { return test_support::namedButton(scene.window->contentItem(), name); });
     test_support::clickItem(scene.window, entry);
