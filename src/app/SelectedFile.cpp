@@ -74,7 +74,8 @@ SelectedFile::SelectedFile(SessionModel &files, QObject *parent) : QObject(paren
 }
 QVariant SelectedFile::role(int role) const
 {
-    return row_ < 0 ? QVariant{} : files_.data(files_.index(row_), role);
+    const auto row = files_.rowOf(fileId_.toStdString());
+    return row < 0 ? QVariant{} : files_.data(files_.index(row), role);
 }
 QString SelectedFile::mimeIcon() const
 {
@@ -88,7 +89,7 @@ QString SelectedFile::mimeDescription() const
 }
 QString SelectedFile::formatDescription() const
 {
-    const auto *file = files_.fileAt(row_);
+    const auto *file = files_.file(fileId_.toStdString());
     const auto *snapshots = file ? file->snapshots() : nullptr;
     if (!snapshots || file->support() != Support::Supported) return {};
     const auto &format = snapshots->launchResult.text.format;
@@ -104,7 +105,7 @@ QString SelectedFile::formatDescription() const
 }
 bool SelectedFile::canEdit() const
 {
-    const auto *file = files_.fileAt(row_);
+    const auto *file = files_.file(fileId_.toStdString());
     return file && file->support() == Support::Supported
         && !files_.hasPendingRecovery() && !files_.hasRecoveryFailure(file->id());
 }
@@ -112,7 +113,6 @@ void SelectedFile::sync(const QString &fileId)
 {
     const auto *file = files_.file(fileId.toStdString());
     const bool selectionChanged = fileId_ != fileId || reset_;
-    row_ = files_.rowOf(fileId.toStdString());
     if (selectionChanged) {
         fileId_ = fileId;
         path_ = file ? files_.displayPath(file->id()) : QString{};

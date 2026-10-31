@@ -117,7 +117,6 @@ private:
         Q_EMIT (this->*changed)();
     }
     SessionModel &files_;
-    int row_ = -1;
     const FileSnapshots *sourceIdentity_ = nullptr;
     bool reset_ = true;
     QString projectedRevision_;

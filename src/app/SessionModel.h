@@ -135,8 +135,11 @@ private:
         QString actionLabel;
     };
     bool commitCandidate(std::size_t row, FileSession candidate, const QString &action);
-    // Stores a row's file and recomputes its cached facts.
-    void setFile(std::size_t row, FileSession file);
+    // Internal rows address discovery-order storage; public rows address presentation.
+    [[nodiscard]] int storageRowOf(const std::string &id) const;
+    void setFile(std::size_t row, FileSession file, const QString &action);
+    [[nodiscard]] std::vector<std::size_t> presentationOrder() const;
+    void refreshPresentation();
     void notifyRow(std::size_t row);
     void notifyFile(const std::string &id);
     [[nodiscard]] bool resolvedAt(std::size_t row) const;
@@ -153,7 +156,7 @@ private:
     template<typename Command>
     Transition update(const std::string &id, const QString &action, Command command)
     {
-        const auto found = rowOf(id);
+        const auto found = storageRowOf(id);
         if (found < 0) return Transition::StaleRevision;
         const auto row = static_cast<std::size_t>(found);
         if (hasPendingRecovery() || hasRecoveryFailure(id)) return Transition::Blocked;
@@ -168,6 +171,9 @@ private:
     // facts_[row] is files_[row].facts(), recomputed whenever setFile stores the row.
     std::vector<FileFacts> facts_;
     std::unordered_map<std::string, std::size_t> rows_;
+    std::vector<std::size_t> presentationRows_;
+    // Placement follows explicit publication/restore, not every draft revision.
+    std::vector<bool> presentationResolved_;
     RecoveryJournal journal_;
     std::set<std::string> restored_;
 };
