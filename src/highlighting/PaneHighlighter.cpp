@@ -66,7 +66,10 @@ void PaneHighlighter::updateDecorations()
         appliedDocument_ = target;
     }
     appliedDecorations_.removeIf([target](const AppliedDecorations &entry) {
-        return !entry.block.isValid() || entry.block.document() != target;
+        return !entry.block.isValid() || entry.block.document() != target
+            // Deleted block handles can still have a document. Retain only
+            // identities that are reachable in the current document tree.
+            || target->findBlockByNumber(entry.block.blockNumber()) != entry.block;
     });
     // Old overlays follow their live blocks across edits. Include them to
     // clear removed ranges, then add the blocks wanted by the new overlays.
