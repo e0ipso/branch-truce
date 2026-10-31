@@ -319,14 +319,9 @@ ColumnLayout {
     }
     // Four characters, so tab-indented text lines up the same in every pane.
     readonly property real tabStop: 4 * paneFont.averageCharacterWidth
-    // One text row; gutter buttons fit within this height.
-    readonly property real rowHeight: {
-        // Reading contentHeight tracks relayout; positionToRectangle uses the editor's
-        // glyph height; Qt adds the line distance after each visual row.
-        const laidOutHeight = resultPane.editor.contentHeight
-        const row = laidOutHeight > 0 ? resultPane.editor.positionToRectangle(0).height : 0
-        return Math.ceil((row > 0 ? row : paneFont.lineSpacing) + Kirigami.Units.smallSpacing)
-    }
+    // The same laid-out advance used by gutters, bands and scroll mapping.
+    // CodeRows owns the line distance; no consumer adds a second gap.
+    readonly property real rowHeight: Math.ceil(resultPane.blocks.rowHeight)
     // Two small icons, with native spacing between them and at both column edges.
     // Broader choices use the row's context menu and reserve no additional width.
     readonly property real choiceWidth: 2 * Math.min(Kirigami.Units.iconSizes.small, rowHeight)

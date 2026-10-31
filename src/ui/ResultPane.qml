@@ -171,7 +171,7 @@ ColumnLayout {
                 width: implicitWidth
                 height: Math.max(resultEditor.height, resultViewport.height)
                 editor: resultEditor
-                rowSpacing: Kirigami.Units.smallSpacing
+                blocks: resultBlocks
                 viewport: resultViewport
                 provenance: true
                 marks: resultPane.marks
@@ -197,10 +197,9 @@ ColumnLayout {
             active: resultPane.showWhitespace
         }
     }
-    TextBlocks {
+    CodeRows {
         id: resultBlocks
         document: resultEditor.textDocument
-        rowSpacing: Kirigami.Units.smallSpacing
         hidden: resultPane.fold.hidden
         // A fold can hide the line the cursor is on.
         onLayoutChanged: resultBlocks.queueCursorCheck()

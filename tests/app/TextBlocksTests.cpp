@@ -113,6 +113,10 @@ int main(int argc, char **argv)
         auto block = doc->begin();
         (void)doc->documentLayout()->blockBoundingRect(block);
         CHECK(block.layout()->lineCount() > 1);
+        CHECK(near(pane.blocks.rowHeight(), baseStep + 6));
+        const auto laidOut = pane.blocks.between(0, pane.blocks.yAtLine(2));
+        CHECK(!laidOut.isEmpty());
+        CHECK(near(laidOut.first().toMap().value("rowHeight").toReal(), pane.blocks.rowHeight()));
         for (int row = 1; row < block.layout()->lineCount(); ++row) {
             const auto previous = block.layout()->lineAt(row - 1);
             const auto next = block.layout()->lineAt(row);
@@ -139,6 +143,7 @@ int main(int argc, char **argv)
         const auto firstRow = doc->begin().layout()->lineAt(0);
         const auto secondRow = doc->begin().layout()->lineAt(1);
         CHECK(near(secondRow.y() - firstRow.y(), firstRow.height() + 6));
+        CHECK(near(pane.blocks.rowHeight(), secondRow.y() - firstRow.y()));
         QTextCursor edit(doc);
         const int insertAt = second.position();
         edit.setPosition(insertAt);

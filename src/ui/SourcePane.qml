@@ -146,7 +146,7 @@ ColumnLayout {
                 width: implicitWidth
                 height: Math.max(sourceText.height, sourceViewport.height)
                 editor: sourceText
-                rowSpacing: Kirigami.Units.smallSpacing
+                blocks: sourceBlocks
                 viewport: sourceViewport
                 marks: sourcePane.marks
             }
@@ -168,9 +168,8 @@ ColumnLayout {
             active: sourcePane.showWhitespace
         }
     }
-    TextBlocks {
+    CodeRows {
         id: sourceBlocks
         document: sourceText.textDocument
-        rowSpacing: Kirigami.Units.smallSpacing
     }
 }

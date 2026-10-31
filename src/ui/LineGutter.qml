@@ -33,7 +33,7 @@ Item {
     id: gutter
     required property TextArea editor
     required property Flickable viewport
-    property real rowSpacing: 0
+    required property TextBlocks blocks
     property var rows: []
     property var marks: ({lines: {}, gaps: {}, letters: {}})
     property var folds: ({})
@@ -80,7 +80,7 @@ Item {
         for (let i = 0; i < found.length; ++i) {
             const rect = editor.positionToRectangle(found[i].position)
             const row = {number: found[i].number, position: found[i].position,
-                y: editor.y + rect.y, height: rect.height + rowSpacing,
+                y: editor.y + rect.y, height: found[i].rowHeight,
                 top: editor.y + editor.topPadding + found[i].top, extent: found[i].height}
             same = same && rows[i].number === row.number && rows[i].position === row.position
                 && rows[i].y === row.y && rows[i].height === row.height
@@ -102,10 +102,9 @@ Item {
     readonly property var noRow: ({number: 0, position: 0, y: 0, height: 0, top: 0, extent: 0})
     Component.onCompleted: schedule()
 
-    TextBlocks {
-        id: blocks
-        document: gutter.editor.textDocument
-        onLayoutChanged: gutter.invalidate()
+    Connections {
+        target: gutter.blocks
+        function onLayoutChanged(): void { gutter.invalidate() }
     }
     FontMetrics {
         id: gutterFont

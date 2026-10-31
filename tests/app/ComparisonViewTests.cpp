@@ -7,6 +7,7 @@
 #include "fixtures/QuickScene.h"
 #include "fixtures/RecoveryFaults.h"
 #include "storage/TextFormat.h"
+#include "ui/TextBlocks.h"
 #include <QAbstractTextDocumentLayout>
 #include <QAccessible>
 #include <QApplication>
@@ -899,6 +900,8 @@ public:
             const auto row = second.y() - first.y();
             const auto budgetRow = fixture.item("comparisonView")->property("rowHeight").toReal();
             CHECK(row > 0 && std::abs(budgetRow - std::ceil(row)) < 0.01);
+            const auto *blocks = fixture.item("resultGutter")->property("blocks").value<branch_truce::TextBlocks *>();
+            CHECK(blocks && std::abs(budgetRow - std::ceil(blocks->rowHeight())) < 0.01);
             CHECK(!fixture.controller.selectedFile()->mimeIcon().isEmpty());
             CHECK(!fixture.item("selectedTypeIcon")->property("source").toString().isEmpty());
         });

@@ -141,10 +141,12 @@ An outside-app file shows a `Kirigami.PlaceholderMessage` in place of the panes,
 | Gap between glyph and code | `Kirigami.Units.largeSpacing` | 8 px |
 | Gutter buttons | On the source pane's edge that faces the result, two `Kirigami.Units.iconSizes.small` buttons `Kirigami.Units.smallSpacing` apart | 46 px column |
 | Inset from a split handle | `Kirigami.Units.smallSpacing` between the handle's hairline and the nearest text or button | none |
-| Row height | `fixedWidthFont` line spacing plus `Kirigami.Units.smallSpacing` | 20 px for 12 px Hack |
+| Row height | Laid-out `fixedWidthFont` visual row plus one `Kirigami.Units.mediumSpacing` line distance, supplied by `CodeRows` | 20 logical px target for the pinned Hack 9 pt profile |
 | Connector handle | `Kirigami.Units.gridUnit` wide in total, including one theme hairline at each edge | 20 px target |
 
-The vertical budget counts rows at this height. The pane's minimum height, the window-fit check and the helper that scrolls by line height all use the same row height; change them together.
+`CodeRows` applies the gap once through `TextBlocks` block formatting, including wrapped continuation rows. It replaces the former `smallSpacing` gap rather than adding another spacer. Under the pinned units the change adds half a `smallSpacing` to the historical 18 logical px pitch; final native captures must measure the resulting pitch against the 20 logical px reference. The approved raster is at 1.5x, so raster pixels and comparison-grid cells are not logical row units.
+
+`TextBlocks.rowHeight` reads the laid-out advance, and its block queries include the first visual row's advance as well as the whole block extent. Gutters share the editor's `TextBlocks` object rather than estimating a row from cursor height and a separate gap. Folds, bands and scroll correspondence use those same block extents. The pane minimum, gutter choices and line-scroll helper consume the shared row height. Earlier-version panes and snapshot preview readers use `CodeRows` too; neither dialog has an approved PNG target.
 
 ### Connector bands
 
@@ -241,6 +243,7 @@ Rules:
 | `PreviewDialog` | A `Kirigami.Dialog` for a change the user confirms after seeing it. A header with the path, a one-line summary and a detail line; a `BeforeAfterPanes` body; a confirm button whose text names its action and a Cancel button. Width, padding and entry spacing in `Kirigami.Units`. | Whole-file, all non-conflicting and replacement previews |
 | `BeforeAfterPanes` | Two read-only panes side by side, each with a title, in `fixedWidthFont` with the code panes' tab stop. Takes an objectName prefix for its children. | Every before-and-after view in a `PreviewDialog` |
 | `DiffStyle` | A QML singleton that maps each passage kind to its background role, text role, glyph, band tint and accessible description, from the tables in section 6, with one fallback for an unknown kind. | Gutter glyphs, line fills, connector bands, decision glyphs, previews |
+| `CodeRows` | A `TextBlocks` with one native `mediumSpacing` line distance. Exposes actual laid-out visual-row advances and whole-block extents without changing plain text. | Source, result, earlier-version and snapshot preview readers |
 | Row plate | An inset rounded rectangle behind a list row: `Kirigami.Units.smallSpacing` from the list's sides, radius `Kirigami.Units.cornerRadius`, `Kirigami.Units.smallSpacing` vertical and `Kirigami.Units.largeSpacing` horizontal padding. Selected: `highlightColor` with `highlightedTextColor`, secondary text at 0.8 alpha. Hover: a `Qt.alpha(hoverColor, 0.2)` tint. Keyboard focus: a 1 px `focusColor` outline. Never full-bleed. | Sidebar file rows; handoff dialog rows |
 | Footer status | The one-line footer band: Header colour set, hairline above, `smallFont` in `disabledTextColor`. From left: progress text and a progress bar (`Kirigami.Units.gridUnit * 5` wide, `Kirigami.Units.smallSpacing` high, rounded, `highlightColor` over `Qt.alpha(disabledTextColor, 0.25)`), then the outside-app count, then a spacer, then the selected file's facts. No actions. | The session footer |
 

@@ -6,6 +6,7 @@ qt_add_qml_module(branch_truce_ui STATIC
     IMPORTS BranchTruce.App
     IMPORT_PATH "${PROJECT_BINARY_DIR}/src/app"
     QML_FILES
+        CodeRows.qml
         Main.qml
         PlainLabel.qml
         Pill.qml

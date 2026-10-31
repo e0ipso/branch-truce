@@ -33,6 +33,8 @@ class TextBlocks : public QObject {
     QML_ELEMENT
     Q_PROPERTY(QQuickTextDocument *document READ document WRITE setDocument NOTIFY documentChanged)
     Q_PROPERTY(qreal rowSpacing READ rowSpacing WRITE setRowSpacing NOTIFY rowSpacingChanged)
+    // The first shown visual row's laid-out advance, including line distance.
+    Q_PROPERTY(qreal rowHeight READ rowHeight NOTIFY layoutChanged)
     Q_PROPERTY(int blockCount READ blockCount NOTIFY blockCountChanged)
     // The lines to hide, as {line, text} maps: a 1-based line number and the
     // text that line must hold. A line is hidden only while it holds that
@@ -49,6 +51,7 @@ public:
     void setDocument(QQuickTextDocument *document);
     qreal rowSpacing() const;
     void setRowSpacing(qreal spacing);
+    qreal rowHeight() const;
     // Finish a pending text-change relayout before the editor restores its viewport.
     Q_INVOKABLE void flushSpacing();
     int blockCount() const;
@@ -56,8 +59,8 @@ public:
     void setHidden(const QVariantList &hidden);
     // The shown blocks whose layout meets [top, bottom) in document
     // coordinates, in order. Each entry has number (1-based), position (its
-    // first character), and top and height, the block's extent in document
-    // coordinates.
+    // first character), top and height (the block's extent in document
+    // coordinates), and rowHeight (its first visual row's laid-out advance).
     Q_INVOKABLE QVariantList between(qreal top, qreal bottom) const;
     // The 1-based number of the block holding the character at position, or 0
     // without a document.
@@ -127,6 +130,7 @@ private:
         QString lastText;
     };
     QRectF extent(QAbstractTextDocumentLayout *layout, const QTextBlock &block) const;
+    qreal firstRowHeight(QAbstractTextDocumentLayout *layout, const QTextBlock &block) const;
     // A hidden line or a folded block's row, where the cursor never rests.
     bool folded(const QTextBlock &block) const;
     // block itself or the nearest one in that direction that is not folded.
