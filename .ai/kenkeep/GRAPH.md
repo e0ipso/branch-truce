@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:5895b63309d292916f0af1437f2e77755082f02b4b0c831f19177ca837c3a939'
-node_count: 31
+nodes_hash: 'sha256:dd4bf16f67487b680381cdc6a0a3af96001c13d6d43b9a53117d0fff4baad25a'
+node_count: 32
 ---
 # kenkeep Graph
 
-Total nodes: 31
+Total nodes: 32
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -254,3 +254,11 @@ Total nodes: 31
 - **path:** practice-wait-for-layout-before-clicking-offscreen-dialog-items.md
 - **tags:** testing, qml, ui, offscreen
 - **relates_to:** practice-keep-unsupported-and-unfinished-work-visible, map-journey-acceptance-suite, practice-design-desktop-apps-around-screens-and-components
+
+## practice-wait-for-rendered-frames-before-capturing-native-scenes
+
+- **kind:** practice
+- **title:** Wait for rendered frames before capturing native scenes
+- **path:** practice-wait-for-rendered-frames-before-capturing-native-scenes.md
+- **tags:** testing, qml, ui, capture, readiness
+- **relates_to:** practice-wait-for-layout-before-clicking-offscreen-dialog-items, map-startup-style-colour-scheme-and-icon-theme

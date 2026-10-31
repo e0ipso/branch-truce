@@ -1,7 +1,7 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:5895b63309d292916f0af1437f2e77755082f02b4b0c831f19177ca837c3a939'
-node_count: 31
+nodes_hash: 'sha256:dd4bf16f67487b680381cdc6a0a3af96001c13d6d43b9a53117d0fff4baad25a'
+node_count: 32
 ---
 # kenkeep
 
@@ -22,15 +22,16 @@ _None._
 - Open [**Recover unfinished work without changing its status**](nodes/practice-recover-unfinished-work-without-changing-its-status.md) to learn about: Restore unsaved edits and outstanding decisions after closing or a crash while preserving honest work status. #product #recovery #editing #progress
 - Open [**Separate Save from Mark resolved**](nodes/practice-separate-save-from-mark-resolved.md) to learn about: Save keeps app-only drafts; Mark resolved writes the reviewed result and resolves the file in Git. #product #saving #resolution #review
 - Open [**Treat mergetool file state as live evidence**](nodes/practice-treat-mergetool-file-state-as-live-evidence.md) to learn about: Check live MERGED bytes before trusting a recorded write, shrink restores after flushing, and wait for the socket on a wall-clock deadline. #mergetool #publication #git #failures
+- Open [**Wait for layout before clicking offscreen dialog items**](nodes/practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) to learn about: In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles. #testing #qml #ui #offscreen
 - Open [**Bound each converted representation independently**](nodes/practice-bound-each-converted-representation-independently.md) to learn about: Reject cleaned canonical objects over 4194304 bytes before reading; give each Git phase its own 4194304-byte budget. #git #conversion #limits #failures
 - Open [**Keep PRD.md focused on user needs**](nodes/practice-keep-prd-focused-on-user-needs.md) to learn about: PRD.md describes user needs, interactions, and capabilities without technical or implementation details. #product #prd #documentation
 - Open [**Keep TechSpecs and PRDs independent**](nodes/practice-keep-techspecs-and-prds-independent.md) to learn about: TechSpecs explain how to build; PRDs explain what to build and why. Keep both separate and independently understandable. #documentation #techspec #prd
 - Open [**Reconcile uncertain destination publication**](nodes/practice-reconcile-uncertain-destination-publication.md) to learn about: Use captured destination identities, fail closed on unsupported metadata, and inspect uncertain exchanges before retrying. #publication #storage #concurrency #git
-- Open [**Wait for layout before clicking offscreen dialog items**](nodes/practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) to learn about: In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles. #testing #qml #ui #offscreen
 - Open [**Follow the UI design brief for the KDE-native window**](nodes/practice-follow-the-ui-design-brief-for-the-kde-native-window.md) to learn about: docs/ui-design.md sets layout, actions and colour roles; panes get the space and red marks only ranges that need a decision. #ui #design #kde #kirigami #qml
 - Open [**Hold a Git call to test racing repository changes**](nodes/practice-hold-a-git-call-to-test-racing-repository-changes.md) to learn about: GitGate holds one git subcommand on one path so a write lands mid-inspection; keep a race test only if it fails without its guard. #testing #git #concurrency #mergetool
 - Open [**Keep the qmllint target at zero warnings**](nodes/practice-keep-the-qmllint-target-at-zero-warnings.md) to learn about: src/ui/.qmllint.ini makes branch_truce_ui_qmllint fail on any warning; type QML properties concretely, anchor at use sites. #qml #lint #ui #ci
 - Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](nodes/practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) to learn about: Sift ticket references stay inside Sift; commitlint and check:tracker-refs enforce this for commit messages and tracked files. #git #commits #ci #conventions #release
+- Open [**Wait for rendered frames before capturing native scenes**](nodes/practice-wait-for-rendered-frames-before-capturing-native-scenes.md) to learn about: Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus. #testing #qml #ui #capture #readiness
 
 ## Components (what exists)
 - Open [**Branch Truce desktop implementation baseline**](nodes/map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation. #architecture #desktop #platform #cpp
@@ -40,7 +41,7 @@ _None._
 - Open [**Per-base Debian artifacts and container inspection**](nodes/map-per-base-debian-artifacts-and-container-inspection.md) to learn about: Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base. #packaging #platform #debian #containers #compatibility
 - Open [**Installed-artifact validation in base containers**](nodes/map-installed-artifact-validation-in-base-containers.md) to learn about: validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE. #packaging #platform #validation #wayland #accessibility #compatibility
 - Open [**Recovery journal and acknowledgment boundary**](nodes/map-recovery-journal-and-acknowledgment-boundary.md) to learn about: Persist complete text-and-decision transactions before acknowledgment; retain failed input and loaded captures for retry. #recovery #storage #editing #failures
+- Open [**Startup style, colour scheme and icon theme**](nodes/map-startup-style-colour-scheme-and-icon-theme.md) to learn about: main.cpp picks org.kde.desktop or Fusion, names hicolor when no icon theme is set; kdeglobals sets colours; a preloaded probe tests it. #ui #startup #kde #icons #testing #preview
 - Open [**Conflict admission and offline startup**](nodes/map-conflict-admission-and-offline-startup.md) to learn about: ConflictClassifier admits editable merge/rebase files; startup preserves excluded reasons and existing manual edits. #git #classification #conversion #startup #scope
 - Open [**Repository discovery and verified source identities**](nodes/map-repository-discovery-and-verified-source-identities.md) to learn about: Verify merge/rebase source identities and keep renamed text conflicts supported while isolating path provenance failures. #git #discovery #source-identity #scope
-- Open [**Startup style, colour scheme and icon theme**](nodes/map-startup-style-colour-scheme-and-icon-theme.md) to learn about: main.cpp picks org.kde.desktop or Fusion, names hicolor when no icon theme is set; kdeglobals sets colours; a preloaded probe tests it. #ui #startup #kde #icons #testing #preview
 - Open [**Revision-bound passage correspondence**](nodes/map-revision-bound-passage-correspondence.md) to learn about: Map immutable source ranges to one result revision; reject uncertain targets and keep alignment memory linear. #comparison #editing #revisions #failures
