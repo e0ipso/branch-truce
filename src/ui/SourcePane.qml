@@ -243,8 +243,16 @@ ColumnLayout {
                 blocks: sourceBlocks
                 viewport: sourceViewport
                 marks: sourcePane.marks
-                fillPassages: true
-                current: sourcePane.current
+                // Compose the fill here so LineGutter does not depend on a
+                // component whose gutter property is itself typed LineGutter.
+                // Keep it above the opaque cover and below numbers and glyphs.
+                LineBackgrounds {
+                    objectName: sourcePane.paneName + "GutterBackgrounds"
+                    anchors.fill: parent
+                    gutter: sourceGutter
+                    current: sourcePane.current
+                    z: -0.5
+                }
             }
             LineBackgrounds {
                 objectName: sourcePane.paneName + "Backgrounds"
