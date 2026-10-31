@@ -27,6 +27,11 @@ target_include_directories(branch_truce_word_differences_tests PRIVATE "${CMAKE_
 target_link_libraries(branch_truce_word_differences_tests PRIVATE branch_truce_core branch_truce_build_options)
 add_test(NAME core.word-differences COMMAND branch_truce_word_differences_tests)
 find_program(BASH_EXECUTABLE bash REQUIRED)
+add_test(NAME tooling.icon-name-collection
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+        "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/icon-name-tests"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/IconNameCollectionTests.cmake")
+set_tests_properties(tooling.icon-name-collection PROPERTIES TIMEOUT 30)
 add_test(NAME lifecycle.cli-guards
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/SetupGuards.sh")
 set_tests_properties(lifecycle.cli-guards PROPERTIES TIMEOUT 30)

@@ -44,6 +44,13 @@ foreach(qml IN LISTS QML_FILES)
         string(REGEX MATCHALL "(^|[^A-Za-z0-9_])icon(\\.name|Name)? *[:=][^,}]*" assignments "${line}")
         list(APPEND values ${assignments})
         foreach(value IN LISTS values)
+            # A quoted comparison operand selects an icon; it is not itself
+            # an icon result. Keep literals in both branches and fallbacks.
+            set(comparison "(===?|!==?|[<>]=?)")
+            set(quoted "\"[^\"]+\"")
+            string(REGEX REPLACE "${quoted} *${comparison} *${quoted}" "" value "${value}")
+            string(REGEX REPLACE "${comparison} *${quoted}" "" value "${value}")
+            string(REGEX REPLACE "${quoted} *${comparison}" "" value "${value}")
             string(REGEX MATCHALL "\"[^\"]+\"" names "${value}")
             foreach(name IN LISTS names)
                 string(REPLACE "\"" "" name "${name}")
