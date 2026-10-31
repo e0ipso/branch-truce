@@ -271,6 +271,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
         return {};
     case SupportDetailRole: return text(file.supportDetail());
     case UndecidedRole: return QVariant::fromValue(static_cast<qulonglong>(facts.undecided));
+    case ConflictCountRole: return QVariant::fromValue(static_cast<qulonglong>(file.conflictCount()));
     case UnsavedRole: return pendingInput || facts.unsaved;
     case ReviewNeededRole: return facts.needsReview;
     case ResolvedRole: return resolvedAt(row);
@@ -315,7 +316,8 @@ QHash<int, QByteArray> SessionModel::roleNames() const
             {PendingTextRole, "pendingText"}, {RecoveryStateRole, "recoveryState"},
             {RecoveryErrorRole, "recoveryError"}, {ProgressRole, "progress"},
             {StatusIconRole, "statusIcon"}, {StatusLineRole, "statusLine"}, {ChipsRole, "chips"},
-            {MimeIconRole, "mimeIcon"}, {MimeDescriptionRole, "mimeDescription"}, {SummaryRole, "summary"}};
+            {MimeIconRole, "mimeIcon"}, {MimeDescriptionRole, "mimeDescription"}, {SummaryRole, "summary"},
+            {ConflictCountRole, "conflictCount"}};
 }
 
 const FileSession *SessionModel::file(const std::string &id) const
@@ -419,7 +421,7 @@ SessionModel::Progress SessionModel::progressAt(std::size_t row) const
 {
     const auto &facts = facts_[row];
     return {facts.undecided, !journal_.pending(files_[row].id()) && !facts.unsaved, !facts.needsReview,
-            resolvedAt(row), facts.earlierStaged};
+            resolvedAt(row), facts.earlierStaged, files_[row].conflictCount()};
 }
 
 // Dimensions come from the current revision and the saved, reviewed and staged
@@ -429,6 +431,7 @@ QVariantMap SessionModel::progressData(std::size_t row) const
     const auto &file = files_[row];
     const auto progress = progressAt(row);
     return {{QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(progress.undecided))},
+        {QStringLiteral("conflicts"), QVariant::fromValue(static_cast<qulonglong>(progress.conflicts))},
         {QStringLiteral("saved"), progress.saved},
         {QStringLiteral("reviewed"), progress.reviewed},
         {QStringLiteral("resolved"), progress.resolved},

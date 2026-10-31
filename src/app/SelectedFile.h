@@ -37,6 +37,7 @@ class SelectedFile : public QObject {
     Q_PROPERTY(bool reviewNeeded READ reviewNeeded NOTIFY statusChanged)
     Q_PROPERTY(bool resolved READ resolved NOTIFY statusChanged)
     Q_PROPERTY(int undecided READ undecided NOTIFY statusChanged)
+    Q_PROPERTY(int conflicts READ conflicts NOTIFY statusChanged)
     Q_PROPERTY(bool pendingInput READ pendingInput NOTIFY statusChanged)
     Q_PROPERTY(QString pendingText READ pendingText NOTIFY statusChanged)
     Q_PROPERTY(QString recoveryState READ recoveryState NOTIFY statusChanged)
@@ -81,6 +82,7 @@ public:
     [[nodiscard]] bool reviewNeeded() const { return role(SessionModel::ReviewNeededRole).toBool(); }
     [[nodiscard]] bool resolved() const { return role(SessionModel::ResolvedRole).toBool(); }
     [[nodiscard]] int undecided() const { return role(SessionModel::UndecidedRole).toInt(); }
+    [[nodiscard]] int conflicts() const { return role(SessionModel::ConflictCountRole).toInt(); }
     [[nodiscard]] bool pendingInput() const { return role(SessionModel::PendingInputRole).toBool(); }
     [[nodiscard]] QString pendingText() const { return role(SessionModel::PendingTextRole).toString(); }
     [[nodiscard]] QString recoveryState() const { return role(SessionModel::RecoveryStateRole).toString(); }

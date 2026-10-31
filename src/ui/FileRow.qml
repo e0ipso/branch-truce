@@ -17,6 +17,7 @@ KirigamiDelegates.SubtitleDelegate {
     required property string statusIcon
     required property string statusLine
     required property int undecidedCount
+    required property int conflictCount
     required property string recoveryState
     required property string status
     required property string summary
@@ -33,10 +34,10 @@ KirigamiDelegates.SubtitleDelegate {
         : row.status === "Repository write failed" || row.status === "Written, unresolved"
             || row.status === "Draft save failed" || row.status === "Outcome uncertain; verification required"
             || row.status === "Earlier result staged; current draft not applied" ? row.status
-        : row.undecidedCount > 0 ? (row.undecidedCount === 1
-            ? qsTr("%n conflict left", "", row.undecidedCount)
-            : qsTr("%n conflicts left", "", row.undecidedCount))
-        : row.statusLine
+        : row.conflictCount > 0 ? (row.conflictCount === 1
+            ? qsTr("%n conflict left", "", row.conflictCount)
+            : qsTr("%n conflicts left", "", row.conflictCount))
+        : qsTr("No conflicts to step through")
     Accessible.description: row.summary
     icon.name: row.statusIcon
     highlighted: current

@@ -57,6 +57,14 @@ std::vector<ScopeTarget> differenceTargets(const FileSession &file)
     return targets;
 }
 
+std::vector<ScopeTarget> conflictTargets(const FileSession &file)
+{
+    std::vector<ScopeTarget> targets;
+    for (const auto &region : file.conflictRegions())
+        targets.push_back({region.begin, region.end, true, {}, SourceSide::Stage2});
+    return targets;
+}
+
 std::vector<ScopeTarget> undecidedTargets(const FileSession &file)
 {
     const auto *mapping = file.correspondence();

@@ -36,7 +36,7 @@ public:
         ResolvedRole, StatusRole, FinishBlockersRole, CanUndoRole, CanRedoRole,
         PendingInputRole, PendingTextRole, RecoveryStateRole, RecoveryErrorRole,
         ProgressRole, StatusIconRole, StatusLineRole, ChipsRole, MimeIconRole,
-        MimeDescriptionRole, SummaryRole
+        MimeDescriptionRole, SummaryRole, ConflictCountRole
     };
     Q_ENUM(Role)
 
@@ -67,11 +67,14 @@ public:
     [[nodiscard]] const FileSession *fileAt(int row) const;
     // The progress facts of a row, with pending input and recovery errors applied.
     struct Progress {
+        // Contribution decisions retained for review and handoff, even without markers.
         std::size_t undecided;
         bool saved;
         bool reviewed;
         bool resolved;
         bool earlierStaged;
+        // Current conflict regions used by the file row and conflict stepper.
+        std::size_t conflicts = 0;
     };
     // The progress rule the status, chips and progress role use, for a row
     // inside 0 to totalFiles().

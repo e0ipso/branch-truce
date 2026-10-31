@@ -13,7 +13,7 @@ namespace branch_truce {
 class ResultEditorAdapter;
 class SessionModel;
 
-// Walks the selected file's differences or undecided regions in the result
+// Walks the selected file's differences, conflicts or undecided choices in the result
 // editor, or the session's unfinished or saved-or-reviewed files. A repeated
 // step in the same mode continues from the last stop while the file, its
 // revision and the editor selection are unchanged; otherwise the walk starts
@@ -23,7 +23,8 @@ class FileNavigator : public QObject {
     QML_ELEMENT
     QML_UNCREATABLE("Owned by ApplicationController")
 public:
-    enum class Mode { Difference, Undecided, Unfinished, SavedOrReviewed };
+    // Undecided retains contribution navigation; Conflict visits real result regions.
+    enum class Mode { Difference, Undecided, Unfinished, SavedOrReviewed, Conflict };
     Q_ENUM(Mode)
     // What the navigator needs from the window.
     struct Owners {

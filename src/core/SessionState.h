@@ -136,6 +136,13 @@ public:
     // captured side, or in the earlier version inside a diff3 base region, is
     // source content, not a marker.
     [[nodiscard]] MarkerScan markers() const;
+    // Actual unresolved result regions, independent of source decisions. Each
+    // recognized block or orphan marker is one stop, in result byte order.
+    // Markerless drafts retain their decisions without inventing conflicts.
+    [[nodiscard]] std::vector<ByteRange> conflictRegions() const;
+    [[nodiscard]] std::size_t conflictCount() const noexcept {
+        return support_ == Support::Supported ? current().draft.unresolvedMarkers : 0;
+    }
     // Blocks in the current result tied to the choice sections they enclose,
     // in text order. A block whose marker lines or base text no launch block
     // has is orphaned.

@@ -30,6 +30,10 @@ struct ScopeTarget {
 // result order, one entry per range. Empty without a correspondence.
 [[nodiscard]] std::vector<ScopeTarget> differenceTargets(const FileSession &file);
 
+// The same actual conflict regions FileSession counts, one result stop per
+// block or orphan marker. Source choices remain separately navigable below.
+[[nodiscard]] std::vector<ScopeTarget> conflictTargets(const FileSession &file);
+
 // The undecided choices, one entry per choice, at their mapped result range
 // or, when unmapped, at their source range. A section with line choices is
 // left to its lines. Mapped targets come first in result order, then the
