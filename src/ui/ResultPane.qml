@@ -78,9 +78,21 @@ ColumnLayout {
             anchors.fill: parent
             anchors.leftMargin: Kirigami.Units.smallSpacing
             anchors.rightMargin: Kirigami.Units.smallSpacing
+            // Match source panes: fitting/wrapped text keeps the full height.
+            anchors.bottomMargin: resultHorizontal.visible ? resultHorizontal.height : 0
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.horizontal: ScrollBar {}
+            ScrollBar.horizontal: ScrollBar {
+                id: resultHorizontal
+                objectName: "resultHorizontalScrollBar"
+                parent: resultViewport.parent
+                anchors.left: resultViewport.left
+                anchors.right: resultViewport.right
+                anchors.bottom: parent.bottom
+                height: implicitHeight
+                policy: resultPane.wrapLines ? ScrollBar.AlwaysOff : ScrollBar.AsNeeded
+                Accessible.name: qsTr("Result horizontal scroll")
+            }
             ScrollBar.vertical: ScrollBar {
                 id: resultBar
             }
@@ -127,7 +139,11 @@ ColumnLayout {
                 rightPadding: Kirigami.Units.smallSpacing
                 topPadding: Kirigami.Units.smallSpacing
                 bottomPadding: Kirigami.Units.smallSpacing
-                width: resultPane.wrapLines ? resultViewport.width : implicitWidth
+                // Size to text rather than the native input background's minimum.
+                // TextArea.flickable derives its content width from this too.
+                implicitWidth: contentWidth + leftPadding + rightPadding
+                width: resultPane.wrapLines ? resultViewport.width
+                    : Math.max(resultViewport.width, implicitWidth)
                 wrapMode: resultPane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                 Accessible.name: qsTr("Editable result")
                 Component.onCompleted: resultPane.controller.attachResultEditor(resultEditor)

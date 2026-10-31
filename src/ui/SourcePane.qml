@@ -85,9 +85,21 @@ ColumnLayout {
             anchors.fill: parent
             anchors.leftMargin: (sourcePane.choiceEdge === "left" ? choiceColumn.width : 0) + Kirigami.Units.smallSpacing
             anchors.rightMargin: (sourcePane.choiceEdge === "right" ? choiceColumn.width : 0) + Kirigami.Units.smallSpacing
+            // Only genuine unwrapped overflow reserves a native scrollbar row.
+            anchors.bottomMargin: sourceHorizontal.visible ? sourceHorizontal.height : 0
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.horizontal: ScrollBar {}
+            ScrollBar.horizontal: ScrollBar {
+                id: sourceHorizontal
+                objectName: sourcePane.paneName + "HorizontalScrollBar"
+                parent: sourceViewport.parent
+                anchors.left: sourceViewport.left
+                anchors.right: sourceViewport.right
+                anchors.bottom: parent.bottom
+                height: implicitHeight
+                policy: sourcePane.wrapLines ? ScrollBar.AlwaysOff : ScrollBar.AsNeeded
+                Accessible.name: qsTr("%1 horizontal scroll").arg(sourcePane.paneRole)
+            }
             ScrollBar.vertical: ScrollBar {
                 id: sourceBar
             }
@@ -134,7 +146,11 @@ ColumnLayout {
                 rightPadding: Kirigami.Units.smallSpacing
                 topPadding: Kirigami.Units.smallSpacing
                 bottomPadding: Kirigami.Units.smallSpacing
-                width: sourcePane.wrapLines ? sourceViewport.width : implicitWidth
+                // The native input background's minimum width is not text overflow.
+                // TextArea.flickable also uses this implicit width for its content.
+                implicitWidth: contentWidth + leftPadding + rightPadding
+                width: sourcePane.wrapLines ? sourceViewport.width
+                    : Math.max(sourceViewport.width, implicitWidth)
                 wrapMode: sourcePane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                 Accessible.name: qsTr("%1 · %2").arg(sourcePane.paneRole).arg(sourcePane.displayIdentity)
                 Component.onCompleted: sourcePane.editorCompleted()

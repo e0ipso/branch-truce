@@ -127,6 +127,8 @@ The earlier version (common ancestor) is not a fourth column. It opens on demand
 
 Code panes have a continuous, flat View background across the gutter, text and side insets. There is no permanent input-field outline or vertical rule between numbers and code. The native TextArea background appears while its editor has active focus so the selected desktop style still draws its focus indication. Header and connector hairlines remain independent of that focus decoration.
 
+Horizontal native scrollbars use AsNeeded for unwrapped text and AlwaysOff for wrapped text. A visible horizontal bar occupies a row below its pane's viewport; fitting or wrapped text reserves no row. Overflow follows the laid-out text and its gutter padding rather than the native input background's minimum width. Each pane retains independent horizontal scrolling, and native editor cursor navigation continues to reveal unwrapped text. Vertical scrolling, folds and range markers use the remaining viewport height.
+
 An outside-app file shows a `Kirigami.PlaceholderMessage` in place of the panes, in the View background: the file's type icon, a title naming why it is outside the app ("Binary files are resolved outside Branch Truce"), and an explanation that names the next step (resolve it with another tool, then `git add` the path) and says the file stays in the list until Git reports it resolved.
 
 ### Pane spacing
