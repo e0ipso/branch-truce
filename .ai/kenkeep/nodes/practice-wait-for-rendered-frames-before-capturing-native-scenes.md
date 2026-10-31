@@ -19,11 +19,11 @@ kk_relates_to:
 kk_depends_on: []
 kk_confidence: high
 ---
-Native replay captures must await the private compositor's publication, an exposed loaded window, durable file state, completed resolution and settled scene layout. Use the maintained external [native replay tool](../../../tools/native-replay/README.md#L21) with real UI controls and native focus, retaining accessible labels and the pinned source/result bytes.
+Native replay captures must await the private compositor's publication, an exposed loaded window, durable file state, completed resolution and settled scene layout. Use the maintained external [native replay tool](../../../tools/native-replay/README.md) with real UI controls and native focus, retaining accessible labels and the pinned source/result bytes.
 
-Named-control geometry alone does not guarantee that a capture shows the current scene. Anonymous icon and colour transitions can keep painting after geometry settles. In [Driver.cpp](../../../tools/native-replay/Driver.cpp#L150), `capture-ready` samples `QQuickWindow::grabWindow()` and requires unchanged frames for 700 ms after the scene snapshot has settled. Keep this rendering check when changing replay readiness; the loaded and layout checks in [the same driver](../../../tools/native-replay/Driver.cpp#L88) serve separate conditions.
+Named-control geometry alone does not guarantee that a capture shows the current scene. Anonymous icon and colour transitions can keep painting after geometry settles. In [Driver.cpp](../../../tools/native-replay/Driver.cpp), `capture-ready` samples `QQuickWindow::grabWindow()` and requires unchanged frames for 700 ms after the scene snapshot has settled. Keep this rendering check when changing replay readiness; the loaded and layout checks in [the same driver](../../../tools/native-replay/Driver.cpp) serve separate conditions.
 
-[replay.py](../../../tools/native-replay/replay.py#L259) requests `capture-ready` before saving the compositor output with `grim`. Compare independently replayed decoded pixels on the same executable and environment, as [the replay comparison](../../../tools/native-replay/replay.py#L312) does, to detect captures taken before rendering settles. Preserve the native scene when stabilizing capture; do not replace controls, relabel accessibility objects or inject synthetic model state.
+[replay.py](../../../tools/native-replay/replay.py) requests `capture-ready` before saving the compositor output with `grim`. Compare independently replayed decoded pixels on the same executable and environment, as [the replay comparison](../../../tools/native-replay/replay.py) does, to detect captures taken before rendering settles. Preserve the native scene when stabilizing capture; do not replace controls, relabel accessibility objects or inject synthetic model state.
 
 <!-- kk:related:start -->
 # Related

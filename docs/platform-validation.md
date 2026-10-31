@@ -1,11 +1,14 @@
 # Platform validation
 
-This file records what has been observed with the installed packages, and
-what has not been tested. No compatibility claim for Kubuntu 26.04 or
-Tuxedo OS 24.04 desktops follows from it. Neither artifact has been installed
-on a real target desktop. The dated package observations below describe older builds in containers of each artifact's own OS base on a headless Wayland compositor. They do not validate the redesigned window or establish Plasma, KWin or real-hardware compatibility. Current interaction descriptions below come from source inspection, not a fresh runtime observation.
+This file separates installed-package observations from build-tree UI captures and physical-desktop validation. Current native CI targets Kubuntu 26.04, Fedora 44 and Arch Linux. Headless compilation, package installation and native Qt captures do not establish Plasma, KWin, scaling or AT-SPI compatibility on a physical desktop. The older Kubuntu/Tuxedo observations below keep their original scope.
 
-## Status
+## Current CI evidence
+
+[CI run 41235434979](https://github.com/e0ipso/branch-truce/actions/runs/41235434979) passed all three native desktop/package jobs for PR source `3d70e4c`. Each desktop ran 56 CTest groups; core and sanitizer variants ran 18 each. The canonical Kubuntu artifact retains 16 native captures at both heights, eight zero-difference repeat comparisons, five successful replay/integrity commands and owned cleanup receipts. These are repeatability results, not approval of every mockup callout. The artifact's `native/ci-context.json` and build provenance identify the actual producing merge and executable.
+
+The captures use the build-tree executable in private headless sway. They are not installed-package UI or physical Plasma/AT-SPI observations. This green baseline predates the final review repairs, which need a new CI producer; the highlighting-disabled desktop variant was not executed in this baseline. Fresh README images must use the final retained documentation capture pair, with its source/date and development-capture scope.
+
+## Historical installed-package status
 
 | Environment | Status |
 | --- | --- |
@@ -21,13 +24,13 @@ it does on a Wayland compositor with Breeze, three scale factors and AT-SPI.
 
 ## Redesign evidence still required
 
-No fresh installed-artifact run or screenshot pair was collected for this documentation revision. The 2026-10-25 package results and 2026-10-26 startup observations remain historical, with their original hashes, dates and scope. The existing README images were committed on 2026-10-29 and must not stand in for final evidence of the current sidebar, menus, gutters or connectors.
+No fresh installed-desktop UI observation is established by the current build-tree captures. The 2026-10-25 package results and 2026-10-26 startup observations remain historical, with their original hashes, dates and scope. The existing README images were committed on 2026-10-29 and must not stand in for final evidence of the current sidebar, menus, gutters or connectors.
 
 At the final gate, build each OS artifact from the integrated source revision and run the commands under [How to reproduce](#how-to-reproduce), using a new owned output directory per target. Record the actual run date, source revision, package SHA-256, environment, command, exit status and emitted `.validation`, `.atspi` and PNG paths here. Replace pending observations only with the results that run produced. Add the fresh development light/dark pair through [the preview procedure](build.md#preview) and link it from README.md; preserve the older artifacts.
 
 For the redesigned window, collect evidence for the status sidebar, independent conflict and decision counters, segmented source identities, positive verified-resolved file status, flat panes with native focus, native scroll overflow, and a result gutter with a number and one meaningful glyph whose provenance can be inspected. Exercise compact inward Accept/Ignore controls, exact range and line choices, both combination orders, and the editor-anchored menu after every precise scope in a range is decided. Public source-editor right-click, hold and keyboard menu gestures, including routing through `SourceContextMenuHost`, have no fresh runtime result here. Save must remain an app-only draft checkpoint; publishing and verified staging belong to Mark resolved.
 
-Required size evidence remains 1280x720 with at least eight text rows and reachable controls and opened menus, and 1280x800 with the sidebar rows and handoff text meeting their no-wrap/whole-word requirements. Use actual rendered geometry and interactions, not counts derived from layout formulas. Only strict 960x540 fit has an owner waiver; it does not cover either 1280 size, first-undecided navigation, source-fill/ribbon continuity or source-menu routing. The acceptance helpers and assertions still need migration for the current controls before the final run. Container screenshots do not close native interaction or real Plasma/AT-SPI scope gaps.
+Required size evidence remains 1280x720 with at least eight text rows and reachable controls and opened menus, and 1280x800 with the sidebar rows and handoff text meeting their no-wrap/whole-word requirements. Use actual rendered geometry and interactions, not counts derived from layout formulas. Only strict 960x540 fit has an owner waiver; it does not cover either 1280 size, first-undecided navigation, source-fill/ribbon continuity or source-menu routing. The acceptance helpers use actual hover controls and native editor/toolbar menus; final verification must exercise those routes against the producing revision. Container screenshots do not close native interaction or real Plasma/AT-SPI scope gaps.
 
 ## What was used
 
