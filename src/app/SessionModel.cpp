@@ -64,7 +64,8 @@ constexpr CategoryIcon categoryIcons[] = {
     {.category = "written-unresolved", .icon = "vcs-locally-modified"},
     {.category = "failed", .icon = "dialog-error"},
     {.category = "outside-app", .icon = "unknown"},
-    {.category = "published", .icon = "checkmark"},
+    // The emblem is the positive check tile; the action named checkmark is monochrome.
+    {.category = "published", .icon = "emblem-checked"},
 };
 
 QString categoryIcon(const QString &category)

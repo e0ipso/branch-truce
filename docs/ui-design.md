@@ -302,7 +302,7 @@ All names are Breeze icon names, used through `Kirigami.Icon` or an action's `ic
 | File: conflicting | `vcs-conflicting` |
 | File: untouched or no conflict left | `vcs-normal` |
 | File: edited by hand or in progress | `vcs-locally-modified` |
-| File: resolved and saved | `checkmark` |
+| File: verified resolved | `emblem-checked` |
 | File: outside the app | `unknown` |
 | Notice or count: warning / error | `dialog-warning` / `dialog-error` |
 | Notice: data at risk | `data-warning` |

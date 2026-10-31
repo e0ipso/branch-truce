@@ -16,6 +16,7 @@ KirigamiDelegates.SubtitleDelegate {
     required property string path
     required property string statusIcon
     required property string statusLine
+    required property bool resolved
     required property int undecidedCount
     required property int conflictCount
     required property string recoveryState
@@ -45,7 +46,7 @@ KirigamiDelegates.SubtitleDelegate {
         ? row.status
         : row.support === "unreadable" ? qsTr("Load error")
         : row.support !== "supported" ? qsTr("Handle outside the app")
-        : row.status === "Written and resolved" ? qsTr("Resolved")
+        : row.resolved ? qsTr("Resolved")
         : row.status === "Repository write failed" || row.status === "Written, unresolved"
             || row.status === "Draft save failed" || row.status === "Outcome uncertain; verification required"
             || row.status === "Earlier result staged; current draft not applied" ? row.status
@@ -88,7 +89,8 @@ KirigamiDelegates.SubtitleDelegate {
             Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
             Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
             source: row.icon.name
-            selected: row.highlighted
+            // Keep the verified-resolution emblem's positive theme role on the selected plate.
+            selected: row.highlighted && !row.resolved
         }
         ColumnLayout {
             Layout.fillWidth: true
@@ -131,7 +133,7 @@ KirigamiDelegates.SubtitleDelegate {
                 maximumLineCount: 1
                 elide: Text.ElideRight
                 font: Kirigami.Theme.smallFont
-                color: row.highlighted ? Qt.alpha(Kirigami.Theme.highlightedTextColor, 0.8) : row.support !== "supported" ? Kirigami.Theme.neutralTextColor : row.status === "Written and resolved" ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.disabledTextColor
+                color: row.resolved ? Kirigami.Theme.positiveTextColor : row.highlighted ? Qt.alpha(Kirigami.Theme.highlightedTextColor, 0.8) : row.support !== "supported" ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.disabledTextColor
             }
         }
 
