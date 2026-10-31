@@ -1,3 +1,4 @@
+// The session model presents each file's draft, decisions and resolution state to the window.
 #pragma once
 #include <QtQml/qqmlregistration.h>
 
@@ -22,6 +23,7 @@
 namespace branch_truce {
 struct RecoveryRestore;
 
+// Lists session files and owns their result histories, recovery boundaries and observable status.
 class SessionModel : public QAbstractListModel {
     Q_OBJECT
     QML_ELEMENT
@@ -35,7 +37,8 @@ public:
         SupportRole, SupportDetailRole, UndecidedRole, UnsavedRole, ReviewNeededRole,
         ResolvedRole, StatusRole, FinishBlockersRole, CanUndoRole, CanRedoRole,
         PendingInputRole, PendingTextRole, RecoveryStateRole, RecoveryErrorRole,
-        ProgressRole, StatusIconRole, StatusLineRole, ChipsRole, SummaryRole
+        ProgressRole, StatusIconRole, StatusLineRole, ChipsRole, MimeIconRole,
+        MimeDescriptionRole, SummaryRole, ConflictCountRole
     };
     Q_ENUM(Role)
 
@@ -66,11 +69,14 @@ public:
     [[nodiscard]] const FileSession *fileAt(int row) const;
     // The progress facts of a row, with pending input and recovery errors applied.
     struct Progress {
+        // Contribution decisions retained for review and handoff, even without markers.
         std::size_t undecided;
         bool saved;
         bool reviewed;
         bool resolved;
         bool earlierStaged;
+        // Current conflict regions used by the file row and conflict stepper.
+        std::size_t conflicts = 0;
     };
     // The progress rule the status, chips and progress role use, for a row
     // inside 0 to totalFiles().
@@ -135,8 +141,11 @@ private:
         QString actionLabel;
     };
     bool commitCandidate(std::size_t row, FileSession candidate, const QString &action);
-    // Stores a row's file and recomputes its cached facts.
-    void setFile(std::size_t row, FileSession file);
+    // Internal rows address discovery-order storage; public rows address presentation.
+    [[nodiscard]] int storageRowOf(const std::string &id) const;
+    void setFile(std::size_t row, FileSession file, const QString &action);
+    [[nodiscard]] std::vector<std::size_t> presentationOrder() const;
+    void refreshPresentation();
     void notifyRow(std::size_t row);
     void notifyFile(const std::string &id);
     [[nodiscard]] bool resolvedAt(std::size_t row) const;
@@ -153,7 +162,7 @@ private:
     template<typename Command>
     Transition update(const std::string &id, const QString &action, Command command)
     {
-        const auto found = rowOf(id);
+        const auto found = storageRowOf(id);
         if (found < 0) return Transition::StaleRevision;
         const auto row = static_cast<std::size_t>(found);
         if (hasPendingRecovery() || hasRecoveryFailure(id)) return Transition::Blocked;
@@ -168,6 +177,9 @@ private:
     // facts_[row] is files_[row].facts(), recomputed whenever setFile stores the row.
     std::vector<FileFacts> facts_;
     std::unordered_map<std::string, std::size_t> rows_;
+    std::vector<std::size_t> presentationRows_;
+    // Placement follows explicit publication/restore, not every draft revision.
+    std::vector<bool> presentationResolved_;
     RecoveryJournal journal_;
     std::set<std::string> restored_;
 };

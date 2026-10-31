@@ -1,3 +1,4 @@
+// Text changes identify the edited range and preserve line positions across a result edit.
 #pragma once
 #include <QString>
 #include <QtGlobal>

@@ -9,6 +9,7 @@
 #include "mergetool/MergetoolProtocol.h"
 #include "TestHarness.h"
 #include "fixtures/QuickScene.h"
+#include "ui/TextBlocks.h"
 #include <QAccessible>
 #include <QApplication>
 #include <QClipboard>
@@ -19,12 +20,18 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QFontMetricsF>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSignalSpy>
+#include <cstdio>
 #include <QLockFile>
 #include <QKeySequence>
 #include <QMap>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
+#include <QQmlExpression>
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
@@ -340,8 +347,7 @@ QString regionResult(Scene &scene, const QVariantMap &region)
     return scene.text("resultText").mid(begin, end - begin);
 }
 
-// The scope whose gutter row offers a choice: the section that starts on the choice's line
-// on its side, or else the choice itself.
+// The section owns all of its precise lines, including lines after its first row.
 QString rowOwner(Scene &scene, const QVariantMap &region)
 {
     const auto id = region.value(QStringLiteral("id")).toString();
@@ -350,36 +356,70 @@ QString rowOwner(Scene &scene, const QVariantMap &region)
         const auto other = value.toMap();
         if (other.value(QStringLiteral("scope")).toString() == QStringLiteral("section")
             && other.value(QStringLiteral("side")) == region.value(QStringLiteral("side"))
-            && other.value(QStringLiteral("sourceLineBegin")) == region.value(QStringLiteral("sourceLineBegin")))
+            && other.value(QStringLiteral("section")) == region.value(QStringLiteral("section"))
+            && other.value(QStringLiteral("sourceLineBegin")).toInt() <= region.value(QStringLiteral("sourceLineBegin")).toInt()
+            && other.value(QStringLiteral("sourceLineEnd")).toInt() >= region.value(QStringLiteral("sourceLineEnd")).toInt())
             return other.value(QStringLiteral("id")).toString();
     }
     return id;
 }
 
-// Click one scoped choice in the source gutters. kind is the part of the control's objectName
+// Hover and click one scoped source overlay. kind is the part of the control's objectName
 // before the choice ID: Accept, Ignore, Resolve, PreviewLeftFirst or PreviewRightFirst. Accept
-// and Ignore of the scope that owns a gutter row are buttons on that row; every other choice
-// is an entry of the row's menu, choiceMore-<owner ID>.
-void clickChoice(Scene &scene, const QString &label, const char *kind)
+// and Ignore of the scope that owns a range are buttons on its first row; every other choice
+// is an entry of the row's context menu, choiceMore-<owner ID>. Open that menu with
+// the requested source line's public context-menu gesture.
+void clickChoice(Scene &scene, const QString &label, const char *kind, int menuKey = 0)
 {
     auto *lanes = scene.item("scopedChoices");
     const auto region = regionFor(scene, label);
     const auto id = region.value(QStringLiteral("id")).toString();
     const auto owner = rowOwner(scene, region);
     const auto name = QStringLiteral("choice") + QLatin1String(kind) + QLatin1Char('-') + id;
-    const bool onRow = owner == id && (qstrcmp(kind, "Accept") == 0 || qstrcmp(kind, "Ignore") == 0);
-    if (onRow) {
-        auto *target = stable(scene, (label + " " + name).toStdString(),
-                              [&] { return test_support::namedButton(lanes, name); });
+    const bool onRow = region.value("scope").toString() == "section" && owner == id
+        && (qstrcmp(kind, "Accept") == 0 || qstrcmp(kind, "Ignore") == 0);
+    if (auto *target = onRow ? test_support::hoverChoiceControl(scene.window, lanes, name) : nullptr) {
         test_support::clickItem(scene.window, target);
         return;
     }
-    const auto more = QStringLiteral("choiceMore-") + owner;
-    auto *menuButton = stable(scene, (label + " " + more).toStdString(),
-                              [&] { return test_support::namedButton(lanes, more); });
-    test_support::clickItem(scene.window, menuButton);
-    auto *entry = stable(scene, (label + " " + name).toStdString(),
-                         [&] { return test_support::namedButton(scene.window->contentItem(), name); });
+    const auto side = region.value("side").toString().toStdString();
+    test_support::sourceLineMenu(scene.window, scene.item((side + "Text").c_str()),
+        scene.item((side + "Viewport").c_str()), region.value("sourceLineBegin").toInt(), menuKey);
+    QQuickItem *entry = nullptr;
+    try {
+        entry = stable(scene, (label + " " + name).toStdString(),
+                       [&] { return test_support::reachableButton(scene.window, scene.window->contentItem(), name); });
+    } catch (const std::exception &error) {
+        auto *editor = scene.item((side + "Text").c_str());
+        std::string menus;
+        const auto visit = [&](auto &&self, QQuickItem *item) -> void {
+            if (!item->isVisible()) return;
+            if (item->inherits("QQuickAbstractButton"))
+                menus += " [" + item->objectName().toStdString() + "="
+                    + test_support::accessibleName(item).toStdString() + "]";
+            for (auto *child : item->childItems()) self(self, child);
+        };
+        visit(visit, scene.window->contentItem());
+        for (auto *other : QGuiApplication::topLevelWindows()) {
+            if (other == scene.window || !other->isVisible()) continue;
+            menus += " [window=" + std::string(other->metaObject()->className())
+                + " " + other->objectName().toStdString() + "]";
+            if (auto *quick = qobject_cast<QQuickWindow *>(other)) visit(visit, quick->contentItem());
+        }
+        for (auto *popup : scene.window->findChildren<QObject *>()) {
+            if (!popup->objectName().startsWith(QStringLiteral("choiceMore-"))
+                && !popup->objectName().endsWith(QStringLiteral("ContextMenu"))) continue;
+            menus += " [popup=" + popup->objectName().toStdString()
+                + " visible=" + std::to_string(popup->property("visible").toBool())
+                + " opened=" + std::to_string(popup->property("opened").toBool())
+                + " type=" + std::to_string(popup->property("popupType").toInt()) + "]";
+        }
+        throw std::runtime_error(std::string(error.what()) + "; source=" + side
+            + " cursor=" + std::to_string(editor->property("cursorPosition").toInt())
+            + " focus=" + std::to_string(editor->hasActiveFocus())
+            + " selection=" + std::to_string(editor->property("selectionStart").toInt()) + ".."
+            + std::to_string(editor->property("selectionEnd").toInt()) + "; visible controls:" + menus);
+    }
     test_support::clickItem(scene.window, entry);
 }
 
@@ -507,29 +547,15 @@ void clickOverflowAction(Scene &scene, const char *name)
 // A named toolbar control may move to overflow as the window narrows.
 void clickFileToolbarControl(Scene &scene, const char *name)
 {
-    const auto find = [&] { return test_support::namedButton(scene.window->contentItem(), QString::fromLatin1(name)); };
-    auto *control = find();
-    if (!control) {
-        auto *toolbar = scene.item("fileToolBar");
-        auto *more = test_support::waitForStable(scene.window, "file toolbar overflow", [&] {
-            return test_support::namedButton(toolbar, QStringLiteral("More Actions"));
-        }, Scene::settleMs);
-        test_support::clickItem(scene.window, more);
-        control = test_support::waitForStable(scene.window, name, find, Scene::settleMs);
-    }
-    test_support::clickItem(scene.window, control);
+    test_support::clickItem(scene.window,
+        test_support::fileToolbarControl(scene.window, name, Scene::settleMs));
 }
 
 // Opens the file toolbar's overflow menu and clicks its Show conflict markers entry.
 void toggleConflictMarkers(Scene &scene)
 {
     clickOverflowAction(scene, "showConflictMarkers");
-    // A click on the overflow button while the menu is still closing closes it again.
-    settleFor("overflow menu closed", [&] {
-        return !descendant(scene.window->contentItem(), [](QQuickItem *item) {
-            return item->objectName() == QStringLiteral("ActionsMenu") && item->isVisible();
-        });
-    });
+    test_support::closeFileToolbarMenu(scene.window);
 }
 
 QPointF sceneOrigin(QQuickItem *item)
@@ -759,12 +785,7 @@ qreal checkFits(Scene &scene, int width, int height, const std::vector<const cha
                                      + ": " + geometry(item));
         if (openedOverflow) {
             CHECK(!test_support::accessibleName(item).isEmpty());
-            keyClick(scene, Qt::Key_Escape);
-            settleFor("file toolbar overflow closed", [&] {
-                return !descendant(scene.window->contentItem(), [](QQuickItem *candidate) {
-                    return candidate->objectName() == QStringLiteral("ActionsMenu") && candidate->isVisible();
-                });
-            });
+            test_support::closeFileToolbarMenu(scene.window);
         }
     }
     // Each pane header is one line high.
@@ -967,7 +988,7 @@ void expectSourcesAround(Scene &scene, const Repository &repo, const char *path,
 
 // Empty when the first line of the earliest undecided region on each side lies
 // inside its pane's viewport, else where each pane stands.
-std::string firstUndecidedInView(Scene &scene)
+std::string firstUndecidedInView(Scene &scene, bool snapshot = false)
 {
     struct Pane {
         const char *side;
@@ -975,6 +996,8 @@ std::string firstUndecidedInView(Scene &scene)
         const char *text;
         int line = 0;
         int position = -1;
+        int sourceLine = 0;
+        int resultLine = 0;
     };
     Pane panes[] = {{"stage2", "stage2Viewport", "stage2Text"}, {"result", "resultViewport", "resultText"},
                     {"stage3", "stage3Viewport", "stage3Text"}};
@@ -990,6 +1013,8 @@ std::string firstUndecidedInView(Scene &scene)
             if (pane.position >= 0 && line >= pane.line) continue;
             pane.line = line;
             pane.position = region.value(prefix + QStringLiteral("Utf16Begin")).toInt();
+            pane.sourceLine = region.value("sourceLineBegin").toInt();
+            pane.resultLine = region.value("resultLineBegin").toInt();
         }
     }
     std::string failures;
@@ -1003,6 +1028,21 @@ std::string firstUndecidedInView(Scene &scene)
         auto top = editor->y() + rect.top() - view->property("contentY").toReal();
         auto height = rect.height();
         bool shown = pane.position >= 0;
+        const auto *blocks = scene.item((std::string(pane.side) + "Gutter").c_str())
+            ->property("blocks").value<TextBlocks *>();
+        CHECK(blocks);
+        QVariantMap laidOut;
+        for (const auto &value : blocks->between(0, 1e9))
+            if (value.toMap().value("number").toInt() == pane.line) laidOut = value.toMap();
+        // Keep the original cursor-rectangle assertion as well as the complete block.
+        const bool cursorShown = shown && top >= 0 && top + height <= view->height();
+        qreal blockTop = top, blockHeight = height;
+        if (!laidOut.isEmpty()) {
+            blockTop = editor->y() + editor->property("topPadding").toReal()
+                + laidOut.value("top").toReal() - view->property("contentY").toReal();
+            blockHeight = laidOut.value("height").toReal();
+        }
+        int foldedFirst = 0, foldedEnd = 0;
         // A result line inside a folded marker block is represented by its visible
         // conflict row, not by the hidden QTextBlock's positionToRectangle.
         if (std::strcmp(pane.side, "result") == 0 && shown) {
@@ -1011,6 +1051,8 @@ std::string firstUndecidedInView(Scene &scene)
                 const int first = block.value(QStringLiteral("resultLineBegin")).toInt();
                 const int end = block.value(QStringLiteral("resultLineEnd")).toInt();
                 if (!block.value(QStringLiteral("folded")).toBool() || pane.line < first || pane.line >= end) continue;
+                foldedFirst = first;
+                foldedEnd = end;
                 auto *row = test_support::visualItem(scene.item("resultFoldedRows"), QStringLiteral("resultConflictRow-") + QString::number(first));
                 shown = row && row->isVisible();
                 if (shown) {
@@ -1020,9 +1062,39 @@ std::string firstUndecidedInView(Scene &scene)
                 break;
             }
         }
-        if (!shown || top < 0 || top + height > view->height())
-            failures += std::string(failures.empty() ? "" : "; ") + pane.side + " line " + std::to_string(pane.line)
-                + " at " + std::to_string(top) + " of " + std::to_string(view->height());
+        const bool folded = foldedFirst > 0;
+        const bool fullBlockShown = !laidOut.isEmpty() && blockTop >= 0 && blockTop + blockHeight <= view->height();
+        const bool inView = shown && top >= 0 && top + height <= view->height()
+            && (folded || (cursorShown && fullBlockShown));
+        if (!inView || snapshot) {
+            const auto cursor = editor->property("cursorRectangle").toRectF();
+            const auto origin = sceneOrigin(view);
+            QJsonObject diagnostic{{"schema", 1}, {"pane", pane.side}, {"inView", inView},
+                {"screen", QJsonObject{{"width", scene.window->width()}, {"height", scene.window->height()}}},
+                {"selectedFileId", scene.controller->selectedFileId()},
+                {"editorPlacement", QJsonObject::fromVariantMap(scene.controller->editorPlacement())},
+                {"navigation", QJsonObject::fromVariantMap(scene.controller->navigationTarget())},
+                {"line", pane.line}, {"utf16Position", pane.position},
+                {"mappedSourceLine", pane.sourceLine}, {"mappedResultLine", pane.resultLine},
+                {"block", QJsonObject::fromVariantMap(laidOut)},
+                {"fullBlockViewportTop", blockTop}, {"fullBlockViewportBottom", blockTop + blockHeight},
+                {"foldedFirst", foldedFirst}, {"foldedEndExclusive", foldedEnd},
+                {"visibleTop", top}, {"visibleHeight", height},
+                {"positionRectangle", QJsonObject{{"y", rect.y()}, {"height", rect.height()}}},
+                {"cursorRectangle", QJsonObject{{"y", cursor.y()}, {"height", cursor.height()}}},
+                {"viewport", QJsonObject{{"x", origin.x()}, {"y", origin.y()},
+                    {"width", view->width()}, {"height", view->height()}}},
+                {"editorY", editor->y()}, {"editorWidth", editor->width()}, {"editorHeight", editor->height()},
+                {"activeFocus", editor->hasActiveFocus()}, {"rowHeight", blocks->rowHeight()}};
+            for (const auto *key : {"contentY", "contentHeight", "moving", "dragging", "flicking"})
+                diagnostic[key] = QJsonValue::fromVariant(view->property(key));
+            for (const auto *key : {"cursorPosition", "selectionStart", "selectionEnd", "topPadding", "bottomPadding", "wrapMode"})
+                diagnostic[key] = QJsonValue::fromVariant(editor->property(key));
+            QQmlExpression scrollbar(qmlContext(view), view, "ScrollBar.vertical ? ScrollBar.vertical.pressed : false");
+            diagnostic["verticalScrollbarPressed"] = QJsonValue::fromVariant(scrollbar.evaluate());
+            failures += (failures.empty() ? "" : "\n")
+                + QJsonDocument(diagnostic).toJson(QJsonDocument::Compact).toStdString();
+        }
     }
     return failures;
 }
@@ -1934,6 +2006,24 @@ public:
             paths.push_back({"image.bin", QByteArray("base\0", 5), QByteArray("left\0", 5), QByteArray("side\0", 5), std::nullopt});
             Repository repo("merge", paths);
             Scene scene(repo);
+            // Theme font requests can leave attributes unresolved. Compare
+            // against independent native Labels that resolve the same roles.
+            QQmlComponent fonts(scene.engine.get());
+            fonts.setData(R"(
+import QtQuick
+import QtQuick.Controls
+import org.kde.kirigami as K
+Item {
+    visible: false
+    property alias smallFont: small.font
+    property alias fixedFont: fixed.font
+    Label { id: small; font: K.Theme.smallFont }
+    Label { id: fixed; font: K.Theme.fixedWidthFont }
+}
+)", QUrl(QStringLiteral("native-font-reference.qml")));
+            std::unique_ptr<QQuickItem> fontReference(qobject_cast<QQuickItem *>(fonts.create()));
+            if (!fontReference) throw std::runtime_error(fonts.errorString().toStdString());
+            fontReference->setParentItem(scene.window->contentItem());
             CHECK(!scene.item("inventoryWarning")->isVisible() && scene.item("outsideAppCount")->isVisible());
             clickFile(scene, "image.bin");
             CHECK(scene.file("image.bin").support() == Support::OutsideApp);
@@ -1986,8 +2076,75 @@ public:
                     throw std::runtime_error("text panes " + std::to_string(pane) + " px high at "
                                              + std::to_string(screen.width()) + "x" + std::to_string(screen.height())
                                              + ", less than eight " + std::to_string(lineHeight) + " px lines");
-                for (const auto *identity : {"stage2Identity", "stage3Identity"})
-                    CHECK(!scene.item(identity)->property("truncated").toBool());
+                for (const auto *name : {"saveDraft", "markResolved"}) {
+                    auto *toolbar = test_support::visibleItem(scene.window->contentItem(), "fileToolBar");
+                    CHECK(test_support::reachableButton(scene.window, toolbar, QString::fromLatin1(name)));
+                }
+                for (const auto *identity : {"stage2Identity", "stage3Identity"}) {
+                    auto *label = scene.item(identity);
+                    const auto text = label->property("text").toString();
+                    CHECK(test_support::accessibleName(label) == text);
+                    CHECK(!text.isEmpty());
+                    auto *role = scene.item((std::string(identity) + "Role").c_str());
+                    auto *hash = scene.item((std::string(identity) + "Hash").c_str());
+                    QQmlExpression smallFont(qmlContext(role), role, "Kirigami.Theme.smallFont");
+                    QQmlExpression fixedFont(qmlContext(hash), hash, "Kirigami.Theme.fixedWidthFont");
+                    const auto rawRole = smallFont.evaluate();
+                    const auto rawHash = fixedFont.evaluate();
+                    const auto expectedRole = fontReference->property("smallFont").value<QFont>();
+                    const auto expectedHash = fontReference->property("fixedFont").value<QFont>();
+                    const auto inspectFont = [&](QQuickItem *item, const QFont &expected) {
+                        const auto actual = item->property("font").value<QFont>();
+                        if (actual == expected) return;
+                        const auto fields = [](const QFont &font) {
+                            return QJsonObject{{"key", font.key()}, {"family", font.family()},
+                                {"styleName", font.styleName()}, {"pointSize", font.pointSizeF()},
+                                {"pixelSize", font.pixelSize()}, {"weight", font.weight()}, {"style", font.style()},
+                                {"styleHint", font.styleHint()}, {"styleStrategy", int(font.styleStrategy())},
+                                {"stretch", font.stretch()}, {"kerning", font.kerning()},
+                                {"fixedPitch", font.fixedPitch()}, {"hinting", font.hintingPreference()},
+                                {"capitalization", font.capitalization()}, {"letterSpacing", font.letterSpacing()},
+                                {"wordSpacing", font.wordSpacing()}, {"underline", font.underline()},
+                                {"overline", font.overline()}, {"strikeOut", font.strikeOut()},
+                                {"resolveMask", QString::number(static_cast<qulonglong>(font.resolveMask()))}};
+                        };
+                        const auto diagnostic = QJsonDocument(QJsonObject{{"control", item->objectName()},
+                            {"actual", fields(actual)}, {"expected", fields(expected)},
+                            {"rawRoleType", QString::fromLatin1(rawRole.metaType().name())},
+                            {"rawHashType", QString::fromLatin1(rawHash.metaType().name())},
+                            {"rawRoleValid", rawRole.isValid()}, {"rawHashValid", rawHash.isValid()},
+                            {"rawRoleConvertible", rawRole.canConvert<QFont>()},
+                            {"rawHashConvertible", rawHash.canConvert<QFont>()},
+                            {"expressionError", smallFont.hasError() || fixedFont.hasError()}}).toJson(QJsonDocument::Compact);
+                        std::fprintf(stderr, "IDENTITY_FONT_DIAGNOSTIC=%s\n", diagnostic.constData());
+                    };
+                    inspectFont(role, expectedRole);
+                    inspectFont(hash, expectedHash);
+                    CHECK(role->property("font").value<QFont>() == expectedRole);
+                    CHECK(hash->property("font").value<QFont>() == expectedHash);
+                    CHECK(text.contains(role->property("text").toString()));
+                    CHECK(text.contains(hash->property("text").toString()));
+                    CHECK(!hash->property("text").toString().isEmpty());
+                    CHECK(std::abs(role->mapToScene(QPointF(0, role->baselineOffset())).y()
+                        - hash->mapToScene(QPointF(0, hash->baselineOffset())).y()) < 0.5);
+                    if (label->property("truncated").toBool()) {
+                        const auto bounds = label->mapRectToScene(label->boundingRect());
+                        throw std::runtime_error(std::string(identity) + " truncated at "
+                            + std::to_string(screen.width()) + "x" + std::to_string(screen.height())
+                            + ": " + text.toStdString() + " bounds="
+                            + std::to_string(bounds.x()) + "," + std::to_string(bounds.y()) + ","
+                            + std::to_string(bounds.width()) + "," + std::to_string(bounds.height())
+                            + " role=" + role->property("text").toString().toStdString()
+                            + " roleWidth=" + std::to_string(role->width())
+                            + " roleImplicit=" + std::to_string(role->implicitWidth())
+                            + " roleTruncated=" + std::to_string(role->property("truncated").toBool())
+                            + " hash=" + hash->property("text").toString().toStdString()
+                            + " hashWidth=" + std::to_string(hash->width())
+                            + " hashImplicit=" + std::to_string(hash->implicitWidth())
+                            + " hashTruncated=" + std::to_string(hash->property("truncated").toBool()));
+                    }
+                    CHECK(!label->property("truncated").toBool());
+                }
                 checkMenus();
             }
             // Whether this page is taller than a 960x540 window depends on the fonts. It fits with
@@ -2011,8 +2168,8 @@ public:
             QMetaObject::invokeMethod(dialog, "close");
             settleFor("handoff closed", [&] { return !dialog->property("visible").toBool(); });
 
-            // the source choices start shown, in the source panes' gutters, where they
-            // take no height. With them the three panes keep eight lines and the panes and choices
+            // Source choices start enabled as hover overlays, reserving no pane width
+            // or height. The three panes keep eight lines and the panes and choices
             // stay reachable, from a roomy window down to 1280x720, and hiding them leaves every
             // text pane as high as it was. The owner waiver still excludes strict 960x540 fit.
             settleFor("source choices shown", [&] { return scene.item("scopedChoices")->isVisible(); });
@@ -2049,7 +2206,23 @@ public:
                                       {"short.txt", QByteArray("short base\n"), QByteArray("short left\n"),
                                        QByteArray("short right\n"), std::nullopt}});
             Scene scene(repo);
+            int diagnosticCount = 0;
+            std::string lastGeometry;
+            const auto recordPlacement = [&](const char *event) {
+                if (diagnosticCount >= 16) return;
+                const auto geometry = firstUndecidedInView(scene, true);
+                if (geometry == lastGeometry) return;
+                lastGeometry = geometry;
+                ++diagnosticCount;
+                std::fprintf(stderr, "PLACEMENT_DIAGNOSTIC event=%s observed=%d\n%s\n",
+                             event, diagnosticCount, geometry.c_str());
+            };
+            QObject placementObserver;
+            QObject::connect(scene.controller.get(), &ApplicationController::editorPlaced,
+                &placementObserver, [&] { recordPlacement("editorPlaced"); });
+            recordPlacement("before-long-selection");
             clickFile(scene, "long.txt");
+            recordPlacement("after-long-selection");
             waitFor("the first undecided region in every pane at launch", [&] { return firstUndecidedInView(scene).empty(); },
                     [&] { return firstUndecidedInView(scene); });
             const auto lineHeight = scene.item("comparisonView")->property("rowHeight").toReal();
@@ -2066,9 +2239,20 @@ public:
                 // presses at once, so the tooltip must close before the press.
                 scene.object("pageScroll")->setProperty("contentY", 0);
                 clickFile(scene, "short.txt");
+                recordPlacement("before-placement-request");
                 clickFile(scene, "long.txt");
+                recordPlacement("after-selection-cursor-and-scroll");
                 waitFor("the first undecided region in every pane at " + size,
-                        [&] { return firstUndecidedInView(scene).empty(); }, [&] { return firstUndecidedInView(scene); });
+                        [&] { recordPlacement("observed-layout-cursor-contentY"); return firstUndecidedInView(scene).empty(); },
+                        [&] { return firstUndecidedInView(scene); });
+                QSignalSpy frames(scene.window, &QQuickWindow::frameSwapped);
+                scene.window->update();
+                settleFor("two rendered frames after placement", [&] {
+                    if (frames.count() < 2) scene.window->update();
+                    return frames.count() >= 2;
+                });
+                recordPlacement("after-two-rendered-frames");
+                CHECK(firstUndecidedInView(scene).empty());
             }
             checkOffline(scene);
         });
@@ -2176,7 +2360,7 @@ public:
             std::vector<Work> history{work(scene, "lines.txt")};
 
             // The middle line from the left replaces only the launch line at its position.
-            clickChoice(scene, "Left line 3", "Accept");
+            clickChoice(scene, "Left line 3", "Accept", Qt::Key_Menu);
             CHECK(scene.item("manualReplacementNotice")->isVisible());
             expectText(scene.text("replacementBeforeText"), "base two\n", "replaced left target");
             expectText(scene.text("replacementAfterText"), "left two\n", "left replacement");
@@ -2186,7 +2370,7 @@ public:
             history.push_back(work(scene, "lines.txt"));
 
             // The last line from the right goes beside it in the same conflict.
-            clickChoice(scene, "Right line 4", "Accept");
+            clickChoice(scene, "Right line 4", "Accept", Qt::Key_F10);
             expectText(scene.text("replacementBeforeText"), "base three\n", "replaced right target");
             expectText(scene.text("replacementAfterText"), "right three\n", "right replacement");
             clickDialogButton(scene, "replacementDialog", "Apply choice");

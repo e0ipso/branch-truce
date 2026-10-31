@@ -1,3 +1,4 @@
+// The result editor adapter journals text edits and connects native editing actions to file history.
 #pragma once
 #include <QtQml/qqmlregistration.h>
 #include "highlighting/SyntaxHighlighting.h"

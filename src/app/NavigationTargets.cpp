@@ -1,3 +1,4 @@
+// Navigation targets translate conflict ranges into positions the result editor can reveal.
 #include "NavigationTargets.h"
 #include <QString>
 #include <algorithm>
@@ -54,6 +55,14 @@ std::vector<ScopeTarget> differenceTargets(const FileSession &file)
     targets.erase(std::unique(targets.begin(), targets.end(), [](const auto &left, const auto &right) {
         return left.byteBegin == right.byteBegin && left.byteEnd == right.byteEnd;
     }), targets.end());
+    return targets;
+}
+
+std::vector<ScopeTarget> conflictTargets(const FileSession &file)
+{
+    std::vector<ScopeTarget> targets;
+    for (const auto &region : file.conflictRegions())
+        targets.push_back({region.begin, region.end, true, {}, SourceSide::Stage2});
     return targets;
 }
 

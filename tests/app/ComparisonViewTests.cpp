@@ -7,6 +7,7 @@
 #include "fixtures/QuickScene.h"
 #include "fixtures/RecoveryFaults.h"
 #include "storage/TextFormat.h"
+#include "ui/TextBlocks.h"
 #include <QAbstractTextDocumentLayout>
 #include <QAccessible>
 #include <QApplication>
@@ -137,7 +138,11 @@ public:
     void click(const char *name)
     {
         auto *target = test_support::fileOverflowControl(name)
-            ? test_support::fileToolbarControl(window, name) : item(name);
+            ? test_support::fileToolbarControl(window, name)
+            : test_support::waitForStable(window, name, [&] {
+                auto *candidate = item(name);
+                return test_support::reachable(window, candidate) ? candidate : nullptr;
+            }, 60);
         if (!target->isVisible() || !target->isEnabled() || target->width() <= 0 || target->height() <= 0)
             throw std::runtime_error(std::string("unavailable control: ") + name);
         const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
@@ -300,10 +305,29 @@ void checkUnchanged(Fixture &fixture, const WorkSnapshot &before)
         && after.rightText == before.rightText);
 }
 
+void expectDiagnostic(Fixture &fixture, const QString &diagnostic)
+{
+    auto *button = test_support::waitForStable(fixture.window, "Technical details", [&] {
+        return test_support::reachableButton(fixture.window, fixture.window->contentItem(), "Technical details");
+    }, 60);
+    test_support::clickItem(fixture.window, button);
+    settleFor("captured file diagnostic", [&] {
+        return fixture.item("selectedProblemDiagnostic")->isVisible();
+    });
+    auto *text = fixture.item("selectedProblemDiagnostic");
+    CHECK(text->property("text").toString() == diagnostic);
+    CHECK(text->property("readOnly").toBool() && text->property("selectByMouse").toBool());
+    CHECK(text->property("textFormat").toInt() == 0); // TextEdit.PlainText
+    QTest::keyClick(fixture.window, Qt::Key_Escape);
+    settleFor("file diagnostics closed", [&] {
+        return !fixture.object("selectedProblemDetails")->property("visible").toBool();
+    });
+}
+
 void expectProgress(Fixture &fixture, bool saved, bool reviewed, bool resolved, bool earlier,
                     const QString &current, const QString &savedRevision,
                     const QString &reviewedRevision, const QString &stagedRevision,
-                    qulonglong undecided)
+                    qulonglong undecided, qulonglong conflicts = 0)
 {
     CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
     const auto progress = fixture.controller.selectedFile()->progress();
@@ -337,6 +361,7 @@ void expectProgress(Fixture &fixture, bool saved, bool reviewed, bool resolved, 
     CHECK(progress.value(QStringLiteral("reviewedRevision")).toString() == reviewedRevision);
     CHECK(progress.value(QStringLiteral("stagedRevision")).toString() == stagedRevision);
     CHECK(progress.value(QStringLiteral("undecided")).toULongLong() == undecided);
+    CHECK(progress.value(QStringLiteral("conflicts")).toULongLong() == conflicts);
 }
 
 void expectNavigation(Fixture &fixture, const QString &mode, const QString &fileId,
@@ -562,23 +587,37 @@ QMap<int, QString> tintedLines(QQuickItem *editor)
 PaneMarks paintedMarks(Fixture &fixture, const std::string &pane)
 {
     PaneMarks found;
+    QSet<int> glyphLines;
     for (auto *fill : fixture.item((pane + "BackgroundsLines").c_str())->childItems()) {
         if (fill->isVisible() && fill->property("line").isValid())
             found.backgrounds.insert(fill->property("line").toInt(), fill->property("kind").toString());
     }
     for (auto *glyph : fixture.item((pane + "GutterMarkerSlot").c_str())->childItems()) {
         const auto kind = glyph->property("kind").toString();
+        if (glyph->isVisible() && !kind.isEmpty()) {
+            const auto line = glyph->property("line").toInt();
+            CHECK(!glyphLines.contains(line));
+            glyphLines.insert(line);
+        }
         if (glyph->isVisible() && !kind.isEmpty() && kind != "removed")
             found.glyphs.insert(glyph->property("line").toInt(), kind);
     }
-    // The gutter's other text is the line numbers.
+    // Provenance is inspectable on the real line-number accessibility node.
+    // No permanent B/L/R/m text or second glyph column may reserve code width.
     for (auto *child : fixture.item((pane + "Gutter").c_str())->childItems()) {
         const auto text = child->property("text").toString();
         bool number = false;
-        text.toInt(&number);
-        if (child->isVisible() && !text.isEmpty() && !number)
-            found.letters.insert(qmlValue(child, QStringLiteral("modelData.number")).toInt(), text);
+        const auto line = text.toInt(&number);
+        if (!child->isVisible() || text.isEmpty()) continue;
+        CHECK(number);
+        const auto description = qmlValue(child, QStringLiteral("Accessible.description")).toString();
+        if (description.contains("Matches both captured sources")) found.letters.insert(line, "B");
+        else if (description.contains("Matches the captured left source")) found.letters.insert(line, "L");
+        else if (description.contains("Matches the captured right source")) found.letters.insert(line, "R");
+        else if (description.contains("Edited by hand")) found.letters.insert(line, "m");
     }
+    CHECK(!test_support::visualItem(fixture.window->contentItem(),
+        QString::fromStdString(pane + "GutterDecisionSlot")));
     found.tinted = tintedLines(fixture.item((pane + "Text").c_str()));
     return found;
 }
@@ -605,6 +644,27 @@ void expectMarks(Fixture &fixture, const std::string &when, const std::string &p
     if (painted != expected)
         throw std::runtime_error(when + ", " + pane + " paints " + describeMarks(painted)
             + ", not " + describeMarks(expected));
+    if (pane != "stage2" && pane != "stage3") return;
+    // The remaining number/state gutter shares the full viewport's row fills,
+    // including accepted rows and after history changes.
+    for (const auto *suffix : {"GutterBackgroundsLines"}) {
+        QMap<int, QQuickItem *> strips;
+        for (auto *fill : fixture.item((pane + suffix).c_str())->childItems())
+            if (fill->isVisible() && fill->property("line").isValid())
+                strips.insert(fill->property("line").toInt(), fill);
+        CHECK(strips.keys() == expected.backgrounds.keys());
+        for (auto *fill : fixture.item((pane + "BackgroundsLines").c_str())->childItems()) {
+            const auto line = fill->property("line").toInt();
+            if (!fill->isVisible() || !strips.contains(line)) continue;
+            auto *strip = strips.value(line);
+            const auto codeRect = fill->mapRectToScene(fill->boundingRect());
+            const auto stripRect = strip->mapRectToScene(strip->boundingRect());
+            CHECK(std::abs(codeRect.top() - stripRect.top()) < 0.5);
+            CHECK(std::abs(codeRect.bottom() - stripRect.bottom()) < 0.5);
+            CHECK(strip->property("color") == fill->property("color"));
+            CHECK(strip->property("kind") == fill->property("kind"));
+        }
+    }
 }
 
 // The marks of a pane whose regions on lines 2, 4 and 6 have the given kinds;
@@ -877,6 +937,98 @@ public:
         Group suite(results, selection == Selection::All || selection == Selection::Scenes);
         Group boundary(results, selection == Selection::All || selection == Selection::Boundary);
         Group display(results, selection == Selection::Display);
+        suite.run("source choices overlay full-width panes only on hover or focus", [] {
+            Fixture fixture;
+            settlePanes(fixture);
+            const auto before = captureWork(fixture);
+            auto *comparison = fixture.item("comparisonView");
+            for (const auto *side : {"stage2", "stage3"}) {
+                const auto prefix = std::string(side);
+                auto *viewport = fixture.item((prefix + "Viewport").c_str());
+                CHECK(std::abs(viewport->x()) < 0.01);
+                CHECK(std::abs(viewport->width() - viewport->parentItem()->width()) < 0.01);
+                CHECK(fixture.item((prefix + "Backgrounds").c_str())->width() >= viewport->width());
+                auto *gutter = fixture.item((prefix + "Gutter").c_str());
+                CHECK(std::abs(gutter->mapToScene(QPointF()).x()
+                    - viewport->mapToScene(QPointF()).x()) < 0.01);
+                CHECK(!test_support::visualItem(fixture.window->contentItem(),
+                    QString::fromStdString(prefix + "ChoiceColumn")));
+                const auto width = viewport->width();
+                CHECK(comparison->setProperty("showChoices", false));
+                CHECK(std::abs(viewport->width() - width) < 0.01);
+                CHECK(comparison->setProperty("showChoices", true));
+            }
+            const auto &choice = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+            const auto name = QStringLiteral("choiceAccept-") + QString::fromStdString(choice.source.contributionId);
+            auto *lanes = fixture.item("scopedChoices");
+            auto *button = test_support::reachableButton(fixture.window, lanes, name);
+            CHECK(button);
+            // Repeater rows can belong to a separate QObject tree even while
+            // their buttons are in this window's visual tree. Use the real owner.
+            auto *menu = button->parentItem()->findChild<QObject *>(
+                QString::fromStdString("choiceMore-" + choice.source.contributionId));
+            CHECK(menu);
+            const auto waitOverlay = [&](const char *phase, const std::function<bool()> &ready) {
+                try {
+                    settleFor(phase, ready);
+                } catch (const std::exception &error) {
+                    auto *row = button->parentItem();
+                    auto *pane = fixture.item("stage2Viewport")->parentItem()->parentItem();
+                    auto *focus = fixture.window->activeFocusItem();
+                    throw std::runtime_error(std::string(error.what()) + "; sourceHoveredLine="
+                        + std::to_string(pane->property("hoveredLine").toInt())
+                        + " rowHovered=" + std::to_string(row->property("rowHovered").toBool())
+                        + " revealed=" + std::to_string(row->property("revealed").toBool())
+                        + " choiceFocused=" + std::to_string(row->property("choiceFocused").toBool())
+                        + " activeFocus=" + (focus ? focus->objectName().toStdString() : "none"));
+                }
+            };
+            QTest::mouseMove(fixture.window, QPoint(5, 5));
+            fixture.item("resultText")->forceActiveFocus();
+            waitOverlay("source overlay idle before touch", [&] { return !test_support::painted(button); });
+            const auto center = QPointF(button->width() / 2, button->height() / 2);
+            CHECK(!button->contains(center));
+            static auto *touch = QTest::createTouchDevice();
+            const auto point = button->mapToScene(center).toPoint();
+            QTest::touchEvent(fixture.window, touch).press(0, point, fixture.window);
+            QTest::touchEvent(fixture.window, touch).release(0, point, fixture.window);
+            checkUnchanged(fixture, before);
+            CHECK(!menu->property("visible").toBool());
+            // Hover the code away from the buttons. The same source observer
+            // must reveal the overlay and retain source/counterpart highlighting.
+            auto *viewport = fixture.item("stage2Viewport");
+            const auto rowY = button->mapToItem(viewport, center).y();
+            QTest::mouseMove(fixture.window,
+                viewport->mapToScene(QPointF(viewport->width() / 2, rowY)).toPoint());
+            waitOverlay("source code hover reveals its overlay", [&] {
+                auto *row = button->parentItem();
+                auto *pane = viewport->parentItem()->parentItem();
+                return pane->property("hoveredLine").toInt() == row->property("modelData").toMap().value("line").toInt()
+                    && row->property("rowHovered").toBool() && test_support::painted(button);
+            });
+            CHECK(test_support::hoverChoiceControl(fixture.window, lanes, name) == button);
+            CHECK(test_support::painted(button));
+            CHECK(button->contains(center));
+            auto *bar = fixture.item("stage2VerticalScrollBar");
+            if (bar->isVisible())
+                CHECK(button->mapRectToScene(button->boundingRect()).right()
+                    <= bar->mapRectToScene(bar->boundingRect()).left());
+            QTest::mouseMove(fixture.window, QPoint(5, 5));
+            waitOverlay("source overlay hidden after leaving hover", [&] { return !test_support::painted(button); });
+            // Traverse the real native Tab chain; opacity must not remove the target.
+            auto *previous = button->nextItemInFocusChain(false);
+            CHECK(previous && previous != button);
+            CHECK(previous != fixture.item("resultText"));
+            previous->forceActiveFocus(Qt::TabFocusReason);
+            QTest::keyClick(fixture.window, Qt::Key_Tab);
+            waitOverlay("source overlay reached by native Tab", [&] { return button->hasActiveFocus(); });
+            CHECK(test_support::painted(button));
+            QTest::keyClick(fixture.window, Qt::Key_Menu);
+            waitOverlay("source overlay keyboard menu opened", [&] { return menu->property("visible").toBool(); });
+            CHECK(test_support::painted(button));
+            QTest::keyClick(fixture.window, Qt::Key_Escape);
+            checkUnchanged(fixture, before);
+        });
         suite.run("pane headers do not rearrange recursively", [] {
             HeaderWarningCapture capture;
             Fixture fixture;
@@ -899,6 +1051,8 @@ public:
             const auto row = second.y() - first.y();
             const auto budgetRow = fixture.item("comparisonView")->property("rowHeight").toReal();
             CHECK(row > 0 && std::abs(budgetRow - std::ceil(row)) < 0.01);
+            const auto *blocks = fixture.item("resultGutter")->property("blocks").value<branch_truce::TextBlocks *>();
+            CHECK(blocks && std::abs(budgetRow - std::ceil(blocks->rowHeight())) < 0.01);
             CHECK(!fixture.controller.selectedFile()->mimeIcon().isEmpty());
             CHECK(!fixture.item("selectedTypeIcon")->property("source").toString().isEmpty());
         });
@@ -1423,7 +1577,7 @@ public:
             CHECK(fixture.item("retrySave")->isVisible());
             CHECK(!fixture.item("saveDraft")->isEnabled());
             CHECK(!fixture.toolbarEnabled("discardUnsaved"));
-            CHECK(fixture.item("undoCommand")->isVisible() && !fixture.item("undoCommand")->isEnabled());
+            CHECK(!fixture.toolbarEnabled("undoCommand"));
             CHECK(!fixture.file().written() && !fixture.file().staged());
             fixture.click("retrySave");
             settle([&] { return !fixture.controller.selectedFile()->unsaved(); });
@@ -1639,8 +1793,8 @@ public:
             const QMap<QString, QString> glyphs{{"added", "+"}, {"changed", "~"}, {"conflict", "!"},
                 {"manual", "m"}, {"accepted", QString(QChar(0x2713))}, {"ignored", QString(QChar(0x00d7))},
                 {"removed", QString(QChar(0x2212))}};
-            // The kinds of the line backgrounds and gap rules painted in a pane,
-            // and how many of them lack a visible glyph of that kind on their line.
+            // Each coloured line has one state glyph. A gap on that same line
+            // is described by the glyph instead of adding a second symbol.
             struct Painted { QSet<QString> kinds; int unmarked = 0; };
             const auto painted = [&](const std::string &pane) {
                 Painted found;
@@ -1655,29 +1809,53 @@ public:
                     if (!fill->isVisible() || !fill->property("line").isValid()) continue;
                     const auto kind = fill->property("kind").toString();
                     found.kinds.insert(kind);
-                    const auto glyph = shown.value({fill->property("line").toInt(), kind});
+                    const auto line = fill->property("line").toInt();
+                    const auto glyph = shown.value({line, kind});
+                    if (QString::fromLatin1(suffix) == "BackgroundsGaps") {
+                        const auto lineKind = qmlValue(fixture.item((pane + "Gutter").c_str()),
+                            QStringLiteral("lineKind(%1)").arg(line)).toString();
+                        if (!lineKind.isEmpty()) {
+                            const auto description = qmlValue(fixture.item((pane + "Gutter").c_str()),
+                                QStringLiteral("lineDescription(%1)").arg(line)).toString()
+                                .contains(QStringLiteral("Unmatched lines at this boundary"));
+                            if (shown.value({line, lineKind}) != glyphs.value(lineKind)
+                                || shown.contains({line, QStringLiteral("removed")}) || !description)
+                                ++found.unmarked;
+                            continue;
+                        }
+                    }
                     if (glyph.isEmpty() || glyph != glyphs.value(kind)) ++found.unmarked;
                   }
                 }
                 return found;
             };
             const auto expect = [&](const std::string &pane, const QSet<QString> &kinds) {
-                settleFor(pane + " diff colours", [&] { return painted(pane).kinds == kinds; });
+                settleFor(pane + " diff colours and glyphs", [&] {
+                    const auto found = painted(pane);
+                    return found.kinds == kinds && found.unmarked == 0;
+                });
                 CHECK(painted(pane).unmarked == 0);
             };
             // At launch every region is undecided; the right source's extra line is a gap in the result.
-            expect("stage2", {"conflict"});
-            expect("result", {"conflict", "removed"});
-            expect("stage3", {"conflict"});
+            expect("stage2", {});
+            expect("result", {"changed", "removed"});
+            expect("stage3", {"changed", "added"});
             auto *slot = fixture.item("resultGutterMarkerSlot");
-            int gaps = 0;
+            int gapGlyphs = 0;
             for (auto *glyph : slot->childItems()) {
                 if (glyph->isVisible() && glyph->property("kind").toString() == "removed") {
-                    ++gaps;
+                    ++gapGlyphs;
                     CHECK(glyph->x() + glyph->width() < slot->width());
                 }
             }
-            CHECK(gaps > 0);
+            int describedGaps = 0;
+            for (auto *fill : fixture.item("resultBackgroundsGaps")->childItems()) {
+                if (!fill->isVisible() || !fill->property("line").isValid()) continue;
+                const auto line = fill->property("line").toInt();
+                if (!qmlValue(fixture.item("resultGutter"), QStringLiteral("lineKind(%1)").arg(line)).toString().isEmpty())
+                    ++describedGaps;
+            }
+            CHECK(gapGlyphs + describedGaps > 0);
             // Taking the left side decides every region, and typing in an accepted line marks it manual.
             // The edited region shows its passage colours again; the right's extra line stays ignored.
             const auto revision = [&] { return QString::number(fixture.file().current().id); };
@@ -1717,7 +1895,7 @@ public:
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
             CHECK(gutterAnchorErrors == 0);
         });
-        suite.run("a hand edit outside every region shows the neutral background, the m glyph and letter", [] {
+        suite.run("a hand edit outside every region shows the neutral background, one m glyph and inspectable provenance", [] {
             Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
                 "header\nright first\nshared\nright extra\ntail\n"));
             const auto revision = [&] { return QString::number(fixture.file().current().id); };
@@ -1762,7 +1940,7 @@ public:
             leftLetters.insert(2, "L");
             // One scoped choice on the left region at line 2: the action, the states the
             // left and right regions there end in, and what each pane then paints. The
-            // regions on lines 4 and 6 stay undecided and keep their conflict marks. A
+            // regions on lines 4 and 6 stay undecided; only line 6 is a conflict. A
             // decided side is marked accepted or ignored on its source lines.
             struct Choice {
                 QString name;
@@ -1775,31 +1953,29 @@ public:
                 PaneMarks stage3;
             };
             const std::array<Choice, 3> choices{{
-                // The left line now matches the result. The result line stays a
-                // conflict while the right contribution is undecided.
-                {"accept", ChoicePreviewFlow::Action::Accept, "accepted", "undecided", true, regionMarks("accepted", "conflict", "conflict"),
-                    regionMarks("conflict", "conflict", "conflict", leftLetters),
-                    regionMarks("conflict", "conflict", "conflict")},
-                // Ignore leaves the result alone, so the left line still differs from it.
-                {"ignore", ChoicePreviewFlow::Action::Ignore, "ignored", "undecided", false, regionMarks("ignored", "conflict", "conflict"),
-                    regionMarks("conflict", "conflict", "conflict", launchLetters),
-                    regionMarks("conflict", "conflict", "conflict")},
-                // Resolving using the left side decides both contributions, so the
-                // result line is only a change against the right source.
-                {"resolve", ChoicePreviewFlow::Action::ResolveUsingSide, "accepted", "ignored", true, regionMarks("accepted", "conflict", "conflict"),
-                    regionMarks("changed", "conflict", "conflict", leftLetters),
-                    regionMarks("ignored", "conflict", "conflict")},
+                {"accept", ChoicePreviewFlow::Action::Accept, "accepted", "undecided", true,
+                    regionMarks("accepted", {}, "conflict"),
+                    regionMarks("accepted", "changed", "conflict", leftLetters),
+                    regionMarks("changed", "changed", "conflict")},
+                {"ignore", ChoicePreviewFlow::Action::Ignore, "ignored", "undecided", false,
+                    regionMarks("ignored", {}, "conflict"),
+                    regionMarks("changed", "changed", "conflict", launchLetters),
+                    regionMarks({}, "changed", "conflict")},
+                {"resolve", ChoicePreviewFlow::Action::ResolveUsingSide, "accepted", "ignored", true,
+                    regionMarks("accepted", {}, "conflict"),
+                    regionMarks("accepted", "changed", "conflict", leftLetters),
+                    regionMarks("ignored", "changed", "conflict")},
             }};
             for (const auto &choice : choices) {
                 // regionMarks gives an ignored line a tinted text and no background,
                 // so undo also checks that the tint goes.
                 suite.run("a scoped " + choice.name.toStdString()
-                    + " repaints all three panes and the provenance letters, and undo restores them", [choice, launchLetters] {
+                    + " repaints all three panes and inspected provenance, and undo restores them", [choice, launchLetters] {
                     Fixture fixture;
                     settlePanes(fixture);
-                    expectMarks(fixture, "at launch", "stage2", regionMarks("conflict", "conflict", "conflict"));
-                    expectMarks(fixture, "at launch", "result", regionMarks("conflict", "conflict", "conflict", launchLetters));
-                    expectMarks(fixture, "at launch", "stage3", regionMarks("conflict", "conflict", "conflict"));
+                    expectMarks(fixture, "at launch", "stage2", regionMarks("changed", {}, "conflict"));
+                    expectMarks(fixture, "at launch", "result", regionMarks("changed", "changed", "conflict", launchLetters));
+                    expectMarks(fixture, "at launch", "stage3", regionMarks({}, "changed", "conflict"));
                     const auto before = fixture.text();
                     const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
                     CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
@@ -1828,9 +2004,9 @@ public:
                     CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
                     CHECK(fixture.text() == before);
                     const auto undone = "after undoing " + choice.name.toStdString();
-                    expectMarks(fixture, undone, "stage2", regionMarks("conflict", "conflict", "conflict"));
-                    expectMarks(fixture, undone, "result", regionMarks("conflict", "conflict", "conflict", launchLetters));
-                    expectMarks(fixture, undone, "stage3", regionMarks("conflict", "conflict", "conflict"));
+                    expectMarks(fixture, undone, "stage2", regionMarks("changed", {}, "conflict"));
+                    expectMarks(fixture, undone, "result", regionMarks("changed", "changed", "conflict", launchLetters));
+                    expectMarks(fixture, undone, "stage3", regionMarks({}, "changed", "conflict"));
                 });
             }
         }
@@ -1839,13 +2015,13 @@ public:
             // and 6 and the right source on lines 4 and 6, and every region is undecided.
             Fixture fixture;
             settlePanes(fixture);
-            const std::vector<std::string> left{"conflict 2-3>2-3", "conflict 6-7>6-7"};
-            const std::vector<std::string> right{"conflict 4-5>4-5", "conflict 6-7>6-7"};
+            const std::vector<std::string> left{"changed 2-3>2-3", "conflict 6-7>6-7"};
+            const std::vector<std::string> right{"changed 4-5>4-5", "conflict 6-7>6-7"};
             expectBands(fixture, "at launch", "stage2", left);
             expectBands(fixture, "at launch", "stage3", right);
             // A scoped choice on the left region at line 2 redraws the bands with the
-            // passages, and undo restores them. Accepting makes the left line equal to
-            // the result, so its band goes, and the right line now differs from it.
+            // passages, and undo restores them. Acceptance keeps a positive band on
+            // the changed-against-earlier range; the right line now differs from it.
             struct Choice {
                 QString name;
                 ChoicePreviewFlow::Action action;
@@ -1853,7 +2029,8 @@ public:
                 std::vector<std::string> right;
             };
             const std::array<Choice, 2> choices{{
-                {"accept", ChoicePreviewFlow::Action::Accept, {"conflict 6-7>6-7"}, {"conflict 2-3>2-3", "conflict 4-5>4-5", "conflict 6-7>6-7"}},
+                {"accept", ChoicePreviewFlow::Action::Accept, {"accepted 2-3>2-3", "conflict 6-7>6-7"},
+                    {"changed 2-3>2-3", "changed 4-5>4-5", "conflict 6-7>6-7"}},
                 {"ignore", ChoicePreviewFlow::Action::Ignore, {"ignored 2-3>2-3", "conflict 6-7>6-7"}, right},
             }};
             for (const auto &choice : choices) {
@@ -1932,7 +2109,7 @@ public:
             settlePanes(fixture);
             const auto line = paneLineHeight(editor);
             wheelTo(fixture, "stage2Viewport", 40 * line);
-            const std::vector<std::string> band{"conflict 51-51>51-81"};
+            const std::vector<std::string> band{"added 51-51>51-81"};
             expectBands(fixture, "at the insertion", "stage2", band);
             CHECK(bandLines(fixture, "stage3").empty());
             const auto before = paintedBands(fixture, "stage2").front();
@@ -1968,6 +2145,8 @@ public:
             // Dragging the handle widens the left source at the expense of the right
             // source, which fills the split, and leaves the result as it was.
             auto *right = fixture.item("stage3Viewport");
+            const auto bandsBefore = bandLines(fixture, "stage2");
+            CHECK(bandsBefore == (std::vector<std::string>{"changed 2-3>2-3", "conflict 6-7>6-7"}));
             const auto leftWidth = left->width();
             const auto resultWidth = result->width();
             const auto rightWidth = right->width();
@@ -1978,7 +2157,7 @@ public:
             QTest::mouseRelease(fixture.window, Qt::LeftButton, Qt::NoModifier, QPoint(from.x() + 80, from.y()));
             settle([&] { return std::abs(left->width() - (leftWidth + 80)) < 2; });
             CHECK(std::abs(result->width() - resultWidth) < 1 && std::abs(right->width() - (rightWidth - 80)) < 2);
-            expectBands(fixture, "after the drag", "stage2", {"conflict 2-3>2-3", "conflict 6-7>6-7"});
+            expectBands(fixture, "after the drag", "stage2", bandsBefore);
         });
         suite.run("each marker block folds into one labelled row behind a conflict band, keeps the buffer and shows on the toggle", [] {
             // markedFile(true) writes both sections between markers with diff3 base sections:
@@ -2388,35 +2567,48 @@ public:
             CHECK(fixture.item("resultText")->property("text").toString().toStdString() == result);
             checkUnchanged(fixture, before);
         });
-        suite.run("the undecided counter steps to the next undecided choice and counts down as choices are decided", [] {
+        suite.run("markerless drafts retain decisions without conflict navigation", [] {
             const std::string result = "same\nAAA\nmid\nBBB\n";
-            const std::string left = "same\nleftA\nmid\nleftB\n";
-            Fixture fixture(test_support::choiceFile(left, result, result));
+            Fixture fixture(test_support::choiceFile("same\nleftA\nmid\nleftB\n", result, result));
             CHECK(fixture.file().facts().undecided == 4);
-            auto *counter = fixture.item("undecidedCounter");
-            settle([&] { return counter->property("text").toString() == QStringLiteral("4 conflicts left"); });
-            CHECK(counter->isEnabled());
-
-            fixture.select(0, 0);
-            fixture.click("undecidedCounter");
-            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
-                QStringLiteral("result"), 0, 4, 5, 9,
-                QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
-                QStringLiteral("pick/1/5/11"));
-            fixture.click("undecidedCounter");
-            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
-                QStringLiteral("result"), 1, 4, 5, 9,
-                QStringLiteral("Undecided 2 of 4 · Right · result bytes 5-9"),
-                QStringLiteral("pick/2/5/9"));
-
-            // Ignoring the left side of the first region decides one choice.
+            const auto noConflicts = [&] {
+                settle([&] { return fixture.item("undecidedCounter")->property("text").toString()
+                    == QStringLiteral("No conflicts to step through"); });
+                for (const auto *name : {"previousUndecided", "undecidedCounter", "nextUndecided"})
+                    CHECK(!fixture.item(name)->isEnabled());
+                CHECK(fixture.controller.selectedFile()->progress().value("conflicts").toInt() == 0);
+            };
+            noConflicts();
             const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
             CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
                 QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::Ignore));
             CHECK(fixture.controller.applyChoice(true));
             CHECK(fixture.file().facts().undecided == 3);
-            settle([&] { return counter->property("text").toString() == QStringLiteral("3 conflicts left"); });
-            CHECK(counter->isEnabled());
+            CHECK(fixture.text().toStdString() == result);
+            noConflicts();
+            CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
+            CHECK(fixture.file().facts().undecided == 4);
+            CHECK(fixture.text().toStdString() == result);
+            noConflicts();
+        });
+        suite.run("conflict controls navigate whole marker regions independently of decisions", [] {
+            Fixture fixture(test_support::splitFile());
+            const auto before = fixture.file().current();
+            const auto marked = test_support::splitText();
+            const auto begin = static_cast<int>(marked.find("<<<<<<<"));
+            const auto end = static_cast<int>(marked.find(">>>>>>> theirs") + std::string(">>>>>>> theirs\n").size());
+            CHECK(fixture.file().facts().undecided > 1);
+            CHECK(fixture.file().conflictRegions().size() == 1);
+            settle([&] { return fixture.item("undecidedCounter")->property("text").toString() == "1 conflict left"; });
+            fixture.select(0, 0);
+            for (const auto *name : {"nextUndecided", "undecidedCounter", "previousUndecided"}) {
+                CHECK(fixture.item(name)->isEnabled());
+                fixture.click(name);
+                expectNavigation(fixture, "conflict", "choices", "result", 0, 1, begin, end,
+                    QStringLiteral("Conflict 1 of 1 · result bytes %1-%2").arg(begin).arg(end));
+                CHECK(fixture.item("resultText")->hasActiveFocus());
+            }
+            CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
         });
         suite.run("revision progress, within-file navigation, unfinished files and file-list location", [] {
             const std::string result = "same\nAAA\nmid\nBBB\n";
@@ -2446,33 +2638,38 @@ public:
                 QStringLiteral("result"), 1, 2, 13, 17,
                 QStringLiteral("Difference 2 of 2 · result bytes 13-17"));
 
+            // Contribution decisions remain four, while this markerless draft has no conflicts.
+            for (const auto *name : {"nextUndecided", "previousUndecided", "undecidedCounter"})
+                CHECK(!fixture.item(name)->isEnabled());
+            CHECK(fixture.controller.selectedFile()->progress().value("conflicts").toInt() == 0);
+            // Explicit legacy source-decision callers retain their exact four targets.
             fixture.select(0, 0);
-            fixture.click("nextUndecided");
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 0, 4, 5, 9,
                 QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
                 QStringLiteral("pick/1/5/11"));
-            fixture.click("nextUndecided");
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 1, 4, 5, 9,
                 QStringLiteral("Undecided 2 of 4 · Right · result bytes 5-9"),
                 QStringLiteral("pick/2/5/9"));
-            fixture.click("nextUndecided");
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 2, 4, 13, 17,
                 QStringLiteral("Undecided 3 of 4 · Left · result bytes 13-17"),
                 QStringLiteral("pick/1/15/21"));
-            fixture.click("nextUndecided");
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 3, 4, 13, 17,
                 QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
                 QStringLiteral("pick/2/13/17"));
-            fixture.click("nextUndecided");
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 0, 4, 5, 9,
                 QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
                 QStringLiteral("pick/1/5/11"));
-            fixture.click("previousUndecided");
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, -1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 3, 4, 13, 17,
                 QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
@@ -2519,8 +2716,7 @@ public:
             CHECK(fixture.item("selectedProblem")->property("text").toString() == QStringLiteral("This file must be resolved outside Branch Truce"));
             CHECK(fixture.item("selectedProblem")->property("explanation").toString().contains(
                 QStringLiteral("outstanding")));
-            CHECK(fixture.item("selectedProblem")->property("explanation").toString().contains(
-                QStringLiteral("image content")));
+            expectDiagnostic(fixture, QStringLiteral("image content"));
             const auto *outside = fixture.controller.files()->file("outside");
             CHECK(outside && outside->support() == Support::OutsideApp);
             CHECK(outside->supportDetail() == "image content");
@@ -2587,6 +2783,9 @@ public:
             auto *viewport = fixture.item("resultViewport");
             settle([&] { return viewport->property("contentHeight").toReal() > viewport->height() * 2
                 && viewport->property("contentWidth").toReal() > viewport->width() * 2; });
+            // Let the initial file placement run before establishing the scroll
+            // position whose preservation this test exercises.
+            test_support::waitForStable(fixture.window, "initial result viewport", [&] { return viewport; }, 60);
             // Keep the cursor at the top so that scrolling away leaves it out of view.
             fixture.select(0, 0);
             CHECK(viewport->setProperty("contentY", 600.0));
@@ -3138,7 +3337,9 @@ public:
                     throw std::runtime_error(("route " + id + " selected " + fixture.controller.selectedFileId()).toStdString());
                 CHECK(fixture.controller.selectedFileId() == id);
             }
-            CHECK(fixture.item("selectedProblem")->property("explanation").toString().contains(QStringLiteral("image content")));
+            CHECK(fixture.controller.selectFile(QStringLiteral("outside")));
+            CHECK(fixture.item("selectedProblem")->property("explanation").toString().contains("outstanding"));
+            expectDiagnostic(fixture, QStringLiteral("image content"));
 
             int ended = 0;
             bool clean = true;

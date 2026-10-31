@@ -1,3 +1,4 @@
+// The session coordinator schedules guarded save and publication work and reconciles cancelled mutations.
 #include "session/SessionCoordinator.h"
 #include "recovery/RecoveryRestore.h"
 #include <QDir>

@@ -16,26 +16,43 @@ KirigamiDelegates.SubtitleDelegate {
     required property string path
     required property string statusIcon
     required property string statusLine
+    required property bool resolved
     required property int undecidedCount
+    required property int conflictCount
     required property string recoveryState
     required property string status
     required property string summary
     required property ApplicationController controller
     readonly property bool current: fileId === row.controller.selectedFileId
-    width: ListView.view.width
+    readonly property real plateOuterInset: Kirigami.Units.smallSpacing
+    readonly property real plateHorizontalPadding: Kirigami.Units.largeSpacing
+    readonly property real plateVerticalPadding: Kirigami.Units.mediumSpacing
+    readonly property real iconTextGap: Kirigami.Units.largeSpacing
+    // Inset the control itself so hover, clicks and focus share the plate's bounds.
+    x: plateOuterInset
+    width: Math.max(0, ListView.view.width - 2 * plateOuterInset)
+    leftPadding: plateHorizontalPadding
+    rightPadding: plateHorizontalPadding
+    topPadding: plateVerticalPadding
+    bottomPadding: plateVerticalPadding
+    // Native styles may otherwise inset the background again or pad the last row differently.
+    leftInset: 0
+    rightInset: 0
+    topInset: 0
+    bottomInset: 0
     // The path alone names the row, so a screen reader reads it as the list item's name.
     text: row.path
     subtitle: row.recoveryState === "failed" || row.recoveryState === "save-failed" || row.recoveryState === "blocked"
         ? row.status
         : row.support === "unreadable" ? qsTr("Load error")
         : row.support !== "supported" ? qsTr("Handle outside the app")
-        : row.status === "Written and resolved" ? qsTr("Resolved")
+        : row.resolved ? qsTr("Resolved")
         : row.status === "Repository write failed" || row.status === "Written, unresolved"
             || row.status === "Draft save failed" || row.status === "Outcome uncertain; verification required"
             || row.status === "Earlier result staged; current draft not applied" ? row.status
-        : row.undecidedCount > 0 ? (row.undecidedCount === 1
-            ? qsTr("%n conflict left", "", row.undecidedCount)
-            : qsTr("%n conflicts left", "", row.undecidedCount))
+        : row.conflictCount > 0 ? (row.conflictCount === 1
+            ? qsTr("%n conflict left", "", row.conflictCount)
+            : qsTr("%n conflicts left", "", row.conflictCount))
         : row.statusLine
     Accessible.description: row.summary
     icon.name: row.statusIcon
@@ -65,53 +82,63 @@ KirigamiDelegates.SubtitleDelegate {
     Keys.onEnterPressed: row.clicked()
     // One line each, so a path or a status never breaks inside a word.
     contentItem: RowLayout {
-        spacing: Kirigami.Units.smallSpacing
+        spacing: row.iconTextGap
+        clip: true
         Kirigami.Icon {
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
             Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
             source: row.icon.name
-            selected: row.highlighted
+            // Keep the verified-resolution emblem's positive theme role on the selected plate.
+            selected: row.highlighted && !row.resolved
         }
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 0
-            RowLayout {
+            Item {
+                id: pathLine
                 Layout.fillWidth: true
-                Layout.preferredHeight: titleLabel.implicitHeight
-                spacing: Kirigami.Units.smallSpacing
+                implicitHeight: Math.max(titleLabel.implicitHeight, directoryLabel.implicitHeight)
                 PlainLabel {
                     id: titleLabel
-                    Layout.fillWidth: true
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.min(implicitWidth, pathLine.width)
                     text: row.path.split("/").pop() || row.path
+                    wrapMode: Text.NoWrap
+                    maximumLineCount: 1
                     elide: Text.ElideMiddle
-                    font.bold: row.current
+                    font: Kirigami.Theme.defaultFont
                     color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                 }
                 PlainLabel {
-                    Layout.maximumWidth: row.width / 3
+                    id: directoryLabel
+                    anchors.baseline: titleLabel.baseline
+                    x: titleLabel.width + Kirigami.Units.smallSpacing
+                    // The basename takes its natural width first; the directory uses only the remainder.
+                    width: Math.min(implicitWidth, Math.max(0, pathLine.width - x))
                     visible: row.path.lastIndexOf("/") >= 0
                     text: row.path.slice(0, row.path.lastIndexOf("/"))
+                    wrapMode: Text.NoWrap
+                    maximumLineCount: 1
                     elide: Text.ElideMiddle
                     font: Kirigami.Theme.smallFont
-                    color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.disabledTextColor
+                    color: row.highlighted ? Qt.alpha(Kirigami.Theme.highlightedTextColor, 0.8) : Kirigami.Theme.disabledTextColor
                 }
             }
             PlainLabel {
                 id: subtitleLabel
                 Layout.fillWidth: true
                 text: row.subtitle
+                wrapMode: Text.NoWrap
                 maximumLineCount: 1
                 elide: Text.ElideRight
                 font: Kirigami.Theme.smallFont
-                color: row.highlighted ? Kirigami.Theme.highlightedTextColor : row.support !== "supported" ? Kirigami.Theme.neutralTextColor : row.status === "Written and resolved" ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.disabledTextColor
+                color: row.resolved ? Kirigami.Theme.positiveTextColor : row.highlighted ? Qt.alpha(Kirigami.Theme.highlightedTextColor, 0.8) : row.support !== "supported" ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.disabledTextColor
             }
         }
 
     }
     background: Rectangle {
-        x: Kirigami.Units.smallSpacing
-        width: row.width - 2 * Kirigami.Units.smallSpacing
         radius: Kirigami.Units.cornerRadius
         color: row.current ? Kirigami.Theme.highlightColor
             : row.hovered ? Qt.alpha(Kirigami.Theme.hoverColor, 0.2) : "transparent"

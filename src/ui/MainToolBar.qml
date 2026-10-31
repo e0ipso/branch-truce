@@ -1,4 +1,4 @@
-// The session toolbar: the handoff, difference navigation, the undecided stepper with its
+// The session toolbar: the handoff, difference navigation, the conflict stepper with its
 // count, file navigation, and the file list toggle.
 pragma ComponentBehavior: Bound
 
@@ -12,10 +12,10 @@ RowLayout {
     id: mainToolBar
     required property ApplicationController controller
     signal handoffRequested()
-    // The selected file's undecided choices; the stepper steps through them.
-    readonly property int undecided: {
+    // Current result regions, separate from the source decisions kept for review.
+    readonly property int conflicts: {
         const progress = controller.selectedFile.progress
-        return progress ? Number(progress.undecided) : 0
+        return progress ? Number(progress.conflicts) : 0
     }
     objectName: "mainToolBar"
     spacing: Kirigami.Units.smallSpacing
@@ -30,22 +30,22 @@ RowLayout {
                 text: qsTr("Previous conflict")
                 icon.name: "arrow-up"
                 display: AbstractButton.IconOnly
-                enabled: mainToolBar.undecided > 0
+                enabled: mainToolBar.conflicts > 0
                 Accessible.name: text
                 ToolTip.text: text
                 ToolTip.visible: hovered
                 ToolTip.delay: Kirigami.Units.toolTipDelay
-                onClicked: mainToolBar.controller.navigate(FileNavigator.Undecided, -1)
+                onClicked: mainToolBar.controller.navigate(FileNavigator.Conflict, -1)
             }
             Kirigami.Separator { Layout.fillHeight: true }
             ToolButton {
                 objectName: "undecidedCounter"
-                text: mainToolBar.undecided > 0 ? (mainToolBar.undecided === 1 ? qsTr("%n conflict left", "", mainToolBar.undecided) : qsTr("%n conflicts left", "", mainToolBar.undecided))
+                text: mainToolBar.conflicts > 0 ? (mainToolBar.conflicts === 1 ? qsTr("%n conflict left", "", mainToolBar.conflicts) : qsTr("%n conflicts left", "", mainToolBar.conflicts))
                                                 : qsTr("No conflicts to step through")
                 icon.name: "vcs-conflicting"
-                enabled: mainToolBar.undecided > 0
+                enabled: mainToolBar.conflicts > 0
                 Accessible.name: text
-                onClicked: mainToolBar.controller.navigate(FileNavigator.Undecided, 1)
+                onClicked: mainToolBar.controller.navigate(FileNavigator.Conflict, 1)
             }
             Kirigami.Separator { Layout.fillHeight: true }
             ToolButton {
@@ -53,12 +53,12 @@ RowLayout {
                 text: qsTr("Next conflict")
                 icon.name: "arrow-down"
                 display: AbstractButton.IconOnly
-                enabled: mainToolBar.undecided > 0
+                enabled: mainToolBar.conflicts > 0
                 Accessible.name: text
                 ToolTip.text: text
                 ToolTip.visible: hovered
                 ToolTip.delay: Kirigami.Units.toolTipDelay
-                onClicked: mainToolBar.controller.navigate(FileNavigator.Undecided, 1)
+                onClicked: mainToolBar.controller.navigate(FileNavigator.Conflict, 1)
             }
         }
     }

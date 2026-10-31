@@ -1,3 +1,4 @@
+// File snapshots retain the captured text, formatting and source identities used throughout a session.
 #pragma once
 
 #include <cstdint>

@@ -1,3 +1,4 @@
+// Conflict classification separates editable text conflicts from files that need another tool.
 #pragma once
 
 #include "TextConversion.h"

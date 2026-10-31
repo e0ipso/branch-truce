@@ -208,6 +208,9 @@ stage_test() {
     run_container \
         -v "$root_dir:/src:ro" -v "$output/tests/$format:/reports" \
         "${cache_env[@]}" -e BRANCH_TRUCE_COMPILER_CACHE_REPORT_DIR=/reports/cache \
+        -e BRANCH_TRUCE_CI_RUN_URL -e BRANCH_TRUCE_CI_RUN_ATTEMPT -e BRANCH_TRUCE_CI_JOB \
+        -e BRANCH_TRUCE_CI_SOURCE_REVISION -e "BRANCH_TRUCE_CI_FORMAT=$format" \
+        -e BRANCH_TRUCE_NATIVE_FIDELITY \
         "$image:$format-test" /src/packaging/scripts/test-desktop.sh "$version" "$test_uid" "$test_gid"
 }
 

@@ -1,8 +1,4 @@
-// The choices on one row of a source pane's choice column: Accept and Ignore for the scope
-// that starts on the row, and a menu with Resolve using this side, Take both in either order,
-// and the choices of any other scope that starts on the same line, such as the line choice on
-// a section's first line. Accept sits nearest the result. Once the scope is decided its
-// buttons go and the pane's glyph column shows the decision; undo brings them back.
+// Compact source controls accept or ignore a range and offer precise and ordered choices in its menu.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -12,7 +8,7 @@ import org.kde.kirigami as Kirigami
 
 Row {
     id: buttons
-    // {line, choice, extras}: the scope that owns the row and the other scopes on its line.
+    // {line, choice, extras}: the range's section and all its precise line scopes.
     // Each is a scoped choice with its region's undecided flag.
     required property var modelData
     // The pane edge that faces the result: "right" in the left pane, "left" in the right one.
@@ -21,6 +17,12 @@ Row {
     required property real rowHeight
     // Whether the file takes choices now: it can be edited and no input is composing.
     required property bool choosing
+    property bool rowHovered: false
+    // Opacity retains the native Tab path; focus reveals controls before interaction.
+    readonly property bool revealed: rowHovered || rowHover.hovered || choiceFocused
+    opacity: revealed ? 1 : 0
+    property TextArea contextEditor: null
+    property EditActions edits: null
     // A choice of action for a scope; the owner previews it when it needs confirming.
     signal chosen(target: string, action: int)
     signal hovered(target: string)
@@ -56,86 +58,195 @@ Row {
         return list
     }
     readonly property bool hasEntries: entries.some(entry => entry.enabled)
+    // A decided section may still contain an undecided precise line. Only a
+    // fully decided range loses its overlay controls. An unavailable owner
+    // still needs a keyboard/touch target for its available mapped lines.
+    readonly property bool rangeUndecided: !!choice.undecided
+        || (modelData.extras || []).some(extra => !!extra.undecided)
+    readonly property bool menuOnly: rangeUndecided && hasEntries && (!choice.undecided || !choice.available)
+    readonly property string menuLabel: qsTr("More choices for %1").arg(choice.label)
+    readonly property string menuHint: qsTr("Right-click, hold, or press Menu or Shift+F10 for more choices.")
+    function openMenu(): void {
+        if (!rangeUndecided || !visible)
+            return
+        const anchor = contextEditor || buttons
+        const point = buttons.mapToItem(anchor, 0, rowHeight)
+        openMenuAt(anchor, point.x, point.y)
+    }
+    // Source text is a stable context-menu anchor even after the range is
+    // decided. No hidden overlay button is kept alive as a menu target.
+    function openMenuAt(anchor: Item, x: real, y: real): bool {
+        if (!choosing || !hasEntries || !anchor || !anchor.visible)
+            return false
+        entryMenu.popup(anchor, x, y)
+        return true
+    }
+    function choose(target: string, action: int): void {
+        if (entryMenu)
+            entryMenu.close()
+        if (contextEditor)
+            contextEditor.forceActiveFocus(Qt.OtherFocusReason)
+        hovered("")
+        focused(choice.id, false)
+        chosen(target, action)
+    }
+    onRangeUndecidedChanged: if (!rangeUndecided) {
+        const restoreFocus = choiceFocused
+        if (entryMenu)
+            entryMenu.close()
+        hovered("")
+        focused(choice.id, false)
+        if (restoreFocus && contextEditor)
+            contextEditor.forceActiveFocus(Qt.OtherFocusReason)
+    }
+    Component.onDestruction: {
+        hovered("")
+        focused(choice.id, false)
+    }
     spacing: Kirigami.Units.smallSpacing
     layoutDirection: pointsRight ? Qt.RightToLeft : Qt.LeftToRight
     // A scope that cannot take a choice says why while the pointer rests on its disabled buttons.
     HoverHandler {
         id: rowHover
+        enabled: buttons.rangeUndecided && buttons.visible
         onHoveredChanged: buttons.hovered(hovered ? buttons.choice.id : "")
     }
-    readonly property bool choiceFocused: accept.activeFocus || ignore.activeFocus || more.activeFocus
+    readonly property bool choiceFocused: accept.activeFocus || ignore.activeFocus || more.activeFocus || entryMenu.visible
     onChoiceFocusedChanged: focused(choice.id, choiceFocused)
     ToolTip.text: buttons.choice.detail || ""
-    ToolTip.visible: rowHover.hovered && !more.hovered && buttons.choice.undecided && !buttons.choice.available
+    ToolTip.visible: rowHover.hovered && !entryMenu.visible && buttons.choice.undecided && !buttons.choice.available
         && ToolTip.text.length > 0
     ToolTip.delay: Kirigami.Units.toolTipDelay
 
-    // A small framed icon button one row high; its text names the action and the scope.
-    component GutterButton: ToolButton {
+    TapHandler {
+        enabled: buttons.rangeUndecided && buttons.visible
+        // Button filtering does not exclude touchscreen events. A short idle
+        // touch must reach the source editor, whose hold gesture opens its menu.
+        acceptedDevices: PointerDevice.AllDevices & ~PointerDevice.TouchScreen
+        acceptedButtons: Qt.RightButton
+        onTapped: buttons.openMenu()
+    }
+    Keys.onPressed: event => {
+        if (event.key === Qt.Key_Menu || event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier)) {
+            buttons.openMenu()
+            event.accepted = true
+        }
+    }
+
+    // A small framed icon button within one row; its text names the action and the scope.
+    component ChoiceButton: ToolButton {
+        id: choiceButton
         required property real size
         required property real glyphSize
-        width: size
+        width: glyphSize
         height: size
         padding: 0
         flat: false
+        activeFocusOnTab: true
+        // Opacity preserves keyboard traversal, while the mask lets idle touch
+        // taps reach the source text instead of activating invisible choices.
+        containmentMask: QtObject {
+            function contains(position: point): bool {
+                return buttons.revealed && position.x >= 0 && position.y >= 0
+                    && position.x < choiceButton.width && position.y < choiceButton.height
+            }
+        }
         display: AbstractButton.IconOnly
         icon.width: glyphSize
         icon.height: glyphSize
-        ToolTip.text: text
-        ToolTip.visible: hovered
+        Accessible.description: buttons.menuHint
+        ToolTip.text: text + "\n" + buttons.menuHint
+        ToolTip.visible: hovered && !entryMenu.visible
         ToolTip.delay: Kirigami.Units.toolTipDelay
+        onPressAndHold: buttons.openMenu()
     }
-    GutterButton {
+    ChoiceButton {
         id: accept
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
         objectName: "choiceAccept-" + buttons.choice.id
-        visible: !!buttons.choice.undecided
+        visible: !!buttons.choice.undecided && !buttons.menuOnly
         enabled: buttons.choosing && !!buttons.choice.available
         text: qsTr("Accept %1").arg(buttons.choice.label)
         icon.name: buttons.pointsRight ? "arrow-right" : "arrow-left"
         icon.color: Kirigami.Theme.activeTextColor
-        onClicked: buttons.chosen(buttons.choice.id, ChoicePreviewFlow.Accept)
+        onClicked: buttons.choose(buttons.choice.id, ChoicePreviewFlow.Accept)
     }
-    GutterButton {
+    ChoiceButton {
         id: ignore
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
         objectName: "choiceIgnore-" + buttons.choice.id
-        visible: !!buttons.choice.undecided
+        visible: !!buttons.choice.undecided && !buttons.menuOnly
         enabled: buttons.choosing && !!buttons.choice.available
         text: qsTr("Ignore %1").arg(buttons.choice.label)
         icon.name: "edit-delete-remove"
         icon.color: Kirigami.Theme.negativeTextColor
-        onClicked: buttons.chosen(buttons.choice.id, ChoicePreviewFlow.Ignore)
+        onClicked: buttons.choose(buttons.choice.id, ChoicePreviewFlow.Ignore)
     }
-    GutterButton {
+    ChoiceButton {
         id: more
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
-        objectName: "choiceMore-" + buttons.choice.id
-        visible: buttons.hasEntries
+        // An undecided unmapped owner can still have available line choices. Keep
+        // their menu focusable in the same lane without adding a third button.
+        objectName: "choiceMenu-" + buttons.choice.id
+        visible: buttons.menuOnly
         enabled: buttons.choosing
-        text: qsTr("More choices for %1").arg(buttons.choice.label)
-        icon.name: "merge"
+        text: buttons.menuLabel
+        icon.name: "overflow-menu"
         down: pressed || entryMenu.visible
         Accessible.role: Accessible.ButtonMenu
-        ToolTip.visible: hovered && !entryMenu.visible
-        onClicked: entryMenu.popup(more, 0, more.height)
-        Menu {
-            id: entryMenu
-            Instantiator {
-                model: buttons.entries
-                delegate: MenuItem {
-                    required property var modelData
-                    objectName: modelData.name
-                    text: modelData.text
-                    enabled: buttons.choosing && modelData.enabled
-                    onTriggered: buttons.chosen(modelData.target, modelData.action)
-                }
-                onObjectAdded: (index, entry) => entryMenu.insertItem(index, entry as MenuItem)
-                onObjectRemoved: (index, entry) => entryMenu.removeItem(entry as MenuItem)
+        onClicked: buttons.openMenu()
+    }
+    Menu {
+        id: entryMenu
+        objectName: "choiceMore-" + buttons.choice.id
+        title: buttons.menuLabel
+        onAboutToHide: {
+            if (buttons.contextEditor)
+                buttons.contextEditor.forceActiveFocus(Qt.PopupFocusReason)
+        }
+        Binding {
+            target: entryMenu.contentItem ? entryMenu.contentItem.Accessible : null
+            property: "name"
+            value: buttons.menuLabel
+        }
+        MenuItem {
+            text: buttons.choice.label
+            enabled: false
+            Accessible.description: buttons.choice.detail || ""
+        }
+        MenuItem {
+            visible: !!buttons.edits
+            action: buttons.edits ? buttons.edits.undo : null
+        }
+        MenuItem {
+            visible: !!buttons.edits
+            action: buttons.edits ? buttons.edits.redo : null
+        }
+        MenuItem {
+            text: qsTr("Copy")
+            enabled: !!buttons.contextEditor && buttons.contextEditor.selectedText.length > 0
+            onTriggered: buttons.contextEditor.copy()
+        }
+        MenuItem {
+            text: qsTr("Select all")
+            enabled: !!buttons.contextEditor
+            onTriggered: buttons.contextEditor.selectAll()
+        }
+        MenuSeparator {}
+        Instantiator {
+            model: buttons.entries
+            delegate: MenuItem {
+                required property var modelData
+                objectName: modelData.name
+                text: modelData.text
+                enabled: buttons.choosing && modelData.enabled
+                onTriggered: buttons.choose(modelData.target, modelData.action)
             }
+            onObjectAdded: (index, entry) => entryMenu.insertItem(index + 6, entry as MenuItem)
+            onObjectRemoved: (index, entry) => entryMenu.removeItem(entry as MenuItem)
         }
     }
 }

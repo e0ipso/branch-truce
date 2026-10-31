@@ -1,3 +1,4 @@
+// Shared size limits bound the files, Git output and recovery payloads the app supports.
 #pragma once
 
 #include <cstddef>

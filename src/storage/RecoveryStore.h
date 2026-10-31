@@ -1,3 +1,4 @@
+// The recovery store persists app-owned journals and text payloads under an exclusive session lease.
 #pragma once
 
 #include <QByteArray>

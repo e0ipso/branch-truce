@@ -1,3 +1,4 @@
+// File and conflict navigation keeps the selected file and result cursor on the requested work.
 #include "FileNavigator.h"
 #include "NavigationTargets.h"
 #include "ResultEditorAdapter.h"
@@ -12,6 +13,7 @@ QString modeName(FileNavigator::Mode mode)
     switch (mode) {
     case FileNavigator::Mode::Difference: return QStringLiteral("difference");
     case FileNavigator::Mode::Undecided: return QStringLiteral("undecided");
+    case FileNavigator::Mode::Conflict: return QStringLiteral("conflict");
     case FileNavigator::Mode::Unfinished: return QStringLiteral("unfinished");
     case FileNavigator::Mode::SavedOrReviewed: return QStringLiteral("saved-or-reviewed");
     }
@@ -27,7 +29,7 @@ bool FileNavigator::navigate(Mode mode, int direction)
 {
     if (direction != -1 && direction != 1) return false;
     if (editor_.composing()) return false;
-    if (mode == Mode::Difference || mode == Mode::Undecided)
+    if (mode == Mode::Difference || mode == Mode::Undecided || mode == Mode::Conflict)
         return navigateWithinFile(mode, direction);
     if (mode == Mode::Unfinished || mode == Mode::SavedOrReviewed)
         return navigateAcrossFiles(mode, direction);
@@ -72,11 +74,14 @@ bool FileNavigator::navigateWithinFile(Mode mode, int direction)
         return false;
     };
     if (!file || file->support() != Support::Supported)
-        return fail(tr("This file has no editor differences."));
-    const auto targets = mode == Mode::Difference ? differenceTargets(*file) : undecidedTargets(*file);
+        return fail(mode == Mode::Conflict ? tr("No conflicts to step through")
+                                           : tr("This file has no editor differences."));
+    const auto targets = mode == Mode::Difference ? differenceTargets(*file)
+        : mode == Mode::Conflict ? conflictTargets(*file) : undecidedTargets(*file);
     if (targets.empty()) {
         return fail(mode == Mode::Difference
-            ? tr("No differences in this file.") : tr("No undecided work in this file."));
+            ? tr("No differences in this file.") : mode == Mode::Conflict
+            ? tr("No conflicts to step through") : tr("No undecided work in this file."));
     }
     const auto &result = file->current().draft.text;
     const int count = static_cast<int>(targets.size());
@@ -155,6 +160,11 @@ bool FileNavigator::navigateWithinFile(Mode mode, int direction)
     QString label;
     if (mode == Mode::Difference) {
         label = tr("Difference %1 of %2 · result bytes %3-%4")
+            .arg(index + 1).arg(count)
+            .arg(static_cast<qulonglong>(target.byteBegin))
+            .arg(static_cast<qulonglong>(target.byteEnd));
+    } else if (mode == Mode::Conflict) {
+        label = tr("Conflict %1 of %2 · result bytes %3-%4")
             .arg(index + 1).arg(count)
             .arg(static_cast<qulonglong>(target.byteBegin))
             .arg(static_cast<qulonglong>(target.byteEnd));

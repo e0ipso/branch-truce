@@ -1,3 +1,4 @@
+// Source commands are checked against the selected file and result revision before they can change work.
 #pragma once
 #include "core/SessionState.h"
 #include <QString>

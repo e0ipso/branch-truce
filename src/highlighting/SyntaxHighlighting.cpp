@@ -1,3 +1,4 @@
+// Syntax highlighting selects language definitions and theme colours for comparison documents.
 #include "highlighting/SyntaxHighlighting.h"
 #include "highlighting/PaneHighlighter.h"
 #include <KSyntaxHighlighting/Repository>

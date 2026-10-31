@@ -15,13 +15,16 @@ Item {
     property string explanation
     property bool viewBackground: false
     property Kirigami.Action helpfulAction: null
+    // Keep prose near the approved reading measure while following native font sizing.
+    readonly property real maximumReadingWidth: Kirigami.Units.gridUnit * 26
+    readonly property real contentMargin: Kirigami.Units.gridUnit
     // Asks the owner to set plain text on a message and each label inside it, once they exist.
     signal plainTextRequested(item: Item)
     // Extra items below the message, such as a busy indicator.
     default property alias content: message.data
     Layout.fillWidth: true
     Layout.fillHeight: true
-    Layout.minimumHeight: message.implicitHeight
+    Layout.minimumHeight: message.implicitHeight + contentMargin * 2
     Rectangle {
         parent: placeholder
         anchors.fill: parent
@@ -35,7 +38,8 @@ Item {
         id: message
         objectName: placeholder.messageName
         anchors.centerIn: parent
-        width: parent.width - Kirigami.Units.gridUnit * 2
+        width: Math.min(placeholder.maximumReadingWidth,
+            Math.max(0, placeholder.width - placeholder.contentMargin * 2))
         onPlainTextRequested: item => placeholder.plainTextRequested(item)
         icon.name: placeholder.iconName
         text: placeholder.text

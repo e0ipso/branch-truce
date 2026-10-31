@@ -1,6 +1,6 @@
 // One captured source as a read-only pane: its identity header above the text, with line
-// numbers, diff colours and whitespace markers. A pane with a choiceEdge keeps a column of
-// choiceWidth on that edge, beside the text, where ChoiceLane lays the region choices.
+// numbers, diff colours and whitespace markers. ChoiceLane overlays the full-width text
+// viewport; source choices never reserve a separate column.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -26,10 +26,15 @@ ColumnLayout {
     property alias editor: sourceText
     property alias viewport: sourceViewport
     property alias blocks: sourceBlocks
-    // The edge that faces the result, "left" or "right", for the choice column; none without it.
+    readonly property int hoveredLine: textHover.line
+    readonly property real verticalScrollBarWidth: sourceBar.visible ? sourceBar.width : 0
+    property EditActions edits: null
+    // A comparison pane overrides this method to offer its source-range menu.
+    function openChoicesAt(line: int, x: real, y: real): bool {
+        return false
+    }
+    // The edge that faces the result, "left" or "right", for hover overlays.
     property string choiceEdge: ""
-    property real choiceWidth: 0
-    readonly property alias choiceSlot: choiceColumn
     // Full identities remain available in the tooltips and accessibility descriptions.
     readonly property string commitId: sourcePane.source.commitId || ""
     readonly property string fullIdentity: qsTr("Verified commit: %1\nCaptured blob: %2")
@@ -53,23 +58,27 @@ ColumnLayout {
             ? qsTr("%1 · %2").arg(sourcePane.source.label || sourcePane.paneRole)
                 .arg(sourcePane.source.shortCommitId || qsTr("Commit unavailable"))
             : sourcePane.source.shortCommitId || qsTr("Commit unavailable")
-        fixedIdentity: true
+        identityRole: sourcePane.versionName.length > 0
+            ? sourcePane.source.label || sourcePane.paneRole : ""
+        identityHash: sourcePane.source.shortCommitId || ""
         description: sourcePane.fullIdentity
     }
-    Item {
+    SourceContextMenuHost {
+        id: sourceSurface
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.minimumHeight: sourcePane.minimumTextHeight
+        Kirigami.Theme.colorSet: Kirigami.Theme.View
+        Kirigami.Theme.inherit: false
+        editor: sourceText
+        onPointerMenuRequested: position => sourceText.openContextMenu(
+            sourceBlocks.lineAt(sourceText.positionAt(position.x, position.y)), position.x, position.y)
+        onKeyboardMenuRequested: {
+            const rect = sourceText.cursorRectangle
+            sourceText.openContextMenu(sourceBlocks.lineAt(sourceText.cursorPosition), rect.x, rect.y + rect.height)
+        }
         Rectangle {
-            id: choiceColumn
-            objectName: sourcePane.paneName + "ChoiceColumn"
-            Kirigami.Theme.colorSet: Kirigami.Theme.View
-            Kirigami.Theme.inherit: false
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            x: sourcePane.choiceEdge === "right" ? parent.width - width : 0
-            width: sourcePane.choiceEdge.length > 0 ? sourcePane.choiceWidth : 0
-            visible: width > 0
+            anchors.fill: parent
             color: Kirigami.Theme.backgroundColor
         }
         Flickable {
@@ -80,34 +89,65 @@ ColumnLayout {
             Kirigami.Theme.colorSet: Kirigami.Theme.View
             Kirigami.Theme.inherit: false
             anchors.fill: parent
-            anchors.leftMargin: (sourcePane.choiceEdge === "left" ? choiceColumn.width : 0) + Kirigami.Units.smallSpacing
-            anchors.rightMargin: (sourcePane.choiceEdge === "right" ? choiceColumn.width : 0) + Kirigami.Units.smallSpacing
+            // Only genuine unwrapped overflow reserves a native scrollbar row.
+            anchors.bottomMargin: sourceHorizontal.visible ? sourceHorizontal.height : 0
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.horizontal: ScrollBar {}
+            ScrollBar.horizontal: ScrollBar {
+                id: sourceHorizontal
+                objectName: sourcePane.paneName + "HorizontalScrollBar"
+                parent: sourceViewport.parent
+                anchors.left: sourceViewport.left
+                anchors.right: sourceViewport.right
+                anchors.bottom: parent.bottom
+                height: implicitHeight
+                policy: sourcePane.wrapLines ? ScrollBar.AlwaysOff : ScrollBar.AsNeeded
+                Accessible.name: qsTr("%1 horizontal scroll").arg(sourcePane.paneRole)
+            }
             ScrollBar.vertical: ScrollBar {
                 id: sourceBar
+                objectName: sourcePane.paneName + "VerticalScrollBar"
             }
             HoverHandler {
                 id: textHover
+                property int line: -1
                 function updateLine(): void {
                     const y = point.position.y + sourceViewport.contentY - sourceText.y - sourceText.topPadding
-                    sourcePane.lineHovered(hovered ? Math.floor(sourceBlocks.lineAtY(y)) : -1)
+                    line = hovered ? Math.floor(sourceBlocks.lineAtY(y)) : -1
+                    sourcePane.lineHovered(line)
                 }
                 onHoveredChanged: updateLine()
                 onPointChanged: if (hovered) updateLine()
             }
-            onContentYChanged: sourcePane.scrolled(moving || !!sourceBar && sourceBar.pressed
-                || sourceText.activeFocus)
+            onContentYChanged: {
+                if (textHover.hovered)
+                    textHover.updateLine()
+                sourcePane.scrolled(moving || !!sourceBar && sourceBar.pressed || sourceText.activeFocus)
+            }
+            Connections {
+                target: sourceBlocks
+                function onLayoutChanged(): void {
+                    if (textHover.hovered)
+                        textHover.updateLine()
+                }
+            }
             TextArea.flickable: TextArea {
                 id: sourceText
                 objectName: sourcePane.paneName + "Text"
                 text: sourcePane.source.text || ""
                 readOnly: true
                 selectByMouse: true
+                selectByKeyboard: true
                 persistentSelection: true
                 textFormat: TextEdit.PlainText
                 font: Kirigami.Theme.fixedWidthFont
+                // Keep the style's own focus indication, but let the flat View
+                // fill supply the idle background rather than an input frame.
+                Binding {
+                    target: sourceText.background
+                    property: "visible"
+                    value: sourceText.activeFocus
+                }
                 // Read by the C++ word-difference decoration: this pane, the line kinds its
                 // backgrounds draw, and the text colours of those kinds' theme roles.
                 readonly property var wordDifferenceStyle: ({
@@ -124,9 +164,52 @@ ColumnLayout {
                 rightPadding: Kirigami.Units.smallSpacing
                 topPadding: Kirigami.Units.smallSpacing
                 bottomPadding: Kirigami.Units.smallSpacing
-                width: sourcePane.wrapLines ? sourceViewport.width : implicitWidth
+                // The native input background's minimum width is not text overflow.
+                // TextArea.flickable also uses this implicit width for its content.
+                implicitWidth: contentWidth + leftPadding + rightPadding
+                width: sourcePane.wrapLines ? sourceViewport.width
+                    : Math.max(sourceViewport.width, implicitWidth)
                 wrapMode: sourcePane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
+                // Place against the new document's native spacing, before a
+                // deferred formatter can move the source cursor's viewport.
+                onTextChanged: sourceBlocks.flushSpacing()
                 Accessible.name: qsTr("%1 · %2").arg(sourcePane.paneRole).arg(sourcePane.displayIdentity)
+                function openContextMenu(line: int, x: real, y: real): void {
+                    sourceText.forceActiveFocus(Qt.PopupFocusReason)
+                    if (sourcePane.openChoicesAt(line, x, y))
+                        return
+                    sourceMenu.popup(sourceText, x, y)
+                }
+                TapHandler {
+                    id: touchContext
+                    acceptedButtons: Qt.LeftButton
+                    acceptedDevices: PointerDevice.TouchScreen | PointerDevice.Stylus
+                    onLongPressed: sourceText.openContextMenu(
+                        sourceBlocks.lineAt(sourceText.positionAt(touchContext.point.position.x, touchContext.point.position.y)),
+                        touchContext.point.position.x, touchContext.point.position.y)
+                }
+                Menu {
+                    id: sourceMenu
+                    objectName: sourcePane.paneName + "ContextMenu"
+                    onAboutToHide: sourceText.forceActiveFocus(Qt.PopupFocusReason)
+                    MenuItem {
+                        visible: !!sourcePane.edits
+                        action: sourcePane.edits ? sourcePane.edits.undo : null
+                    }
+                    MenuItem {
+                        visible: !!sourcePane.edits
+                        action: sourcePane.edits ? sourcePane.edits.redo : null
+                    }
+                    MenuItem {
+                        text: qsTr("Copy")
+                        enabled: sourceText.selectedText.length > 0
+                        onTriggered: sourceText.copy()
+                    }
+                    MenuItem {
+                        text: qsTr("Select all")
+                        onTriggered: sourceText.selectAll()
+                    }
+                }
                 Component.onCompleted: sourcePane.editorCompleted()
             }
             LineGutter {
@@ -136,9 +219,19 @@ ColumnLayout {
                 width: implicitWidth
                 height: Math.max(sourceText.height, sourceViewport.height)
                 editor: sourceText
-                rowSpacing: Kirigami.Units.smallSpacing
+                blocks: sourceBlocks
                 viewport: sourceViewport
                 marks: sourcePane.marks
+                // Compose the fill here so LineGutter does not depend on a
+                // component whose gutter property is itself typed LineGutter.
+                // Keep it above the opaque cover and below numbers and glyphs.
+                LineBackgrounds {
+                    objectName: sourcePane.paneName + "GutterBackgrounds"
+                    anchors.fill: parent
+                    gutter: sourceGutter
+                    current: sourcePane.current
+                    z: -0.5
+                }
             }
             LineBackgrounds {
                 objectName: sourcePane.paneName + "Backgrounds"
@@ -158,9 +251,8 @@ ColumnLayout {
             active: sourcePane.showWhitespace
         }
     }
-    TextBlocks {
+    CodeRows {
         id: sourceBlocks
         document: sourceText.textDocument
-        rowSpacing: Kirigami.Units.smallSpacing
     }
 }

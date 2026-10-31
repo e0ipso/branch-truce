@@ -1,3 +1,4 @@
+// Passage search finds text within the selected comparison scope and highlights its matches.
 #include "PassageSearch.h"
 #include "highlighting/PaneHighlighter.h"
 #include <QColor>

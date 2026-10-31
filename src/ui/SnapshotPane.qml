@@ -25,6 +25,7 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
         TextArea {
+            id: snapshotText
             objectName: pane.paneName + "Text"
             text: pane.paneText
             readOnly: true
@@ -35,5 +36,8 @@ ColumnLayout {
             wrapMode: TextEdit.NoWrap
             Accessible.name: pane.paneTitle
         }
+    }
+    CodeRows {
+        document: snapshotText.textDocument
     }
 }

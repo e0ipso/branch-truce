@@ -2,6 +2,7 @@
 #include "ConnectorBands.h"
 #include "PaneMarks.h"
 #include <QMap>
+#include <QPainterPath>
 #include <algorithm>
 
 namespace branch_truce {
@@ -44,16 +45,28 @@ QVariantMap ConnectorBands::bandForLine(int line, bool result) const
 }
 QVariantMap ConnectorBands::bandAt(qreal x, qreal y, qreal width, bool leftSide) const
 {
-    if (width <= 0) return {};
-    const qreal ratio = leftSide ? x / width : 1 - x / width;
+    if (width <= 0 || x < 0 || x > width) return {};
+    const qreal sourceX = leftSide ? x : width - x;
     y -= sourceParentY_;
+    if (y < 0 || y > viewportHeight_) return {};
     for (const auto &value : visibleBands_) {
         const auto band = value.toMap();
-        const qreal top = band.value(QStringLiteral("sourceTop")).toReal() * (1 - ratio)
-            + band.value(QStringLiteral("resultTop")).toReal() * ratio;
-        const qreal bottom = band.value(QStringLiteral("sourceBottom")).toReal() * (1 - ratio)
-            + band.value(QStringLiteral("resultBottom")).toReal() * ratio;
-        if (y >= top && y <= bottom) return band;
+        const qreal sourceTop = band.value(QStringLiteral("sourceTop")).toReal();
+        const qreal sourceBottom = band.value(QStringLiteral("sourceBottom")).toReal();
+        const qreal resultTop = band.value(QStringLiteral("resultTop")).toReal();
+        const qreal resultBottom = band.value(QStringLiteral("resultBottom")).toReal();
+        // Keep the attachment edges inclusive, as with the former straight bands.
+        if ((sourceX == 0 && y >= sourceTop && y <= sourceBottom)
+            || (sourceX == width && y >= resultTop && y <= resultBottom)) return band;
+        // Match ConnectorHandle's cubic edges in source-to-result coordinates.
+        // Clipping happens after constructing the full, scrolled passage bounds.
+        QPainterPath ribbon;
+        ribbon.moveTo(0, sourceTop);
+        ribbon.cubicTo(width / 2, sourceTop, width / 2, resultTop, width, resultTop);
+        ribbon.lineTo(width, resultBottom);
+        ribbon.cubicTo(width / 2, resultBottom, width / 2, sourceBottom, 0, sourceBottom);
+        ribbon.closeSubpath();
+        if (ribbon.contains(QPointF(sourceX, y))) return band;
     }
     return {};
 }
@@ -66,10 +79,12 @@ void ConnectorBands::update()
         const auto decide = [](QMap<int, QString> &states, int line, const QString &kind) {
             if (!states.contains(line) || PaneMarks::rank(states.value(line)) < PaneMarks::rank(kind)) states[line] = kind;
         };
-        for (const auto &value : regions_) {
+        const auto conflicts = PaneMarks::conflictingLines(passages_);
+        for (const auto &value : PaneMarks::stylingRegions(regions_)) {
             const auto region = value.toMap();
             if (string(region, "side") != side_) continue;
             const auto state = string(region, "state");
+            if (state == QLatin1String("undecided") && !PaneMarks::conflictingRegion(region, conflicts)) continue;
             const auto kind = state == QLatin1String("undecided") ? QStringLiteral("conflict") : state;
             const int begin = number(region, "sourceLineBegin"), end = number(region, "sourceLineEnd");
             if (begin == end) decide(boundaries, begin, kind);
@@ -77,7 +92,39 @@ void ConnectorBands::update()
         }
         const auto rows = fold_.value(QStringLiteral("rows")).toMap();
         QMap<int, int> folded;
-        for (const auto &value : passages_) {
+        QVariantList projected;
+        for (const auto &value : PaneMarks::decoratedPassages(passages_)) {
+            const auto passage = value.toMap();
+            if (string(passage, "side") != side_) continue;
+            const int sb = number(passage, "sourceLineBegin"), se = number(passage, "sourceLineEnd");
+            const int rb = number(passage, "resultLineBegin"), re = number(passage, "resultLineEnd");
+            const auto kind = string(passage, "kind");
+            const bool equal = passage.value(QStringLiteral("comparisonKind"), kind).toString() == QLatin1String("equal");
+            if (!equal || sb >= se || se - sb != re - rb) {
+                projected.append(value);
+                continue;
+            }
+            // Equal correspondence is exact line by line. Split it at decision
+            // boundaries so accepting one line never tints its equal neighbours.
+            const auto kindAt = [&](int line) {
+                const auto state = lines.value(line);
+                return PaneMarks::rank(state) > PaneMarks::rank(kind) ? state : kind;
+            };
+            for (int first = sb; first < se;) {
+                const auto state = kindAt(first);
+                int stop = first + 1;
+                while (stop < se && kindAt(stop) == state) ++stop;
+                auto part = passage;
+                part[QStringLiteral("kind")] = state;
+                part[QStringLiteral("sourceLineBegin")] = first;
+                part[QStringLiteral("sourceLineEnd")] = stop;
+                part[QStringLiteral("resultLineBegin")] = rb + first - sb;
+                part[QStringLiteral("resultLineEnd")] = rb + stop - sb;
+                projected.append(part);
+                first = stop;
+            }
+        }
+        for (const auto &value : projected) {
             const auto passage = value.toMap();
             if (string(passage, "side") != side_) continue;
             const auto passageKind = string(passage, "kind");
@@ -105,7 +152,7 @@ void ConnectorBands::update()
                 continue;
             }
             if (passageKind == QLatin1String("equal")) continue;
-            QString kind = passageKind == QLatin1String("result-only") ? QStringLiteral("added")
+            QString kind = passageKind == QLatin1String("result-only") || passageKind == QLatin1String("added") ? QStringLiteral("added")
                 : passageKind == QLatin1String("source-only") ? QStringLiteral("removed") : QStringLiteral("changed");
             const auto &states = sb == se ? boundaries : lines;
             for (int line = sb; line < std::max(se, sb + 1); ++line)
@@ -128,6 +175,8 @@ void ConnectorBands::update()
             const qreal parent = source ? 0 : resultParentY_ - sourceParentY_;
             const qreal offset = source ? sourceEditorY_ + sourcePadding_ - sourceScroll_
                                         : resultEditorY_ + resultPadding_ - resultScroll_;
+            // Half-open endpoints use the laid-out block boundaries, including
+            // wrapped rows and the single visible row of a folded marker block.
             return parent + offset + blocks->yAtLine(bottom ? end : begin)
                 + (begin < end ? 0 : (bottom ? rule_ : -rule_) / 2);
         };

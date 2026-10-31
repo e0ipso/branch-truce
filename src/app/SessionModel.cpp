@@ -1,10 +1,13 @@
+// The session model presents each file's draft, decisions and resolution state to the window.
 #include "SessionModel.h"
 #include "recovery/RecoveryRestore.h"
 #include "git/GitAdapter.h"
+#include <QMimeDatabase>
 #include <QStandardPaths>
 #include <QUuid>
 #include <algorithm>
 #include <limits>
+#include <numeric>
 
 namespace branch_truce {
 namespace {
@@ -62,7 +65,8 @@ constexpr CategoryIcon categoryIcons[] = {
     {.category = "written-unresolved", .icon = "vcs-locally-modified"},
     {.category = "failed", .icon = "dialog-error"},
     {.category = "outside-app", .icon = "unknown"},
-    {.category = "published", .icon = "checkmark"},
+    // The emblem is the positive check tile; the action named checkmark is monochrome.
+    {.category = "published", .icon = "emblem-checked"},
 };
 
 QString categoryIcon(const QString &category)
@@ -119,24 +123,59 @@ bool SessionModel::settleRecoveryFailure(const std::string &id, const QString &e
 bool SessionModel::commitCandidate(std::size_t row, FileSession candidate, const QString &action)
 {
     if (!journal_.commitCandidate(candidate, action)) return false;
-    setFile(row, std::move(candidate));
+    setFile(row, std::move(candidate), action);
     return true;
 }
 
-void SessionModel::setFile(std::size_t row, FileSession file)
+void SessionModel::setFile(std::size_t row, FileSession file, const QString &action)
 {
     files_[row] = std::move(file);
     facts_[row] = files_[row].facts();
+    if (action == QLatin1String("open") || action == QLatin1String("stage-outcome")
+        || action == QLatin1String("discard-to-staged") || action == QLatin1String("discard-to-checkpoint")
+        || action == QLatin1String("support"))
+        presentationResolved_[row] = facts_[row].resolved;
+}
+
+std::vector<std::size_t> SessionModel::presentationOrder() const
+{
+    std::vector<std::size_t> order(files_.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    const auto group = [this](std::size_t row) {
+        if (files_[row].support() != Support::Supported) return 2;
+        return presentationResolved_[row] ? 1 : 0;
+    };
+    std::stable_sort(order.begin(), order.end(), [&](auto left, auto right) {
+        return group(left) < group(right);
+    });
+    return order;
+}
+
+void SessionModel::refreshPresentation()
+{
+    const auto order = presentationOrder();
+    for (std::size_t target = 0; target < order.size(); ++target) {
+        const auto found = std::find(presentationRows_.begin() + static_cast<std::ptrdiff_t>(target),
+                                     presentationRows_.end(), order[target]);
+        const auto source = static_cast<int>(found - presentationRows_.begin());
+        if (source == static_cast<int>(target)) continue;
+        // Move rows, keeping Qt's persistent indexes and delegate identities intact.
+        beginMoveRows({}, source, source, {}, static_cast<int>(target));
+        presentationRows_.erase(found);
+        presentationRows_.insert(presentationRows_.begin() + static_cast<std::ptrdiff_t>(target), order[target]);
+        endMoveRows();
+    }
 }
 
 void SessionModel::notifyFile(const std::string &id)
 {
-    if (const auto row = rowOf(id); row >= 0) notifyRow(static_cast<std::size_t>(row));
+    if (const auto row = storageRowOf(id); row >= 0) notifyRow(static_cast<std::size_t>(row));
 }
 
 void SessionModel::notifyRow(std::size_t row)
 {
-    const auto changed = index(static_cast<int>(row), 0);
+    refreshPresentation();
+    const auto changed = index(rowOf(files_[row].id()), 0);
     Q_EMIT dataChanged(changed, changed);
     Q_EMIT summaryChanged();
 }
@@ -150,11 +189,12 @@ const Draft *SessionModel::pendingDraft(const std::string &id) const
 Transition SessionModel::retryRecovery(const std::string &id)
 {
     if (!journal_.pending(id)) return file(id) ? Transition::NoChange : Transition::StaleRevision;
-    const auto found = rowOf(id);
+    const auto found = storageRowOf(id);
     if (found < 0) return Transition::StaleRevision;
     const auto row = static_cast<std::size_t>(found);
+    const auto action = journal_.pending(id)->action;
     auto committed = journal_.retryPending(id);
-    if (committed) setFile(row, std::move(*committed));
+    if (committed) setFile(row, std::move(*committed), action);
     notifyRow(row);
     return committed ? Transition::Applied : Transition::Blocked;
 }
@@ -184,6 +224,7 @@ void SessionModel::replaceFiles(std::vector<FileSession> files, RecoveryRestore 
     files_ = std::move(files);
     facts_.clear();
     rows_.clear();
+    presentationResolved_.assign(files_.size(), false);
     for (std::size_t row = 0; row < files_.size(); ++row) {
         facts_.push_back(files_[row].facts());
         rows_.emplace(files_[row].id(), row);
@@ -192,6 +233,9 @@ void SessionModel::replaceFiles(std::vector<FileSession> files, RecoveryRestore 
         if (restore && !restore->newFiles.contains(files_[row].id())) restored_.insert(files_[row].id());
         else (void)commitCandidate(row, files_[row], QStringLiteral("open"));
     }
+    for (std::size_t row = 0; row < files_.size(); ++row)
+        presentationResolved_[row] = facts_[row].resolved;
+    presentationRows_ = presentationOrder();
     endResetModel();
     Q_EMIT summaryChanged();
 }
@@ -207,7 +251,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.model() != this || index.column() != 0
         || index.row() < 0 || index.row() >= totalFiles()) return {};
-    const auto row = static_cast<std::size_t>(index.row());
+    const auto row = presentationRows_[static_cast<std::size_t>(index.row())];
     const auto &file = files_[row];
     const auto &facts = facts_[row];
     const auto *pending = journal_.pending(file.id());
@@ -229,6 +273,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
         return {};
     case SupportDetailRole: return text(file.supportDetail());
     case UndecidedRole: return QVariant::fromValue(static_cast<qulonglong>(facts.undecided));
+    case ConflictCountRole: return QVariant::fromValue(static_cast<qulonglong>(file.conflictCount()));
     case UnsavedRole: return pendingInput || facts.unsaved;
     case ReviewNeededRole: return facts.needsReview;
     case ResolvedRole: return resolvedAt(row);
@@ -249,6 +294,14 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case StatusIconRole: return categoryIcon(routeAt(row).category);
     case StatusLineRole: return statusLineAt(row);
     case ChipsRole: return chipsAt(row);
+    case MimeIconRole:
+    case MimeDescriptionRole: {
+        // Use the captured path, never a later read of the mutable worktree or draft.
+        const auto mime = QMimeDatabase().mimeTypeForFile(text(file.path()), QMimeDatabase::MatchExtension);
+        if (role == MimeDescriptionRole) return mime.isDefault() ? QString{} : mime.comment();
+        const auto icon = mime.iconName();
+        return mime.isDefault() || icon.isEmpty() ? QStringLiteral("unknown") : icon;
+    }
     case SummaryRole: return summaryAt(row);
     default: return {};
     }
@@ -265,16 +318,25 @@ QHash<int, QByteArray> SessionModel::roleNames() const
             {PendingTextRole, "pendingText"}, {RecoveryStateRole, "recoveryState"},
             {RecoveryErrorRole, "recoveryError"}, {ProgressRole, "progress"},
             {StatusIconRole, "statusIcon"}, {StatusLineRole, "statusLine"}, {ChipsRole, "chips"},
-            {SummaryRole, "summary"}};
+            {MimeIconRole, "mimeIcon"}, {MimeDescriptionRole, "mimeDescription"}, {SummaryRole, "summary"},
+            {ConflictCountRole, "conflictCount"}};
 }
 
 const FileSession *SessionModel::file(const std::string &id) const
 {
-    const auto row = rowOf(id);
+    const auto row = storageRowOf(id);
     return row < 0 ? nullptr : &files_[static_cast<std::size_t>(row)];
 }
 
 int SessionModel::rowOf(const std::string &id) const
+{
+    const auto row = storageRowOf(id);
+    if (row < 0) return -1;
+    const auto found = std::find(presentationRows_.begin(), presentationRows_.end(), static_cast<std::size_t>(row));
+    return found == presentationRows_.end() ? -1 : static_cast<int>(found - presentationRows_.begin());
+}
+
+int SessionModel::storageRowOf(const std::string &id) const
 {
     const auto found = rows_.find(id);
     return found == rows_.end() ? -1 : static_cast<int>(found->second);
@@ -282,12 +344,13 @@ int SessionModel::rowOf(const std::string &id) const
 
 const FileSession *SessionModel::fileAt(int row) const
 {
-    return row < 0 || static_cast<std::size_t>(row) >= files_.size() ? nullptr : &files_[static_cast<std::size_t>(row)];
+    return row < 0 || static_cast<std::size_t>(row) >= presentationRows_.size()
+        ? nullptr : &files_[presentationRows_[static_cast<std::size_t>(row)]];
 }
 
 SessionModel::Progress SessionModel::progress(int row) const
 {
-    return progressAt(static_cast<std::size_t>(row));
+    return progressAt(presentationRows_[static_cast<std::size_t>(row)]);
 }
 
 int SessionModel::supportCount(Support support) const
@@ -311,8 +374,11 @@ bool SessionModel::appendFile(FileSession file)
     facts_.push_back(file.facts());
     rows_.emplace(file.id(), files_.size());
     files_.push_back(std::move(file));
+    presentationRows_.push_back(static_cast<std::size_t>(row));
+    presentationResolved_.push_back(false);
     (void)commitCandidate(static_cast<std::size_t>(row), files_.back(), QStringLiteral("open"));
     endInsertRows();
+    refreshPresentation();
     Q_EMIT summaryChanged();
     return true;
 }
@@ -357,7 +423,7 @@ SessionModel::Progress SessionModel::progressAt(std::size_t row) const
 {
     const auto &facts = facts_[row];
     return {facts.undecided, !journal_.pending(files_[row].id()) && !facts.unsaved, !facts.needsReview,
-            resolvedAt(row), facts.earlierStaged};
+            resolvedAt(row), facts.earlierStaged, files_[row].conflictCount()};
 }
 
 // Dimensions come from the current revision and the saved, reviewed and staged
@@ -367,6 +433,7 @@ QVariantMap SessionModel::progressData(std::size_t row) const
     const auto &file = files_[row];
     const auto progress = progressAt(row);
     return {{QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(progress.undecided))},
+        {QStringLiteral("conflicts"), QVariant::fromValue(static_cast<qulonglong>(progress.conflicts))},
         {QStringLiteral("saved"), progress.saved},
         {QStringLiteral("reviewed"), progress.reviewed},
         {QStringLiteral("resolved"), progress.resolved},

@@ -182,3 +182,29 @@ test('workflow compilation cache reaches the build and reuses compatible revisio
   assert.equal(restore.with.ref, undefined);
   assert.equal(save.with.ref, undefined, 'PR cache must keep GitHub merge-ref scope');
 });
+
+test('full fidelity uses one baseline while every platform still reaches native validation', t => {
+  const box = repository(t);
+  const job = workflow.jobs.kde;
+  assert.deepEqual(job.strategy.matrix.include.map((entry: { format: string }) => entry.format), formats);
+  const build = job.steps.find((step: any) => step.name === 'Test, package and check');
+  assert.equal(build.if, undefined, 'platform validation must remain unconditional');
+  const configured = String(job.env.BRANCH_TRUCE_NATIVE_FIDELITY);
+  assert.match(configured, /^\$\{\{.*\}\}$/);
+  const expression = configured.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+  const trace = join(box.cwd, 'native-validation-routes');
+  const directory = join(box.cwd, 'packaging/scripts');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, 'container-check.sh'), '#!/bin/bash\nset -euo pipefail\n' +
+    'printf "%s %s\\n" "$FORMAT" "${BRANCH_TRUCE_NATIVE_FIDELITY:?}" >> "$TRACE"\n', { mode: 0o755 });
+  for (const format of formats) {
+    const mode = String(runInNewContext(expressionForJS(expression), { matrix: { format } }));
+    assert.equal(mode, format === 'kubuntu-deb' ? '1' : '0');
+    execFileSync('bash', ['-euo', 'pipefail', '-c', build.run], { cwd: box.cwd, env: {
+      PATH: process.env.PATH, FORMAT: format, VERSION: '1.2.3', OUTPUT: join(box.cwd, format),
+      PREVIOUS: '', TRACE: trace, BRANCH_TRUCE_NATIVE_FIDELITY: mode,
+    } });
+  }
+  assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'),
+    ['kubuntu-deb 1', 'fedora-rpm 0', 'arch-pkg 0']);
+});

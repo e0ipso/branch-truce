@@ -1,4 +1,5 @@
 #include "app/SessionModel.h"
+#include "app/SelectedFile.h"
 #include "recovery/RecoveryRestore.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
@@ -10,6 +11,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
+#include <QQmlContext>
+#include <QQmlEngine>
+#include <QQmlExpression>
 #include <QStandardPaths>
 #include <QPersistentModelIndex>
 #include <QSet>
@@ -198,6 +202,61 @@ public:
     int run()
     {
         test_support::Suite suite("SessionModelTests");
+        suite.run("comparison bindings receive one complete projection per revision", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(test_support::choiceFile()));
+            SelectedFile selected(model);
+            selected.sync(QStringLiteral("choices"));
+            QQmlEngine engine;
+            engine.rootContext()->setContextProperty(QStringLiteral("selected"), &selected);
+            QQmlExpression binding(engine.rootContext(), nullptr, QStringLiteral(
+                "JSON.stringify({passages:selected.passages, regions:selected.regions, "
+                "handEditedLines:selected.handEditedLines, choices:selected.choices, "
+                "markerBlocks:selected.markerBlocks, markerOrphans:selected.markerOrphans, "
+                "choiceNotice:selected.choiceNotice})"));
+            binding.setNotifyOnValueChanged(true);
+            const auto read = [&] {
+                const auto value = binding.evaluate().toString();
+                CHECK(!binding.hasError());
+                return value;
+            };
+            const auto initial = read();
+            QStringList observed, focused;
+            QObject::connect(&binding, &QQmlExpression::valueChanged, [&] { observed.push_back(read()); });
+            const auto observeFocused = [&] { focused.push_back(read()); };
+            QObject::connect(&selected, &SelectedFile::passagesChanged, observeFocused);
+            QObject::connect(&selected, &SelectedFile::regionsChanged, observeFocused);
+            QObject::connect(&selected, &SelectedFile::handEditedLinesChanged, observeFocused);
+            const auto checkPublication = [&] {
+                const auto complete = read();
+                CHECK(observed.size() == 1);
+                CHECK(observed.front() == complete);
+                CHECK(focused.size() >= 2);
+                for (const auto &value : focused) CHECK(value == complete);
+                observed.clear();
+                focused.clear();
+                return complete;
+            };
+            CHECK(model.editResult("choices", model.file("choices")->current().id,
+                {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+            selected.sync(QStringLiteral("choices"));
+            CHECK(checkPublication() != initial);
+            // Status-only refreshes must not recompute the same QML projection.
+            selected.sync(QStringLiteral("choices"));
+            CHECK(observed.isEmpty() && focused.isEmpty());
+            CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+            selected.sync(QStringLiteral("choices"));
+            CHECK(checkPublication() == initial);
+            CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
+            selected.sync(QStringLiteral("choices"));
+            CHECK(checkPublication() != initial);
+            selected.sync(QString{});
+            checkPublication();
+            CHECK(selected.passages().isEmpty() && selected.regions().isEmpty()
+                && selected.handEditedLines().isEmpty() && selected.choices().isEmpty());
+        });
         for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
             for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst}) {
                 suite.run("ordered combination undo and redo recover as complete transactions "
@@ -656,17 +715,56 @@ public:
             CHECK(!decisions[1].toMap().contains("order"));
             const auto names = model.roleNames();
             // Progress and the view roles follow the recovery roles.
-            CHECK(names.size() == SessionModel::SummaryRole - SessionModel::FileIdRole + 1);
+            CHECK(names.size() == SessionModel::ConflictCountRole - SessionModel::FileIdRole + 1);
             CHECK(names.value(SessionModel::ProgressRole) == "progress");
             CHECK(names.value(SessionModel::StatusIconRole) == "statusIcon");
             CHECK(names.value(SessionModel::StatusLineRole) == "statusLine");
             CHECK(names.value(SessionModel::ChipsRole) == "chips");
             CHECK(names.value(SessionModel::SummaryRole) == "summary");
+            CHECK(names.value(SessionModel::ConflictCountRole) == "conflictCount");
             QSet<QByteArray> unique;
             for (auto it = names.cbegin(); it != names.cend(); ++it) {
                 CHECK(!it.value().isEmpty() && !unique.contains(it.value()));
                 unique.insert(it.value());
             }
+        });
+        suite.run("conflict counts follow marker history without erasing source decisions", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(test_support::splitFile()));
+            const auto launch = model.file("choices")->current().draft;
+            CHECK(role(model, SessionModel::ConflictCountRole).toInt() == 1);
+            CHECK(role(model, SessionModel::UndecidedRole).toInt() > 1);
+            auto edited = launch;
+            edited.text = "manual result without conflict markers\n";
+            edited.unresolvedMarkers = 0;
+            CHECK(model.replaceDraft("choices", 1, edited) == Transition::Applied);
+            CHECK(role(model, SessionModel::ConflictCountRole).toInt() == 0);
+            CHECK(role(model, SessionModel::UndecidedRole).toInt() > 0);
+            CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+            CHECK(model.file("choices")->current().draft == launch);
+            CHECK(role(model, SessionModel::ConflictCountRole).toInt() == 1);
+            CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
+            CHECK(model.file("choices")->current().draft == edited);
+            CHECK(role(model, SessionModel::ConflictCountRole).toInt() == 0);
+            CHECK(replayedFile(model.recoveryDirectory()).current().draft == edited);
+        });
+        suite.run("saved and reviewed drafts do not receive the published check tile", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(sessionFile("status")));
+            const auto revision = model.file("status")->current().id;
+            CHECK(role(model, SessionModel::StatusIconRole).toString() != "emblem-checked");
+            CHECK(model.recordCheckpoint("status", revision, Outcome::Succeeded) == Transition::Applied);
+            CHECK(role(model, SessionModel::StatusIconRole).toString() != "emblem-checked");
+            CHECK(model.beginMarkResolved("status", revision) == Transition::Applied);
+            CHECK(role(model, SessionModel::StatusIconRole).toString() != "emblem-checked");
+            CHECK(model.recordWrite("status", revision, Outcome::Succeeded) == Transition::Applied);
+            CHECK(role(model, SessionModel::StatusIconRole).toString() != "emblem-checked");
+            CHECK(model.recordStage("status", revision, Outcome::Succeeded, "verified-object", "100644") == Transition::Applied);
+            CHECK(role(model, SessionModel::StatusIconRole).toString() == "emblem-checked");
         });
         suite.run("row insertion and notifications occur only for applied commands", [] {
             SessionModel model;
@@ -873,7 +971,14 @@ public:
             CHECK(model.appendFile(FileSession("unreadable", "broken.txt", {}, Support::Unreadable, {})));
             const std::string bytes = std::string(":literal\t") + static_cast<char>(0xff);
             CHECK(model.appendFile(FileSession("bytes", bytes, draft())));
-            CHECK(model.rowOf("published") == 1 && model.rowOf("bytes") == 4 && model.rowOf("missing") == -1);
+            const std::vector<std::string> displayOrder{"undecided", "bytes", "published", "outside", "unreadable"};
+            for (int row = 0; row < static_cast<int>(displayOrder.size()); ++row) {
+                const auto &expected = displayOrder[static_cast<std::size_t>(row)];
+                CHECK(model.rowOf(expected) == row);
+                CHECK(model.fileAt(row)->id() == expected);
+                CHECK(role(model, SessionModel::FileIdRole, row).toString().toStdString() == expected);
+            }
+            CHECK(model.rowOf("missing") == -1);
             CHECK(model.supportCount(Support::Supported) == 3 && model.supportCount(Support::OutsideApp) == 1
                   && model.supportCount(Support::Unreadable) == 1);
             const auto at = [&](const std::string &id, int value) { return role(model, value, model.rowOf(id)); };
@@ -883,7 +988,7 @@ public:
             CHECK(at("outside", SessionModel::StatusLineRole).toString() == "image content");
             CHECK(at("unreadable", SessionModel::StatusLineRole).toString() == "File could not be read");
             CHECK(at("undecided", SessionModel::StatusIconRole).toString() == "vcs-conflicting");
-            CHECK(at("published", SessionModel::StatusIconRole).toString() == "checkmark");
+            CHECK(at("published", SessionModel::StatusIconRole).toString() == "emblem-checked");
             CHECK(at("outside", SessionModel::StatusIconRole).toString() == "unknown");
             CHECK(at("unreadable", SessionModel::StatusIconRole).toString() == "dialog-error");
 

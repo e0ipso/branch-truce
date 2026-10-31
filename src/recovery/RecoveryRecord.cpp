@@ -1,3 +1,4 @@
+// Recovery records encode and read a complete text-and-decision state at an acknowledgment boundary.
 #include "recovery/RecoveryRecord.h"
 #include "storage/TextFormat.h"
 #include <QJsonArray>

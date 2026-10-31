@@ -1314,9 +1314,14 @@ public:
             const auto selectedId = controller.selectedFileId();
             CHECK(!controller.selectFile("not-an-exact-file-id") && controller.selectedFileId() == selectedId);
             // Adapter success callbacks complete supported rows without touching Git in this fixture.
+            // Publishing moves display rows. Capture stable identities before the first move.
+            std::vector<std::string> supportedIds;
             for (int row = 0; row < model->totalFiles(); ++row) {
                 const auto id = model->data(model->index(row), SessionModel::FileIdRole).toString().toStdString();
-                if (model->file(id)->support() != Support::Supported) continue;
+                if (model->file(id)->support() == Support::Supported) supportedIds.push_back(id);
+            }
+            CHECK(supportedIds.size() == 4);
+            for (const auto &id : supportedIds) {
                 CHECK(model->replaceDraft(id, 1, {"reviewed supported result\n", {}, 0}) == Transition::Applied);
                 const auto revision = model->file(id)->current().id;
                 CHECK(model->beginMarkResolved(id, revision) == Transition::Applied);

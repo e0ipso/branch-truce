@@ -5,8 +5,12 @@
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/QuickScene.h"
+#include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QColor>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QQmlApplicationEngine>
 #include <QQmlExpression>
@@ -16,6 +20,7 @@
 #include <QTemporaryDir>
 #include <QTextBlock>
 #include <QTextCharFormat>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QtQml/qqml.h>
@@ -328,6 +333,49 @@ public:
             CHECK(fixture.controller.selectFile("notes"));
             settlePlain(fixture);
         });
+        suite.run("scattered decorations publish one document change without changing text or history", [] {
+            QTextDocument document;
+            document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
+            PaneHighlighter highlighter(&document);
+            highlighter.attach();
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            document.setModified(false);
+            const auto text = document.toPlainText();
+            const auto undo = document.isUndoAvailable();
+            const auto redo = document.isRedoAvailable();
+            QTextCursor selection(&document);
+            selection.setPosition(3);
+            selection.setPosition(8, QTextCursor::KeepAnchor);
+            int notifications = 0;
+            const auto connection = QObject::connect(&document, &QTextDocument::contentsChanged,
+                &document, [&] { ++notifications; });
+            QList<QTextLayout::FormatRange> ranges;
+            for (const int line : {2, 7, 12}) {
+                QTextLayout::FormatRange range;
+                range.start = document.findBlockByNumber(line).position();
+                range.length = 5;
+                range.format.setFontUnderline(true);
+                ranges.append(range);
+            }
+            highlighter.setDecorations(ranges);
+            CHECK(notifications == 1);
+            for (const auto &range : ranges) {
+                const auto formats = document.findBlock(range.start).layout()->formats();
+                CHECK(!formats.isEmpty() && formats.front().format.fontUnderline());
+            }
+            highlighter.setDecorations(ranges);
+            CHECK(notifications == 1);
+            notifications = 0;
+            highlighter.setDecorations({});
+            CHECK(notifications == 1);
+            for (const auto &range : ranges)
+                CHECK(document.findBlock(range.start).layout()->formats().isEmpty());
+            CHECK(document.toPlainText() == text);
+            CHECK(!document.isModified());
+            CHECK(document.isUndoAvailable() == undo && document.isRedoAvailable() == redo);
+            CHECK(selection.anchor() == 3 && selection.position() == 8);
+            QObject::disconnect(connection);
+        });
         suite.run("a decoration pass creates no revision and no recovery transaction", [] {
             Fixture fixture;
             CHECK(fixture.controller.selectFile("notes"));
@@ -356,6 +404,168 @@ public:
             CHECK(!fixture.controller.files()->hasPendingRecovery());
             CHECK(result->toPlainText() == text);
             CHECK(highlighter->document() == result);
+        });
+        suite.run("edits before decorated blocks keep their local formats without another layout pass", [] {
+            QTextDocument document;
+            // Match a Quick editor: initialize its layout before highlighting.
+            // Installing it later publishes a full-document change that merges
+            // into the first edit and legitimately reformats shifted ranges.
+            (void)document.documentLayout();
+            document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
+            PaneHighlighter highlighter(&document);
+            highlighter.attach();
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            const QList<QTextBlock> decorated{document.findBlockByNumber(4), document.findBlockByNumber(9),
+                                             document.findBlockByNumber(14)};
+            const auto ranges = [&] {
+                QList<QTextLayout::FormatRange> found;
+                for (const auto &block : decorated) {
+                    QTextLayout::FormatRange range;
+                    range.start = block.position() + 2;
+                    range.length = 5;
+                    range.format.setFontUnderline(true);
+                    found.append(range);
+                }
+                return found;
+            };
+            highlighter.setDecorations(ranges());
+            QTextCursor selection(&document);
+            selection.setPosition(decorated.last().position() + 1);
+            selection.setPosition(selection.position() + 3, QTextCursor::KeepAnchor);
+            int notifications = 0;
+            int updates = 0;
+            const auto changed = QObject::connect(&document, &QTextDocument::contentsChanged,
+                &document, [&] { ++notifications; });
+            const auto laidOut = QObject::connect(document.documentLayout(), &QAbstractTextDocumentLayout::update,
+                &document, [&](const QRectF &) { ++updates; });
+            const auto formatState = [](const QList<QTextLayout::FormatRange> &formats) {
+                QJsonArray state;
+                for (const auto &range : formats) {
+                    QJsonArray properties;
+                    const auto values = range.format.properties();
+                    for (auto it = values.cbegin(); it != values.cend(); ++it)
+                        properties.append(QJsonObject{{"property", it.key()}, {"value", QJsonValue::fromVariant(it.value())}});
+                    state.append(QJsonObject{{"start", range.start}, {"length", range.length},
+                        {"underline", range.format.fontUnderline()}, {"underlineStyle", static_cast<int>(range.format.underlineStyle())},
+                        {"properties", properties}});
+                }
+                return state;
+            };
+            const auto blockState = [&] {
+                QJsonArray state;
+                for (const auto &block : decorated) {
+                    if (!block.isValid()) {
+                        state.append(QJsonObject{{"valid", false}});
+                        continue;
+                    }
+                    state.append(QJsonObject{{"valid", block.isValid()}, {"number", block.blockNumber()},
+                        {"position", block.position()}, {"revision", block.revision()}, {"text", block.text()},
+                        {"currentIdentity", document.findBlockByNumber(block.blockNumber()) == block},
+                        {"formats", formatState(block.layout()->formats())}});
+                }
+                return state;
+            };
+            for (const auto &prefix : {QStringLiteral("prefix "), QStringLiteral("new line\n")}) {
+                const auto beforeEdit = blockState();
+                const auto previousRanges = formatState(highlighter.decorations());
+                QTextCursor edit(&document);
+                edit.insertText(prefix);
+                const auto text = document.toPlainText();
+                const auto revision = document.revision();
+                const auto modified = document.isModified();
+                const auto undo = document.isUndoAvailable(), redo = document.isRedoAvailable();
+                const int anchor = selection.anchor(), position = selection.position();
+                const auto afterEdit = blockState();
+                const auto wanted = ranges();
+                const int nativeNotifications = notifications, nativeUpdates = updates;
+                notifications = updates = 0;
+                highlighter.setDecorations(wanted);
+                if (notifications != 0 || updates != 0) {
+                    const QJsonObject diagnostic{{"qt", qVersion()}, {"prefix", prefix},
+                        {"notifications", notifications}, {"layoutUpdates", updates},
+                        {"notificationsBeforeRangeUpdate", nativeNotifications}, {"layoutUpdatesBeforeRangeUpdate", nativeUpdates},
+                        {"documentRevisionBeforeRangeUpdate", revision}, {"documentRevisionAfterRangeUpdate", document.revision()},
+                        {"beforeEdit", beforeEdit}, {"afterEdit", afterEdit}, {"afterRangeUpdate", blockState()},
+                        {"previousRanges", previousRanges}, {"wantedRanges", formatState(wanted)}};
+                    std::cerr << "DECORATION_SHIFT_DIAGNOSTIC="
+                              << QJsonDocument(diagnostic).toJson(QJsonDocument::Compact).constData() << '\n';
+                }
+                CHECK(notifications == 0 && updates == 0);
+                CHECK(document.revision() == revision);
+                CHECK(document.toPlainText() == text && document.isModified() == modified);
+                CHECK(document.isUndoAvailable() == undo && document.isRedoAvailable() == redo);
+                CHECK(selection.anchor() == anchor && selection.position() == position);
+                for (const auto &range : ranges()) {
+                    for (int at = range.start; at < range.start + range.length; ++at)
+                        CHECK(formatAt(&document, at).fontUnderline());
+                    CHECK(!formatAt(&document, range.start - 1).fontUnderline());
+                    CHECK(!formatAt(&document, range.start + range.length).fontUnderline());
+                }
+            }
+            highlighter.setDecorations({});
+            for (const auto &block : decorated) CHECK(block.layout()->formats().isEmpty());
+            QObject::disconnect(changed);
+            QObject::disconnect(laidOut);
+        });
+        suite.run("local overlays follow replacement splitting deletion and search precedence", [] {
+            QTextDocument document;
+            document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
+            PaneHighlighter highlighter(&document);
+            highlighter.attach();
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            auto block = document.findBlockByNumber(4);
+            QTextLayout::FormatRange word;
+            word.start = block.position() + 2;
+            word.length = 7;
+            word.format.setFontUnderline(true);
+            word.format.setBackground(QColor(Qt::yellow));
+            auto search = word;
+            search.length = 2;
+            search.format = QTextCharFormat();
+            search.format.setBackground(QColor(Qt::magenta));
+            highlighter.setDecorations({word});
+            highlighter.setSearchDecorations({search});
+            CHECK(formatAt(&document, word.start).fontUnderline());
+            CHECK(formatAt(&document, word.start).background().color() == QColor(Qt::magenta));
+            CHECK(formatAt(&document, word.start + 3).background().color() == QColor(Qt::yellow));
+            QTextCursor edit(&document);
+            edit.setPosition(word.start + 2);
+            edit.setPosition(word.start + 4, QTextCursor::KeepAnchor);
+            edit.insertText(QStringLiteral("XY"));
+            highlighter.setDecorations({word});
+            CHECK(formatAt(&document, word.start + 3).fontUnderline());
+            // Split the decorated range across two new layouts. The inserted
+            // paragraph separator itself has no character overlay.
+            edit.setPosition(word.start + 3);
+            edit.insertText(QStringLiteral("\n"));
+            ++word.length;
+            highlighter.setDecorations({word});
+            for (int at = word.start; at < word.start + word.length; ++at) {
+                if (document.characterAt(at) == QChar::ParagraphSeparator) continue;
+                CHECK(formatAt(&document, at).fontUnderline());
+            }
+            CHECK(formatAt(&document, search.start).background().color() == QColor(Qt::magenta));
+            highlighter.setSearchDecorations({});
+            CHECK(formatAt(&document, search.start).background().color() == QColor(Qt::yellow));
+            // Delete both pieces, including one cached live block. Any
+            // formats temporarily applied at the old offsets must be cleared.
+            const int first = block.position();
+            const auto after = block.next().next();
+            CHECK(after.isValid());
+            edit.setPosition(first);
+            edit.setPosition(after.position(), QTextCursor::KeepAnchor);
+            edit.removeSelectedText();
+            highlighter.setDecorations({});
+            for (auto current = document.begin(); current.isValid(); current = current.next())
+                CHECK(current.layout()->formats().isEmpty());
+            document.setPlainText(QStringLiteral("replacement text\n").repeated(32));
+            word.start = document.findBlockByNumber(8).position() + 1;
+            word.length = 4;
+            highlighter.setDecorations({word});
+            CHECK(formatAt(&document, word.start).fontUnderline());
+            highlighter.setDecorations({});
+            for (auto current = document.begin(); current.isValid(); current = current.next())
+                CHECK(current.layout()->formats().isEmpty());
         });
         return suite.report();
     }

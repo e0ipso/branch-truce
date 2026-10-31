@@ -1,3 +1,4 @@
+// Git parsing preserves exact repository paths while decoding conflict and index records.
 #pragma once
 
 #include "GitAdapter.h"

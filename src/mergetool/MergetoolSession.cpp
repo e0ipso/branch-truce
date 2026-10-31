@@ -1,3 +1,4 @@
+// The mergetool session connects waiting Git launchers to the window and tracks their published results.
 #include "mergetool/MergetoolSession.h"
 #include "mergetool/MergetoolProtocol.h"
 #include "recovery/RecoveryRestore.h"

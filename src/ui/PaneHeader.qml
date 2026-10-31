@@ -2,6 +2,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
@@ -12,7 +13,11 @@ Rectangle {
     property string identity: ""
     property string identityName: ""
     property string description: ""
-    property bool fixedIdentity: false
+    property string identityRole: ""
+    property string identityHash: ""
+    // Font-scaled native units keep the wider side inset and shared text baseline.
+    readonly property real sideInset: Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing
+    readonly property real titleIdentitySpacing: Kirigami.Units.largeSpacing
     implicitHeight: heading.implicitHeight + Kirigami.Units.mediumSpacing * 2 + separator.height
     color: Kirigami.Theme.alternateBackgroundColor
     RowLayout {
@@ -20,13 +25,15 @@ Rectangle {
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: separator.top
-        anchors.leftMargin: Kirigami.Units.largeSpacing
-        anchors.rightMargin: Kirigami.Units.largeSpacing
-        spacing: Kirigami.Units.largeSpacing
+        anchors.leftMargin: header.sideInset
+        anchors.rightMargin: header.sideInset
+        spacing: header.titleIdentitySpacing
         // Heading supplies the native title font; PlainLabel renders the literal title.
         Kirigami.Heading {
             id: heading
             level: 5
+            type: Kirigami.Heading.Type.Primary
+            Layout.alignment: Qt.AlignBaseline
             Layout.minimumWidth: Math.min(Kirigami.Units.gridUnit * 2, header.width / 3)
             Layout.preferredWidth: paneTitle.implicitWidth
             Layout.maximumWidth: header.width / 3
@@ -40,17 +47,79 @@ Rectangle {
                 Accessible.description: header.description
             }
         }
-        PlainLabel {
+        RowLayout {
+            id: identityLabel
             objectName: header.identityName
             visible: header.identity.length > 0
+            // Keep one complete literal identity on the existing locator and
+            // accessible node, even though its visible fonts are segmented.
+            readonly property string text: header.identity
+            readonly property bool truncated: roleText.truncated || hashText.truncated
+            baselineOffset: Math.max(roleText.visible ? roleText.baselineOffset : 0,
+                hashText.visible ? hashText.baselineOffset : 0)
+            spacing: 0
+            Layout.alignment: Qt.AlignBaseline
             Layout.fillWidth: true
             Layout.minimumWidth: 0
             Layout.preferredWidth: implicitWidth
-            text: header.identity
-            elide: header.fixedIdentity ? Text.ElideMiddle : Text.ElideRight
-            font: header.fixedIdentity ? Kirigami.Theme.fixedWidthFont : Kirigami.Theme.smallFont
-            color: Kirigami.Theme.disabledTextColor
+            Layout.maximumWidth: implicitWidth
+            Accessible.role: Accessible.StaticText
+            Accessible.ignored: false
+            Accessible.name: text
             Accessible.description: header.description
+            HoverHandler { id: identityHover }
+            ToolTip {
+                id: identityToolTip
+                text: identityLabel.text + (header.description.length > 0 ? "\n" + header.description : "")
+                Binding {
+                    target: identityToolTip.contentItem
+                    property: "textFormat"
+                    value: Text.PlainText
+                }
+                visible: identityHover.hovered && identityLabel.truncated
+                delay: Kirigami.Units.toolTipDelay
+            }
+            PlainLabel {
+                id: roleText
+                objectName: header.identityName.length > 0 ? header.identityName + "Role" : ""
+                text: header.identityHash.length > 0 ? header.identityRole : header.identity
+                visible: text.length > 0
+                Layout.alignment: Qt.AlignBaseline
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                // Layouts round allocated widths to pixels. Reserve the whole
+                // text width so rounding cannot elide a fitting identity.
+                Layout.preferredWidth: Math.ceil(implicitWidth)
+                Layout.maximumWidth: Math.ceil(implicitWidth)
+                font: Kirigami.Theme.smallFont
+                color: Kirigami.Theme.disabledTextColor
+                Accessible.ignored: true
+                ToolTip.visible: false
+            }
+            PlainLabel {
+                text: qsTr(" · ")
+                visible: roleText.visible && hashText.visible
+                Layout.alignment: Qt.AlignBaseline
+                font: Kirigami.Theme.smallFont
+                color: Kirigami.Theme.disabledTextColor
+                Accessible.ignored: true
+            }
+            PlainLabel {
+                id: hashText
+                objectName: header.identityName.length > 0 ? header.identityName + "Hash" : ""
+                text: header.identityHash
+                visible: text.length > 0
+                Layout.alignment: Qt.AlignBaseline
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                Layout.preferredWidth: Math.ceil(implicitWidth)
+                Layout.maximumWidth: Math.ceil(implicitWidth)
+                font: Kirigami.Theme.fixedWidthFont
+                elide: Text.ElideMiddle
+                color: Kirigami.Theme.disabledTextColor
+                Accessible.ignored: true
+                ToolTip.visible: false
+            }
         }
     }
     Kirigami.Separator {

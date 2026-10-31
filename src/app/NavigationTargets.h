@@ -1,3 +1,4 @@
+// Navigation targets translate conflict ranges into positions the result editor can reveal.
 #pragma once
 #include "core/EditingCommands.h"
 #include <cstddef>
@@ -29,6 +30,10 @@ struct ScopeTarget {
 // The current result's ranges that differ from the left or right source, in
 // result order, one entry per range. Empty without a correspondence.
 [[nodiscard]] std::vector<ScopeTarget> differenceTargets(const FileSession &file);
+
+// The same actual conflict regions FileSession counts, one result stop per
+// block or orphan marker. Source choices remain separately navigable below.
+[[nodiscard]] std::vector<ScopeTarget> conflictTargets(const FileSession &file);
 
 // The undecided choices, one entry per choice, at their mapped result range
 // or, when unmapped, at their source range. A section with line choices is

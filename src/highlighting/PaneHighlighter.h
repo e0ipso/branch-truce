@@ -1,5 +1,9 @@
+// Pane highlighting combines syntax colours and word decorations without editing document text.
 #pragma once
 #include <QList>
+#include <QPointer>
+#include <QString>
+#include <QTextBlock>
 #include <QTextLayout>
 #ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
 #include <KSyntaxHighlighting/Definition>
@@ -38,7 +42,7 @@ public:
 #endif
     // Ranges in document positions, kept in position order, merged over the
     // syntax formats of the characters they cover. Replacing them runs a
-    // format pass over the blocks the old or new ranges touch.
+    // format pass only where the block-local overlay actually changes.
     void setDecorations(const QList<QTextLayout::FormatRange> &ranges);
     const QList<QTextLayout::FormatRange> &decorations() const { return decorations_; }
     // Search matches share this highlighter with syntax and word differences.
@@ -48,8 +52,23 @@ protected:
     void highlightBlock(const QString &text) override;
 
 private:
-    void decorate(int begin, int end);
+    QList<QTextLayout::FormatRange> blockDecorations(int begin, int end) const;
+    void decorate(const QList<QTextLayout::FormatRange> &ranges);
+    void rememberDecorations(const QTextBlock &block, const QString &text,
+                             const QList<QTextLayout::FormatRange> &ranges);
     void updateDecorations();
+    struct AppliedDecorations {
+        QTextBlock block;
+        QString text;
+        // A block's revision changes with its content, not when the
+        // highlighter dirties the document's layout formats.
+        int revision;
+        QList<QTextLayout::FormatRange> ranges;
+    };
+    // Keep live block identities, not positions that move when earlier text is
+    // edited. Only blocks with an applied overlay need a retained entry.
+    QPointer<QTextDocument> appliedDocument_;
+    QList<AppliedDecorations> appliedDecorations_;
     QList<QTextLayout::FormatRange> wordDecorations_;
     QList<QTextLayout::FormatRange> searchDecorations_;
     QList<QTextLayout::FormatRange> decorations_;

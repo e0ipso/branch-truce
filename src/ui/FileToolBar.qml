@@ -157,7 +157,7 @@ RowLayout {
         controlName: "showEarlier"
         text: enabled ? qsTr("Show common earlier version") : qsTr("Common earlier version unavailable")
         enabled: !!fileToolBar.selectedFile.earlier && !!fileToolBar.selectedFile.earlier.available
-        icon.name: "view-visible"
+        icon.name: "view-history"
         iconOnly: true
         toggle: true
         displayHint: Kirigami.DisplayHint.KeepVisible
@@ -188,7 +188,6 @@ RowLayout {
         Layout.fillWidth: true
         Layout.minimumWidth: Kirigami.Units.gridUnit * 4
         Layout.preferredWidth: Kirigami.Units.gridUnit * 12
-        Layout.maximumWidth: Kirigami.Units.gridUnit * 18
         text: " "
         Item {
             id: selectedPathLabel
@@ -226,6 +225,17 @@ RowLayout {
     Kirigami.ActionToolBar {
         objectName: "fileToolBar"
         Layout.fillWidth: true
+        // ActionToolBar prefers zero width by default. Give the actions their
+        // native width before the path consumes the remaining space, and keep
+        // its own minimum so KeepVisible actions cannot disappear into overflow.
+        // maximumContentWidth excludes the overflow button. Always-hidden
+        // commands still need that button beside the complete visible actions.
+        readonly property real nativeWidth: maximumContentWidth + Layout.minimumWidth + Kirigami.Units.smallSpacing
+        Layout.preferredWidth: nativeWidth
+        // The path gets spare width; actions keep their native width and can overflow.
+        Layout.maximumWidth: nativeWidth
+        // Keep one native control row with breathing room shared by the list header.
+        Layout.minimumHeight: implicitHeight + Kirigami.Units.mediumSpacing
         actions: {
             return [
                 fileToolBar.saveAction,

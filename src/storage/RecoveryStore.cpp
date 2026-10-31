@@ -1,3 +1,4 @@
+// The recovery store persists app-owned journals and text payloads under an exclusive session lease.
 #include "RecoveryStore.h"
 #include "core/ResourceLimits.h"
 #include <QBuffer>

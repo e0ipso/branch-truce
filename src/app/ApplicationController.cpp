@@ -1,3 +1,4 @@
+// The application controller connects conflict review, result editing and session completion to the window.
 #include "ApplicationController.h"
 #include "CommandGuard.h"
 #include "NavigationTargets.h"

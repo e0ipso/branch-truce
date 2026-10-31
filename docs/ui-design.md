@@ -94,10 +94,10 @@ One toolbar row in the Header colour set, using native Qt Quick Controls buttons
 
 ### Sidebar
 
-A `SplitView` pane to the left of the work area, `Kirigami.Units.gridUnit * 14` wide by default (262 px in the mockup). It is not modal, can be resized, and collapses with the sidebar toggle. It uses the View colour set and lists the conflicted files and nothing else.
+A `SplitView` pane to the left of the work area, `Kirigami.Units.gridUnit * 14 + Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing / 2` wide by default (262 logical pixels under the pinned native profile, matching the mockup target). It is not modal, can be resized, and collapses with the sidebar toggle. It uses the View colour set and lists the conflicted files and nothing else.
 
-- **List header.** "Conflicted files" as a `Kirigami.Heading` and a neutral `Pill` with the number of files. It is as tall as the file toolbar, so their hairlines line up.
-- **List.** `Kirigami.Units.smallSpacing` padding above the first row and below the last.
+- **List header.** "Conflicted files" as a `Kirigami.Heading` and a neutral `Pill` with the number of files. It is as tall as the file toolbar, so their hairlines line up. Leading padding is `largeSpacing + mediumSpacing`, trailing padding is `largeSpacing + smallSpacing / 2`.
+- **List.** `Kirigami.Units.smallSpacing * 1.5` padding above the first row and below the last, with `smallSpacing` between rows.
 - **Rows.** Each row sits on a row plate (section 4). The leading icon is the file's status icon from section 5. The first line is the file name, then its directory in muted `smallFont`. The second line is one short status phrase in `smallFont`: "1 conflict left", "Resolved" in `positiveTextColor`, "Handle outside the app" in `neutralTextColor`. Recovery and write failures take priority over the conflict count, including on unselected rows. A row never carries a second status as a pill, and never joins statuses with dots or separators.
 
 ### File toolbar
@@ -111,7 +111,7 @@ A second `Kirigami.ActionToolBar` row for the selected file, in the Window colou
 5. **Reading controls.** Wrap lines, Show spaces and tabs, and Show earlier version are checkable toolbar actions.
 6. **Overflow menu** (`overflow-menu`). It holds Discard, "Discard draft and use staged result", Copy and Paste, the Source choices menu, and Show conflict markers (`view-visible`).
 
-The reading controls sit in the file toolbar, and Find opens the search bar. Whole-file and "all non-conflicting" choices live in the Source choices menu, never as an always-visible row of buttons. Line and region choices live in the gutters.
+The reading controls sit in the file toolbar, and Find opens the search bar. Whole-file and "all non-conflicting" choices live in the Source choices menu, never as an always-visible row of buttons. Line and region choices use source hover overlays and editor context menus.
 
 Mark resolved is always available for a file the app can edit, as `PRD.md:103` requires. While source choices remain undecided it opens a confirmation that names how many; once none remain it acts at once. The ellipsis in its label is there because it may open that confirmation. When the selected file is outside the app, every file action is disabled, because there is no app result to save or resolve (the binary mockups).
 
@@ -125,6 +125,10 @@ Three code panes in a `SplitView`: the two read-only sources around the editable
 
 The earlier version (common ancestor) is not a fourth column. It opens on demand with Show earlier version, over or beside the panes, and closing it restores the editor state and selection (`PRD.md:37`).
 
+Code panes have a continuous, flat View background across the gutter, text and side insets. There is no permanent input-field outline or vertical rule between numbers and code. The native TextArea background appears while its editor has active focus so the selected desktop style still draws its focus indication. Header and connector hairlines remain independent of that focus decoration.
+
+Horizontal native scrollbars use AsNeeded for unwrapped text and AlwaysOff for wrapped text. A visible horizontal bar occupies a row below its pane's viewport; fitting or wrapped text reserves no row. Overflow follows the laid-out text and its gutter padding rather than the native input background's minimum width. Each pane retains independent horizontal scrolling, and native editor cursor navigation continues to reveal unwrapped text. Vertical scrolling, folds and range markers use the remaining viewport height.
+
 An outside-app file shows a `Kirigami.PlaceholderMessage` in place of the panes, in the View background: the file's type icon, a title naming why it is outside the app ("Binary files are resolved outside Branch Truce"), and an explanation that names the next step (resolve it with another tool, then `git add` the path) and says the file stays in the list until Git reports it resolved.
 
 ### Pane spacing
@@ -132,26 +136,35 @@ An outside-app file shows a `Kirigami.PlaceholderMessage` in place of the panes,
 | Measure | Value | Mockup |
 | --- | --- | --- |
 | Pane header height | Fixed, the same in all three panes: one line plus `Kirigami.Units.mediumSpacing` above and below | 30 px |
-| Pane header side margins | `Kirigami.Units.largeSpacing` | 12 px |
+| Pane header side margins | `Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing` | 12 px |
+| Pane title-to-identity gap | `Kirigami.Units.largeSpacing` | 8 px |
 | Text inset below the pane header | `Kirigami.Units.smallSpacing` | 6 px |
 | Line-number column | Right-aligned in muted `smallFont`, as wide as the largest number, `Kirigami.Units.smallSpacing` after it | 34 px |
 | Glyph column | `Kirigami.Units.iconSizes.small` wide, glyph centred | 16 px |
 | Gap between glyph and code | `Kirigami.Units.largeSpacing` | 8 px |
-| Gutter buttons | On the source pane's edge that faces the result, two `Kirigami.Units.iconSizes.small` buttons `Kirigami.Units.smallSpacing` apart | 46 px column |
-| Inset from a split handle | `Kirigami.Units.smallSpacing` between the handle's hairline and the nearest text or button | none |
-| Row height | `fixedWidthFont` line spacing plus `Kirigami.Units.smallSpacing` | 20 px for 12 px Hack |
-| Connector handle | `Kirigami.Units.gridUnit` wide | 20 px plus two hairlines |
+| Source hover buttons | Overlay the source edge facing the result, two `Kirigami.Units.iconSizes.small` buttons `Kirigami.Units.smallSpacing` apart | No reserved column |
+| Hover-button inset from a split handle | `Kirigami.Units.smallSpacing` between the handle and the overlaid buttons; source text retains the full viewport | none |
+| Row height | Laid-out `fixedWidthFont` visual row plus one `Kirigami.Units.mediumSpacing` line distance, supplied by `CodeRows` | 20 logical px target for the pinned Hack 9 pt profile |
+| Connector handle | `Kirigami.Units.gridUnit` wide in total, including one theme hairline at each edge | 20 px target |
 
-The vertical budget counts rows at this height. The pane's minimum height, the window-fit check and the helper that scrolls by line height all use the same row height; change them together.
+`PaneHeader` uses the same side inset and title-to-identity gap for sources, result and earlier-version content. The preserved native baseline recorded an 8 logical pixel inset from `largeSpacing` alone against the reference's 12; the composed inset adds `smallSpacing` while retaining the reference's smaller inter-label gap. It follows the calibrated theme fonts and units rather than fixing either margin in pixels. Header height, baseline alignment, plain-text role/hash segmentation and elision keep their existing contracts. Final native captures must measure the actual insets, truncation and any remaining unit difference in both themes after font calibration. The earlier-version header follows this shared contract without an invented PNG target.
+
+`CodeRows` applies the gap once through `TextBlocks` block formatting, including wrapped continuation rows. It replaces the former `smallSpacing` gap rather than adding another spacer. Under the pinned units the change adds half a `smallSpacing` to the historical 18 logical px pitch; final native captures must measure the resulting pitch against the 20 logical px reference. The approved raster is at 1.5x, so raster pixels and comparison-grid cells are not logical row units.
+
+`TextBlocks.rowHeight` reads the laid-out advance, and its block queries include the first visual row's advance as well as the whole block extent. Gutters share the editor's `TextBlocks` object rather than estimating a row from cursor height and a separate gap. Folds, bands and scroll correspondence use those same block extents. The pane minimum, source hover choices and line-scroll helper consume the shared row height. Earlier-version panes and snapshot preview readers use `CodeRows` too; neither dialog has an approved PNG target.
 
 ### Connector bands
 
 Each non-equal passage gets one band between a source pane and the result. The band sits in the connector handle, so it takes no extra row or column from the vertical budget.
 
+The handle owns both one-pixel theme separators across its full height, including the pane headers. The separators overlay the ribbon ends inside the handle's allocated width; pane widths do not reserve them again. Hover and dragging still belong to the split handle.
+
+Initial pane shares each use one third of the split width after reserving both complete connector handles. That default follows available width and native units until the user drags a split. Native SplitView preferred widths then retain the user's adjustment; choices, edits, history and file selection do not reset it. Minimum pane widths still apply.
+
 - **Fill.** The band uses the passage's band tint from section 6: the role's text colour at about 40 % alpha, `positiveTextColor` for added or accepted, `activeTextColor` for changed, `negativeTextColor` for conflicting, `neutralTextColor` for hand-edited, and `disabledTextColor` at about 30 % for removed or ignored. Bands are stronger than the line fills so the eye can follow them across the handle.
-- **Ends.** Each end of a band follows the top and bottom of its passage in that pane and moves with the pane's scroll. A band whose passage is off-screen is clipped, not repositioned.
+- **Shape and ends.** Each end follows the full laid-out passage height in its pane, including wrapped rows. Folded marker passages join their complete source extent to the result's single visible marker row, retaining full-height ends for both two-row-to-one-row and one-row-to-two-row connections. Top and bottom edges are cubic curves with horizontal tangents at each pane; both control points sit at the handle's horizontal midpoint. The ends meet the row fills under the handle hairlines and move with each pane's independent scroll. Off-screen portions are clipped after computing the full bounds. Hover inspection follows the same curved shape inside the viewport. Empty ranges retain the thin rule at their actual line boundary; no equal-row padding is added.
 - **Redraw.** Bands are redrawn whenever passages or decisions change, including after undo and redo.
-- **Not a control.** A band only shows which passages correspond. Choices stay on the gutter buttons. A band never carries meaning by colour alone; the passage's gutter glyph (section 6) is the non-colour cue.
+- **Not a control.** A band only shows which passages correspond. Choices use source hover buttons or context menus. A band never carries meaning by colour alone; the passage's gutter glyph (section 6) is the non-colour cue.
 
 ### Conflict markers
 
@@ -231,13 +244,14 @@ Rules:
 
 | Component | Definition | Used by |
 | --- | --- | --- |
-| `PaneHeader` | Fixed-height row in `alternateBackgroundColor` with a hairline below. Title as `Kirigami.Heading` level 5, Primary. Optional one-line identity as a muted `smallFont` `PlainLabel`. Side margins and height from the pane spacing table. Its layout never sizes the row from its own children's widths, so the three headers align by construction. | Left, result and right panes; the earlier-version view |
+| `PaneHeader` | Fixed-height row in `alternateBackgroundColor` with a hairline below. Title as `Kirigami.Heading` level 5, Primary. Optional one-line identity uses muted `smallFont` for the role and only `fixedWidthFont` for an available commit hash, with a shared baseline. Visible segments are literal `PlainLabel`s; the existing identity locator retains the complete plain text, truncation state and one accessible identity. Elided identities expose the full text and provenance in a tooltip. Side margins and height from the pane spacing table. Its layout never sizes the row from its own children's widths, so the three headers align by construction. | Left, result and right panes; the earlier-version view |
 | `Pill` | A short state tag: text, an optional icon name, and a tone (neutral, positive, negative, warning, highlight) mapped to `disabledTextColor`, `positiveTextColor`, `negativeTextColor`, `neutralTextColor` and `highlightColor`. Text in the tone colour and `smallFont`. Fill `Qt.alpha(tone, 0.14)`, 1 px border `Qt.alpha(tone, 0.4)`, radius half its height, `Kirigami.Units.smallSpacing` horizontal padding. One line. | List header count; the marker chip in the gutter; any other short state tag. Never a second status on a file row. |
 | `PlainLabel` | A `Label` with `textFormat: Text.PlainText`, one line, eliding at the end (in the middle for paths). While elided it shows the full text in a tooltip after `Kirigami.Units.toolTipDelay`. | Every label that shows repository, path, branch, commit or status text: the header title and operation, file row name, directory and status, the file toolbar path, pane identities, footer text, handoff blockers, preview dialog fields |
 | `PreviewDialog` | A `Kirigami.Dialog` for a change the user confirms after seeing it. A header with the path, a one-line summary and a detail line; a `BeforeAfterPanes` body; a confirm button whose text names its action and a Cancel button. Width, padding and entry spacing in `Kirigami.Units`. | Whole-file, all non-conflicting and replacement previews |
 | `BeforeAfterPanes` | Two read-only panes side by side, each with a title, in `fixedWidthFont` with the code panes' tab stop. Takes an objectName prefix for its children. | Every before-and-after view in a `PreviewDialog` |
 | `DiffStyle` | A QML singleton that maps each passage kind to its background role, text role, glyph, band tint and accessible description, from the tables in section 6, with one fallback for an unknown kind. | Gutter glyphs, line fills, connector bands, decision glyphs, previews |
-| Row plate | An inset rounded rectangle behind a list row: `Kirigami.Units.smallSpacing` from the list's sides, radius `Kirigami.Units.cornerRadius`, `Kirigami.Units.smallSpacing` vertical and `Kirigami.Units.largeSpacing` horizontal padding. Selected: `highlightColor` with `highlightedTextColor`, secondary text at 0.8 alpha. Hover: a `Qt.alpha(hoverColor, 0.2)` tint. Keyboard focus: a 1 px `focusColor` outline. Never full-bleed. | Sidebar file rows; handoff dialog rows |
+| `CodeRows` | A `TextBlocks` with one native `mediumSpacing` line distance. Exposes actual laid-out visual-row advances and whole-block extents without changing plain text. | Source, result, earlier-version and snapshot preview readers |
+| Row plate | An inset rounded rectangle behind a list row: `Kirigami.Units.smallSpacing` from the list's sides, radius `Kirigami.Units.cornerRadius`, `Kirigami.Units.mediumSpacing` vertical and `Kirigami.Units.largeSpacing` horizontal padding. The sidebar control itself occupies the inset plate, so pointer targets and native focus remain inside its bounds. Selected: `highlightColor` with `highlightedTextColor`, secondary text at 0.8 alpha. Hover: a `Qt.alpha(hoverColor, 0.2)` tint. Keyboard focus: a 1 px `focusColor` outline. Never full-bleed. | Sidebar file rows; handoff dialog rows |
 | Footer status | The one-line footer band: Header colour set, hairline above, `smallFont` in `disabledTextColor`. From left: progress text and a progress bar (`Kirigami.Units.gridUnit * 5` wide, `Kirigami.Units.smallSpacing` high, rounded, `highlightColor` over `Qt.alpha(disabledTextColor, 0.25)`), then the outside-app count, then a spacer, then the selected file's facts. No actions. | The session footer |
 
 ### Kirigami components per surface
@@ -281,18 +295,19 @@ All names are Breeze icon names, used through `Kirigami.Icon` or an action's `ic
 | Accept from the left / right side | `arrow-right` / `arrow-left` |
 | Ignore a contribution | `dialog-cancel` or `edit-delete-remove` |
 | Take both sides | `merge` |
-| Show earlier version | `view-visible` |
+| Show spaces and tabs | `view-visible` |
+| Show earlier version | `view-history` |
 | Show conflict markers | `view-visible` |
 | Selected file's type | the file's MIME-type icon, `unknown` when none |
 | File: conflicting | `vcs-conflicting` |
 | File: untouched or no conflict left | `vcs-normal` |
 | File: edited by hand or in progress | `vcs-locally-modified` |
-| File: resolved and saved | `checkmark` |
+| File: verified resolved | `emblem-checked` |
 | File: outside the app | `unknown` |
 | Notice or count: warning / error | `dialog-warning` / `dialog-error` |
 | Notice: data at risk | `data-warning` |
 
-The accept arrow points from the source towards the result: `arrow-right` in the left pane, `arrow-left` in the right pane. Use `edit-delete-remove` for Ignore beside a gutter arrow, as the mockups do, and `dialog-cancel` where Ignore is a labelled button. Use one of the two per surface.
+The accept arrow points from the source towards the result: `arrow-right` in the left pane, `arrow-left` in the right pane. Use `edit-delete-remove` for Ignore beside a source hover arrow, as the mockups do, and `dialog-cancel` where Ignore is a labelled button. Use one of the two per surface.
 
 An icon alone never carries meaning. Icon-only buttons set `text` (shown as a tooltip or in the overflow menu) so the name is available to the user and to tests.
 
@@ -325,9 +340,15 @@ Colour never carries meaning alone (`PRD.md:35`, `PRD.md:73`). Every coloured ra
 | Ignored side | `×` |
 | Conflict markers remain | `!` |
 
-**Gutter buttons.** On a region's first line, each source pane shows Accept and Ignore on its edge that faces the result: Ignore then Accept in the left pane, Accept then Ignore in the right pane. They are small framed buttons in the View background. The Accept icon is drawn in `activeTextColor` and the Ignore icon in `negativeTextColor`.
+**Source hover controls.** Source viewports fill their panes with no reserved action column or replacement padding. The right pane's line numbers start at its left edge; the left pane's code extends to its right edge. Hovering a source range reveals Accept and Ignore over its first line at the edge facing the result: Ignore then Accept in the left pane, Accept then Ignore in the right pane. Keyboard focus and an open range menu also keep these small native framed buttons visible. The Accept icon uses `activeTextColor` and Ignore uses `negativeTextColor`.
 
-**Decided regions.** When a region is decided, its gutter buttons are replaced by the decision glyph: `✓` for the accepted side, `×` for the ignored side. Undo is the way back (`PRD.md:43`); the buttons return when the decision is undone. The ignored side keeps its text, only muted, so the user can still read what was declined.
+Each actual source range has one primary pair at the start of its section. Every line scope in that range remains labelled in the owner's native context menu, including lines after the first. Wrapped continuations add no primary rows. An undecided unavailable section with available mapped line commands keeps a focusable menu-only hover control. A section with undecided precise lines still needs that fallback even if its aggregate decision is complete. Once the whole range is decided, its overlay controls disappear. Hidden overlays remain in the native Tab path and reveal when focused.
+
+**Decided regions.** When a region is decided, its hover buttons disappear and the existing state glyph shows `✓` for the accepted side or `×` for the ignored side. Undo is the way back (`PRD.md:43`); hover controls return when the decision is undone. The ignored side keeps its text, only muted, so the user can still read what was declined.
+
+Source text retains range commands through right-click, touch hold, Menu or Shift+F10 at the cursor. Its context menu includes the shared Undo/Redo actions and native source Copy/Select all. Range menus anchor to the source editor, and choosing returns focus there before an overlay control can disappear. These menus retain line, section and ordered combination commands without reserving a decided-row button.
+
+Accepted source lines, their mapped result lines and exact correspondence bands use the accepted role instead of the underlying added or changed role. Precise line decisions take precedence over a decided section's aggregate state. Genuine conflicts and remaining markers retain their warning role; manual edits take precedence over acceptance. Ignoring a source does not repaint unchanged result text. The result gutter reserves only the line number and one state-glyph column. Section decisions supply a glyph only where no precise line mark exists; a folded conflict keeps its opening number and `!`. Source correspondence and full section decisions remain in the number/glyph tooltips and accessible descriptions, including unchanged lines. Correspondence describes matching captured source text rather than claiming an unverified origin. A removed-source boundary shares that inspection when the row already has a state glyph. There is no repeated B/L/R column or separate decision chip reservation.
 
 Within a changed line, word-level highlights use the same role as the line at a stronger weight, and carry no separate control (`PRD.md:35`).
 
@@ -354,7 +375,7 @@ Within a changed line, word-level highlights use the same role as the line at a 
 
 How they apply here:
 
-- The per-side arrow in the gutter is the accept action for a range; the ignore icon beside it declines that side. Both are reversible with undo.
+- The per-side source hover arrow accepts a range; the ignore icon beside it declines that side. Both are reversible with undo.
 - The conflict stepper in the header band shows the undecided conflicts left in the selected file and, when clicked, moves to the next one.
 - Take both respects the order of the sources and never reorders text silently.
 - Mark resolved is always available for a file the app can edit (`PRD.md:103`). While source choices remain undecided it opens a confirmation that names how many, instead of being disabled. Once none remain, it acts at once.
@@ -377,7 +398,7 @@ The acceptance and UI tests find controls by `objectName` and read their state b
 The mockups show elements the app does not have yet. They are targets of this brief:
 
 - the progress bar and the file facts in the footer;
-- the accept and ignore buttons in the source pane gutters;
+- the accept and ignore source overlays, revealed on hover or keyboard focus;
 - Take both on the folded conflict row in the result.
 
 The rest of the layout above (the header band with the repository name and conflict stepper, the row plates, the pane headers, the footer status and the shared components) is also the target where the app still differs from it.

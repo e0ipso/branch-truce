@@ -3,9 +3,7 @@
 This file records what has been observed with the installed packages, and
 what has not been tested. No compatibility claim for Kubuntu 26.04 or
 Tuxedo OS 24.04 desktops follows from it. Neither artifact has been installed
-on a real target desktop. Everything below was observed in a container of each
-artifact's own OS base, shown on a headless Wayland compositor. It is evidence
-about the package and the program, not about Plasma, KWin or real hardware.
+on a real target desktop. The dated package observations below describe older builds in containers of each artifact's own OS base on a headless Wayland compositor. They do not validate the redesigned window or establish Plasma, KWin or real-hardware compatibility. Current interaction descriptions below come from source inspection, not a fresh runtime observation.
 
 ## Status
 
@@ -20,6 +18,16 @@ The rows that matter for compatibility are the first two, and both stay
 open. The container rows show that each package installs on its own base,
 that the installed program runs without the source or build tree, and what
 it does on a Wayland compositor with Breeze, three scale factors and AT-SPI.
+
+## Redesign evidence still required
+
+No fresh installed-artifact run or screenshot pair was collected for this documentation revision. The 2026-10-25 package results and 2026-10-26 startup observations remain historical, with their original hashes, dates and scope. The existing README images were committed on 2026-10-29 and must not stand in for final evidence of the current sidebar, menus, gutters or connectors.
+
+At the final gate, build each OS artifact from the integrated source revision and run the commands under [How to reproduce](#how-to-reproduce), using a new owned output directory per target. Record the actual run date, source revision, package SHA-256, environment, command, exit status and emitted `.validation`, `.atspi` and PNG paths here. Replace pending observations only with the results that run produced. Add the fresh development light/dark pair through [the preview procedure](build.md#preview) and link it from README.md; preserve the older artifacts.
+
+For the redesigned window, collect evidence for the status sidebar, independent conflict and decision counters, segmented source identities, positive verified-resolved file status, flat panes with native focus, native scroll overflow, and a result gutter with a number and one meaningful glyph whose provenance can be inspected. Exercise compact inward Accept/Ignore controls, exact range and line choices, both combination orders, and the editor-anchored menu after every precise scope in a range is decided. Public source-editor right-click, hold and keyboard menu gestures, including routing through `SourceContextMenuHost`, have no fresh runtime result here. Save must remain an app-only draft checkpoint; publishing and verified staging belong to Mark resolved.
+
+Required size evidence remains 1280x720 with at least eight text rows and reachable controls and opened menus, and 1280x800 with the sidebar rows and handoff text meeting their no-wrap/whole-word requirements. Use actual rendered geometry and interactions, not counts derived from layout formulas. Only strict 960x540 fit has an owner waiver; it does not cover either 1280 size, first-undecided navigation, source-fill/ribbon continuity or source-menu routing. The acceptance helpers and assertions still need migration for the current controls before the final run. Container screenshots do not close native interaction or real Plasma/AT-SPI scope gaps.
 
 ## What was used
 
@@ -116,8 +124,7 @@ windows appear on the compositor and take keyboard focus.
 
 ## Results
 
-"Pass" means the check ran in the container and its expected outcome was
-observed. The real-desktop column has no observations.
+"Pass" below means the check ran on the historical package in its container and its expected outcome was observed. It does not apply to the current source revision. The real-desktop column has no observations.
 These results predate the application ID change to `com.canpicasoft.branch-truce`;
 the window IDs below record the IDs observed in those runs.
 
@@ -204,7 +211,7 @@ fails the run if the closure alone cannot start on Wayland. With
 window whose `app_id` matched the desktop entry. sway tiled it to the full
 1920x1080 output.
 
-Breeze Light and Breeze Dark both applied. On both bases the screenshots show
+In the 2026-10-25 package runs, Breeze Light and Breeze Dark both applied. On both bases the historical screenshots show
 Breeze-styled controls in the light and the dark palette; this was checked by
 looking at the screenshots, not by tracing which style plugin loaded. The colour
 scheme was set before launch; switching it while the app runs was not
@@ -218,8 +225,7 @@ under `org.kde.desktop` and compare the sidebar and the four panes with the
 scheme's View background. `ui.theme-icons` checks that every icon name in
 `src/ui` resolves with Breeze as the fallback theme, and `ui.theme-cues` that
 every coloured line has a gutter glyph. They skip, rather than pass, when the
-host lacks the KDE style, the colour schemes or the Breeze icons. The installed
-package is still checked by the screenshots above.
+host lacks the KDE style, the colour schemes or the Breeze icons. The historical installed-package screenshots above predate the redesigned scene; fresh package evidence is still required.
 
 Since then `src/app/main.cpp` picks the Qt Quick Controls style itself,
 before it loads the window. If `QT_QUICK_CONTROLS_STYLE` is set, Qt uses that
@@ -299,42 +305,16 @@ A theme the platform names stays: on Wayland the app kept `breeze` with
 `QT_QPA_PLATFORMTHEME=kde` and `XDG_CURRENT_DESKTOP=KDE`, and `Adwaita` with
 `QT_QPA_PLATFORMTHEME=gtk3`. `document-save` resolved in both.
 
-At `QT_SCALE_FACTOR=2` the text and controls doubled, but the 1920x1080
-output is only 960x540 logical pixels. That was smaller than the window's
-minimum size at the time, 1000x760. The window stayed at the output size,
-the toolbar wrapped onto two rows, the right edge and the bottom row were
-cut off, and each text pane showed about one line.
+The historical scaling observations used `QT_SCALE_FACTOR` on a 1920x1080 headless sway output, rather than KWin output scaling. At factor 2 the older 1000x760 minimum clipped the toolbar and result. The earlier comparison used `46e0801` as its before revision; a later historical 900x500 minimum allowed work-area scrolling. Those values are not the current minimum: `src/ui/Main.qml` now uses 48 by 28 native grid units, which vary with the desktop font and theme. `ComparisonView.qml` requests an eight-row minimum for each main text pane, and the page can scroll when the work area's minimum exceeds its viewport. Toolbar actions use native overflow menus rather than an extra wrapping button row.
 
-The minimum size is now 900x500 (`src/ui/Main.qml`). When the window is
-shorter than its content, the page scrolls and the text panes keep at least
-eight lines. The row of Save, Mark resolved and the other file actions wraps
-on a narrow window. The 150% and 200% cases were then observed in containers
-of both bases on the same sway output, with `QT_SCALE_FACTOR=1.5` and `2`,
-Breeze Light and Breeze Dark:
+| Historical `QT_SCALE_FACTOR` on 1920x1080 | Logical size | Recorded observation on the earlier layout |
+| --- | --- | --- |
+| 1.5 | 1280x720 | Fit without scrolling, with about nine pane lines in the short single-file fixture. |
+| 2 | 960x540 | Fit the width with a page scroll bar; only the top of the page was captured and scrolling was not exercised. |
 
-| `QT_SCALE_FACTOR` on 1920x1080 | Logical size | Before (`46e0801`) | After |
-| --- | --- | --- | --- |
-| 1.5 | 1280x720 | Fits. Panes about 9 lines high. Kubuntu base only. | Fits without scrolling. Panes about 9 lines high, as before. |
-| 2 | 960x540 | Right edge and bottom cut off. Panes about 1 line high. Kubuntu base only. | Fits the width. The page shows a scroll bar, and the panes start below the fold. |
+The 150% observations predated the package's `qt6-wayland` dependency and the validator's factor-1.5 capture loop. Those runs reported 36 passed, 0 failed and 1 warning per base, the warning being closure-only Wayland startup. The 37-check runs in the status table are separate later observations. Neither run is evidence for the current layout.
 
-The fixture has one conflicted file with short content and no warning, so
-the 150% window had room to spare before the change too. A session with
-more files, an outside-app warning or a long path is taller. The window-fit
-journey in `tests/acceptance/JourneyAcceptanceTests.cpp` covers that case
-offscreen. With four files and the warning, it checks at 1280x720 and
-960x540 that every control and all three text panes lie inside
-the window once the page has scrolled to them. It also checks that each pane
-is at least eight lines high and that the mouse wheel scrolls the page. It
-passes with the default offscreen style and with `org.kde.desktop`. In the
-container the 200% screenshot shows only the top of the page. Scrolling
-there was not exercised. The script now opens the 1.5 windows itself, so the
-steps in "How to reproduce" write `scale1.5-BreezeLight` and
-`scale1.5-BreezeDark` screenshots. The 150% results above were taken before
-that, and before the package depended on `qt6-wayland`. The other checks in those runs
-gave 36 passed, 0 failed and 1 warning on each base; the warning was the
-closure-only Wayland check. Plasma's own output scaling, which KWin
-applies rather than `QT_SCALE_FACTOR`, was not available, and 125% was not
-measured.
+The final gate must remeasure the theme and scaling matrix using fresh installed packages, then insert dated results and artifact paths in this section. Retain the 1280x720 eight-row and control/menu reachability obligation and the 1280x800 no-wrap/whole-word obligation described above. The offscreen window journeys express these requirements, but their old results cannot validate the redesigned controls. The strict 960x540 fit waiver is narrow and supplies no measured pass. KWin scaling, a live theme switch, 125% scaling and real-desktop pointer/assistive-technology behaviour have no observation here.
 
 ### Editor input
 
@@ -378,8 +358,7 @@ and, under it, "Waiting for Git to launch this path. It is not resolved."
 The second line contradicted the first, because its visibility in
 `src/ui/Main.qml` did not depend on the selected file's state. The label is now
 hidden once Git has staged a result for the selected file, and paths Git has
-not launched still show it. The acceptance suite checks both cases offscreen
-with real `git mergetool`. The container run has not been repeated since.
+not launched still show it. The acceptance suite contains both cases offscreen with real `git mergetool`. Its current-revision results and a fresh installed-package run remain required.
 
 ### Organization name
 

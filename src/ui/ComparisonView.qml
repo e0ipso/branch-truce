@@ -1,5 +1,5 @@
 // The comparison of one file: the reading controls, the source and result panes with the
-// connector bands between them, the region choices in the source panes' gutters, and the
+// connector bands between them, hover choices over the source panes, and the
 // earlier version below.
 pragma ComponentBehavior: Bound
 
@@ -26,7 +26,7 @@ ColumnLayout {
     property bool showMarkers: false
     // Asks for showMarkers, because something the user asked for is on a folded line.
     signal markersRevealed()
-    // Shows the region choices in the source panes' gutters and the result's Take both menus.
+    // Enables the source hover choices and the result's Take both menus.
     property bool showChoices: true
     // A choice of action for a source scope; the owner previews it when it needs confirming.
     signal choiceChosen(target: string, action: int)
@@ -115,8 +115,6 @@ ColumnLayout {
     function editorNamed(name: string): Item {
         return panesByRole.editor(name)
     }
-    // Selects the next passage the search finds and scrolls the panes to it, showing the
-    // folded markers when it lies on them.
     function openSearch(): void { readingBar.open() }
     function updateSearch(): void {
         passageSearch.update(readingBar.query, readingBar.caseSensitive, readingBar.visible)
@@ -165,10 +163,8 @@ ColumnLayout {
     }
     BandProjection { id: leftBands; pane: leftPane }
     BandProjection { id: rightBands; pane: rightPane }
-    // The choice rows of one source pane, in line order: one per line where a scope starts.
-    // A section owns the row on its first line. A line choice owns the row on its line unless
-    // a section starts there; then it rides in that row's extras, as does any other scope
-    // that starts on a taken line. Each choice gains its region's undecided state.
+    // One primary row at each actual source range's start. The section owns
+    // that row; all its precise line scopes remain commands in its menu.
     function choiceRowsFor(side: string, file: SelectedFile): var {
         const choices = file.choices || []
         const regions = file.regions || []
@@ -177,22 +173,28 @@ ColumnLayout {
             const region = regions[i]
             if (region.side !== side || region.id !== choices[i].id)
                 continue
-            scoped.push({line: region.sourceLineBegin, section: region.scope === "section",
+            scoped.push({line: region.sourceLineBegin, end: region.sourceLineEnd,
+                section: region.section, whole: region.scope === "section",
                 choice: Object.assign({undecided: region.state === "undecided"}, choices[i])})
         }
-        const byLine = {}
-        for (const sections of [true, false]) {
-            for (let i = 0; i < scoped.length; ++i) {
-                const entry = scoped[i]
-                if (entry.section !== sections)
-                    continue
-                if (byLine[entry.line])
-                    byLine[entry.line].extras.push(entry.choice)
-                else
-                    byLine[entry.line] = {line: entry.line, choice: entry.choice, extras: []}
-            }
+        const rows = scoped.filter(entry => entry.whole).map(entry => ({
+            line: entry.line, end: entry.end, section: entry.section,
+            choice: entry.choice, extras: []
+        }))
+        for (let i = 0; i < scoped.length; ++i) {
+            const entry = scoped[i]
+            if (entry.whole)
+                continue
+            const owner = rows.find(row => row.section === entry.section
+                && row.line <= entry.line && entry.end <= row.end)
+            if (owner)
+                owner.extras.push(entry.choice)
+            else
+                // Retain a standalone scope if no section owns its actual range.
+                rows.push({line: entry.line, end: entry.end, section: entry.section,
+                    choice: entry.choice, extras: []})
         }
-        return Object.keys(byLine).map(Number).sort((a, b) => a - b).map(line => byLine[line])
+        return rows.sort((a, b) => a.line - b.line)
     }
     // The result's section actions. decisions maps the first result line of each section
     // with a side mapped there to its state once no side is undecided, for the gutter; a
@@ -262,7 +264,6 @@ ColumnLayout {
         return {decisions: decisions, combinations: combinations}
     }
     readonly property var resultSections: kept("sections:result", resultSectionsFor(file, markerFold))
-    // Showing the earlier version brings it to the result's position.
     function followEarlier(): void {
         panesByRole.paneShown(earlierPane.paneName)
     }
@@ -290,8 +291,10 @@ ColumnLayout {
     }
     function followNavigation(): void {
         const target = controller.navigationTarget
-        if (target.fileId === controller.selectedFileId && target.scope === "result")
+        if (target.fileId === controller.selectedFileId && target.scope === "result") {
+            resultPane.editor.forceActiveFocus(Qt.ShortcutFocusReason)
             panesByRole.follow("result")
+        }
     }
     Connections {
         target: comparison.controller
@@ -325,16 +328,9 @@ ColumnLayout {
     // Measure actual spaces and update when the desktop's fixed-width font changes.
     // Some font files report a different average width from their glyph advances.
     readonly property real tabStop: tabMetrics.advanceWidth
-    // One text row; a gutter button is this high and wide.
-    readonly property real rowHeight: {
-        // Reading contentHeight tracks relayout; positionToRectangle uses the editor's
-        // glyph height; Qt adds the line distance after each visual row.
-        const laidOutHeight = resultPane.editor.contentHeight
-        const row = laidOutHeight > 0 ? resultPane.editor.positionToRectangle(0).height : 0
-        return Math.ceil((row > 0 ? row : paneFont.lineSpacing) + Kirigami.Units.smallSpacing)
-    }
-    // A source pane's choice column: three buttons with a small spacing between and around them.
-    readonly property real choiceWidth: 3 * rowHeight + 4 * Kirigami.Units.smallSpacing
+    // The same laid-out advance used by gutters, bands and scroll mapping.
+    // CodeRows owns the line distance; no consumer adds a second gap.
+    readonly property real rowHeight: Math.ceil(resultPane.blocks.rowHeight)
     // The panes by role, scrolled together through the file's passages.
     ComparisonPanes {
         id: panesByRole
@@ -388,8 +384,13 @@ ColumnLayout {
             objectName: "comparisonPanes"
             anchors.fill: parent
             orientation: Qt.Horizontal
+            // Each handle includes its two overlaid hairlines. Reserve both
+            // handles once before sharing the usable width among the panes.
+            readonly property real connectorWidth: Kirigami.Units.gridUnit
+            readonly property real defaultPaneWidth: Math.max(0, width - 2 * connectorWidth) / 3
             handle: ConnectorHandle {
                 id: connectorHandle
+                implicitWidth: panes.connectorWidth
                 result: resultPane
                 source: connectorHandle.leftSide ? leftPane : rightPane
                 projection: connectorHandle.leftSide ? leftBands : rightBands
@@ -398,12 +399,15 @@ ColumnLayout {
             }
             SourcePane {
                 id: leftPane
+                edits: comparison.edits
+                function openChoicesAt(line: int, x: real, y: real): bool {
+                    return leftChoices.openMenuForLine(line, x, y)
+                }
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
-                SplitView.preferredWidth: panes.width / 3
+                SplitView.preferredWidth: panes.defaultPaneWidth
                 paneName: "stage2"
                 paneRole: qsTr("Left source")
                 choiceEdge: "right"
-                choiceWidth: comparison.showChoices ? comparison.choiceWidth : 0
                 source: comparison.file.stage2 || ({})
                 versionName: source.commitId === comparison.controller.loader.stage2CommitId
                     ? comparison.controller.loader.stage2Name : ""
@@ -421,7 +425,7 @@ ColumnLayout {
                 id: resultPane
                 edits: comparison.edits
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 10
-                SplitView.preferredWidth: panes.width / 3
+                SplitView.preferredWidth: panes.defaultPaneWidth
                 controller: comparison.controller
                 file: comparison.file
                 marks: comparison.kept("marks:result", comparison.paneLineMarks("result"))
@@ -441,12 +445,15 @@ ColumnLayout {
             }
             SourcePane {
                 id: rightPane
+                edits: comparison.edits
+                function openChoicesAt(line: int, x: real, y: real): bool {
+                    return rightChoices.openMenuForLine(line, x, y)
+                }
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
-                SplitView.preferredWidth: panes.width / 3
+                SplitView.preferredWidth: panes.defaultPaneWidth
                 paneName: "stage3"
                 paneRole: qsTr("Right source")
                 choiceEdge: "left"
-                choiceWidth: comparison.showChoices ? comparison.choiceWidth : 0
                 source: comparison.file.stage3 || ({})
                 versionName: source.commitId === comparison.controller.loader.stage3CommitId
                     ? comparison.controller.loader.stage3Name : ""
@@ -467,6 +474,7 @@ ColumnLayout {
             anchors.fill: parent
             visible: comparison.showChoices
             ChoiceLane {
+                id: leftChoices
                 pane: leftPane
                 rows: comparison.kept("choices:stage2", comparison.choiceRowsFor(leftPane.paneName, comparison.file))
                 rowHeight: comparison.rowHeight
@@ -476,6 +484,7 @@ ColumnLayout {
                 onChosen: (target, action) => comparison.choiceChosen(target, action)
             }
             ChoiceLane {
+                id: rightChoices
                 pane: rightPane
                 rows: comparison.kept("choices:stage3", comparison.choiceRowsFor(rightPane.paneName, comparison.file))
                 rowHeight: comparison.rowHeight
@@ -488,6 +497,7 @@ ColumnLayout {
     }
     SourcePane {
         id: earlierPane
+        edits: comparison.edits
         Layout.fillWidth: true
         Layout.preferredHeight: Math.min(comparison.height / 3, Kirigami.Units.gridUnit * 10)
         visible: comparison.showEarlier && !!comparison.file.earlier && !!comparison.file.earlier.available

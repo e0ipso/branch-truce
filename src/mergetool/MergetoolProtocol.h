@@ -1,3 +1,4 @@
+// The mergetool protocol identifies local sessions and carries verified handoff messages to waiting launchers.
 #pragma once
 
 #include "git/GitAdapter.h"

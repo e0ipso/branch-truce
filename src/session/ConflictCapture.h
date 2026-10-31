@@ -1,3 +1,4 @@
+// Conflict capture turns inspected Git sources into immutable session snapshots and support decisions.
 #pragma once
 #include "core/FileSnapshot.h"
 #include "core/SessionState.h"

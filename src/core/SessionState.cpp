@@ -1,3 +1,4 @@
+// Session state keeps result revisions, decisions and undo history separate from immutable sources.
 #include "SessionState.h"
 #include "EditingCommands.h"
 #include "ResourceLimits.h"
@@ -284,6 +285,21 @@ const std::vector<NonConflictingTarget> &FileSession::nonConflictingTargets() co
 MarkerScan FileSession::markers() const
 {
     return resultMarkers(current().draft.text, correspondence(), launchBlocks_.get());
+}
+
+std::vector<ByteRange> FileSession::conflictRegions() const
+{
+    if (support_ != Support::Supported) return {};
+    const auto scan = markers();
+    std::vector<ByteRange> regions;
+    regions.reserve(scan.count());
+    for (const auto &block : scan.blocks)
+        regions.push_back({block.begin.bytes.begin, block.end.bytes.end});
+    for (const auto &orphan : scan.orphans) regions.push_back(orphan.bytes);
+    std::sort(regions.begin(), regions.end(), [](const auto &left, const auto &right) {
+        return left.begin < right.begin;
+    });
+    return regions;
 }
 
 std::vector<MarkerSection> FileSession::markerSections() const

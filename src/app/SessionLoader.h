@@ -1,3 +1,4 @@
+// Session loading discovers conflicted files and offers recoverable work without silently replacing it.
 #pragma once
 #include <QtQml/qqmlregistration.h>
 #include "mergetool/MergetoolSession.h"

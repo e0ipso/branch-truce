@@ -23,6 +23,7 @@
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/QuickScene.h"
+#include "fixtures/performance/TypingTrace.h"
 #include <QApplication>
 #include <QColor>
 #include <QDir>
@@ -32,13 +33,16 @@
 #include <QFileInfo>
 #include <QIcon>
 #include <QImage>
+#include <QJsonDocument>
 #include <QKeyEvent>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QStandardPaths>
+#include <QSysInfo>
 #include <QTemporaryDir>
 #include <QTextDocument>
 #include <QTimer>
@@ -447,6 +451,115 @@ std::string join(const std::vector<qint64> &values)
     for (const auto value : values) text += (text.empty() ? "" : " ") + std::to_string(value);
     return text;
 }
+
+void writeTypingDiagnostic(QJsonObject record)
+{
+    record.insert("schema", 1);
+    std::cout << "HIGHLIGHTED_TYPING_DIAGNOSTIC="
+              << QJsonDocument(record).toJson(QJsonDocument::Compact).constData() << '\n';
+}
+
+// Replay only after all budget samples and assertions. The same live scene now
+// contains the measured edits; report that state rather than claiming a pristine
+// replay or comparing instrumented CPU time against the uninstrumented limit.
+void diagnoseTyping(Scene &scene)
+{
+    auto *result = scene.item(QStringLiteral("resultText"));
+    auto *viewport = scene.item(QStringLiteral("resultViewport"));
+    auto *document = result->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+    const auto file = [&] { return scene.controller.files()->file("workload"); };
+    test_support::TypingTrace trace;
+    const auto dispatched = trace.add(QStringLiteral("input.sendEvent.return"));
+    const auto model = trace.add(QStringLiteral("session.dataChanged"));
+    const auto editor = trace.add(QStringLiteral("controller.resultEditorChanged"));
+    const auto selected = trace.add(QStringLiteral("controller.selectedFileChanged"));
+    const auto projected = trace.add(QStringLiteral("selectedFile.statusChanged"));
+    const auto comparison = trace.add(QStringLiteral("selectedFile.comparisonChanged"));
+    const auto passages = trace.add(QStringLiteral("selectedFile.passagesChanged"));
+    const auto handEdited = trace.add(QStringLiteral("selectedFile.handEditedLinesChanged"));
+    const auto choices = trace.add(QStringLiteral("selectedFile.choicesChanged"));
+    const auto regions = trace.add(QStringLiteral("selectedFile.regionsChanged"));
+    const auto markerBlocks = trace.add(QStringLiteral("selectedFile.markerBlocksChanged"));
+    const auto markerOrphans = trace.add(QStringLiteral("selectedFile.markerOrphansChanged"));
+    const auto summary = trace.add(QStringLiteral("session.summaryChanged"));
+    const auto frame = trace.add(QStringLiteral("input.acknowledgedFrame"));
+    QObject::connect(scene.controller.files(), &QAbstractItemModel::dataChanged, &trace, [&] { trace.mark(model); });
+    QObject::connect(&scene.controller, &ApplicationController::resultEditorChanged, &trace, [&] { trace.mark(editor); });
+    QObject::connect(&scene.controller, &ApplicationController::selectedFileChanged, &trace, [&] { trace.mark(selected); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::statusChanged, &trace, [&] { trace.mark(projected); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::comparisonChanged, &trace, [&] { trace.mark(comparison); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::passagesChanged, &trace, [&] { trace.mark(passages); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::handEditedLinesChanged, &trace, [&] { trace.mark(handEdited); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::choicesChanged, &trace, [&] { trace.mark(choices); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::regionsChanged, &trace, [&] { trace.mark(regions); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::markerBlocksChanged, &trace, [&] { trace.mark(markerBlocks); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::markerOrphansChanged, &trace, [&] { trace.mark(markerOrphans); });
+    QObject::connect(scene.controller.files(), &SessionModel::summaryChanged, &trace, [&] { trace.mark(summary); });
+    QJsonArray panes;
+    for (const auto *name : {"stage2Text", "resultText", "stage3Text"}) {
+        auto *item = scene.item(QString::fromLatin1(name));
+        auto *text = item->property("textDocument").value<QQuickTextDocument *>()->textDocument();
+        auto *highlighter = highlighterOf(item);
+        trace.watchDocument(QString::fromLatin1(name), text);
+        panes.append(QJsonObject{{"pane", name}, {"characters", text->characterCount()},
+            {"blocks", text->blockCount()}, {"definition", highlighter ? highlighter->definition().name() : QString()},
+            {"decorations", highlighter ? static_cast<int>(highlighter->decorations().size()) : 0}});
+    }
+    writeTypingDiagnostic({{"kind", "context"}, {"sequence", "after_budget_same_scene"},
+        {"budget_samples_instrumented", false}, {"diagnostic_times_include_observer_overhead", true},
+        {"timing_semantics", "cumulative public signal delivery offsets; overlapping, not exclusive costs"},
+        {"cpu_clock", "CLOCK_PROCESS_CPUTIME_ID"}, {"offset_unit", "us"},
+        {"offset_origin", "before_key_event_construction"},
+        {"render_observation", "frameSwapped delivered to GUI thread after revision and length acknowledgment"},
+        {"qt_runtime", qVersion()}, {"qt_build", QT_VERSION_STR}, {"os", QSysInfo::prettyProductName()},
+        {"architecture", QSysInfo::buildCpuArchitecture()}, {"platform", QGuiApplication::platformName()},
+        {"controls_style", QQuickStyle::name()},
+        {"graphics_api", static_cast<int>(scene.window->rendererInterface()->graphicsApi())},
+        {"window_width", scene.window->width()}, {"window_height", scene.window->height()},
+        {"workload_path", "src/workload.cpp"}, {"workload_source", "in_memory_workloadFile_fixture"},
+        {"source_lines", kWorkloadLines}, {"conflict_every", kRegionEvery},
+        {"repeats", kRepeats}, {"keys_per_repeat", kKeysPerRepeat}, {"diagnostic_scroll_notches", 0}, {"panes", panes},
+        {"input_path", "src/app/ResultEditorAdapter.cpp"}, {"model_path", "src/app/SessionModel.cpp"},
+        {"layout_path", "src/ui/TextBlocks.cpp"}, {"highlight_path", "src/highlighting/PaneHighlighter.cpp"}});
+    for (int repeat = 0; repeat < kRepeats; ++repeat) {
+        const auto position = document->findBlockByNumber(kWorkloadLines / 2 + 3 + repeat).position() + 4;
+        result->forceActiveFocus();
+        result->setProperty("cursorPosition", position);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        for (int key = 0; key < kKeysPerRepeat; ++key) {
+            const auto before = file()->current().id;
+            const auto length = document->characterCount();
+            QJsonObject record{{"kind", "key"}, {"repeat", repeat + 1}, {"key", key + 1},
+                {"revision_before", QString::number(before)}, {"characters_before", length},
+                {"document_revision_before", document->revision()},
+                {"blocks_before", document->blockCount()}, {"cursor_before", result->property("cursorPosition").toInt()},
+                {"viewport_y", viewport->property("contentY").toDouble()},
+                {"viewport_height", viewport->height()}, {"content_height", viewport->property("contentHeight").toDouble()}};
+            const auto cost = costToFrame(scene.window, [&] {
+                trace.begin();
+                QKeyEvent press(QEvent::KeyPress, Qt::Key_A, Qt::NoModifier, QStringLiteral("a"));
+                QCoreApplication::sendEvent(result, &press);
+                trace.mark(dispatched);
+            }, [&] {
+                if (file()->current().id == before || document->characterCount() != length + 1) return false;
+                trace.mark(frame);
+                return true;
+            });
+            trace.finish();
+            const auto timing = trace.json();
+            record.insert("trace", timing);
+            record.insert("acknowledged_and_drawn", cost.wall >= 0);
+            record.insert("to_frame_wall_ms", cost.wall);
+            if (timing.value("cpu_clock_valid").toBool() && cost.wall >= 0)
+                record.insert("to_frame_process_cpu_ms", cost.cpu);
+            record.insert("revision_after", QString::number(file()->current().id));
+            record.insert("characters_after", document->characterCount());
+            record.insert("document_revision_after", document->revision());
+            writeTypingDiagnostic(record);
+            if (cost.wall < 0) throw std::runtime_error("diagnostic key was not acknowledged and drawn");
+        }
+    }
+}
 #endif
 
 int checkCost()
@@ -551,6 +664,7 @@ int checkCost()
         CHECK(scrollMedians.size() == static_cast<std::size_t>(kRepeats));
         CHECK(scroll <= kScrollLimitMs);
     });
+    suite.run("typing diagnostic replay reaches acknowledged frames", [&] { diagnoseTyping(scene); });
     return suite.report();
 #endif
 }

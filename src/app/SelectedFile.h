@@ -1,4 +1,4 @@
-// SelectedFile exposes the selected row and caches independently notified comparison data.
+// SelectedFile exposes the selected row and publishes coherent comparison projections.
 #pragma once
 #include "SessionModel.h"
 #include "TextPositions.h"
@@ -23,13 +23,13 @@ class SelectedFile : public QObject {
     Q_PROPERTY(QVariantMap initialResult READ initialResult NOTIFY sourcesChanged)
     Q_PROPERTY(QString resultText READ resultText NOTIFY resultTextChanged)
     Q_PROPERTY(QVariantList decisions READ decisions NOTIFY decisionsChanged)
-    Q_PROPERTY(QVariantList passages READ passages NOTIFY passagesChanged)
-    Q_PROPERTY(QVariantList handEditedLines READ handEditedLines NOTIFY handEditedLinesChanged)
-    Q_PROPERTY(QVariantList choices READ choices NOTIFY choicesChanged)
-    Q_PROPERTY(QString choiceNotice READ choiceNotice NOTIFY choicesChanged)
-    Q_PROPERTY(QVariantList regions READ regions NOTIFY regionsChanged)
-    Q_PROPERTY(QVariantList markerBlocks READ markerBlocks NOTIFY markerBlocksChanged)
-    Q_PROPERTY(QVariantList markerOrphans READ markerOrphans NOTIFY markerOrphansChanged)
+    Q_PROPERTY(QVariantList passages READ passages NOTIFY comparisonChanged)
+    Q_PROPERTY(QVariantList handEditedLines READ handEditedLines NOTIFY comparisonChanged)
+    Q_PROPERTY(QVariantList choices READ choices NOTIFY comparisonChanged)
+    Q_PROPERTY(QString choiceNotice READ choiceNotice NOTIFY comparisonChanged)
+    Q_PROPERTY(QVariantList regions READ regions NOTIFY comparisonChanged)
+    Q_PROPERTY(QVariantList markerBlocks READ markerBlocks NOTIFY comparisonChanged)
+    Q_PROPERTY(QVariantList markerOrphans READ markerOrphans NOTIFY comparisonChanged)
     Q_PROPERTY(QString support READ support NOTIFY statusChanged)
     Q_PROPERTY(QString supportDetail READ supportDetail NOTIFY statusChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
@@ -37,6 +37,7 @@ class SelectedFile : public QObject {
     Q_PROPERTY(bool reviewNeeded READ reviewNeeded NOTIFY statusChanged)
     Q_PROPERTY(bool resolved READ resolved NOTIFY statusChanged)
     Q_PROPERTY(int undecided READ undecided NOTIFY statusChanged)
+    Q_PROPERTY(int conflicts READ conflicts NOTIFY statusChanged)
     Q_PROPERTY(bool pendingInput READ pendingInput NOTIFY statusChanged)
     Q_PROPERTY(QString pendingText READ pendingText NOTIFY statusChanged)
     Q_PROPERTY(QString recoveryState READ recoveryState NOTIFY statusChanged)
@@ -81,6 +82,7 @@ public:
     [[nodiscard]] bool reviewNeeded() const { return role(SessionModel::ReviewNeededRole).toBool(); }
     [[nodiscard]] bool resolved() const { return role(SessionModel::ResolvedRole).toBool(); }
     [[nodiscard]] int undecided() const { return role(SessionModel::UndecidedRole).toInt(); }
+    [[nodiscard]] int conflicts() const { return role(SessionModel::ConflictCountRole).toInt(); }
     [[nodiscard]] bool pendingInput() const { return role(SessionModel::PendingInputRole).toBool(); }
     [[nodiscard]] QString pendingText() const { return role(SessionModel::PendingTextRole).toString(); }
     [[nodiscard]] QString recoveryState() const { return role(SessionModel::RecoveryStateRole).toString(); }
@@ -100,6 +102,7 @@ Q_SIGNALS:
     void sourcesChanged();
     void resultTextChanged();
     void decisionsChanged();
+    void comparisonChanged();
     void passagesChanged();
     void handEditedLinesChanged();
     void choicesChanged();
@@ -108,8 +111,18 @@ Q_SIGNALS:
     void markerOrphansChanged();
     void statusChanged();
 private:
+    struct Projection {
+        QVariantList passages;
+        QVariantList handEditedLines;
+        QVariantList choices;
+        QVariantList regions;
+        QVariantList markerBlocks;
+        QVariantList markerOrphans;
+        QString choiceNotice;
+    };
     [[nodiscard]] QVariant role(int role) const;
     void project(const FileSession *file);
+    void publishProjection(Projection projection);
     template<typename T> void update(T &stored, const T &next, void (SelectedFile::*changed)())
     {
         if (stored == next) return;
@@ -117,7 +130,6 @@ private:
         Q_EMIT (this->*changed)();
     }
     SessionModel &files_;
-    int row_ = -1;
     const FileSnapshots *sourceIdentity_ = nullptr;
     bool reset_ = true;
     QString projectedRevision_;

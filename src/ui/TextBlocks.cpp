@@ -1,3 +1,4 @@
+// Text block geometry keeps line numbers, folds and comparison decorations aligned with the editor.
 #include "TextBlocks.h"
 #include <QAbstractTextDocumentLayout>
 #include <QQuickTextDocument>
@@ -286,6 +287,26 @@ QRectF TextBlocks::extent(QAbstractTextDocumentLayout *layout, const QTextBlock 
     return {};
 }
 
+qreal TextBlocks::firstRowHeight(QAbstractTextDocumentLayout *layout, const QTextBlock &block) const
+{
+    // Force this block's layout before reading its visual rows. Wrapped
+    // continuations already include the document's line-distance format.
+    const auto rect = extent(layout, block);
+    const auto *lines = block.layout();
+    if (lines && lines->lineCount() > 1)
+        return lines->lineAt(1).y() - lines->lineAt(0).y();
+    return rect.height();
+}
+
+qreal TextBlocks::rowHeight() const
+{
+    auto *text = document_ ? document_->textDocument() : nullptr;
+    auto *layout = text ? text->documentLayout() : nullptr;
+    if (!layout) return 0;
+    const auto block = shown(text->begin(), true);
+    return block.isValid() ? firstRowHeight(layout, block) : 0;
+}
+
 bool TextBlocks::folded(const QTextBlock &block) const
 {
     return !block.isVisible() || rows_.contains(block.blockNumber() + 1);
@@ -316,7 +337,8 @@ QVariantList TextBlocks::between(qreal top, qreal bottom) const
         if (rect.bottom() <= top) continue;
         blocks.append(QVariantMap{{QStringLiteral("number"), block.blockNumber() + 1},
             {QStringLiteral("position"), block.position()},
-            {QStringLiteral("top"), rect.top()}, {QStringLiteral("height"), rect.height()}});
+            {QStringLiteral("top"), rect.top()}, {QStringLiteral("height"), rect.height()},
+            {QStringLiteral("rowHeight"), firstRowHeight(layout, block)}});
     }
     return blocks;
 }

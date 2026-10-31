@@ -1,6 +1,6 @@
 // The editable result as a pane: its header above the text, with line numbers and
-// provenance, diff colours, whitespace markers, a gutter column with each decided
-// section's state, and the folded conflict-marker blocks as rows with their Take both menus.
+// one state glyph, inspectable provenance and decisions, diff colours, whitespace
+// markers, and folded conflict-marker blocks as rows with their Take both menus.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -61,10 +61,13 @@ ColumnLayout {
         identity: qsTr("Editable")
         description: identity
     }
-    Item {
+    Rectangle {
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.minimumHeight: resultPane.minimumTextHeight
+        Kirigami.Theme.colorSet: Kirigami.Theme.View
+        Kirigami.Theme.inherit: false
+        color: Kirigami.Theme.backgroundColor
         Flickable {
             id: resultViewport
             objectName: "resultViewport"
@@ -75,9 +78,21 @@ ColumnLayout {
             anchors.fill: parent
             anchors.leftMargin: Kirigami.Units.smallSpacing
             anchors.rightMargin: Kirigami.Units.smallSpacing
+            // Match source panes: fitting/wrapped text keeps the full height.
+            anchors.bottomMargin: resultHorizontal.visible ? resultHorizontal.height : 0
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            ScrollBar.horizontal: ScrollBar {}
+            ScrollBar.horizontal: ScrollBar {
+                id: resultHorizontal
+                objectName: "resultHorizontalScrollBar"
+                parent: resultViewport.parent
+                anchors.left: resultViewport.left
+                anchors.right: resultViewport.right
+                anchors.bottom: parent.bottom
+                height: implicitHeight
+                policy: resultPane.wrapLines ? ScrollBar.AlwaysOff : ScrollBar.AsNeeded
+                Accessible.name: qsTr("Result horizontal scroll")
+            }
             ScrollBar.vertical: ScrollBar {
                 id: resultBar
             }
@@ -101,6 +116,13 @@ ColumnLayout {
                 persistentSelection: true
                 textFormat: TextEdit.PlainText
                 font: Kirigami.Theme.fixedWidthFont
+                // Keep the style's own focus indication, but let the flat View
+                // fill supply the idle background rather than an input frame.
+                Binding {
+                    target: resultEditor.background
+                    property: "visible"
+                    value: resultEditor.activeFocus
+                }
                 // Read by the C++ word-difference decoration: this pane, the line kinds its
                 // backgrounds draw, and the text colours of those kinds' theme roles.
                 readonly property var wordDifferenceStyle: ({
@@ -117,7 +139,11 @@ ColumnLayout {
                 rightPadding: Kirigami.Units.smallSpacing
                 topPadding: Kirigami.Units.smallSpacing
                 bottomPadding: Kirigami.Units.smallSpacing
-                width: resultPane.wrapLines ? resultViewport.width : implicitWidth
+                // Size to text rather than the native input background's minimum.
+                // TextArea.flickable derives its content width from this too.
+                implicitWidth: contentWidth + leftPadding + rightPadding
+                width: resultPane.wrapLines ? resultViewport.width
+                    : Math.max(resultViewport.width, implicitWidth)
                 wrapMode: resultPane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                 Accessible.name: qsTr("Editable result")
                 Component.onCompleted: resultPane.controller.attachResultEditor(resultEditor)
@@ -161,12 +187,10 @@ ColumnLayout {
                 width: implicitWidth
                 height: Math.max(resultEditor.height, resultViewport.height)
                 editor: resultEditor
-                rowSpacing: Kirigami.Units.smallSpacing
+                blocks: resultBlocks
                 viewport: resultViewport
-                provenance: true
                 marks: resultPane.marks
                 folds: resultPane.fold.rows
-                decisionColumn: true
                 decisions: resultPane.decisions
             }
             LineBackgrounds {
@@ -187,10 +211,9 @@ ColumnLayout {
             active: resultPane.showWhitespace
         }
     }
-    TextBlocks {
+    CodeRows {
         id: resultBlocks
         document: resultEditor.textDocument
-        rowSpacing: Kirigami.Units.smallSpacing
         hidden: resultPane.fold.hidden
         // A fold can hide the line the cursor is on.
         onLayoutChanged: resultBlocks.queueCursorCheck()

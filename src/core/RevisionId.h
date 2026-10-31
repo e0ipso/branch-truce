@@ -1,3 +1,4 @@
+// Revision identifiers distinguish successive versions of a file's result and decisions.
 #pragma once
 
 #include <cstdint>

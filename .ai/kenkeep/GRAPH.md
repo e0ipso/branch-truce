@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:ff0d279b7743e4acac6b324cd205ddac2e879f27815258b005d01f0a7e4fbf3d'
-node_count: 31
+nodes_hash: 'sha256:681194a6612829e86162f32533160737d5aefc7887746a27a31cd70106fdfffa'
+node_count: 33
 ---
 # kenkeep Graph
 
-Total nodes: 31
+Total nodes: 33
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -71,7 +71,7 @@ Total nodes: 31
 - **path:** map-recovery-journal-and-acknowledgment-boundary.md
 - **tags:** recovery, storage, editing, failures
 - **relates_to:** practice-recover-unfinished-work-without-changing-its-status, practice-keep-session-captures-immutable-across-revisions, practice-keep-failed-work-outstanding, map-mergetool-session-socket-and-real-git-parent
-- **derived_from:** docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md, src/storage/RecoveryStore.cpp, src/app/ApplicationController.cpp, src/app/main.cpp, src/ui/Main.qml
+- **derived_from:** docs/recovery-journal.md, src/recovery/RecoveryRestore.cpp, src/app/SessionModel.h, tests/fixtures/performance/evidence.md, src/storage/RecoveryStore.cpp, src/app/ApplicationController.cpp, src/app/main.cpp, src/ui/Main.qml
 
 ## map-repository-discovery-and-verified-source-identities
 
@@ -144,6 +144,14 @@ Total nodes: 31
 - **path:** practice-hold-a-git-call-to-test-racing-repository-changes.md
 - **tags:** testing, git, concurrency, mergetool
 - **relates_to:** map-recovery-journal-and-acknowledgment-boundary, map-mergetool-session-socket-and-real-git-parent, practice-fence-session-work-and-serialize-worktree-mutations
+
+## practice-interpret-native-reference-comparisons-on-the-calibrated-grid
+
+- **kind:** practice
+- **title:** Interpret native reference comparisons on the calibrated grid
+- **path:** practice-interpret-native-reference-comparisons-on-the-calibrated-grid.md
+- **tags:** testing, ui, capture, calibration, provenance
+- **relates_to:** practice-wait-for-rendered-frames-before-capturing-native-scenes
 
 ## practice-keep-failed-work-outstanding
 
@@ -229,7 +237,7 @@ Total nodes: 31
 - **title:** Recover unfinished work without changing its status
 - **path:** practice-recover-unfinished-work-without-changing-its-status.md
 - **tags:** product, recovery, editing, progress
-- **derived_from:** PRD.md, docs/recovery-journal.md, src/app/RecoveryRestore.cpp, src/app/ResolutionPublisher.cpp
+- **derived_from:** PRD.md, docs/recovery-journal.md, src/recovery/RecoveryRestore.cpp, src/publication/ResolutionPublisher.cpp
 
 ## practice-separate-save-from-mark-resolved
 
@@ -237,7 +245,7 @@ Total nodes: 31
 - **title:** Separate Save from Mark resolved
 - **path:** practice-separate-save-from-mark-resolved.md
 - **tags:** product, saving, resolution, review
-- **derived_from:** PRD.md, src/app/ResolutionPublisher.cpp
+- **derived_from:** PRD.md, src/publication/ResolutionPublisher.cpp
 
 ## practice-treat-mergetool-file-state-as-live-evidence
 
@@ -254,3 +262,11 @@ Total nodes: 31
 - **path:** practice-wait-for-layout-before-clicking-offscreen-dialog-items.md
 - **tags:** testing, qml, ui, offscreen
 - **relates_to:** practice-keep-unsupported-and-unfinished-work-visible, map-journey-acceptance-suite, practice-design-desktop-apps-around-screens-and-components
+
+## practice-wait-for-rendered-frames-before-capturing-native-scenes
+
+- **kind:** practice
+- **title:** Wait for rendered frames before capturing native scenes
+- **path:** practice-wait-for-rendered-frames-before-capturing-native-scenes.md
+- **tags:** testing, qml, ui, capture, readiness
+- **relates_to:** practice-wait-for-layout-before-clicking-offscreen-dialog-items, map-startup-style-colour-scheme-and-icon-theme

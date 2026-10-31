@@ -1,3 +1,4 @@
+// Comparison panes keep source and result scroll positions aligned through their passage correspondence.
 #include "ComparisonPanes.h"
 #include "TextBlocks.h"
 #include <QScopedValueRollback>
@@ -147,10 +148,21 @@ qreal ComparisonPanes::lineOnRow(const Pane &pane, qreal row)
     return pane.blocks->lineAtY(contentY + row - pane.editor->y() - padding);
 }
 
-void ComparisonPanes::putLineOnRow(const Pane &pane, qreal line, qreal row)
+void ComparisonPanes::putLineOnRow(const Pane &pane, qreal line, qreal row, bool wholeLine)
 {
     const auto padding = pane.editor->property("topPadding").toReal();
-    const auto y = pane.editor->y() + padding + pane.blocks->yAtLine(line) - row;
+    const auto origin = pane.editor->y() + padding;
+    auto y = origin + pane.blocks->yAtLine(line) - row;
+    if (wholeLine) {
+        // A cursor rectangle covers only one visual row. Placement must keep
+        // the block's wrapped rows and native line distance in view as well.
+        const auto top = origin + pane.blocks->yAtLine(std::floor(line));
+        const auto bottom = origin + pane.blocks->yAtLine(std::floor(line) + 1);
+        if (bottom - top <= pane.viewport->height())
+            y = std::clamp(y, bottom - pane.viewport->height(), top);
+        else
+            y = top;
+    }
     const auto contentHeight = pane.viewport->property("contentHeight").toReal();
     const auto bottom = std::max<qreal>(0, contentHeight - pane.viewport->height());
     pane.viewport->setProperty("contentY", std::max<qreal>(0, std::min(bottom, y)));
@@ -188,15 +200,26 @@ void ComparisonPanes::paneScrolled(const QString &name, bool byUser)
 
 void ComparisonPanes::place(const QString &lead, qreal line)
 {
+    if (following_) return;
     const auto panes = shownPanes();
     const auto leader = std::find_if(panes.cbegin(), panes.cend(), [&](const Pane &pane) { return pane.name == lead; });
-    if (leader == panes.cend()) return;
+    const auto resultPane = std::find_if(panes.cbegin(), panes.cend(), [](const Pane &pane) { return pane.name == resultName; });
+    if (leader == panes.cend() || resultPane == panes.cend()) return;
+    QScopedValueRollback guard(following_, true);
+    for (const auto &pane : panes) pane.blocks->flushSpacing();
     const auto row = referenceRow(panes);
-    putLineOnRow(*leader, line, row);
-    follow(lead);
+    const int resultLines = resultPane->blocks->blockCount();
+    const auto resultLine = toResult(lead, line, leader->blocks->blockCount(), resultLines);
+    QList<qreal> targets;
     for (const auto &pane : panes) {
-        if (pane.name != resultName) keepCursorOnLine(pane, std::floor(lineOnRow(pane, row)));
+        const auto target = pane.name == lead ? line
+            : fromResult(pane.name, resultLine, resultLines, pane.blocks->blockCount());
+        targets.append(target);
+        // Native TextArea cursor visibility can scroll its Flickable. Do it
+        // before assigning any final viewport, without making a pane lead.
+        if (pane.name != resultName) keepCursorOnLine(pane, std::floor(target));
     }
+    for (qsizetype i = 0; i < panes.size(); ++i) putLineOnRow(panes[i], targets[i], row, true);
 }
 
 void ComparisonPanes::paneShown(const QString &name)

@@ -1,3 +1,4 @@
+// The Git adapter inspects repository state and performs guarded operations for conflict resolution.
 #include "GitAdapter.h"
 #include "GitAdapterState.h"
 #include "GitParsing.h"

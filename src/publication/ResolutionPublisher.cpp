@@ -1,3 +1,4 @@
+// Resolution publishing writes a reviewed result and verifies its Git staging or parent handoff.
 #include "publication/ResolutionPublisher.h"
 
 #include <QHash>

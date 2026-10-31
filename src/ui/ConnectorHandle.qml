@@ -64,6 +64,7 @@ Item {
                 readonly property real resultBottom: modelData.resultBottom
                 readonly property real sourceX: connector.leftSide ? 0 : width
                 readonly property real resultX: width - sourceX
+                readonly property real middleX: width / 2
                 // Current passages use the highlight; others use their kind's text-role tint.
                 readonly property bool current: modelData.current
                 readonly property color fill: current ? Kirigami.Theme.highlightColor : DiffStyle.textColor(kind, band)
@@ -76,12 +77,36 @@ Item {
                     fillColor: band.fill
                     startX: band.sourceX
                     startY: band.sourceTop
-                    PathLine { x: band.resultX; y: band.resultTop }
+                    // Horizontal tangents join the full row fills at both ends.
+                    // Keep the midpoint controls in sync with ConnectorBands::bandAt.
+                    PathCubic {
+                        control1X: band.middleX; control1Y: band.sourceTop
+                        control2X: band.middleX; control2Y: band.resultTop
+                        x: band.resultX; y: band.resultTop
+                    }
                     PathLine { x: band.resultX; y: band.resultBottom }
-                    PathLine { x: band.sourceX; y: band.sourceBottom }
+                    PathCubic {
+                        control1X: band.middleX; control1Y: band.resultBottom
+                        control2X: band.middleX; control2Y: band.sourceBottom
+                        x: band.sourceX; y: band.sourceBottom
+                    }
                     PathLine { x: band.sourceX; y: band.sourceTop }
                 }
             }
         }
+    }
+    // Both edges belong to the handle's allocated width. Draw them over the
+    // ribbon ends for the full split height, including the pane headers.
+    Kirigami.Separator {
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 1
+    }
+    Kirigami.Separator {
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 1
     }
 }

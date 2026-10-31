@@ -27,6 +27,11 @@ target_include_directories(branch_truce_word_differences_tests PRIVATE "${CMAKE_
 target_link_libraries(branch_truce_word_differences_tests PRIVATE branch_truce_core branch_truce_build_options)
 add_test(NAME core.word-differences COMMAND branch_truce_word_differences_tests)
 find_program(BASH_EXECUTABLE bash REQUIRED)
+add_test(NAME tooling.icon-name-collection
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+        "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/icon-name-tests"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/IconNameCollectionTests.cmake")
+set_tests_properties(tooling.icon-name-collection PROPERTIES TIMEOUT 30)
 add_test(NAME lifecycle.cli-guards
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/SetupGuards.sh")
 set_tests_properties(lifecycle.cli-guards PROPERTIES TIMEOUT 30)
@@ -44,24 +49,44 @@ foreach(native_check IN ITEMS NativeIntegration DebianPreflight FedoraPackaging 
     set_tests_properties(packaging.${native_check} PROPERTIES TIMEOUT 30)
 endforeach()
 
-# Host side of the .deb build and inspection scripts against a stub container engine (about 1 s).
+# Host side of the .deb build and inspection scripts against a stub container engine.
 add_test(NAME packaging.artifact-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ArtifactTooling.sh")
 set_tests_properties(packaging.artifact-tooling PROPERTIES TIMEOUT 30)
-# The CI test stages install every runtime Depends of the package (text parsing, under 1 s).
+# The CI fixture checks that test stages list every runtime package dependency.
 add_test(NAME packaging.ci-test-stage-depends
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/CiTestStageDepends.sh")
 set_tests_properties(packaging.ci-test-stage-depends PROPERTIES TIMEOUT 30)
-# The host provisioning list installs every runtime Depends of the package (text parsing, under 1 s).
+# The provisioning fixture checks that the host list includes every runtime package dependency.
 add_test(NAME packaging.provisioning-depends
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ProvisioningDepends.sh")
 set_tests_properties(packaging.provisioning-depends PROPERTIES TIMEOUT 30)
 # Host side of the installed-artifact validation and the AT-SPI probe against stub
-# container, sway and grim commands and a fake Atspi module (about 4 s). It exits 77,
+# container, sway and grim commands and a fake Atspi module. It exits 77,
 # reported as skipped, when jq or python3 is missing.
 add_test(NAME packaging.installed-validation-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/InstalledValidationTooling.sh")
 set_tests_properties(packaging.installed-validation-tooling PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+# Native replay tooling uses only Python's standard library. Its Qt driver has a
+# separate build under tools/native-replay and is never linked into the app.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME tooling.native-replay
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/NativeReplayTests.py")
+    set_tests_properties(tooling.native-replay PROPERTIES TIMEOUT 30)
+    if(BRANCH_TRUCE_BUILD_DESKTOP)
+        # Exercise the same image CLI as native replay without building its Qt Quick driver.
+        # Core-only builds have no QtGui; their Python contract/lifecycle checks stay above.
+        add_executable(branch_truce_native_calibration_image
+            "${PROJECT_SOURCE_DIR}/tools/native-replay/ImageCheck.cpp")
+        target_link_libraries(branch_truce_native_calibration_image PRIVATE
+            Qt6::Core Qt6::Gui branch_truce_build_options)
+        add_test(NAME tooling.native-calibration
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/NativeCalibrationTests.py"
+                --image-tool $<TARGET_FILE:branch_truce_native_calibration_image>)
+        set_tests_properties(tooling.native-calibration PROPERTIES TIMEOUT 30)
+    endif()
+endif()
 if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_text_format_tests storage/TextFormatTests.cpp)
     target_include_directories(branch_truce_text_format_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -130,11 +155,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     #   QT_QPA_PLATFORM=wayland tests/with-private-xdg.sh build/desktop/tests/branch_truce_comparison_tests display
     # with WAYLAND_DISPLAY naming the compositor socket by absolute path, because the wrapper
     # replaces XDG_RUNTIME_DIR. "boundary" is the two Backspace and Delete fixtures that edit 262144-byte lines and an
-    # 8388608-byte buffer in the real editor. Each timeout is at least twice the slowest measured run on
-    # the development host. Boundary took 17.8 to 23.8 s over nine runs, one of them under load from
-    # another build. Scenes run under org.kde.desktop, the style the app selects at startup; a run under
-    # the default Basic style would add no coverage, as the app never selects Basic. Five such runs at
-    # load averages of 2 to 12 took 180 to 213 s, against 84 s under Basic, so scenes get 450 s.
+    # 8388608-byte buffer in the real editor. Scenes use the app's org.kde.desktop style.
+    # Each timeout must be at least twice the slowest measured run.
     add_test(NAME app.comparison-view COMMAND branch_truce_comparison_tests scenes)
     add_test(NAME app.comparison-view-boundary COMMAND branch_truce_comparison_tests boundary)
     set_tests_properties(app.comparison-view PROPERTIES TIMEOUT 450
@@ -205,8 +227,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
     # Typing and wheel scrolling in the real panes with a highlighted 200-line C++ file. It fails
     # when either median CPU time exceeds its limit in docs/resource-limits.md, and skips when the
-    # build has BRANCH_TRUCE_SYNTAX_HIGHLIGHTING off. The timeout is twice the slowest of twelve
-    # runs on the development host: 50.6 to 52.3 s alone or three at once, 81.0 to 90.7 s six at once.
+    # build has BRANCH_TRUCE_SYNTAX_HIGHLIGHTING off.
+    # The timeout must be at least twice the slowest measured run.
     add_test(NAME performance.highlighted-editor COMMAND branch_truce_theme_tests cost)
     # CPU medians must not compete with other CTest processes.
     set_tests_properties(performance.highlighted-editor PROPERTIES TIMEOUT 200 RUN_SERIAL TRUE LABELS "ui;performance"
@@ -219,16 +241,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_libraries(branch_truce_journey_acceptance_tests PRIVATE branch_truce_controller branch_truce_uiplugin
         Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
     # The executable takes "review", "handoff" or "window"; with no argument it runs every journey.
-    # "review" is the six journeys on the three panes, choices, editing, search and Save. "handoff" is the six
-    # on the handoff, discarding back to the staged result, startup recovery and mergetool. "window" is the five
-    # on window fit, first undecided region, hand edits, line choices inside one conflict and the close guard. Each timeout is at least twice the slowest
-    # of four runs on the development host, one of them with the three groups running together: review 23.5 to
-    # 26.6 s (36.5 s together), handoff 21.9 to 23.1 s (39.2 s), window 15.5 to 15.9 s (26.8 s). Those window runs
-    # predate the line-choice journey; with it, two runs alone under load from other builds took 18.4 and 18.7 s.
-    # The single entry these replaced took 85 to 108 s against 120 s. The window journeys run under org.kde.desktop,
-    # the style the app selects at startup, as the window fit is what users see; the app never selects the default
-    # Basic style, so a Basic run would add no coverage. Under it two runs at load averages of 3 and 4 took 31.1 and
-    # 38.1 s, against 29.7 s under Basic.
+    # Review covers panes, choices, editing, search and Save. Handoff covers staged drafts,
+    # startup recovery and mergetool completion. Window covers fit, navigation and the close guard.
+    # Each timeout must be at least twice the slowest measured run.
     add_test(NAME acceptance.journeys-review COMMAND branch_truce_journey_acceptance_tests review)
     add_test(NAME acceptance.journeys-handoff COMMAND branch_truce_journey_acceptance_tests handoff)
     add_test(NAME acceptance.journeys-window COMMAND branch_truce_journey_acceptance_tests window)
@@ -251,10 +266,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         "LINKER:--wrap=_ZNK12branch_truce7storage13RecoveryStore4readEv")
     add_dependencies(branch_truce_startup_route_tests branch-truce)
     add_test(NAME app.startup-routes COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_route_tests> $<TARGET_FILE:branch-truce>)
-    # Real merge fixtures include restart and recovery fault matrices. Alone it takes 71 to 79 s.
-    # With 24 busy loops on 8 cores (load averages of 25 to 36) 14 runs on the host and in the
-    # Tuxedo image took 287 to 463 s, so it gets 600 s: the longest run plus 25 %, rounded up.
-    set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 600)
+    # The timeout must be at least twice the slowest measured run.
+    set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 1000)
 
     # Preloaded into the real binary to report its style and icon theme state.
     add_library(branch_truce_appearance_probe MODULE fixtures/AppearanceProbe.cpp)
@@ -282,9 +295,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_options(branch_truce_mergetool_tests PRIVATE "LINKER:--wrap=getsockopt")
     add_dependencies(branch_truce_mergetool_tests branch-truce)
     add_test(NAME app.mergetool-launcher COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_tests> $<TARGET_FILE:branch-truce>)
-    # Alone it takes about 40 s. At load averages of 25 to 36 on 8 cores 14 runs on the host and in
-    # the Tuxedo image took 97 to 174 s, so it gets 240 s: the longest run plus 25 %, rounded up.
-    set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 240)
+    # The timeout must be at least twice the slowest measured run.
+    set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 360)
 
     # Installed /usr/bin/git runs `git mergetool` against the launcher and an in-process session.
     add_executable(branch_truce_mergetool_parent_tests git/MergetoolParentTests.cpp)
@@ -292,9 +304,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_link_libraries(branch_truce_mergetool_parent_tests PRIVATE branch_truce_controller branch_truce_build_options)
     add_dependencies(branch_truce_mergetool_parent_tests branch-truce)
     add_test(NAME git.mergetool-parent COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_parent_tests> $<TARGET_FILE:branch-truce>)
-    # Alone it takes about 35 s. At load averages of 25 to 36 on 8 cores 14 runs on the host and in
-    # the Tuxedo image took 107 to 218 s, so it gets 300 s: the longest run plus 25 %, rounded up.
-    set_tests_properties(git.mergetool-parent PROPERTIES TIMEOUT 300)
+    # The timeout must be at least twice the slowest measured run.
+    set_tests_properties(git.mergetool-parent PROPERTIES TIMEOUT 450)
 
     add_executable(branch_truce_coordinator_tests app/SessionCoordinatorTests.cpp)
     target_include_directories(branch_truce_coordinator_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -308,10 +319,10 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_test(NAME git.adapter COMMAND branch_truce_git_tests)
     add_test(NAME git.conflict-classification COMMAND branch_truce_git_tests --classification-only)
     set_tests_properties(git.conflict-classification PROPERTIES TIMEOUT 30)
-    # Allow the real 30-second operation deadline plus the Git fixture matrix.
+    # The timeout must be at least twice the slowest measured run, including the Git operation deadline.
     set_tests_properties(git.adapter PROPERTIES TIMEOUT 90)
 
-    # Keep the accepted editor fixture, which links no product target, in the permanent regression suite.
+    # The standalone editor fixture checks native text selection, editing and scrolling without product targets.
     set(editor_fixture "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/editor")
     add_executable(branch_truce_editor_tests "${editor_fixture}/main.cpp")
     target_link_libraries(branch_truce_editor_tests PRIVATE Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
@@ -336,7 +347,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     # Rebuilds a Release copy in a fixture under ${TMPDIR:-/tmp}, installs it, launches only the
-    # installed files and removes the fixture (about 100 s on the development host).
+    # installed files and removes the fixture.
     add_test(NAME install.prefix COMMAND ${private_xdg} "${BASH_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/verify-install-prefix.sh"
         --mergetool-tests $<TARGET_FILE:branch_truce_mergetool_tests>)
     # Serial, so its Release build does not slow the wall-clock deadlines of other tests.

@@ -1,3 +1,4 @@
+// Private Git adapter state tracks each bounded request and its supervised Git process.
 #pragma once
 
 // Private to the branch_truce_git library. GitAdapter's sources share the

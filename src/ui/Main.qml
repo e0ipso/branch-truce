@@ -1,3 +1,4 @@
+// The main window brings the session sidebar, comparison workspace and completion dialogs together.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -11,6 +12,25 @@ Kirigami.ApplicationWindow {
     required property ApplicationController controller
     readonly property SelectedFile selectedFile: controller.selectedFile
     readonly property bool supportedSelection: selectedFile.support === "supported"
+    readonly property bool binarySelection: OutsideAppText.binaryExcluded(
+        selectedFile.support, selectedFile.supportDetail, selectedFile.pathBytes)
+    readonly property string selectedAddCommand: OutsideAppText.gitAddCommand(selectedFile.pathBytes)
+    function selectedProblemExplanation(): string {
+        const path = selectedFile.path;
+        const name = path.slice(path.lastIndexOf("/") + 1);
+        const identity = name === path ? name : name + " (" + path + ")";
+        if (selectedFile.support === "unreadable")
+            return qsTr("Branch Truce could not read %1. Check that the file is available and readable before resolving it outside Branch Truce. It remains outstanding until Git reports it resolved.").arg(identity);
+        const guidance = binarySelection
+            ? qsTr("Resolve %1 with another tool.").arg(identity)
+            : qsTr("Branch Truce cannot edit %1. Inspect the file and resolve it with another tool.").arg(identity);
+        if (selectedAddCommand.length === 0)
+            return qsTr("%1\n\nThis path cannot be represented safely in a copyable shell command. Stage the exact path with another tool after resolving it. It stays in this list and remains outstanding until Git reports it resolved.").arg(guidance);
+        // Substitute repository text only once per string, so a path containing %1 or
+        // %2 is never interpreted as another translation placeholder.
+        return guidance + qsTr(" Then run this command from the repository root:\n%1\n\nIt stays in this list and remains outstanding until Git reports it resolved.")
+            .arg(selectedAddCommand);
+    }
     function choose(target: string, action: int): void {
         if (!controller.previewChoice(controller.selectedFileId, selectedFile.currentRevision, target, action))
             return;
@@ -55,7 +75,6 @@ Kirigami.ApplicationWindow {
             pending.push(...next.children);
         }
     }
-    // Retries every file's pending recovery, then closes again if none is left.
     function retryPendingRecoveryAndClose(): void {
         for (const group of controller.handoff.groups || [])
             for (const entry of group.entries)
@@ -123,9 +142,35 @@ Kirigami.ApplicationWindow {
         id: replacementDialog
         controller: window.controller
     }
+    Kirigami.Dialog {
+        id: selectedDetailsDialog
+        objectName: "selectedProblemDetails"
+        title: qsTr("File diagnostics")
+        standardButtons: Kirigami.Dialog.Close
+        preferredWidth: Kirigami.Units.gridUnit * 30
+        DialogBody {
+            PlainLabel {
+                objectName: "selectedProblemDiagnosticPath"
+                Layout.fillWidth: true
+                text: window.selectedFile.path
+                font.bold: true
+                wrapMode: Text.WrapAnywhere
+            }
+            TextArea {
+                objectName: "selectedProblemDiagnostic"
+                Layout.fillWidth: true
+                text: window.selectedFile.supportDetail
+                textFormat: TextEdit.PlainText
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.WrapAnywhere
+                Accessible.name: qsTr("Captured file diagnostic")
+            }
+        }
+    }
     width: Kirigami.Units.gridUnit * 70
     height: Kirigami.Units.gridUnit * 40
-    // Fits 1920x1080 at 200% scaling (960x540 logical pixels); the page scrolls below its content height.
+    // Native grid units let the minimum follow the desktop font size.
     minimumWidth: Kirigami.Units.gridUnit * 48
     minimumHeight: Kirigami.Units.gridUnit * 28
     visible: true
@@ -185,8 +230,7 @@ Kirigami.ApplicationWindow {
             visible: !window.controller.loader.opening && window.controller.files.totalFiles > 0
             controller: window.controller
         }
-        // On a short screen, such as 1080p at 150% or 200%, the content keeps its minimum
-        // height and scrolls, so the text panes keep a usable height and nothing is cut off.
+        // Keep the panes' reading height when the work area needs vertical scrolling.
         Flickable {
             id: pageScroll
             objectName: "pageScroll"
@@ -297,6 +341,7 @@ Kirigami.ApplicationWindow {
                         id: fileListPane
                         visible: window.controller.fileListVisible
                         SplitView.preferredWidth: Kirigami.Units.gridUnit * 14
+                            + Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing / 2
                         SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
                         SplitView.maximumWidth: Math.max(SplitView.minimumWidth, workSplit.width / 2)
                         controller: window.controller
@@ -330,18 +375,25 @@ Kirigami.ApplicationWindow {
                             objectName: "selectedStatus"
                             visible: false
                         }
-                        // The reason is shown whole; it stays outstanding until it is handled outside the app.
+                        // Explain the selected-file handoff; keep the exact diagnostic inspectable.
                         CenteredPlaceholder {
                             visible: window.controller.selectedFileId.length > 0 && !window.supportedSelection
                             messageName: "selectedProblem"
                             viewBackground: true
                             onPlainTextRequested: item => window.showPlainText(item)
-                            iconName: window.selectedFile.statusIcon || ""
-                            text: window.selectedFile.support === "unreadable" ? qsTr("Could not load this file") : qsTr("This file must be resolved outside Branch Truce")
-                            explanation: window.selectedFile.support === "unreadable" ? window.selectedFile.supportDetail || ""
-                                : qsTr("%1\n\nResolve this file with another tool, then run git add for its path. It remains outstanding until Git reports it resolved.")
-                                    .arg(window.selectedFile.supportDetail || "")
-
+                            iconName: window.selectedFile.support === "outside-app"
+                                ? window.selectedFile.mimeIcon : window.selectedFile.statusIcon
+                            text: window.selectedFile.support === "unreadable" ? qsTr("Could not load this file")
+                                : window.binarySelection ? qsTr("Binary files are resolved outside Branch Truce")
+                                : qsTr("This file must be resolved outside Branch Truce")
+                            explanation: window.selectedProblemExplanation()
+                            helpfulAction: Kirigami.Action {
+                                objectName: "selectedProblemDetailsAction"
+                                text: qsTr("Technical details")
+                                icon.name: "documentinfo"
+                                enabled: window.selectedFile.supportDetail.length > 0
+                                onTriggered: selectedDetailsDialog.open()
+                            }
                         }
                         Repeater {
                             model: FileNotices {

@@ -1,3 +1,4 @@
+// Comparison panes keep source and result scroll positions aligned through their passage correspondence.
 #pragma once
 #include <QHash>
 #include <QList>
@@ -86,8 +87,8 @@ public:
     // moves a pane the user is not scrolling leaves the others alone.
     Q_INVOKABLE void paneScrolled(const QString &name, bool byUser);
     // Puts line of the pane named lead on the reference row and the other
-    // panes on their matching lines. A relayout scrolls a source to keep its
-    // cursor in view, so each source's cursor goes to the line on its row.
+    // panes on their matching lines. Finish spacing and source cursor updates
+    // before scrolling; reserve room for the entire target block when it fits.
     Q_INVOKABLE void place(const QString &lead, qreal line);
     // Brings a pane that was just shown to the result's position. Showing it
     // lays it out again, which would scroll it back to the cursor it had while
@@ -114,7 +115,7 @@ private:
     QList<Pane> shownPanes() const;
     qreal referenceRow(const QList<Pane> &panes) const;
     static qreal lineOnRow(const Pane &pane, qreal row);
-    static void putLineOnRow(const Pane &pane, qreal line, qreal row);
+    static void putLineOnRow(const Pane &pane, qreal line, qreal row, bool wholeLine = false);
     static void keepCursorOnLine(const Pane &pane, qreal line);
     qreal toResult(const QString &side, qreal line, int sideLines, int resultLines) const;
     qreal fromResult(const QString &side, qreal line, int resultLines, int sideLines) const;
