@@ -333,23 +333,37 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
     window->installEventFilter(&inputTrace);
     QObject::connect(window, &QQuickWindow::activeFocusItemChanged, &inputTrace,
         [&] { record(QStringLiteral("active focus changed")); });
-    try {
-        auto *toolbar = visibleItem(window->contentItem(), QStringLiteral("fileToolBar"));
-        if (!toolbar) throw std::runtime_error("missing file toolbar");
-        if (auto *more = reachableButton(window, toolbar, QStringLiteral("More Actions"))) {
-            if (auto *menu = more->property("menu").value<QObject *>()) {
-                aboutToHideSpy = std::make_unique<QSignalSpy>(menu, SIGNAL(aboutToHide()));
-                closedSpy = std::make_unique<QSignalSpy>(menu, SIGNAL(closed()));
-            }
+    QQuickItem *observedMore = nullptr;
+    QObject *observedMenu = nullptr;
+    const auto observePopup = [&](QQuickItem *more) {
+        if (observedMore != more) {
+            observedMore = more;
+            observedMenu = nullptr;
+            aboutToHideSpy.reset();
+            closedSpy.reset();
             // Array order: button visible/checked/pressed, menu visible/opened.
-            // Notifications preserve transition order, including a transient
-            // button hide or menu dismissal between readiness polls.
+            // Subscribe even before asynchronous Menu creation completes.
             popupState = std::make_unique<QQmlExpression>(qmlContext(more), more,
                 QStringLiteral("JSON.stringify([visible, checked, pressed, menu ? menu.visible : false, menu ? menu.opened : false])"));
             popupState->setNotifyOnValueChanged(true);
             QObject::connect(popupState.get(), &QQmlExpression::valueChanged, popupState.get(),
                 [&] { record(QStringLiteral("notify")); });
-            record(QStringLiteral("begin"));
+            record(QStringLiteral("More observer attached"));
+        }
+        auto *menu = more->property("menu").value<QObject *>();
+        if (menu && observedMenu != menu) {
+            observedMenu = menu;
+            aboutToHideSpy = std::make_unique<QSignalSpy>(menu, SIGNAL(aboutToHide()));
+            closedSpy = std::make_unique<QSignalSpy>(menu, SIGNAL(closed()));
+            record(QStringLiteral("Menu observer attached"));
+        }
+        return menu;
+    };
+    try {
+        auto *toolbar = visibleItem(window->contentItem(), QStringLiteral("fileToolBar"));
+        if (!toolbar) throw std::runtime_error("missing file toolbar");
+        if (auto *more = reachableButton(window, toolbar, QStringLiteral("More Actions"))) {
+            observePopup(more);
             settleFileToolbarMenu(more);
         }
         if (reachableButton(window, window->contentItem(), controlName)) {
@@ -367,6 +381,9 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
         auto *more = waitForStable(window, "file toolbar overflow", [&] {
             return reachableButton(window, toolbar, QStringLiteral("More Actions"));
         }, stableMs);
+        observePopup(more);
+        settleFor("file toolbar native menu created", [&] { return observePopup(more) != nullptr; });
+        settleFileToolbarMenu(more);
         const auto center = more->mapToScene(QPointF(more->width() / 2, more->height() / 2)).toPoint();
         record(QStringLiteral("before overflow click"));
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);

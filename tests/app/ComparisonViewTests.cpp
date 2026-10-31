@@ -963,7 +963,11 @@ public:
             auto *lanes = fixture.item("scopedChoices");
             auto *button = test_support::reachableButton(fixture.window, lanes, name);
             CHECK(button);
-            auto *menu = fixture.object(("choiceMore-" + choice.source.contributionId).c_str());
+            // Repeater rows can belong to a separate QObject tree even while
+            // their buttons are in this window's visual tree. Use the real owner.
+            auto *menu = button->parentItem()->findChild<QObject *>(
+                QString::fromStdString("choiceMore-" + choice.source.contributionId));
+            CHECK(menu);
             const auto waitOverlay = [&](const char *phase, const std::function<bool()> &ready) {
                 try {
                     settleFor(phase, ready);
