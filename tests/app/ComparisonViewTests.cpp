@@ -1719,11 +1719,12 @@ public:
                         const auto lineKind = qmlValue(fixture.item((pane + "Gutter").c_str()),
                             QStringLiteral("lineKind(%1)").arg(line)).toString();
                         if (!lineKind.isEmpty()) {
-                            CHECK(shown.value({line, lineKind}) == glyphs.value(lineKind));
-                            CHECK(!shown.contains({line, QStringLiteral("removed")}));
-                            CHECK(qmlValue(fixture.item((pane + "Gutter").c_str()),
+                            const auto description = qmlValue(fixture.item((pane + "Gutter").c_str()),
                                 QStringLiteral("lineDescription(%1)").arg(line)).toString()
-                                .contains(QStringLiteral("Unmatched lines at this boundary")));
+                                .contains(QStringLiteral("Unmatched lines at this boundary"));
+                            if (shown.value({line, lineKind}) != glyphs.value(lineKind)
+                                || shown.contains({line, QStringLiteral("removed")}) || !description)
+                                ++found.unmarked;
                             continue;
                         }
                     }
@@ -1733,7 +1734,10 @@ public:
                 return found;
             };
             const auto expect = [&](const std::string &pane, const QSet<QString> &kinds) {
-                settleFor(pane + " diff colours", [&] { return painted(pane).kinds == kinds; });
+                settleFor(pane + " diff colours and glyphs", [&] {
+                    const auto found = painted(pane);
+                    return found.kinds == kinds && found.unmarked == 0;
+                });
                 CHECK(painted(pane).unmarked == 0);
             };
             // At launch every region is undecided; the right source's extra line is a gap in the result.
