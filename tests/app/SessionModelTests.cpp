@@ -913,9 +913,10 @@ public:
             CHECK(model.appendFile(FileSession("bytes", bytes, draft())));
             const std::vector<std::string> displayOrder{"undecided", "bytes", "published", "outside", "unreadable"};
             for (int row = 0; row < static_cast<int>(displayOrder.size()); ++row) {
-                CHECK(model.rowOf(displayOrder[row]) == row);
-                CHECK(model.fileAt(row)->id() == displayOrder[row]);
-                CHECK(role(model, SessionModel::FileIdRole, row).toString().toStdString() == displayOrder[row]);
+                const auto &expected = displayOrder[static_cast<std::size_t>(row)];
+                CHECK(model.rowOf(expected) == row);
+                CHECK(model.fileAt(row)->id() == expected);
+                CHECK(role(model, SessionModel::FileIdRole, row).toString().toStdString() == expected);
             }
             CHECK(model.rowOf("missing") == -1);
             CHECK(model.supportCount(Support::Supported) == 3 && model.supportCount(Support::OutsideApp) == 1
