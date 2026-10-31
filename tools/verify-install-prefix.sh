@@ -80,11 +80,16 @@ mkdir -p -- "$source_dir"
     tar -C "$root" --null -T - -cf - | tar -C "$source_dir" -xf -
 echo "Copied source: $source_dir (from $root at $(git -C "$root" rev-parse --short HEAD))"
 
+source "$root/packaging/scripts/compiler-cache.sh"
+cache_begin install-prefix-Release "$fixture"
 step "Configure, build and install"
 run cmake -S "$source_dir" -B "$build" -G 'Unix Makefiles' -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=OFF -DBRANCH_TRUCE_BUILD_DESKTOP=ON -DBRANCH_TRUCE_WARNINGS_AS_ERRORS=ON \
-    "-DCMAKE_INSTALL_PREFIX=$prefix"
-run cmake --build "$build" --parallel 2
+    "-DCMAKE_INSTALL_PREFIX=$prefix" "${cache_cmake_args[@]}"
+cache_build_status=0
+run cmake --build "$build" --parallel 2 || cache_build_status=$?
+cache_end
+[[ "$cache_build_status" -eq 0 ]] || exit "$cache_build_status"
 run cmake --install "$build"
 run rm -rf -- "$source_dir" "$build"
 [[ ! -e "$source_dir" && ! -e "$build" ]] || fail "copied source or build tree still exists"

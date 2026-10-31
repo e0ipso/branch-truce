@@ -1,4 +1,5 @@
 #include "app/ApplicationController.h"
+#include "mergetool/MergetoolProtocol.h"
 #include "fixtures/GitOnPath.h"
 #include "recovery/RecoveryRestore.h"
 #include "app/SessionModel.h"
@@ -356,13 +357,15 @@ class IndexConflict {
 public:
     IndexConflict()
     {
-        CHECK(directory.isValid() && home.isValid());
+        CHECK(directory.isValid() && home.isValid() && runtime.isValid());
+        CHECK(QFile::setPermissions(runtime.path(), QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
         root = QFileInfo(directory.path()).canonicalFilePath();
         environment.insert(QStringLiteral("PATH"), QStringLiteral("/usr/bin:/bin"));
         environment.insert(QStringLiteral("HOME"), home.path());
         environment.insert(QStringLiteral("XDG_CONFIG_HOME"), home.path() + QStringLiteral("/config"));
         environment.insert(QStringLiteral("XDG_CACHE_HOME"), home.path() + QStringLiteral("/cache"));
         environment.insert(QStringLiteral("XDG_DATA_HOME"), home.path() + QStringLiteral("/data"));
+        environment.insert(QStringLiteral("XDG_RUNTIME_DIR"), runtime.path());
         environment.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
         environment.insert(QStringLiteral("GIT_CONFIG_NOSYSTEM"), QStringLiteral("1"));
         environment.insert(QStringLiteral("GIT_CONFIG_GLOBAL"), QStringLiteral("/dev/null"));
@@ -428,6 +431,8 @@ public:
 
     QTemporaryDir directory;
     QTemporaryDir home;
+    // Keep session sockets private even when TMPDIR exceeds the Unix socket path limit.
+    QTemporaryDir runtime{QStringLiteral("/tmp/bt-run-XXXXXX")};
     QString root;
     QProcessEnvironment environment;
     ScopedEnvironment scoped;
@@ -527,6 +532,22 @@ public:
     {
         qunsetenv("TRUCE_CRASH_FSYNC");
         test_support::Suite suite("RecoveryBoundaryFaultTests");
+        suite.run("controller fixtures contain and remove their session sockets and restore the runtime environment", [] {
+            const auto previous = qgetenv("XDG_RUNTIME_DIR");
+            const auto wasSet = qEnvironmentVariableIsSet("XDG_RUNTIME_DIR");
+            QString runtime;
+            {
+                IndexConflict conflict;
+                runtime = conflict.environment.value(QStringLiteral("XDG_RUNTIME_DIR"));
+                CHECK(QDir::isAbsolutePath(runtime));
+                CHECK(qEnvironmentVariable("XDG_RUNTIME_DIR") == runtime);
+                CHECK(mergetoolSocketDirectory() == runtime + QStringLiteral("/branch-truce"));
+                CHECK(QFileInfo::exists(mergetoolSocketDirectory()));
+            }
+            CHECK(qEnvironmentVariableIsSet("XDG_RUNTIME_DIR") == wasSet);
+            CHECK(qgetenv("XDG_RUNTIME_DIR") == previous);
+            CHECK(!QFileInfo::exists(runtime));
+        });
         const QStringList durable{QStringLiteral("edit"), QStringLiteral("checkpoint"), QStringLiteral("discard"),
             QStringLiteral("write"), QStringLiteral("stage")};
         QStringList recorded = durable;

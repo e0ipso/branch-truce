@@ -7,11 +7,13 @@ FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a
 ENV LANG=C.UTF-8
 ARG BRANCH_TRUCE_KDE_CI_REFRESH=
 COPY scripts/prepare-target.sh /opt/branch-truce/scripts/
-RUN /opt/branch-truce/scripts/prepare-target.sh --format kubuntu-deb
+RUN /opt/branch-truce/scripts/prepare-target.sh --format kubuntu-deb \
+    && apt-get install -y -q --no-install-recommends appstream desktop-file-utils binutils
 
 FROM target AS build
 COPY debian/control /opt/branch-truce/debian/
-RUN /opt/branch-truce/scripts/prepare-target.sh --format kubuntu-deb --build-deps
+RUN /opt/branch-truce/scripts/prepare-target.sh --format kubuntu-deb --build-deps \
+    && apt-get install -y -q --no-install-recommends ccache
 COPY ci/baseline.sh /opt/branch-truce/ci/
 RUN /opt/branch-truce/ci/baseline.sh --format kubuntu-deb > /opt/branch-truce/baseline.txt \
     && cat /opt/branch-truce/baseline.txt

@@ -27,13 +27,16 @@ mapfile -t build_depends < <(field_names Build-Depends)
 
 failures=0
 checked=0
-for format in kubuntu tuxedo; do
+# The release matrix has one Debian target; keep per-format diagnostics.
+# shellcheck disable=SC2043
+for format in kubuntu; do
     dockerfile=$root/packaging/ci/$format.Dockerfile
     mapfile -t installed < <(test_stage_words "$dockerfile")
     ((${#installed[@]} > 0)) || { echo "FAIL: no test stage in $dockerfile" >&2; failures=$((failures + 1)); continue; }
     for package in "${depends[@]}"; do
         checked=$((checked + 1))
-        if printf '%s\n' "${installed[@]}" "${build_depends[@]}" | grep -qxF -- "$package"; then
+        # Consume all names: grep -q can SIGPIPE printf under pipefail.
+        if printf '%s\n' "${installed[@]}" "${build_depends[@]}" | grep -xF -- "$package" >/dev/null; then
             continue
         fi
         echo "FAIL: $format.Dockerfile test stage does not install the runtime Depends $package" >&2

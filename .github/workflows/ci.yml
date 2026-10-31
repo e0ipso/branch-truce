@@ -7,6 +7,12 @@ on:
 
 permissions: {}
 
+# PRs cancel only earlier runs for the same PR. Main runs have unique groups;
+# their publishing jobs retain the separate serialized release boundary.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -50,67 +56,9 @@ jobs:
           cmake --build build/sanitize --parallel 2
           ctest --test-dir build/sanitize --output-on-failure -V
 
-  # Branch Truce on each supported KDE desktop target (Kubuntu 26.04 and Tuxedo
-  # OS 24.04 noble), in the pinned images of packaging/ci: the build, the
-  # branch_truce_ui_qmllint target (it fails on any warning) and CTest (which
-  # repeats the lint as ui.qmllint and includes install.prefix), then the DEB
-  # with installation, smoke-test loading, upgrade and removal checks. The
-  # version is the one in package.json; the kde-release jobs build the release
-  # packages.
-  kde:
-    name: kde (${{ matrix.target }})
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: Kubuntu 26.04
-            format: kubuntu-deb
-          - target: Tuxedo OS 24.04
-            format: tuxedo-deb
-    env:
-      FORMAT: ${{ matrix.format }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - name: Identify the dependency images
-        id: images
-        run: |
-          refresh="$(TZ=UTC0 git log -1 --format=%cd --date=format-local:%G-W%V)"
-          echo "BRANCH_TRUCE_KDE_CI_REFRESH=$refresh" >> "$GITHUB_ENV"
-          echo "id=$(BRANCH_TRUCE_KDE_CI_REFRESH="$refresh" packaging/ci/image-id.sh --format "$FORMAT")" >> "$GITHUB_OUTPUT"
-      - id: restore-images
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
-        with:
-          path: ${{ runner.temp }}/kde-images/${{ matrix.format }}-${{ steps.images.outputs.id }}.tar
-          key: kde-images-${{ matrix.format }}-${{ steps.images.outputs.id }}
-      - name: Test, package and check
-        env:
-          OUTPUT: ${{ runner.temp }}/kde
-          BRANCH_TRUCE_KDE_CI_IMAGE_CACHE: ${{ runner.temp }}/kde-images
-        run: |
-          version="$(node -p 'require("./package.json").version')"
-          packaging/scripts/container-check.sh --version "$version" --format "$FORMAT" --output "$OUTPUT"
-      - if: steps.restore-images.outputs.cache-hit != 'true'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
-        with:
-          path: ${{ runner.temp }}/kde-images/${{ matrix.format }}-${{ steps.images.outputs.id }}.tar
-          key: kde-images-${{ matrix.format }}-${{ steps.images.outputs.id }}
-
-  # The release runs in three stages once every check has passed. This job
-  # works out the version the pushed commits release with a semantic-release
-  # dry run (packaging/ci/next-release.js), or nothing when they warrant no
-  # release, and records the commit it was worked out for.
-  release-version:
-    needs: [test, kde]
+  # Only main analysis receives write access for semantic-release's push
+  # preflight. A failed analysis fails selection, never becoming no-release.
+  analyze-release:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -128,24 +76,50 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Work out the next version
+      - name: Analyze the main release
         id: version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          version="$(node packaging/ci/next-release.js)"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          bt_release_version="$(node packaging/ci/next-release.js --analyze)"
+          echo "version=$bt_release_version" >> "$GITHUB_OUTPUT"
           echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-  # The branch-truce Kubuntu 26.04 and Tuxedo OS 24.04 DEBs for that version and
-  # commit, each on its own runner, tested, built and checked by
-  # packaging/scripts/container-check.sh as in the kde job. Each leg uploads its
-  # package with a manifest (format, version, revision, package, SHA-256) as
-  # kde-release-<format>.
-  kde-release:
-    name: kde-release (${{ matrix.target }})
-    needs: release-version
-    if: needs.release-version.outputs.version != ''
+  # !cancelled() explicitly allows the skipped main analyzer on PRs. No
+  # release-write token or semantic-release invocation reaches this job.
+  select:
+    needs: analyze-release
+    if: "!cancelled() && (needs.analyze-release.result == 'success' || (github.event_name == 'pull_request' && needs.analyze-release.result == 'skipped'))"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.candidate.outputs.version }}
+      revision: ${{ steps.candidate.outputs.revision }}
+      publish: ${{ steps.candidate.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - id: candidate
+        env:
+          BRANCH_TRUCE_CI_EVENT: ${{ github.event_name }}
+          BRANCH_TRUCE_ANALYZED_VERSION: ${{ needs.analyze-release.outputs.version }}
+          BRANCH_TRUCE_ANALYZED_REVISION: ${{ needs.analyze-release.outputs.revision }}
+        run: |
+          bt_release_selection="$(node packaging/ci/next-release.js)"
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "$bt_release_selection" >> "$GITHUB_OUTPUT"
+
+  # One full desktop/CTest/install-prefix/native package lifecycle per target
+  # at the selected candidate and revision, including PR and no-release paths.
+  # ui.qmllint remains the single warning-free lint invocation in CTest.
+  kde:
+    name: kde (${{ matrix.target }})
+    needs: select
+    if: "!cancelled() && needs.select.result == 'success'"
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -155,27 +129,40 @@ jobs:
         include:
           - target: Kubuntu 26.04
             format: kubuntu-deb
-          - target: Tuxedo OS 24.04
-            format: tuxedo-deb
+          - target: Fedora 44
+            format: fedora-rpm
+          - target: Arch Linux
+            format: arch-pkg
     env:
       FORMAT: ${{ matrix.format }}
-      VERSION: ${{ needs.release-version.outputs.version }}
-      REVISION: ${{ needs.release-version.outputs.revision }}
+      VERSION: ${{ needs.select.outputs.version }}
+      REVISION: ${{ needs.select.outputs.revision }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.release-version.outputs.revision }}
+          ref: ${{ needs.select.outputs.revision }}
           persist-credentials: false
       - name: Identify the dependency images
         id: images
         run: |
-          refresh="$(TZ=UTC0 git log -1 --format=%cd --date=format-local:%G-W%V)"
-          echo "BRANCH_TRUCE_KDE_CI_REFRESH=$refresh" >> "$GITHUB_ENV"
-          echo "id=$(BRANCH_TRUCE_KDE_CI_REFRESH="$refresh" packaging/ci/image-id.sh --format "$FORMAT")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+          bt_release_refresh="$(TZ=UTC0 git log -1 --format=%cd --date=format-local:%G-W%V)"
+          echo "BRANCH_TRUCE_KDE_CI_REFRESH=$bt_release_refresh" >> "$GITHUB_ENV"
+          echo "id=$(BRANCH_TRUCE_KDE_CI_REFRESH="$bt_release_refresh" packaging/ci/image-id.sh --format "$FORMAT")" >> "$GITHUB_OUTPUT"
+          echo "arch=$(uname -m)" >> "$GITHUB_OUTPUT"
+      - id: restore-images
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ${{ runner.temp }}/kde-images/${{ matrix.format }}-${{ steps.images.outputs.id }}.tar
           key: kde-images-${{ matrix.format }}-${{ steps.images.outputs.id }}
+      # GitHub scopes PR saves to their merge ref. The compatible prefix spans
+      # source revisions; each successful run saves a fresh immutable entry.
+      - id: restore-compiler
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/compiler-cache
+          key: compiler-v1-${{ matrix.format }}-${{ steps.images.outputs.arch }}-${{ steps.images.outputs.id }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            compiler-v1-${{ matrix.format }}-${{ steps.images.outputs.arch }}-${{ steps.images.outputs.id }}-
       - name: Fetch the previous package
         id: previous
         env:
@@ -183,60 +170,77 @@ jobs:
           GH_REPO: ${{ github.repository }}
           DIR: ${{ runner.temp }}/previous
         run: |
-          file="$(packaging/ci/previous-package.sh --format "$FORMAT" --version "$VERSION" --output "$DIR")"
-          echo "file=$file" >> "$GITHUB_OUTPUT"
+          bt_release_previous="$(packaging/ci/previous-package.sh --format "$FORMAT" --version "$VERSION" --output "$DIR")"
+          echo "file=$bt_release_previous" >> "$GITHUB_OUTPUT"
       - name: Test, package and check
+        id: build
         env:
           OUTPUT: ${{ runner.temp }}/kde
+          BRANCH_TRUCE_COMPILER_CACHE: ${{ runner.temp }}/compiler-cache
           BRANCH_TRUCE_KDE_CI_IMAGE_CACHE: ${{ runner.temp }}/kde-images
           PREVIOUS: ${{ steps.previous.outputs.file }}
         run: |
-          previous=()
-          [ -z "$PREVIOUS" ] || previous=(--previous-package "$PREVIOUS")
-          packaging/scripts/container-check.sh --version "$VERSION" --format "$FORMAT" --output "$OUTPUT" "${previous[@]}"
+          bt_release_previous_args=()
+          [ -z "$PREVIOUS" ] || bt_release_previous_args=(--previous-package "$PREVIOUS")
+          packaging/scripts/container-check.sh --version "$VERSION" --format "$FORMAT" --output "$OUTPUT" "${bt_release_previous_args[@]}"
+      - name: Save compiler cache
+        if: success() && steps.build.outcome == 'success'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/compiler-cache
+          key: compiler-v1-${{ matrix.format }}-${{ steps.images.outputs.arch }}-${{ steps.images.outputs.id }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - if: steps.restore-images.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/kde-images/${{ matrix.format }}-${{ steps.images.outputs.id }}.tar
+          key: kde-images-${{ matrix.format }}-${{ steps.images.outputs.id }}
       - name: Record the package
+        if: needs.select.outputs.publish == 'true'
         env:
           OUTPUT: ${{ runner.temp }}/kde
           DIR: ${{ runner.temp }}/kde-release
+          RUN_ID: ${{ github.run_id }}
         run: |
           if [ "$(git rev-parse HEAD)" != "$REVISION" ]; then
             echo "::error::checked out $(git rev-parse HEAD), expected $REVISION"
             exit 1
           fi
-          native="$(packaging/scripts/native-version.sh "$VERSION")"
-          shopt -s nullglob
-          if [ "$FORMAT" = kubuntu-deb ]; then
-            packages=("$OUTPUT/branch-truce_${native}_amd64-ubuntu26.04.deb")
-          else
-            packages=("$OUTPUT/branch-truce_${native}_amd64-tuxedo24.04.deb")
-          fi
-          if [ "${#packages[@]}" != 1 ] || [ ! -f "${packages[0]}" ]; then
-            echo "::error::expected one branch-truce $FORMAT for $native in $OUTPUT"
-            ls -l "$OUTPUT"
-            exit 1
-          fi
+          bt_release_info="$(packaging/scripts/package-info.sh --format "$FORMAT" --version "$VERSION")"
+          bt_release_name="$(jq -r .filename <<< "$bt_release_info")"
+          test -f "$OUTPUT/$bt_release_name"
           mkdir -p "$DIR"
-          cp "${packages[0]}" "$DIR/"
-          name="$(basename "${packages[0]}")"
-          jq -n --arg format "$FORMAT" --arg version "$VERSION" --arg revision "$REVISION" \
-            --arg package "$name" --arg sha256 "$(sha256sum "$DIR/$name" | cut -d' ' -f1)" \
-            '{format: $format, version: $version, revision: $revision, package: $package, sha256: $sha256}' \
-            > "$DIR/kde-$FORMAT.json"
+          cp "$OUTPUT/$bt_release_name" "$DIR/"
+          jq --arg revision "$REVISION" --arg runId "$RUN_ID" \
+            --arg sha256 "$(sha256sum "$DIR/$bt_release_name" | cut -d' ' -f1)" \
+            '. + {revision: $revision, runId: $runId, package: .filename, sha256: $sha256} | del(.filename)' \
+            <<< "$bt_release_info" > "$DIR/kde-$FORMAT.json"
           cat "$DIR/kde-$FORMAT.json"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - if: needs.select.outputs.publish == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kde-release-${{ matrix.format }}
           path: ${{ runner.temp }}/kde-release/
           if-no-files-found: error
           overwrite: true
           retention-days: 7
+      - name: Preserve native validation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kde-evidence-${{ matrix.format }}
+          path: |
+            ${{ runner.temp }}/kde/tests/
+            ${{ runner.temp }}/kde/containers/
+            ${{ runner.temp }}/kde/cache/
+          if-no-files-found: warn
+          retention-days: 7
 
-  # The final gate: it runs only when both kde-release legs passed, with their
-  # packages in dist/kde, on the same commit (github.sha). The plugin checks
-  # each manifest against that commit before semantic-release commits or tags.
+  # Every validation result is required. Only this run's three candidate
+  # artifacts are downloaded, and the plugin checks identity and digest before
+  # any release metadata, tags or assets can be written.
   release:
-    needs: [test, kde, release-version, kde-release]
-    if: github.event_name == 'push' && needs.release-version.outputs.version != ''
+    needs: [test, select, kde]
+    if: github.event_name == 'push' && needs.select.outputs.publish == 'true'
     runs-on: ubuntu-latest
     concurrency: release
     permissions:
@@ -246,6 +250,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.select.outputs.revision }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -253,17 +258,19 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
+      - name: Install native metadata readers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends rpm libarchive-tools
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: kde-release-*
           merge-multiple: true
           path: dist/kde
-
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BRANCH_TRUCE_KDE_RELEASE_VERSION: ${{ needs.release-version.outputs.version }}
+          BRANCH_TRUCE_KDE_RELEASE_VERSION: ${{ needs.select.outputs.version }}
+          BRANCH_TRUCE_KDE_RELEASE_REVISION: ${{ needs.select.outputs.revision }}
+          BRANCH_TRUCE_KDE_RELEASE_RUN_ID: ${{ github.run_id }}
         run: npx --no -- semantic-release
-
       - id: tag
         run: echo "tag=$(git tag --points-at HEAD 'v*')" >> "$GITHUB_OUTPUT"

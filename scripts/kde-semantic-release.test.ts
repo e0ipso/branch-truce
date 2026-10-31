@@ -2,27 +2,26 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // The release gate (packaging/ci/semantic-release.js) and the dry run that picks the version the
 // KDE packages are built for (packaging/ci/next-release.js) run only on a real release. These
-// tests run both against a throwaway repository that holds native-version.sh where the plugin looks
-// for it, so nothing here touches the checkout or GitHub.
+// tests use disposable repositories and metadata adapters, without touching GitHub.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGING = join(HERE, '..', 'packaging');
 const PLUGIN = join(PACKAGING, 'ci', 'semantic-release.js');
 const NEXT_RELEASE = join(PACKAGING, 'ci', 'next-release.js');
-const NATIVE_VERSION = join(PACKAGING, 'scripts', 'native-version.sh');
 const RELEASERC = join(HERE, '..', '.releaserc.json');
 
 type Context = {
   cwd: string;
   env: Record<string, string | undefined>;
   nextRelease: { version: string };
+  options?: { dryRun: boolean };
   logger: { log: (...args: unknown[]) => void };
 };
 type Plugin = {
@@ -33,167 +32,149 @@ const plugin: Plugin = await import(pathToFileURL(PLUGIN).href);
 
 const GIT_IDENTITY = ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false'];
 
-/** A throwaway git repository with native-version.sh committed, deleted when the test ends. */
+/** A disposable repository with the same package identity helpers as CI. */
 function repository(t: { after: (fn: () => void) => void }) {
   const root = mkdtempSync(join(tmpdir(), 'branch-truce-kde-semantic-release-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const cwd = join(root, 'repo');
   mkdirSync(join(cwd, 'packaging', 'scripts'), { recursive: true });
-  writeFileSync(join(cwd, 'packaging', 'scripts', 'native-version.sh'), readFileSync(NATIVE_VERSION));
-  chmodSync(join(cwd, 'packaging', 'scripts', 'native-version.sh'), 0o755);
+  for (const name of ['native-version.sh', 'package-info.sh']) {
+    const file = join(cwd, 'packaging', 'scripts', name);
+    writeFileSync(file, readFileSync(join(PACKAGING, 'scripts', name)));
+    chmodSync(file, 0o755);
+  }
+  writeFileSync(join(cwd, 'package.json'), JSON.stringify({ version: '1.0.0' }));
   const git = (...args: string[]) => execFileSync('git', [...GIT_IDENTITY, ...args], { cwd, encoding: 'utf8' }).trim();
   git('init', '--quiet', '--initial-branch', 'main');
-  git('add', 'packaging');
+  git('add', '.');
   git('commit', '--quiet', '-m', 'chore: fixture');
   return { root, cwd, git };
 }
 
 const sha256 = (content: string) => createHash('sha256').update(content).digest('hex');
+const formats = ['kubuntu-deb', 'fedora-rpm', 'arch-pkg'] as const;
+type Format = typeof formats[number];
+type Identity = { filename: string; nativeVersion: string; architecture: string };
 
-/** A release gate fixture: dist/kde with both DEBs and their manifests for `version`. */
-function gate(t: { after: (fn: () => void) => void }, version = '1.2.3', native = version) {
+// Metadata adapters stand in for native tools, not for the gate. The separate
+// real-artifact check runs the gate against genuine native package bytes.
+function gate(t: { after: (fn: () => void) => void }, version = '1.2.3') {
   const repo = repository(t);
   const revision = repo.git('rev-parse', 'HEAD');
   const dist = join(repo.cwd, 'dist', 'kde');
+  const bin = join(repo.root, 'bin');
   mkdirSync(dist, { recursive: true });
-  const kubuntu = `branch-truce_${native}_amd64-ubuntu26.04.deb`;
-  const tuxedo = `branch-truce_${native}_amd64-tuxedo24.04.deb`;
-  const put = (name: string, content: string) => writeFileSync(join(dist, name), content);
-  const manifest = (format: 'kubuntu-deb' | 'tuxedo-deb', fields: Record<string, unknown> = {}) => {
-    const name = format === 'kubuntu-deb' ? kubuntu : tuxedo;
-    const want = { format, version, revision, package: name, sha256: sha256(readFileSync(join(dist, name), 'utf8')) };
-    put(`kde-${format}.json`, JSON.stringify({ ...want, ...fields }));
-  };
-  put(kubuntu, 'kubuntu bytes');
-  put(tuxedo, 'tuxedo bytes');
-  manifest('kubuntu-deb');
-  manifest('tuxedo-deb');
-  const logs: unknown[][] = [];
-  const context = (env: Record<string, string> = {}): Context => ({
-    cwd: repo.cwd,
-    env: { PATH: process.env.PATH, ...env },
-    nextRelease: { version },
-    logger: { log: (...args) => logs.push(args) },
-  });
-  return { ...repo, revision, dist, kubuntu, tuxedo, put, manifest, logs, context };
-}
-
-test('prepare accepts exactly both DEBs and their manifests for the next version', async (t) => {
-  const fixture = gate(t);
-  await plugin.prepare({}, fixture.context());
-  assert.deepEqual(fixture.logs, [['Releasing %s and %s, built and checked from %s', fixture.kubuntu, fixture.tuxedo, fixture.revision]]);
-});
-
-test('prepare names the packages by the native version of a prerelease', async (t) => {
-  const fixture = gate(t, '1.3.0-rc.1', '1.3.0~rc1');
-  await plugin.prepare({}, fixture.context());
-  assert.equal(fixture.logs.length, 1);
-});
-
-test('prepare refuses when dist/kde is missing', async (t) => {
-  const fixture = gate(t);
-  rmSync(fixture.dist, { recursive: true });
-  await assert.rejects(plugin.prepare({}, fixture.context()), /found: nothing$/);
-});
-
-for (const missing of ['kubuntu', 'tuxedo', 'kde-kubuntu-deb.json', 'kde-tuxedo-deb.json'] as const) {
-  test(`prepare refuses when ${missing} is missing`, async (t) => {
-    const fixture = gate(t);
-    const name = missing === 'kubuntu' ? fixture.kubuntu : missing === 'tuxedo' ? fixture.tuxedo : missing;
-    rmSync(join(fixture.dist, name));
-    await assert.rejects(
-      plugin.prepare({}, fixture.context()),
-      /^Error: Expected branch-truce_1\.2\.3_amd64-ubuntu26\.04\.deb, branch-truce_1\.2\.3_amd64-tuxedo24\.04\.deb/,
-    );
-  });
-}
-
-for (const [what, extra] of [
-  ['a DEB of another version', 'branch-truce_1.2.2_amd64-ubuntu26.04.deb'],
-  ['an unsuffixed DEB', 'branch-truce_1.2.3_amd64.deb'],
-  ['an unrelated file', 'notes.txt'],
-] as const) {
-  test(`prepare refuses ${what} in dist/kde`, async (t) => {
-    const fixture = gate(t);
-    fixture.put(extra, 'bytes');
-    await assert.rejects(plugin.prepare({}, fixture.context()), new RegExp(`found: .*${extra.replace(/\./g, '\\.')}`));
-  });
-}
-
-test('prepare refuses packages built for another version', async (t) => {
-  const fixture = gate(t);
-  await assert.rejects(
-    plugin.prepare({}, { ...fixture.context(), nextRelease: { version: '1.2.4' } }),
-    /^Error: Expected branch-truce_1\.2\.4_amd64-ubuntu26\.04\.deb/,
-  );
-});
-
-for (const format of ['kubuntu-deb', 'tuxedo-deb'] as const) {
-  for (const [key, value] of [
-    ['format', format === 'kubuntu-deb' ? 'tuxedo-deb' : 'kubuntu-deb'],
-    ['version', '1.2.2'],
-    ['revision', '0'.repeat(40)],
-    ['package', 'branch-truce_1.2.2_amd64-ubuntu26.04.deb'],
-    ['sha256', sha256('other bytes')],
-  ] as const) {
-    test(`prepare refuses kde-${format}.json with another ${key}`, async (t) => {
-      const fixture = gate(t);
-      fixture.manifest(format, { [key]: value });
-      await assert.rejects(plugin.prepare({}, fixture.context()), new RegExp(`dist/kde/kde-${format}\\.json has ${key} "${value}", expected `));
-    });
+  mkdirSync(bin);
+  const adapter = `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (process.argv[1].endsWith('dpkg-deb') && args[0] !== '--show') process.exit(64);
+const info = JSON.parse(fs.readFileSync(args.find(a => fs.existsSync(a)), 'utf8'));
+if (process.argv[1].endsWith('bsdtar')) console.log('pkgname = ' + info.name + '\\npkgver = ' + info.version + '\\narch = ' + info.architecture);
+else console.log(info.name + '|' + (process.argv[1].endsWith('rpm') ? '0|' : '') + info.version + '|' + info.architecture);
+`;
+  for (const name of ['dpkg-deb', 'rpm', 'bsdtar']) {
+    writeFileSync(join(bin, name), adapter);
+    chmodSync(join(bin, name), 0o755);
   }
-
-  test(`prepare refuses kde-${format}.json without a field`, async (t) => {
-    const fixture = gate(t);
-    fixture.manifest(format, { revision: undefined });
-    await assert.rejects(plugin.prepare({}, fixture.context()), new RegExp(`kde-${format}\\.json has revision undefined, expected "`));
+  const info = Object.fromEntries(formats.map(format => [format, JSON.parse(execFileSync(
+    join(PACKAGING, 'scripts', 'package-info.sh'), ['--format', format, '--version', version], { encoding: 'utf8' },
+  ))])) as Record<Format, Identity>;
+  const put = (name: string, content: string) => writeFileSync(join(dist, name), content);
+  const metadata = (format: Format, fields = {}) => put(info[format].filename, JSON.stringify({
+    name: 'branch-truce', version: info[format].nativeVersion, architecture: info[format].architecture, ...fields,
+  }));
+  const manifest = (format: Format, fields: Record<string, unknown> = {}) => put(`kde-${format}.json`, JSON.stringify({
+    format, version, nativeVersion: info[format].nativeVersion, architecture: info[format].architecture,
+    revision, runId: 'fixture-run', package: info[format].filename,
+    sha256: sha256(readFileSync(join(dist, info[format].filename), 'utf8')), ...fields,
+  }));
+  for (const format of formats) { metadata(format); manifest(format); }
+  const context = (env: Record<string, string | undefined> = {}): Context => ({
+    cwd: repo.cwd,
+    env: { PATH: `${bin}:${process.env.PATH}`, BRANCH_TRUCE_KDE_RELEASE_VERSION: version,
+      BRANCH_TRUCE_KDE_RELEASE_REVISION: revision, BRANCH_TRUCE_KDE_RELEASE_RUN_ID: 'fixture-run', ...env },
+    nextRelease: { version }, logger: { log: () => {} },
   });
-
-  test(`prepare refuses a ${format} changed after its manifest was written`, async (t) => {
-    const fixture = gate(t);
-    fixture.put(format === 'kubuntu-deb' ? fixture.kubuntu : fixture.tuxedo, 'tampered bytes');
-    await assert.rejects(plugin.prepare({}, fixture.context()), new RegExp(`kde-${format}\\.json has sha256 `));
-  });
-
-  test(`prepare refuses kde-${format}.json that is not JSON`, async (t) => {
-    const fixture = gate(t);
-    fixture.put(`kde-${format}.json`, '{"format":');
-    await assert.rejects(plugin.prepare({}, fixture.context()), new RegExp(`dist/kde/kde-${format}\\.json is not valid JSON`));
-  });
+  return { ...repo, revision, dist, info, put, metadata, manifest, context };
 }
 
-test('prepare refuses packages recorded for an earlier commit', async (t) => {
-  const fixture = gate(t);
-  fixture.git('commit', '--quiet', '--allow-empty', '-m', 'fix: later');
-  await assert.rejects(plugin.prepare({}, fixture.context()), /kde-kubuntu-deb\.json has revision "[0-9a-f]{40}", expected "[0-9a-f]{40}"/);
+test('validates exactly three stable and prerelease native artifacts before release mutations', async t => {
+  for (const version of ['1.2.3', '1.3.0-rc.1']) {
+    const box = gate(t, version);
+    await plugin.verifyRelease({}, box.context());
+    await plugin.prepare({}, box.context());
+  }
 });
 
-test('verifyRelease accepts the version the packages were built for', async (t) => {
-  const fixture = gate(t);
-  await plugin.verifyRelease({}, fixture.context({ BRANCH_TRUCE_KDE_RELEASE_VERSION: '1.2.3' }));
-  assert.deepEqual(fixture.logs, [['KDE packages for %s will have version %s', '1.2.3', '1.2.3']]);
+test('refuses missing and extra packages or manifests for every native format', async t => {
+  const box = gate(t);
+  for (const format of formats) {
+    for (const name of [box.info[format].filename, `kde-${format}.json`]) {
+      const bytes = readFileSync(join(box.dist, name));
+      rmSync(join(box.dist, name));
+      await assert.rejects(plugin.verifyRelease({}, box.context()), /Expected .*found:/);
+      writeFileSync(join(box.dist, name), bytes);
+    }
+  }
+  for (const name of ['notes.txt', `branch-truce_${'1.2.2'}_amd64-ubuntu26.04.deb`, `branch-truce_${'1.2.3'}_amd64.deb`]) {
+    box.put(name, 'unexpected');
+    await assert.rejects(plugin.verifyRelease({}, box.context()), /Expected .*found:/);
+    rmSync(join(box.dist, name));
+  }
+  rmSync(box.dist, { recursive: true });
+  await assert.rejects(plugin.prepare({}, box.context()), /found: nothing/);
 });
 
-test('verifyRelease accepts any packageable version when no build version is given', async (t) => {
-  const fixture = gate(t);
-  await plugin.verifyRelease({}, fixture.context());
-  assert.equal(fixture.logs.length, 1);
+test('rejects every manifest identity mismatch, omitted field, invalid JSON and changed bytes before prepare', async t => {
+  const box = gate(t);
+  for (const format of formats) {
+    for (const key of ['format', 'version', 'nativeVersion', 'architecture', 'revision', 'runId', 'package', 'sha256']) {
+      for (const value of ['wrong', undefined]) {
+        box.manifest(format, { [key]: value });
+        await assert.rejects(plugin.verifyRelease({}, box.context()), new RegExp(`has ${key} `));
+      }
+      box.manifest(format);
+    }
+    box.put(`kde-${format}.json`, '{');
+    await assert.rejects(plugin.verifyRelease({}, box.context()), /not valid JSON/);
+    box.manifest(format);
+    box.put(box.info[format].filename, 'tampered');
+    await assert.rejects(plugin.verifyRelease({}, box.context()), /has sha256 /);
+    box.metadata(format); box.manifest(format);
+  }
 });
 
-test('verifyRelease refuses a next version other than the one the packages were built for', async (t) => {
-  const fixture = gate(t);
-  await assert.rejects(
-    plugin.verifyRelease({}, fixture.context({ BRANCH_TRUCE_KDE_RELEASE_VERSION: '1.2.2' })),
-    /^Error: The KDE packages were built for 1\.2\.2, but the next release is 1\.2\.3$/,
-  );
+test('rejects wrong native package name, version and architecture even with a matching digest', async t => {
+  const box = gate(t);
+  for (const format of formats) {
+    for (const key of ['name', 'version', 'architecture']) {
+      box.metadata(format, { [key]: 'wrong' }); box.manifest(format);
+      await assert.rejects(plugin.verifyRelease({}, box.context()), /native metadata/);
+    }
+    box.metadata(format); box.manifest(format);
+  }
 });
 
-test('verifyRelease refuses a version the packages cannot carry', async (t) => {
-  const fixture = gate(t);
-  await assert.rejects(
-    plugin.verifyRelease({}, { ...fixture.context(), nextRelease: { version: '1.2.3-rc-1' } }),
-    /native-version\.sh 1\.2\.3-rc-1 exited with 2/,
-  );
+test('stale version, revision and workflow run candidates fail before any prepare mutation', async t => {
+  const box = gate(t);
+  await assert.rejects(plugin.verifyRelease({}, box.context({ BRANCH_TRUCE_KDE_RELEASE_VERSION: '1.2.2' })), /built for 1.2.2/);
+  await assert.rejects(plugin.prepare({}, box.context({ BRANCH_TRUCE_KDE_RELEASE_VERSION: '1.2.2' })), /built for 1.2.2/);
+  await assert.rejects(plugin.verifyRelease({}, box.context({ BRANCH_TRUCE_KDE_RELEASE_REVISION: '0'.repeat(40) })), /revision/);
+  await assert.rejects(plugin.verifyRelease({}, box.context({ BRANCH_TRUCE_KDE_RELEASE_RUN_ID: 'other-run' })), /runId/);
+  for (const key of ['VERSION', 'REVISION', 'RUN_ID']) {
+    await assert.rejects(plugin.verifyRelease({}, box.context({ [`BRANCH_TRUCE_KDE_RELEASE_${key}`]: undefined })), /Candidate/);
+  }
+  box.git('commit', '--quiet', '--allow-empty', '-m', 'fix: later');
+  await assert.rejects(plugin.verifyRelease({}, box.context()), /revision/);
+});
+
+test('dry analysis accepts supported versions without artifacts and fails unsupported versions', async t => {
+  const box = gate(t);
+  rmSync(box.dist, { recursive: true });
+  const ctx = { ...box.context({ BRANCH_TRUCE_KDE_RELEASE_VERSION: undefined }), options: { dryRun: true } };
+  await plugin.verifyRelease({}, ctx);
+  await assert.rejects(plugin.verifyRelease({}, { ...ctx, nextRelease: { version: '1.2.3-rc-1' } }), /exited with 2/);
 });
 
 /**
@@ -217,13 +198,13 @@ function releaseRepository(t: { after: (fn: () => void) => void }) {
   // Only these variables, so a CI run of this test does not look like a release run to env-ci.
   const nextRelease = (env: Record<string, string> = {}) => {
     repo.git('push', '--quiet', '--tags', 'origin', 'main');
-    return spawnSync(process.execPath, [NEXT_RELEASE], {
+    return spawnSync(process.execPath, [NEXT_RELEASE, '--analyze'], {
       cwd: repo.cwd,
       env: { PATH: process.env.PATH, HOME: repo.root, GIT_CONFIG_NOSYSTEM: '1', ...env },
       encoding: 'utf8',
     });
   };
-  return { commit, tag, nextRelease };
+  return { ...repo, commit, tag, nextRelease };
 }
 
 test('next-release prints only the first version when nothing was released yet', (t) => {
@@ -271,4 +252,28 @@ test('next-release fails, printing nothing, when the KDE plugin refuses the vers
   assert.notEqual(result.status, 0);
   assert.equal(result.stdout, '');
   assert.match(result.stderr, /The KDE packages were built for 1\.3\.0, but the next release is 1\.2\.4/);
+});
+
+test('semantic-release rejects stale candidates before an earlier prepare hook can mutate files', t => {
+  const repo = releaseRepository(t);
+  const marker = join(repo.cwd, 'prepare-mutation');
+  const sentinel = join(repo.cwd, 'mutation.cjs');
+  writeFileSync(sentinel, `exports.prepare = () => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'mutated');`);
+  const configPath = join(repo.cwd, '.releaserc.json');
+  const config = JSON.parse(readFileSync(configPath, 'utf8'));
+  config.plugins.unshift(sentinel);
+  writeFileSync(configPath, JSON.stringify(config));
+  repo.commit('feat: earlier'); repo.tag('v1.2.3'); repo.commit('fix: next');
+  // The remote is disposable and local. This setup never reaches GitHub.
+  repo.nextRelease();
+  for (const [version, revision] of [['1.3.0', repo.git('rev-parse', 'HEAD')], ['1.2.4', '0'.repeat(40)]]) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e',
+      `import semanticRelease from ${JSON.stringify(pathToFileURL(join(HERE, '..', 'node_modules/semantic-release/index.js')).href)}; await semanticRelease({dryRun:false, ci:false});`], {
+      cwd: repo.cwd, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo.root, GIT_CONFIG_NOSYSTEM: '1',
+        BRANCH_TRUCE_KDE_RELEASE_VERSION: version!, BRANCH_TRUCE_KDE_RELEASE_REVISION: revision!, BRANCH_TRUCE_KDE_RELEASE_RUN_ID: 'fixture-run' },
+    });
+    assert.notEqual(result.status, 0, 'stale candidate reached prepare');
+    assert.match(result.stderr, /built for|Candidate revision/);
+    assert.equal(existsSync(marker), false, 'prepare mutated release metadata before validation');
+  }
 });

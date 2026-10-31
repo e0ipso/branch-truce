@@ -1,27 +1,18 @@
 #!/usr/bin/env bash
-# Downloads the published branch-truce package that the release's upgrade check
-# starts from, for packaging/scripts/container-check.sh --previous-package.
+# Reuses a verified published native package for every validation event.
+# Missing tools/releases/assets and failed downloads visibly select the real
+# synthetic upgrade check. Downloaded bytes with bad size/digest are fatal.
 #
-#   previous-package.sh --format kubuntu-deb|tuxedo-deb --version <version> --output <dir>
-#
-# It picks the newest published GitHub release (no drafts or pre-releases)
-# whose version is older than <version> by the package version order
-# (packaging/scripts/native-version.sh, compared with dpkg) and that has
-# exactly one asset for the target: named
-# branch-truce_<v>_amd64-ubuntu26.04.deb or
-# branch-truce_<v>_amd64-tuxedo24.04.deb, with the label .releaserc.json gives
-# that format today and a SHA-256 digest.
-#
-# When there is nothing to use (gh, jq or dpkg missing, the releases or the
-# release's assets cannot be read, no older release has a matching asset, or
-# the download fails) it says why on stderr, prints nothing and exits 0: the
-# check then builds the synthetic previous package (0.0.0 from this source).
-# A downloaded file that does not match its size and digest exits 1.
+# package-info owns target filenames, architectures and native revisions.
+# The supported version subset has the same order in dpkg, RPM and vercmp;
+# compare its canonical tilde form with dpkg on the Ubuntu workflow host.
+# Clean native runtime checks independently verify actual package metadata and
+# strictly older ordering with the target's own package manager before install.
 
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 --format kubuntu-deb|tuxedo-deb --version <version> --output <dir>" >&2
+    echo "usage: $0 --format kubuntu-deb|fedora-rpm|arch-pkg --version <version> --output <dir>" >&2
     exit 2
 }
 
@@ -36,12 +27,13 @@ while [ $# -gt 0 ]; do
         *) usage ;;
     esac
 done
-case "$format" in kubuntu-deb|tuxedo-deb) ;; *) usage ;; esac
+case "$format" in kubuntu-deb|fedora-rpm|arch-pkg) ;; *) usage ;; esac
 [ -n "$version" ] && [ -n "$output" ] || usage
 
 packaging_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 native_version() { "$packaging_dir/scripts/native-version.sh" "$1"; }
 next="$(native_version "$version")" || exit 2
+source "$packaging_dir/scripts/package-info.sh"
 
 fallback() {
     echo "previous package: $*; the upgrade check uses a build of this source as 0.0.0 instead" >&2
@@ -53,7 +45,8 @@ done
 
 case "$format" in
     kubuntu-deb) asset_path='dist/kde/branch-truce_*_amd64-ubuntu26.04.deb' ;;
-    tuxedo-deb) asset_path='dist/kde/branch-truce_*_amd64-tuxedo24.04.deb' ;;
+    fedora-rpm) asset_path='dist/kde/branch-truce-*-1.fc44.x86_64.rpm' ;;
+    arch-pkg) asset_path='dist/kde/branch-truce-*-1-x86_64.pkg.tar.zst' ;;
 esac
 label="$(jq -r --arg path "$asset_path" '
     .plugins[] | select(type == "array" and .[0] == "@semantic-release/github")
@@ -82,12 +75,12 @@ asset_of() {
         head -n 1 <<<"$assets" >&2
         return 1
     fi
-    jq -c --arg format "$format" --arg native "$1" --arg label "$label" '
+    package_info "$format" "${2#v}"
+    jq -c --arg name "$package_filename" --arg label "$label" '
         [.assets[]
-         | select(.label == $label and .state == "uploaded" and ((.digest // "") | startswith("sha256:")))
-         | select(if $format == "kubuntu-deb" then .name == "branch-truce_\($native)_amd64-ubuntu26.04.deb"
-                  else .name == "branch-truce_\($native)_amd64-tuxedo24.04.deb"
-                  end)]
+         | select(.label == $label and .state == "uploaded")
+         | select((.digest // "") | test("^sha256:[0-9a-f]{64}$"))
+         | select(.name == $name)]
         | if length == 1 then .[0] else empty end' <<<"$assets"
 }
 

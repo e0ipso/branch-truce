@@ -2,12 +2,12 @@
 # Prints the distribution, Qt 6, KDE Frameworks 6 and Git versions of a build
 # environment and fails when they are older than the supported baseline.
 #
-#   baseline.sh --format kubuntu-deb|tuxedo-deb
+#   baseline.sh --format kubuntu-deb|fedora-rpm|arch-pkg
 
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 --format kubuntu-deb|tuxedo-deb" >&2
+    echo "usage: $0 --format kubuntu-deb|fedora-rpm|arch-pkg" >&2
     exit 2
 }
 
@@ -29,13 +29,40 @@ case "$format" in
         [ "${ID-}" = ubuntu ] && [ "${VERSION_ID-}" = 26.04 ] \
             || fail "expected Ubuntu 26.04, found ${ID-} ${VERSION_ID-}"
         ;;
-    tuxedo-deb)
-        { [ "${ID-}" = tuxedo ] || [ "${ID-}" = ubuntu ]; } && [ "${VERSION_ID-}" = 24.04 ] \
-            || fail "expected Tuxedo/Ubuntu 24.04 (noble), found ${ID-} ${VERSION_ID-}"
+    fedora-rpm)
+        [ "${ID-}" = fedora ] && [ "${VERSION_ID-}" = 44 ] || fail "expected Fedora 44"
+        ;;
+    arch-pkg)
+        [ "${ID-}" = arch ] || fail "expected Arch Linux"
         ;;
     *) usage ;;
 esac
 
+if [ "$format" != kubuntu-deb ]; then
+    echo "os ${PRETTY_NAME:-$ID}"
+    if [ "$format" = fedora-rpm ]; then
+        installed() { rpm -q --qf '%{VERSION}' "$1"; }
+        at_least() { [ "$(OLD="$1" NEW="$2" rpm --eval '%{lua:print(rpm.vercmp(os.getenv("OLD"), os.getenv("NEW")))}')" != -1 ]; }
+        packages="qt6-qtbase:6.6.0 kf6-kirigami:6.0.0 kf6-syntax-highlighting:6.0.0 git:2.43.0"
+        rpm -q gcc-c++ cmake extra-cmake-modules qt6-qtdeclarative rpm rpm-build redhat-rpm-config
+    else
+        installed() { pacman -Q "$1" | awk '{print $2}'; }
+        at_least() { [ "$(vercmp "$1" "$2")" -ge 0 ]; }
+        packages="qt6-base:6.6.0 kirigami:6.0.0 syntax-highlighting:6.0.0 git:2.43.0"
+        pacman -Q gcc cmake extra-cmake-modules qt6-declarative pacman
+        makepkg --version
+    fi
+    for entry in $packages; do
+        IFS=: read -r package minimum <<< "$entry"
+        version="$(installed "$package")" || { fail "missing $package"; continue; }
+        echo "library/tool $package $version"
+        at_least "$version" "$minimum" || fail "$package $version is older than $minimum"
+    done
+    [ "$failures" -eq 0 ]
+    exit
+fi
+
+dpkg-query -W g++ cmake extra-cmake-modules dpkg-dev debhelper
 libraries="qt:libQt6Core.so:6.6.0 kf:libKirigami.so:6.0.0 kf:libKF6SyntaxHighlighting.so:6.0.0"
 
 owner() { dpkg -S "*/$1.*" 2>/dev/null | head -n 1 | cut -d: -f1; }

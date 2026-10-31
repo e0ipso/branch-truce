@@ -318,8 +318,14 @@ ColumnLayout {
         id: paneFont
         font: resultPane.editor.font
     }
-    // Four characters, so tab-indented text lines up the same in every pane.
-    readonly property real tabStop: 4 * paneFont.averageCharacterWidth
+    TextMetrics {
+        id: tabMetrics
+        font: resultPane.editor.font
+        text: "    "
+    }
+    // Measure actual spaces and update when the desktop's fixed-width font changes.
+    // Some font files report a different average width from their glyph advances.
+    readonly property real tabStop: tabMetrics.advanceWidth
     // The same laid-out advance used by gutters, bands and scroll mapping.
     // CodeRows owns the line distance; no consumer adds a second gap.
     readonly property real rowHeight: Math.ceil(resultPane.blocks.rowHeight)

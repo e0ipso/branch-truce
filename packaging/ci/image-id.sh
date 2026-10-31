@@ -5,7 +5,7 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 --format kubuntu-deb|tuxedo-deb" >&2
+    echo "usage: $0 --format kubuntu-deb|fedora-rpm|arch-pkg" >&2
     exit 2
 }
 
@@ -18,7 +18,8 @@ while [ $# -gt 0 ]; do
 done
 case "$format" in
     kubuntu-deb) dockerfile=ci/kubuntu.Dockerfile ;;
-    tuxedo-deb) dockerfile=ci/tuxedo.Dockerfile ;;
+    fedora-rpm) dockerfile=ci/fedora.Dockerfile ;;
+    arch-pkg) dockerfile=ci/arch.Dockerfile ;;
     *) usage ;;
 esac
 

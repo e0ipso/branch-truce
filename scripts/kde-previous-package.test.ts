@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// packaging/ci/previous-package.sh runs only in the release, against the published releases.
+// Every validation event can reuse a verified published native predecessor.
 // These tests run it with a stand-in `gh` that serves releases from a throwaway directory: `release
 // list` prints the tags, `release view <tag>` the release's assets, `release download` copies the
 // asset's bytes, and marker files make a call fail.
@@ -20,7 +20,8 @@ const GITHUB_ASSETS: { path: string; label: string }[] = RELEASERC.plugins.find(
 )[1].assets;
 const LABEL = {
   'kubuntu-deb': GITHUB_ASSETS.find((asset) => asset.path.endsWith('-ubuntu26.04.deb'))!.label,
-  'tuxedo-deb': GITHUB_ASSETS.find((asset) => asset.path.endsWith('-tuxedo24.04.deb'))!.label,
+  'fedora-rpm': 'branch-truce RPM for Fedora 44 (x86_64)',
+  'arch-pkg': 'branch-truce package for Arch Linux (x86_64)',
 };
 
 const GH = `#!/usr/bin/env bash
@@ -57,9 +58,9 @@ const kubuntu = (native: string, extra: Partial<Asset> = {}): Asset => ({
   label: LABEL['kubuntu-deb'],
   ...extra,
 });
-const tuxedo = (native: string, extra: Partial<Asset> = {}): Asset => ({
-  name: `branch-truce_${native}_amd64-tuxedo24.04.deb`,
-  label: LABEL['tuxedo-deb'],
+const fedora = (native: string, extra: Partial<Asset> = {}): Asset => ({
+  name: `branch-truce-${native}-1.fc44.x86_64.rpm`,
+  label: LABEL['fedora-rpm'],
   ...extra,
 });
 
@@ -92,7 +93,7 @@ function fixture(t: { after: (fn: () => void) => void }, releases: Release[], ta
   }
   const mark = (name: 'fail-list' | 'fail-download' | 'partial') => writeFileSync(join(data, name), '');
   const forget = (tag: string) => rmSync(join(data, 'releases', `${tag}.json`));
-  const run = (format: 'kubuntu-deb' | 'tuxedo-deb', version: string, path = `${bin}:${process.env.PATH}`) => {
+  const run = (format: 'kubuntu-deb' | 'fedora-rpm' | 'arch-pkg', version: string, path = `${bin}:${process.env.PATH}`) => {
     const result = spawnSync(SCRIPT, ['--format', format, '--version', version, '--output', output], {
       env: { PATH: path, FIXTURE: data, HOME: root },
       encoding: 'utf8',
@@ -107,19 +108,19 @@ function fixture(t: { after: (fn: () => void) => void }, releases: Release[], ta
 
 const FALLBACK = /the upgrade check uses a build of this source as 0\.0\.0 instead\n$/;
 
-test('selects the Tuxedo predecessor separately from Kubuntu packages in the same release', (t) => {
+test('selects the Fedora predecessor separately from Kubuntu packages in the same release', (t) => {
   const box = fixture(t, [
     { tag: 'v1.2.2', assets: [kubuntu('1.2.2')] },
-    { tag: 'v1.2.1', assets: [kubuntu('1.2.1'), tuxedo('1.2.1')] },
+    { tag: 'v1.2.1', assets: [kubuntu('1.2.1'), fedora('1.2.1')] },
   ]);
-  const result = box.run('tuxedo-deb', '1.2.3');
+  const result = box.run('fedora-rpm', '1.2.3');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, `${join(result.output, tuxedo('1.2.1').name)}\n`);
-  assert.deepEqual(result.left, [tuxedo('1.2.1').name]);
+  assert.equal(result.stdout, `${join(result.output, fedora('1.2.1').name)}\n`);
+  assert.deepEqual(result.left, [fedora('1.2.1').name]);
 });
 
-test('selects the Kubuntu predecessor when the release also contains a Tuxedo DEB', (t) => {
-  const box = fixture(t, [{ tag: 'v1.2.2', assets: [kubuntu('1.2.2'), tuxedo('1.2.2')] }]);
+test('selects the Kubuntu predecessor when the release also contains a Fedora RPM', (t) => {
+  const box = fixture(t, [{ tag: 'v1.2.2', assets: [kubuntu('1.2.2'), fedora('1.2.2')] }]);
   const result = box.run('kubuntu-deb', '1.2.3');
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.left, [kubuntu('1.2.2').name]);
@@ -142,7 +143,7 @@ test('picks the newest strictly older release with one asset of the format by pa
       { tag: 'v1.3.0', assets: [kubuntu('1.3.0')] },
       { tag: 'v1.3.0-rc.1', assets: [kubuntu('1.3.0~rc1', { label: 'branch-truce DEB for Kubuntu 24.04 (amd64)' })] },
       { tag: 'v1.2.11', assets: [kubuntu('1.2.11', { digest: null })] },
-      { tag: 'v1.2.10', assets: [kubuntu('1.2.10'), tuxedo('1.2.10')] },
+      { tag: 'v1.2.10', assets: [kubuntu('1.2.10'), fedora('1.2.10')] },
     ],
     ['v1.2.9', 'v1.4.0', 'nightly', 'v1.3.0', 'v1.3.0-rc.1', 'v1.2.11', 'v1.2.10', 'v1.2.3-rc-1'],
   );
@@ -206,7 +207,7 @@ test('falls back when no older release has a package for the target', (t) => {
     { tag: 'v1.3.0', assets: [kubuntu('1.3.0')] },
     { tag: 'v1.2.3', assets: [kubuntu('1.2.3')] },
     { tag: 'v1.2.2', assets: [kubuntu('1.2.2', { label: 'branch-truce DEB for Kubuntu 24.04 (amd64)' })] },
-    { tag: 'v1.2.1', assets: [tuxedo('1.2.1')] },
+    { tag: 'v1.2.1', assets: [fedora('1.2.1')] },
   ]);
   const result = box.run('kubuntu-deb', '1.2.3');
   assertFallback(result, /no published release older than 1\.2\.3 has a "branch-truce DEB for Kubuntu 26\.04 \(amd64\)" asset;/);
@@ -251,3 +252,32 @@ test('removes a stale file of the same name when the download does not verify', 
   assert.equal(result.status, 1);
   assert.deepEqual(result.left, []);
 });
+
+for (const format of ['fedora-rpm', 'arch-pkg'] as const) {
+  test(`${format} selects the newest strictly older target and treats corrupt bytes as fatal`, t => {
+    const asset = (version: string, extra: Partial<Asset> = {}): Asset => ({
+      name: format === 'fedora-rpm' ? `branch-truce-${version}-1.fc44.x86_64.rpm` : `branch-truce-${version.replace('~', '')}-1-x86_64.pkg.tar.zst`,
+      label: LABEL[format], ...extra,
+    });
+    const releases = [
+      { tag: 'v1.3.0', assets: [asset('1.3.0')] },
+      { tag: 'v1.2.10', assets: [asset('1.2.10'), asset('1.2.10')] },
+      { tag: 'v1.2.9', assets: [asset('1.2.9', { label: 'wrong platform' })] },
+      { tag: 'v1.2.8', assets: [asset('1.2.8', { name: 'wrong-architecture' })] },
+      { tag: 'v1.3.0-rc.2', assets: [asset('1.3.0~rc2')] },
+      { tag: 'v1.3.0-rc.10', assets: [asset('1.3.0~rc10')] },
+      { tag: 'v1.2.7', assets: [asset('1.2.7')] },
+    ];
+    const box = fixture(t, releases);
+    const result = box.run(format, '1.3.0');
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, `${join(result.output, asset('1.3.0~rc10').name)}\n`);
+    assert.match(result.stderr, /from v1.3.0-rc.10, SHA-256/);
+    const corrupt = fixture(t, [{ tag: 'v1.2.2', assets: [asset('1.2.2', { digest: `sha256:${sha256('corrupt')}` })] }]).run(format, '1.3.0');
+    assert.equal(corrupt.status, 1, corrupt.stderr);
+    assert.match(corrupt.stderr, /does not match its published/);
+    assert.doesNotMatch(corrupt.stderr, FALLBACK);
+    assert.deepEqual(corrupt.left, []);
+    assertFallback(fixture(t, []).run(format, '1.3.0'), /no published release older/);
+  });
+}

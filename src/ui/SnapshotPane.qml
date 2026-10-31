@@ -14,7 +14,7 @@ ColumnLayout {
     Layout.fillWidth: true
     Layout.fillHeight: true
     spacing: Kirigami.Units.smallSpacing
-    FontMetrics { id: snapshotFont; font: Kirigami.Theme.fixedWidthFont }
+    TextMetrics { id: snapshotTabs; font: Kirigami.Theme.fixedWidthFont; text: "    " }
     PlainLabel {
         objectName: pane.paneName + "Label"
         Layout.fillWidth: true
@@ -32,7 +32,7 @@ ColumnLayout {
             selectByMouse: true
             textFormat: TextEdit.PlainText
             font: Kirigami.Theme.fixedWidthFont
-            tabStopDistance: 4 * snapshotFont.averageCharacterWidth
+            tabStopDistance: snapshotTabs.advanceWidth
             wrapMode: TextEdit.NoWrap
             Accessible.name: pane.paneTitle
         }

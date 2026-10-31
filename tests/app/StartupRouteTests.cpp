@@ -329,7 +329,16 @@ void openController(ApplicationController &controller, const Repository &repo, c
     if (controller.loader()->startupState() != "ready")
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(QFileInfo(repo.socketDirectory()).isDir());
-    CHECK(repo.snapshot() == before);
+    const auto after = repo.snapshot();
+    if (after != before) {
+        QStringList changed;
+        for (auto it = before.cbegin(); it != before.cend(); ++it)
+            if (!after.contains(it.key()) || after.value(it.key()) != it.value()) changed.append(it.key());
+        for (auto it = after.cbegin(); it != after.cend(); ++it)
+            if (!before.contains(it.key())) changed.append(it.key());
+        throw std::runtime_error("repository changed during startup: " + changed.join(", ").toStdString());
+    }
+    CHECK(after == before);
 }
 
 const FileSession &openedFile(ApplicationController &controller, const char *path = "tracked.txt")

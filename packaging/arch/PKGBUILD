@@ -1,0 +1,32 @@
+# Prepared by package-arch.sh with a checksum of the disposable source archive.
+pkgname=branch-truce
+pkgver=${BRANCH_TRUCE_ARCH_PKGVER:?use packaging/scripts/package-arch.sh}
+pkgrel=1
+pkgdesc='Offline Git merge and rebase text conflict resolver for KDE'
+arch=('x86_64')
+url='https://github.com/e0ipso/branch-truce'
+license=('GPL-3.0-or-later' 'CC0-1.0')
+depends=('gcc-libs' 'glibc' 'git>=2.43' 'qt6-base>=6.6' 'qt6-declarative>=6.6'
+         'kirigami>=6.0' 'syntax-highlighting>=6.0' 'qqc2-desktop-style'
+         'breeze' 'breeze-icons' 'hicolor-icon-theme' 'qt6-svg' 'qt6-wayland')
+makedepends=('cmake>=3.28' 'ninja' 'extra-cmake-modules>=6.0')
+source=('branch-truce.tar.gz')
+# Keep makepkg's native buildflags/strip handling, without a second debug package.
+options=('!debug')
+PKGEXT='.pkg.tar.zst'
+_app_version=${BRANCH_TRUCE_VERSION:?use packaging/scripts/package-arch.sh}
+
+build() {
+    cmake -S "$srcdir/branch-truce" -B "$srcdir/build" -G Ninja \
+        -DCMAKE_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=/usr \
+        -DBRANCH_TRUCE_VERSION="$_app_version" \
+        -DBRANCH_TRUCE_BUILD_DESKTOP=ON -DBRANCH_TRUCE_WARNINGS_AS_ERRORS=ON \
+        -DBUILD_TESTING=OFF -DCMAKE_PROJECT_TOP_LEVEL_INCLUDES="${BRANCH_TRUCE_CACHE_CMAKE_INCLUDE:-}"
+    cmake --build "$srcdir/build"
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install "$srcdir/build"
+    install -Dm644 "$srcdir/branch-truce/packaging/copyright" \
+        "$pkgdir/usr/share/licenses/branch-truce/copyright"
+}

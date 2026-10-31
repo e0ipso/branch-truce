@@ -1,6 +1,6 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:0891f7f57ca1ab526482365b560e7874cff8b26ea493b5f6c85d6aec8b290b9f'
+nodes_hash: 'sha256:681194a6612829e86162f32533160737d5aefc7887746a27a31cd70106fdfffa'
 node_count: 33
 ---
 # kenkeep
@@ -35,11 +35,11 @@ _None._
 - Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](nodes/practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) to learn about: Sift ticket references stay inside Sift; commitlint and check:tracker-refs enforce this for commit messages and tracked files. #git #commits #ci #conventions #release
 
 ## Components (what exists)
-- Open [**Branch Truce desktop implementation baseline**](nodes/map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation. #architecture #desktop #platform #cpp
+- Open [**Branch Truce desktop implementation baseline**](nodes/map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack on Kubuntu 26.04; native release packages also target Fedora 44 and pinned Arch Linux. #architecture #desktop #platform #cpp
 - Open [**Mergetool session socket and real Git parent**](nodes/map-mergetool-session-socket-and-real-git-parent.md) to learn about: The session socket sits under XDG_RUNTIME_DIR or /tmp/branch-truce-<uid>; real Git 2.43 parent tests bound the compatibility claim. #mergetool #git #transport #compatibility
 - Open [**Branch Truce first-release scope**](nodes/map-branch-truce-first-release-scope.md) to learn about: PRD.md defines a standalone, offline Linux app for text conflicts during merges and rebases. #product #scope #workflow
 - Open [**Journey acceptance suite**](nodes/map-journey-acceptance-suite.md) to learn about: CTest acceptance groups drive Main offscreen over real Git merges and rebases with private XDG directories and an offline Git guard. #testing #acceptance #qml #offscreen #git
-- Open [**Per-base Debian artifacts and container inspection**](nodes/map-per-base-debian-artifacts-and-container-inspection.md) to learn about: Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base. #packaging #platform #debian #containers #compatibility
+- Open [**Per-base Debian artifacts and container inspection**](nodes/map-per-base-debian-artifacts-and-container-inspection.md) to learn about: Developer per-base DEBs are separate from Kubuntu DEB, Fedora RPM and Arch release packages, each validated in a clean native target. #packaging #platform #debian #containers #compatibility
 - Open [**Installed-artifact validation in base containers**](nodes/map-installed-artifact-validation-in-base-containers.md) to learn about: validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE. #packaging #platform #validation #wayland #accessibility #compatibility
 - Open [**Recovery journal and acknowledgment boundary**](nodes/map-recovery-journal-and-acknowledgment-boundary.md) to learn about: Persist complete text-and-decision transactions before acknowledgment; retain failed input and loaded captures for retry. #recovery #storage #editing #failures
 - Open [**Startup style, colour scheme and icon theme**](nodes/map-startup-style-colour-scheme-and-icon-theme.md) to learn about: main.cpp picks org.kde.desktop or Fusion, names hicolor when no icon theme is set; kdeglobals sets colours; a preloaded probe tests it. #ui #startup #kde #icons #testing #preview

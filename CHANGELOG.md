@@ -1,3 +1,13 @@
+## [1.2.0](https://github.com/e0ipso/branch-truce/compare/v1.1.0...v1.2.0) (2026-10-30)
+
+### Features
+
+* add Fedora and Arch release packages ([7a4d706](https://github.com/e0ipso/branch-truce/commit/7a4d7063ce1f222e910784ab136d95d0d01f6b48))
+
+### Bug Fixes
+
+* retain native validation on pull requests ([1c89f5e](https://github.com/e0ipso/branch-truce/commit/1c89f5ea606a65dec822c5139cb22585e3ee0bab))
+
 ## [1.1.0](https://github.com/e0ipso/branch-truce/compare/v1.0.0...v1.1.0) (2026-10-30)
 
 ### Features

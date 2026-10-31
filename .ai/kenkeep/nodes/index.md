@@ -35,11 +35,11 @@ _None._
 - Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) to learn about: Sift ticket references stay inside Sift; commitlint and check:tracker-refs enforce this for commit messages and tracked files. #git #commits #ci #conventions #release
 
 ## Components (what exists)
-- Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation. #architecture #desktop #platform #cpp
+- Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack on Kubuntu 26.04; native release packages also target Fedora 44 and pinned Arch Linux. #architecture #desktop #platform #cpp
 - Open [**Mergetool session socket and real Git parent**](map-mergetool-session-socket-and-real-git-parent.md) to learn about: The session socket sits under XDG_RUNTIME_DIR or /tmp/branch-truce-<uid>; real Git 2.43 parent tests bound the compatibility claim. #mergetool #git #transport #compatibility
 - Open [**Branch Truce first-release scope**](map-branch-truce-first-release-scope.md) to learn about: PRD.md defines a standalone, offline Linux app for text conflicts during merges and rebases. #product #scope #workflow
 - Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) to learn about: CTest acceptance groups drive Main offscreen over real Git merges and rebases with private XDG directories and an offline Git guard. #testing #acceptance #qml #offscreen #git
-- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) to learn about: Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base. #packaging #platform #debian #containers #compatibility
+- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) to learn about: Developer per-base DEBs are separate from Kubuntu DEB, Fedora RPM and Arch release packages, each validated in a clean native target. #packaging #platform #debian #containers #compatibility
 - Open [**Installed-artifact validation in base containers**](map-installed-artifact-validation-in-base-containers.md) to learn about: validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE. #packaging #platform #validation #wayland #accessibility #compatibility
 - Open [**Recovery journal and acknowledgment boundary**](map-recovery-journal-and-acknowledgment-boundary.md) to learn about: Persist complete text-and-decision transactions before acknowledgment; retain failed input and loaded captures for retry. #recovery #storage #editing #failures
 - Open [**Startup style, colour scheme and icon theme**](map-startup-style-colour-scheme-and-icon-theme.md) to learn about: main.cpp picks org.kde.desktop or Fusion, names hicolor when no icon theme is set; kdeglobals sets colours; a preloaded probe tests it. #ui #startup #kde #icons #testing #preview
@@ -83,10 +83,10 @@ _None._
 - Open [**Repository discovery and verified source identities**](map-repository-discovery-and-verified-source-identities.md) — Verify merge/rebase source identities and keep renamed text conflicts supported while isolating path provenance failures.
 ### #architecture
 - Open [**Design desktop apps around screens and components**](practice-design-desktop-apps-around-screens-and-components.md) — Define screens and components, then build loosely coupled implementations using each desktop environment's idiomatic UI kit.
-- Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) — Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation.
+- Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) — Locked C++/Qt Quick/Kirigami stack on Kubuntu 26.04; native release packages also target Fedora 44 and pinned Arch Linux.
 - Open [**Fence session work and serialize worktree mutations**](practice-fence-session-work-and-serialize-worktree-mutations.md) — Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation.
 ### #compatibility
-- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base.
+- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Developer per-base DEBs are separate from Kubuntu DEB, Fedora RPM and Arch release packages, each validated in a clean native target.
 - Open [**Installed-artifact validation in base containers**](map-installed-artifact-validation-in-base-containers.md) — validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE.
 - Open [**Mergetool session socket and real Git parent**](map-mergetool-session-socket-and-real-git-parent.md) — The session socket sits under XDG_RUNTIME_DIR or /tmp/branch-truce-<uid>; real Git 2.43 parent tests bound the compatibility claim.
 ### #concurrency
@@ -95,20 +95,20 @@ _None._
 - Open [**Fence session work and serialize worktree mutations**](practice-fence-session-work-and-serialize-worktree-mutations.md) — Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation.
 ### #desktop
 - Open [**Design desktop apps around screens and components**](practice-design-desktop-apps-around-screens-and-components.md) — Define screens and components, then build loosely coupled implementations using each desktop environment's idiomatic UI kit.
-- Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) — Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation.
+- Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) — Locked C++/Qt Quick/Kirigami stack on Kubuntu 26.04; native release packages also target Fedora 44 and pinned Arch Linux.
 - Open [**Fence session work and serialize worktree mutations**](practice-fence-session-work-and-serialize-worktree-mutations.md) — Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation.
 ### #mergetool
 - Open [**Mergetool session socket and real Git parent**](map-mergetool-session-socket-and-real-git-parent.md) — The session socket sits under XDG_RUNTIME_DIR or /tmp/branch-truce-<uid>; real Git 2.43 parent tests bound the compatibility claim.
 - Open [**Treat mergetool file state as live evidence**](practice-treat-mergetool-file-state-as-live-evidence.md) — Check live MERGED bytes before trusting a recorded write, shrink restores after flushing, and wait for the socket on a wall-clock deadline.
 - Open [**Hold a Git call to test racing repository changes**](practice-hold-a-git-call-to-test-racing-repository-changes.md) — GitGate holds one git subcommand on one path so a write lands mid-inspection; keep a race test only if it fails without its guard.
 ### #packaging
-- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base.
+- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Developer per-base DEBs are separate from Kubuntu DEB, Fedora RPM and Arch release packages, each validated in a clean native target.
 - Open [**Installed-artifact validation in base containers**](map-installed-artifact-validation-in-base-containers.md) — validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE.
 - Open [**Compile QML to bytecode to avoid private Qt ABI pins**](practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins.md) — Keep qmlcachegen --only-bytecode; QML compiled to C++ links Qt_6_PRIVATE_API and pins the package to one exact Qt release.
 ### #platform
-- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base.
+- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Developer per-base DEBs are separate from Kubuntu DEB, Fedora RPM and Arch release packages, each validated in a clean native target.
 - Open [**Installed-artifact validation in base containers**](map-installed-artifact-validation-in-base-containers.md) — validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE.
-- Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) — Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation.
+- Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) — Locked C++/Qt Quick/Kirigami stack on Kubuntu 26.04; native release packages also target Fedora 44 and pinned Arch Linux.
 ### #capture
 - Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) — Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus.
 - Open [**Interpret native reference comparisons on the calibrated grid**](practice-interpret-native-reference-comparisons-on-the-calibrated-grid.md) — Keep raster scale, comparison-cell units and capture provenance explicit when judging native screenshots against approved references.
@@ -122,7 +122,7 @@ _None._
 - Open [**Bound each converted representation independently**](practice-bound-each-converted-representation-independently.md) — Reject cleaned canonical objects over 4194304 bytes before reading; give each Git phase its own 4194304-byte budget.
 - Open [**Conflict admission and offline startup**](map-conflict-admission-and-offline-startup.md) — ConflictClassifier admits editable merge/rebase files; startup preserves excluded reasons and existing manual edits.
 ### #debian
-- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base.
+- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Developer per-base DEBs are separate from Kubuntu DEB, Fedora RPM and Arch release packages, each validated in a clean native target.
 - Open [**Compile QML to bytecode to avoid private Qt ABI pins**](practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins.md) — Keep qmlcachegen --only-bytecode; QML compiled to C++ links Qt_6_PRIVATE_API and pins the package to one exact Qt release.
 ### #documentation
 - Open [**Keep PRD.md focused on user needs**](practice-keep-prd-focused-on-user-needs.md) — PRD.md describes user needs, interactions, and capabilities without technical or implementation details.
@@ -180,11 +180,11 @@ _None._
 ### #commits
 - Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) — Sift ticket references stay inside Sift; commitlint and check:tracker-refs enforce this for commit messages and tracked files.
 ### #containers
-- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base.
+- Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Developer per-base DEBs are separate from Kubuntu DEB, Fedora RPM and Arch release packages, each validated in a clean native target.
 ### #conventions
 - Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) — Sift ticket references stay inside Sift; commitlint and check:tracker-refs enforce this for commit messages and tracked files.
 ### #cpp
-- Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) — Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation.
+- Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) — Locked C++/Qt Quick/Kirigami stack on Kubuntu 26.04; native release packages also target Fedora 44 and pinned Arch Linux.
 ### #design
 - Open [**Follow the UI design brief for the KDE-native window**](practice-follow-the-ui-design-brief-for-the-kde-native-window.md) — docs/ui-design.md sets layout, actions and colour roles; panes get the space and red marks only ranges that need a decision.
 ### #discovery
