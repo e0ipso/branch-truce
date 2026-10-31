@@ -645,9 +645,9 @@ void expectMarks(Fixture &fixture, const std::string &when, const std::string &p
         throw std::runtime_error(when + ", " + pane + " paints " + describeMarks(painted)
             + ", not " + describeMarks(expected));
     if (pane != "stage2" && pane != "stage3") return;
-    // Every source strip must render the same actual row extent and colour as
-    // the code fill, including accepted rows and after history changes.
-    for (const auto *suffix : {"LeftEdgeBackgroundsLines", "GutterBackgroundsLines", "RightEdgeBackgroundsLines"}) {
+    // The remaining number/state gutter shares the full viewport's row fills,
+    // including accepted rows and after history changes.
+    for (const auto *suffix : {"GutterBackgroundsLines"}) {
         QMap<int, QQuickItem *> strips;
         for (auto *fill : fixture.item((pane + suffix).c_str())->childItems())
             if (fill->isVisible() && fill->property("line").isValid())
@@ -937,6 +937,51 @@ public:
         Group suite(results, selection == Selection::All || selection == Selection::Scenes);
         Group boundary(results, selection == Selection::All || selection == Selection::Boundary);
         Group display(results, selection == Selection::Display);
+        suite.run("source choices overlay full-width panes only on hover or focus", [] {
+            Fixture fixture;
+            settlePanes(fixture);
+            const auto before = captureWork(fixture);
+            auto *comparison = fixture.item("comparisonView");
+            for (const auto *side : {"stage2", "stage3"}) {
+                const auto prefix = std::string(side);
+                auto *viewport = fixture.item((prefix + "Viewport").c_str());
+                CHECK(std::abs(viewport->x()) < 0.01);
+                CHECK(std::abs(viewport->width() - viewport->parentItem()->width()) < 0.01);
+                CHECK(fixture.item((prefix + "Backgrounds").c_str())->width() >= viewport->width());
+                auto *gutter = fixture.item((prefix + "Gutter").c_str());
+                CHECK(std::abs(gutter->mapToScene(QPointF()).x()
+                    - viewport->mapToScene(QPointF()).x()) < 0.01);
+                CHECK(!test_support::visualItem(fixture.window->contentItem(),
+                    QString::fromStdString(prefix + "ChoiceColumn")));
+                const auto width = viewport->width();
+                CHECK(comparison->setProperty("showChoices", false));
+                CHECK(std::abs(viewport->width() - width) < 0.01);
+                CHECK(comparison->setProperty("showChoices", true));
+            }
+            const auto &choice = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+            const auto name = QStringLiteral("choiceAccept-") + QString::fromStdString(choice.source.contributionId);
+            auto *lanes = fixture.item("scopedChoices");
+            auto *button = test_support::reachableButton(fixture.window, lanes, name);
+            CHECK(button);
+            QTest::mouseMove(fixture.window, QPoint(5, 5));
+            fixture.item("resultText")->forceActiveFocus();
+            settle([&] { return !test_support::painted(button); });
+            CHECK(test_support::hoverChoiceControl(fixture.window, lanes, name) == button);
+            CHECK(test_support::painted(button));
+            QTest::mouseMove(fixture.window, QPoint(5, 5));
+            settle([&] { return !test_support::painted(button); });
+            // Traverse the real native Tab chain; opacity must not remove the target.
+            for (int tab = 0; tab < 100 && !button->hasActiveFocus(); ++tab)
+                QTest::keyClick(fixture.window, Qt::Key_Tab);
+            CHECK(button->hasActiveFocus());
+            CHECK(test_support::painted(button));
+            QTest::keyClick(fixture.window, Qt::Key_Menu);
+            auto *menu = fixture.object(("choiceMore-" + choice.source.contributionId).c_str());
+            settle([&] { return menu->property("visible").toBool(); });
+            CHECK(test_support::painted(button));
+            QTest::keyClick(fixture.window, Qt::Key_Escape);
+            checkUnchanged(fixture, before);
+        });
         suite.run("pane headers do not rearrange recursively", [] {
             HeaderWarningCapture capture;
             Fixture fixture;

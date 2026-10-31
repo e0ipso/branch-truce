@@ -17,6 +17,10 @@ Row {
     required property real rowHeight
     // Whether the file takes choices now: it can be edited and no input is composing.
     required property bool choosing
+    property bool rowHovered: false
+    // Opacity retains the native Tab path; focus reveals controls before interaction.
+    readonly property bool revealed: rowHovered || rowHover.hovered || choiceFocused
+    opacity: revealed ? 1 : 0
     property TextArea contextEditor: null
     property EditActions edits: null
     // A choice of action for a scope; the owner previews it when it needs confirming.
@@ -55,7 +59,7 @@ Row {
     }
     readonly property bool hasEntries: entries.some(entry => entry.enabled)
     // A decided section may still contain an undecided precise line. Only a
-    // fully decided range loses its persistent controls. An unavailable owner
+    // fully decided range loses its overlay controls. An unavailable owner
     // still needs a keyboard/touch target for its available mapped lines.
     readonly property bool rangeUndecided: !!choice.undecided
         || (modelData.extras || []).some(extra => !!extra.undecided)
@@ -70,7 +74,7 @@ Row {
         openMenuAt(anchor, point.x, point.y)
     }
     // Source text is a stable context-menu anchor even after the range is
-    // decided. No hidden gutter button is kept alive as a menu target.
+    // decided. No hidden overlay button is kept alive as a menu target.
     function openMenuAt(anchor: Item, x: real, y: real): bool {
         if (!choosing || !hasEntries || !anchor || !anchor.visible)
             return false
@@ -127,13 +131,14 @@ Row {
     }
 
     // A small framed icon button within one row; its text names the action and the scope.
-    component GutterButton: ToolButton {
+    component ChoiceButton: ToolButton {
         required property real size
         required property real glyphSize
         width: glyphSize
         height: size
         padding: 0
         flat: false
+        activeFocusOnTab: true
         display: AbstractButton.IconOnly
         icon.width: glyphSize
         icon.height: glyphSize
@@ -143,7 +148,7 @@ Row {
         ToolTip.delay: Kirigami.Units.toolTipDelay
         onPressAndHold: buttons.openMenu()
     }
-    GutterButton {
+    ChoiceButton {
         id: accept
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
@@ -155,7 +160,7 @@ Row {
         icon.color: Kirigami.Theme.activeTextColor
         onClicked: buttons.choose(buttons.choice.id, ChoicePreviewFlow.Accept)
     }
-    GutterButton {
+    ChoiceButton {
         id: ignore
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
@@ -167,7 +172,7 @@ Row {
         icon.color: Kirigami.Theme.negativeTextColor
         onClicked: buttons.choose(buttons.choice.id, ChoicePreviewFlow.Ignore)
     }
-    GutterButton {
+    ChoiceButton {
         id: more
         size: buttons.rowHeight
         glyphSize: buttons.iconSize

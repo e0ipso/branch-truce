@@ -364,9 +364,9 @@ QString rowOwner(Scene &scene, const QVariantMap &region)
     return id;
 }
 
-// Click one scoped choice in the source gutters. kind is the part of the control's objectName
+// Hover and click one scoped source overlay. kind is the part of the control's objectName
 // before the choice ID: Accept, Ignore, Resolve, PreviewLeftFirst or PreviewRightFirst. Accept
-// and Ignore of the scope that owns a gutter row are buttons on that row; every other choice
+// and Ignore of the scope that owns a range are buttons on its first row; every other choice
 // is an entry of the row's context menu, choiceMore-<owner ID>. Open that menu with
 // the requested source line's public context-menu gesture.
 void clickChoice(Scene &scene, const QString &label, const char *kind, int menuKey = 0)
@@ -378,7 +378,7 @@ void clickChoice(Scene &scene, const QString &label, const char *kind, int menuK
     const auto name = QStringLiteral("choice") + QLatin1String(kind) + QLatin1Char('-') + id;
     const bool onRow = region.value("scope").toString() == "section" && owner == id
         && (qstrcmp(kind, "Accept") == 0 || qstrcmp(kind, "Ignore") == 0);
-    if (auto *target = onRow ? test_support::reachableButton(scene.window, lanes, name) : nullptr) {
+    if (auto *target = onRow ? test_support::hoverChoiceControl(scene.window, lanes, name) : nullptr) {
         test_support::clickItem(scene.window, target);
         return;
     }
@@ -2187,8 +2187,8 @@ Item {
             QMetaObject::invokeMethod(dialog, "close");
             settleFor("handoff closed", [&] { return !dialog->property("visible").toBool(); });
 
-            // the source choices start shown, in the source panes' gutters, where they
-            // take no height. With them the three panes keep eight lines and the panes and choices
+            // Source choices start enabled as hover overlays, reserving no pane width
+            // or height. The three panes keep eight lines and the panes and choices
             // stay reachable, from a roomy window down to 1280x720, and hiding them leaves every
             // text pane as high as it was. The owner waiver still excludes strict 960x540 fit.
             settleFor("source choices shown", [&] { return scene.item("scopedChoices")->isVisible(); });

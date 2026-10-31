@@ -279,7 +279,7 @@ def callout_closeups(state, shot, image_tool, output):
     regions = {}
     for name in ('fileList', 'selectedPath', 'fileToolBar', 'stage2Identity', 'stage3Identity',
                  'stage2Gutter', 'resultGutter', 'stage3Gutter', 'stage2Bands', 'stage3Bands',
-                 'stage2LeftEdge', 'stage2RightEdge', 'stage3LeftEdge', 'stage3RightEdge', 'selectedProblem'):
+                 'stage2Viewport', 'stage3Viewport', 'selectedProblem'):
         matches = [row for row in state['items'] if row['name'] == name]
         if len(matches) != 1:
             continue

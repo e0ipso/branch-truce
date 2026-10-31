@@ -144,10 +144,13 @@ QJsonObject snapshot() {
         if (!item->objectName().isEmpty() || item->property("line").isValid()
             || item->property("text").isValid() || item->property("color").isValid()) {
             const auto pos = item->mapToScene(QPointF());
+            bool painted = true;
+            for (auto *ancestor = item; ancestor; ancestor = ancestor->parentItem())
+                painted = painted && ancestor->isVisible() && ancestor->opacity() > 0;
             QJsonObject row{{"name", item->objectName()}, {"x", pos.x()}, {"y", pos.y()},
                 {"width", item->width()}, {"height", item->height()}, {"enabled", item->isEnabled()},
                 {"activeFocus", item->hasActiveFocus()}, {"opacity", item->opacity()},
-                {"onScreen", reachable(item)}, {"clip", item->clip()},
+                {"onScreen", reachable(item) && painted}, {"clip", item->clip()},
                 {"className", item->metaObject()->className()}};
             QStringList ancestors;
             for (auto *parent = item->parentItem(); parent; parent = parent->parentItem())
@@ -260,6 +263,17 @@ void tick() {
             return;
         }
         if (!item || !item->isEnabled()) { stable.restart(); return; }
+        if (target.startsWith("choiceAccept-") || target.startsWith("choiceIgnore-")
+            || target.startsWith("choiceMenu-")) {
+            bool painted = true;
+            for (auto *ancestor = item; ancestor; ancestor = ancestor->parentItem())
+                painted = painted && ancestor->isVisible() && ancestor->opacity() > 0;
+            if (!painted) {
+                const auto point = item->mapToScene(QPointF(item->width()/2, item->height()/2)).toPoint();
+                QTest::mouseMove(window, point);
+                previous.clear(); stable.restart(); return;
+            }
+        }
         if (request.contains("text") && item->property("text").toString() != request.value("text").toString()) {
             stable.restart(); return;
         }

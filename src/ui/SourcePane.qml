@@ -1,6 +1,6 @@
 // One captured source as a read-only pane: its identity header above the text, with line
-// numbers, diff colours and whitespace markers. A pane with a choiceEdge keeps a column of
-// choiceWidth on that edge, beside the text, where ChoiceLane lays the region choices.
+// numbers, diff colours and whitespace markers. ChoiceLane overlays the full-width text
+// viewport; source choices never reserve a separate column.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -31,10 +31,8 @@ ColumnLayout {
     function openChoicesAt(line: int, x: real, y: real): bool {
         return false
     }
-    // The edge that faces the result, "left" or "right", for the choice column; none without it.
+    // The edge that faces the result, "left" or "right", for hover overlays.
     property string choiceEdge: ""
-    property real choiceWidth: 0
-    readonly property alias choiceSlot: choiceColumn
     // Full identities remain available in the tooltips and accessibility descriptions.
     readonly property string commitId: sourcePane.source.commitId || ""
     readonly property string fullIdentity: qsTr("Verified commit: %1\nCaptured blob: %2")
@@ -81,44 +79,6 @@ ColumnLayout {
             anchors.fill: parent
             color: Kirigami.Theme.backgroundColor
         }
-        Item {
-            id: choiceColumn
-            objectName: sourcePane.paneName + "ChoiceColumn"
-            Kirigami.Theme.colorSet: Kirigami.Theme.View
-            Kirigami.Theme.inherit: false
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            x: sourcePane.choiceEdge === "right" ? parent.width - width : 0
-            width: sourcePane.choiceEdge.length > 0 ? sourcePane.choiceWidth : 0
-            visible: width > 0
-        }
-        // Extend the viewport's row fills through its outer padding and action
-        // lane. Each strip meets the viewport exactly and uses the same laid-out
-        // rows and scroll offset; horizontal text scrolling never moves it.
-        // Separate clips keep fills out of the native horizontal scrollbar row.
-        component EdgeFills: Item {
-            id: edgeFills
-            y: sourceViewport.y
-            height: sourceViewport.height
-            clip: true
-            LineBackgrounds {
-                objectName: edgeFills.objectName + "Backgrounds"
-                y: -sourceViewport.contentY
-                width: edgeFills.width
-                height: sourceGutter.height
-                gutter: sourceGutter
-                current: sourcePane.current
-            }
-        }
-        EdgeFills {
-            objectName: sourcePane.paneName + "LeftEdge"
-            width: sourceViewport.x
-        }
-        EdgeFills {
-            objectName: sourcePane.paneName + "RightEdge"
-            x: sourceViewport.x + sourceViewport.width
-            width: sourceSurface.width - x
-        }
         Flickable {
             id: sourceViewport
             objectName: sourcePane.paneName + "Viewport"
@@ -127,8 +87,6 @@ ColumnLayout {
             Kirigami.Theme.colorSet: Kirigami.Theme.View
             Kirigami.Theme.inherit: false
             anchors.fill: parent
-            anchors.leftMargin: (sourcePane.choiceEdge === "left" ? choiceColumn.width : 0) + Kirigami.Units.smallSpacing
-            anchors.rightMargin: (sourcePane.choiceEdge === "right" ? choiceColumn.width : 0) + Kirigami.Units.smallSpacing
             // Only genuine unwrapped overflow reserves a native scrollbar row.
             anchors.bottomMargin: sourceHorizontal.visible ? sourceHorizontal.height : 0
             clip: true

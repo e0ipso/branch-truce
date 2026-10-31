@@ -111,7 +111,7 @@ A second `Kirigami.ActionToolBar` row for the selected file, in the Window colou
 5. **Reading controls.** Wrap lines, Show spaces and tabs, and Show earlier version are checkable toolbar actions.
 6. **Overflow menu** (`overflow-menu`). It holds Discard, "Discard draft and use staged result", Copy and Paste, the Source choices menu, and Show conflict markers (`view-visible`).
 
-The reading controls sit in the file toolbar, and Find opens the search bar. Whole-file and "all non-conflicting" choices live in the Source choices menu, never as an always-visible row of buttons. Line and region choices live in the gutters.
+The reading controls sit in the file toolbar, and Find opens the search bar. Whole-file and "all non-conflicting" choices live in the Source choices menu, never as an always-visible row of buttons. Line and region choices use source hover overlays and editor context menus.
 
 Mark resolved is always available for a file the app can edit, as `PRD.md:103` requires. While source choices remain undecided it opens a confirmation that names how many; once none remain it acts at once. The ellipsis in its label is there because it may open that confirmation. When the selected file is outside the app, every file action is disabled, because there is no app result to save or resolve (the binary mockups).
 
@@ -142,8 +142,8 @@ An outside-app file shows a `Kirigami.PlaceholderMessage` in place of the panes,
 | Line-number column | Right-aligned in muted `smallFont`, as wide as the largest number, `Kirigami.Units.smallSpacing` after it | 34 px |
 | Glyph column | `Kirigami.Units.iconSizes.small` wide, glyph centred | 16 px |
 | Gap between glyph and code | `Kirigami.Units.largeSpacing` | 8 px |
-| Gutter buttons | On the source pane's edge that faces the result, two `Kirigami.Units.iconSizes.small` buttons `Kirigami.Units.smallSpacing` apart | 46 px column |
-| Inset from a split handle | `Kirigami.Units.smallSpacing` between the handle's hairline and the nearest text or button | none |
+| Source hover buttons | Overlay the source edge facing the result, two `Kirigami.Units.iconSizes.small` buttons `Kirigami.Units.smallSpacing` apart | No reserved column |
+| Hover-button inset from a split handle | `Kirigami.Units.smallSpacing` between the handle and the overlaid buttons; source text retains the full viewport | none |
 | Row height | Laid-out `fixedWidthFont` visual row plus one `Kirigami.Units.mediumSpacing` line distance, supplied by `CodeRows` | 20 logical px target for the pinned Hack 9 pt profile |
 | Connector handle | `Kirigami.Units.gridUnit` wide in total, including one theme hairline at each edge | 20 px target |
 
@@ -151,7 +151,7 @@ An outside-app file shows a `Kirigami.PlaceholderMessage` in place of the panes,
 
 `CodeRows` applies the gap once through `TextBlocks` block formatting, including wrapped continuation rows. It replaces the former `smallSpacing` gap rather than adding another spacer. Under the pinned units the change adds half a `smallSpacing` to the historical 18 logical px pitch; final native captures must measure the resulting pitch against the 20 logical px reference. The approved raster is at 1.5x, so raster pixels and comparison-grid cells are not logical row units.
 
-`TextBlocks.rowHeight` reads the laid-out advance, and its block queries include the first visual row's advance as well as the whole block extent. Gutters share the editor's `TextBlocks` object rather than estimating a row from cursor height and a separate gap. Folds, bands and scroll correspondence use those same block extents. The pane minimum, gutter choices and line-scroll helper consume the shared row height. Earlier-version panes and snapshot preview readers use `CodeRows` too; neither dialog has an approved PNG target.
+`TextBlocks.rowHeight` reads the laid-out advance, and its block queries include the first visual row's advance as well as the whole block extent. Gutters share the editor's `TextBlocks` object rather than estimating a row from cursor height and a separate gap. Folds, bands and scroll correspondence use those same block extents. The pane minimum, source hover choices and line-scroll helper consume the shared row height. Earlier-version panes and snapshot preview readers use `CodeRows` too; neither dialog has an approved PNG target.
 
 ### Connector bands
 
@@ -164,7 +164,7 @@ Initial pane shares each use one third of the split width after reserving both c
 - **Fill.** The band uses the passage's band tint from section 6: the role's text colour at about 40 % alpha, `positiveTextColor` for added or accepted, `activeTextColor` for changed, `negativeTextColor` for conflicting, `neutralTextColor` for hand-edited, and `disabledTextColor` at about 30 % for removed or ignored. Bands are stronger than the line fills so the eye can follow them across the handle.
 - **Shape and ends.** Each end follows the full laid-out passage height in its pane, including wrapped rows. Folded marker passages join their complete source extent to the result's single visible marker row, retaining full-height ends for both two-row-to-one-row and one-row-to-two-row connections. Top and bottom edges are cubic curves with horizontal tangents at each pane; both control points sit at the handle's horizontal midpoint. The ends meet the row fills under the handle hairlines and move with each pane's independent scroll. Off-screen portions are clipped after computing the full bounds. Hover inspection follows the same curved shape inside the viewport. Empty ranges retain the thin rule at their actual line boundary; no equal-row padding is added.
 - **Redraw.** Bands are redrawn whenever passages or decisions change, including after undo and redo.
-- **Not a control.** A band only shows which passages correspond. Choices stay on the gutter buttons. A band never carries meaning by colour alone; the passage's gutter glyph (section 6) is the non-colour cue.
+- **Not a control.** A band only shows which passages correspond. Choices use source hover buttons or context menus. A band never carries meaning by colour alone; the passage's gutter glyph (section 6) is the non-colour cue.
 
 ### Conflict markers
 
@@ -307,7 +307,7 @@ All names are Breeze icon names, used through `Kirigami.Icon` or an action's `ic
 | Notice or count: warning / error | `dialog-warning` / `dialog-error` |
 | Notice: data at risk | `data-warning` |
 
-The accept arrow points from the source towards the result: `arrow-right` in the left pane, `arrow-left` in the right pane. Use `edit-delete-remove` for Ignore beside a gutter arrow, as the mockups do, and `dialog-cancel` where Ignore is a labelled button. Use one of the two per surface.
+The accept arrow points from the source towards the result: `arrow-right` in the left pane, `arrow-left` in the right pane. Use `edit-delete-remove` for Ignore beside a source hover arrow, as the mockups do, and `dialog-cancel` where Ignore is a labelled button. Use one of the two per surface.
 
 An icon alone never carries meaning. Icon-only buttons set `text` (shown as a tooltip or in the overflow menu) so the name is available to the user and to tests.
 
@@ -340,13 +340,13 @@ Colour never carries meaning alone (`PRD.md:35`, `PRD.md:73`). Every coloured ra
 | Ignored side | `×` |
 | Conflict markers remain | `!` |
 
-**Gutter buttons.** On a region's first line, each source pane shows Accept and Ignore on its edge that faces the result: Ignore then Accept in the left pane, Accept then Ignore in the right pane. They are small framed buttons in the View background. The Accept icon is drawn in `activeTextColor` and the Ignore icon in `negativeTextColor`.
+**Source hover controls.** Source viewports fill their panes with no reserved action column or replacement padding. The right pane's line numbers start at its left edge; the left pane's code extends to its right edge. Hovering a source range reveals Accept and Ignore over its first line at the edge facing the result: Ignore then Accept in the left pane, Accept then Ignore in the right pane. Keyboard focus and an open range menu also keep these small native framed buttons visible. The Accept icon uses `activeTextColor` and Ignore uses `negativeTextColor`.
 
-Each actual source range has one primary pair at the start of its section. Every line scope in that range remains labelled in the owner's native context menu, including lines after the first. Wrapped continuations add no primary rows. An undecided unavailable section with available mapped line commands keeps a focusable menu-only control in the same compact lane. A section with undecided precise lines still needs that fallback even if its aggregate decision is complete. Once the whole range is decided, every persistent primary and menu control disappears.
+Each actual source range has one primary pair at the start of its section. Every line scope in that range remains labelled in the owner's native context menu, including lines after the first. Wrapped continuations add no primary rows. An undecided unavailable section with available mapped line commands keeps a focusable menu-only hover control. A section with undecided precise lines still needs that fallback even if its aggregate decision is complete. Once the whole range is decided, its overlay controls disappear. Hidden overlays remain in the native Tab path and reveal when focused.
 
-**Decided regions.** When a region is decided, its gutter buttons are replaced by the decision glyph: `✓` for the accepted side, `×` for the ignored side. Undo is the way back (`PRD.md:43`); the buttons return when the decision is undone. The ignored side keeps its text, only muted, so the user can still read what was declined.
+**Decided regions.** When a region is decided, its hover buttons disappear and the existing state glyph shows `✓` for the accepted side or `×` for the ignored side. Undo is the way back (`PRD.md:43`); hover controls return when the decision is undone. The ignored side keeps its text, only muted, so the user can still read what was declined.
 
-Source text retains range commands through right-click, touch hold, Menu or Shift+F10 at the cursor. Its context menu includes the shared Undo/Redo actions and native source Copy/Select all. Range menus anchor to the source editor, and choosing returns focus there before a gutter control can disappear. These menus retain line, section and ordered combination commands without reserving a decided-row button.
+Source text retains range commands through right-click, touch hold, Menu or Shift+F10 at the cursor. Its context menu includes the shared Undo/Redo actions and native source Copy/Select all. Range menus anchor to the source editor, and choosing returns focus there before an overlay control can disappear. These menus retain line, section and ordered combination commands without reserving a decided-row button.
 
 Accepted source lines, their mapped result lines and exact correspondence bands use the accepted role instead of the underlying added or changed role. Precise line decisions take precedence over a decided section's aggregate state. Genuine conflicts and remaining markers retain their warning role; manual edits take precedence over acceptance. Ignoring a source does not repaint unchanged result text. The result gutter reserves only the line number and one state-glyph column. Section decisions supply a glyph only where no precise line mark exists; a folded conflict keeps its opening number and `!`. Source correspondence and full section decisions remain in the number/glyph tooltips and accessible descriptions, including unchanged lines. Correspondence describes matching captured source text rather than claiming an unverified origin. A removed-source boundary shares that inspection when the row already has a state glyph. There is no repeated B/L/R column or separate decision chip reservation.
 
@@ -375,7 +375,7 @@ Within a changed line, word-level highlights use the same role as the line at a 
 
 How they apply here:
 
-- The per-side arrow in the gutter is the accept action for a range; the ignore icon beside it declines that side. Both are reversible with undo.
+- The per-side source hover arrow accepts a range; the ignore icon beside it declines that side. Both are reversible with undo.
 - The conflict stepper in the header band shows the undecided conflicts left in the selected file and, when clicked, moves to the next one.
 - Take both respects the order of the sources and never reorders text silently.
 - Mark resolved is always available for a file the app can edit (`PRD.md:103`). While source choices remain undecided it opens a confirmation that names how many, instead of being disabled. Once none remain, it acts at once.
@@ -398,7 +398,7 @@ The acceptance and UI tests find controls by `objectName` and read their state b
 The mockups show elements the app does not have yet. They are targets of this brief:
 
 - the progress bar and the file facts in the footer;
-- the accept and ignore buttons in the source pane gutters;
+- the accept and ignore source overlays, revealed on hover or keyboard focus;
 - Take both on the folded conflict row in the result.
 
 The rest of the layout above (the header band with the repository name and conflict stepper, the row plates, the pane headers, the footer status and the shared components) is also the target where the app still differs from it.

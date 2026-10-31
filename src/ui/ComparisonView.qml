@@ -1,5 +1,5 @@
 // The comparison of one file: the reading controls, the source and result panes with the
-// connector bands between them, the region choices in the source panes' gutters, and the
+// connector bands between them, hover choices over the source panes, and the
 // earlier version below.
 pragma ComponentBehavior: Bound
 
@@ -26,7 +26,7 @@ ColumnLayout {
     property bool showMarkers: false
     // Asks for showMarkers, because something the user asked for is on a folded line.
     signal markersRevealed()
-    // Shows the region choices in the source panes' gutters and the result's Take both menus.
+    // Enables the source hover choices and the result's Take both menus.
     property bool showChoices: true
     // A choice of action for a source scope; the owner previews it when it needs confirming.
     signal choiceChosen(target: string, action: int)
@@ -331,10 +331,6 @@ ColumnLayout {
     // The same laid-out advance used by gutters, bands and scroll mapping.
     // CodeRows owns the line distance; no consumer adds a second gap.
     readonly property real rowHeight: Math.ceil(resultPane.blocks.rowHeight)
-    // Two small icons, with native spacing between them and at both column edges.
-    // Broader choices use the row's context menu and reserve no additional width.
-    readonly property real choiceWidth: 2 * Math.min(Kirigami.Units.iconSizes.small, rowHeight)
-        + 3 * Kirigami.Units.smallSpacing
     // The panes by role, scrolled together through the file's passages.
     ComparisonPanes {
         id: panesByRole
@@ -412,7 +408,6 @@ ColumnLayout {
                 paneName: "stage2"
                 paneRole: qsTr("Left source")
                 choiceEdge: "right"
-                choiceWidth: comparison.showChoices ? comparison.choiceWidth : 0
                 source: comparison.file.stage2 || ({})
                 versionName: source.commitId === comparison.controller.loader.stage2CommitId
                     ? comparison.controller.loader.stage2Name : ""
@@ -459,7 +454,6 @@ ColumnLayout {
                 paneName: "stage3"
                 paneRole: qsTr("Right source")
                 choiceEdge: "left"
-                choiceWidth: comparison.showChoices ? comparison.choiceWidth : 0
                 source: comparison.file.stage3 || ({})
                 versionName: source.commitId === comparison.controller.loader.stage3CommitId
                     ? comparison.controller.loader.stage3Name : ""

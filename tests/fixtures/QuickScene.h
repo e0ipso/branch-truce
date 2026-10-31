@@ -185,6 +185,25 @@ inline QQuickItem *waitForLayout(QQuickWindow *window, const QString &name, int 
                          }, stableMs);
 }
 
+inline bool painted(QQuickItem *item)
+{
+    for (auto *ancestor = item; ancestor; ancestor = ancestor->parentItem())
+        if (!ancestor->isVisible() || ancestor->opacity() <= 0) return false;
+    return item != nullptr;
+}
+
+// Source choices reveal through a real pointer move, before any click is allowed.
+inline QQuickItem *hoverChoiceControl(QQuickWindow *window, QQuickItem *root, const QString &name)
+{
+    auto *target = reachableButton(window, root, name);
+    if (!target) return nullptr;
+    QTest::mouseMove(window, target->mapToScene(QPointF(target->width() / 2, target->height() / 2)).toPoint());
+    return waitForStable(window, name.toStdString() + " after hover", [&] {
+        auto *candidate = reachableButton(window, root, name);
+        return painted(candidate) ? candidate : nullptr;
+    }, 60);
+}
+
 inline bool fileOverflowControl(const char *name)
 {
     // These actions may have hidden measurement delegates as well as live buttons.
@@ -216,12 +235,29 @@ inline std::string controlGeometry(QQuickWindow *window, const QString &name)
     return state;
 }
 
+// Native overflow entries can disappear before the popup's exit transition and
+// closed callback finish. Observe the popup and its owning button together so
+// an old closed callback cannot uncheck a newly reopened menu.
+inline void settleFileToolbarMenu(QQuickItem *more)
+{
+    settleFor("file toolbar popup transition", [&] {
+        auto *menu = more->property("menu").value<QObject *>();
+        if (!menu) return !more->property("checked").toBool();
+        return menu->property("visible").toBool() ? menu->property("opened").toBool()
+            : !more->property("checked").toBool();
+    });
+}
+
 // Exercise the actual native button or overflow entry, including disabled ones
 // inspected by callers. Hidden measurement delegates never establish reachability.
 inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, int stableMs = 60)
 {
     const auto controlName = QString::fromLatin1(name);
     try {
+        auto *toolbar = visibleItem(window->contentItem(), QStringLiteral("fileToolBar"));
+        if (!toolbar) throw std::runtime_error("missing file toolbar");
+        if (auto *more = reachableButton(window, toolbar, QStringLiteral("More Actions")))
+            settleFileToolbarMenu(more);
         if (reachableButton(window, window->contentItem(), controlName)) {
             try {
                 return waitForStable(window, controlName.toStdString(), [&] {
@@ -234,8 +270,6 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
                 if (reachableButton(window, window->contentItem(), controlName)) throw;
             }
         }
-        auto *toolbar = visibleItem(window->contentItem(), QStringLiteral("fileToolBar"));
-        if (!toolbar) throw std::runtime_error("missing file toolbar");
         auto *more = waitForStable(window, "file toolbar overflow", [&] {
             return reachableButton(window, toolbar, QStringLiteral("More Actions"));
         }, stableMs);
@@ -291,9 +325,17 @@ inline void sourceLineMenu(QQuickWindow *window, QQuickItem *editor, QQuickItem 
 
 inline void closeFileToolbarMenu(QQuickWindow *window)
 {
-    QTest::keyClick(window, Qt::Key_Escape);
+    auto *toolbar = visibleItem(window->contentItem(), QStringLiteral("fileToolBar"));
+    if (!toolbar) throw std::runtime_error("missing file toolbar");
+    auto *more = reachableButton(window, toolbar, QStringLiteral("More Actions"));
+    if (!more) return;
+    settleFileToolbarMenu(more);
+    auto *menu = more->property("menu").value<QObject *>();
+    if (menu && menu->property("visible").toBool())
+        QTest::keyClick(window, Qt::Key_Escape);
     settleFor("file toolbar overflow closed", [&] {
-        return !namedButton(window->contentItem(), QStringLiteral("copyResult"));
+        auto *popup = more->property("menu").value<QObject *>();
+        return (!popup || !popup->property("visible").toBool()) && !more->property("checked").toBool();
     });
 }
 
