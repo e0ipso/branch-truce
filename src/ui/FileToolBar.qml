@@ -188,7 +188,6 @@ RowLayout {
         Layout.fillWidth: true
         Layout.minimumWidth: Kirigami.Units.gridUnit * 4
         Layout.preferredWidth: Kirigami.Units.gridUnit * 12
-        Layout.maximumWidth: Kirigami.Units.gridUnit * 18
         text: " "
         Item {
             id: selectedPathLabel
@@ -226,6 +225,9 @@ RowLayout {
     Kirigami.ActionToolBar {
         objectName: "fileToolBar"
         Layout.fillWidth: true
+        Layout.minimumWidth: 0
+        // The path gets spare width; actions keep their native width and can overflow.
+        Layout.maximumWidth: implicitWidth
         // Keep one native control row with breathing room shared by the list header.
         Layout.minimumHeight: implicitHeight + Kirigami.Units.mediumSpacing
         actions: {
