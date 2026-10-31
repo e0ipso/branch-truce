@@ -27,11 +27,12 @@ _None._
 - Open [**Keep PRD.md focused on user needs**](practice-keep-prd-focused-on-user-needs.md) to learn about: PRD.md describes user needs, interactions, and capabilities without technical or implementation details. #product #prd #documentation
 - Open [**Keep TechSpecs and PRDs independent**](practice-keep-techspecs-and-prds-independent.md) to learn about: TechSpecs explain how to build; PRDs explain what to build and why. Keep both separate and independently understandable. #documentation #techspec #prd
 - Open [**Reconcile uncertain destination publication**](practice-reconcile-uncertain-destination-publication.md) to learn about: Use captured destination identities, fail closed on unsupported metadata, and inspect uncertain exchanges before retrying. #publication #storage #concurrency #git
+- Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) to learn about: Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus. #testing #qml #ui #capture #readiness
 - Open [**Follow the UI design brief for the KDE-native window**](practice-follow-the-ui-design-brief-for-the-kde-native-window.md) to learn about: docs/ui-design.md sets layout, actions and colour roles; panes get the space and red marks only ranges that need a decision. #ui #design #kde #kirigami #qml
 - Open [**Hold a Git call to test racing repository changes**](practice-hold-a-git-call-to-test-racing-repository-changes.md) to learn about: GitGate holds one git subcommand on one path so a write lands mid-inspection; keep a race test only if it fails without its guard. #testing #git #concurrency #mergetool
+- Open [**Interpret native reference comparisons on the calibrated grid**](practice-interpret-native-reference-comparisons-on-the-calibrated-grid.md) to learn about: Keep raster scale, comparison-cell units and capture provenance explicit when judging native screenshots against approved references. #testing #ui #capture #calibration #provenance
 - Open [**Keep the qmllint target at zero warnings**](practice-keep-the-qmllint-target-at-zero-warnings.md) to learn about: src/ui/.qmllint.ini makes branch_truce_ui_qmllint fail on any warning; type QML properties concretely, anchor at use sites. #qml #lint #ui #ci
 - Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) to learn about: Sift ticket references stay inside Sift; commitlint and check:tracker-refs enforce this for commit messages and tracked files. #git #commits #ci #conventions #release
-- Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) to learn about: Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus. #testing #qml #ui #capture #readiness
 
 ## Components (what exists)
 - Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation. #architecture #desktop #platform #cpp
@@ -64,18 +65,18 @@ _None._
 - Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
 - Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) — Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus.
 - Open [**Keep the qmllint target at zero warnings**](practice-keep-the-qmllint-target-at-zero-warnings.md) — src/ui/.qmllint.ini makes branch_truce_ui_qmllint fail on any warning; type QML properties concretely, anchor at use sites.
+### #testing
+- Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
+- Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) — Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus.
+- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard.
+### #ui
+- Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) — Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus.
+- Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
+- Open [**Interpret native reference comparisons on the calibrated grid**](practice-interpret-native-reference-comparisons-on-the-calibrated-grid.md) — Keep raster scale, comparison-cell units and capture provenance explicit when judging native screenshots against approved references.
 ### #failures
 - Open [**Recovery journal and acknowledgment boundary**](map-recovery-journal-and-acknowledgment-boundary.md) — Persist complete text-and-decision transactions before acknowledgment; retain failed input and loaded captures for retry.
 - Open [**Treat mergetool file state as live evidence**](practice-treat-mergetool-file-state-as-live-evidence.md) — Check live MERGED bytes before trusting a recorded write, shrink restores after flushing, and wait for the socket on a wall-clock deadline.
 - Open [**Bound each converted representation independently**](practice-bound-each-converted-representation-independently.md) — Reject cleaned canonical objects over 4194304 bytes before reading; give each Git phase its own 4194304-byte budget.
-### #testing
-- Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
-- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard.
-- Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) — Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus.
-### #ui
-- Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
-- Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) — Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus.
-- Open [**Follow the UI design brief for the KDE-native window**](practice-follow-the-ui-design-brief-for-the-kde-native-window.md) — docs/ui-design.md sets layout, actions and colour roles; panes get the space and red marks only ranges that need a decision.
 ### #scope
 - Open [**Branch Truce first-release scope**](map-branch-truce-first-release-scope.md) — PRD.md defines a standalone, offline Linux app for text conflicts during merges and rebases.
 - Open [**Keep unsupported and unfinished work visible**](practice-keep-unsupported-and-unfinished-work-visible.md) — Show all current files, prominent outside-app warnings, and an honest handoff that directs users to outstanding work.
@@ -108,6 +109,9 @@ _None._
 - Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) — Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base.
 - Open [**Installed-artifact validation in base containers**](map-installed-artifact-validation-in-base-containers.md) — validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE.
 - Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) — Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation.
+### #capture
+- Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) — Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus.
+- Open [**Interpret native reference comparisons on the calibrated grid**](practice-interpret-native-reference-comparisons-on-the-calibrated-grid.md) — Keep raster scale, comparison-cell units and capture provenance explicit when judging native screenshots against approved references.
 ### #ci
 - Open [**Keep the qmllint target at zero warnings**](practice-keep-the-qmllint-target-at-zero-warnings.md) — src/ui/.qmllint.ini makes branch_truce_ui_qmllint fail on any warning; type QML properties concretely, anchor at use sites.
 - Open [**Keep ticket IDs and AI trailers out of commits and tracked files**](practice-keep-ticket-ids-and-ai-trailers-out-of-commits-and-tracked-files.md) — Sift ticket references stay inside Sift; commitlint and check:tracker-refs enforce this for commit messages and tracked files.
@@ -165,10 +169,10 @@ _None._
 - Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard.
 ### #accessibility
 - Open [**Installed-artifact validation in base containers**](map-installed-artifact-validation-in-base-containers.md) — validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE.
+### #calibration
+- Open [**Interpret native reference comparisons on the calibrated grid**](practice-interpret-native-reference-comparisons-on-the-calibrated-grid.md) — Keep raster scale, comparison-cell units and capture provenance explicit when judging native screenshots against approved references.
 ### #cancellation
 - Open [**Fence session work and serialize worktree mutations**](practice-fence-session-work-and-serialize-worktree-mutations.md) — Fence background completions by session and revision; serialize worktree mutations through cancellation reconciliation.
-### #capture
-- Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) — Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus.
 ### #choices
 - Open [**Make conflict choices explicit and reversible**](practice-make-conflict-choices-explicit-and-reversible.md) — Keep accept, ignore, combine, and broader choices distinct, inspectable, and reversible with their decision states.
 ### #classification
@@ -197,6 +201,8 @@ _None._
 - Open [**Keep the qmllint target at zero warnings**](practice-keep-the-qmllint-target-at-zero-warnings.md) — src/ui/.qmllint.ini makes branch_truce_ui_qmllint fail on any warning; type QML properties concretely, anchor at use sites.
 ### #preview
 - Open [**Startup style, colour scheme and icon theme**](map-startup-style-colour-scheme-and-icon-theme.md) — main.cpp picks org.kde.desktop or Fusion, names hicolor when no icon theme is set; kdeglobals sets colours; a preloaded probe tests it.
+### #provenance
+- Open [**Interpret native reference comparisons on the calibrated grid**](practice-interpret-native-reference-comparisons-on-the-calibrated-grid.md) — Keep raster scale, comparison-cell units and capture provenance explicit when judging native screenshots against approved references.
 ### #qt
 - Open [**Compile QML to bytecode to avoid private Qt ABI pins**](practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins.md) — Keep qmlcachegen --only-bytecode; QML compiled to C++ links Qt_6_PRIVATE_API and pins the package to one exact Qt release.
 ### #readiness

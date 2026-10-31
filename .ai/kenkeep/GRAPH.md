@@ -1,11 +1,11 @@
 ---
 schema_version: 3
-nodes_hash: 'sha256:dd4bf16f67487b680381cdc6a0a3af96001c13d6d43b9a53117d0fff4baad25a'
-node_count: 32
+nodes_hash: 'sha256:b6911c82866f2bd597fc8724f33029c61d6cdc804290a54d2055fc32396f9c23'
+node_count: 33
 ---
 # kenkeep Graph
 
-Total nodes: 32
+Total nodes: 33
 
 ## map-branch-truce-desktop-implementation-baseline
 
@@ -144,6 +144,14 @@ Total nodes: 32
 - **path:** practice-hold-a-git-call-to-test-racing-repository-changes.md
 - **tags:** testing, git, concurrency, mergetool
 - **relates_to:** map-recovery-journal-and-acknowledgment-boundary, map-mergetool-session-socket-and-real-git-parent, practice-fence-session-work-and-serialize-worktree-mutations
+
+## practice-interpret-native-reference-comparisons-on-the-calibrated-grid
+
+- **kind:** practice
+- **title:** Interpret native reference comparisons on the calibrated grid
+- **path:** practice-interpret-native-reference-comparisons-on-the-calibrated-grid.md
+- **tags:** testing, ui, capture, calibration, provenance
+- **relates_to:** practice-wait-for-rendered-frames-before-capturing-native-scenes
 
 ## practice-keep-failed-work-outstanding
 
