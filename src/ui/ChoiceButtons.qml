@@ -190,7 +190,11 @@ Row {
             if (buttons.contextEditor)
                 buttons.contextEditor.forceActiveFocus(Qt.PopupFocusReason)
         }
-        Accessible.name: buttons.menuLabel
+        Binding {
+            target: entryMenu.contentItem ? entryMenu.contentItem.Accessible : null
+            property: "name"
+            value: buttons.menuLabel
+        }
         MenuItem {
             text: buttons.choice.label
             enabled: false
