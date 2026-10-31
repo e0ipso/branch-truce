@@ -140,13 +140,15 @@ An outside-app file shows a `Kirigami.PlaceholderMessage` in place of the panes,
 | Gutter buttons | On the source pane's edge that faces the result, two `Kirigami.Units.iconSizes.small` buttons `Kirigami.Units.smallSpacing` apart | 46 px column |
 | Inset from a split handle | `Kirigami.Units.smallSpacing` between the handle's hairline and the nearest text or button | none |
 | Row height | `fixedWidthFont` line spacing plus `Kirigami.Units.smallSpacing` | 20 px for 12 px Hack |
-| Connector handle | `Kirigami.Units.gridUnit` wide | 20 px plus two hairlines |
+| Connector handle | `Kirigami.Units.gridUnit` wide in total, including one theme hairline at each edge | 20 px target |
 
 The vertical budget counts rows at this height. The pane's minimum height, the window-fit check and the helper that scrolls by line height all use the same row height; change them together.
 
 ### Connector bands
 
 Each non-equal passage gets one band between a source pane and the result. The band sits in the connector handle, so it takes no extra row or column from the vertical budget.
+
+The handle owns both one-pixel theme separators across its full height, including the pane headers. The separators overlay the ribbon ends inside the handle's allocated width; pane widths do not reserve them again. Hover and dragging still belong to the split handle.
 
 - **Fill.** The band uses the passage's band tint from section 6: the role's text colour at about 40 % alpha, `positiveTextColor` for added or accepted, `activeTextColor` for changed, `negativeTextColor` for conflicting, `neutralTextColor` for hand-edited, and `disabledTextColor` at about 30 % for removed or ignored. Bands are stronger than the line fills so the eye can follow them across the handle.
 - **Ends.** Each end of a band follows the top and bottom of its passage in that pane and moves with the pane's scroll. A band whose passage is off-screen is clipped, not repositioned.

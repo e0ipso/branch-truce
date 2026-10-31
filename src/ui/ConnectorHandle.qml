@@ -84,4 +84,18 @@ Item {
             }
         }
     }
+    // Both edges belong to the handle's allocated width. Draw them over the
+    // ribbon ends for the full split height, including the pane headers.
+    Kirigami.Separator {
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 1
+    }
+    Kirigami.Separator {
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 1
+    }
 }
