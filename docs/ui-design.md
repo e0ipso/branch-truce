@@ -136,7 +136,8 @@ An outside-app file shows a `Kirigami.PlaceholderMessage` in place of the panes,
 | Measure | Value | Mockup |
 | --- | --- | --- |
 | Pane header height | Fixed, the same in all three panes: one line plus `Kirigami.Units.mediumSpacing` above and below | 30 px |
-| Pane header side margins | `Kirigami.Units.largeSpacing` | 12 px |
+| Pane header side margins | `Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing` | 12 px |
+| Pane title-to-identity gap | `Kirigami.Units.largeSpacing` | 8 px |
 | Text inset below the pane header | `Kirigami.Units.smallSpacing` | 6 px |
 | Line-number column | Right-aligned in muted `smallFont`, as wide as the largest number, `Kirigami.Units.smallSpacing` after it | 34 px |
 | Glyph column | `Kirigami.Units.iconSizes.small` wide, glyph centred | 16 px |
@@ -145,6 +146,8 @@ An outside-app file shows a `Kirigami.PlaceholderMessage` in place of the panes,
 | Inset from a split handle | `Kirigami.Units.smallSpacing` between the handle's hairline and the nearest text or button | none |
 | Row height | Laid-out `fixedWidthFont` visual row plus one `Kirigami.Units.mediumSpacing` line distance, supplied by `CodeRows` | 20 logical px target for the pinned Hack 9 pt profile |
 | Connector handle | `Kirigami.Units.gridUnit` wide in total, including one theme hairline at each edge | 20 px target |
+
+`PaneHeader` uses the same side inset and title-to-identity gap for sources, result and earlier-version content. The preserved native baseline recorded an 8 logical pixel inset from `largeSpacing` alone against the reference's 12; the composed inset adds `smallSpacing` while retaining the reference's smaller inter-label gap. It follows the calibrated theme fonts and units rather than fixing either margin in pixels. Header height, baseline alignment, plain-text role/hash segmentation and elision keep their existing contracts. Final native captures must measure the actual insets, truncation and any remaining unit difference in both themes after font calibration. The earlier-version header follows this shared contract without an invented PNG target.
 
 `CodeRows` applies the gap once through `TextBlocks` block formatting, including wrapped continuation rows. It replaces the former `smallSpacing` gap rather than adding another spacer. Under the pinned units the change adds half a `smallSpacing` to the historical 18 logical px pitch; final native captures must measure the resulting pitch against the 20 logical px reference. The approved raster is at 1.5x, so raster pixels and comparison-grid cells are not logical row units.
 

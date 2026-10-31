@@ -15,6 +15,11 @@ Rectangle {
     property string description: ""
     property string identityRole: ""
     property string identityHash: ""
+    // The historical native header used largeSpacing alone for the side inset.
+    // Compose the reference's wider inset from font-scaled native units while
+    // retaining the smaller title-to-identity gap and the shared text baseline.
+    readonly property real sideInset: Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing
+    readonly property real titleIdentitySpacing: Kirigami.Units.largeSpacing
     implicitHeight: heading.implicitHeight + Kirigami.Units.mediumSpacing * 2 + separator.height
     color: Kirigami.Theme.alternateBackgroundColor
     RowLayout {
@@ -22,9 +27,9 @@ Rectangle {
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.bottom: separator.top
-        anchors.leftMargin: Kirigami.Units.largeSpacing
-        anchors.rightMargin: Kirigami.Units.largeSpacing
-        spacing: Kirigami.Units.largeSpacing
+        anchors.leftMargin: header.sideInset
+        anchors.rightMargin: header.sideInset
+        spacing: header.titleIdentitySpacing
         // Heading supplies the native title font; PlainLabel renders the literal title.
         Kirigami.Heading {
             id: heading
