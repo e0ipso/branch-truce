@@ -297,6 +297,7 @@ Kirigami.ApplicationWindow {
                         id: fileListPane
                         visible: window.controller.fileListVisible
                         SplitView.preferredWidth: Kirigami.Units.gridUnit * 14
+                            + Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing / 2
                         SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
                         SplitView.maximumWidth: Math.max(SplitView.minimumWidth, workSplit.width / 2)
                         controller: window.controller

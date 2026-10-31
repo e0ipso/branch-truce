@@ -94,7 +94,7 @@ One toolbar row in the Header colour set, using native Qt Quick Controls buttons
 
 ### Sidebar
 
-A `SplitView` pane to the left of the work area, `Kirigami.Units.gridUnit * 14` wide by default (262 px in the mockup). It is not modal, can be resized, and collapses with the sidebar toggle. It uses the View colour set and lists the conflicted files and nothing else.
+A `SplitView` pane to the left of the work area, `Kirigami.Units.gridUnit * 14 + Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing / 2` wide by default (262 logical pixels under the pinned native profile, matching the mockup target). It is not modal, can be resized, and collapses with the sidebar toggle. It uses the View colour set and lists the conflicted files and nothing else.
 
 - **List header.** "Conflicted files" as a `Kirigami.Heading` and a neutral `Pill` with the number of files. It is as tall as the file toolbar, so their hairlines line up.
 - **List.** `Kirigami.Units.smallSpacing` padding above the first row and below the last.

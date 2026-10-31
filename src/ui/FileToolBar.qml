@@ -226,6 +226,8 @@ RowLayout {
     Kirigami.ActionToolBar {
         objectName: "fileToolBar"
         Layout.fillWidth: true
+        // Keep one native control row with breathing room shared by the list header.
+        Layout.minimumHeight: implicitHeight + Kirigami.Units.mediumSpacing
         actions: {
             return [
                 fileToolBar.saveAction,

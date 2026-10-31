@@ -36,7 +36,12 @@ Rectangle {
                 ToolTip.visible: progressHover.hovered && ToolTip.text.length > 0
             }
             ProgressBar {
+                visible: sessionFooter.width > Kirigami.Units.gridUnit * 40
                 Layout.preferredWidth: Kirigami.Units.gridUnit * 5
+                // Desktop-style insets otherwise make this the tallest footer item.
+                implicitHeight: Kirigami.Units.smallSpacing
+                topInset: 0
+                bottomInset: 0
                 from: 0; to: Math.max(1, sessionFooter.controller.files.totalFiles)
                 value: sessionFooter.controller.files.resolvedFiles
             }
