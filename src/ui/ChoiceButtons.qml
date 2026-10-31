@@ -1,7 +1,7 @@
 // The choices on one row of a source pane's choice column: Accept and Ignore for the scope
 // that starts on the row, and a context menu with Resolve using this side, Take both in either order,
-// and the choices of any other scope that starts on the same line, such as the line choice on
-// a section's first line. Accept sits nearest the result. Once the scope is decided its
+// and every precise line choice in that actual source range.
+// Accept sits nearest the result. Once the scope is decided its
 // buttons go and the pane's glyph column shows the decision; undo brings them back.
 pragma ComponentBehavior: Bound
 
@@ -12,7 +12,7 @@ import org.kde.kirigami as Kirigami
 
 Row {
     id: buttons
-    // {line, choice, extras}: the scope that owns the row and the other scopes on its line.
+    // {line, choice, extras}: the range's section and all its precise line scopes.
     // Each is a scoped choice with its region's undecided flag.
     required property var modelData
     // The pane edge that faces the result: "right" in the left pane, "left" in the right one.

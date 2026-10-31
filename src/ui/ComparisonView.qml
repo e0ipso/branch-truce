@@ -165,10 +165,8 @@ ColumnLayout {
     }
     BandProjection { id: leftBands; pane: leftPane }
     BandProjection { id: rightBands; pane: rightPane }
-    // The choice rows of one source pane, in line order: one per line where a scope starts.
-    // A section owns the row on its first line. A line choice owns the row on its line unless
-    // a section starts there; then it rides in that row's extras, as does any other scope
-    // that starts on a taken line. Each choice gains its region's undecided state.
+    // One primary row at each actual source range's start. The section owns
+    // that row; all its precise line scopes remain commands in its menu.
     function choiceRowsFor(side: string, file: SelectedFile): var {
         const choices = file.choices || []
         const regions = file.regions || []
@@ -177,22 +175,28 @@ ColumnLayout {
             const region = regions[i]
             if (region.side !== side || region.id !== choices[i].id)
                 continue
-            scoped.push({line: region.sourceLineBegin, section: region.scope === "section",
+            scoped.push({line: region.sourceLineBegin, end: region.sourceLineEnd,
+                section: region.section, whole: region.scope === "section",
                 choice: Object.assign({undecided: region.state === "undecided"}, choices[i])})
         }
-        const byLine = {}
-        for (const sections of [true, false]) {
-            for (let i = 0; i < scoped.length; ++i) {
-                const entry = scoped[i]
-                if (entry.section !== sections)
-                    continue
-                if (byLine[entry.line])
-                    byLine[entry.line].extras.push(entry.choice)
-                else
-                    byLine[entry.line] = {line: entry.line, choice: entry.choice, extras: []}
-            }
+        const rows = scoped.filter(entry => entry.whole).map(entry => ({
+            line: entry.line, end: entry.end, section: entry.section,
+            choice: entry.choice, extras: []
+        }))
+        for (let i = 0; i < scoped.length; ++i) {
+            const entry = scoped[i]
+            if (entry.whole)
+                continue
+            const owner = rows.find(row => row.section === entry.section
+                && row.line <= entry.line && entry.end <= row.end)
+            if (owner)
+                owner.extras.push(entry.choice)
+            else
+                // Retain a standalone scope if no section owns its actual range.
+                rows.push({line: entry.line, end: entry.end, section: entry.section,
+                    choice: entry.choice, extras: []})
         }
-        return Object.keys(byLine).map(Number).sort((a, b) => a - b).map(line => byLine[line])
+        return rows.sort((a, b) => a.line - b.line)
     }
     // The result's section actions. decisions maps the first result line of each section
     // with a side mapped there to its state once no side is undecided, for the gutter; a
