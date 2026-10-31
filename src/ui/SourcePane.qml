@@ -196,6 +196,9 @@ ColumnLayout {
                 width: sourcePane.wrapLines ? sourceViewport.width
                     : Math.max(sourceViewport.width, implicitWidth)
                 wrapMode: sourcePane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
+                // Place against the new document's native spacing, before a
+                // deferred formatter can move the source cursor's viewport.
+                onTextChanged: sourceBlocks.flushSpacing()
                 Accessible.name: qsTr("%1 · %2").arg(sourcePane.paneRole).arg(sourcePane.displayIdentity)
                 function openContextMenu(line: int, x: real, y: real): void {
                     sourceText.forceActiveFocus(Qt.PopupFocusReason)

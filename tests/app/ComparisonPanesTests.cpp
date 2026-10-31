@@ -2,10 +2,13 @@
 #include "TestHarness.h"
 #include "ui/ComparisonPanes.h"
 #include "ui/TextBlocks.h"
+#include <QEventLoop>
 #include <QGuiApplication>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
+#include <QQuickWindow>
+#include <QTimer>
 #include <QUrl>
 #include <cmath>
 #include <initializer_list>
@@ -92,10 +95,10 @@ Item {
 
 class Scene {
 public:
-    Scene()
+    explicit Scene(const char *source = reorderedScene)
     {
         QQmlComponent component(&engine);
-        component.setData(reorderedScene, QUrl(QStringLiteral("qrc:/ComparisonPanesTests/ReorderedPanes.qml")));
+        component.setData(source, QUrl(QStringLiteral("qrc:/ComparisonPanesTests/Panes.qml")));
         root.reset(qobject_cast<QQuickItem *>(component.create()));
         if (!root) throw std::runtime_error(component.errorString().toStdString());
         panes = root->property("registry").value<ComparisonPanes *>();
@@ -128,6 +131,118 @@ public:
     std::unique_ptr<QQuickItem> root;
     ComparisonPanes *panes = nullptr;
 };
+
+// Exercise the actual source pane and native TextArea cursor scrolling rather
+// than the bare TextEdit used by the correspondence-only fixtures above.
+const char *const nativePlacementScene = R"(
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import QtQuick.Controls
+import BranchTruce
+
+Item {
+    id: root
+    width: 960
+    height: 540
+    property alias registry: panes
+    property var leftSource: ({})
+    property var rightSource: ({})
+    property alias resultText: resultEditor.text
+    property bool wrapLines: false
+    Row {
+        component Source: SourcePane {
+            width: root.width / 3
+            height: root.height
+            marks: ({lines: {}, gaps: {}, letters: {}})
+            current: []
+            tabStop: 40
+            wrapLines: root.wrapLines
+            showWhitespace: false
+            minimumTextHeight: 0
+            onScrolled: byUser => panes.paneScrolled(paneName, byUser)
+        }
+        Source {
+            id: left
+            paneName: "stage2"
+            paneRole: "Left source"
+            source: root.leftSource
+        }
+        Item {
+            id: result
+            width: root.width / 3
+            height: root.height
+            property alias editor: resultEditor
+            property alias viewport: resultView
+            property alias blocks: resultBlocks
+            Flickable {
+                id: resultView
+                anchors.fill: parent
+                onContentYChanged: panes.paneScrolled("result", moving || resultEditor.activeFocus)
+                TextArea.flickable: TextArea {
+                    id: resultEditor
+                    textFormat: TextEdit.PlainText
+                    font: left.editor.font
+                    wrapMode: root.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
+                    onTextChanged: resultBlocks.flushSpacing()
+                }
+            }
+            CodeRows { id: resultBlocks; document: resultEditor.textDocument }
+        }
+        Source {
+            id: right
+            paneName: "stage3"
+            paneRole: "Right source"
+            source: root.rightSource
+        }
+    }
+    ComparisonPanes {
+        id: panes
+        left: left
+        result: result
+        right: right
+        lineSpacing: resultBlocks.rowHeight
+    }
+}
+)";
+
+void renderedFrame(QQuickWindow &window)
+{
+    QEventLoop loop;
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    bool rendered = false;
+    QObject::connect(&window, &QQuickWindow::frameSwapped, &loop, [&] {
+        rendered = true;
+        loop.quit();
+    }, Qt::QueuedConnection);
+    QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+    deadline.start(5000);
+    window.requestUpdate();
+    loop.exec();
+    CHECK(rendered);
+}
+
+void wholeLineInView(QQuickItem *pane, int line, const char *role)
+{
+    auto *view = Scene::viewport(pane);
+    auto *editor = pane->property("editor").value<QQuickItem *>();
+    auto *blocks = Scene::blocks(pane);
+    const auto rows = blocks->between(blocks->yAtLine(line), blocks->yAtLine(line) + 1);
+    CHECK(!rows.isEmpty());
+    const auto block = rows.first().toMap();
+    CHECK(block.value(QStringLiteral("number")).toInt() == line);
+    const auto top = editor->y() + editor->property("topPadding").toReal()
+        + block.value(QStringLiteral("top")).toReal() - view->property("contentY").toReal();
+    const auto bottom = top + block.value(QStringLiteral("height")).toReal();
+    if (top < -0.01 || bottom > view->height() + 0.01)
+        throw std::runtime_error(QStringLiteral("%1 line %2: full block [%3, %4], viewport %5x%6, contentY %7, "
+                                                "editorY %8, padding %9, rowHeight %10, cursor %11, wrapMode %12")
+            .arg(QString::fromLatin1(role)).arg(line).arg(top).arg(bottom).arg(view->width()).arg(view->height())
+            .arg(view->property("contentY").toReal()).arg(editor->y()).arg(editor->property("topPadding").toReal())
+            .arg(blocks->rowHeight()).arg(editor->property("cursorPosition").toInt())
+            .arg(editor->property("wrapMode").toInt()).toStdString());
+}
 }
 
 int main(int argc, char **argv)
@@ -249,6 +364,109 @@ int main(int argc, char **argv)
         CHECK(near(Scene::lineOnRow(result), 27.5));
         CHECK(near(Scene::lineOnRow(left), 16.5));
         CHECK(scene.panes->editor("stage2")->property("cursorPosition").toInt() == Scene::blocks(left)->positionOf(16));
+    });
+    suite.run("native placement keeps complete source and folded result rows visible after file replacement", [] {
+        QQuickWindow window;
+        Scene scene(nativePlacementScene);
+        scene.root->setParentItem(window.contentItem());
+        window.resize(960, 540);
+        window.show();
+        const auto before = numberedLines(120);
+        const auto after = numberedLines(80);
+        const auto leftText = before + QStringLiteral("left value\n") + after;
+        const auto rightText = before + QStringLiteral("right value\n") + after;
+        const auto resultText = before + QStringLiteral("<<<<<<< left\nleft value\n||||||| base\nbase value\n"
+                                                        "=======\nright value\n>>>>>>> right\n") + after;
+        auto *resultBlocks = Scene::blocks(scene.pane("result"));
+        const QVariantList folds{QVariantMap{{QStringLiteral("line"), 121}, {QStringLiteral("text"), "<<<<<<< left"},
+            {QStringLiteral("last"), 127}, {QStringLiteral("lastText"), ">>>>>>> right"}}};
+        QVariantList passages;
+        for (const auto &side : {QStringLiteral("stage2"), QStringLiteral("stage3")}) {
+            passages.append(passage(side, 1, 121, 1, 121));
+            passages.append(passage(side, 121, 122, 121, 128));
+            passages.append(passage(side, 122, 203, 128, 209));
+        }
+        scene.panes->setPassages(passages);
+        for (const auto height : {390, 386}) {
+            scene.root->setHeight(height);
+            // Selecting a short file resets each native editor, then the long
+            // file restores its text and queues formatting/fold/cursor work.
+            for (const auto &text : {QStringLiteral("short\n"), leftText}) {
+                CHECK(scene.root->setProperty("leftSource", QVariantMap{{QStringLiteral("text"), text}}));
+                CHECK(scene.root->setProperty("rightSource", QVariantMap{{QStringLiteral("text"),
+                    text == leftText ? rightText : text}}));
+                CHECK(scene.root->setProperty("resultText", text == leftText ? resultText : text));
+                resultBlocks->setHidden(text == leftText ? folds : QVariantList{});
+                if (text != leftText) renderedFrame(window);
+            }
+            scene.panes->editor("stage2")->forceActiveFocus();
+            auto *focus = window.activeFocusItem();
+            // The application defers placement from its editor notification.
+            // Allow pending formatting and native cursor work to run with it.
+            bool placed = false;
+            QTimer::singleShot(0, scene.panes, [&] {
+                scene.panes->place("result", 121);
+                placed = true;
+            });
+            renderedFrame(window);
+            renderedFrame(window);
+            CHECK(placed);
+            wholeLineInView(scene.pane("left"), 121, "stage2");
+            wholeLineInView(scene.pane("result"), 121, "result folded marker");
+            wholeLineInView(scene.pane("right"), 121, "stage3");
+            CHECK(window.activeFocusItem() == focus);
+            CHECK(scene.panes->editor("stage2")->property("text").toString() == leftText);
+            CHECK(scene.panes->editor("stage3")->property("text").toString() == rightText);
+            CHECK(scene.panes->editor("result")->property("text").toString() == resultText);
+            CHECK(resultBlocks->hidden() == folds);
+        }
+    });
+    suite.run("placement fits a wrapped block independently and yields to subsequent user scrolling", [] {
+        QQuickWindow window;
+        Scene scene(nativePlacementScene);
+        scene.root->setParentItem(window.contentItem());
+        window.resize(960, 540);
+        window.show();
+        CHECK(scene.root->setProperty("wrapLines", true));
+        const auto before = numberedLines(120);
+        const auto after = numberedLines(80);
+        const auto leftText = before + QStringLiteral("wrapped source ").repeated(12) + '\n' + after;
+        const auto shortText = before + QStringLiteral("short target\n") + after;
+        CHECK(scene.root->setProperty("leftSource", QVariantMap{{QStringLiteral("text"), leftText}}));
+        CHECK(scene.root->setProperty("rightSource", QVariantMap{{QStringLiteral("text"), shortText}}));
+        CHECK(scene.root->setProperty("resultText", shortText));
+        scene.panes->setPassages({passage("stage2", 1, 203, 1, 203), passage("stage3", 1, 203, 1, 203)});
+        renderedFrame(window);
+        auto *left = scene.pane("left");
+        auto *blocks = Scene::blocks(left);
+        const auto height = blocks->yAtLine(122) - blocks->yAtLine(121);
+        CHECK(height > 2 * blocks->rowHeight());
+        // Leave one row of spare height, less than the normal reference context.
+        const auto header = scene.root->height() - Scene::viewport(left)->height();
+        scene.root->setHeight(header + height + blocks->rowHeight());
+        renderedFrame(window);
+        scene.panes->place("result", 121);
+        renderedFrame(window);
+        renderedFrame(window);
+        wholeLineInView(left, 121, "stage2 wrapped");
+        wholeLineInView(scene.pane("result"), 121, "result");
+        wholeLineInView(scene.pane("right"), 121, "stage3");
+        CHECK(!near(Scene::viewport(left)->property("contentY").toReal(),
+                    Scene::viewport(scene.pane("right"))->property("contentY").toReal()));
+        const auto selected = blocks->positionOf(121) + 2;
+        CHECK(QMetaObject::invokeMethod(scene.panes->editor("stage2"), "select", Q_ARG(int, selected), Q_ARG(int, selected + 3)));
+        scene.panes->place("result", 121);
+        CHECK(scene.panes->editor("stage2")->property("selectionStart").toInt() == selected);
+        CHECK(scene.panes->editor("stage2")->property("selectionEnd").toInt() == selected + 3);
+        auto *view = Scene::viewport(left);
+        const auto scrolled = view->property("contentY").toReal() + blocks->rowHeight();
+        CHECK(view->setProperty("contentY", scrolled));
+        scene.panes->paneScrolled("stage2", true);
+        renderedFrame(window);
+        CHECK(near(view->property("contentY").toReal(), scrolled));
+        CHECK(scene.panes->editor("stage2")->property("text").toString() == leftText);
+        CHECK(scene.panes->editor("result")->property("text").toString() == shortText);
+        CHECK(scene.panes->editor("stage3")->property("text").toString() == shortText);
     });
     return suite.report();
 }
