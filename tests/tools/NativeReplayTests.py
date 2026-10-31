@@ -114,6 +114,17 @@ class FixtureTests(unittest.TestCase):
 
 
 class ResourceTests(unittest.TestCase):
+    def test_reader_failure_is_reported_after_private_cleanup(self):
+        def broken_reader():
+            raise OSError('broken sink')
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / 'cleanup.json'
+            with self.assertRaisesRegex(RuntimeError, 'Owned log reader failed: OSError: broken sink'):
+                with OwnedResources(cleanup_receipt=receipt) as owned:
+                    owned.start_reader(broken_reader)
+            self.assertFalse(owned.root.exists())
+            self.assertTrue(json.loads(receipt.read_text())['private_root_removed'])
+
     def test_private_environment_does_not_modify_parent(self):
         before = dict(os.environ)
         with OwnedResources() as owned:
