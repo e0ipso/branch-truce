@@ -2,6 +2,7 @@
 #include "ConnectorBands.h"
 #include "PaneMarks.h"
 #include <QMap>
+#include <QPainterPath>
 #include <algorithm>
 
 namespace branch_truce {
@@ -44,16 +45,28 @@ QVariantMap ConnectorBands::bandForLine(int line, bool result) const
 }
 QVariantMap ConnectorBands::bandAt(qreal x, qreal y, qreal width, bool leftSide) const
 {
-    if (width <= 0) return {};
-    const qreal ratio = leftSide ? x / width : 1 - x / width;
+    if (width <= 0 || x < 0 || x > width) return {};
+    const qreal sourceX = leftSide ? x : width - x;
     y -= sourceParentY_;
+    if (y < 0 || y > viewportHeight_) return {};
     for (const auto &value : visibleBands_) {
         const auto band = value.toMap();
-        const qreal top = band.value(QStringLiteral("sourceTop")).toReal() * (1 - ratio)
-            + band.value(QStringLiteral("resultTop")).toReal() * ratio;
-        const qreal bottom = band.value(QStringLiteral("sourceBottom")).toReal() * (1 - ratio)
-            + band.value(QStringLiteral("resultBottom")).toReal() * ratio;
-        if (y >= top && y <= bottom) return band;
+        const qreal sourceTop = band.value(QStringLiteral("sourceTop")).toReal();
+        const qreal sourceBottom = band.value(QStringLiteral("sourceBottom")).toReal();
+        const qreal resultTop = band.value(QStringLiteral("resultTop")).toReal();
+        const qreal resultBottom = band.value(QStringLiteral("resultBottom")).toReal();
+        // Keep the attachment edges inclusive, as with the former straight bands.
+        if ((sourceX == 0 && y >= sourceTop && y <= sourceBottom)
+            || (sourceX == width && y >= resultTop && y <= resultBottom)) return band;
+        // Match ConnectorHandle's cubic edges in source-to-result coordinates.
+        // Clipping happens after constructing the full, scrolled passage bounds.
+        QPainterPath ribbon;
+        ribbon.moveTo(0, sourceTop);
+        ribbon.cubicTo(width / 2, sourceTop, width / 2, resultTop, width, resultTop);
+        ribbon.lineTo(width, resultBottom);
+        ribbon.cubicTo(width / 2, resultBottom, width / 2, sourceBottom, 0, sourceBottom);
+        ribbon.closeSubpath();
+        if (ribbon.contains(QPointF(sourceX, y))) return band;
     }
     return {};
 }
@@ -162,6 +175,8 @@ void ConnectorBands::update()
             const qreal parent = source ? 0 : resultParentY_ - sourceParentY_;
             const qreal offset = source ? sourceEditorY_ + sourcePadding_ - sourceScroll_
                                         : resultEditorY_ + resultPadding_ - resultScroll_;
+            // Half-open endpoints use the laid-out block boundaries, including
+            // wrapped rows and the single visible row of a folded marker block.
             return parent + offset + blocks->yAtLine(bottom ? end : begin)
                 + (begin < end ? 0 : (bottom ? rule_ : -rule_) / 2);
         };
