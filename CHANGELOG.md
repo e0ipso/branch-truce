@@ -1,3 +1,63 @@
+## [1.3.0](https://github.com/e0ipso/branch-truce/compare/v1.2.0...v1.3.0) (2026-10-31)
+
+### Features
+
+* **tools:** add exact native mockup replay ([a960f2f](https://github.com/e0ipso/branch-truce/commit/a960f2f30cd1a3c96c91911ddc79b827504d189a))
+
+### Bug Fixes
+
+* count and navigate real conflict regions ([61517ac](https://github.com/e0ipso/branch-truce/commit/61517ac8336c0da6f7f6b8ca15efa6a42aa07b85))
+* restore native editor and toolbar behavior ([5f653a2](https://github.com/e0ipso/branch-truce/commit/5f653a2e13acc8a42e12b5fd933169fa56595bf8))
+* route native context requests to range menus ([17f339e](https://github.com/e0ipso/branch-truce/commit/17f339e2cddfe025e8b8ea515330841dcbab37dc))
+* **tools:** align scaled reference crops ([ad2497e](https://github.com/e0ipso/branch-truce/commit/ad2497e9c618b928ca09a4994ad71a7f9c441b77))
+* **tools:** validate observed scheme palettes ([85b3886](https://github.com/e0ipso/branch-truce/commit/85b388691728844af2026e70354815239f332fc5))
+* **ui:** align sidebar plates and content insets ([9a5293a](https://github.com/e0ipso/branch-truce/commit/9a5293a90e17737d8a842b179f53b772f71d69ad))
+* **ui:** apply primary heading roles ([716e710](https://github.com/e0ipso/branch-truce/commit/716e7103e687867a79ac143528ab97cee405485b))
+* **ui:** bound centered placeholder prose ([a5172b5](https://github.com/e0ipso/branch-truce/commit/a5172b51cd155f3a0296b9cfb35077b3cf06cf48))
+* **ui:** calibrate sidebar and chrome spacing ([e329545](https://github.com/e0ipso/branch-truce/commit/e32954523d73ac7bfae97fd2a251e73b198a301e))
+* **ui:** carry source fills through choice lanes ([abb6d1d](https://github.com/e0ipso/branch-truce/commit/abb6d1dfbdcff290f8a01aba70702834389223d6))
+* **ui:** compact the source choice lanes ([c7dedc8](https://github.com/e0ipso/branch-truce/commit/c7dedc847c9528184b09117e315fce7d4403cc8f))
+* **ui:** compose gutter fills at pane level ([00adbf1](https://github.com/e0ipso/branch-truce/commit/00adbf1962bcb6dee8830c6db4481ac784ea9966))
+* **ui:** compose shared pane header insets ([f4a2adf](https://github.com/e0ipso/branch-truce/commit/f4a2adf20fc6342ff87dc6a570d355f92f177b0a))
+* **ui:** distinguish earlier-version action ([3e2fe58](https://github.com/e0ipso/branch-truce/commit/3e2fe58ada04b57944c6d7fdc4349faceb1de98d))
+* **ui:** draw explicit connector edge hairlines ([e2bb63e](https://github.com/e0ipso/branch-truce/commit/e2bb63efc8ae1a3324269f8383bb20fc10c6e6d6))
+* **ui:** draw smooth continuous connector ribbons ([943ea90](https://github.com/e0ipso/branch-truce/commit/943ea907b3e907bf5c9e398e455cff3f3379cd8f))
+* **ui:** explain selected file exclusions ([fe8d8e8](https://github.com/e0ipso/branch-truce/commit/fe8d8e875d02f5ed67c2aeeef0591b03893abf9c))
+* **ui:** flatten idle comparison editor surfaces ([7c8514b](https://github.com/e0ipso/branch-truce/commit/7c8514b6135735d3c53878398cfda13aca7ad8a6))
+* **ui:** format tooltip native content as plain text ([7a7dbb2](https://github.com/e0ipso/branch-truce/commit/7a7dbb28b5b456557315c94033bee7cee458e3a3))
+* **ui:** give spare toolbar width to file path ([28d562b](https://github.com/e0ipso/branch-truce/commit/28d562bc2b61ee5847a29e0ecd50bfee439f3052))
+* **ui:** group choices by actual source range ([3efc00b](https://github.com/e0ipso/branch-truce/commit/3efc00b5a657a0b84cdbe984da94334a30c3ee14))
+* **ui:** ignore touch in desktop choice gestures ([74fefb5](https://github.com/e0ipso/branch-truce/commit/74fefb54272ab85a46119040f63ae167355c3b56))
+* **ui:** keep filename and directory adjacent ([6a0b95f](https://github.com/e0ipso/branch-truce/commit/6a0b95fdea27cbb0187cee48b8cf41e532d3384b))
+* **ui:** keep hover choices safe and reachable ([d03a413](https://github.com/e0ipso/branch-truce/commit/d03a41322d443ba7268b9ae3590163a9e7aa911c))
+* **ui:** keep stable workflow file ordering ([199a676](https://github.com/e0ipso/branch-truce/commit/199a676b5e658a772c5726894ae8083bed506ad4))
+* **ui:** keep unmapped line choice menus reachable ([99d42ba](https://github.com/e0ipso/branch-truce/commit/99d42ba5a1bdbcd41b1cb478d90d5c36dab9ea55))
+* **ui:** name the visual choice menu content ([87ad080](https://github.com/e0ipso/branch-truce/commit/87ad0803791a55332a97594ddffd645840375567))
+* **ui:** overlay choices on full-width sources ([aa91a3a](https://github.com/e0ipso/branch-truce/commit/aa91a3a15a536c801a3faab588ec066fcfa5d69c))
+* **ui:** preserve non-touch pointing devices ([0a01924](https://github.com/e0ipso/branch-truce/commit/0a01924df7eb9d43000058b11f0b7dbe0333090a))
+* **ui:** preserve nonconflicting passage kinds ([1e11683](https://github.com/e0ipso/branch-truce/commit/1e1168368b6b6acd8c8cb512792252400d65241f))
+* **ui:** project accepted range styling ([dcc5dc8](https://github.com/e0ipso/branch-truce/commit/dcc5dc81142b45ed7db6d94ab7f4159e3914f923))
+* **ui:** reduce result gutter to one state glyph ([f681ed3](https://github.com/e0ipso/branch-truce/commit/f681ed34159a4de14ac314bbe4881819f09a774b))
+* **ui:** remove controls from decided ranges ([4278147](https://github.com/e0ipso/branch-truce/commit/42781478e9db45385b49e2e9b2e4a9ae3d66e03b))
+* **ui:** reserve complete native control widths ([e324124](https://github.com/e0ipso/branch-truce/commit/e324124933297785f947f6e87220763074a42fad))
+* **ui:** reserve handles before pane allocation ([023acf9](https://github.com/e0ipso/branch-truce/commit/023acf9246995e7a00c678287b04153f214f4ced))
+* **ui:** reserve scroll tracks only on overflow ([f3c405c](https://github.com/e0ipso/branch-truce/commit/f3c405c72a2b4ba038b6f74c5660ce5786ea11ec))
+* **ui:** restore verified resolved-file tile ([0e5ac2b](https://github.com/e0ipso/branch-truce/commit/0e5ac2b6ebea60f76842ea4b2ef1caf88cf87c83))
+* **ui:** retain honest zero-conflict row status ([972b0b4](https://github.com/e0ipso/branch-truce/commit/972b0b49d53ce0dd67c2fae1bedb459a0682abd4))
+* **ui:** retain whole rows during pane placement ([126a9f9](https://github.com/e0ipso/branch-truce/commit/126a9f9e8a14314c900fb16ad21d01544b6e234c))
+* **ui:** separate role and commit typography ([b5f0370](https://github.com/e0ipso/branch-truce/commit/b5f0370fa1106390494540c6d29881b168358f7d))
+* **ui:** share calibrated code row geometry ([3733a64](https://github.com/e0ipso/branch-truce/commit/3733a64142cf04dba4dafe4799775b5c113675ff))
+* **ui:** share hover and await menu closure ([3995205](https://github.com/e0ipso/branch-truce/commit/399520530c23140a8420a8e7808bfb93d768322a))
+* **ui:** share type icons with outside-app view ([9eed0f6](https://github.com/e0ipso/branch-truce/commit/9eed0f6dabd74732223f96ec5d156ac55f5c3c3e))
+* **ui:** unify source context menu gestures ([f4090bc](https://github.com/e0ipso/branch-truce/commit/f4090bc22bc24536b07a6b53c16039298597d99d))
+* **ui:** use methods for source menu routing ([aa97f72](https://github.com/e0ipso/branch-truce/commit/aa97f72de03b08936fb7c9e0cf27b64268515bf6))
+
+### Performance Improvements
+
+* drop detached decoration cache entries ([1811561](https://github.com/e0ipso/branch-truce/commit/18115616cea9e6e26b253bdb2d9fd8f9a02ab438))
+* publish comparison fields together ([12f03b8](https://github.com/e0ipso/branch-truce/commit/12f03b8b21c53a445e132448d8139ac55a249f62))
+* retain unchanged block decorations ([337da8a](https://github.com/e0ipso/branch-truce/commit/337da8a82fe7b40546f9c97514836bf0fef714d8))
+
 ## [1.2.0](https://github.com/e0ipso/branch-truce/compare/v1.1.0...v1.2.0) (2026-10-30)
 
 ### Features
