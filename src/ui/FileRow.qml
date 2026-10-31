@@ -23,7 +23,22 @@ KirigamiDelegates.SubtitleDelegate {
     required property string summary
     required property ApplicationController controller
     readonly property bool current: fileId === row.controller.selectedFileId
-    width: ListView.view.width
+    readonly property real plateOuterInset: Kirigami.Units.smallSpacing
+    readonly property real plateHorizontalPadding: Kirigami.Units.largeSpacing
+    readonly property real plateVerticalPadding: Kirigami.Units.mediumSpacing
+    readonly property real iconTextGap: Kirigami.Units.largeSpacing
+    // Inset the control itself so hover, clicks and focus share the plate's bounds.
+    x: plateOuterInset
+    width: Math.max(0, ListView.view.width - 2 * plateOuterInset)
+    leftPadding: plateHorizontalPadding
+    rightPadding: plateHorizontalPadding
+    topPadding: plateVerticalPadding
+    bottomPadding: plateVerticalPadding
+    // Native styles may otherwise inset the background again or pad the last row differently.
+    leftInset: 0
+    rightInset: 0
+    topInset: 0
+    bottomInset: 0
     // The path alone names the row, so a screen reader reads it as the list item's name.
     text: row.path
     subtitle: row.recoveryState === "failed" || row.recoveryState === "save-failed" || row.recoveryState === "blocked"
@@ -66,7 +81,8 @@ KirigamiDelegates.SubtitleDelegate {
     Keys.onEnterPressed: row.clicked()
     // One line each, so a path or a status never breaks inside a word.
     contentItem: RowLayout {
-        spacing: Kirigami.Units.smallSpacing
+        spacing: row.iconTextGap
+        clip: true
         Kirigami.Icon {
             Layout.alignment: Qt.AlignVCenter
             Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
@@ -86,6 +102,8 @@ KirigamiDelegates.SubtitleDelegate {
                     anchors.verticalCenter: parent.verticalCenter
                     width: Math.min(implicitWidth, pathLine.width)
                     text: row.path.split("/").pop() || row.path
+                    wrapMode: Text.NoWrap
+                    maximumLineCount: 1
                     elide: Text.ElideMiddle
                     font: Kirigami.Theme.defaultFont
                     color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
@@ -98,6 +116,8 @@ KirigamiDelegates.SubtitleDelegate {
                     width: Math.min(implicitWidth, Math.max(0, pathLine.width - x))
                     visible: row.path.lastIndexOf("/") >= 0
                     text: row.path.slice(0, row.path.lastIndexOf("/"))
+                    wrapMode: Text.NoWrap
+                    maximumLineCount: 1
                     elide: Text.ElideMiddle
                     font: Kirigami.Theme.smallFont
                     color: row.highlighted ? Qt.alpha(Kirigami.Theme.highlightedTextColor, 0.8) : Kirigami.Theme.disabledTextColor
@@ -107,6 +127,7 @@ KirigamiDelegates.SubtitleDelegate {
                 id: subtitleLabel
                 Layout.fillWidth: true
                 text: row.subtitle
+                wrapMode: Text.NoWrap
                 maximumLineCount: 1
                 elide: Text.ElideRight
                 font: Kirigami.Theme.smallFont
@@ -116,8 +137,6 @@ KirigamiDelegates.SubtitleDelegate {
 
     }
     background: Rectangle {
-        x: Kirigami.Units.smallSpacing
-        width: row.width - 2 * Kirigami.Units.smallSpacing
         radius: Kirigami.Units.cornerRadius
         color: row.current ? Kirigami.Theme.highlightColor
             : row.hovered ? Qt.alpha(Kirigami.Theme.hoverColor, 0.2) : "transparent"

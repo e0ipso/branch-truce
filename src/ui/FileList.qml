@@ -14,6 +14,10 @@ Rectangle {
     required property Component rowDelegate
     property alias currentIndex: fileList.currentIndex
     property real headerHeight: Kirigami.Units.gridUnit * 2
+    readonly property real headerLeadingPadding: Kirigami.Units.largeSpacing + Kirigami.Units.mediumSpacing
+    readonly property real headerTrailingPadding: Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing / 2
+    readonly property real rowSpacing: Kirigami.Units.smallSpacing
+    readonly property real listVerticalPadding: Kirigami.Units.smallSpacing + rowSpacing / 2
     Kirigami.Theme.colorSet: Kirigami.Theme.View
     Kirigami.Theme.inherit: false
     color: Kirigami.Theme.backgroundColor
@@ -22,8 +26,9 @@ Rectangle {
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.leftMargin: Kirigami.Units.smallSpacing
-        anchors.rightMargin: Kirigami.Units.smallSpacing
+        anchors.leftMargin: fileListPane.headerLeadingPadding
+        anchors.rightMargin: fileListPane.headerTrailingPadding
+        spacing: Kirigami.Units.largeSpacing
         height: Math.max(0, fileListPane.headerHeight - listSeparator.height)
         Kirigami.Heading { Layout.fillWidth: true; level: 5; type: Kirigami.Heading.Type.Primary; text: qsTr("Conflicted files") }
         Pill { text: String(fileListPane.controller.files.totalFiles) }
@@ -37,8 +42,9 @@ Rectangle {
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
-        topMargin: Kirigami.Units.smallSpacing
-        bottomMargin: Kirigami.Units.smallSpacing
+        topMargin: fileListPane.listVerticalPadding
+        bottomMargin: fileListPane.listVerticalPadding
+        spacing: fileListPane.rowSpacing
         activeFocusOnTab: true
         keyNavigationEnabled: true
         clip: true
