@@ -30,6 +30,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlExpression>
 #include <QQuickItem>
 #include <QQuickTextDocument>
@@ -2024,6 +2025,24 @@ public:
             paths.push_back({"image.bin", QByteArray("base\0", 5), QByteArray("left\0", 5), QByteArray("side\0", 5), std::nullopt});
             Repository repo("merge", paths);
             Scene scene(repo);
+            // Theme font requests can leave attributes unresolved. Compare
+            // against independent native Labels that resolve the same roles.
+            QQmlComponent fonts(scene.engine.get());
+            fonts.setData(R"(
+import QtQuick
+import QtQuick.Controls
+import org.kde.kirigami as K
+Item {
+    visible: false
+    property alias smallFont: small.font
+    property alias fixedFont: fixed.font
+    Label { id: small; font: K.Theme.smallFont }
+    Label { id: fixed; font: K.Theme.fixedWidthFont }
+}
+)", QUrl(QStringLiteral("native-font-reference.qml")));
+            std::unique_ptr<QQuickItem> fontReference(qobject_cast<QQuickItem *>(fonts.create()));
+            if (!fontReference) throw std::runtime_error(fonts.errorString().toStdString());
+            fontReference->setParentItem(scene.window->contentItem());
             CHECK(!scene.item("inventoryWarning")->isVisible() && scene.item("outsideAppCount")->isVisible());
             clickFile(scene, "image.bin");
             CHECK(scene.file("image.bin").support() == Support::OutsideApp);
@@ -2089,8 +2108,10 @@ public:
                     auto *hash = scene.item((std::string(identity) + "Hash").c_str());
                     QQmlExpression smallFont(qmlContext(role), role, "Kirigami.Theme.smallFont");
                     QQmlExpression fixedFont(qmlContext(hash), hash, "Kirigami.Theme.fixedWidthFont");
-                    const auto expectedRole = smallFont.evaluate().value<QFont>();
-                    const auto expectedHash = fixedFont.evaluate().value<QFont>();
+                    const auto rawRole = smallFont.evaluate();
+                    const auto rawHash = fixedFont.evaluate();
+                    const auto expectedRole = fontReference->property("smallFont").value<QFont>();
+                    const auto expectedHash = fontReference->property("fixedFont").value<QFont>();
                     const auto inspectFont = [&](QQuickItem *item, const QFont &expected) {
                         const auto actual = item->property("font").value<QFont>();
                         if (actual == expected) return;
@@ -2103,10 +2124,16 @@ public:
                                 {"fixedPitch", font.fixedPitch()}, {"hinting", font.hintingPreference()},
                                 {"capitalization", font.capitalization()}, {"letterSpacing", font.letterSpacing()},
                                 {"wordSpacing", font.wordSpacing()}, {"underline", font.underline()},
-                                {"overline", font.overline()}, {"strikeOut", font.strikeOut()}};
+                                {"overline", font.overline()}, {"strikeOut", font.strikeOut()},
+                                {"resolveMask", QString::number(static_cast<qulonglong>(font.resolveMask()))}};
                         };
                         const auto diagnostic = QJsonDocument(QJsonObject{{"control", item->objectName()},
                             {"actual", fields(actual)}, {"expected", fields(expected)},
+                            {"rawRoleType", QString::fromLatin1(rawRole.metaType().name())},
+                            {"rawHashType", QString::fromLatin1(rawHash.metaType().name())},
+                            {"rawRoleValid", rawRole.isValid()}, {"rawHashValid", rawHash.isValid()},
+                            {"rawRoleConvertible", rawRole.canConvert<QFont>()},
+                            {"rawHashConvertible", rawHash.canConvert<QFont>()},
                             {"expressionError", smallFont.hasError() || fixedFont.hasError()}}).toJson(QJsonDocument::Compact);
                         std::fprintf(stderr, "IDENTITY_FONT_DIAGNOSTIC=%s\n", diagnostic.constData());
                     };

@@ -472,9 +472,15 @@ void diagnoseTyping(Scene &scene)
     const auto dispatched = trace.add(QStringLiteral("input.sendEvent.return"));
     const auto model = trace.add(QStringLiteral("session.dataChanged"));
     const auto editor = trace.add(QStringLiteral("controller.resultEditorChanged"));
+    const auto selected = trace.add(QStringLiteral("controller.selectedFileChanged"));
+    const auto projected = trace.add(QStringLiteral("selectedFile.statusChanged"));
+    const auto summary = trace.add(QStringLiteral("session.summaryChanged"));
     const auto frame = trace.add(QStringLiteral("input.acknowledgedFrame"));
     QObject::connect(scene.controller.files(), &QAbstractItemModel::dataChanged, &trace, [&] { trace.mark(model); });
     QObject::connect(&scene.controller, &ApplicationController::resultEditorChanged, &trace, [&] { trace.mark(editor); });
+    QObject::connect(&scene.controller, &ApplicationController::selectedFileChanged, &trace, [&] { trace.mark(selected); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::statusChanged, &trace, [&] { trace.mark(projected); });
+    QObject::connect(scene.controller.files(), &SessionModel::summaryChanged, &trace, [&] { trace.mark(summary); });
     QJsonArray panes;
     for (const auto *name : {"stage2Text", "resultText", "stage3Text"}) {
         auto *item = scene.item(QString::fromLatin1(name));

@@ -407,6 +407,10 @@ public:
         });
         suite.run("edits before decorated blocks keep their local formats without another layout pass", [] {
             QTextDocument document;
+            // Match a Quick editor: initialize its layout before highlighting.
+            // Installing it later publishes a full-document change that merges
+            // into the first edit and legitimately reformats shifted ranges.
+            (void)document.documentLayout();
             document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
             PaneHighlighter highlighter(&document);
             highlighter.attach();

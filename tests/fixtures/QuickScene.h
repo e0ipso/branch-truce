@@ -222,10 +222,18 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
 {
     const auto controlName = QString::fromLatin1(name);
     try {
-        if (reachableButton(window, window->contentItem(), controlName))
-            return waitForStable(window, controlName.toStdString(), [&] {
-                return reachableButton(window, window->contentItem(), controlName);
-            }, stableMs);
+        if (reachableButton(window, window->contentItem(), controlName)) {
+            try {
+                return waitForStable(window, controlName.toStdString(), [&] {
+                    return reachableButton(window, window->contentItem(), controlName);
+                }, stableMs);
+            } catch (const std::runtime_error &) {
+                // A closing overflow entry can be reachable at the first
+                // lookup and disappear during the stability wait. Reopen the
+                // menu to inspect the current item, including disabled ones.
+                if (reachableButton(window, window->contentItem(), controlName)) throw;
+            }
+        }
         auto *toolbar = visibleItem(window->contentItem(), QStringLiteral("fileToolBar"));
         if (!toolbar) throw std::runtime_error("missing file toolbar");
         auto *more = waitForStable(window, "file toolbar overflow", [&] {
