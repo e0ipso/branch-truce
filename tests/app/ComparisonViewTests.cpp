@@ -963,6 +963,7 @@ public:
             auto *lanes = fixture.item("scopedChoices");
             auto *button = test_support::reachableButton(fixture.window, lanes, name);
             CHECK(button);
+            auto *menu = fixture.object(("choiceMore-" + choice.source.contributionId).c_str());
             const auto waitOverlay = [&](const char *phase, const std::function<bool()> &ready) {
                 try {
                     settleFor(phase, ready);
@@ -988,6 +989,7 @@ public:
             QTest::touchEvent(fixture.window, touch).press(0, point, fixture.window);
             QTest::touchEvent(fixture.window, touch).release(0, point, fixture.window);
             checkUnchanged(fixture, before);
+            CHECK(!menu->property("visible").toBool());
             // Hover the code away from the buttons. The same source observer
             // must reveal the overlay and retain source/counterpart highlighting.
             auto *viewport = fixture.item("stage2Viewport");
@@ -1018,7 +1020,6 @@ public:
             waitOverlay("source overlay reached by native Tab", [&] { return button->hasActiveFocus(); });
             CHECK(test_support::painted(button));
             QTest::keyClick(fixture.window, Qt::Key_Menu);
-            auto *menu = fixture.object(("choiceMore-" + choice.source.contributionId).c_str());
             waitOverlay("source overlay keyboard menu opened", [&] { return menu->property("visible").toBool(); });
             CHECK(test_support::painted(button));
             QTest::keyClick(fixture.window, Qt::Key_Escape);

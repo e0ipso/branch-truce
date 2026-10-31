@@ -120,6 +120,9 @@ Row {
 
     TapHandler {
         enabled: buttons.rangeUndecided && buttons.visible
+        // Button filtering does not exclude touchscreen events. A short idle
+        // touch must reach the source editor, whose hold gesture opens its menu.
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad | PointerDevice.Stylus
         acceptedButtons: Qt.RightButton
         onTapped: buttons.openMenu()
     }
