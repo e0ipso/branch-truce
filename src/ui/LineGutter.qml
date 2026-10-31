@@ -49,7 +49,6 @@ Item {
     property real coveredBottom: -1
     z: 1
     implicitWidth: Kirigami.Units.smallSpacing * 3 + numberWidth + letterWidth + slot.width + decisionSlot.width
-        + separator.width
     Kirigami.Theme.colorSet: Kirigami.Theme.View
     Kirigami.Theme.inherit: false
     Accessible.ignored: true
@@ -251,11 +250,5 @@ Item {
                 }
             }
         }
-    }
-    Kirigami.Separator {
-        id: separator
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.right: parent.right
     }
 }

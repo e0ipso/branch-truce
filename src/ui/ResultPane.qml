@@ -61,10 +61,13 @@ ColumnLayout {
         identity: qsTr("Editable")
         description: identity
     }
-    Item {
+    Rectangle {
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.minimumHeight: resultPane.minimumTextHeight
+        Kirigami.Theme.colorSet: Kirigami.Theme.View
+        Kirigami.Theme.inherit: false
+        color: Kirigami.Theme.backgroundColor
         Flickable {
             id: resultViewport
             objectName: "resultViewport"
@@ -101,6 +104,13 @@ ColumnLayout {
                 persistentSelection: true
                 textFormat: TextEdit.PlainText
                 font: Kirigami.Theme.fixedWidthFont
+                // Keep the style's own focus indication, but let the flat View
+                // fill supply the idle background rather than an input frame.
+                Binding {
+                    target: resultEditor.background
+                    property: "visible"
+                    value: resultEditor.activeFocus
+                }
                 // Read by the C++ word-difference decoration: this pane, the line kinds its
                 // backgrounds draw, and the text colours of those kinds' theme roles.
                 readonly property var wordDifferenceStyle: ({

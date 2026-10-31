@@ -125,6 +125,8 @@ Three code panes in a `SplitView`: the two read-only sources around the editable
 
 The earlier version (common ancestor) is not a fourth column. It opens on demand with Show earlier version, over or beside the panes, and closing it restores the editor state and selection (`PRD.md:37`).
 
+Code panes have a continuous, flat View background across the gutter, text and side insets. There is no permanent input-field outline or vertical rule between numbers and code. The native TextArea background appears while its editor has active focus so the selected desktop style still draws its focus indication. Header and connector hairlines remain independent of that focus decoration.
+
 An outside-app file shows a `Kirigami.PlaceholderMessage` in place of the panes, in the View background: the file's type icon, a title naming why it is outside the app ("Binary files are resolved outside Branch Truce"), and an explanation that names the next step (resolve it with another tool, then `git add` the path) and says the file stays in the list until Git reports it resolved.
 
 ### Pane spacing
