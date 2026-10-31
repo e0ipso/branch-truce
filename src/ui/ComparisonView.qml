@@ -398,6 +398,8 @@ ColumnLayout {
             }
             SourcePane {
                 id: leftPane
+                edits: comparison.edits
+                openChoicesAt: (line, x, y) => leftChoices.openMenuForLine(line, x, y)
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
                 SplitView.preferredWidth: panes.defaultPaneWidth
                 paneName: "stage2"
@@ -441,6 +443,8 @@ ColumnLayout {
             }
             SourcePane {
                 id: rightPane
+                edits: comparison.edits
+                openChoicesAt: (line, x, y) => rightChoices.openMenuForLine(line, x, y)
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
                 SplitView.preferredWidth: panes.defaultPaneWidth
                 paneName: "stage3"
@@ -467,6 +471,7 @@ ColumnLayout {
             anchors.fill: parent
             visible: comparison.showChoices
             ChoiceLane {
+                id: leftChoices
                 pane: leftPane
                 rows: comparison.kept("choices:stage2", comparison.choiceRowsFor(leftPane.paneName, comparison.file))
                 rowHeight: comparison.rowHeight
@@ -476,6 +481,7 @@ ColumnLayout {
                 onChosen: (target, action) => comparison.choiceChosen(target, action)
             }
             ChoiceLane {
+                id: rightChoices
                 pane: rightPane
                 rows: comparison.kept("choices:stage3", comparison.choiceRowsFor(rightPane.paneName, comparison.file))
                 rowHeight: comparison.rowHeight
@@ -488,6 +494,7 @@ ColumnLayout {
     }
     SourcePane {
         id: earlierPane
+        edits: comparison.edits
         Layout.fillWidth: true
         Layout.preferredHeight: Math.min(comparison.height / 3, Kirigami.Units.gridUnit * 10)
         visible: comparison.showEarlier && !!comparison.file.earlier && !!comparison.file.earlier.available

@@ -26,6 +26,9 @@ ColumnLayout {
     property alias editor: sourceText
     property alias viewport: sourceViewport
     property alias blocks: sourceBlocks
+    property EditActions edits: null
+    // Optional source-range context menu supplied by the comparison's choice lane.
+    property var openChoicesAt: null
     // The edge that faces the result, "left" or "right", for the choice column; none without it.
     property string choiceEdge: ""
     property real choiceWidth: 0
@@ -155,6 +158,53 @@ ColumnLayout {
                     : Math.max(sourceViewport.width, implicitWidth)
                 wrapMode: sourcePane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                 Accessible.name: qsTr("%1 · %2").arg(sourcePane.paneRole).arg(sourcePane.displayIdentity)
+                function openContextMenu(line: int, x: real, y: real): void {
+                    if (sourcePane.openChoicesAt && sourcePane.openChoicesAt(line, x, y))
+                        return
+                    sourceMenu.popup(sourceText, x, y)
+                }
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    onTapped: point => sourceText.openContextMenu(
+                        sourceBlocks.lineAt(sourceText.positionAt(point.position.x, point.position.y)),
+                        point.position.x, point.position.y)
+                }
+                TapHandler {
+                    id: touchContext
+                    acceptedButtons: Qt.LeftButton
+                    acceptedDevices: PointerDevice.TouchScreen | PointerDevice.Stylus
+                    onLongPressed: sourceText.openContextMenu(
+                        sourceBlocks.lineAt(sourceText.positionAt(touchContext.point.position.x, touchContext.point.position.y)),
+                        touchContext.point.position.x, touchContext.point.position.y)
+                }
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Menu || event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier)) {
+                        const rect = sourceText.cursorRectangle
+                        sourceText.openContextMenu(sourceBlocks.lineAt(sourceText.cursorPosition), rect.x, rect.y + rect.height)
+                        event.accepted = true
+                    }
+                }
+                Menu {
+                    id: sourceMenu
+                    objectName: sourcePane.paneName + "ContextMenu"
+                    MenuItem {
+                        visible: !!sourcePane.edits
+                        action: sourcePane.edits ? sourcePane.edits.undo : null
+                    }
+                    MenuItem {
+                        visible: !!sourcePane.edits
+                        action: sourcePane.edits ? sourcePane.edits.redo : null
+                    }
+                    MenuItem {
+                        text: qsTr("Copy")
+                        enabled: sourceText.selectedText.length > 0
+                        onTriggered: sourceText.copy()
+                    }
+                    MenuItem {
+                        text: qsTr("Select all")
+                        onTriggered: sourceText.selectAll()
+                    }
+                }
                 Component.onCompleted: sourcePane.editorCompleted()
             }
             LineGutter {

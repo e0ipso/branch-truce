@@ -21,6 +21,8 @@ Row {
     required property real rowHeight
     // Whether the file takes choices now: it can be edited and no input is composing.
     required property bool choosing
+    property TextArea contextEditor: null
+    property EditActions edits: null
     // A choice of action for a scope; the owner previews it when it needs confirming.
     signal chosen(target: string, action: int)
     signal hovered(target: string)
@@ -56,18 +58,57 @@ Row {
         return list
     }
     readonly property bool hasEntries: entries.some(entry => entry.enabled)
-    readonly property bool menuOnly: hasEntries && (!choice.undecided || !choice.available)
+    // A decided section may still contain an undecided precise line. Only a
+    // fully decided range loses its persistent controls. An unavailable owner
+    // still needs a keyboard/touch target for its available mapped lines.
+    readonly property bool rangeUndecided: !!choice.undecided
+        || (modelData.extras || []).some(extra => !!extra.undecided)
+    readonly property bool menuOnly: rangeUndecided && hasEntries && (!choice.undecided || !choice.available)
     readonly property string menuLabel: qsTr("More choices for %1").arg(choice.label)
     readonly property string menuHint: qsTr("Right-click, hold, or press Menu or Shift+F10 for more choices.")
     function openMenu(): void {
-        if (choosing && hasEntries)
-            entryMenu.popup(buttons, 0, rowHeight)
+        if (!rangeUndecided || !visible)
+            return
+        const anchor = contextEditor || buttons
+        const point = buttons.mapToItem(anchor, 0, rowHeight)
+        openMenuAt(anchor, point.x, point.y)
+    }
+    // Source text is a stable context-menu anchor even after the range is
+    // decided. No hidden gutter button is kept alive as a menu target.
+    function openMenuAt(anchor: Item, x: real, y: real): bool {
+        if (!choosing || !hasEntries || !anchor || !anchor.visible)
+            return false
+        entryMenu.popup(anchor, x, y)
+        return true
+    }
+    function choose(target: string, action: int): void {
+        if (entryMenu)
+            entryMenu.close()
+        if (contextEditor)
+            contextEditor.forceActiveFocus(Qt.OtherFocusReason)
+        hovered("")
+        focused(choice.id, false)
+        chosen(target, action)
+    }
+    onRangeUndecidedChanged: if (!rangeUndecided) {
+        const restoreFocus = choiceFocused
+        if (entryMenu)
+            entryMenu.close()
+        hovered("")
+        focused(choice.id, false)
+        if (restoreFocus && contextEditor)
+            contextEditor.forceActiveFocus(Qt.OtherFocusReason)
+    }
+    Component.onDestruction: {
+        hovered("")
+        focused(choice.id, false)
     }
     spacing: Kirigami.Units.smallSpacing
     layoutDirection: pointsRight ? Qt.RightToLeft : Qt.LeftToRight
     // A scope that cannot take a choice says why while the pointer rests on its disabled buttons.
     HoverHandler {
         id: rowHover
+        enabled: buttons.rangeUndecided && buttons.visible
         onHoveredChanged: buttons.hovered(hovered ? buttons.choice.id : "")
     }
     readonly property bool choiceFocused: accept.activeFocus || ignore.activeFocus || more.activeFocus || entryMenu.visible
@@ -78,6 +119,7 @@ Row {
     ToolTip.delay: Kirigami.Units.toolTipDelay
 
     TapHandler {
+        enabled: buttons.rangeUndecided && buttons.visible
         acceptedButtons: Qt.RightButton
         onTapped: buttons.openMenu()
     }
@@ -115,7 +157,7 @@ Row {
         text: qsTr("Accept %1").arg(buttons.choice.label)
         icon.name: buttons.pointsRight ? "arrow-right" : "arrow-left"
         icon.color: Kirigami.Theme.activeTextColor
-        onClicked: buttons.chosen(buttons.choice.id, ChoicePreviewFlow.Accept)
+        onClicked: buttons.choose(buttons.choice.id, ChoicePreviewFlow.Accept)
     }
     GutterButton {
         id: ignore
@@ -127,13 +169,13 @@ Row {
         text: qsTr("Ignore %1").arg(buttons.choice.label)
         icon.name: "edit-delete-remove"
         icon.color: Kirigami.Theme.negativeTextColor
-        onClicked: buttons.chosen(buttons.choice.id, ChoicePreviewFlow.Ignore)
+        onClicked: buttons.choose(buttons.choice.id, ChoicePreviewFlow.Ignore)
     }
     GutterButton {
         id: more
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
-        // A decided or unmapped owner can still have available line choices. Keep
+        // An undecided unmapped owner can still have available line choices. Keep
         // their menu focusable in the same lane without adding a third button.
         objectName: "choiceMenu-" + buttons.choice.id
         visible: buttons.menuOnly
@@ -149,6 +191,30 @@ Row {
         objectName: "choiceMore-" + buttons.choice.id
         title: buttons.menuLabel
         Accessible.name: buttons.menuLabel
+        MenuItem {
+            text: buttons.choice.label
+            enabled: false
+            Accessible.description: buttons.choice.detail || ""
+        }
+        MenuItem {
+            visible: !!buttons.edits
+            action: buttons.edits ? buttons.edits.undo : null
+        }
+        MenuItem {
+            visible: !!buttons.edits
+            action: buttons.edits ? buttons.edits.redo : null
+        }
+        MenuItem {
+            text: qsTr("Copy")
+            enabled: !!buttons.contextEditor && buttons.contextEditor.selectedText.length > 0
+            onTriggered: buttons.contextEditor.copy()
+        }
+        MenuItem {
+            text: qsTr("Select all")
+            enabled: !!buttons.contextEditor
+            onTriggered: buttons.contextEditor.selectAll()
+        }
+        MenuSeparator {}
         Instantiator {
             model: buttons.entries
             delegate: MenuItem {
@@ -156,9 +222,9 @@ Row {
                 objectName: modelData.name
                 text: modelData.text
                 enabled: buttons.choosing && modelData.enabled
-                onTriggered: buttons.chosen(modelData.target, modelData.action)
+                onTriggered: buttons.choose(modelData.target, modelData.action)
             }
-            onObjectAdded: (index, entry) => entryMenu.insertItem(index, entry as MenuItem)
+            onObjectAdded: (index, entry) => entryMenu.insertItem(index + 6, entry as MenuItem)
             onObjectRemoved: (index, entry) => entryMenu.removeItem(entry as MenuItem)
         }
     }

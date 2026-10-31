@@ -18,6 +18,20 @@ Item {
     signal chosen(target: string, action: int)
     signal hovered(target: string)
     signal focused(target: string, active: bool)
+    // Context inspection uses the source editor, including decided ranges and
+    // precise lines after a range's first row. The popup never anchors to chrome
+    // that disappears when a choice completes.
+    function openMenuForLine(line: int, x: real, y: real): bool {
+        if (!visible)
+            return false
+        for (let i = 0; i < rows.length; ++i) {
+            if (line >= rows[i].line && line < Math.max(rows[i].line + 1, rows[i].end)) {
+                const row = choiceRows.itemAt(i) as ChoiceButtons
+                return !!row && row.openMenuAt(pane.editor, x, y)
+            }
+        }
+        return false
+    }
     // Counts relayouts of the pane's text, so the rows follow them.
     property int layoutRevision: 0
     // The pane's choice column in this lane's parent. The arguments are the geometry the
@@ -45,6 +59,7 @@ Item {
         function onLayoutChanged(): void { ++lane.layoutRevision }
     }
     Repeater {
+        id: choiceRows
         model: lane.rows
         delegate: ChoiceButtons {
             id: row
@@ -52,6 +67,8 @@ Item {
             edge: lane.pane.choiceEdge
             rowHeight: lane.rowHeight
             choosing: lane.choosing
+            contextEditor: lane.pane.editor
+            edits: lane.pane.edits
             x: edge === "right" ? lane.width - width - Kirigami.Units.smallSpacing : Kirigami.Units.smallSpacing
             y: rowTop
             visible: rowTop >= 0 && rowTop + lane.rowHeight <= lane.height
