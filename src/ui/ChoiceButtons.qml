@@ -56,6 +56,7 @@ Row {
         return list
     }
     readonly property bool hasEntries: entries.some(entry => entry.enabled)
+    readonly property bool menuOnly: hasEntries && (!choice.undecided || !choice.available)
     readonly property string menuLabel: qsTr("More choices for %1").arg(choice.label)
     readonly property string menuHint: qsTr("Right-click, hold, or press Menu or Shift+F10 for more choices.")
     function openMenu(): void {
@@ -109,7 +110,7 @@ Row {
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
         objectName: "choiceAccept-" + buttons.choice.id
-        visible: !!buttons.choice.undecided
+        visible: !!buttons.choice.undecided && !buttons.menuOnly
         enabled: buttons.choosing && !!buttons.choice.available
         text: qsTr("Accept %1").arg(buttons.choice.label)
         icon.name: buttons.pointsRight ? "arrow-right" : "arrow-left"
@@ -121,7 +122,7 @@ Row {
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
         objectName: "choiceIgnore-" + buttons.choice.id
-        visible: !!buttons.choice.undecided
+        visible: !!buttons.choice.undecided && !buttons.menuOnly
         enabled: buttons.choosing && !!buttons.choice.available
         text: qsTr("Ignore %1").arg(buttons.choice.label)
         icon.name: "edit-delete-remove"
@@ -132,10 +133,10 @@ Row {
         id: more
         size: buttons.rowHeight
         glyphSize: buttons.iconSize
-        // A decided owner can still have line choices on its first line. Keep those
-        // reachable in the same slot after its Accept and Ignore buttons disappear.
+        // A decided or unmapped owner can still have available line choices. Keep
+        // their menu focusable in the same lane without adding a third button.
         objectName: "choiceMenu-" + buttons.choice.id
-        visible: !buttons.choice.undecided && buttons.hasEntries
+        visible: buttons.menuOnly
         enabled: buttons.choosing
         text: buttons.menuLabel
         icon.name: "overflow-menu"
