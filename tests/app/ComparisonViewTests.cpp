@@ -2522,32 +2522,32 @@ public:
             CHECK(fixture.controller.selectedFile()->progress().value("conflicts").toInt() == 0);
             // Explicit legacy source-decision callers retain their exact four targets.
             fixture.select(0, 0);
-            CHECK(fixture.controller.navigate(FileNavigator::Undecided, 1));
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 0, 4, 5, 9,
                 QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
                 QStringLiteral("pick/1/5/11"));
-            CHECK(fixture.controller.navigate(FileNavigator::Undecided, 1));
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 1, 4, 5, 9,
                 QStringLiteral("Undecided 2 of 4 · Right · result bytes 5-9"),
                 QStringLiteral("pick/2/5/9"));
-            CHECK(fixture.controller.navigate(FileNavigator::Undecided, 1));
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 2, 4, 13, 17,
                 QStringLiteral("Undecided 3 of 4 · Left · result bytes 13-17"),
                 QStringLiteral("pick/1/15/21"));
-            CHECK(fixture.controller.navigate(FileNavigator::Undecided, 1));
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 3, 4, 13, 17,
                 QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
                 QStringLiteral("pick/2/13/17"));
-            CHECK(fixture.controller.navigate(FileNavigator::Undecided, 1));
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 0, 4, 5, 9,
                 QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
                 QStringLiteral("pick/1/5/11"));
-            CHECK(fixture.controller.navigate(FileNavigator::Undecided, -1));
+            CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, -1));
             expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
                 QStringLiteral("result"), 3, 4, 13, 17,
                 QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
