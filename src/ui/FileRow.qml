@@ -24,13 +24,14 @@ KirigamiDelegates.SubtitleDelegate {
     required property string summary
     required property ApplicationController controller
     readonly property bool current: fileId === row.controller.selectedFileId
+    // Supplied by the ListView bounds, rather than a delegate x binding.
     readonly property real plateOuterInset: Kirigami.Units.smallSpacing
     readonly property real plateHorizontalPadding: Kirigami.Units.largeSpacing
     readonly property real plateVerticalPadding: Kirigami.Units.mediumSpacing
     readonly property real iconTextGap: Kirigami.Units.largeSpacing
-    // Inset the control itself so hover, clicks and focus share the plate's bounds.
-    x: plateOuterInset
-    width: Math.max(0, ListView.view.width - 2 * plateOuterInset)
+    // The list supplies both outer insets. The control fills those bounds so
+    // its background, pointer target and focus frame share the same plate.
+    width: ListView.view.width
     leftPadding: plateHorizontalPadding
     rightPadding: plateHorizontalPadding
     topPadding: plateVerticalPadding

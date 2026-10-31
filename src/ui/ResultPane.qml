@@ -76,8 +76,6 @@ ColumnLayout {
             Kirigami.Theme.colorSet: Kirigami.Theme.View
             Kirigami.Theme.inherit: false
             anchors.fill: parent
-            anchors.leftMargin: Kirigami.Units.smallSpacing
-            anchors.rightMargin: Kirigami.Units.smallSpacing
             // Match source panes: fitting/wrapped text keeps the full height.
             anchors.bottomMargin: resultHorizontal.visible ? resultHorizontal.height : 0
             clip: true

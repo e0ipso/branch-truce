@@ -937,6 +937,68 @@ public:
         Group suite(results, selection == Selection::All || selection == Selection::Scenes);
         Group boundary(results, selection == Selection::All || selection == Selection::Boundary);
         Group display(results, selection == Selection::Display);
+        suite.run("native reading widths, path weights and row insets remain balanced", [] {
+            auto sources = *test_support::batchFile().snapshots();
+            sources.path = "src/net/retry.cpp";
+            const auto launch = sources.launchResult.text.utf8;
+            Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0},
+                Support::Supported, {}, sources, true));
+            const auto before = captureWork(fixture);
+            for (const auto height : {720, 800}) {
+                fixture.window->resize(1280, height);
+                settlePanes(fixture);
+                const auto left = fixture.item("stage2Viewport")->width();
+                const auto result = fixture.item("resultViewport")->width();
+                const auto right = fixture.item("stage3Viewport")->width();
+                CHECK(std::max({left, result, right}) - std::min({left, result, right}) <= 1.001);
+            }
+            const auto directory = fixture.item("selectedPathDirectory")->property("font").value<QFont>();
+            const auto basename = fixture.item("selectedPathBasename")->property("font").value<QFont>();
+            CHECK(directory.weight() == QFont::Normal);
+            CHECK(basename.weight() == QFont::DemiBold);
+            auto *list = fixture.item("fileList");
+            auto *row = test_support::visualButton(list, [](QQuickItem *item) {
+                return item->property("fileId").toString() == QStringLiteral("choices");
+            });
+            CHECK(row);
+            const auto plate = row->mapRectToScene(row->boundingRect());
+            const auto outer = list->parentItem()->mapRectToScene(list->parentItem()->boundingRect());
+            const auto leading = plate.left() - outer.left();
+            const auto trailing = outer.right() - plate.right();
+            CHECK(leading > 0 && trailing > 0 && std::abs(leading - trailing) < 0.5);
+            row->forceActiveFocus(Qt::TabFocusReason);
+            CHECK(row->hasActiveFocus() && test_support::reachable(fixture.window, row));
+            checkUnchanged(fixture, before);
+        });
+        suite.run("native identity tooltips render literal text through style wrappers", [] {
+            Fixture fixture;
+            settlePanes(fixture);
+            const auto before = captureWork(fixture);
+            const auto literal = QStringLiteral("<b>literal identity & source</b>");
+            for (const auto *side : {"stage2", "stage3"}) {
+                const auto identityName = QString::fromLatin1(side) + QStringLiteral("Identity");
+                auto *identity = fixture.item(identityName.toUtf8().constData());
+                auto *tooltip = identity->findChild<QObject *>(identityName + QStringLiteral("ToolTip"));
+                CHECK(tooltip && tooltip->setProperty("text", literal));
+                CHECK(QMetaObject::invokeMethod(tooltip, "open"));
+                settleFor("identity tooltip opened", [&] { return tooltip->property("opened").toBool(); });
+                int labels = 0;
+                const std::function<void(QQuickItem *)> visit = [&](QQuickItem *item) {
+                    if (item->property("textFormat").isValid() && item->property("text").toString() == literal) {
+                        ++labels;
+                        CHECK(item->property("textFormat").toInt() == Qt::PlainText);
+                    }
+                    for (auto *child : item->childItems()) visit(child);
+                };
+                auto *content = tooltip->property("contentItem").value<QQuickItem *>();
+                CHECK(content);
+                visit(content);
+                CHECK(labels > 0);
+                CHECK(QMetaObject::invokeMethod(tooltip, "close"));
+                settleFor("identity tooltip closed", [&] { return !tooltip->property("visible").toBool(); });
+            }
+            checkUnchanged(fixture, before);
+        });
         suite.run("source choices overlay full-width panes only on hover or focus", [] {
             Fixture fixture;
             settlePanes(fixture);

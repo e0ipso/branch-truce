@@ -30,6 +30,7 @@ ColumnLayout {
             text: pane.paneText
             readOnly: true
             selectByMouse: true
+            selectByKeyboard: true
             textFormat: TextEdit.PlainText
             font: Kirigami.Theme.fixedWidthFont
             tabStopDistance: snapshotTabs.advanceWidth

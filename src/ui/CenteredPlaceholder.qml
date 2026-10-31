@@ -6,9 +6,10 @@ import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
 
 // The layout never makes it shorter than the message, so the page scrolls instead of cutting
-// the message off. Its objectName goes on the message, which tests read like a placeholder.
+// the message off. Name the message and its container for geometry inspection.
 Item {
     id: placeholder
+    objectName: messageName + "Container"
     required property string messageName
     property string iconName
     property string text

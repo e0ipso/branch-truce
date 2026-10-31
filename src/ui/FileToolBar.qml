@@ -202,14 +202,18 @@ RowLayout {
                 anchors.fill: parent
                 spacing: 0
                 PlainLabel {
+                    objectName: "selectedPathDirectory"
                     visible: selectedPathLabel.directory.length > 0
                     Layout.maximumWidth: parent.width / 2
                     text: selectedPathLabel.directory
                     elide: Text.ElideLeft
-                    font: Kirigami.Theme.defaultFont
+                    // Level 5 inherits the native default font; override only
+                    // the heading weight for the directory segment.
+                    font.weight: Font.Normal
                     color: Kirigami.Theme.disabledTextColor
                 }
                 PlainLabel {
+                    objectName: "selectedPathBasename"
                     Layout.fillWidth: true
                     text: selectedPathLabel.fileName
                     elide: Text.ElideMiddle
