@@ -2128,7 +2128,9 @@ public:
                     return item->inherits("QQuickText") && item->property("text").toString() == heading;
                 });
                 auto *body = descendant(message, [&](QQuickItem *item) {
-                    return item->inherits("QQuickText") && item->property("text").toString() == prose;
+                    // Kirigami's selectable explanation uses TextEdit inside
+                    // a Control wrapper; inspect the actual rendering item.
+                    return item->inherits("QQuickTextEdit") && item->property("text").toString() == prose;
                 });
                 CHECK(title && body);
                 CHECK(title->property("textFormat").toInt() == 0 && body->property("textFormat").toInt() == 0);
