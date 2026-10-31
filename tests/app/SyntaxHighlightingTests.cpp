@@ -5,6 +5,7 @@
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/QuickScene.h"
+#include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QColor>
 #include <QKeyEvent>
@@ -400,6 +401,122 @@ public:
             CHECK(!fixture.controller.files()->hasPendingRecovery());
             CHECK(result->toPlainText() == text);
             CHECK(highlighter->document() == result);
+        });
+        suite.run("edits before decorated blocks keep their local formats without another layout pass", [] {
+            QTextDocument document;
+            document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
+            PaneHighlighter highlighter(&document);
+            highlighter.attach();
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            const QList<QTextBlock> decorated{document.findBlockByNumber(4), document.findBlockByNumber(9),
+                                             document.findBlockByNumber(14)};
+            const auto ranges = [&] {
+                QList<QTextLayout::FormatRange> found;
+                for (const auto &block : decorated) {
+                    QTextLayout::FormatRange range;
+                    range.start = block.position() + 2;
+                    range.length = 5;
+                    range.format.setFontUnderline(true);
+                    found.append(range);
+                }
+                return found;
+            };
+            highlighter.setDecorations(ranges());
+            QTextCursor selection(&document);
+            selection.setPosition(decorated.last().position() + 1);
+            selection.setPosition(selection.position() + 3, QTextCursor::KeepAnchor);
+            int notifications = 0;
+            int updates = 0;
+            const auto changed = QObject::connect(&document, &QTextDocument::contentsChanged,
+                &document, [&] { ++notifications; });
+            const auto laidOut = QObject::connect(document.documentLayout(), &QAbstractTextDocumentLayout::update,
+                &document, [&](const QRectF &) { ++updates; });
+            for (const auto &prefix : {QStringLiteral("prefix "), QStringLiteral("new line\n")}) {
+                QTextCursor edit(&document);
+                edit.insertText(prefix);
+                const auto text = document.toPlainText();
+                const auto revision = document.revision();
+                const auto modified = document.isModified();
+                const auto undo = document.isUndoAvailable(), redo = document.isRedoAvailable();
+                const int anchor = selection.anchor(), position = selection.position();
+                notifications = updates = 0;
+                highlighter.setDecorations(ranges());
+                CHECK(notifications == 0 && updates == 0);
+                CHECK(document.revision() == revision);
+                CHECK(document.toPlainText() == text && document.isModified() == modified);
+                CHECK(document.isUndoAvailable() == undo && document.isRedoAvailable() == redo);
+                CHECK(selection.anchor() == anchor && selection.position() == position);
+                for (const auto &range : ranges()) {
+                    for (int at = range.start; at < range.start + range.length; ++at)
+                        CHECK(formatAt(&document, at).fontUnderline());
+                    CHECK(!formatAt(&document, range.start - 1).fontUnderline());
+                    CHECK(!formatAt(&document, range.start + range.length).fontUnderline());
+                }
+            }
+            highlighter.setDecorations({});
+            for (const auto &block : decorated) CHECK(block.layout()->formats().isEmpty());
+            QObject::disconnect(changed);
+            QObject::disconnect(laidOut);
+        });
+        suite.run("local overlays follow replacement splitting deletion and search precedence", [] {
+            QTextDocument document;
+            document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
+            PaneHighlighter highlighter(&document);
+            highlighter.attach();
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            auto block = document.findBlockByNumber(4);
+            QTextLayout::FormatRange word;
+            word.start = block.position() + 2;
+            word.length = 7;
+            word.format.setFontUnderline(true);
+            word.format.setBackground(QColor(Qt::yellow));
+            auto search = word;
+            search.length = 2;
+            search.format = QTextCharFormat();
+            search.format.setBackground(QColor(Qt::magenta));
+            highlighter.setDecorations({word});
+            highlighter.setSearchDecorations({search});
+            CHECK(formatAt(&document, word.start).fontUnderline());
+            CHECK(formatAt(&document, word.start).background().color() == QColor(Qt::magenta));
+            CHECK(formatAt(&document, word.start + 3).background().color() == QColor(Qt::yellow));
+            QTextCursor edit(&document);
+            edit.setPosition(word.start + 2);
+            edit.setPosition(word.start + 4, QTextCursor::KeepAnchor);
+            edit.insertText(QStringLiteral("XY"));
+            highlighter.setDecorations({word});
+            CHECK(formatAt(&document, word.start + 3).fontUnderline());
+            // Split the decorated range across two new layouts. The inserted
+            // paragraph separator itself has no character overlay.
+            edit.setPosition(word.start + 3);
+            edit.insertText(QStringLiteral("\n"));
+            ++word.length;
+            highlighter.setDecorations({word});
+            for (int at = word.start; at < word.start + word.length; ++at) {
+                if (document.characterAt(at) == QChar::ParagraphSeparator) continue;
+                CHECK(formatAt(&document, at).fontUnderline());
+            }
+            CHECK(formatAt(&document, search.start).background().color() == QColor(Qt::magenta));
+            highlighter.setSearchDecorations({});
+            CHECK(formatAt(&document, search.start).background().color() == QColor(Qt::yellow));
+            // Delete both pieces, including one cached live block. Any
+            // formats temporarily applied at the old offsets must be cleared.
+            const int first = block.position();
+            const auto after = block.next().next();
+            CHECK(after.isValid());
+            edit.setPosition(first);
+            edit.setPosition(after.position(), QTextCursor::KeepAnchor);
+            edit.removeSelectedText();
+            highlighter.setDecorations({});
+            for (auto current = document.begin(); current.isValid(); current = current.next())
+                CHECK(current.layout()->formats().isEmpty());
+            document.setPlainText(QStringLiteral("replacement text\n").repeated(32));
+            word.start = document.findBlockByNumber(8).position() + 1;
+            word.length = 4;
+            highlighter.setDecorations({word});
+            CHECK(formatAt(&document, word.start).fontUnderline());
+            highlighter.setDecorations({});
+            for (auto current = document.begin(); current.isValid(); current = current.next())
+                CHECK(current.layout()->formats().isEmpty());
         });
         return suite.report();
     }
