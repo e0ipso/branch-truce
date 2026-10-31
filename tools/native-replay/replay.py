@@ -19,6 +19,7 @@ import time
 # Keep the source checkout read only, including when it has no bytecode cache.
 sys.dont_write_bytecode = True
 
+from calibration import build_provenance, capture_inputs, colour_scheme, compare, load_contract, validate_profile
 from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged
 
 HERE = Path(__file__).resolve().parent
@@ -50,7 +51,7 @@ def replay_lock(path=None):
 class OwnedResources:
     """Own only this invocation's private directory and process groups."""
     def __init__(self):
-        self.directory = tempfile.TemporaryDirectory(prefix='bt-replay-', dir='/tmp')
+        self.directory = tempfile.TemporaryDirectory(prefix='bt-r-', dir='/var/tmp')
         self.root = Path(self.directory.name)
         self.processes = []
         self.logs = []
@@ -271,8 +272,16 @@ def capture_one(args, driver, out, theme, repeat):
                 metadata = dict(theme=theme, kind=kind, repeat=repeat, height=args.height,
                                 fixture=fixture, fixture_sha256=sha256(out / 'fixture.json'), executable_sha256=sha256(args.build / 'src/app/branch-truce'),
                                 driver_sha256=sha256(driver), capture_sha256=sha256(shot), decoded_sha256=decoded,
+                                capture_environment=dict(colour_scheme=scheme, kdeglobals_sha256=sha256(Path(env['XDG_CONFIG_HOME']) / 'kdeglobals'),
+                                                         output=outputs[0], renderer='pixman', quick_backend='software',
+                                                         os_release=Path('/etc/os-release').read_text(), physical_desktop=False,
+                                                         scheme_roles=colour_scheme(Path(env['XDG_CONFIG_HOME']) / 'kdeglobals')),
                                 reference_provenance_sha256=sha256(REFERENCE / 'provenance.json'))
+                metadata.update(capture_profile_sha256=sha256(HERE / 'capture-profile.json'),
+                                reference_contract_sha256=sha256(HERE / 'reference-contract.json'))
+                validate_profile(state, metadata)
                 write_json(out / f'{name}-state.json', dict(metadata=metadata, state=state))
+                compare(args.source, shot, state, driver.parent / 'native-replay-image', out / f'{name}-comparison')
                 captures.append(dict(file=str(shot), **metadata))
             client.command('quit')
             require(app.wait(timeout=10) == 0, 'Application exit failed')
@@ -296,8 +305,10 @@ def capture(args):
             '--source must name the checkout containing this replay tool')
     require((args.build / 'src/app/branch-truce').is_file(), '--build must contain src/app/branch-truce')
     require(args.repeat >= 2, 'Capture requires at least two clean replays for pixel comparison')
+    load_contract(args.source)
     with replay_lock():
         args.output.mkdir(exist_ok=False)
+        write_json(args.output / 'build-provenance.json', build_provenance(args.source, args.build))
         driver_build = args.output / 'driver-build'
         subprocess.run(['cmake', '-S', str(HERE), '-B', str(driver_build)], check=True)
         subprocess.run(['cmake', '--build', str(driver_build), '--parallel', '2'], check=True)
@@ -320,7 +331,9 @@ def capture(args):
         write_json(args.output / 'verification.json', dict(captures=records, comparisons=comparisons,
             source=str(args.source), build=str(args.build), height=args.height,
             environment=dict(platform='wayland', renderer='pixman', quick_backend='software'),
-            cleanup_confirmed=True))
+            cleanup_confirmed=True, source_inputs=capture_inputs(args.source),
+            artifact_hashes={str(p.relative_to(args.output)): sha256(p) for p in args.output.rglob('*')
+                             if p.is_file() and 'driver-build' not in p.relative_to(args.output).parts}))
         require(all(row['differing_pixels'] == 0 for row in comparisons), 'Clean replays differ in decoded pixels')
         print(f'{len(records)} native captures; {len(comparisons)} comparisons, zero differing decoded pixels; cleanup confirmed')
 

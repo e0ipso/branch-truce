@@ -28,3 +28,34 @@ Run focused integrity, readiness, serialization and cleanup checks with:
 python3 tests/tools/NativeReplayTests.py
 # Also registered as tooling.native-replay when CMake finds Python 3.
 ```
+
+## Capture profile and reference comparison
+
+[The calibration notes](../../docs/ui-mockup/native-calibration.md) explain the pinned
+profile, actual typography/theme observations, reference raster scale and exception rules.
+`capture-profile.json` pins observed style, icon theme, fonts, scale and DPR.
+`reference-contract.json` hashes all four approved PNG/HTML pairs and names logical regions.
+Changing an approved reference fails before capture. A different platform/profile needs
+an explicit reviewed profile change rather than a silent theme exception.
+
+Capture now retains `build-provenance.json`, measured `state.profile`, the actual colour
+scheme groups, and a `*-comparison/` directory for each shot. That directory includes
+byte-identical original reference/native PNGs, unscaled region close-ups, common-grid
+overlays, absolute-channel differences and `comparison.json`. Approved PNGs are 1.5 raster
+pixels per logical CSS pixel; native DPR is 1. The comparison grid uses exact reference
+x2/native x3 cell replication, with no interpolation or masks. Region differences stay
+outstanding, even where the contract lists a conditional narrow exception.
+
+Replay's short private runtime directory is under `/var/tmp`, so it does not consume a
+nearly full `/tmp`; the existing small serialization lock remains under `/tmp`.
+Run the focused contract and pixel checks after building the external image tool:
+
+```sh
+python3 tests/tools/NativeCalibrationTests.py --image-tool /absolute/driver-build/native-replay-image
+python3 tools/native-replay/calibration.py --verify /absolute/capture-output
+```
+
+Contract checks are also included in `NativeReplayTests.py` and its existing CTest entry.
+Verification compares current source/profile/reference inputs and retained artifact hashes,
+rechecks the executable and measured profile, and confirms disposable resources were removed.
+The integrated gate still owns full fit/reachability and complete suite verification.

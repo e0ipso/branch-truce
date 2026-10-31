@@ -1,0 +1,232 @@
+{
+  "version": 1,
+  "references": {
+    "dark-binary.html": "af7ee42254196ef959a1b6ade3b558abc922b7981c1146972543dfd53f2e85c0",
+    "dark-binary.png": "d769fc395cc413b172d553b3bf4976278a290c85c0d9c792cc4a2a83512f2765",
+    "dark-text.html": "046460db847f1554a765abf43cf9161af74dc27534e0067e388f25cee2835a9c",
+    "dark-text.png": "58d318edc976d5c85f49d9ff4784df665479898f891ec36f578045779d346ef2",
+    "light-binary.html": "32c1eda2b3f5f90b43bbc2b0473913dae1578c26c0de47dfd0df33b8205a76f9",
+    "light-binary.png": "c84bbb155c4eb2a33938bceca18f781d79f70644ed91d4bf67f955c3c8f97c9e",
+    "light-text.html": "b941e1893c3037ed576bf96a6c4e1de7a17900cc5f61ff4c2497c3e2791619af",
+    "light-text.png": "c6d9a292c098028d97ccbc8a1c7c13257cb2ac36260c17de7756c37815b94e41"
+  },
+  "regions": {
+    "window": [
+      0,
+      0,
+      1280,
+      720
+    ],
+    "header": [
+      0,
+      0,
+      1280,
+      46
+    ],
+    "sidebar": [
+      0,
+      46,
+      262,
+      646
+    ],
+    "file_header": [
+      263,
+      46,
+      1017,
+      40
+    ],
+    "pane_header": [
+      263,
+      86,
+      324,
+      30
+    ],
+    "source_identity": [
+      320,
+      86,
+      267,
+      30
+    ],
+    "syntax": [
+      263,
+      116,
+      324,
+      160
+    ],
+    "footer": [
+      0,
+      692,
+      1280,
+      28
+    ],
+    "footer_facts": [
+      1040,
+      692,
+      240,
+      28
+    ],
+    "placeholder": [
+      263,
+      86,
+      1017,
+      606
+    ],
+    "accepted_fill": [
+      310,
+      482,
+      4,
+      20
+    ],
+    "incoming_identity": [
+      1060,
+      86,
+      220,
+      30
+    ]
+  },
+  "exceptions": [
+    {
+      "reference": "light-text.png",
+      "reference_sha256": "c6d9a292c098028d97ccbc8a1c7c13257cb2ac36260c17de7756c37815b94e41",
+      "region": "source_identity",
+      "kind": "truthful-identity",
+      "observed_native_value": "Current checkout \u00b7 50bf56277c",
+      "reason": "Deterministic fixture commits differ from illustrative mockup commits. Role wording describes the verified Git source.",
+      "acceptance_rule": "Accept only verified fixture commit prefixes and truthful side roles; branch names require unique refs. No exception for geometry, font, truncation or other header content."
+    },
+    {
+      "reference": "light-text.png",
+      "reference_sha256": "c6d9a292c098028d97ccbc8a1c7c13257cb2ac36260c17de7756c37815b94e41",
+      "region": "footer_facts",
+      "kind": "truthful-metadata",
+      "observed_native_value": "UTF-8 \u00b7 LF \u00b7 C++ source code",
+      "reason": "Captured MIME display name is the truthful expanded form of C++ in the mockup.",
+      "acceptance_rule": "C++ source code and C++ name the same recognized language for this exact .cpp fixture; encoding/BOM/line-ending facts must remain captured, not inferred. Geometry and contrast remain outstanding."
+    },
+    {
+      "reference": "light-binary.png",
+      "reference_sha256": "c84bbb155c4eb2a33938bceca18f781d79f70644ed91d4bf67f955c3c8f97c9e",
+      "region": "footer_facts",
+      "kind": "truthful-metadata",
+      "observed_native_value": "PNG image \u00b7 18.20 KiB",
+      "reason": "18637 captured bytes / 1024 = 18.2001953125 KiB. PNG image is the recognized type; Binary names its unsupported classification.",
+      "acceptance_rule": "Accept PNG image and 18.20 KiB for the pinned valid PNG, or Binary and 18.2 KiB as a truthful concise rendering. Never change bytes, MIME or size to match text. Geometry and contrast remain outstanding."
+    },
+    {
+      "reference": "light-text.png",
+      "reference_sha256": "c6d9a292c098028d97ccbc8a1c7c13257cb2ac36260c17de7756c37815b94e41",
+      "region": "accepted_fill",
+      "kind": "background-role-fill",
+      "observed_native_value": {
+        "role": "Kirigami.Theme.positiveBackgroundColor",
+        "source_line": 19,
+        "color": "#def0e6"
+      },
+      "reason": "The design brief explicitly gives theme-derived background roles priority over HTML text-role mixing at 14% light or 24% dark.",
+      "acceptance_rule": "Only the glyph-free accepted-line fill shade is exempt, provided it equals the observed scheme positive background role. No exception for pane base/header shades, syntax, glyphs, other geometry or unexplained pixels."
+    },
+    {
+      "reference": "dark-text.png",
+      "reference_sha256": "58d318edc976d5c85f49d9ff4784df665479898f891ec36f578045779d346ef2",
+      "region": "source_identity",
+      "kind": "truthful-identity",
+      "observed_native_value": "Current checkout \u00b7 50bf56277c",
+      "reason": "Deterministic fixture commits differ from illustrative mockup commits. Role wording describes the verified Git source.",
+      "acceptance_rule": "Accept only verified fixture commit prefixes and truthful side roles; branch names require unique refs. No exception for geometry, font, truncation or other header content."
+    },
+    {
+      "reference": "dark-text.png",
+      "reference_sha256": "58d318edc976d5c85f49d9ff4784df665479898f891ec36f578045779d346ef2",
+      "region": "footer_facts",
+      "kind": "truthful-metadata",
+      "observed_native_value": "UTF-8 \u00b7 LF \u00b7 C++ source code",
+      "reason": "Captured MIME display name is the truthful expanded form of C++ in the mockup.",
+      "acceptance_rule": "C++ source code and C++ name the same recognized language for this exact .cpp fixture; encoding/BOM/line-ending facts must remain captured, not inferred. Geometry and contrast remain outstanding."
+    },
+    {
+      "reference": "dark-binary.png",
+      "reference_sha256": "d769fc395cc413b172d553b3bf4976278a290c85c0d9c792cc4a2a83512f2765",
+      "region": "footer_facts",
+      "kind": "truthful-metadata",
+      "observed_native_value": "PNG image \u00b7 18.20 KiB",
+      "reason": "18637 captured bytes / 1024 = 18.2001953125 KiB. PNG image is the recognized type; Binary names its unsupported classification.",
+      "acceptance_rule": "Accept PNG image and 18.20 KiB for the pinned valid PNG, or Binary and 18.2 KiB as a truthful concise rendering. Never change bytes, MIME or size to match text. Geometry and contrast remain outstanding."
+    },
+    {
+      "reference": "dark-text.png",
+      "reference_sha256": "58d318edc976d5c85f49d9ff4784df665479898f891ec36f578045779d346ef2",
+      "region": "accepted_fill",
+      "kind": "background-role-fill",
+      "observed_native_value": {
+        "role": "Kirigami.Theme.positiveBackgroundColor",
+        "source_line": 19,
+        "color": "#0e2017"
+      },
+      "reason": "The design brief explicitly gives theme-derived background roles priority over HTML text-role mixing at 14% light or 24% dark.",
+      "acceptance_rule": "Only the glyph-free accepted-line fill shade is exempt, provided it equals the observed scheme positive background role. No exception for pane base/header shades, syntax, glyphs, other geometry or unexplained pixels."
+    },
+    {
+      "reference": "light-text.png",
+      "reference_sha256": "c6d9a292c098028d97ccbc8a1c7c13257cb2ac36260c17de7756c37815b94e41",
+      "region": "incoming_identity",
+      "kind": "truthful-identity",
+      "observed_native_value": "Merged commit \u00b7 017b782636",
+      "reason": "Deterministic fixture commits differ from illustrative mockup commits. Role wording describes the verified Git source.",
+      "acceptance_rule": "Accept only verified fixture commit prefixes and truthful side roles; branch names require unique refs. No exception for geometry, font, truncation or other header content."
+    },
+    {
+      "reference": "dark-text.png",
+      "reference_sha256": "58d318edc976d5c85f49d9ff4784df665479898f891ec36f578045779d346ef2",
+      "region": "incoming_identity",
+      "kind": "truthful-identity",
+      "observed_native_value": "Merged commit \u00b7 017b782636",
+      "reason": "Deterministic fixture commits differ from illustrative mockup commits. Role wording describes the verified Git source.",
+      "acceptance_rule": "Accept only verified fixture commit prefixes and truthful side roles; branch names require unique refs. No exception for geometry, font, truncation or other header content."
+    }
+  ],
+  "requirements": {
+    "spacing": "Kirigami.Units and font metrics; observed pixels are not literal constraints",
+    "palette": "Kirigami.Theme roles; only background-role line-fill shades may differ from HTML role-text mixing",
+    "aligned_boundary": "List header and file toolbar hairlines align; HTML list height 38 versus file header 40 is a reference defect, not permission to misalign",
+    "window_720": "Each text pane at least eight measured rows; controls reachable directly, by page scroll, or native overflow",
+    "window_800": "Supplemental captures; file rows must remain single line",
+    "window_960": "Owner waiver of strict control-fit and pane-height; scrolling/first-undecided visibility remain required",
+    "comparison": "No masks, thresholds, replacement screenshots or global similarity score; all changed pixels reported"
+  },
+  "baseline_observations": {
+    "row_pitch": {
+      "native": 18,
+      "reference": 20,
+      "decision": "Font line spacing plus smallSpacing governs; keep row-height/scroll/budget synchronized; literal 20 is not a repair."
+    },
+    "header_inset": {
+      "native": 8,
+      "reference": 12,
+      "decision": "largeSpacing governs; native largeSpacing is 8. Do not hardcode 12."
+    },
+    "sidebar_width": {
+      "native": 252,
+      "reference": 262,
+      "decision": "14 * native gridUnit 18 = 252; resizable. Do not hardcode 262."
+    },
+    "file_toolbar_height": {
+      "native": 34,
+      "reference": 40,
+      "decision": "Native ActionToolBar row height governs; list header boundary must align."
+    },
+    "footer_height": {
+      "native": 30,
+      "reference": 28,
+      "decision": "One actual smallFont line plus theme spacing and native frame/separator allowances; inspect missing/excess padding rather than force 28."
+    }
+  },
+  "reference_pixel_scale": 1.5,
+  "reference_logical_size": [
+    1280,
+    720
+  ],
+  "reference_decoded_size": [
+    1920,
+    1080
+  ]
+}

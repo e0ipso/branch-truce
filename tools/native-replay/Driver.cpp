@@ -4,6 +4,8 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFont>
+#include <QFontInfo>
+#include <QIcon>
 #include <QGuiApplication>
 #include <QImage>
 #include <QJsonArray>
@@ -14,6 +16,15 @@
 #include <QPointer>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QQuickStyle>
+#include <QQuickTextDocument>
+#include <QQmlComponent>
+#include <QQmlEngine>
+#include <QPalette>
+#include <QSettings>
+#include <QScreen>
+#include <QTextBlock>
+#include <QTextLayout>
 #include <QRegularExpression>
 #include <QTest>
 #include <QTimer>
@@ -47,6 +58,57 @@ QQuickItem *find(QQuickItem *item, const QString &target, bool path = false) {
         if (auto *found = find(child, target, path)) return found;
     return nullptr;
 }
+QJsonObject fontInfo(const QFont &font) {
+    const QFontInfo resolved(font);
+    return {{"requestedFamily", font.family()}, {"resolvedFamily", resolved.family()},
+            {"pointSize", font.pointSizeF()}, {"pixelSize", resolved.pixelSize()},
+            {"exactMatch", resolved.exactMatch()}};
+}
+QJsonObject profile() {
+    // Probe theme roles in the application's engine, without changing its scene.
+    static QPointer<QObject> probe;
+    if (!probe) {
+        auto *engine = qmlEngine(window);
+        if (!engine) qFatal("Native scene has no QML engine");
+        QQmlComponent component(engine);
+        component.setData(R"QML(
+import QtQuick
+import org.kde.kirigami as K
+Item {
+    visible: false
+    property font normalFont: K.Theme.defaultFont
+    property font smallFont: K.Theme.smallFont
+    property font fixedFont: K.Theme.fixedWidthFont
+    readonly property var units: ({gridUnit: K.Units.gridUnit, smallSpacing: K.Units.smallSpacing,
+                                   mediumSpacing: K.Units.mediumSpacing, largeSpacing: K.Units.largeSpacing})
+
+}
+)QML", QUrl("native-calibration.qml"));
+        probe = component.create();
+        if (!probe) qFatal("Cannot observe Kirigami profile: %s", qPrintable(component.errorString()));
+        probe->setParent(engine);
+        qobject_cast<QQuickItem *>(probe)->setParentItem(window->contentItem());
+    }
+    QJsonObject fonts;
+    for (const auto *key : {"normal", "small", "fixed"})
+        fonts[key] = fontInfo(probe->property((QByteArray(key)+"Font").constData()).value<QFont>());
+    QSettings settings(qEnvironmentVariable("XDG_CONFIG_HOME")+"/kdeglobals", QSettings::IniFormat);
+    const auto actualPalette = QGuiApplication::palette();
+    const QJsonObject palette{{"window", actualPalette.color(QPalette::Window).name()},
+        {"viewBase", actualPalette.color(QPalette::Base).name()},
+        {"viewAlternateBase", actualPalette.color(QPalette::AlternateBase).name()},
+        {"text", actualPalette.color(QPalette::Text).name()},
+        {"disabledText", actualPalette.color(QPalette::Disabled, QPalette::Text).name()},
+        {"highlight", actualPalette.color(QPalette::Highlight).name()}};
+    auto *screen = window->screen();
+    return {{"qtVersion", qVersion()}, {"colourScheme", settings.value("ColorScheme").toString()}, {"platform", QGuiApplication::platformName()},
+            {"quickControlsStyle", QQuickStyle::name()}, {"iconTheme", QIcon::themeName()},
+            {"fallbackIconTheme", QIcon::fallbackThemeName()}, {"fonts", fonts},
+            {"units", value(probe->property("units"))}, {"palette", palette},
+            {"devicePixelRatio", window->devicePixelRatio()},
+            {"logicalDpi", screen->logicalDotsPerInch()}, {"physicalDpi", screen->physicalDotsPerInch()},
+            {"screenName", screen->name()}, {"physicalDesktop", false}};
+}
 QJsonObject snapshot() {
     QJsonObject state;
     QJsonArray items;
@@ -59,11 +121,31 @@ QJsonObject snapshot() {
                 {"activeFocus", item->hasActiveFocus()}, {"opacity", item->opacity()}};
             if (auto *accessible = QAccessible::queryAccessibleInterface(item))
                 row["accessibleName"] = accessible->text(QAccessible::Name);
-            for (const auto *key : {"text", "path", "fileId", "contentY", "cursorPosition", "checked", "rows", "folds"}) {
+            for (const auto *key : {"text", "path", "fileId", "contentY", "cursorPosition", "checked", "rows", "folds",
+                                   "rowHeight", "lineSpacing", "color", "schemeBackground"}) {
                 const auto property = item->property(key);
                 if (property.isValid()) row[key] = value(property);
             }
             if (item->property("font").isValid()) row["font"] = item->property("font").value<QFont>().toString();
+            if (item->objectName().endsWith("Label") && item->parentItem() && item->parentItem()->parentItem()) {
+                auto *header = item->parentItem()->parentItem()->parentItem();
+                if (header) {
+                    const auto p = header->mapToScene(QPointF());
+                    row["ancestorGeometry"] = QJsonArray{p.x(), p.y(), header->width(), header->height()};
+                    row["ancestorColor"] = value(header->property("color"));
+                }
+            }
+            if (item->objectName() == "stage2Text") {
+                auto *quick = item->property("textDocument").value<QQuickTextDocument *>();
+                QJsonArray formats;
+                if (quick) for (auto block = quick->textDocument()->begin(); block.isValid(); block = block.next()) {
+                    for (const auto &range : block.layout()->formats())
+                        formats.append(QJsonObject{{"line", block.blockNumber()+1}, {"start", range.start},
+                            {"length", range.length}, {"foreground", range.format.foreground().color().name()},
+                            {"weight", range.format.fontWeight()}});
+                }
+                row["syntaxFormats"] = formats;
+            }
             items.append(row);
         }
         for (auto *child : item->childItems()) self(self, child);
@@ -72,6 +154,7 @@ QJsonObject snapshot() {
     state["items"] = items;
     state["width"] = window->width();
     state["height"] = window->height();
+    state["profile"] = profile();
     if (auto *file = selected())
         for (const auto *key : {"path", "status", "unsaved", "undecided", "progress", "regions", "choices", "decisions",
                                "resultText", "passages", "markerBlocks", "pendingInput", "recoveryState"})

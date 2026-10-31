@@ -16,6 +16,7 @@ import zlib
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/native-replay'))
+from NativeCalibrationTests import ContractTests
 from fixture import PATHS, git, make_fixture, png, reference_bytes, unmerged
 from replay import NativeClient, OwnedResources, await_compositor, private_environment, replay_lock
 
