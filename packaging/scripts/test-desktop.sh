@@ -3,7 +3,7 @@
 set -euo pipefail
 version="${1:?version}"; test_uid="${2:?uid}"; test_gid="${3:?gid}"
 [ "$test_uid" -ne 0 ] || { echo 'error: tests require an unprivileged user' >&2; exit 2; }
-work="$(mktemp -d /tmp/bt-ci.XXXXXX)"
+work="$(mktemp -d /var/tmp/bt-ci.XXXXXX)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/repo" "$work/home" /reports
 # Exclude disposable outputs before copying, including private agent metadata.
@@ -52,5 +52,11 @@ runuser -u "$test_user" -- env HOME="$work/home" bash -euc '
     result=0
     ctest --test-dir "$work/build" --parallel 2 --output-on-failure --output-junit /reports/ctest.xml || result=$?
     cp "$work/build/Testing/Temporary/LastTest.log" /reports/LastTest.log
+    # CTest and packaging do not collect native fidelity evidence. Run both
+    # sizes even after a CTest failure, retaining independent command receipts.
+    native_result=0
+    python3 "$work/repo/tools/native-replay/ci.py" --source "$work/repo" \
+        --build "$work/build" --output /reports/native || native_result=$?
+    [ "$native_result" -eq 0 ] || result="$native_result"
     exit "$result"
 ' bash "$work" "$version"

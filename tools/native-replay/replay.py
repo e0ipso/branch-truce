@@ -4,6 +4,7 @@ import argparse
 from contextlib import contextmanager
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import selectors
@@ -50,7 +51,8 @@ def replay_lock(path=None):
 
 class OwnedResources:
     """Own only this invocation's private directory and process groups."""
-    def __init__(self):
+    def __init__(self, cleanup_receipt=None):
+        self.cleanup_receipt = cleanup_receipt
         self.directory = tempfile.TemporaryDirectory(prefix='bt-r-', dir='/var/tmp')
         self.root = Path(self.directory.name)
         self.processes = []
@@ -92,6 +94,11 @@ class OwnedResources:
             log.close()
         self.directory.cleanup()
         require(not self.root.exists(), f'Private replay directory survived cleanup: {self.root}')
+        if self.cleanup_receipt:
+            write_json(self.cleanup_receipt, dict(private_root=str(self.root),
+                private_root_removed=not self.root.exists(),
+                owned_processes_reaped=all(process.returncode is not None for process in self.processes),
+                unrelated_outputs_touched=False))
 
     def __enter__(self):
         return self
@@ -136,18 +143,34 @@ def await_compositor(process, log, timeout=30):
 
 
 class NativeClient:
-    def __init__(self, channel):
+    def __init__(self, channel, diagnostics=None):
+        self.diagnostics = diagnostics
+        self.sequence = 0
         self.channel = channel
         self.channel.settimeout(40)
         self.reader = channel.makefile('rb')
 
     def command(self, action='wait', **kwargs):
-        self.channel.sendall(json.dumps(dict(action=action, **kwargs)).encode() + b'\n')
+        request = dict(action=action, **kwargs)
+        self.sequence += 1
+        if self.diagnostics:
+            write_json(self.diagnostics / 'last-request.json', dict(sequence=self.sequence, **request))
+        self.channel.sendall(json.dumps(request).encode() + b'\n')
         line = self.reader.readline(4 * 1024 * 1024)
         require(line.endswith(b'\n'), 'Native driver closed or returned an incomplete reply')
         reply = json.loads(line)
+        if self.diagnostics:
+            write_json(self.diagnostics / 'last-reply.json', reply)
+            with (self.diagnostics / 'actions.jsonl').open('a') as log:
+                log.write(json.dumps(dict(sequence=self.sequence, request=request, error=reply['error'])) + '\n')
         require(not reply['error'], reply['error'])
         return reply['state']
+
+    def toolbar(self, target):
+        return self.command('toolbar-click', target=target)
+
+    def source_menu(self, side, line, gesture='right-click'):
+        return self.command('source-menu', target=side + 'Text', line=line, gesture=gesture)
 
     def close(self):
         self.reader.close()
@@ -155,11 +178,64 @@ class NativeClient:
 
 
 def item(state, name):
-    return next(row for row in state['items'] if row['name'] == name)
+    matches = [row for row in state['items'] if row['name'] == name and row.get('onScreen', True)]
+    require(len(matches) == 1, f'{name}: expected one reachable control, observed {matches}')
+    return matches[0]
+
+
+def verify_prominent_actions(state):
+    for name in ('saveDraft', 'markResolved'):
+        control = item(state, name)
+        require(control['x'] >= 0 and control['y'] >= 0
+                and control['x'] + control['width'] <= state['width']
+                and control['y'] + control['height'] <= state['height'],
+                f'{name} must remain prominent and fully reachable: {control}')
+
+
+def verify_window(state):
+    if not any(row['name'] == 'comparisonView' for row in state['items']):
+        return
+    pitch = item(state, 'comparisonView')['rowHeight']
+    for name in ('stage2Viewport', 'resultViewport', 'stage3Viewport'):
+        pane = item(state, name)
+        require(pitch > 0 and pane['height'] >= 8 * pitch, f'{name} has fewer than eight rows: {pane}')
+    for name in ('stage2Identity', 'stage3Identity'):
+        identity = item(state, name)
+        require(not identity['truncated'], f'{name} truncated at {state["width"]}x{state["height"]}: {identity}')
+
+
+def verify_decided_controls(state):
+    for scope in ('section/1/392/446', 'section/2/392/450'):
+        for kind in ('Accept', 'Ignore', 'Menu'):
+            require(not any(row['name'] == f'choice{kind}-{scope}' and row.get('onScreen', True)
+                            for row in state['items']), f'Decided range retains {kind} chrome: {scope}')
+
+
+def verify_line_cue(state, pane, line, kind, fill=True):
+    details = state['renderedDetails']
+    glyphs = [row for row in details if row.get('line') == line and row.get('kind')
+              and pane + 'GutterMarkerSlot' in row.get('ancestors', [])]
+    require(len(glyphs) == 1 and glyphs[0]['kind'] == kind,
+            f'{pane}:{line} must have exactly one {kind} glyph: {glyphs}')
+    backgrounds = [row for row in details if row.get('line') == line
+                   and pane + 'BackgroundsLines' in row.get('ancestors', [])]
+    require((len(backgrounds) == 1 and backgrounds[0].get('kind') == kind) if fill else not backgrounds,
+            f'{pane}:{line} background differs from {kind}, fill={fill}: {backgrounds}')
 
 
 def verify_text(state, repo):
     require(state['path'] == 'src/net/retry.cpp', 'Wrong text file selected')
+    verify_prominent_actions(state)
+    verify_window(state)
+    verify_decided_controls(state)
+    for pane, line, kind, fill in [('stage3', 4, 'added', True), ('result', 4, 'added', True),
+                                   ('stage2', 16, 'changed', True), ('result', 22, 'changed', True),
+                                   ('stage2', 19, 'accepted', True), ('result', 25, 'accepted', True),
+                                   ('stage3', 20, 'ignored', False)]:
+        verify_line_cue(state, pane, line, kind, fill)
+    require(int(state['progress']['conflicts']) == 1, 'Expected one actual conflict region')
+    require(int(state['progress']['undecided']) == 8, 'Separate source decisions changed')
+    require(item(state, 'undecidedCounter')['text'] == '1 conflict left', 'Conflict stepper count differs')
     for name, side in [('stage2Text', 'left'), ('stage3Text', 'right')]:
         require(item(state, name)['text'].encode() == reference_bytes(f'expected-{side}.cpp'), f'{side} source bytes differ')
     require(state['resultText'].encode() == reference_bytes('expected-result.cpp'), 'Result bytes differ')
@@ -186,15 +262,46 @@ def verify_text(state, repo):
 
 def verify_binary(state):
     require(state['path'] == 'assets/logo.png', 'Wrong binary file selected')
+    verify_prominent_actions(state)
+    require(item(state, 'selectedProblem')['text'] == 'Binary files are resolved outside Branch Truce',
+            'Binary heading lost its exclusion meaning')
+    explanation = item(state, 'selectedProblem')['explanation']
+    require('logo.png' in explanation and 'git add assets/logo.png' in explanation
+            and 'Git' in explanation, 'Concrete binary guidance missing')
     require(not item(state, 'markResolved')['enabled'] and not item(state, 'saveDraft')['enabled'],
             'Binary save/resolution must stay disabled')
     require(item(state, 'workflowStatus')['text'] == '1 of 3 files resolved', 'Resolved count changed')
     require(item(state, 'fileFacts')['text'] == 'PNG image · 18.20 KiB', 'Wrong binary facts')
 
 
+def callout_closeups(state, shot, image_tool, output):
+    output.mkdir()
+    regions = {}
+    for name in ('fileList', 'selectedPath', 'fileToolBar', 'stage2Identity', 'stage3Identity',
+                 'stage2Gutter', 'resultGutter', 'stage3Gutter', 'stage2Bands', 'stage3Bands',
+                 'stage2LeftEdge', 'stage2RightEdge', 'stage3LeftEdge', 'stage3RightEdge', 'selectedProblem'):
+        matches = [row for row in state['items'] if row['name'] == name]
+        if len(matches) != 1:
+            continue
+        row = matches[0]
+        x, y = max(0, math.floor(row['x'])), max(0, math.floor(row['y']))
+        right = min(state['width'], math.ceil(row['x'] + row['width']))
+        bottom = min(state['height'], math.ceil(row['y'] + row['height']))
+        if right <= x or bottom <= y:
+            continue
+        rect = [x, y, right-x, bottom-y]
+        destination = output / f'{name}.png'
+        subprocess.run([str(image_tool), '--crop', str(shot), str(destination), *map(str, rect)], check=True)
+        regions[name] = dict(observed_scene_rect=[row[key] for key in ('x', 'y', 'width', 'height')],
+                             native_pixel_crop=rect, file=destination.name,
+                             acceptance='pending original-image inspection; native diagnostic only')
+    write_json(output / 'callout-regions.json', dict(original=str(shot), regions=regions,
+               transforms='exact native pixels, no scaling, overlays or target substitution'))
+
+
 def capture_one(args, driver, out, theme, repeat):
     captures = []
-    with OwnedResources() as owned:
+    with OwnedResources(out / 'cleanup.json') as owned:
         env = private_environment(owned.root / 'home')
         fixture_root = owned.root / 'fixture'
         fixture = make_fixture(fixture_root)
@@ -230,7 +337,7 @@ def capture_one(args, driver, out, theme, repeat):
         require(len(outputs) == 1 and outputs[0]['active'] and outputs[0]['rect']['width'] == 1280
                 and outputs[0]['rect']['height'] == args.height, 'Private output geometry differs')
         parent, child = socket.socketpair()
-        client = NativeClient(parent)
+        client = NativeClient(parent, out)
         app_env = dict(env, LD_PRELOAD=str(driver), BRANCH_TRUCE_REPLAY_FD=str(child.fileno()))
         try:
             app, _ = owned.spawn([str(args.build / 'src/app/branch-truce'), '--mergetool-path',
@@ -244,11 +351,23 @@ def capture_one(args, driver, out, theme, repeat):
             client.command(path='docs/release-notes.md', target='choiceAccept-section/1/17/37')
             client.command('click', target='choiceAccept-section/1/17/37')
             client.command('click', target='choiceIgnore-section/2/17/46')
-            client.command('click', target='markResolved')
+            client.toolbar('markResolved')
             client.command(target='workflowStatus', text='1 of 3 files resolved')
             client.command('click-path', target='src/net/retry.cpp')
-            client.command('click', path='src/net/retry.cpp', target='undoCommand')
-            client.command('click', target='redoCommand')
+            client.command(path='src/net/retry.cpp')
+            client.toolbar('undoCommand')
+            undone = client.command()
+            write_json(out / 'undo-state.json', undone)
+            require(any(row['name'] == 'choiceIgnore-section/2/392/450' and row.get('onScreen', True)
+                        for row in undone['items']), 'Undo must restore undecided controls')
+            client.toolbar('redoCommand')
+            for side, line, gesture in [('stage2', 19, 'Menu'), ('stage3', 20, 'Shift+F10'),
+                                         ('stage2', 10, 'right-click')]:
+                menu = client.source_menu(side, line, gesture)
+                require(any(row['name'].startswith('choiceResolve-') for row in menu['items']),
+                        f'{gesture} did not open a real range menu at {side}:{line}')
+                write_json(out / f'{side}-{line}-menu-state.json', menu)
+                client.command('escape')
             client.command('click', target='stage2Label')
             state = client.command('neutral')
             verify_text(state, repo)
@@ -257,6 +376,15 @@ def capture_one(args, driver, out, theme, repeat):
                     client.command('click-path', target='assets/logo.png')
                     state = client.command('neutral', path='assets/logo.png')
                     verify_binary(state)
+                    client.command('click-accessible', target='Technical details')
+                    details = client.command()
+                    diagnostic = item(details, 'selectedProblemDiagnostic')
+                    require(diagnostic['text'] == details['supportDetail'] and 'UTF-8' in diagnostic['text'],
+                            'Technical details changed or lost the captured decoder diagnostic')
+                    require(diagnostic['readOnly'] and diagnostic['textFormat'] == 0,
+                            'Technical details must remain selectable plain text')
+                    write_json(out / 'binary-details-state.json', details)
+                    client.command('escape')
                 state = client.command('capture-ready', path='src/net/retry.cpp' if kind == 'text' else 'assets/logo.png')
                 if kind == 'text':
                     verify_text(state, repo)
@@ -281,10 +409,37 @@ def capture_one(args, driver, out, theme, repeat):
                                 reference_contract_sha256=sha256(HERE / 'reference-contract.json'))
                 validate_profile(state, metadata)
                 write_json(out / f'{name}-state.json', dict(metadata=metadata, state=state))
+                callout_closeups(state, shot, driver.parent / 'native-replay-image', out / f'{name}-callouts')
                 compare(args.source, shot, state, driver.parent / 'native-replay-image', out / f'{name}-comparison')
                 captures.append(dict(file=str(shot), **metadata))
+            if getattr(args, 'documentation', False) and repeat == 1 and theme == 'light':
+                docs = args.output / 'documentation-readme'
+                docs.mkdir()
+                preview_env = dict(env, PREVIEW_FILE='notes.md', PREVIEW_SIZE='1440x900',
+                                   PREVIEW_OUTPUT=str(docs))
+                with (docs / 'preview.log').open('wb') as log:
+                    subprocess.run([str(args.source / 'tools/preview-app.sh'),
+                                    str(args.build / 'src/app/branch-truce')],
+                                   env=preview_env, stdout=log, stderr=subprocess.STDOUT, check=True)
+                write_json(docs / 'provenance.json', dict(
+                    command=['tools/preview-app.sh', str(args.build / 'src/app/branch-truce')],
+                    environment={key: preview_env[key] for key in ('PREVIEW_FILE', 'PREVIEW_SIZE')},
+                    captured_at_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+                    executable_sha256=sha256(args.build / 'src/app/branch-truce'),
+                    build_provenance='../build-provenance.json', physical_desktop=False,
+                    images={path.name: sha256(path) for path in docs.glob('*.png')},
+                    acceptance='pending original-image inspection; development build, not installed validation'))
             client.command('quit')
             require(app.wait(timeout=10) == 0, 'Application exit failed')
+        except BaseException as error:
+            # Keep the actual failing scene even when a semantic/readiness check
+            # stops the replay before its normal capture boundary.
+            failure = subprocess.run(['grim', '-o', outputs[0]['name'], str(out / 'failure.png')],
+                                     env=env, capture_output=True)
+            write_json(out / 'failure.json', dict(error=str(error), capture_exit=failure.returncode,
+                capture_stderr=failure.stderr.decode(errors='replace'),
+                scene='actual private output at failure; not an approved final state'))
+            raise
         finally:
             child.close()
             client.close()
@@ -294,9 +449,6 @@ def capture_one(args, driver, out, theme, repeat):
         compositor.wait(timeout=10)
         drain_thread.join(timeout=5)
         require(not drain_thread.is_alive(), 'Compositor log reader did not finish')
-        private_root = str(owned.root)
-    write_json(out / 'cleanup.json', dict(private_root=private_root, private_root_removed=True,
-                                         owned_processes_reaped=True, unrelated_outputs_touched=False))
     return captures
 
 
@@ -348,6 +500,7 @@ def main():
     native.add_argument('--build', required=True, type=Path)
     native.add_argument('--output', required=True, type=Path)
     native.add_argument('--height', type=int, choices=(720, 800), default=720)
+    native.add_argument('--documentation', action='store_true', help='Also retain the fresh README preview pair')
     native.add_argument('--repeat', type=int, default=2)
     args = parser.parse_args()
     def interrupted(signum, _frame):

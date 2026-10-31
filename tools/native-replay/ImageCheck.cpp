@@ -8,6 +8,19 @@
 
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
+    if (argc == 8 && QByteArray(argv[1]) == "--crop") {
+        const QImage image(QString::fromLocal8Bit(argv[2]));
+        int coordinates[4];
+        for (int i = 0; i < 4; ++i) {
+            bool ok = false;
+            coordinates[i] = QString::fromLocal8Bit(argv[4 + i]).toInt(&ok);
+            if (!ok) return 2;
+        }
+        const QRect rect(coordinates[0], coordinates[1], coordinates[2], coordinates[3]);
+        if (image.isNull() || rect.isEmpty() || !image.rect().contains(rect)) return 2;
+        // Diagnostic close-ups retain exact native pixels, with no scaling or paint.
+        return image.copy(rect).save(QString::fromLocal8Bit(argv[3])) ? 0 : 2;
+    }
     if ((argc == 13 || argc == 15 || argc == 19) && QByteArray(argv[1]) == "--artifacts") {
         const QImage reference(QString::fromLocal8Bit(argv[2])), native(QString::fromLocal8Bit(argv[3]));
         const QString prefix = QString::fromLocal8Bit(argv[4]);

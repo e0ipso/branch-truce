@@ -17,8 +17,9 @@ import zlib
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/native-replay'))
 from NativeCalibrationTests import ContractTests
+from ledger import assemble
 from fixture import PATHS, git, make_fixture, png, reference_bytes, unmerged
-from replay import NativeClient, OwnedResources, await_compositor, private_environment, replay_lock
+from replay import NativeClient, OwnedResources, await_compositor, private_environment, replay_lock, item
 
 
 class FixtureTests(unittest.TestCase):
@@ -210,6 +211,68 @@ class ReadinessTests(unittest.TestCase):
                 client.close()
                 worker.join(timeout=5)
             self.assertFalse(worker.is_alive())
+
+
+class AcceptanceEvidenceTests(unittest.TestCase):
+    def test_control_lookup_rejects_hidden_measurement_duplicates(self):
+        visible = dict(name='saveDraft', onScreen=True, enabled=True)
+        hidden = dict(name='saveDraft', onScreen=False, enabled=True)
+        self.assertEqual(item(dict(items=[hidden, visible]), 'saveDraft'), visible)
+        with self.assertRaisesRegex(RuntimeError, 'expected one reachable control'):
+            item(dict(items=[hidden]), 'saveDraft')
+        with self.assertRaisesRegex(RuntimeError, 'expected one reachable control'):
+            item(dict(items=[visible, visible]), 'saveDraft')
+
+    def test_failed_native_action_retains_request_and_full_reply(self):
+        with tempfile.TemporaryDirectory(dir='/var/tmp') as directory:
+            root = Path(directory)
+            parent, child = socket.socketpair()
+            client = NativeClient(parent, root)
+            response = dict(error='control clipped', state=dict(width=1280, height=720))
+            def respond():
+                with child, child.makefile('rb') as reader:
+                    reader.readline()
+                    child.sendall(json.dumps(response).encode() + b'\n')
+            worker = threading.Thread(target=respond)
+            worker.start()
+            try:
+                with self.assertRaisesRegex(RuntimeError, 'control clipped'):
+                    client.toolbar('undoCommand')
+            finally:
+                client.close()
+                worker.join(timeout=5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(json.loads((root / 'last-reply.json').read_text()), response)
+            request = json.loads((root / 'last-request.json').read_text())
+            self.assertEqual((request['action'], request['target']), ('toolbar-click', 'undoCommand'))
+
+    def test_ledger_keeps_missing_runs_and_measured_residuals_outstanding(self):
+        with tempfile.TemporaryDirectory(dir='/var/tmp') as directory:
+            root = Path(directory)
+            comparison = root / '720/replay-1-light/light-text-comparison'
+            comparison.mkdir(parents=True)
+            (comparison / 'comparison.json').write_text(json.dumps(dict(regions=dict(
+                syntax=dict(status='outstanding', differing_pixels=12, native_rect=[0, 0, 4, 3],
+                            reference_logical_rect=[0, 0, 4, 3], count_unit='common-grid cells')))))
+            ledger = assemble(root)
+            self.assertFalse(ledger['originals_inspected'])
+            self.assertTrue(all(row['outcome'] == 'pending-independent-inspection' for row in ledger['callouts']))
+            row = next(row for row in ledger['callouts'] if row['behavior'] == 'passage-kinds')
+            self.assertEqual(row['residuals'][0]['differing_pixels'], 12)
+            self.assertEqual(len(row['missing_evidence']), 2)
+            self.assertIsNone(row['original_inspection'])
+
+    def test_error_cleanup_publishes_only_actual_owned_disposition(self):
+        with tempfile.TemporaryDirectory(dir='/var/tmp') as directory:
+            receipt = Path(directory) / 'cleanup.json'
+            with self.assertRaisesRegex(RuntimeError, 'interrupted replay'):
+                with OwnedResources(receipt) as owned:
+                    private = owned.root
+                    raise RuntimeError('interrupted replay')
+            evidence = json.loads(receipt.read_text())
+            self.assertFalse(private.exists())
+            self.assertTrue(evidence['private_root_removed'])
+            self.assertTrue(evidence['owned_processes_reaped'])
 
 
 if __name__ == '__main__':

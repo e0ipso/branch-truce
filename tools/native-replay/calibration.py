@@ -218,6 +218,7 @@ def capture_inputs(source):
     paths = [p for folder in ('src', 'tools/native-replay') for p in (source / folder).rglob('*')
              if p.is_file() and '__pycache__' not in p.parts]
     paths.append(source / 'docs/ui-design.md')
+    paths.append(source / 'tests/acceptance/fidelity-ledger.json')
     return {str(p.relative_to(source)): sha256(p) for p in sorted(paths)}
 
 

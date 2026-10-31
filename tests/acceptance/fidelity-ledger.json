@@ -1,0 +1,511 @@
+{
+  "version": 1,
+  "status": "pending-fresh-CI-and-independent-inspection",
+  "policy": "Inspect every original final PNG before derivatives. Every unexplained difference remains outstanding. Only reference-contract narrow exceptions apply; no masks, rewritten targets or overall match score.",
+  "historical_documentation_citations": [
+    "docs/build.md:228 formerly described notes.md at 1440x900; current recipe docs/build.md Preview",
+    "README.md:16 and historical 1600x960 C++ merge captures",
+    "docs/ui-mockup/README.md:17 and docs/ui-design.md:377 formerly listed unimplemented elements",
+    "src/ui/SessionFooter.qml:38, src/ui/ChoiceButtons.qml:88, src/ui/FoldedRows.qml:76 current implementation citations; line numbers drift"
+  ],
+  "runtime_outcomes": "not executed during authoring; all pending",
+  "callouts": [
+    {
+      "behavior": "conflict-count",
+      "requirement": "One real constants conflict, independent outstanding source decisions; count, row and previous/next/count-click agree; empty/outside-app navigation disabled.",
+      "citations": [
+        "src/ui/MainToolBar.qml",
+        "src/app/SessionModel.cpp",
+        "tests/app/ComparisonViewTests.cpp"
+      ],
+      "calibrated_regions": [
+        "header",
+        "sidebar"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "passage-kinds",
+      "requirement": "Right/result line 4 random include is added; left 16/result 22 send call is changed; only genuine conflicts are negative. Decisions remain outstanding.",
+      "citations": [
+        "src/ui/PaneMarks.cpp",
+        "src/ui/ConnectorBands.cpp",
+        "tests/app/TextBlocksTests.cpp"
+      ],
+      "calibrated_regions": [
+        "syntax"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "accepted-result",
+      "requirement": "Accepted left 19 and result 25 have positive fill, exactly one check and accepted connector; word differences remain legible.",
+      "citations": [
+        "src/ui/ResultPane.qml",
+        "tests/app/ComparisonViewTests.cpp"
+      ],
+      "calibrated_regions": [
+        "accepted_fill",
+        "glyph"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "ignored-source",
+      "requirement": "Ignored right 20 is readable, muted, cross-marked and has no whole-line fill.",
+      "citations": [
+        "src/ui/SourcePane.qml",
+        "tests/app/ComparisonViewTests.cpp"
+      ],
+      "calibrated_regions": [
+        "syntax"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "compact-choice-lane",
+      "requirement": "Two native buttons; left Ignore/Accept and right Accept/Ignore toward result; evaluate 46px reference using native units, never the obsolete 80px estimate.",
+      "citations": [
+        "src/ui/ChoiceButtons.qml",
+        "docs/ui-design.md"
+      ],
+      "calibrated_regions": [
+        "syntax"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "range-start-controls",
+      "requirement": "One primary pair at constants left 10/right 11; no duplicate on later lines or wrapped continuations. All precise scopes remain reachable.",
+      "citations": [
+        "src/ui/ChoiceLane.qml",
+        "tests/acceptance/JourneyAcceptanceTests.cpp"
+      ],
+      "calibrated_regions": [
+        "syntax"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "decided-control-lifecycle",
+      "requirement": "Accepted left 19 and ignored right 20 lose persistent controls; Undo restores and Redo/recovery removes them; real editor context routes retain available actions and focus.",
+      "citations": [
+        "src/ui/ChoiceButtons.qml",
+        "tools/native-replay/replay.py"
+      ],
+      "calibrated_regions": [
+        "syntax"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "result-gutter",
+      "requirement": "Number plus one state glyph; no permanent B/L/R or decision reservation. Tooltip/accessibility retains provenance, gaps and decisions. Folded 11 jumps to 18 with warning.",
+      "citations": [
+        "src/ui/LineGutter.qml",
+        "tests/app/ComparisonViewTests.cpp"
+      ],
+      "calibrated_regions": [
+        "glyph"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "equal-pane-shares",
+      "requirement": "Three balanced usable panes within rounding after charging both complete handles once; explicit user splits persist across choices, edits and file selection.",
+      "citations": [
+        "src/ui/ComparisonView.qml",
+        "tests/app/ComparisonViewTests.cpp"
+      ],
+      "calibrated_regions": [
+        "window"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "continuous-source-fills",
+      "requirement": "Added/changed/conflict/accepted fills meet gutters, code, choice lane and hairlines at full bounds; no detached slabs after scroll/wrap/edit/undo.",
+      "citations": [
+        "src/ui/SourcePane.qml",
+        "src/ui/LineBackgrounds.qml"
+      ],
+      "calibrated_regions": [
+        "syntax",
+        "accepted_fill"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "smooth-ribbons",
+      "requirement": "Full-height curved constants 2-to-1 left and 1-to-2 right transitions; attached tops/bottoms, no point wedges, gaps or notches, matching hover containment.",
+      "citations": [
+        "src/ui/ConnectorHandle.qml",
+        "src/ui/ConnectorBands.cpp",
+        "tests/app/TextBlocksTests.cpp"
+      ],
+      "calibrated_regions": [
+        "syntax"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "connector-hairlines",
+      "requirement": "Both edges of both handles have one continuous theme hairline; no double border; dragging, hover and minimum sizes remain usable.",
+      "citations": [
+        "src/ui/ConnectorHandle.qml",
+        "tests/app/ComparisonViewTests.cpp"
+      ],
+      "calibrated_regions": [
+        "syntax"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "flat-editor-surfaces",
+      "requirement": "Continuous View backgrounds without idle input outlines or incidental number/code rule; native focus, IME, selection, menus and serialization intact.",
+      "citations": [
+        "src/ui/SourcePane.qml",
+        "src/ui/ResultPane.qml"
+      ],
+      "calibrated_regions": [
+        "syntax"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "native-scroll-overflow",
+      "requirement": "No permanent horizontal track for fitting/wrapped code; long unwrapped content reachable by native scrollbar and keyboard; independent horizontal scroll and marker alignment.",
+      "citations": [
+        "tests/app/ComparisonViewTests.cpp",
+        "src/ui/SourcePane.qml"
+      ],
+      "calibrated_regions": [
+        "window"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "heading-hierarchy",
+      "requirement": "Primary/DemiBold sidebar/source/result titles, muted identities, shared baseline/height without wrap or recursive layout; include earlier version.",
+      "citations": [
+        "src/ui/PaneHeader.qml",
+        "src/ui/FileList.qml"
+      ],
+      "calibrated_regions": [
+        "pane_header",
+        "sidebar"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "truthful-source-identity",
+      "requirement": "Actual fixture commit/role; smallFont role plus fixedWidthFont hash, full accessible/tooltip identity and predictable long/ambiguous elision. Normal-width identity fit remains required.",
+      "citations": [
+        "src/ui/PaneHeader.qml",
+        "tests/acceptance/JourneyAcceptanceTests.cpp"
+      ],
+      "calibrated_regions": [
+        "source_identity",
+        "incoming_identity"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "row-pitch",
+      "requirement": "Measure native/reference pitch and native-unit residual; shared rows, wrapped continuations, gutter controls, folds, ribbons and earlier/choice preview agree.",
+      "citations": [
+        "src/ui/CodeRows.qml",
+        "docs/ui-design.md"
+      ],
+      "calibrated_regions": [
+        "syntax"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "header-insets",
+      "requirement": "Measure title/identity from actual pane borders with shared native-unit spacing, baseline, height and full text; include earlier version.",
+      "citations": [
+        "src/ui/PaneHeader.qml"
+      ],
+      "calibrated_regions": [
+        "pane_header"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "chrome-proportions",
+      "requirement": "Measure sidebar/main/file/list/pane/footer bounds and aligned hairlines; one control row and truthful status visibility priority, no formula-only fit claim.",
+      "citations": [
+        "src/ui/FileList.qml",
+        "src/ui/FileToolBar.qml",
+        "src/ui/SessionFooter.qml"
+      ],
+      "calibrated_regions": [
+        "header",
+        "file_header",
+        "footer",
+        "sidebar"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "selected-path-toolbar",
+      "requirement": "Spare width belongs to muted-directory/emphasized-basename path; full tooltip; Save and Mark resolved prominent and all native overflow entries reachable.",
+      "citations": [
+        "src/ui/FileToolBar.qml",
+        "tests/fixtures/QuickScene.h"
+      ],
+      "calibrated_regions": [
+        "file_header"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "sidebar-workflow-order",
+      "requirement": "retry.cpp, release-notes.md, logo.png; display moves preserve exact selection/navigation/edit/save/stage identity across resolve, restore, typing, recovery and failure.",
+      "citations": [
+        "src/app/SessionModel.cpp",
+        "tests/app/SessionModelTests.cpp",
+        "tests/app/StartupRouteTests.cpp"
+      ],
+      "calibrated_regions": [
+        "sidebar"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "sidebar-path-composition",
+      "requirement": "Adjacent filename/directory pairs at regular weight; selected muted secondary text has contrast; directory yields first and full path remains inspectable.",
+      "citations": [
+        "src/ui/FileRow.qml"
+      ],
+      "calibrated_regions": [
+        "sidebar"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "sidebar-plates",
+      "requirement": "Measure title/count/row outer and inner padding, icon gap, first/last row insets; two one-line rows, no clipping at 1280x800, real focus/hover targets within plate.",
+      "citations": [
+        "src/ui/FileList.qml",
+        "src/ui/FileRow.qml"
+      ],
+      "calibrated_regions": [
+        "sidebar"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "verified-resolved-tile",
+      "requirement": "Only genuinely published release notes gets positive emblem-checked tile and Resolved text; saved-only/review-only/failed/uncertain/outstanding rows never imply publication.",
+      "citations": [
+        "src/app/SessionModel.cpp",
+        "src/ui/FileRow.qml",
+        "tests/app/SessionModelTests.cpp"
+      ],
+      "calibrated_regions": [
+        "sidebar"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "outside-app-type-icon",
+      "requirement": "PNG MIME icon in placeholder and toolbar; outside-app sidebar status stays distinct; unknown/unreadable fallbacks truthful.",
+      "citations": [
+        "src/ui/Main.qml",
+        "src/app/SelectedFile.cpp"
+      ],
+      "calibrated_regions": [
+        "placeholder",
+        "file_header"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "binary-guidance",
+      "requirement": "Concrete logo.png and git add assets/logo.png with outstanding-until-Git guidance; exact decoder diagnostic in selectable plain-text details; disabled Save/Mark resolved.",
+      "citations": [
+        "src/ui/Main.qml",
+        "tests/app/ComparisonViewTests.cpp"
+      ],
+      "calibrated_regions": [
+        "placeholder",
+        "footer"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "readable-placeholder",
+      "requirement": "Compact centered measure at both 1280 heights; long names/translations/narrow windows wrap and scroll without overlap; empty/unavailable states distinct and plain text.",
+      "citations": [
+        "src/ui/CenteredPlaceholder.qml",
+        "src/ui/Main.qml"
+      ],
+      "calibrated_regions": [
+        "placeholder"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "strict-window-obligations",
+      "requirement": "1280x720 eight measured rows and reachability; 1280x800 also sidebar no-wrap. Only strict 960 fit is waived; first-region reachability remains required.",
+      "citations": [
+        "tests/acceptance/JourneyAcceptanceTests.cpp"
+      ],
+      "calibrated_regions": [
+        "window"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "shared-reading-dialogs",
+      "requirement": "Earlier/choice previews share fonts, row geometry, headers, focus and selection. No invented PNG target for either dialog.",
+      "citations": [
+        "src/ui/Main.qml",
+        "src/ui/PreviewDialog.qml",
+        "tests/app/ComparisonViewTests.cpp"
+      ],
+      "calibrated_regions": [],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "exact-state-and-history",
+      "requirement": "Exact immutable source/result bytes, accepted left 19, ignored right 20, constants fold 11 to 18, one of three resolved, offline/undo/redo/serialization/recovery semantics.",
+      "citations": [
+        "tools/native-replay/reference/provenance.json",
+        "tests/acceptance/JourneyAcceptanceTests.cpp"
+      ],
+      "calibrated_regions": [
+        "window"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "repeatability-and-provenance",
+      "requirement": "Two independent same-build/theme/size runs compare decoded pixels; executable, profile, reference, source, job and environment identities are retained. Equality is repeatability only.",
+      "citations": [
+        "tools/native-replay/replay.py",
+        "tools/native-replay/calibration.py"
+      ],
+      "calibrated_regions": [
+        "window"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    },
+    {
+      "behavior": "documentation-refresh",
+      "requirement": "Inspect real new README light/dark pair and dated installed-validation evidence before replacing historical images/date labels; preserve supplemental historical/current citations below.",
+      "citations": [
+        "README.md:16",
+        "docs/build.md:228",
+        "docs/ui-mockup/README.md:17",
+        "docs/ui-design.md:377",
+        "src/ui/SessionFooter.qml:38",
+        "src/ui/ChoiceButtons.qml:88",
+        "src/ui/FoldedRows.qml:76"
+      ],
+      "calibrated_regions": [
+        "window"
+      ],
+      "outcome": "pending",
+      "original_inspection": null,
+      "evidence": [],
+      "residuals": []
+    }
+  ]
+}

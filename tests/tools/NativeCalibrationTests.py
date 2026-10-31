@@ -156,6 +156,23 @@ class PixelTests(unittest.TestCase):
                                  *map(str, left), *map(str, right)], capture_output=True)
         return result
 
+    def test_native_closeups_preserve_original_pixels_and_reject_outside_bounds(self):
+        original = self.a.read_bytes()
+        crop = self.root / 'native-closeup.png'
+        subprocess.run([str(IMAGE_TOOL), '--crop', str(self.a), str(crop), '1', '2', '4', '3'], check=True)
+        decoded = json.loads(subprocess.check_output([str(IMAGE_TOOL), str(crop)]))
+        self.assertEqual((decoded['width'], decoded['height']), (4, 3))
+        expected = self.artifacts('expected-closeup', self.a, self.a, (1, 2, 4, 3), (1, 2, 4, 3))
+        self.assertEqual(expected.returncode, 0, expected.stderr)
+        reference = str(self.root / 'expected-closeup-native.png')
+        compared = json.loads(subprocess.check_output([str(IMAGE_TOOL), str(crop), reference]))
+        self.assertEqual(compared['differing_pixels'], 0)
+        bad = self.root / 'invalid-closeup.png'
+        result = subprocess.run([str(IMAGE_TOOL), '--crop', str(self.a), str(bad), '-1', '0', '4', '3'])
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(bad.exists())
+        self.assertEqual(self.a.read_bytes(), original)
+
     def test_identical_and_changed_pixels_are_exact_and_repeatable(self):
         originals = [sha256(p) for p in (self.a, self.b)]
         same = json.loads(self.artifacts('same', self.a, self.a).stdout)

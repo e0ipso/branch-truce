@@ -17,6 +17,7 @@
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QtQml/qqml.h>
+#include <algorithm>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -107,6 +108,23 @@ inline QQuickItem *namedButton(QQuickItem *root, const QString &name)
     return visualButton(root, [&](QQuickItem *button) { return accessibleName(button) == name; });
 }
 
+inline bool reachable(QQuickWindow *window, QQuickItem *item)
+{
+    if (!item || !item->isVisible() || item->width() <= 0 || item->height() <= 0) return false;
+    const auto rect = item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+    if (!QRectF(0, 0, window->width(), window->height()).contains(rect)) return false;
+    for (auto *parent = item->parentItem(); parent; parent = parent->parentItem())
+        if (parent->clip() && !parent->mapRectToScene(parent->boundingRect()).contains(rect)) return false;
+    return true;
+}
+
+inline QQuickItem *reachableButton(QQuickWindow *window, QQuickItem *root, const QString &name)
+{
+    return visualButton(root, [&](QQuickItem *button) {
+        return (button->objectName() == name || accessibleName(button) == name) && reachable(window, button);
+    });
+}
+
 // A popup's root item, under the window overlay, holds its header, content and footer.
 inline QQuickItem *popupRoot(QObject *popup)
 {
@@ -169,25 +187,98 @@ inline QQuickItem *waitForLayout(QQuickWindow *window, const QString &name, int 
 
 inline bool fileOverflowControl(const char *name)
 {
+    // These actions may have hidden measurement delegates as well as live buttons.
+    // Always resolve the visible native control, opening overflow when necessary.
     return QStringList{QStringLiteral("discardUnsaved"), QStringLiteral("copyResult"),
         QStringLiteral("pasteResult"), QStringLiteral("sourceChoicesMenu"),
-        QStringLiteral("showSourceChoices")}.contains(QString::fromLatin1(name));
+        QStringLiteral("showSourceChoices"), QStringLiteral("saveDraft"), QStringLiteral("markResolved"),
+        QStringLiteral("undoCommand"), QStringLiteral("redoCommand"), QStringLiteral("showEarlier"),
+        QStringLiteral("wrapLines"), QStringLiteral("showWhitespace"), QStringLiteral("openPassageSearch")}
+        .contains(QString::fromLatin1(name));
 }
 
-// These commands deliberately live in overflow even in a wide window. Exercise their
-// actual menu controls rather than triggering the action object behind the UI.
+inline std::string controlGeometry(QQuickWindow *window, const QString &name)
+{
+    std::string state = "window=" + std::to_string(window->width()) + "x" + std::to_string(window->height());
+    const auto visit = [&](auto &&self, QQuickItem *item) -> void {
+        if (item->objectName() == name || item->objectName() == "fileToolBar"
+            || accessibleName(item) == "More Actions") {
+            const auto rect = item->mapRectToScene(item->boundingRect());
+            state += "; " + item->objectName().toStdString() + " visible=" + std::to_string(item->isVisible())
+                + " enabled=" + std::to_string(item->isEnabled()) + " reachable=" + std::to_string(reachable(window, item))
+                + " checked=" + std::to_string(item->property("checked").toBool())
+                + " bounds=" + std::to_string(rect.x()) + "," + std::to_string(rect.y()) + ","
+                + std::to_string(rect.width()) + "," + std::to_string(rect.height());
+        }
+        for (auto *child : item->childItems()) self(self, child);
+    };
+    visit(visit, window->contentItem());
+    return state;
+}
+
+// Exercise the actual native button or overflow entry, including disabled ones
+// inspected by callers. Hidden measurement delegates never establish reachability.
 inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, int stableMs = 60)
 {
     const auto controlName = QString::fromLatin1(name);
-    if (auto *button = namedButton(window->contentItem(), controlName)) return button;
-    auto *toolbar = visualItem(window->contentItem(), QStringLiteral("fileToolBar"));
-    if (!toolbar) throw std::runtime_error("missing file toolbar");
-    auto *more = waitForStable(window, "file toolbar overflow", [&] {
-        return namedButton(toolbar, QStringLiteral("More Actions"));
-    }, stableMs);
-    const auto center = more->mapToScene(QPointF(more->width() / 2, more->height() / 2)).toPoint();
-    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
-    return waitForLayout(window, controlName, stableMs);
+    try {
+        if (reachableButton(window, window->contentItem(), controlName))
+            return waitForStable(window, controlName.toStdString(), [&] {
+                return reachableButton(window, window->contentItem(), controlName);
+            }, stableMs);
+        auto *toolbar = visibleItem(window->contentItem(), QStringLiteral("fileToolBar"));
+        if (!toolbar) throw std::runtime_error("missing file toolbar");
+        auto *more = waitForStable(window, "file toolbar overflow", [&] {
+            return reachableButton(window, toolbar, QStringLiteral("More Actions"));
+        }, stableMs);
+        const auto center = more->mapToScene(QPointF(more->width() / 2, more->height() / 2)).toPoint();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
+        return waitForStable(window, controlName.toStdString() + " in native overflow", [&] {
+            return reachableButton(window, window->contentItem(), controlName);
+        }, stableMs);
+    } catch (const std::exception &error) {
+        throw std::runtime_error(std::string(error.what()) + "; " + controlGeometry(window, controlName));
+    }
+}
+
+// Open a range menu at the requested real source line, including decided ranges
+// and later-line scopes that have no permanent gutter button.
+inline void sourceLineMenu(QQuickWindow *window, QQuickItem *editor, QQuickItem *viewport,
+                           int line, int key = 0)
+{
+    auto *quick = editor->property("textDocument").value<QQuickTextDocument *>();
+    if (!quick) throw std::runtime_error("source editor has no document");
+    const auto block = quick->textDocument()->findBlockByNumber(line - 1);
+    if (!block.isValid()) throw std::runtime_error("source line unavailable: " + std::to_string(line));
+    editor->forceActiveFocus();
+    editor->setProperty("cursorPosition", block.position());
+    QRectF rect;
+    CHECK(QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, rect),
+                                    Q_ARG(int, block.position())));
+    const auto top = editor->mapToItem(viewport->property("contentItem").value<QQuickItem *>(), rect.topLeft()).y();
+    const auto offset = viewport->property("contentY").toReal();
+    if (top < offset || top + rect.height() > offset + viewport->height())
+        viewport->setProperty("contentY", std::max<qreal>(0, top - viewport->height() / 2));
+    QPointF previousPoint(-1, -1);
+    QElapsedTimer held;
+    held.start();
+    settleFor("source line " + std::to_string(line), [&] {
+        QRectF current;
+        QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, current),
+                                 Q_ARG(int, block.position()));
+        const auto point = editor->mapToScene(current.center());
+        if (point != previousPoint) held.restart();
+        previousPoint = point;
+        return viewport->contains(viewport->mapFromScene(point))
+            && window->contentItem()->contains(point) && held.elapsed() >= 60;
+    });
+    if (key) {
+        QTest::keyClick(window, static_cast<Qt::Key>(key), key == Qt::Key_F10 ? Qt::ShiftModifier : Qt::NoModifier);
+    } else {
+        CHECK(QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, rect),
+                                        Q_ARG(int, block.position())));
+        QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, editor->mapToScene(rect.center()).toPoint());
+    }
 }
 
 inline void closeFileToolbarMenu(QQuickWindow *window)

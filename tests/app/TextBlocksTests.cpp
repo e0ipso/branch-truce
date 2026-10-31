@@ -190,7 +190,7 @@ int main(int argc, char **argv)
         branch_truce::PaneMarks marks;
         const QVariantList passages{QVariantMap{{"side", "stage2"}, {"kind", "changed"},
             {"resultLineBegin", 1}, {"resultLineEnd", 5}, {"sourceLineBegin", 1}, {"sourceLineEnd", 5}}};
-        const QVariantList regions{QVariantMap{{"side", "stage2"}, {"state", "undecided"}, {"mapped", true},
+        const QVariantList regions{QVariantMap{{"side", "stage2"}, {"state", "undecided"}, {"mapped", true}, {"markersRemain", true},
             {"resultLineBegin", 2}, {"resultLineEnd", 4}, {"sourceLineBegin", 2}, {"sourceLineEnd", 4}}};
         const QVariantList blocks{QVariantMap{{"resultLineBegin", 3}, {"resultLineEnd", 4}, {"folded", true},
             {"markerLines", QVariantList{QVariantMap{{"line", 3}, {"text", "<<<<<<<"}},
@@ -210,6 +210,16 @@ int main(int argc, char **argv)
         block.insert("folded", false);
         ineligible[0] = block;
         CHECK(marks.folds(ineligible, false).value("hidden").toList().isEmpty());
+    });
+    suite.run("an undecided nonconflicting contribution retains its passage kind", [] {
+        branch_truce::PaneMarks marks;
+        const QVariantList passages{QVariantMap{{"side", "stage2"}, {"kind", "changed"},
+            {"resultLineBegin", 2}, {"resultLineEnd", 3}, {"sourceLineBegin", 2}, {"sourceLineEnd", 3}}};
+        const QVariantList regions{QVariantMap{{"side", "stage2"}, {"state", "undecided"}, {"mapped", true},
+            {"resultLineBegin", 2}, {"resultLineEnd", 3}, {"sourceLineBegin", 2}, {"sourceLineEnd", 3}}};
+        for (const auto &pane : {QStringLiteral("stage2"), QStringLiteral("result")})
+            CHECK(marks.marks(pane, passages, regions, {}, {}, {}).value("lines").toMap().value("2").toString() == "changed");
+        CHECK(regions.first().toMap().value("state").toString() == "undecided");
     });
     suite.run("connector bands clip offscreen and follow layout", [] {
         Pane source(QStringLiteral("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"), {});
@@ -247,6 +257,36 @@ int main(int argc, char **argv)
         QCoreApplication::processEvents();
         CHECK(!bands.visibleBands().isEmpty());
         CHECK(!near(before, bands.visibleBands().first().toMap().value("sourceTop").toReal()));
+    });
+    suite.run("curved ribbon hover follows full unequal attachment ends", [] {
+        Pane source(QStringLiteral("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"), {});
+        Pane result(QStringLiteral("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"), {});
+        branch_truce::ConnectorBands bands;
+        bands.setSide("stage2");
+        bands.setSourceBlocks(&source.blocks);
+        bands.setResultBlocks(&result.blocks);
+        bands.setViewportHeight(result.blocks.yAtLine(10));
+        bands.setPassages({QVariantMap{{"side", "stage2"}, {"kind", "changed"},
+            {"sourceLineBegin", 2}, {"sourceLineEnd", 4}, {"resultLineBegin", 7}, {"resultLineEnd", 8}}});
+        CHECK(bands.visibleBands().size() == 1);
+        const auto band = bands.visibleBands().first().toMap();
+        const auto st = band.value("sourceTop").toReal(), sb = band.value("sourceBottom").toReal();
+        const auto rt = band.value("resultTop").toReal(), rb = band.value("resultBottom").toReal();
+        CHECK(sb > st && rb > rt && rt > sb);
+        // At t=1/4, midpoint-control cubic x is 0.296875w and y
+        // interpolation is 0.15625. This point is above the straight wedge.
+        const qreal width = 40, x = width * 0.296875;
+        const qreal top = st + (rt - st) * 0.15625;
+        const qreal bottom = sb + (rb - sb) * 0.15625;
+        for (const bool left : {true, false}) {
+            const auto at = [&](qreal px, qreal py) { return bands.bandAt(left ? px : width - px, py, width, left); };
+            CHECK(!at(x, top + (bottom - top) * 0.1).isEmpty());
+            CHECK(at(x, top - 1).isEmpty());
+            CHECK(!at(0, st).isEmpty() && !at(0, sb).isEmpty());
+            CHECK(!at(width, rt).isEmpty() && !at(width, rb).isEmpty());
+            CHECK(at(-1, st).isEmpty() && at(width + 1, rt).isEmpty());
+            CHECK(at(x, -1).isEmpty());
+        }
     });
     suite.run("Down crosses folded lines and keeps the column", [] {
         Pane pane(between, {2, 3});

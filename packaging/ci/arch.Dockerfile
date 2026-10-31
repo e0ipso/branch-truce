@@ -23,6 +23,6 @@ RUN /opt/branch-truce/ci/baseline.sh --format arch-pkg > /opt/branch-truce/basel
 
 FROM build AS test
 # Startup appearance checks use the Plasma platform plugin; glib2 supplies gio.
-RUN pacman -S --noconfirm --needed plasma-integration glib2 python jq \
+RUN pacman -S --noconfirm --needed plasma-integration glib2 python jq sway grim noto-fonts ttf-hack \
     && pacman -Q > /opt/branch-truce-test-baseline.txt \
     && cat /opt/branch-truce-test-baseline.txt
