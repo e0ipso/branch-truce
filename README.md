@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-A standalone text conflict resolver for Git on Linux and KDE. Compare both branches, compose your result and get back to your merge or rebase. Works offline, with no account.
+A standalone text conflict resolver for Git on Linux and KDE. Review captured sources beside an editable result, track each file in the sidebar and return to your merge or rebase. Works offline, with no account.
 
 **[Download](https://github.com/e0ipso/branch-truce/releases/latest)** · **[Get started](#use-it)** · **[Set up git mergetool](docs/mergetool.md#register-the-tool)**
 
@@ -14,7 +14,7 @@ A standalone text conflict resolver for Git on Linux and KDE. Compare both branc
   <img src="docs/images/comparison-light.png" alt="A four-file merge in Branch Truce: competing C++ retry policies, status checks, backoff and logging changes, with both branches beside the editable result" width="1200">
 </picture>
 
-*One merge, four conflicted files. Both branches stay visible while you build the result in the middle. Follows your desktop's light or dark colour scheme.*
+*Earlier light and dark captures, committed on 2026-10-29. They predate the current sidebar, gutter and menu changes. A fresh pair and updated installed-package measurements remain required; see [platform validation](docs/platform-validation.md#redesign-evidence-still-required).*
 
 ## See it in action
 
@@ -70,9 +70,15 @@ branch-truce                     # current repository
 branch-truce /path/to/repository
 ```
 
-1. Pick a file and compare the changes. Opening a session leaves your files and Git index untouched.
-2. Compose your result. **Save** keeps a draft inside Branch Truce. **Mark resolved** writes the reviewed result to the file and stages that path in Git.
-3. Return to your terminal to continue the merge or rebase. Branch Truce leaves continuing and committing to you.
+The sidebar lists each file with its status, including work that needs another tool. A resolved row uses a positive status icon and text only after the result is verified in Git. The session toolbar steps through remaining conflicts; its conflict count is separate from the undecided source-decision count in the file row's tooltip. Save, Mark resolved, editing and reading controls are in the file toolbar, with a menu for overflow actions.
+
+The left and right sources surround the editable result. Source headings distinguish their captured role from their commit identity, including during a rebase. Hover a source range to follow its connection to the result. Its compact controls put the Accept arrow toward the result and Ignore beside it. The range menu offers precise line choices, Resolve using this side and Take both in either order. Fully decided ranges keep their choices in the source text's context menu. The result gutter shows a line number and one state glyph; inspect the glyph for provenance and decisions.
+
+1. Pick a file and compare the changes. Opening a session leaves your files and Git index untouched. Show the common earlier version when you need context.
+2. Compose your result with source choices or direct edits. **Save** keeps a draft inside Branch Truce. **Mark resolved** writes the reviewed result and verifies that path's staging in Git. With `git mergetool`, it hands the result back to the waiting Git process and waits for staging confirmation.
+3. Review the session handoff and return to your terminal to continue the merge or rebase. Branch Truce leaves continuing and committing to you.
+
+The panes use the desktop's focus treatment and scroll bars. Short windows can scroll the work area; use the sidebar toggle and toolbar overflow to reach controls.
 
 Prefer `git mergetool`? [Register Branch Truce](docs/mergetool.md#register-the-tool), then run:
 

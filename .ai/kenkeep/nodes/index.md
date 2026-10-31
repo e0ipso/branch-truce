@@ -38,7 +38,7 @@ _None._
 - Open [**Branch Truce desktop implementation baseline**](map-branch-truce-desktop-implementation-baseline.md) to learn about: Locked C++/Qt Quick/Kirigami stack for native Linux/KDE on Kubuntu 26.04 LTS; Tuxedo OS compatibility needs validation. #architecture #desktop #platform #cpp
 - Open [**Mergetool session socket and real Git parent**](map-mergetool-session-socket-and-real-git-parent.md) to learn about: The session socket sits under XDG_RUNTIME_DIR or /tmp/branch-truce-<uid>; real Git 2.43 parent tests bound the compatibility claim. #mergetool #git #transport #compatibility
 - Open [**Branch Truce first-release scope**](map-branch-truce-first-release-scope.md) to learn about: PRD.md defines a standalone, offline Linux app for text conflicts during merges and rebases. #product #scope #workflow
-- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) to learn about: ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard. #testing #acceptance #qml #offscreen #git
+- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) to learn about: CTest acceptance groups drive Main offscreen over real Git merges and rebases with private XDG directories and an offline Git guard. #testing #acceptance #qml #offscreen #git
 - Open [**Per-base Debian artifacts and container inspection**](map-per-base-debian-artifacts-and-container-inspection.md) to learn about: Each OS base builds its own .deb from shared packaging/debian in a pinned container and is inspected on a clean copy of that base. #packaging #platform #debian #containers #compatibility
 - Open [**Installed-artifact validation in base containers**](map-installed-artifact-validation-in-base-containers.md) to learn about: validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE. #packaging #platform #validation #wayland #accessibility #compatibility
 - Open [**Recovery journal and acknowledgment boundary**](map-recovery-journal-and-acknowledgment-boundary.md) to learn about: Persist complete text-and-decision transactions before acknowledgment; retain failed input and loaded captures for retry. #recovery #storage #editing #failures
@@ -68,7 +68,7 @@ _None._
 ### #testing
 - Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
 - Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) — Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus.
-- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard.
+- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — CTest acceptance groups drive Main offscreen over real Git merges and rebases with private XDG directories and an offline Git guard.
 ### #ui
 - Open [**Wait for rendered frames before capturing native scenes**](practice-wait-for-rendered-frames-before-capturing-native-scenes.md) — Capture native replay after publication, layout and rendered frames settle while preserving real controls and focus.
 - Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
@@ -131,7 +131,7 @@ _None._
 - Open [**Startup style, colour scheme and icon theme**](map-startup-style-colour-scheme-and-icon-theme.md) — main.cpp picks org.kde.desktop or Fusion, names hicolor when no icon theme is set; kdeglobals sets colours; a preloaded probe tests it.
 - Open [**Follow the UI design brief for the KDE-native window**](practice-follow-the-ui-design-brief-for-the-kde-native-window.md) — docs/ui-design.md sets layout, actions and colour roles; panes get the space and red marks only ranges that need a decision.
 ### #offscreen
-- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard.
+- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — CTest acceptance groups drive Main offscreen over real Git merges and rebases with private XDG directories and an offline Git guard.
 - Open [**Wait for layout before clicking offscreen dialog items**](practice-wait-for-layout-before-clicking-offscreen-dialog-items.md) — In offscreen UI tests, find popup delegates through the visual item tree and click only after their scene position settles.
 ### #prd
 - Open [**Keep PRD.md focused on user needs**](practice-keep-prd-focused-on-user-needs.md) — PRD.md describes user needs, interactions, and capabilities without technical or implementation details.
@@ -166,7 +166,7 @@ _None._
 ### #abi
 - Open [**Compile QML to bytecode to avoid private Qt ABI pins**](practice-compile-qml-to-bytecode-to-avoid-private-qt-abi-pins.md) — Keep qmlcachegen --only-bytecode; QML compiled to C++ links Qt_6_PRIVATE_API and pins the package to one exact Qt release.
 ### #acceptance
-- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — ctest acceptance.journeys drives the real Main scene offscreen over real Git merges and rebases with private XDG dirs and an offline git guard.
+- Open [**Journey acceptance suite**](map-journey-acceptance-suite.md) — CTest acceptance groups drive Main offscreen over real Git merges and rebases with private XDG directories and an offline Git guard.
 ### #accessibility
 - Open [**Installed-artifact validation in base containers**](map-installed-artifact-validation-in-base-containers.md) — validate-installed-artifact.sh runs each installed .deb in a container of its base on headless sway; real-desktop rows stay UNAVAILABLE.
 ### #calibration

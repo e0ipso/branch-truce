@@ -5,13 +5,9 @@ The build separates `branch_truce_core`, `branch_truce_controller`,
 `branch-truce` executable. The controller includes object targets for session,
 recovery, publication, mergetool and highlighting code. Git provides constrained asynchronous inspection and
 conversion; storage provides lossless text codecs. See the
-[supported conversion envelope](text-conversion.md). The window opens the launched
-repository's complete current conflict inventory, including outside-app work and
-load errors with persistent reasons. Selecting a file by its exact byte-derived ID
-opens read-only captured sources around the editable result; the common
-earlier version is available on demand. The session warning keeps outside-app work
-visible while supported files are selected. Using the app, including Save and
-Mark resolved, is described in the [README](../README.md#use-it).
+[supported conversion envelope](text-conversion.md). The window opens the launched repository's complete conflict inventory in a status sidebar. Read-only captured sources surround the editable result, with common earlier context on demand. Flat panes retain native editor focus and scroll bars. Compact range controls put Accept toward the result and Ignore beside it; hover highlights the corresponding passage and ribbon. Range menus retain precise line and order-aware choices, including through the source editor after a range is fully decided. The result gutter reserves one state glyph beside its line number, with provenance available for inspection. Source headings separate roles and commit hashes without inventing branch identities.
+
+The session toolbar's remaining-conflict count and the per-file undecided-decision count describe different work. Sidebar states preserve failed, outside-app and newer-than-staged drafts; verified resolution uses the native positive status icon and text. Toolbar overflow and work-area scrolling handle limited space. Source-editor context-menu gesture routing still needs final-gate runtime evidence. Using Save, Mark resolved and the handoff is described in the [README](../README.md#use-it).
 The core uses C++20 and the standard library without Qt or platform I/O.
 
 ## Machine provisioning
@@ -168,11 +164,11 @@ screenshot of the window on a real conflict. It runs on the current sway
 session, such as the headless one agents use here:
 
 ```sh
-tools/preview-app.sh                              # build/desktop/src/app/branch-truce
-PREVIEW_FILE=tracked.txt tools/preview-app.sh     # the three comparison panes on a text file
-PREVIEW_FILE=notes.md tools/preview-app.sh        # the same on a Markdown file
-PREVIEW_SIZE=1280x800 tools/preview-app.sh        # at a 1280x800 logical screen size
-tools/preview-app.sh /path/to/branch-truce        # another build
+PREVIEW_FILE=notes.md PREVIEW_SIZE=1440x900 tools/preview-app.sh
+PREVIEW_FILE=tracked.txt PREVIEW_SIZE=1280x800 tools/preview-app.sh
+PREVIEW_FILE=tracked.txt PREVIEW_SIZE=1280x720 tools/preview-app.sh
+PREVIEW_FILE=notes.md tools/preview-app.sh /path/to/branch-truce
+# Without PREVIEW_FILE, the default selection is the outside-app binary file.
 ```
 
 For each of BreezeLight and BreezeDark, the script builds a repository stopped
@@ -225,10 +221,17 @@ Agents sharing the headless session run the script under
 uses the same function inside its container for its single `tracked.txt`
 conflict.
 
-The README images `docs/images/comparison-light.png` and
-`docs/images/comparison-dark.png` are the BreezeLight and BreezeDark captures
-of `PREVIEW_FILE=notes.md PREVIEW_SIZE=1440x900`. To refresh them, run that
-command and copy the two PNGs over the old ones.
+The existing README pair, `docs/images/comparison-light.png` and `docs/images/comparison-dark.png`, was committed on 2026-10-29 and predates the latest interaction changes. Preserve those files. The replacement pair remains outstanding until final-gate collection on the integrated revision. From a sway session, set `capture_dir` to a new owned artifact directory and run:
+
+```sh
+PREVIEW_FILE=notes.md PREVIEW_SIZE=1440x900 PREVIEW_OUTPUT="$capture_dir" \
+    flock /tmp/branch-truce-preview.lock tools/preview-app.sh \
+    build/desktop/src/app/branch-truce
+```
+
+Retain the printed `branch-truce-BreezeLight-1440x900.png` and `branch-truce-BreezeDark-1440x900.png`, the source revision, build identity, command, date and display environment. After inspecting the actual captures, add new files at `docs/images/redesigned-comparison-light.png` and `docs/images/redesigned-comparison-dark.png`, then update the opening picture and caption in README.md. No new pair was captured during the documentation edit. The preview is a development-build capture on sway; it does not replace installed-package or real Plasma evidence.
+
+Collect separate 1280x720 and 1280x800 evidence with the corresponding `PREVIEW_SIZE` examples above. Screenshots alone do not establish eight visible rows, control/menu reachability or no-wrap fit. Those obligations need the final acceptance and native interaction checks, including source context-menu gestures, source-fill continuity and connector hover behaviour. Keep the narrow strict-960x540 fit waiver separate from these required checks.
 
 ## Install
 
