@@ -1,6 +1,7 @@
 #include "SessionModel.h"
 #include "recovery/RecoveryRestore.h"
 #include "git/GitAdapter.h"
+#include <QMimeDatabase>
 #include <QStandardPaths>
 #include <QUuid>
 #include <algorithm>
@@ -290,6 +291,14 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case StatusIconRole: return categoryIcon(routeAt(row).category);
     case StatusLineRole: return statusLineAt(row);
     case ChipsRole: return chipsAt(row);
+    case MimeIconRole:
+    case MimeDescriptionRole: {
+        // Use the captured path, never a later read of the mutable worktree or draft.
+        const auto mime = QMimeDatabase().mimeTypeForFile(text(file.path()), QMimeDatabase::MatchExtension);
+        if (role == MimeDescriptionRole) return mime.isDefault() ? QString{} : mime.comment();
+        const auto icon = mime.iconName();
+        return mime.isDefault() || icon.isEmpty() ? QStringLiteral("unknown") : icon;
+    }
     case SummaryRole: return summaryAt(row);
     default: return {};
     }
@@ -306,7 +315,7 @@ QHash<int, QByteArray> SessionModel::roleNames() const
             {PendingTextRole, "pendingText"}, {RecoveryStateRole, "recoveryState"},
             {RecoveryErrorRole, "recoveryError"}, {ProgressRole, "progress"},
             {StatusIconRole, "statusIcon"}, {StatusLineRole, "statusLine"}, {ChipsRole, "chips"},
-            {SummaryRole, "summary"}};
+            {MimeIconRole, "mimeIcon"}, {MimeDescriptionRole, "mimeDescription"}, {SummaryRole, "summary"}};
 }
 
 const FileSession *SessionModel::file(const std::string &id) const

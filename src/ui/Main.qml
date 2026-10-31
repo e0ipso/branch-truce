@@ -337,7 +337,8 @@ Kirigami.ApplicationWindow {
                             messageName: "selectedProblem"
                             viewBackground: true
                             onPlainTextRequested: item => window.showPlainText(item)
-                            iconName: window.selectedFile.statusIcon || ""
+                            iconName: window.selectedFile.support === "outside-app"
+                                ? window.selectedFile.mimeIcon : window.selectedFile.statusIcon
                             text: window.selectedFile.support === "unreadable" ? qsTr("Could not load this file") : qsTr("This file must be resolved outside Branch Truce")
                             explanation: window.selectedFile.support === "unreadable" ? window.selectedFile.supportDetail || ""
                                 : qsTr("%1\n\nResolve this file with another tool, then run git add for its path. It remains outstanding until Git reports it resolved.")

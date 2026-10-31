@@ -1,7 +1,6 @@
 // SelectedFile keeps immutable sources indexed while projecting changed result revisions.
 #include "SelectedFile.h"
 #include "SourceIdentity.h"
-#include <QMimeDatabase>
 #include <algorithm>
 #include <set>
 
@@ -79,13 +78,12 @@ QVariant SelectedFile::role(int role) const
 }
 QString SelectedFile::mimeIcon() const
 {
-    const auto icon = QMimeDatabase().mimeTypeForFile(fileName_, QMimeDatabase::MatchExtension).iconName();
+    const auto icon = role(SessionModel::MimeIconRole).toString();
     return icon.isEmpty() ? QStringLiteral("unknown") : icon;
 }
 QString SelectedFile::mimeDescription() const
 {
-    const auto mime = QMimeDatabase().mimeTypeForFile(fileName_, QMimeDatabase::MatchExtension);
-    return mime.isDefault() ? QString{} : mime.comment();
+    return role(SessionModel::MimeDescriptionRole).toString();
 }
 QString SelectedFile::formatDescription() const
 {

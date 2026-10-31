@@ -35,7 +35,8 @@ public:
         SupportRole, SupportDetailRole, UndecidedRole, UnsavedRole, ReviewNeededRole,
         ResolvedRole, StatusRole, FinishBlockersRole, CanUndoRole, CanRedoRole,
         PendingInputRole, PendingTextRole, RecoveryStateRole, RecoveryErrorRole,
-        ProgressRole, StatusIconRole, StatusLineRole, ChipsRole, SummaryRole
+        ProgressRole, StatusIconRole, StatusLineRole, ChipsRole, MimeIconRole,
+        MimeDescriptionRole, SummaryRole
     };
     Q_ENUM(Role)
 
