@@ -63,10 +63,11 @@ class ContractTests(unittest.TestCase):
 
     def test_profile_rejects_style_dpr_scheme_and_font_drift(self):
         profile = json.loads((ROOT / 'tools/native-replay/capture-profile.json').read_text())
-        state = {'profile': dict(profile['pinned_observations'], fonts=profile['pinned_fonts'], colourScheme='BreezeLight')}
+        state = {'profile': dict(profile['pinned_observations'], fonts=profile['pinned_fonts'],
+                                 configuredColourScheme='BreezeLight', palette=profile['pinned_palettes']['BreezeLight'])}
         metadata = {'capture_environment': {'output': {'scale': 1}, 'colour_scheme': 'BreezeLight'}}
         self.assertTrue(validate_profile(state, metadata))
-        for key, value in [('devicePixelRatio', 2), ('quickControlsStyle', 'Fusion'), ('colourScheme', 'BreezeDark')]:
+        for key, value in [('devicePixelRatio', 2), ('quickControlsStyle', 'Fusion'), ('configuredColourScheme', 'BreezeDark')]:
             changed = copy.deepcopy(state)
             changed['profile'][key] = value
             with self.assertRaises(ValueError):
@@ -75,6 +76,42 @@ class ContractTests(unittest.TestCase):
         changed['profile']['fonts']['small']['pointSize'] = 9
         with self.assertRaises(ValueError):
             validate_profile(changed, metadata)
+
+    def test_profile_accepts_recorded_light_and_dark_palettes(self):
+        profile = json.loads((ROOT / 'tools/native-replay/capture-profile.json').read_text())
+        for scheme, palette in profile['pinned_palettes'].items():
+            with self.subTest(scheme=scheme):
+                state = {'profile': dict(profile['pinned_observations'], fonts=profile['pinned_fonts'],
+                                         configuredColourScheme=scheme, palette=palette)}
+                metadata = {'capture_environment': {'output': {'scale': 1}, 'colour_scheme': scheme}}
+                self.assertTrue(validate_profile(state, metadata))
+
+    def test_profile_rejects_wrong_palette_when_configured_name_matches(self):
+        profile = json.loads((ROOT / 'tools/native-replay/capture-profile.json').read_text())
+        for requested, observed in [('BreezeLight', 'BreezeDark'), ('BreezeDark', 'BreezeLight')]:
+            with self.subTest(requested=requested):
+                state = {'profile': dict(profile['pinned_observations'], fonts=profile['pinned_fonts'],
+                                         configuredColourScheme=requested, palette=profile['pinned_palettes'][observed])}
+                metadata = {'capture_environment': {'output': {'scale': 1}, 'colour_scheme': requested}}
+                with self.assertRaisesRegex(ValueError, 'Observed application palette'):
+                    validate_profile(state, metadata)
+
+    def test_profile_requires_all_pinned_observed_palette_roles(self):
+        profile = json.loads((ROOT / 'tools/native-replay/capture-profile.json').read_text())
+        palette = profile['pinned_palettes']['BreezeLight']
+        metadata = {'capture_environment': {'output': {'scale': 1}, 'colour_scheme': 'BreezeLight'}}
+        for role in palette:
+            for value in [None, '#000000']:
+                with self.subTest(role=role, value=value):
+                    changed = dict(palette)
+                    if value is None:
+                        del changed[role]
+                    else:
+                        changed[role] = value
+                    state = {'profile': dict(profile['pinned_observations'], fonts=profile['pinned_fonts'],
+                                             configuredColourScheme='BreezeLight', palette=changed)}
+                    with self.assertRaisesRegex(ValueError, 'Observed application palette'):
+                        validate_profile(state, metadata)
 
     def test_supplemental_footer_geometry_uses_native_height(self):
         state = {'width': 1280, 'height': 800, 'items': [

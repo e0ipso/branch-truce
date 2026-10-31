@@ -201,8 +201,16 @@ def validate_profile(state, metadata):
             raise ValueError(f'Capture font mismatch: {key}')
     if metadata['capture_environment']['output']['scale'] != profile['environment']['scale']:
         raise ValueError('Compositor scale mismatch')
-    if metadata['capture_environment']['colour_scheme'] != actual['colourScheme']:
-        raise ValueError('Observed colour scheme differs from requested scheme')
+    requested_scheme = metadata['capture_environment']['colour_scheme']
+    if requested_scheme != actual.get('configuredColourScheme'):
+        raise ValueError('Configured colour scheme differs from requested scheme')
+    expected_palette = profile['pinned_palettes'].get(requested_scheme)
+    if expected_palette is None:
+        raise ValueError(f'No pinned application palette for {requested_scheme!r}')
+    observed_palette = actual.get('palette')
+    if not isinstance(observed_palette, dict) or any(
+            observed_palette.get(role) != value for role, value in expected_palette.items()):
+        raise ValueError(f'Observed application palette differs from pinned {requested_scheme}')
     return True
 
 

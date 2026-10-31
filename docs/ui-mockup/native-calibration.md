@@ -24,11 +24,20 @@ original pixel dimensions. No derivative replaces an approved reference or nativ
 The current environment is a private headless sway compositor with pixman, Qt Quick's
 software backend, Wayland, org.kde.desktop Quick Controls, Breeze icons and Breeze
 fallback icons. This is not evidence of a physical Plasma session. Each snapshot records
-actual Qt version, OS release, colour scheme, Qt palette, original kdeglobals colour
-groups and their file hash, output scale, logical size, logical/physical DPI and DPR.
+actual Qt version, OS release, configured colour-scheme name, observed Qt palette,
+original kdeglobals colour groups and their file hash, output scale, logical size,
+logical/physical DPI and DPR.
 The observed typography is Noto Sans 10 pt, Hack 9 pt, and Kirigami smallFont Noto Sans
 8 pt. Font resolution reports exactMatch truthfully, including false for proportional
 fonts. The environment variables that identify KDE do not prove a desktop session.
+
+`configuredColourScheme` records the name read from kdeglobals; it does not establish
+which colours the application uses. `palette` records the actual application palette.
+The profile pins its Window, Base, AlternateBase, Text, disabled Text and Highlight
+roles separately for Breeze Light and Breeze Dark, with the retained baseline state
+hashes. Capture rejects missing or changed observed roles even when the configured
+name matches the requested scheme. These observations belong to the controlled
+headless profile and do not establish physical-desktop compatibility.
 
 `build-provenance.json` records the executable SHA, build-cache/compile-command hashes,
 observed compiler/build type, observed source/build checkout identities and whether

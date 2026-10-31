@@ -27,7 +27,7 @@
     "fixed": "Hack 9pt",
     "small": "Observe Kirigami.Theme.smallFont; do not override"
   },
-  "observations": "Each state.json contains actual resolved fonts, style, roles, units, DPI and DPR. capture_environment includes actual sway output and OS. build-provenance.json separates exact executable hash from observed source/build checkout identities.",
+  "observations": "Each state.json separates the configured colour-scheme name from observed Qt application palette roles and actual resolved fonts, style, units, DPI and DPR. capture_environment includes requested scheme, actual sway output and OS. build-provenance.json separates exact executable hash from observed source/build checkout identities.",
   "build_identity": "Executable SHA is authoritative; source HEAD is an observation, not proof of compiled identity",
   "reference_contract": "reference-contract.json",
   "pinned_observations": {
@@ -51,6 +51,38 @@
     "fixed": {
       "resolvedFamily": "Hack",
       "pointSize": 9
+    }
+  },
+  "pinned_palettes": {
+    "BreezeLight": {
+      "disabledText": "#aaabac",
+      "highlight": "#3daee9",
+      "text": "#232629",
+      "viewAlternateBase": "#f7f7f7",
+      "viewBase": "#ffffff",
+      "window": "#eff0f1"
+    },
+    "BreezeDark": {
+      "disabledText": "#606263",
+      "highlight": "#3daee9",
+      "text": "#fcfcfc",
+      "viewAlternateBase": "#1d1f22",
+      "viewBase": "#141618",
+      "window": "#202326"
+    }
+  },
+  "palette_baseline_provenance": {
+    "BreezeLight": {
+      "recorded_state_sha256": "ace1864701ab89b9fb39ee9069656003c26a4c385f37ca19a10ffe69a5f9f348",
+      "qt_version": "6.10.2",
+      "platform": "wayland",
+      "quick_controls_style": "org.kde.desktop"
+    },
+    "BreezeDark": {
+      "recorded_state_sha256": "c03f47696fdd1fb36bcd78cb8ac8820fabb2b2444d717239864bee78ad458ea9",
+      "qt_version": "6.10.2",
+      "platform": "wayland",
+      "quick_controls_style": "org.kde.desktop"
     }
   }
 }

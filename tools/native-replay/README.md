@@ -56,8 +56,9 @@ python3 tools/native-replay/calibration.py --verify /absolute/capture-output
 ```
 
 Contract checks are also included in `NativeReplayTests.py` and its existing CTest entry.
-Desktop builds with Python register `tooling.native-calibration`, which runs all 17 existing
-contract and pixel cases using a test target built from the same `ImageCheck.cpp`:
+Desktop builds with Python register `tooling.native-calibration`, which runs the
+contract, observed-palette and pixel cases using a test target built from the same
+`ImageCheck.cpp`:
 
 ```sh
 cmake --build /absolute/desktop-build --target branch_truce_native_calibration_image --parallel 2

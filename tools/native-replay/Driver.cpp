@@ -101,7 +101,7 @@ Item {
         {"disabledText", actualPalette.color(QPalette::Disabled, QPalette::Text).name()},
         {"highlight", actualPalette.color(QPalette::Highlight).name()}};
     auto *screen = window->screen();
-    return {{"qtVersion", qVersion()}, {"colourScheme", settings.value("ColorScheme").toString()}, {"platform", QGuiApplication::platformName()},
+    return {{"qtVersion", qVersion()}, {"configuredColourScheme", settings.value("ColorScheme").toString()}, {"platform", QGuiApplication::platformName()},
             {"quickControlsStyle", QQuickStyle::name()}, {"iconTheme", QIcon::themeName()},
             {"fallbackIconTheme", QIcon::fallbackThemeName()}, {"fonts", fonts},
             {"units", value(probe->property("units"))}, {"palette", palette},
