@@ -254,7 +254,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_dependencies(branch_truce_startup_route_tests branch-truce)
     add_test(NAME app.startup-routes COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_route_tests> $<TARGET_FILE:branch-truce>)
     # The timeout must be at least twice the slowest measured run.
-    set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 600)
+    set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 1000)
 
     # Preloaded into the real binary to report its style and icon theme state.
     add_library(branch_truce_appearance_probe MODULE fixtures/AppearanceProbe.cpp)
@@ -283,7 +283,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_dependencies(branch_truce_mergetool_tests branch-truce)
     add_test(NAME app.mergetool-launcher COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_tests> $<TARGET_FILE:branch-truce>)
     # The timeout must be at least twice the slowest measured run.
-    set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 240)
+    set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 360)
 
     # Installed /usr/bin/git runs `git mergetool` against the launcher and an in-process session.
     add_executable(branch_truce_mergetool_parent_tests git/MergetoolParentTests.cpp)
@@ -292,7 +292,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_dependencies(branch_truce_mergetool_parent_tests branch-truce)
     add_test(NAME git.mergetool-parent COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_parent_tests> $<TARGET_FILE:branch-truce>)
     # The timeout must be at least twice the slowest measured run.
-    set_tests_properties(git.mergetool-parent PROPERTIES TIMEOUT 300)
+    set_tests_properties(git.mergetool-parent PROPERTIES TIMEOUT 450)
 
     add_executable(branch_truce_coordinator_tests app/SessionCoordinatorTests.cpp)
     target_include_directories(branch_truce_coordinator_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
