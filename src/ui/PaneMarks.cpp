@@ -22,6 +22,76 @@ int PaneMarks::rank(const QString &kind)
 namespace {
 QVariantList range(int first, int end) { return {first, end}; }
 }
+QVariantList PaneMarks::decoratedPassages(const QVariantList &passages)
+{
+    // A source can already match an automatically merged result. Its equal
+    // correspondence still carries the result's change against the earlier
+    // version. Keep that change separate from source-decision state.
+    QMap<int, QString> resultKinds;
+    for (const auto &value : passages) {
+        const auto p = value.toMap();
+        if (string(p, "side") != QLatin1String("earlier")) continue;
+        const auto kind = string(p, "kind");
+        if (kind == QLatin1String("equal") || kind == QLatin1String("source-only")) continue;
+        const auto decoration = kind == QLatin1String("result-only") ? QStringLiteral("added") : QStringLiteral("changed");
+        for (int line = number(p, "resultLineBegin"); line < number(p, "resultLineEnd"); ++line)
+            resultKinds.insert(line, decoration);
+    }
+    QVariantList decorated;
+    for (const auto &value : passages) {
+        const auto p = value.toMap();
+        const int begin = number(p, "resultLineBegin"), end = number(p, "resultLineEnd");
+        if (string(p, "side") == QLatin1String("earlier") || string(p, "kind") != QLatin1String("equal")
+            || begin >= end || resultKinds.isEmpty()) {
+            decorated.append(value);
+            continue;
+        }
+        int first = begin;
+        while (first < end) {
+            const auto kind = resultKinds.value(first, QStringLiteral("equal"));
+            int stop = first + 1;
+            while (stop < end && resultKinds.value(stop, QStringLiteral("equal")) == kind) ++stop;
+            // These are line-only decoration ranges, never editing targets.
+            decorated.append(QVariantMap{{QStringLiteral("side"), p.value(QStringLiteral("side"))},
+                {QStringLiteral("kind"), kind}, {QStringLiteral("comparisonKind"), QStringLiteral("equal")},
+                {QStringLiteral("sourceLineBegin"), number(p, "sourceLineBegin") + first - begin},
+                {QStringLiteral("sourceLineEnd"), number(p, "sourceLineBegin") + stop - begin},
+                {QStringLiteral("resultLineBegin"), first}, {QStringLiteral("resultLineEnd"), stop}});
+            first = stop;
+        }
+    }
+    return decorated;
+}
+QSet<int> PaneMarks::conflictingLines(const QVariantList &passages)
+{
+    // Where the result still equals the earlier version, changes from both
+    // sources are competing. An undecided choice alone proves no conflict.
+    QMap<int, int> evidence;
+    for (const auto &value : passages) {
+        const auto p = value.toMap();
+        const auto side = string(p, "side"), kind = string(p, "kind");
+        const bool earlier = side == QLatin1String("earlier");
+        const bool changed = kind == QLatin1String("changed") || kind == QLatin1String("result-only");
+        const int bit = earlier && kind == QLatin1String("equal") ? 1
+            : changed && side == QLatin1String("stage2") ? 2
+            : changed && side == QLatin1String("stage3") ? 4 : 0;
+        if (!bit) continue;
+        for (int line = number(p, "resultLineBegin"); line < number(p, "resultLineEnd"); ++line)
+            evidence[line] |= bit;
+    }
+    QSet<int> conflicts;
+    for (auto it = evidence.cbegin(); it != evidence.cend(); ++it)
+        if (it.value() == 7) conflicts.insert(it.key());
+    return conflicts;
+}
+bool PaneMarks::conflictingRegion(const QVariantMap &region, const QSet<int> &lines)
+{
+    if (region.value(QStringLiteral("markersRemain")).toBool()) return true;
+    if (!region.value(QStringLiteral("mapped")).toBool()) return false;
+    for (int line = number(region, "resultLineBegin"); line < number(region, "resultLineEnd"); ++line)
+        if (lines.contains(line)) return true;
+    return false;
+}
 QVariantMap PaneMarks::marks(const QString &pane, const QVariantList &passages, const QVariantList &regions,
                              const QVariantList &edited, const QVariantList &blocks, const QVariantList &orphans) const
 {
@@ -34,21 +104,25 @@ QVariantMap PaneMarks::marks(const QString &pane, const QVariantList &passages, 
             if (!lines.contains(key) || rank(lines.value(key).toString()) < rank(kind)) lines.insert(key, kind);
         }
     };
-    for (const auto &value : passages) {
+    for (const auto &value : decoratedPassages(passages)) {
         const auto p = value.toMap();
         const auto side = string(p, "side"), kind = string(p, "kind");
         if (result ? side == QLatin1String("earlier") : side != pane) continue;
         const int first = number(p, result ? "resultLineBegin" : "sourceLineBegin");
         const int end = number(p, result ? "resultLineEnd" : "sourceLineEnd");
-        if (kind == QLatin1String("equal")) {
+        if (p.value(QStringLiteral("comparisonKind"), kind).toString() == QLatin1String("equal")) {
             if (result) for (int line = first; line < end; ++line) from[line] |= side == QLatin1String("stage2") ? 1 : 2;
+            if (kind != QLatin1String("equal")) mark(first, end, kind);
         } else if (kind == QLatin1String(result ? "source-only" : "result-only")) gaps.insert(QString::number(first), true);
         else mark(first, end, kind == QLatin1String("changed") || kind == QLatin1String("ambiguous")
                   ? QStringLiteral("changed") : QStringLiteral("added"));
     }
+    const auto conflicts = conflictingLines(passages);
     for (const auto &value : regions) {
         const auto r = value.toMap();
         const auto state = string(r, "state");
+        // Optional contributions remain inspectable in regions and choices.
+        if (state == QLatin1String("undecided") && !conflictingRegion(r, conflicts)) continue;
         if (result && r.value(QStringLiteral("mapped")).toBool()) {
             const int first = number(r, "resultLineBegin"), end = number(r, "resultLineEnd");
             if (state == QLatin1String("undecided")) mark(first, end, QStringLiteral("conflict"));

@@ -66,10 +66,12 @@ void ConnectorBands::update()
         const auto decide = [](QMap<int, QString> &states, int line, const QString &kind) {
             if (!states.contains(line) || PaneMarks::rank(states.value(line)) < PaneMarks::rank(kind)) states[line] = kind;
         };
+        const auto conflicts = PaneMarks::conflictingLines(passages_);
         for (const auto &value : regions_) {
             const auto region = value.toMap();
             if (string(region, "side") != side_) continue;
             const auto state = string(region, "state");
+            if (state == QLatin1String("undecided") && !PaneMarks::conflictingRegion(region, conflicts)) continue;
             const auto kind = state == QLatin1String("undecided") ? QStringLiteral("conflict") : state;
             const int begin = number(region, "sourceLineBegin"), end = number(region, "sourceLineEnd");
             if (begin == end) decide(boundaries, begin, kind);
@@ -77,7 +79,7 @@ void ConnectorBands::update()
         }
         const auto rows = fold_.value(QStringLiteral("rows")).toMap();
         QMap<int, int> folded;
-        for (const auto &value : passages_) {
+        for (const auto &value : PaneMarks::decoratedPassages(passages_)) {
             const auto passage = value.toMap();
             if (string(passage, "side") != side_) continue;
             const auto passageKind = string(passage, "kind");
@@ -105,7 +107,7 @@ void ConnectorBands::update()
                 continue;
             }
             if (passageKind == QLatin1String("equal")) continue;
-            QString kind = passageKind == QLatin1String("result-only") ? QStringLiteral("added")
+            QString kind = passageKind == QLatin1String("result-only") || passageKind == QLatin1String("added") ? QStringLiteral("added")
                 : passageKind == QLatin1String("source-only") ? QStringLiteral("removed") : QStringLiteral("changed");
             const auto &states = sb == se ? boundaries : lines;
             for (int line = sb; line < std::max(se, sb + 1); ++line)

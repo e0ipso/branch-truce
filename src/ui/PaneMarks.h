@@ -2,6 +2,7 @@
 #pragma once
 #include "TextBlocks.h"
 #include <QObject>
+#include <QSet>
 #include <QVariant>
 #include <QtQmlIntegration/qqmlintegration.h>
 
@@ -12,6 +13,9 @@ class PaneMarks : public QObject {
 public:
     using QObject::QObject;
     static int rank(const QString &kind);
+    static QVariantList decoratedPassages(const QVariantList &passages);
+    static QSet<int> conflictingLines(const QVariantList &passages);
+    static bool conflictingRegion(const QVariantMap &region, const QSet<int> &lines);
     Q_INVOKABLE QVariantMap marks(const QString &pane, const QVariantList &passages,
         const QVariantList &regions, const QVariantList &edited, const QVariantList &blocks,
         const QVariantList &orphans) const;
