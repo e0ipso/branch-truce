@@ -16,6 +16,7 @@
 #include <QTemporaryDir>
 #include <QTextBlock>
 #include <QTextCharFormat>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QtQml/qqml.h>
@@ -327,6 +328,49 @@ public:
             Fixture fixture;
             CHECK(fixture.controller.selectFile("notes"));
             settlePlain(fixture);
+        });
+        suite.run("scattered decorations publish one document change without changing text or history", [] {
+            QTextDocument document;
+            document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
+            PaneHighlighter highlighter(&document);
+            highlighter.attach();
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            document.setModified(false);
+            const auto text = document.toPlainText();
+            const auto undo = document.isUndoAvailable();
+            const auto redo = document.isRedoAvailable();
+            QTextCursor selection(&document);
+            selection.setPosition(3);
+            selection.setPosition(8, QTextCursor::KeepAnchor);
+            int notifications = 0;
+            const auto connection = QObject::connect(&document, &QTextDocument::contentsChanged,
+                &document, [&] { ++notifications; });
+            QList<QTextLayout::FormatRange> ranges;
+            for (const int line : {2, 7, 12}) {
+                QTextLayout::FormatRange range;
+                range.start = document.findBlockByNumber(line).position();
+                range.length = 5;
+                range.format.setFontUnderline(true);
+                ranges.append(range);
+            }
+            highlighter.setDecorations(ranges);
+            CHECK(notifications == 1);
+            for (const auto &range : ranges) {
+                const auto formats = document.findBlock(range.start).layout()->formats();
+                CHECK(!formats.isEmpty() && formats.front().format.fontUnderline());
+            }
+            highlighter.setDecorations(ranges);
+            CHECK(notifications == 1);
+            notifications = 0;
+            highlighter.setDecorations({});
+            CHECK(notifications == 1);
+            for (const auto &range : ranges)
+                CHECK(document.findBlock(range.start).layout()->formats().isEmpty());
+            CHECK(document.toPlainText() == text);
+            CHECK(!document.isModified());
+            CHECK(document.isUndoAvailable() == undo && document.isRedoAvailable() == redo);
+            CHECK(selection.anchor() == 3 && selection.position() == 8);
+            QObject::disconnect(connection);
         });
         suite.run("a decoration pass creates no revision and no recovery transaction", [] {
             Fixture fixture;

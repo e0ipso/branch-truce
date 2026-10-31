@@ -225,7 +225,10 @@ RowLayout {
     Kirigami.ActionToolBar {
         objectName: "fileToolBar"
         Layout.fillWidth: true
-        Layout.minimumWidth: 0
+        // ActionToolBar prefers zero width by default. Give the actions their
+        // native width before the path consumes the remaining space, and keep
+        // its own minimum so KeepVisible actions cannot disappear into overflow.
+        Layout.preferredWidth: maximumContentWidth
         // The path gets spare width; actions keep their native width and can overflow.
         Layout.maximumWidth: implicitWidth
         // Keep one native control row with breathing room shared by the list header.

@@ -291,8 +291,10 @@ ColumnLayout {
     }
     function followNavigation(): void {
         const target = controller.navigationTarget
-        if (target.fileId === controller.selectedFileId && target.scope === "result")
+        if (target.fileId === controller.selectedFileId && target.scope === "result") {
+            resultPane.editor.forceActiveFocus(Qt.ShortcutFocusReason)
             panesByRole.follow("result")
+        }
     }
     Connections {
         target: comparison.controller

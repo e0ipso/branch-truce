@@ -164,6 +164,7 @@ ColumnLayout {
                 text: sourcePane.source.text || ""
                 readOnly: true
                 selectByMouse: true
+                selectByKeyboard: true
                 persistentSelection: true
                 textFormat: TextEdit.PlainText
                 font: Kirigami.Theme.fixedWidthFont

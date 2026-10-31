@@ -218,7 +218,7 @@ void renderedFrame(QQuickWindow &window)
     }, Qt::QueuedConnection);
     QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
     deadline.start(5000);
-    window.requestUpdate();
+    window.update();
     loop.exec();
     CHECK(rendered);
 }

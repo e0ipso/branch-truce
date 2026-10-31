@@ -679,6 +679,7 @@ public:
             CHECK(role(model, SessionModel::UndecidedRole).toInt() > 1);
             auto edited = launch;
             edited.text = "manual result without conflict markers\n";
+            edited.unresolvedMarkers = 0;
             CHECK(model.replaceDraft("choices", 1, edited) == Transition::Applied);
             CHECK(role(model, SessionModel::ConflictCountRole).toInt() == 0);
             CHECK(role(model, SessionModel::UndecidedRole).toInt() > 0);

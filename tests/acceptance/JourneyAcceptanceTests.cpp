@@ -384,8 +384,27 @@ void clickChoice(Scene &scene, const QString &label, const char *kind, int menuK
     const auto side = region.value("side").toString().toStdString();
     test_support::sourceLineMenu(scene.window, scene.item((side + "Text").c_str()),
         scene.item((side + "Viewport").c_str()), region.value("sourceLineBegin").toInt(), menuKey);
-    auto *entry = stable(scene, (label + " " + name).toStdString(),
-                         [&] { return test_support::reachableButton(scene.window, scene.window->contentItem(), name); });
+    QQuickItem *entry = nullptr;
+    try {
+        entry = stable(scene, (label + " " + name).toStdString(),
+                       [&] { return test_support::reachableButton(scene.window, scene.window->contentItem(), name); });
+    } catch (const std::exception &error) {
+        auto *editor = scene.item((side + "Text").c_str());
+        std::string menus;
+        const auto visit = [&](auto &&self, QQuickItem *item) -> void {
+            if (!item->isVisible()) return;
+            if (item->inherits("QQuickAbstractButton"))
+                menus += " [" + item->objectName().toStdString() + "="
+                    + test_support::accessibleName(item).toStdString() + "]";
+            for (auto *child : item->childItems()) self(self, child);
+        };
+        visit(visit, scene.window->contentItem());
+        throw std::runtime_error(std::string(error.what()) + "; source=" + side
+            + " cursor=" + std::to_string(editor->property("cursorPosition").toInt())
+            + " focus=" + std::to_string(editor->hasActiveFocus())
+            + " selection=" + std::to_string(editor->property("selectionStart").toInt()) + ".."
+            + std::to_string(editor->property("selectionEnd").toInt()) + "; visible controls:" + menus);
+    }
     test_support::clickItem(scene.window, entry);
 }
 
@@ -2182,9 +2201,9 @@ public:
                         [&] { recordPlacement("observed-layout-cursor-contentY"); return firstUndecidedInView(scene).empty(); },
                         [&] { return firstUndecidedInView(scene); });
                 QSignalSpy frames(scene.window, &QQuickWindow::frameSwapped);
-                scene.window->requestUpdate();
+                scene.window->update();
                 settleFor("two rendered frames after placement", [&] {
-                    if (frames.count() < 2) scene.window->requestUpdate();
+                    if (frames.count() < 2) scene.window->update();
                     return frames.count() >= 2;
                 });
                 recordPlacement("after-two-rendered-frames");

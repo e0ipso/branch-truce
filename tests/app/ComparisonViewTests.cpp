@@ -1697,8 +1697,8 @@ public:
             const QMap<QString, QString> glyphs{{"added", "+"}, {"changed", "~"}, {"conflict", "!"},
                 {"manual", "m"}, {"accepted", QString(QChar(0x2713))}, {"ignored", QString(QChar(0x00d7))},
                 {"removed", QString(QChar(0x2212))}};
-            // The kinds of the line backgrounds and gap rules painted in a pane,
-            // and how many of them lack a visible glyph of that kind on their line.
+            // Each coloured line has one state glyph. A gap on that same line
+            // is described by the glyph instead of adding a second symbol.
             struct Painted { QSet<QString> kinds; int unmarked = 0; };
             const auto painted = [&](const std::string &pane) {
                 Painted found;
@@ -1713,7 +1713,20 @@ public:
                     if (!fill->isVisible() || !fill->property("line").isValid()) continue;
                     const auto kind = fill->property("kind").toString();
                     found.kinds.insert(kind);
-                    const auto glyph = shown.value({fill->property("line").toInt(), kind});
+                    const auto line = fill->property("line").toInt();
+                    const auto glyph = shown.value({line, kind});
+                    if (QString::fromLatin1(suffix) == "BackgroundsGaps") {
+                        const auto lineKind = qmlValue(fixture.item((pane + "Gutter").c_str()),
+                            QStringLiteral("lineKind(%1)").arg(line)).toString();
+                        if (!lineKind.isEmpty()) {
+                            CHECK(shown.value({line, lineKind}) == glyphs.value(lineKind));
+                            CHECK(!shown.contains({line, QStringLiteral("removed")}));
+                            CHECK(qmlValue(fixture.item((pane + "Gutter").c_str()),
+                                QStringLiteral("lineDescription(%1)").arg(line)).toString()
+                                .contains(QStringLiteral("Unmatched lines at this boundary")));
+                            continue;
+                        }
+                    }
                     if (glyph.isEmpty() || glyph != glyphs.value(kind)) ++found.unmarked;
                   }
                 }
@@ -1728,14 +1741,21 @@ public:
             expect("result", {"changed", "removed"});
             expect("stage3", {"changed", "added"});
             auto *slot = fixture.item("resultGutterMarkerSlot");
-            int gaps = 0;
+            int gapGlyphs = 0;
             for (auto *glyph : slot->childItems()) {
                 if (glyph->isVisible() && glyph->property("kind").toString() == "removed") {
-                    ++gaps;
+                    ++gapGlyphs;
                     CHECK(glyph->x() + glyph->width() < slot->width());
                 }
             }
-            CHECK(gaps > 0);
+            int describedGaps = 0;
+            for (auto *fill : fixture.item("resultBackgroundsGaps")->childItems()) {
+                if (!fill->isVisible() || !fill->property("line").isValid()) continue;
+                const auto line = fill->property("line").toInt();
+                if (!qmlValue(fixture.item("resultGutter"), QStringLiteral("lineKind(%1)").arg(line)).toString().isEmpty())
+                    ++describedGaps;
+            }
+            CHECK(gapGlyphs + describedGaps > 0);
             // Taking the left side decides every region, and typing in an accepted line marks it manual.
             // The edited region shows its passage colours again; the right's extra line stays ignored.
             const auto revision = [&] { return QString::number(fixture.file().current().id); };
@@ -2025,6 +2045,8 @@ public:
             // Dragging the handle widens the left source at the expense of the right
             // source, which fills the split, and leaves the result as it was.
             auto *right = fixture.item("stage3Viewport");
+            const auto bandsBefore = bandLines(fixture, "stage2");
+            CHECK(bandsBefore == (std::vector<std::string>{"changed 2-3>2-3", "conflict 6-7>6-7"}));
             const auto leftWidth = left->width();
             const auto resultWidth = result->width();
             const auto rightWidth = right->width();
@@ -2035,7 +2057,7 @@ public:
             QTest::mouseRelease(fixture.window, Qt::LeftButton, Qt::NoModifier, QPoint(from.x() + 80, from.y()));
             settle([&] { return std::abs(left->width() - (leftWidth + 80)) < 2; });
             CHECK(std::abs(result->width() - resultWidth) < 1 && std::abs(right->width() - (rightWidth - 80)) < 2);
-            expectBands(fixture, "after the drag", "stage2", {"conflict 2-3>2-3", "conflict 6-7>6-7"});
+            expectBands(fixture, "after the drag", "stage2", bandsBefore);
         });
         suite.run("each marker block folds into one labelled row behind a conflict band, keeps the buffer and shows on the toggle", [] {
             // markedFile(true) writes both sections between markers with diff3 base sections:

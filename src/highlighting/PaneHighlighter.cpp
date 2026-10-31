@@ -1,6 +1,7 @@
 // Pane highlighting combines syntax colours and word decorations without editing document text.
 #include "highlighting/PaneHighlighter.h"
 #include <QTextBlock>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <algorithm>
 #include <set>
@@ -77,7 +78,14 @@ void PaneHighlighter::updateDecorations()
         rehighlight();
         return;
     }
+    // Rehighlighting each block separately otherwise publishes a document
+    // change and relayout for every range. Publish the decoration pass once.
+    const bool modified = target->isModified();
+    QTextCursor transaction(target);
+    transaction.beginEditBlock();
     for (const int number : blocks) rehighlightBlock(target->findBlockByNumber(number));
+    transaction.endEditBlock();
+    target->setModified(modified);
 }
 
 void PaneHighlighter::highlightBlock(const QString &text)
