@@ -383,8 +383,13 @@ ColumnLayout {
             objectName: "comparisonPanes"
             anchors.fill: parent
             orientation: Qt.Horizontal
+            // Each handle includes its two overlaid hairlines. Reserve both
+            // handles once before sharing the usable width among the panes.
+            readonly property real connectorWidth: Kirigami.Units.gridUnit
+            readonly property real defaultPaneWidth: Math.max(0, width - 2 * connectorWidth) / 3
             handle: ConnectorHandle {
                 id: connectorHandle
+                implicitWidth: panes.connectorWidth
                 result: resultPane
                 source: connectorHandle.leftSide ? leftPane : rightPane
                 projection: connectorHandle.leftSide ? leftBands : rightBands
@@ -394,7 +399,7 @@ ColumnLayout {
             SourcePane {
                 id: leftPane
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
-                SplitView.preferredWidth: panes.width / 3
+                SplitView.preferredWidth: panes.defaultPaneWidth
                 paneName: "stage2"
                 paneRole: qsTr("Left source")
                 choiceEdge: "right"
@@ -416,7 +421,7 @@ ColumnLayout {
                 id: resultPane
                 edits: comparison.edits
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 10
-                SplitView.preferredWidth: panes.width / 3
+                SplitView.preferredWidth: panes.defaultPaneWidth
                 controller: comparison.controller
                 file: comparison.file
                 marks: comparison.kept("marks:result", comparison.paneLineMarks("result"))
@@ -437,7 +442,7 @@ ColumnLayout {
             SourcePane {
                 id: rightPane
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 8
-                SplitView.preferredWidth: panes.width / 3
+                SplitView.preferredWidth: panes.defaultPaneWidth
                 paneName: "stage3"
                 paneRole: qsTr("Right source")
                 choiceEdge: "left"

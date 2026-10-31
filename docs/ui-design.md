@@ -154,6 +154,8 @@ Each non-equal passage gets one band between a source pane and the result. The b
 
 The handle owns both one-pixel theme separators across its full height, including the pane headers. The separators overlay the ribbon ends inside the handle's allocated width; pane widths do not reserve them again. Hover and dragging still belong to the split handle.
 
+Initial pane shares each use one third of the split width after reserving both complete connector handles. That default follows available width and native units until the user drags a split. Native SplitView preferred widths then retain the user's adjustment; choices, edits, history and file selection do not reset it. Minimum pane widths still apply.
+
 - **Fill.** The band uses the passage's band tint from section 6: the role's text colour at about 40 % alpha, `positiveTextColor` for added or accepted, `activeTextColor` for changed, `negativeTextColor` for conflicting, `neutralTextColor` for hand-edited, and `disabledTextColor` at about 30 % for removed or ignored. Bands are stronger than the line fills so the eye can follow them across the handle.
 - **Ends.** Each end of a band follows the top and bottom of its passage in that pane and moves with the pane's scroll. A band whose passage is off-screen is clipped, not repositioned.
 - **Redraw.** Bands are redrawn whenever passages or decisions change, including after undo and redo.
