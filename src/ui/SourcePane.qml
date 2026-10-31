@@ -53,7 +53,9 @@ ColumnLayout {
             ? qsTr("%1 · %2").arg(sourcePane.source.label || sourcePane.paneRole)
                 .arg(sourcePane.source.shortCommitId || qsTr("Commit unavailable"))
             : sourcePane.source.shortCommitId || qsTr("Commit unavailable")
-        fixedIdentity: true
+        identityRole: sourcePane.versionName.length > 0
+            ? sourcePane.source.label || sourcePane.paneRole : ""
+        identityHash: sourcePane.source.shortCommitId || ""
         description: sourcePane.fullIdentity
     }
     Rectangle {
