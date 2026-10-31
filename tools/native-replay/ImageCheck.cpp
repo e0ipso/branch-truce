@@ -8,7 +8,7 @@
 
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
-    if ((argc == 13 || argc == 15) && QByteArray(argv[1]) == "--artifacts") {
+    if ((argc == 13 || argc == 15 || argc == 19) && QByteArray(argv[1]) == "--artifacts") {
         const QImage reference(QString::fromLocal8Bit(argv[2])), native(QString::fromLocal8Bit(argv[3]));
         const QString prefix = QString::fromLocal8Bit(argv[4]);
         QRect rects[2];
@@ -26,15 +26,27 @@ int main(int argc, char **argv) {
         const auto originalA = reference.copy(rects[0]).convertToFormat(QImage::Format_RGBA8888);
         const auto originalB = native.copy(rects[1]).convertToFormat(QImage::Format_RGBA8888);
         int replication[2] = {1, 1};
-        if (argc == 15) for (int i = 0; i < 2; ++i) {
+        if (argc >= 15) for (int i = 0; i < 2; ++i) {
             bool ok = false;
             replication[i] = QString::fromLocal8Bit(argv[13+i]).toInt(&ok);
             if (!ok || replication[i] < 1 || replication[i] > 3) return 2;
         }
         // Exact cell replication onto the declared common grid. No interpolation,
-        // registration, thresholds or masks. Close-ups retain original decoded pixels.
-        const auto a = originalA.scaled(originalA.size()*replication[0], Qt::IgnoreAspectRatio, Qt::FastTransformation);
+        // thresholds or masks. Close-ups retain original decoded pixels.
+        auto a = originalA.scaled(originalA.size()*replication[0], Qt::IgnoreAspectRatio, Qt::FastTransformation);
         const auto b = originalB.scaled(originalB.size()*replication[1], Qt::IgnoreAspectRatio, Qt::FastTransformation);
+        QRect referenceGrid = a.rect();
+        if (argc == 19) {
+            int coordinates[4];
+            for (int i = 0; i < 4; ++i) {
+                bool ok = false;
+                coordinates[i] = QString::fromLocal8Bit(argv[15+i]).toInt(&ok);
+                if (!ok) return 2;
+            }
+            referenceGrid = QRect(coordinates[0], coordinates[1], coordinates[2], coordinates[3]);
+            if (referenceGrid.isEmpty() || !a.rect().contains(referenceGrid)) return 2;
+            a = a.copy(referenceGrid);
+        }
         const QSize size(qMax(a.width(), b.width()), qMax(a.height(), b.height()));
         QImage overlay(size, QImage::Format_RGBA8888), difference(size, QImage::Format_RGBA8888);
         qint64 changed = 0, unmatched = 0;
@@ -52,6 +64,7 @@ int main(int argc, char **argv) {
         if (!originalA.save(prefix+"-reference.png") || !originalB.save(prefix+"-native.png")
             || !overlay.save(prefix+"-overlay.png") || !difference.save(prefix+"-difference.png")) return 2;
         const QJsonObject result{{"reference_replication", replication[0]}, {"native_replication", replication[1]},
+                                 {"reference_common_grid_rect", QJsonArray{referenceGrid.x(), referenceGrid.y(), referenceGrid.width(), referenceGrid.height()}},
                                  {"differing_pixels", changed}, {"unmatched_extent_pixels", unmatched},
                                  {"reference_top_left", a.pixelColor(0,0).name(QColor::HexArgb)},
                                  {"native_top_left", b.pixelColor(0,0).name(QColor::HexArgb)},

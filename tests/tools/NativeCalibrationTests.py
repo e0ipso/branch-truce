@@ -4,15 +4,18 @@ import copy
 import json
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import zlib
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/native-replay'))
-from calibration import load_contract, validate_contract, validate_profile, native_regions, build_provenance
+from calibration import load_contract, validate_contract, validate_profile, native_regions, build_provenance, compare
 from fixture import png, sha256
 
 
@@ -157,6 +160,78 @@ class PixelTests(unittest.TestCase):
         result = self.artifacts('invalid', self.a, self.b, left=(60, 0, 5, 3))
         self.assertEqual(result.returncode, 2)
         self.assertFalse(list(self.root.glob('invalid-*')))
+
+    def compare_bar_region(self, name, rect, changed=False, logical_size=None, bar=(2, 2, 4, 4)):
+        x, y, width, height = rect
+        size = logical_size or (x+width, y+height+1)
+        root = self.root / name
+        source = root / 'source'
+        references = source / 'docs/ui-mockup'
+        references.mkdir(parents=True)
+        native = root / 'native'
+        native.mkdir()
+
+        def write_png(path, dimensions, bar, changed_pixel=False):
+            raw = bytearray()
+            for py in range(dimensions[1]):
+                raw.append(0)
+                for px in range(dimensions[0]):
+                    colour = (0, 0, 0) if bar[0] <= px < bar[2] and bar[1] <= py < bar[3] else (255, 255, 255)
+                    raw.extend((255, 0, 0) if changed_pixel and (px, py) == (2, 2) else colour)
+            def chunk(kind, data):
+                return struct.pack('>I', len(data))+kind+data+struct.pack('>I', zlib.crc32(kind+data))
+            path.write_bytes(b'\x89PNG\r\n\x1a\n'
+                +chunk(b'IHDR', struct.pack('>IIBBBBB', *dimensions, 8, 2, 0, 0, 0))
+                +chunk(b'IDAT', zlib.compress(raw))+chunk(b'IEND', b''))
+
+        reference_size = tuple((n*3+1)//2 for n in size)
+        reference, shot = references / 'light-text.png', native / 'light-text.png'
+        # Even bar edges have exact 1.5x raster coordinates without interpolation.
+        write_png(reference, reference_size, tuple(n*3//2 for n in bar))
+        write_png(shot, size, bar, changed)
+        originals = [sha256(reference), sha256(shot)]
+        contract = dict(reference_pixel_scale=1.5, reference_decoded_size=list(reference_size),
+                        regions={'file_header': list(rect)}, exceptions=[])
+        state = dict(width=size[0], height=size[1], profile={'devicePixelRatio': 1}, items=[
+            dict(name='Page', x=0, y=y, width=size[0], height=size[1]-y-1),
+            dict(name='fileList', x=0, y=y, width=x-1, height=height),
+            dict(name='fileToolBar', x=x, y=y, width=width, height=height),
+            dict(name='fileFacts', x=0, y=size[1]-1, width=size[0], height=1, text='fixture')])
+        with mock.patch('calibration.load_contract', return_value=contract):
+            report = compare(source, shot, state, IMAGE_TOOL, root / 'comparison')
+        self.assertEqual([sha256(reference), sha256(shot)], originals)
+        return report['regions']['file_header']
+
+    def test_identical_regions_align_for_odd_and_even_origins_and_dimensions(self):
+        for index, rect in enumerate(((1, 1, 5, 3), (1, 2, 4, 3), (2, 1, 3, 4), (2, 2, 4, 4))):
+            with self.subTest(rect=rect):
+                region = self.compare_bar_region(f'aligned-{index}', rect)
+                self.assertEqual(region['differing_pixels'], 0)
+                self.assertEqual(region['unmatched_extent_pixels'], 0)
+                self.assertEqual(region['status'], 'identical')
+                overlay = json.loads(subprocess.check_output([str(IMAGE_TOOL), region['overlay']]))
+                self.assertEqual((overlay['width'], overlay['height']), (3*rect[2], 3*rect[3]))
+
+    def test_aligned_odd_region_still_detects_a_real_changed_pixel(self):
+        region = self.compare_bar_region('changed-bar', (1, 1, 5, 3), changed=True)
+        self.assertEqual(region['differing_pixels'], 9)
+        self.assertEqual(region['unmatched_extent_pixels'], 0)
+        self.assertEqual(region['status'], 'outstanding')
+
+    def test_identical_file_header_at_reference_resolution_has_no_false_differences(self):
+        region = self.compare_bar_region('file-header', (263, 46, 1017, 40),
+                                        logical_size=(1280, 720), bar=(300, 0, 310, 720))
+        self.assertEqual(region['differing_pixels'], 0)
+        self.assertEqual(region['unmatched_extent_pixels'], 0)
+
+    def test_invalid_common_grid_crop_fails_without_artifacts(self):
+        for index, rect in enumerate(((-1, 0, 6, 6), (0, 0, 9, 6), (0, 0, 6, 0), (0, 0, 6, 7))):
+            with self.subTest(rect=rect):
+                prefix = self.root / f'invalid-grid-{index}'
+                result = subprocess.run([str(IMAGE_TOOL), '--artifacts', str(self.a), str(self.b), str(prefix),
+                    '0', '0', '4', '3', '0', '0', '4', '3', '2', '3', *map(str, rect)], capture_output=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertFalse(list(self.root.glob(f'invalid-grid-{index}-*')))
 
 
 if __name__ == '__main__':

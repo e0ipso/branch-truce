@@ -164,15 +164,16 @@ def compare(source, shot, state, image_tool, output):
         physical = [math.floor(x*scale), math.floor(y*scale),
                     math.ceil((x+w)*scale)-math.floor(x*scale),
                     math.ceil((y+h)*scale)-math.floor(y*scale)]
+        reference_grid = [3*x-2*physical[0], 3*y-2*physical[1], 3*w, 3*h]
         command = [str(image_tool), '--artifacts', str(reference), str(shot), str(prefix),
-                   *map(str, physical), *map(str, rect), '2', '3']
+                   *map(str, physical), *map(str, rect), '2', '3', *map(str, reference_grid)]
         result = json.loads(subprocess.check_output(command))
         regions[region] = dict(reference_logical_rect=logical, reference_pixel_rect=physical, native_rect=rect,
                                count_unit='common-grid cells at 3 cells per logical pixel',
                                **result, status='outstanding' if result['differing_pixels'] else 'identical',
                                reference_closeup=str(prefix)+'-reference.png', native_closeup=str(prefix)+'-native.png')
     report = dict(reference_pixel_scale=scale, native_pixel_scale=state['profile']['devicePixelRatio'],
-                  alignment='Exact nearest-neighbour cell replication: reference x2, native x3. Originals and closeups unscaled.',
+                  alignment='Exact nearest-neighbour cell replication: reference x2, native x3. Reference cells are trimmed to the logical region; originals and closeups remain unscaled.',
                   reference_sha256=sha256(reference), native_sha256=sha256(shot),
                   original_reference=str(output / name), original_native=str(output / 'original-native.png'),
                   regions=regions, observations=observations(state),
