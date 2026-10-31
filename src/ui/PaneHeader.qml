@@ -27,6 +27,7 @@ Rectangle {
         Kirigami.Heading {
             id: heading
             level: 5
+            type: Kirigami.Heading.Type.Primary
             Layout.minimumWidth: Math.min(Kirigami.Units.gridUnit * 2, header.width / 3)
             Layout.preferredWidth: paneTitle.implicitWidth
             Layout.maximumWidth: header.width / 3

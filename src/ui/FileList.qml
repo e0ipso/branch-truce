@@ -25,7 +25,7 @@ Rectangle {
         anchors.leftMargin: Kirigami.Units.smallSpacing
         anchors.rightMargin: Kirigami.Units.smallSpacing
         height: Math.max(0, fileListPane.headerHeight - listSeparator.height)
-        Kirigami.Heading { Layout.fillWidth: true; level: 5; text: qsTr("Conflicted files") }
+        Kirigami.Heading { Layout.fillWidth: true; level: 5; type: Kirigami.Heading.Type.Primary; text: qsTr("Conflicted files") }
         Pill { text: String(fileListPane.controller.files.totalFiles) }
     }
     Kirigami.Separator { id: listSeparator; anchors.top: listHeading.bottom; anchors.left: parent.left; anchors.right: parent.right }
