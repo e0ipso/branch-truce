@@ -8,16 +8,16 @@
 // glyph of each line in marks.lines, and the gaps in marks.gaps on its
 // right edge. rows lists the blocks near the view
 // as {number, position, y, height, top, extent}, where top and extent span
-// the whole block. With provenance set, a column before the slot shows the
-// letter in marks.letters. folds maps the row of each folded
+// the whole block. marks.letters retains source correspondence for inspection,
+// without reserving another column. folds maps the row of each folded
 // conflict-marker block, its opening line, to the block's {last} line; the
 // row keeps its number and glyph, and the layers over the text read folds
 // to draw it.
 //
-// With decisionColumn set, a column after the slot holds the result's
-// section decisions, keyed by line. decisions maps a line to the {state,
-// label} of the section that starts there once both its sides are decided,
-// and the column shows that state as a chip.
+// decisions maps a line to the {state, label} of the section that starts
+// there once both its sides are decided. Its description joins the line's
+// provenance in inspection; it supplies a glyph only on an otherwise unmarked
+// line. The line's precise state and marker warnings always take precedence.
 //
 // rowSlots holds one entry per row. A Repeater over it, with each delegate
 // reading rows[index], keeps its delegates when a refresh changes rows but
@@ -37,18 +37,41 @@ Item {
     property var rows: []
     property var marks: ({lines: {}, gaps: {}, letters: {}})
     property var folds: ({})
-    property bool provenance: false
-    property bool decisionColumn: false
     property var decisions: ({})
     readonly property int digits: Math.max(2, String(blocks.blockCount).length)
     readonly property real numberWidth: Math.ceil(digits * gutterFont.averageCharacterWidth)
-    readonly property real letterWidth: provenance
-        ? Math.ceil(gutterFont.averageCharacterWidth) + Kirigami.Units.smallSpacing : 0
+    function lineKind(line: int): string {
+        if (folds[line])
+            return "markers"
+        return marks.lines[line] || (decisions[line] ? decisions[line].state : "")
+    }
+    function lineDescription(line: int): string {
+        const parts = []
+        const kind = lineKind(line)
+        if (kind.length > 0)
+            parts.push(DiffStyle.description(kind))
+        const correspondence = {
+            L: qsTr("Matches the captured left source"),
+            R: qsTr("Matches the captured right source"),
+            B: qsTr("Matches both captured sources"),
+            m: qsTr("Edited by hand")
+        }
+        const letter = (marks.letters || {})[line] || ""
+        if (correspondence[letter])
+            parts.push(correspondence[letter])
+        if (decisions[line])
+            parts.push(decisions[line].label)
+        if (marks.gaps[line])
+            parts.push(qsTr("Unmatched lines at this boundary"))
+        if (folds[line])
+            parts.push(qsTr("Folded conflict markers, lines %1 through %2").arg(line).arg(folds[line].last))
+        return parts.join("\n")
+    }
     // The editor range, with one view height either side, that rows covers.
     property real coveredTop: 0
     property real coveredBottom: -1
     z: 1
-    implicitWidth: Kirigami.Units.smallSpacing * 3 + numberWidth + letterWidth + slot.width + decisionSlot.width
+    implicitWidth: Kirigami.Units.smallSpacing * 3 + numberWidth + slot.width
     Kirigami.Theme.colorSet: Kirigami.Theme.View
     Kirigami.Theme.inherit: false
     Accessible.ignored: true
@@ -141,6 +164,7 @@ Item {
     Repeater {
         model: gutter.rowSlots
         delegate: PlainLabel {
+            id: lineNumber
             required property int index
             readonly property var modelData: gutter.rows[index] || gutter.noRow
             x: Kirigami.Units.smallSpacing
@@ -151,27 +175,23 @@ Item {
             font: gutter.editor.font
             color: Kirigami.Theme.disabledTextColor
             horizontalAlignment: Text.AlignRight
-        }
-    }
-    Repeater {
-        model: gutter.provenance ? gutter.rowSlots : 0
-        delegate: PlainLabel {
-            required property int index
-            readonly property var modelData: gutter.rows[index] || gutter.noRow
-            x: Kirigami.Units.smallSpacing * 2 + gutter.numberWidth
-            y: modelData.y
-            width: gutter.letterWidth
-            height: modelData.height
-            text: gutter.marks.letters[modelData.number] || ""
-            visible: text.length > 0
-            font: gutter.editor.font
-            color: Kirigami.Theme.disabledTextColor
+            Accessible.role: Accessible.StaticText
+            Accessible.name: qsTr("Line %1").arg(modelData.number)
+            Accessible.description: gutter.lineDescription(modelData.number)
+            ToolTip.visible: false
+            HoverHandler { id: numberHover }
+            ToolTip {
+                text: gutter.lineDescription(lineNumber.modelData.number)
+                textFormat: Text.PlainText
+                visible: numberHover.hovered && text.length > 0
+                delay: Kirigami.Units.toolTipDelay
+            }
         }
     }
     Item {
         id: slot
         objectName: gutter.objectName + "MarkerSlot"
-        x: Kirigami.Units.smallSpacing * 3 + gutter.numberWidth + gutter.letterWidth
+        x: Kirigami.Units.smallSpacing * 3 + gutter.numberWidth
         width: Kirigami.Units.gridUnit
         height: gutter.height
         Repeater {
@@ -181,7 +201,7 @@ Item {
                 required property int index
                 readonly property var modelData: gutter.rows[index] || gutter.noRow
                 readonly property int line: modelData.number
-                readonly property string kind: gutter.marks.lines[line] || ""
+                readonly property string kind: gutter.lineKind(line)
                 y: modelData.y
                 width: slot.width
                 height: modelData.height
@@ -192,9 +212,15 @@ Item {
                 color: DiffStyle.textColor(kind, kindGlyph)
                 Accessible.role: Accessible.StaticText
                 Accessible.name: text
-                Accessible.description: gutter.decisions[line]
-                    ? DiffStyle.description(kind) + ": " + gutter.decisions[line].label
-                    : kind.length > 0 ? DiffStyle.description(kind) : ""
+                Accessible.description: gutter.lineDescription(line)
+                ToolTip.visible: false
+                HoverHandler { id: glyphHover }
+                ToolTip {
+                    text: gutter.lineDescription(kindGlyph.line)
+                    textFormat: Text.PlainText
+                    visible: glyphHover.hovered && text.length > 0
+                    delay: Kirigami.Units.toolTipDelay
+                }
             }
         }
         Repeater {
@@ -204,7 +230,9 @@ Item {
                 required property int index
                 readonly property var modelData: gutter.rows[index] || gutter.noRow
                 readonly property int line: modelData.number
-                readonly property string kind: gutter.marks.gaps[line] ? "removed" : ""
+                // A row with its own state keeps one glyph. The unmatched-line
+                // boundary remains in that row's inspection description.
+                readonly property string kind: gutter.marks.gaps[line] && gutter.lineKind(line).length === 0 ? "removed" : ""
                 // Repeater detaches delegates before destroying them.
                 anchors.right: parent ? parent.right : undefined
                 anchors.rightMargin: Kirigami.Units.smallSpacing
@@ -214,43 +242,6 @@ Item {
                 font: gutter.editor.font
                 color: DiffStyle.textColor(kind, gapGlyph)
                 Accessible.description: kind.length > 0 ? DiffStyle.description(kind) : ""
-            }
-        }
-    }
-    Item {
-        id: decisionSlot
-        objectName: gutter.objectName + "DecisionSlot"
-        x: slot.x + slot.width
-        width: gutter.decisionColumn ? Math.ceil(gutterFont.lineSpacing) + Kirigami.Units.smallSpacing : 0
-        height: gutter.height
-        visible: width > 0
-        Repeater {
-            model: gutter.decisionColumn ? gutter.rowSlots : 0
-            delegate: Item {
-                id: decisionRow
-                required property int index
-                readonly property var modelData: gutter.rows[index] || gutter.noRow
-                readonly property int line: modelData.number
-                readonly property var decision: gutter.decisions[line] || null
-                y: modelData.y
-                width: decisionSlot.width
-                height: modelData.height
-                // The decided section's state as a short tag in its role's colour.
-                Pill {
-                    id: decisionChip
-                    readonly property string decision: decisionRow.decision ? decisionRow.decision.state : ""
-                    text: decision.length > 0 ? DiffStyle.glyph(decision) : ""
-                    tone: DiffStyle.pillTone(decision)
-                    // The line glyph already conveys this decision. Keep the
-                    // section description there instead of drawing a second check.
-                    visible: text.length > 0 && gutter.marks.lines[decisionRow.line] !== decision
-                    anchors.centerIn: parent
-                    height: decisionRow.height
-                    width: Math.max(height, implicitWidth)
-                    Accessible.role: Accessible.StaticText
-                    Accessible.name: text
-                    Accessible.description: decisionRow.decision ? decisionRow.decision.label : ""
-                }
             }
         }
     }

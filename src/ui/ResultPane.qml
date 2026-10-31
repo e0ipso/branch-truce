@@ -1,6 +1,6 @@
 // The editable result as a pane: its header above the text, with line numbers and
-// provenance, diff colours, whitespace markers, a gutter column with each decided
-// section's state, and the folded conflict-marker blocks as rows with their Take both menus.
+// one state glyph, inspectable provenance and decisions, diff colours, whitespace
+// markers, and folded conflict-marker blocks as rows with their Take both menus.
 pragma ComponentBehavior: Bound
 
 import QtQuick
@@ -189,10 +189,8 @@ ColumnLayout {
                 editor: resultEditor
                 blocks: resultBlocks
                 viewport: resultViewport
-                provenance: true
                 marks: resultPane.marks
                 folds: resultPane.fold.rows
-                decisionColumn: true
                 decisions: resultPane.decisions
             }
             LineBackgrounds {
