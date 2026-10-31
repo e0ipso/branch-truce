@@ -76,25 +76,30 @@ KirigamiDelegates.SubtitleDelegate {
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 0
-            RowLayout {
+            Item {
+                id: pathLine
                 Layout.fillWidth: true
-                Layout.preferredHeight: titleLabel.implicitHeight
-                spacing: Kirigami.Units.smallSpacing
+                implicitHeight: Math.max(titleLabel.implicitHeight, directoryLabel.implicitHeight)
                 PlainLabel {
                     id: titleLabel
-                    Layout.fillWidth: true
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.min(implicitWidth, pathLine.width)
                     text: row.path.split("/").pop() || row.path
                     elide: Text.ElideMiddle
-                    font.bold: row.current
+                    font: Kirigami.Theme.defaultFont
                     color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
                 }
                 PlainLabel {
-                    Layout.maximumWidth: row.width / 3
+                    id: directoryLabel
+                    anchors.baseline: titleLabel.baseline
+                    x: titleLabel.width + Kirigami.Units.smallSpacing
+                    // The basename takes its natural width first; the directory uses only the remainder.
+                    width: Math.min(implicitWidth, Math.max(0, pathLine.width - x))
                     visible: row.path.lastIndexOf("/") >= 0
                     text: row.path.slice(0, row.path.lastIndexOf("/"))
                     elide: Text.ElideMiddle
                     font: Kirigami.Theme.smallFont
-                    color: row.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.disabledTextColor
+                    color: row.highlighted ? Qt.alpha(Kirigami.Theme.highlightedTextColor, 0.8) : Kirigami.Theme.disabledTextColor
                 }
             }
             PlainLabel {
@@ -104,7 +109,7 @@ KirigamiDelegates.SubtitleDelegate {
                 maximumLineCount: 1
                 elide: Text.ElideRight
                 font: Kirigami.Theme.smallFont
-                color: row.highlighted ? Kirigami.Theme.highlightedTextColor : row.support !== "supported" ? Kirigami.Theme.neutralTextColor : row.status === "Written and resolved" ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.disabledTextColor
+                color: row.highlighted ? Qt.alpha(Kirigami.Theme.highlightedTextColor, 0.8) : row.support !== "supported" ? Kirigami.Theme.neutralTextColor : row.status === "Written and resolved" ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.disabledTextColor
             }
         }
 
