@@ -181,8 +181,13 @@ Item {
             ToolTip.visible: false
             HoverHandler { id: numberHover }
             ToolTip {
+                id: numberToolTip
                 text: gutter.lineDescription(lineNumber.modelData.number)
-                textFormat: Text.PlainText
+                Binding {
+                    target: numberToolTip.contentItem
+                    property: "textFormat"
+                    value: Text.PlainText
+                }
                 visible: numberHover.hovered && text.length > 0
                 delay: Kirigami.Units.toolTipDelay
             }
@@ -216,8 +221,13 @@ Item {
                 ToolTip.visible: false
                 HoverHandler { id: glyphHover }
                 ToolTip {
+                    id: glyphToolTip
                     text: gutter.lineDescription(kindGlyph.line)
-                    textFormat: Text.PlainText
+                    Binding {
+                        target: glyphToolTip.contentItem
+                        property: "textFormat"
+                        value: Text.PlainText
+                    }
                     visible: glyphHover.hovered && text.length > 0
                     delay: Kirigami.Units.toolTipDelay
                 }

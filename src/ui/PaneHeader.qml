@@ -71,8 +71,13 @@ Rectangle {
             Accessible.description: header.description
             HoverHandler { id: identityHover }
             ToolTip {
+                id: identityToolTip
                 text: identityLabel.text + (header.description.length > 0 ? "\n" + header.description : "")
-                textFormat: Text.PlainText
+                Binding {
+                    target: identityToolTip.contentItem
+                    property: "textFormat"
+                    value: Text.PlainText
+                }
                 visible: identityHover.hovered && identityLabel.truncated
                 delay: Kirigami.Units.toolTipDelay
             }
