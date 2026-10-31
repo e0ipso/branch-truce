@@ -24,5 +24,4 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         'qt6qml(org.kde.desktop)' 'qt6qml(org.kde.kirigami)' \
         qt6-qtsvg qt6-qtwayland plasma-breeze-qt6 breeze-icon-theme plasma-integration \
         dbus-daemon dbus-tools dpkg jq python3 libasan libubsan \
-        sway grim plasma-breeze google-noto-sans-fonts source-foundry-hack-fonts \
     && dnf clean all

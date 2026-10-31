@@ -137,6 +137,9 @@ jobs:
       FORMAT: ${{ matrix.format }}
       VERSION: ${{ needs.select.outputs.version }}
       REVISION: ${{ needs.select.outputs.revision }}
+      # Full reference replay uses one calibrated baseline. Every target still
+      # runs its complete desktop suite and native package lifecycle checks.
+      BRANCH_TRUCE_NATIVE_FIDELITY: ${{ matrix.format == 'kubuntu-deb' && '1' || '0' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -200,8 +203,10 @@ jobs:
             --arg revision "$REVISION" --arg observed "$(git rev-parse HEAD)" \
             --arg format "$FORMAT" --arg job "$GITHUB_JOB" --arg outcome "$BUILD_OUTCOME" \
             --arg images "$IMAGE_INPUTS" --arg date "$(date -u +%FT%TZ)" \
+            --arg fidelity "$BRANCH_TRUCE_NATIVE_FIDELITY" \
             '{run: $run, attempt: $attempt, selected_revision: $revision, source_head_observed: $observed,
               format: $format, job: $job, build_outcome: $outcome, image_inputs: $images, collected_at_utc: $date,
+              native_fidelity_requested: ($fidelity == "1"),
               acceptance: "pending independent original capture and per-callout inspection",
               installed_ui_validation: "pending; native package lifecycle logs are separate from installed UI observations",
               physical_desktop: false}' > "$OUTPUT/ci-provenance.json"
