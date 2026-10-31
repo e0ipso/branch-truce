@@ -56,6 +56,18 @@ python3 tools/native-replay/calibration.py --verify /absolute/capture-output
 ```
 
 Contract checks are also included in `NativeReplayTests.py` and its existing CTest entry.
+Desktop builds with Python register `tooling.native-calibration`, which runs all 17 existing
+contract and pixel cases using a test target built from the same `ImageCheck.cpp`:
+
+```sh
+cmake --build /absolute/desktop-build --target branch_truce_native_calibration_image --parallel 2
+ctest --test-dir /absolute/desktop-build -R '^tooling[.]native-calibration$' --output-on-failure -V
+```
+
+The KDE CI variants build this target and run its CTest entry with the desktop suite.
+Core-only builds register the Python contract/lifecycle checks but omit the pixel entry
+because QtGui is unavailable. Pixel checks include exact changed pixels, odd crop origins
+and dimensions, unmatched extents, and rejection of invalid common-grid crops.
 Verification compares current source/profile/reference inputs and retained artifact hashes,
 rechecks the executable and measured profile, and confirms disposable resources were removed.
 The integrated gate still owns full fit/reachability and complete suite verification.

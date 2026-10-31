@@ -62,6 +62,18 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME tooling.native-replay
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/NativeReplayTests.py")
     set_tests_properties(tooling.native-replay PROPERTIES TIMEOUT 30)
+    if(BRANCH_TRUCE_BUILD_DESKTOP)
+        # Exercise the same image CLI as native replay without building its Qt Quick driver.
+        # Core-only builds have no QtGui; their Python contract/lifecycle checks stay above.
+        add_executable(branch_truce_native_calibration_image
+            "${PROJECT_SOURCE_DIR}/tools/native-replay/ImageCheck.cpp")
+        target_link_libraries(branch_truce_native_calibration_image PRIVATE
+            Qt6::Core Qt6::Gui branch_truce_build_options)
+        add_test(NAME tooling.native-calibration
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/NativeCalibrationTests.py"
+                --image-tool $<TARGET_FILE:branch_truce_native_calibration_image>)
+        set_tests_properties(tooling.native-calibration PROPERTIES TIMEOUT 30)
+    endif()
 endif()
 if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_text_format_tests storage/TextFormatTests.cpp)
