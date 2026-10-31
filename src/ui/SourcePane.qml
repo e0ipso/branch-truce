@@ -26,6 +26,7 @@ ColumnLayout {
     property alias editor: sourceText
     property alias viewport: sourceViewport
     property alias blocks: sourceBlocks
+    readonly property int hoveredLine: textHover.line
     readonly property real verticalScrollBarWidth: sourceBar.visible ? sourceBar.width : 0
     property EditActions edits: null
     // A comparison pane overrides this method to offer its source-range menu.
@@ -109,15 +110,27 @@ ColumnLayout {
             }
             HoverHandler {
                 id: textHover
+                property int line: -1
                 function updateLine(): void {
                     const y = point.position.y + sourceViewport.contentY - sourceText.y - sourceText.topPadding
-                    sourcePane.lineHovered(hovered ? Math.floor(sourceBlocks.lineAtY(y)) : -1)
+                    line = hovered ? Math.floor(sourceBlocks.lineAtY(y)) : -1
+                    sourcePane.lineHovered(line)
                 }
                 onHoveredChanged: updateLine()
                 onPointChanged: if (hovered) updateLine()
             }
-            onContentYChanged: sourcePane.scrolled(moving || !!sourceBar && sourceBar.pressed
-                || sourceText.activeFocus)
+            onContentYChanged: {
+                if (textHover.hovered)
+                    textHover.updateLine()
+                sourcePane.scrolled(moving || !!sourceBar && sourceBar.pressed || sourceText.activeFocus)
+            }
+            Connections {
+                target: sourceBlocks
+                function onLayoutChanged(): void {
+                    if (textHover.hovered)
+                        textHover.updateLine()
+                }
+            }
             TextArea.flickable: TextArea {
                 id: sourceText
                 objectName: sourcePane.paneName + "Text"

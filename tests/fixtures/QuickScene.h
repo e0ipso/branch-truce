@@ -154,17 +154,33 @@ inline QQuickItem *waitForStable(QQuickWindow *window, const std::string &what,
     QElapsedTimer held;
     held.start();
     std::string state = "not found";
+    std::string lastSeen;
+    int matches = 0;
+    int missing = 0;
+    int moves = 0;
     const auto laidOut = [&] {
         auto *target = find();
         found = target;
-        if (!target) return false;
+        if (!target) {
+            ++missing;
+            state = "not found; last seen " + lastSeen;
+            return false;
+        }
+        ++matches;
         const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0));
         state = "visible=" + std::to_string(target->isVisible()) + " size=" + std::to_string(target->width())
             + "x" + std::to_string(target->height()) + " center=" + std::to_string(center.x()) + ","
             + std::to_string(center.y());
         if (!target->isVisible() || target->width() <= 0 || target->height() <= 0) return false;
-        if (center != previous) held.restart();
+        if (center != previous) {
+            ++moves;
+            held.restart();
+        }
         const bool stable = center == previous && held.elapsed() >= stableMs && window->contentItem()->contains(center);
+        state += " heldMs=" + std::to_string(held.elapsed())
+            + " contentContains=" + std::to_string(window->contentItem()->contains(center))
+            + " sameWindow=" + std::to_string(target->window() == window);
+        lastSeen = state;
         previous = center;
         return stable;
     };
@@ -172,7 +188,9 @@ inline QQuickItem *waitForStable(QQuickWindow *window, const std::string &what,
     deadline.start();
     while (!laidOut() && deadline.elapsed() < 5000)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    if (!laidOut()) throw std::runtime_error("layout of " + what + ": " + state);
+    if (!laidOut()) throw std::runtime_error("layout of " + what + ": " + state
+        + " matches=" + std::to_string(matches) + " missing=" + std::to_string(missing)
+        + " moves=" + std::to_string(moves));
     return found;
 }
 

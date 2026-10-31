@@ -963,9 +963,24 @@ public:
             auto *lanes = fixture.item("scopedChoices");
             auto *button = test_support::reachableButton(fixture.window, lanes, name);
             CHECK(button);
+            const auto waitOverlay = [&](const char *phase, const std::function<bool()> &ready) {
+                try {
+                    settleFor(phase, ready);
+                } catch (const std::exception &error) {
+                    auto *row = button->parentItem();
+                    auto *pane = fixture.item("stage2Viewport")->parentItem()->parentItem();
+                    auto *focus = fixture.window->activeFocusItem();
+                    throw std::runtime_error(std::string(error.what()) + "; sourceHoveredLine="
+                        + std::to_string(pane->property("hoveredLine").toInt())
+                        + " rowHovered=" + std::to_string(row->property("rowHovered").toBool())
+                        + " revealed=" + std::to_string(row->property("revealed").toBool())
+                        + " choiceFocused=" + std::to_string(row->property("choiceFocused").toBool())
+                        + " activeFocus=" + (focus ? focus->objectName().toStdString() : "none"));
+                }
+            };
             QTest::mouseMove(fixture.window, QPoint(5, 5));
             fixture.item("resultText")->forceActiveFocus();
-            settle([&] { return !test_support::painted(button); });
+            waitOverlay("source overlay idle before touch", [&] { return !test_support::painted(button); });
             const auto center = QPointF(button->width() / 2, button->height() / 2);
             CHECK(!button->contains(center));
             static auto *touch = QTest::createTouchDevice();
@@ -973,6 +988,18 @@ public:
             QTest::touchEvent(fixture.window, touch).press(0, point, fixture.window);
             QTest::touchEvent(fixture.window, touch).release(0, point, fixture.window);
             checkUnchanged(fixture, before);
+            // Hover the code away from the buttons. The same source observer
+            // must reveal the overlay and retain source/counterpart highlighting.
+            auto *viewport = fixture.item("stage2Viewport");
+            const auto rowY = button->mapToItem(viewport, center).y();
+            QTest::mouseMove(fixture.window,
+                viewport->mapToScene(QPointF(viewport->width() / 2, rowY)).toPoint());
+            waitOverlay("source code hover reveals its overlay", [&] {
+                auto *row = button->parentItem();
+                auto *pane = viewport->parentItem()->parentItem();
+                return pane->property("hoveredLine").toInt() == row->property("modelData").toMap().value("line").toInt()
+                    && row->property("rowHovered").toBool() && test_support::painted(button);
+            });
             CHECK(test_support::hoverChoiceControl(fixture.window, lanes, name) == button);
             CHECK(test_support::painted(button));
             CHECK(button->contains(center));
@@ -981,18 +1008,18 @@ public:
                 CHECK(button->mapRectToScene(button->boundingRect()).right()
                     <= bar->mapRectToScene(bar->boundingRect()).left());
             QTest::mouseMove(fixture.window, QPoint(5, 5));
-            settle([&] { return !test_support::painted(button); });
+            waitOverlay("source overlay hidden after leaving hover", [&] { return !test_support::painted(button); });
             // Traverse the real native Tab chain; opacity must not remove the target.
             auto *previous = button->nextItemInFocusChain(false);
             CHECK(previous && previous != button);
             CHECK(previous != fixture.item("resultText"));
             previous->forceActiveFocus(Qt::TabFocusReason);
             QTest::keyClick(fixture.window, Qt::Key_Tab);
-            settle([&] { return button->hasActiveFocus(); });
+            waitOverlay("source overlay reached by native Tab", [&] { return button->hasActiveFocus(); });
             CHECK(test_support::painted(button));
             QTest::keyClick(fixture.window, Qt::Key_Menu);
             auto *menu = fixture.object(("choiceMore-" + choice.source.contributionId).c_str());
-            settle([&] { return menu->property("visible").toBool(); });
+            waitOverlay("source overlay keyboard menu opened", [&] { return menu->property("visible").toBool(); });
             CHECK(test_support::painted(button));
             QTest::keyClick(fixture.window, Qt::Key_Escape);
             checkUnchanged(fixture, before);

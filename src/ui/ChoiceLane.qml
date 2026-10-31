@@ -52,16 +52,9 @@ Item {
     height: viewportRect.height
     visible: width > 0
     clip: true
-    // A stationary pointer must follow wrapping and font relayouts too.
-    function lineAtPointer(y: real, revision: int, contentY: real): int {
-        return Math.floor(pane.blocks.lineAtY(y + contentY - pane.editor.y - pane.editor.topPadding))
-    }
-    readonly property int hoveredLine: pointer.hovered
-        ? lineAtPointer(pointer.point.position.y, layoutRevision, pane.viewport.contentY) : -1
-    HoverHandler {
-        id: pointer
-        blocking: false
-    }
+    // Share the text's hover observer. A handler on this full-viewport sibling
+    // would stop Qt's hover traversal before it reached the source text.
+    readonly property int hoveredLine: pane.hoveredLine
     Connections {
         target: lane.pane.blocks
         function onLayoutChanged(): void { ++lane.layoutRevision }

@@ -547,29 +547,15 @@ void clickOverflowAction(Scene &scene, const char *name)
 // A named toolbar control may move to overflow as the window narrows.
 void clickFileToolbarControl(Scene &scene, const char *name)
 {
-    const auto find = [&] { return test_support::namedButton(scene.window->contentItem(), QString::fromLatin1(name)); };
-    auto *control = find();
-    if (!control) {
-        auto *toolbar = scene.item("fileToolBar");
-        auto *more = test_support::waitForStable(scene.window, "file toolbar overflow", [&] {
-            return test_support::namedButton(toolbar, QStringLiteral("More Actions"));
-        }, Scene::settleMs);
-        test_support::clickItem(scene.window, more);
-        control = test_support::waitForStable(scene.window, name, find, Scene::settleMs);
-    }
-    test_support::clickItem(scene.window, control);
+    test_support::clickItem(scene.window,
+        test_support::fileToolbarControl(scene.window, name, Scene::settleMs));
 }
 
 // Opens the file toolbar's overflow menu and clicks its Show conflict markers entry.
 void toggleConflictMarkers(Scene &scene)
 {
     clickOverflowAction(scene, "showConflictMarkers");
-    // A click on the overflow button while the menu is still closing closes it again.
-    settleFor("overflow menu closed", [&] {
-        return !descendant(scene.window->contentItem(), [](QQuickItem *item) {
-            return item->objectName() == QStringLiteral("ActionsMenu") && item->isVisible();
-        });
-    });
+    test_support::closeFileToolbarMenu(scene.window);
 }
 
 QPointF sceneOrigin(QQuickItem *item)
@@ -799,12 +785,7 @@ qreal checkFits(Scene &scene, int width, int height, const std::vector<const cha
                                      + ": " + geometry(item));
         if (openedOverflow) {
             CHECK(!test_support::accessibleName(item).isEmpty());
-            keyClick(scene, Qt::Key_Escape);
-            settleFor("file toolbar overflow closed", [&] {
-                return !descendant(scene.window->contentItem(), [](QQuickItem *candidate) {
-                    return candidate->objectName() == QStringLiteral("ActionsMenu") && candidate->isVisible();
-                });
-            });
+            test_support::closeFileToolbarMenu(scene.window);
         }
     }
     // Each pane header is one line high.
