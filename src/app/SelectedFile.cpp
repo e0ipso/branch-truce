@@ -3,6 +3,7 @@
 #include "SourceIdentity.h"
 #include <algorithm>
 #include <set>
+#include <utility>
 
 namespace branch_truce {
 namespace {
@@ -156,13 +157,7 @@ void SelectedFile::sync(const QString &fileId)
 void SelectedFile::project(const FileSession *file)
 {
     if (!file) {
-        update(passages_, QVariantList{}, &SelectedFile::passagesChanged);
-        update(handEditedLines_, QVariantList{}, &SelectedFile::handEditedLinesChanged);
-        update(choices_, QVariantList{}, &SelectedFile::choicesChanged);
-        update(regions_, QVariantList{}, &SelectedFile::regionsChanged);
-        update(markerBlocks_, QVariantList{}, &SelectedFile::markerBlocksChanged);
-        update(markerOrphans_, QVariantList{}, &SelectedFile::markerOrphansChanged);
-        update(choiceNotice_, QString{}, &SelectedFile::choicesChanged);
+        publishProjection({});
         return;
     }
     const auto *mapping = file->correspondence();
@@ -182,7 +177,6 @@ void SelectedFile::project(const FileSession *file)
             }
         }
     }
-    update(passages_, passages, &SelectedFile::passagesChanged);
     // Result lines editor changes wrote, inside choice regions or not. A
     // deletion marks the line it joined, or the last line after a final newline.
     QVariantList handEditedLines;
@@ -196,7 +190,6 @@ void SelectedFile::project(const FileSession *file)
             handEditedLines.push_back(entry);
         }
     }
-    update(handEditedLines_, handEditedLines, &SelectedFile::handEditedLinesChanged);
     QVariantList choices;
     QVariantList regions;
     // A marker block tied to choice sections stays in the result until
@@ -263,8 +256,6 @@ void SelectedFile::project(const FileSession *file)
             {QStringLiteral("detail"), !undecided ? tr("Preview both to replace this scope, or undo intervening actions to change its decision.")
                 : !mapped ? tr("This scope cannot be mapped safely. Edit the result directly.") : QString{}}});
     }
-    update(choices_, choices, &SelectedFile::choicesChanged);
-    update(regions_, regions, &SelectedFile::regionsChanged);
     // Fold recognized blocks independently of whether a choice can safely
     // target them. A pending editor draft has different lines, so it gets none.
     QVariantList markerBlocks;
@@ -289,9 +280,39 @@ void SelectedFile::project(const FileSession *file)
         }
         for (const auto &orphan : scan.orphans) markerOrphans.push_back(markerLine(orphan, draft, lines));
     }
-    update(markerBlocks_, markerBlocks, &SelectedFile::markerBlocksChanged);
-    update(markerOrphans_, markerOrphans, &SelectedFile::markerOrphansChanged);
-    update(choiceNotice_, choices_.empty() && !file->choices().empty()
-        ? tr("Scoped choices are unavailable for this earlier draft. Direct editing remains available.") : QString{}, &SelectedFile::choicesChanged);
+    const auto notice = choices.empty() && !file->choices().empty()
+        ? tr("Scoped choices are unavailable for this earlier draft. Direct editing remains available.") : QString{};
+    publishProjection({std::move(passages), std::move(handEditedLines), std::move(choices), std::move(regions),
+        std::move(markerBlocks), std::move(markerOrphans), notice});
+}
+
+void SelectedFile::publishProjection(Projection projection)
+{
+    const bool passages = passages_ != projection.passages;
+    const bool handEditedLines = handEditedLines_ != projection.handEditedLines;
+    const bool choices = choices_ != projection.choices || choiceNotice_ != projection.choiceNotice;
+    const bool regions = regions_ != projection.regions;
+    const bool markerBlocks = markerBlocks_ != projection.markerBlocks;
+    const bool markerOrphans = markerOrphans_ != projection.markerOrphans;
+    if (!passages && !handEditedLines && !choices && !regions && !markerBlocks && !markerOrphans) return;
+
+    // A QML binding often reads several of these fields. Install the complete
+    // revision first, then invalidate that binding once through a shared notifier.
+    passages_ = std::move(projection.passages);
+    handEditedLines_ = std::move(projection.handEditedLines);
+    choices_ = std::move(projection.choices);
+    choiceNotice_ = std::move(projection.choiceNotice);
+    regions_ = std::move(projection.regions);
+    markerBlocks_ = std::move(projection.markerBlocks);
+    markerOrphans_ = std::move(projection.markerOrphans);
+    Q_EMIT comparisonChanged();
+
+    // Preserve focused observers, with the same coherent state as QML receives.
+    if (passages) Q_EMIT passagesChanged();
+    if (handEditedLines) Q_EMIT handEditedLinesChanged();
+    if (choices) Q_EMIT choicesChanged();
+    if (regions) Q_EMIT regionsChanged();
+    if (markerBlocks) Q_EMIT markerBlocksChanged();
+    if (markerOrphans) Q_EMIT markerOrphansChanged();
 }
 }

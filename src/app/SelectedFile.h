@@ -1,4 +1,4 @@
-// SelectedFile exposes the selected row and caches independently notified comparison data.
+// SelectedFile exposes the selected row and publishes coherent comparison projections.
 #pragma once
 #include "SessionModel.h"
 #include "TextPositions.h"
@@ -23,13 +23,13 @@ class SelectedFile : public QObject {
     Q_PROPERTY(QVariantMap initialResult READ initialResult NOTIFY sourcesChanged)
     Q_PROPERTY(QString resultText READ resultText NOTIFY resultTextChanged)
     Q_PROPERTY(QVariantList decisions READ decisions NOTIFY decisionsChanged)
-    Q_PROPERTY(QVariantList passages READ passages NOTIFY passagesChanged)
-    Q_PROPERTY(QVariantList handEditedLines READ handEditedLines NOTIFY handEditedLinesChanged)
-    Q_PROPERTY(QVariantList choices READ choices NOTIFY choicesChanged)
-    Q_PROPERTY(QString choiceNotice READ choiceNotice NOTIFY choicesChanged)
-    Q_PROPERTY(QVariantList regions READ regions NOTIFY regionsChanged)
-    Q_PROPERTY(QVariantList markerBlocks READ markerBlocks NOTIFY markerBlocksChanged)
-    Q_PROPERTY(QVariantList markerOrphans READ markerOrphans NOTIFY markerOrphansChanged)
+    Q_PROPERTY(QVariantList passages READ passages NOTIFY comparisonChanged)
+    Q_PROPERTY(QVariantList handEditedLines READ handEditedLines NOTIFY comparisonChanged)
+    Q_PROPERTY(QVariantList choices READ choices NOTIFY comparisonChanged)
+    Q_PROPERTY(QString choiceNotice READ choiceNotice NOTIFY comparisonChanged)
+    Q_PROPERTY(QVariantList regions READ regions NOTIFY comparisonChanged)
+    Q_PROPERTY(QVariantList markerBlocks READ markerBlocks NOTIFY comparisonChanged)
+    Q_PROPERTY(QVariantList markerOrphans READ markerOrphans NOTIFY comparisonChanged)
     Q_PROPERTY(QString support READ support NOTIFY statusChanged)
     Q_PROPERTY(QString supportDetail READ supportDetail NOTIFY statusChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
@@ -102,6 +102,7 @@ Q_SIGNALS:
     void sourcesChanged();
     void resultTextChanged();
     void decisionsChanged();
+    void comparisonChanged();
     void passagesChanged();
     void handEditedLinesChanged();
     void choicesChanged();
@@ -110,8 +111,18 @@ Q_SIGNALS:
     void markerOrphansChanged();
     void statusChanged();
 private:
+    struct Projection {
+        QVariantList passages;
+        QVariantList handEditedLines;
+        QVariantList choices;
+        QVariantList regions;
+        QVariantList markerBlocks;
+        QVariantList markerOrphans;
+        QString choiceNotice;
+    };
     [[nodiscard]] QVariant role(int role) const;
     void project(const FileSession *file);
+    void publishProjection(Projection projection);
     template<typename T> void update(T &stored, const T &next, void (SelectedFile::*changed)())
     {
         if (stored == next) return;

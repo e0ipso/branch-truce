@@ -1,4 +1,5 @@
 #include "app/SessionModel.h"
+#include "app/SelectedFile.h"
 #include "recovery/RecoveryRestore.h"
 #include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
@@ -10,6 +11,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QProcess>
+#include <QQmlContext>
+#include <QQmlEngine>
+#include <QQmlExpression>
 #include <QStandardPaths>
 #include <QPersistentModelIndex>
 #include <QSet>
@@ -198,6 +202,61 @@ public:
     int run()
     {
         test_support::Suite suite("SessionModelTests");
+        suite.run("comparison bindings receive one complete projection per revision", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(test_support::choiceFile()));
+            SelectedFile selected(model);
+            selected.sync(QStringLiteral("choices"));
+            QQmlEngine engine;
+            engine.rootContext()->setContextProperty(QStringLiteral("selected"), &selected);
+            QQmlExpression binding(engine.rootContext(), nullptr, QStringLiteral(
+                "JSON.stringify({passages:selected.passages, regions:selected.regions, "
+                "handEditedLines:selected.handEditedLines, choices:selected.choices, "
+                "markerBlocks:selected.markerBlocks, markerOrphans:selected.markerOrphans, "
+                "choiceNotice:selected.choiceNotice})"));
+            binding.setNotifyOnValueChanged(true);
+            const auto read = [&] {
+                const auto value = binding.evaluate().toString();
+                CHECK(!binding.hasError());
+                return value;
+            };
+            const auto initial = read();
+            QStringList observed, focused;
+            QObject::connect(&binding, &QQmlExpression::valueChanged, [&] { observed.push_back(read()); });
+            const auto observeFocused = [&] { focused.push_back(read()); };
+            QObject::connect(&selected, &SelectedFile::passagesChanged, observeFocused);
+            QObject::connect(&selected, &SelectedFile::regionsChanged, observeFocused);
+            QObject::connect(&selected, &SelectedFile::handEditedLinesChanged, observeFocused);
+            const auto checkPublication = [&] {
+                const auto complete = read();
+                CHECK(observed.size() == 1);
+                CHECK(observed.front() == complete);
+                CHECK(focused.size() >= 2);
+                for (const auto &value : focused) CHECK(value == complete);
+                observed.clear();
+                focused.clear();
+                return complete;
+            };
+            CHECK(model.editResult("choices", model.file("choices")->current().id,
+                {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+            selected.sync(QStringLiteral("choices"));
+            CHECK(checkPublication() != initial);
+            // Status-only refreshes must not recompute the same QML projection.
+            selected.sync(QStringLiteral("choices"));
+            CHECK(observed.isEmpty() && focused.isEmpty());
+            CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+            selected.sync(QStringLiteral("choices"));
+            CHECK(checkPublication() == initial);
+            CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
+            selected.sync(QStringLiteral("choices"));
+            CHECK(checkPublication() != initial);
+            selected.sync(QString{});
+            checkPublication();
+            CHECK(selected.passages().isEmpty() && selected.regions().isEmpty()
+                && selected.handEditedLines().isEmpty() && selected.choices().isEmpty());
+        });
         for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
             for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst}) {
                 suite.run("ordered combination undo and redo recover as complete transactions "

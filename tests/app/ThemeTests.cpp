@@ -474,12 +474,26 @@ void diagnoseTyping(Scene &scene)
     const auto editor = trace.add(QStringLiteral("controller.resultEditorChanged"));
     const auto selected = trace.add(QStringLiteral("controller.selectedFileChanged"));
     const auto projected = trace.add(QStringLiteral("selectedFile.statusChanged"));
+    const auto comparison = trace.add(QStringLiteral("selectedFile.comparisonChanged"));
+    const auto passages = trace.add(QStringLiteral("selectedFile.passagesChanged"));
+    const auto handEdited = trace.add(QStringLiteral("selectedFile.handEditedLinesChanged"));
+    const auto choices = trace.add(QStringLiteral("selectedFile.choicesChanged"));
+    const auto regions = trace.add(QStringLiteral("selectedFile.regionsChanged"));
+    const auto markerBlocks = trace.add(QStringLiteral("selectedFile.markerBlocksChanged"));
+    const auto markerOrphans = trace.add(QStringLiteral("selectedFile.markerOrphansChanged"));
     const auto summary = trace.add(QStringLiteral("session.summaryChanged"));
     const auto frame = trace.add(QStringLiteral("input.acknowledgedFrame"));
     QObject::connect(scene.controller.files(), &QAbstractItemModel::dataChanged, &trace, [&] { trace.mark(model); });
     QObject::connect(&scene.controller, &ApplicationController::resultEditorChanged, &trace, [&] { trace.mark(editor); });
     QObject::connect(&scene.controller, &ApplicationController::selectedFileChanged, &trace, [&] { trace.mark(selected); });
     QObject::connect(scene.controller.selectedFile(), &SelectedFile::statusChanged, &trace, [&] { trace.mark(projected); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::comparisonChanged, &trace, [&] { trace.mark(comparison); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::passagesChanged, &trace, [&] { trace.mark(passages); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::handEditedLinesChanged, &trace, [&] { trace.mark(handEdited); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::choicesChanged, &trace, [&] { trace.mark(choices); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::regionsChanged, &trace, [&] { trace.mark(regions); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::markerBlocksChanged, &trace, [&] { trace.mark(markerBlocks); });
+    QObject::connect(scene.controller.selectedFile(), &SelectedFile::markerOrphansChanged, &trace, [&] { trace.mark(markerOrphans); });
     QObject::connect(scene.controller.files(), &SessionModel::summaryChanged, &trace, [&] { trace.mark(summary); });
     QJsonArray panes;
     for (const auto *name : {"stage2Text", "resultText", "stage3Text"}) {
