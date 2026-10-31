@@ -52,7 +52,7 @@ KirigamiDelegates.SubtitleDelegate {
         : row.conflictCount > 0 ? (row.conflictCount === 1
             ? qsTr("%n conflict left", "", row.conflictCount)
             : qsTr("%n conflicts left", "", row.conflictCount))
-        : qsTr("No conflicts to step through")
+        : row.statusLine
     Accessible.description: row.summary
     icon.name: row.statusIcon
     highlighted: current
