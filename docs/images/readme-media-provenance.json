@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "ci_run": "https://github.com/e0ipso/branch-truce/actions/runs/42222287914",
+  "source": "63c9b89d4348a9650e17bb603ff4164de7f84efa",
+  "producing_merge": "1cc64d1371887b5c475b8cdf7a6fbff23d8a86c2",
+  "captured_date": "2026-11-06",
+  "screenshots": [
+    {
+      "published": "docs/images/comparison-light.png",
+      "original": "tests/kubuntu-deb/native/800/replay-1-light/light-text.png",
+      "sha256": "7eae344c947cb857094f127706111245e4503dc307a797fee55290396049646a"
+    },
+    {
+      "published": "docs/images/comparison-dark.png",
+      "original": "tests/kubuntu-deb/native/800/replay-1-dark/dark-text.png",
+      "sha256": "63ac6cd4c5a95f48e8877203d6ee55b97f0130ac9d0ea1623daa1a3bf63856c5"
+    },
+    {
+      "published": "docs/images/choice-preview.png",
+      "original": "tests/kubuntu-deb/ui-scenes/ordered-choice-preview-800.png",
+      "sha256": "8a2adc9d13d37224b619688fce5586c0652c8360e414c6c4da5f98e571d8cace"
+    },
+    {
+      "published": "docs/images/earlier-version.png",
+      "original": "tests/kubuntu-deb/ui-scenes/earlier-context-800.png",
+      "sha256": "18eba65ef1fef524ac9c5edbad2b3de07c07693496fab99bdd2aeac0e0d5b866"
+    }
+  ],
+  "animation": {
+    "type": "Animated gallery of actual CI screenshots; not a continuous interaction recording",
+    "frame_duration_seconds": 4,
+    "original_frames": [
+      "tests/kubuntu-deb/native/800/replay-1-light/light-text.png",
+      "tests/kubuntu-deb/ui-scenes/ordered-choice-preview-800.png",
+      "tests/kubuntu-deb/ui-scenes/earlier-context-800.png",
+      "tests/kubuntu-deb/native/800/replay-1-light/light-binary.png"
+    ],
+    "logical_size": [
+      1280,
+      800
+    ],
+    "output_size": [
+      1200,
+      750
+    ],
+    "changes": "Resize and GIF/video encoding only; no altered application pixels or synthetic actions",
+    "demo.gif": {
+      "sha256": "072fdf4035b601ee4a55f4849e145590dc0ac624e0e3c790a1ec243f42198967",
+      "bytes": 407947
+    },
+    "demo.mp4": {
+      "sha256": "970990755cff75552356709d3d3624ade678eb17ff24495eddc171c557d2fe98",
+      "bytes": 249008
+    },
+    "encoding": {
+      "gif": "ffmpeg fps=8, scale=1200:750:lanczos, palettegen=stats_mode=diff, paletteuse=dither=bayer, loop=0",
+      "video": "ffmpeg fps=8, scale=1200:750:lanczos, libx264 crf20 yuv420p, faststart"
+    }
+  },
+  "scope": "Native comparison and binary scenes use Breeze on headless Wayland; read-only preview scenes use Fusion offscreen. No physical desktop claim."
+}
