@@ -10,7 +10,7 @@ The canonical artifact retains 16 native captures at both heights, eight zero-di
 
 Twelve additional original Qt scenes under `ui-scenes/` cover compact and long-message placeholders, literal diagnostic paths, earlier context and ordered-choice previews. They were inspected at their retained sizes. The stressed 960x540 scene scrolls to Technical details; literal markup remains text. Earlier/context previews retain visible keyboard selection and shared row geometry. Their JSON records `Fusion` for the review dialogs and `org.kde.desktop` for the window stress scenes; these observations do not imply the same style in every fixture. The synthetic localized prose is a stress input, not a shipped translation.
 
-The README pair was inspected and copied unchanged from `native/720/documentation-readme/`. [Its provenance](images/redesigned-comparison-provenance.json) records source, producing merge, command, capture time and image hashes. These build-tree captures ran in private headless sway. They do not establish installed-package UI or physical Plasma/AT-SPI behavior. The earlier [CI baseline](https://github.com/e0ipso/branch-truce/actions/runs/41235434979) remains historical and did not execute the highlighting-disabled desktop variant.
+The documentation pair was inspected and copied unchanged from `native/720/documentation-readme/`. [Its provenance](images/redesigned-comparison-provenance.json) records source, producing merge, command, capture time and image hashes. The README uses the native C++ comparison at 1280x800, current reading-view examples and an animated gallery of those application states; [media provenance](images/readme-media-provenance.json) records the original frames and encoding. These build-tree captures do not establish installed-package UI or physical Plasma/AT-SPI behavior. The earlier [CI baseline](https://github.com/e0ipso/branch-truce/actions/runs/41235434979) remains historical and did not execute the highlighting-disabled desktop variant.
 
 ## Historical installed-package status
 
@@ -28,7 +28,7 @@ it does on a Wayland compositor with Breeze, three scale factors and AT-SPI.
 
 ## Redesign evidence still required
 
-No fresh installed-desktop UI observation is established by the current build-tree captures. The 2026-10-25 package results and 2026-10-26 startup observations remain historical, with their original hashes, dates and scope. The README now uses the inspected 2026-11-06 development capture pair; the older images remain available with their historical scope.
+No fresh installed-desktop UI observation is established by the current build-tree captures. The 2026-10-25 package results and 2026-10-26 startup observations remain historical, with their original hashes, dates and scope. Every README screenshot, GIF and video now uses the inspected 2026-11-06 development captures. Earlier media remains in Git history.
 
 For installed-UI validation, run the commands under [How to reproduce](#how-to-reproduce) against current packages, using a new owned output directory per target. Record the actual run date, source revision, package SHA-256, environment, command, exit status and emitted `.validation`, `.atspi` and PNG paths here. Replace pending observations only with the results that run produced. The current CI package lifecycle checks and development screenshots do not substitute for this observation.
 

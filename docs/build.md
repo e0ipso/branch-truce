@@ -299,13 +299,13 @@ Agents sharing the headless session run the script under
 uses the same function inside its container for its single `tracked.txt`
 conflict.
 
-The README uses the inspected 2026-11-06 CI captures below. Their [provenance](images/redesigned-comparison-provenance.json) records the producing source, executable and original image hashes. The older `comparison-light.png` and `comparison-dark.png` files remain available as historical captures.
+The README uses the inspected 2026-11-06 CI captures below. Their [provenance](images/readme-media-provenance.json) records the producing source and original image hashes. The comparison, preview, earlier-context, GIF and video files now show the current app. The animation is an encoded gallery of actual CI states, not a continuous interaction recording.
 
 | Breeze Light | Breeze Dark |
 | --- | --- |
-| [![Current comparison in Breeze Light](images/redesigned-comparison-light.png)](images/redesigned-comparison-light.png) | [![Current comparison in Breeze Dark](images/redesigned-comparison-dark.png)](images/redesigned-comparison-dark.png) |
+| [![Current comparison in Breeze Light](images/comparison-light.png)](images/comparison-light.png) | [![Current comparison in Breeze Dark](images/comparison-dark.png)](images/comparison-dark.png) |
 
-The README also shows the current [ordered-choice preview](images/redesigned-choice-preview.png) and [earlier-context pane](images/redesigned-earlier-version.png), captured by the acceptance journeys with Fusion controls. These are original application screenshots, not mockups.
+The README also shows the current [ordered-choice preview](images/choice-preview.png) and [earlier-context pane](images/earlier-version.png), captured by the acceptance journeys with Fusion controls. These are original application screenshots, not mockups. The [GIF](images/demo.gif) and [video](images/demo.mp4) use those frames alongside the comparison and binary-file guidance.
 
 To produce a new pair from a sway session, set `capture_dir` to a new owned artifact directory and run:
 
