@@ -58,6 +58,7 @@ class OwnedResources:
         self.processes = []
         self.logs = []
         self.threads = []
+        self.reader_errors = []
 
     def spawn(self, argv, *, env, log, pass_fds=(), pipe=False):
         stream = Path(log).open('wb')
@@ -68,6 +69,17 @@ class OwnedResources:
                                    pass_fds=pass_fds)
         self.processes.append(process)
         return process, stream
+
+    def start_reader(self, target, *args):
+        def run():
+            try:
+                target(*args)
+            except Exception as error:
+                self.reader_errors.append(error)
+        reader = threading.Thread(target=run, daemon=True)
+        reader.start()
+        self.threads.append(reader)
+        return reader
 
     def close(self):
         for process in reversed(self.processes):
@@ -99,6 +111,8 @@ class OwnedResources:
                 private_root_removed=not self.root.exists(),
                 owned_processes_reaped=all(process.returncode is not None for process in self.processes),
                 unrelated_outputs_touched=False))
+        require(not self.reader_errors, 'Owned log reader failed: ' + '; '.join(
+            f'{type(error).__name__}: {error}' for error in self.reader_errors))
 
     def __enter__(self):
         return self
@@ -322,13 +336,11 @@ def capture_one(args, driver, out, theme, repeat):
         display = await_compositor(compositor, log)
         # The readiness prefix has been consumed. Send later logs directly to the owned log.
         # Keep draining the pipe on a thread so compositor diagnostics cannot fill it.
-        def drain():
-            while chunk := compositor.stdout.read(65536):
-                log.write(chunk)
-                log.flush()
-        drain_thread = threading.Thread(target=drain, daemon=True)
-        owned.threads.append(drain_thread)
-        drain_thread.start()
+        def drain(source, destination):
+            while chunk := source.read(65536):
+                destination.write(chunk)
+                destination.flush()
+        drain_thread = owned.start_reader(drain, compositor.stdout, log)
         sockets = list(Path(env['XDG_RUNTIME_DIR']).glob('sway-ipc.*.sock'))
         require(len(sockets) == 1, 'Expected one private sway socket')
         env.update(WAYLAND_DISPLAY=str(Path(env['XDG_RUNTIME_DIR']) / display),
@@ -417,10 +429,10 @@ def capture_one(args, driver, out, theme, repeat):
                 docs.mkdir()
                 preview_env = dict(env, PREVIEW_FILE='notes.md', PREVIEW_SIZE='1440x900',
                                    PREVIEW_OUTPUT=str(docs))
-                with (docs / 'preview.log').open('wb') as log:
+                with (docs / 'preview.log').open('wb') as preview_log:
                     subprocess.run([str(args.source / 'tools/preview-app.sh'),
                                     str(args.build / 'src/app/branch-truce')],
-                                   env=preview_env, stdout=log, stderr=subprocess.STDOUT, check=True)
+                                   env=preview_env, stdout=preview_log, stderr=subprocess.STDOUT, check=True)
                 write_json(docs / 'provenance.json', dict(
                     command=['tools/preview-app.sh', str(args.build / 'src/app/branch-truce')],
                     environment={key: preview_env[key] for key in ('PREVIEW_FILE', 'PREVIEW_SIZE')},

@@ -70,12 +70,24 @@ Rectangle {
             HoverHandler { id: identityHover }
             ToolTip {
                 id: identityToolTip
+                objectName: header.identityName.length > 0 ? header.identityName + "ToolTip" : ""
                 text: identityLabel.text + (header.description.length > 0 ? "\n" + header.description : "")
-                Binding {
-                    target: identityToolTip.contentItem
-                    property: "textFormat"
-                    value: Text.PlainText
+                // Desktop styles may wrap their text in an Item. Apply the
+                // format to actual text descendants, including deferred ones.
+                function ensurePlainText(): void {
+                    const pending = [contentItem]
+                    while (pending.length > 0) {
+                        const next = pending.pop()
+                        if (!next)
+                            continue
+                        if (next["textFormat"] !== undefined)
+                            next["textFormat"] = Text.PlainText
+                        pending.push(...next.children)
+                    }
                 }
+                Component.onCompleted: ensurePlainText()
+                onContentItemChanged: ensurePlainText()
+                onAboutToShow: ensurePlainText()
                 visible: identityHover.hovered && identityLabel.truncated
                 delay: Kirigami.Units.toolTipDelay
             }

@@ -49,17 +49,17 @@ capture inputs and retained artifacts; `calibration.py --verify OUTPUT` rejects 
 
 | Measure | Native baseline | HTML observation | Governing rule |
 | --- | --- | --- | --- |
-| Row pitch | 18 logical px | 20 CSS px | Fixed-font line spacing plus smallSpacing; pane budget and scrolling must use the same pitch |
-| Header inset | 8 | 12 | largeSpacing, currently 8; no literal 12 px repair |
-| Sidebar | 252 | 262 | 14 gridUnits, currently 18 per unit; retain resizing |
+| Row pitch | 18 logical px | 20 CSS px | Fixed-font line spacing plus mediumSpacing; pane budget and scrolling use that shared pitch |
+| Header inset | 8 | 12 | largeSpacing plus smallSpacing, following the native font-scaled units |
+| Sidebar | 252 | 262 | 14 gridUnits plus largeSpacing plus half smallSpacing; retain resizing |
 | File toolbar | 34 | 40 | Native ActionToolBar row; list/file header hairlines must align |
 | Footer | 30 | 28 | Actual smallFont, theme spacing and native frame/separator allowances; inspect extra padding rather than force a height |
 
-SessionFooter sizes its row from the contents. Its ProgressBar sets a preferred width
-but leaves native implicit height in charge; the installed desktop style includes
-largeSpacing top/bottom insets. The brief instead specifies smallSpacing height for
-this indicator. Those native insets, row margins and separator explain why the footer
-height needs its own layout review. They are not a fill-shade exception.
+SessionFooter sizes its row from the contents. Its ProgressBar uses smallSpacing
+for implicit height and zero top/bottom insets. The bar is visible only when the
+footer is wider than 40 gridUnits; the textual progress remains. These current
+rules supersede the native baseline measurements above, without adding a fill-shade
+exception.
 
 These numbers describe a baseline, not new hardcoded UI dimensions. The approved
 HTML gives the list header 38 px and file header 40 px. The written aligned-boundary

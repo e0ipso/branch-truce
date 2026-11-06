@@ -10,17 +10,17 @@ A standalone text conflict resolver for Git on Linux and KDE. Review captured so
 **[Download](https://github.com/e0ipso/branch-truce/releases/latest)** · **[Get started](#use-it)** · **[Set up git mergetool](docs/mergetool.md#register-the-tool)**
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/comparison-dark.png">
-  <img src="docs/images/comparison-light.png" alt="A four-file merge in Branch Truce: competing C++ retry policies, status checks, backoff and logging changes, with both branches beside the editable result" width="1200">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/redesigned-comparison-dark.png">
+  <img src="docs/images/redesigned-comparison-light.png" alt="A three-file merge in Branch Truce: competing release-note changes beside the editable result, with another text conflict and a binary file in the sidebar" width="1200">
 </picture>
 
-*Earlier light and dark captures, committed on 2026-10-29. They predate the current sidebar, gutter and menu changes. A fresh pair and updated installed-package measurements remain required; see [platform validation](docs/platform-validation.md#redesign-evidence-still-required).*
+*Breeze Light and Dark, captured on 2026-11-06 from source `63c9b89` in [CI](https://github.com/e0ipso/branch-truce/actions/runs/42222287914). These are development builds on headless Wayland. [Capture provenance](docs/images/redesigned-comparison-provenance.json) records the producing merge and executable. The [earlier light](docs/images/comparison-light.png) and [dark](docs/images/comparison-dark.png) images remain available; [installed-desktop validation](docs/platform-validation.md#redesign-evidence-still-required) has a separate scope.*
 
 ## See it in action
 
 <img src="docs/images/demo.gif" alt="Resolving a C++ merge: accept a change, undo and redo it, compare the common earlier version, then save a draft" width="1200">
 
-*Choose a change, see the result, undo it and try again. Open the common earlier version whenever you need context. [Watch the video](docs/images/demo.mp4).*
+*Earlier recording: choose a change, undo it and compare the common earlier version. This recording predates the current sidebar and source controls. The screenshots below show the current reading views. [Watch the video](docs/images/demo.mp4).*
 
 ## Work through the conflict
 
@@ -30,14 +30,16 @@ A standalone text conflict resolver for Git on Linux and KDE. Review captured so
     <th>Get the earlier context</th>
   </tr>
   <tr>
-    <td><a href="docs/images/choice-preview.png"><img src="docs/images/choice-preview.png" alt="Before and after preview of taking the logging changes from both branches" width="580"></a></td>
-    <td><a href="docs/images/earlier-version.png"><img src="docs/images/earlier-version.png" alt="The common earlier version showing the original retry settings" width="580"></a></td>
+    <td><a href="docs/images/redesigned-choice-preview.png"><img src="docs/images/redesigned-choice-preview.png" alt="Current text beside the proposed Right then Left combination, with keyboard selection in the read-only preview" width="580"></a></td>
+    <td><a href="docs/images/redesigned-earlier-version.png"><img src="docs/images/redesigned-earlier-version.png" alt="The common earlier version below the comparison panes, with selectable read-only text" width="580"></a></td>
   </tr>
   <tr>
     <td>Accept, ignore or take both sides in either order. Preview broader changes before applying them, then edit the result yourself.</td>
     <td>See what both branches started from. Syntax highlighting, word-level differences and connected passages help you follow the changes.</td>
   </tr>
 </table>
+
+*Reading-view screenshots from the same 2026-11-06 CI run, using the Fusion controls style. [Provenance](docs/images/redesigned-comparison-provenance.json) records their original files and hashes.*
 
 Step through remaining conflicts, find a passage, wrap long lines or reveal spaces and tabs. Choices and typing share an undo history.
 

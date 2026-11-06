@@ -299,7 +299,15 @@ Agents sharing the headless session run the script under
 uses the same function inside its container for its single `tracked.txt`
 conflict.
 
-The existing README pair, `docs/images/comparison-light.png` and `docs/images/comparison-dark.png`, was committed on 2026-10-29 and predates the latest interaction changes. Preserve those files. The replacement pair remains outstanding until final-gate collection on the integrated revision. From a sway session, set `capture_dir` to a new owned artifact directory and run:
+The README uses the inspected 2026-11-06 CI captures below. Their [provenance](images/redesigned-comparison-provenance.json) records the producing source, executable and original image hashes. The older `comparison-light.png` and `comparison-dark.png` files remain available as historical captures.
+
+| Breeze Light | Breeze Dark |
+| --- | --- |
+| [![Current comparison in Breeze Light](images/redesigned-comparison-light.png)](images/redesigned-comparison-light.png) | [![Current comparison in Breeze Dark](images/redesigned-comparison-dark.png)](images/redesigned-comparison-dark.png) |
+
+The README also shows the current [ordered-choice preview](images/redesigned-choice-preview.png) and [earlier-context pane](images/redesigned-earlier-version.png), captured by the acceptance journeys with Fusion controls. These are original application screenshots, not mockups.
+
+To produce a new pair from a sway session, set `capture_dir` to a new owned artifact directory and run:
 
 ```sh
 PREVIEW_FILE=notes.md PREVIEW_SIZE=1440x900 PREVIEW_OUTPUT="$capture_dir" \
@@ -307,7 +315,7 @@ PREVIEW_FILE=notes.md PREVIEW_SIZE=1440x900 PREVIEW_OUTPUT="$capture_dir" \
     build/desktop/src/app/branch-truce
 ```
 
-Retain the printed `branch-truce-BreezeLight-1440x900.png` and `branch-truce-BreezeDark-1440x900.png`, the source revision, build identity, command, date and display environment. After inspecting the actual captures, add new files at `docs/images/redesigned-comparison-light.png` and `docs/images/redesigned-comparison-dark.png`, then update the opening picture and caption in README.md. No new pair was captured during the documentation edit. The preview is a development-build capture on sway; it does not replace installed-package or real Plasma evidence.
+Retain the printed `branch-truce-BreezeLight-1440x900.png` and `branch-truce-BreezeDark-1440x900.png`, the source revision, build identity, command, date and display environment. Inspect the actual captures before updating the documentation images, provenance and README caption. The published pair was copied unchanged from [CI run 42222287914](https://github.com/e0ipso/branch-truce/actions/runs/42222287914); no application capture ran during this documentation edit. Development-build captures on sway do not replace installed-package or real Plasma evidence.
 
 Collect separate 1280x720 and 1280x800 evidence with the corresponding `PREVIEW_SIZE` examples above. Screenshots alone do not establish eight visible rows, control/menu reachability or no-wrap fit. Those obligations need the final acceptance and native interaction checks, including source context-menu gestures, source-fill continuity and connector hover behaviour. Keep the narrow strict-960x540 fit waiver separate from these required checks.
 

@@ -26,11 +26,11 @@ continuation lines get none. Between the numbers and the text the gutter keeps
 a column, `markerSlot`, for per-line glyphs. Its
 y coordinates are the editor's: place an item at the y of
 `editor.positionToRectangle(position)`, using the gutter's `rows` for the blocks
-near the view. Code and numbers use `Kirigami.Theme.fixedWidthFont`, and tab
-stops are four average character widths.
+near the view. Code and numbers use `Kirigami.Theme.fixedWidthFont`. Tab stops
+use the measured advance of four spaces in that font.
 
 Each visual code row, including a wrapped continuation, has the fixed-width
-font's line spacing plus `Kirigami.Units.smallSpacing`. The owning `TextBlocks`
+font's line spacing plus `Kirigami.Units.mediumSpacing`. The owning `TextBlocks`
 applies that extra distance with the public `QTextBlockFormat::LineDistanceHeight`
 to each document block, including blocks created by edits or replacement. The
 glyph and cursor rectangles retain their native height; the next visual row
@@ -52,33 +52,38 @@ entry. Clearing the spacing removes its line-height properties. No full-buffer
 text replacement is used for spacing. Text padding and gutter insets also leave
 the stored bytes unchanged.
 
-Region choices sit in the gutters too. Each source pane keeps a column on the
-edge that faces the result, and `ChoiceLane` lays one row of `ChoiceButtons` on
-the first line of each scope there: Accept and Ignore, nearest the result, and
-a `merge` menu with Resolve using this side and Take both in either order. A
-section owns the row on its first line, so the line choice that starts on the
-same line is in that row's menu. A decided scope loses its buttons and the
-glyph column shows the decision. The result gutter adds a column after
-`markerSlot` with a chip for each fully decided section. The folded conflict
+Region choices overlay source text without reserving a column. `ChoiceLane`
+places Accept and Ignore on the range's first line at the edge facing the result,
+revealed by source hover, keyboard focus or an open menu. A section owns the row;
+its native context menu keeps precise line choices, Resolve using this side and
+Take both in either order. An unavailable section with available precise choices
+keeps a focusable menu fallback. Fully decided ranges remove their controls and
+retain the source editor's right-click, hold, Menu and Shift+F10 routes. The
+number gutter keeps one state glyph; full decisions remain inspectable there.
+The folded conflict
 row carries a framed Take both button for each undecided section whose sides
 can be combined. Its menu previews Left then Right or Right then Left through
 the existing replacement dialog, and its button accepts keyboard focus. Both
 source lanes sit in one `scopedChoices` item laid over the panes. Hiding the
-choices hides their buttons and the folded rows' Take both buttons, changing
-only the panes' widths, never their heights.
+choices hides their buttons and the folded rows' Take both buttons without
+changing the panes' widths or heights.
 
 Diff colours come from the selected file's `passages` and `regions`. Each line
-gets one kind. It is added when the compared text lacks it, changed, conflict
-when an undecided region covers it, manual when a hand-edited result region
-covers it, or, in the result, markers when it belongs to a conflict-marker
-block or is a stray marker line. Where the compared text has lines this pane
+gets one kind: added, changed, an actual competing conflict, or manual when a
+hand-edited result region covers it. Remaining result marker blocks and stray
+marker lines retain their warning kind. Optional undecided choices do not turn
+ordinary additions or changes into conflicts. Accepted/ignored styling is
+projected separately, with precise line decisions taking precedence over a
+section's state and manual edits and marker warnings retaining their precedence.
+Where the compared text has lines this pane
 lacks, the line boundary gets a gap rule. A
 `LineBackgrounds` layer under each TextArea paints them with the
 `Kirigami.Theme` roles in `docs/ui-design.md`, spanning whole blocks so wrapped
 lines stay covered. It never sets character formats. The `markerSlot` shows the
-matching glyph (`+`, `~`, `!`, `m`, and `−` for a gap), and the result gutter
-adds a provenance letter: `L`, `R` or `B` for a line equal to the left, right or
-both sources, `m` for a hand edit. The same layer highlights the lines of the
+matching glyph (`+`, `~`, `!`, `m`, and `−` for a gap). Correspondence with the
+left, right or both captured sources and the full decision description are in
+the number/glyph tooltip and accessible description, without extra columns.
+The same layer highlights the lines of the
 navigation target in all panes with `highlightColor`. Source lines come from the
 target's region, or else from mapping its result lines through that source's
 passages. The highlight stays when the result selection changes. Hovering a

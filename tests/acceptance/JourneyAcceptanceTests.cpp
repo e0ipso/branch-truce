@@ -488,6 +488,46 @@ Work work(Scene &scene, const char *path)
     return {scene.text("resultText"), scene.file(path).current().draft};
 }
 
+QJsonObject inspectReadOnlyPane(Scene &scene, const char *name, const char *header)
+{
+    auto *editor = scene.item(name);
+    auto *label = scene.item(header);
+    auto *main = scene.item("resultText");
+    const auto advance = [](QQuickItem *text) {
+        auto *quick = text->property("textDocument").value<QQuickTextDocument *>();
+        CHECK(quick && quick->textDocument()->begin().next().isValid());
+        QRectF first, second;
+        CHECK(QMetaObject::invokeMethod(text, "positionToRectangle", Q_RETURN_ARG(QRectF, first), Q_ARG(int, 0)));
+        const auto next = quick->textDocument()->begin().next().position();
+        CHECK(QMetaObject::invokeMethod(text, "positionToRectangle", Q_RETURN_ARG(QRectF, second), Q_ARG(int, next)));
+        return second.top() - first.top();
+    };
+    settleFor(std::string(name) + " shared native font and row geometry", [&] {
+        return editor->property("font").value<QFont>() == main->property("font").value<QFont>()
+            && advance(editor) > 0 && std::abs(advance(editor) - advance(main)) < 0.5;
+    });
+    CHECK(editor->property("readOnly").toBool());
+    CHECK(editor->property("textFormat").toInt() == 0);
+    CHECK(label->property("textFormat").toInt() == 0 && !label->property("text").toString().isEmpty());
+    const auto original = editor->property("text").toString();
+    CHECK(!original.isEmpty());
+    const int selected = static_cast<int>(std::min<qsizetype>(5, original.size()));
+    editor->forceActiveFocus(Qt::TabFocusReason);
+    settleFor(std::string(name) + " native focus", [&] { return editor->hasActiveFocus(); });
+    QTest::keyClick(scene.window, Qt::Key_Home, Qt::ControlModifier);
+    for (int index = 0; index < selected; ++index)
+        QTest::keyClick(scene.window, Qt::Key_Right, Qt::ShiftModifier);
+    CHECK(editor->property("selectedText").toString() == original.left(selected));
+    QTest::keyClick(scene.window, Qt::Key_X);
+    CHECK(editor->property("text").toString() == original);
+    CHECK(editor->property("selectedText").toString() == original.left(selected));
+    const auto font = editor->property("font").value<QFont>();
+    return {{"stage", name}, {"synthetic_stress", false}, {"font_family", font.family()},
+        {"font_point_size", font.pointSizeF()}, {"row_advance", advance(editor)},
+        {"header", label->property("text").toString()}, {"read_only", true},
+        {"focused_selection", editor->property("selectedText").toString()}};
+}
+
 // Waits until the result folds each conflict-marker block into one row, its opening marker
 // line, with every later line of the block hidden, or shows every line. The folded rows layer
 // draws a row only while the blocks are folded. The line numbers are the buffer's, so the
@@ -1166,6 +1206,9 @@ public:
             // Earlier context is shown on demand and hidden without touching the result.
             clickFile(scene, "notes.txt");
             const auto before = work(scene, "notes.txt");
+            auto *selectedResult = scene.item("resultText");
+            CHECK(QMetaObject::invokeMethod(selectedResult, "select", Q_ARG(int, 0), Q_ARG(int, 5)));
+            const auto resultSelection = selectedResult->property("selectedText");
             auto *earlier = scene.item("earlierText");
             CHECK(scene.item("showEarlier")->isEnabled() && !earlier->isVisible());
             scene.click("showEarlier");
@@ -1173,9 +1216,22 @@ public:
             expectText(earlier->property("text").toString(), utf8(repo.stageText(1, "notes.txt")), "earlier text");
             expectContains(scene.text("earlierLabel"), "Common earlier version", "earlier label");
             CHECK(earlier->property("readOnly").toBool());
+            const auto earlierSize = scene.window->size();
+            for (const int height : {720, 800}) {
+                scene.window->resize(1280, height);
+                test_support::waitForLayout(scene.window, QStringLiteral("earlierViewport"), Scene::settleMs);
+                CHECK(scene.item("earlierLabel")->property("font") == scene.item("stage2Label")->property("font"));
+                const auto evidence = inspectReadOnlyPane(scene, "earlierText", "earlierLabel");
+                Scene::reveal(earlier);
+                test_support::retainUiEvidence(scene.window, QStringLiteral("earlier-context-%1").arg(height), evidence);
+                CHECK(work(scene, "notes.txt") == before);
+            }
+            scene.window->resize(earlierSize);
             scene.click("showEarlier");
             settleFor("earlier context hidden", [&] { return !earlier->isVisible(); });
             CHECK(work(scene, "notes.txt") == before);
+
+            CHECK(selectedResult->property("selectedText") == resultSelection);
 
             // The unsupported deletion stays listed with its reason and no editor.
             clickFile(scene, "removed.txt");
@@ -1273,9 +1329,33 @@ public:
             CHECK(!(history.back() == history[history.size() - 2]));
 
             // An inspectable order: preview Right then Left before applying it.
+            auto *orderedResult = scene.item("resultText");
+            CHECK(QMetaObject::invokeMethod(orderedResult, "select", Q_ARG(int, 0), Q_ARG(int, 6)));
+            const auto orderedSelection = orderedResult->property("selectedText");
             clickChoice(scene, QString::fromUtf8("Right section, lines 2–2"), "PreviewRightFirst");
             expectText(scene.object("replacementDialog")->property("title").toString(), "Preview Right then Left", "order title");
             expectText(scene.text("replacementAfterText"), "right first\nleft first\n", "ordered preview");
+            const auto ordered = work(scene, "story.txt");
+            const auto orderedRevision = scene.file("story.txt").current().id;
+            const bool orderedUndo = scene.file("story.txt").canUndo();
+            const bool orderedRedo = scene.file("story.txt").canRedo();
+            const auto previewSize = scene.window->size();
+            for (const int height : {720, 800}) {
+                scene.window->resize(1280, height);
+                test_support::waitForLayout(scene.window, QStringLiteral("replacementAfterText"), Scene::settleMs);
+                CHECK(scene.item("replacementBeforeLabel")->property("font")
+                    == scene.item("replacementAfterLabel")->property("font"));
+                inspectReadOnlyPane(scene, "replacementBeforeText", "replacementBeforeLabel");
+                const auto evidence = inspectReadOnlyPane(scene, "replacementAfterText", "replacementAfterLabel");
+                test_support::retainUiEvidence(scene.window, QStringLiteral("ordered-choice-preview-%1").arg(height), evidence);
+                CHECK(work(scene, "story.txt") == ordered);
+            }
+            clickDialogButton(scene, "replacementDialog", "Cancel");
+            CHECK(work(scene, "story.txt") == ordered && scene.file("story.txt").current().id == orderedRevision);
+            CHECK(scene.file("story.txt").canUndo() == orderedUndo && scene.file("story.txt").canRedo() == orderedRedo);
+            CHECK(orderedResult->property("selectedText") == orderedSelection);
+            scene.window->resize(previewSize);
+            clickChoice(scene, QString::fromUtf8("Right section, lines 2–2"), "PreviewRightFirst");
             clickDialogButton(scene, "replacementDialog", "Apply choice");
             expectText(scene.text("resultText"), "header\nright first\nleft first\nbridge one\nbridge two\nbridge three\nright later\ntail\n", "ordered combination");
             CHECK(state("Right line 2") == QStringLiteral("accepted") && state("Left line 2") == QStringLiteral("accepted"));
@@ -1999,6 +2079,100 @@ public:
             CHECK(readFile(repo.path("launched.txt")) == launchBytes);
             CHECK(!repo.unmerged("launched.txt").isEmpty() && !repo.unmerged("other.txt").isEmpty());
             settleFor("leave control gone after leaving", [&] { return !scene.item("leaveMergetool")->isVisible(); });
+            checkOffline(scene);
+        });
+        window.run("outside-app placeholders retain literal stress text and reachable diagnostics", [] {
+            const auto longPath = QStringLiteral("long printable directory/") + QString(90, QLatin1Char('p'))
+                + QStringLiteral("/literal <b>report&review</b> ") + QString(70, QLatin1Char('n')) + QStringLiteral(".bin");
+            const auto pathBytes = longPath.toUtf8();
+            const QByteArray binaryBase("b\0ase", 5), binaryLeft("l\0eft", 5), binaryRight("r\0ght", 5);
+            Repository repo("merge", {{"story.txt", storyBase, storyLeft, storyRight, storyBase},
+                {"image.bin", binaryBase, binaryLeft, binaryRight, std::nullopt},
+                {longPath, binaryBase, binaryLeft, binaryRight, std::nullopt}});
+            const auto repository = repo.snapshot();
+            Scene scene(repo);
+            clickFile(scene, "story.txt");
+            const auto before = work(scene, "story.txt");
+            const auto revision = scene.file("story.txt").current().id;
+            const bool undo = scene.file("story.txt").canUndo(), redo = scene.file("story.txt").canRedo();
+            clickFile(scene, "image.bin");
+            for (const int height : {720, 800}) {
+                scene.window->resize(1280, height);
+                auto *message = test_support::waitForLayout(scene.window, QStringLiteral("selectedProblem"), Scene::settleMs);
+                CHECK(test_support::reachable(scene.window, message));
+                CHECK(message->width() <= message->parentItem()->property("maximumReadingWidth").toReal());
+                test_support::retainUiEvidence(scene.window, QStringLiteral("placeholder-compact-%1").arg(height),
+                    {{"stage", "binary placeholder"}, {"synthetic_stress", false}});
+            }
+            clickFile(scene, pathBytes.constData());
+            auto *message = scene.item("selectedProblem");
+            auto *placeholder = message->parentItem();
+            // Deliberate input stress on the real component, not a shipped translation.
+            const auto heading = QString::fromUtf8("Synthetischer lokalisierter Hinweis <b>bleibt wörtlich</b>: ")
+                + QStringLiteral("Resolve this unusually long printable file name outside Branch Truce");
+            const auto prose = QString::fromUtf8("Dies ist synthetischer lokalisierter Testtext, keine ausgelieferte Übersetzung. ")
+                + QStringLiteral("The literal path is ") + longPath + QStringLiteral(". ")
+                + QStringLiteral("Keep this file outstanding until another tool resolves it and Git confirms the exact path. ").repeated(5)
+                + QStringLiteral("<i>No markup is interpreted & no history changes.</i>");
+            CHECK(placeholder->setProperty("text", heading));
+            CHECK(placeholder->setProperty("explanation", prose));
+            for (const auto size : {QSize(1280, 720), QSize(1280, 800), QSize(960, 540)}) {
+                scene.window->resize(size);
+                scene.object("pageScroll")->setProperty("contentY", 0);
+                test_support::waitForLayout(scene.window, QStringLiteral("selectedProblem"), Scene::settleMs);
+                const auto expectedWidth = std::min(placeholder->property("maximumReadingWidth").toReal(),
+                    placeholder->width() - 2 * placeholder->property("contentMargin").toReal());
+                CHECK(std::abs(message->width() - expectedWidth) < 0.5);
+                CHECK(std::abs(placeholder->width() - placeholder->parentItem()->width()) < 0.5);
+                auto *title = descendant(message, [&](QQuickItem *item) {
+                    return item->inherits("QQuickText") && item->property("text").toString() == heading;
+                });
+                auto *body = descendant(message, [&](QQuickItem *item) {
+                    // Kirigami's selectable explanation uses TextEdit inside
+                    // a Control wrapper; inspect the actual rendering item.
+                    return item->inherits("QQuickTextEdit") && item->property("text").toString() == prose;
+                });
+                CHECK(title && body);
+                CHECK(title->property("textFormat").toInt() == 0 && body->property("textFormat").toInt() == 0);
+                CHECK(!title->property("truncated").toBool() && !body->property("truncated").toBool());
+                CHECK(body->property("lineCount").toInt() > 1);
+                CHECK(title->property("contentWidth").toReal() <= title->width() + 1);
+                CHECK(body->property("contentWidth").toReal() <= body->width() + 1);
+                CHECK(body->property("contentHeight").toReal() <= body->height() + 0.5);
+                CHECK(title->mapRectToScene(title->boundingRect()).bottom()
+                    <= body->mapRectToScene(body->boundingRect()).top());
+                auto *details = test_support::waitForStable(scene.window, "stress placeholder technical details", [&] {
+                    auto *button = test_support::namedButton(message, QStringLiteral("Technical details"));
+                    if (button) Scene::reveal(button);
+                    return test_support::reachable(scene.window, button) ? button : nullptr;
+                }, Scene::settleMs);
+                CHECK(details->isEnabled());
+                CHECK(body->mapRectToScene(body->boundingRect()).bottom()
+                    <= details->mapRectToScene(details->boundingRect()).top());
+                if (size.height() == 540) {
+                    CHECK(scene.object("pageScroll")->property("overflowing").toBool());
+                    CHECK(scene.object("pageScroll")->property("contentY").toReal() > 0);
+                }
+                QJsonObject evidence{{"stage", "long-path localized-prose stress"}, {"synthetic_stress", true},
+                    {"stress_description", "synthetic localized text, not a shipped translation"},
+                    {"literal_path", longPath}, {"heading", heading}, {"explanation", prose},
+                    {"reading_width", message->width()}, {"page_content_y", scene.object("pageScroll")->property("contentY").toReal()}};
+                test_support::retainUiEvidence(scene.window, QStringLiteral("placeholder-stress-%1").arg(size.height()), evidence);
+                test_support::clickItem(scene.window, details);
+                auto *dialog = scene.object("selectedProblemDetails");
+                settleFor("stress technical details opened", [&] { return dialog->property("opened").toBool(); });
+                CHECK(scene.text("selectedProblemDiagnosticPath") == longPath);
+                CHECK(scene.item("selectedProblemDiagnosticPath")->property("textFormat").toInt() == 0);
+                CHECK(scene.item("selectedProblemDiagnostic")->property("readOnly").toBool());
+                test_support::retainUiEvidence(scene.window, QStringLiteral("placeholder-details-%1").arg(size.height()), evidence);
+                keyClick(scene, Qt::Key_Escape);
+                settleFor("stress technical details closed", [&] { return !dialog->property("visible").toBool(); });
+                CHECK(repo.snapshot() == repository);
+            }
+            clickFile(scene, "story.txt");
+            CHECK(work(scene, "story.txt") == before && scene.file("story.txt").current().id == revision);
+            CHECK(scene.file("story.txt").canUndo() == undo && scene.file("story.txt").canRedo() == redo);
+            CHECK(repo.snapshot() == repository);
             checkOffline(scene);
         });
         window.run("a 1280x720 logical screen fits the window with every control and text pane reachable", [] {

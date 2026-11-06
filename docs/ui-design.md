@@ -9,7 +9,7 @@ The approved mockups in [ui-mockup/](ui-mockup/README.md) are the target:
 | [light-text.png](ui-mockup/light-text.png), [dark-text.png](ui-mockup/dark-text.png) | A text conflict in the three panes, with one conflict undecided, one changed passage, one accepted line and one ignored line |
 | [light-binary.png](ui-mockup/light-binary.png), [dark-binary.png](ui-mockup/dark-binary.png) | A binary file selected; it has to be resolved outside the app |
 
-Each PNG is rendered from the HTML file beside it at 1280x720. Pixel sizes quoted from the mockups below are CSS pixels in that HTML. They show what the `Kirigami.Units` values look like with Noto Sans 10 pt; the units are the rule. Section 10 lists the elements the app does not have yet and the one place where a kept rule differs from the mockups.
+Each PNG is rendered from the HTML file beside it at 1280x720. Pixel sizes quoted from the mockups below are CSS pixels in that HTML. They show what the `Kirigami.Units` values look like with Noto Sans 10 pt; the units are the rule. Section 10 records implemented reference elements and the kept rule that differs from the mockups.
 
 ## 1. Visual hierarchy
 
@@ -251,7 +251,7 @@ Rules:
 | `BeforeAfterPanes` | Two read-only panes side by side, each with a title, in `fixedWidthFont` with the code panes' tab stop. Takes an objectName prefix for its children. | Every before-and-after view in a `PreviewDialog` |
 | `DiffStyle` | A QML singleton that maps each passage kind to its background role, text role, glyph, band tint and accessible description, from the tables in section 6, with one fallback for an unknown kind. | Gutter glyphs, line fills, connector bands, decision glyphs, previews |
 | `CodeRows` | A `TextBlocks` with one native `mediumSpacing` line distance. Exposes actual laid-out visual-row advances and whole-block extents without changing plain text. | Source, result, earlier-version and snapshot preview readers |
-| Row plate | An inset rounded rectangle behind a list row: `Kirigami.Units.smallSpacing` from the list's sides, radius `Kirigami.Units.cornerRadius`, `Kirigami.Units.mediumSpacing` vertical and `Kirigami.Units.largeSpacing` horizontal padding. The sidebar control itself occupies the inset plate, so pointer targets and native focus remain inside its bounds. Selected: `highlightColor` with `highlightedTextColor`, secondary text at 0.8 alpha. Hover: a `Qt.alpha(hoverColor, 0.2)` tint. Keyboard focus: a 1 px `focusColor` outline. Never full-bleed. | Sidebar file rows; handoff dialog rows |
+| Row plate | An inset rounded rectangle behind a list row: `Kirigami.Units.smallSpacing` from the list's sides, radius `Kirigami.Units.cornerRadius`, `Kirigami.Units.mediumSpacing` vertical and `Kirigami.Units.largeSpacing` horizontal padding. The list supplies the outer horizontal inset and each row fills those bounds, so ListView layout cannot move the plate back to the sidebar edge. Pointer targets and native focus share the control's bounds. Selected: `highlightColor` with `highlightedTextColor`, secondary text at 0.8 alpha. Hover: a `Qt.alpha(hoverColor, 0.2)` tint. Keyboard focus: a 1 px `focusColor` outline. Never full-bleed. | Sidebar file rows; handoff dialog rows |
 | Footer status | The one-line footer band: Header colour set, hairline above, `smallFont` in `disabledTextColor`. From left: progress text and a progress bar (`Kirigami.Units.gridUnit * 5` wide, `Kirigami.Units.smallSpacing` high, rounded, `highlightColor` over `Qt.alpha(disabledTextColor, 0.25)`), then the outside-app count, then a spacer, then the selected file's facts. No actions. | The session footer |
 
 ### Kirigami components per surface
@@ -395,12 +395,12 @@ The acceptance and UI tests find controls by `objectName` and read their state b
 
 ## 10. Targets and differences
 
-The mockups show elements the app does not have yet. They are targets of this brief:
+The native app implements these reference elements:
 
 - the progress bar and the file facts in the footer;
 - the accept and ignore source overlays, revealed on hover or keyboard focus;
 - Take both on the folded conflict row in the result.
 
-The rest of the layout above (the header band with the repository name and conflict stepper, the row plates, the pane headers, the footer status and the shared components) is also the target where the app still differs from it.
+The header band, repository name and conflict stepper, row plates, pane headers, footer status and shared components remain governed by this brief. Inspect current native captures for geometry and type differences; implementation and passing tests do not establish pixel parity.
 
 One kept rule differs from the mockups. The mockups approximate line fills by mixing a role's text colour into the View background, 14 % in Breeze Light and 24 % in Breeze Dark. The app uses the background roles in section 6 (`positiveBackgroundColor` and the others), which the colour scheme derives, so its fills can differ slightly in shade from the mockups. The roles win.

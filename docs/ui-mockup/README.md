@@ -14,4 +14,8 @@ chrome --headless --hide-scrollbars --window-size=1280,720 --force-device-scale-
     --screenshot=light-text.png light-text.html
 ```
 
-The app does not have these elements yet: the progress bar and file facts in the footer, Take both on the folded conflict row, and the accept and ignore buttons in the gutters.
+The native app implements the footer progress and file facts, folded-row Take both,
+and source Accept/Ignore controls. Source controls overlay the full-width panes on
+hover or keyboard/menu focus, following the current design brief and owner direction.
+The approved files remain reference artifacts; native replay retains independent
+captures and measured residuals rather than claiming every reference pixel matches.

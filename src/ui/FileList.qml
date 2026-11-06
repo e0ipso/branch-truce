@@ -42,6 +42,9 @@ Rectangle {
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
+        // ListView owns delegate x, so place the outer plate inset here.
+        anchors.leftMargin: Kirigami.Units.smallSpacing
+        anchors.rightMargin: Kirigami.Units.smallSpacing
         topMargin: fileListPane.listVerticalPadding
         bottomMargin: fileListPane.listVerticalPadding
         spacing: fileListPane.rowSpacing
