@@ -340,7 +340,7 @@ def capture_one(args, driver, out, theme, repeat):
             while chunk := source.read(65536):
                 destination.write(chunk)
                 destination.flush()
-        owned.start_reader(drain, compositor.stdout, log)
+        drain_thread = owned.start_reader(drain, compositor.stdout, log)
         sockets = list(Path(env['XDG_RUNTIME_DIR']).glob('sway-ipc.*.sock'))
         require(len(sockets) == 1, 'Expected one private sway socket')
         env.update(WAYLAND_DISPLAY=str(Path(env['XDG_RUNTIME_DIR']) / display),
