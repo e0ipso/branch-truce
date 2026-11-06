@@ -25,6 +25,26 @@
     "redesigned-comparison-dark.png": {
       "original": "tests/kubuntu-deb/native/720/documentation-readme/branch-truce-BreezeDark-1440x900.png",
       "sha256": "6679a8e5aeda36e54183df66c6c30018b1e036a9a12336b4024974b721842b14"
+    },
+    "redesigned-choice-preview.png": {
+      "original": "tests/kubuntu-deb/ui-scenes/ordered-choice-preview-800.png",
+      "sha256": "8a2adc9d13d37224b619688fce5586c0652c8360e414c6c4da5f98e571d8cace",
+      "controls_style": "Fusion",
+      "platform": "offscreen",
+      "logical_width": 1280,
+      "logical_height": 800,
+      "source_revision": "1cc64d1371887b5c475b8cdf7a6fbff23d8a86c2",
+      "scope": "Inspected actual offscreen acceptance-journey frame, copied without transformation; not physical Plasma or AT-SPI evidence."
+    },
+    "redesigned-earlier-version.png": {
+      "original": "tests/kubuntu-deb/ui-scenes/earlier-context-800.png",
+      "sha256": "18eba65ef1fef524ac9c5edbad2b3de07c07693496fab99bdd2aeac0e0d5b866",
+      "controls_style": "Fusion",
+      "platform": "offscreen",
+      "logical_width": 1280,
+      "logical_height": 800,
+      "source_revision": "1cc64d1371887b5c475b8cdf7a6fbff23d8a86c2",
+      "scope": "Inspected actual offscreen acceptance-journey frame, copied without transformation; not physical Plasma or AT-SPI evidence."
     }
   },
   "original_provenance": {
