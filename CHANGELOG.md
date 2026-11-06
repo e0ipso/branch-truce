@@ -1,3 +1,11 @@
+## [1.3.1](https://github.com/e0ipso/branch-truce/compare/v1.3.0...v1.3.1) (2026-11-06)
+
+### Bug Fixes
+
+* retain native replay reader handle ([63c9b89](https://github.com/e0ipso/branch-truce/commit/63c9b89d4348a9650e17bb603ff4164de7f84efa))
+* retain replay log reader failures ([83b3fb4](https://github.com/e0ipso/branch-truce/commit/83b3fb41e99c0b0b8d67c59caf6ac69d5c9f6b2d))
+* **ui:** correct native reading geometry ([7fb8a7d](https://github.com/e0ipso/branch-truce/commit/7fb8a7d25d9d5672b3f14f0be76fabde1b552179))
+
 ## [1.3.0](https://github.com/e0ipso/branch-truce/compare/v1.2.0...v1.3.0) (2026-10-31)
 
 ### Features
