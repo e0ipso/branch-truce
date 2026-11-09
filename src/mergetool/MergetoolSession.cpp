@@ -1,6 +1,5 @@
 // The mergetool session connects waiting Git launchers to the window and tracks their published results.
 #include "mergetool/MergetoolSession.h"
-#include "app/SessionModel.h"
 #include "mergetool/MergetoolProtocol.h"
 #include "recovery/RecoveryRestore.h"
 
@@ -14,7 +13,7 @@
 #include <algorithm>
 
 namespace branch_truce {
-MergetoolSession::MergetoolSession(ResolutionPublisher &publisher, SessionModel &files, SessionCoordinator &coordinator,
+MergetoolSession::MergetoolSession(ResolutionPublisher &publisher, SessionStore &files, SessionCoordinator &coordinator,
                                    std::function<git::RepositoryContext()> loadedRepository, QString gitExecutable,
                                    QObject *parent)
     : QObject(parent),

@@ -12,7 +12,7 @@ import org.kde.kirigami as Kirigami
 ColumnLayout {
     id: resultPane
     spacing: 0
-    required property ApplicationController controller
+    required property ResultEditorAdapter editorAdapter
     required property SelectedFile file
     required property EditActions edits
     // Line marks for the gutter and backgrounds, and the navigation target's line ranges.
@@ -118,7 +118,7 @@ ColumnLayout {
                 id: resultEditor
                 objectName: "resultText"
                 // The adapter permits edits only after a lossless, durable load.
-                readOnly: !resultPane.controller.resultEditable
+                readOnly: !resultPane.editorAdapter.editable
                 selectByMouse: true
                 persistentSelection: true
                 textFormat: TextEdit.PlainText
@@ -153,7 +153,7 @@ ColumnLayout {
                     : Math.max(resultViewport.width, implicitWidth)
                 wrapMode: resultPane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                 Accessible.name: qsTr("Editable result")
-                Component.onCompleted: resultPane.controller.attachResultEditor(resultEditor)
+                Component.onCompleted: resultPane.editorAdapter.attach(resultEditor)
                 // A document replacement must be spaced before the adapter restores
                 // its cursor and viewport against the new layout.
                 onTextChanged: resultBlocks.flushSpacing()
@@ -167,7 +167,7 @@ ColumnLayout {
                 }
                 ResultContextMenu {
                     id: resultMenu
-                    controller: resultPane.controller
+                    editorAdapter: resultPane.editorAdapter
                     edits: resultPane.edits
                     editor: resultEditor
                 }

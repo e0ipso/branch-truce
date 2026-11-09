@@ -18,9 +18,10 @@ class OutsideAppText : public QObject {
 public:
     explicit OutsideAppText(QObject *parent = nullptr) : QObject(parent) {}
 
-    Q_INVOKABLE bool binaryExcluded(const QString &support, const QString &detail, const QByteArray &path) const
+    // Whether a file outside the app was excluded as binary, judged from its exact decoder diagnostic.
+    Q_INVOKABLE bool binaryExcluded(bool outsideApp, const QString &detail, const QByteArray &path) const
     {
-        if (support != QLatin1String("outside-app")) return false;
+        if (!outsideApp) return false;
         // Only exact decoder diagnostics establish text rejection. A MIME extension alone
         // must not turn an I/O, topology or conversion-policy failure into a binary claim.
         static const QRegularExpression decoderReason(

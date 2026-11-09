@@ -1,14 +1,15 @@
 // The desktop entry point selects the native appearance and opens repository or Git mergetool sessions.
-#include "ApplicationController.h"
+#include "AppPaths.h"
+#include "Application.h"
+#include "StartupReport.h"
+#include "core/BuildInfo.h"
 #include "mergetool/MergetoolLauncher.h"
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFileInfo>
 #include <QIcon>
-#include <QJsonArray>
 #include <QJsonDocument>
-#include <QJsonObject>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include <QStandardPaths>
@@ -62,8 +63,8 @@ int main(int argc, char *argv[])
     if (applicationIcon.isNull())
         applicationIcon = QIcon(QStringLiteral(":/branch-truce/icons/branch-truce-symbol.svg"));
     QApplication::setWindowIcon(applicationIcon);
-    branch_truce::ApplicationController controller(git);
-    QCoreApplication::setApplicationVersion(controller.version());
+    const auto version = branch_truce::version();
+    QCoreApplication::setApplicationVersion(QString::fromUtf8(version.data(), static_cast<qsizetype>(version.size())));
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Open local merge or rebase conflicts offline."));
     parser.addHelpOption();
@@ -99,50 +100,29 @@ int main(int argc, char *argv[])
     const auto paths = parser.positionalArguments();
     if (paths.size() > 1) parser.showHelp(2);
 
+    // The composition root: the data roots and services this session uses.
+    branch_truce::Application session({git, branch_truce::newRecoveryDirectory(), {}});
     QQmlApplicationEngine engine;
     selectControlsStyle(engine);
-    engine.setInitialProperties({{QStringLiteral("controller"), QVariant::fromValue(&controller)}});
+    engine.setInitialProperties(session.windowProperties());
     engine.loadFromModule(QStringLiteral("BranchTruce"), QStringLiteral("Main"));
     if (engine.rootObjects().isEmpty()) {
         return 1;
     }
     // Finish or deliberate leave ends the process; the outcome stays visible
     // in the terminal the user returns to.
-    QObject::connect(&controller, &branch_truce::ApplicationController::sessionEnded, &application,
+    QObject::connect(session.completion(), &branch_truce::SessionCompletion::sessionEnded, &application,
                      [&application](const QString &outcome, bool) {
                          QTextStream(stderr) << "Branch Truce: " << outcome << Qt::endl;
                          QTimer::singleShot(0, &application, &QCoreApplication::quit);
                      });
     if (parser.isSet(QStringLiteral("smoke-test"))) {
-        auto *loader = controller.loader();
+        auto *loader = session.loader();
         QObject::connect(
-            loader, &branch_truce::SessionLoader::launchChanged, &application, [&controller, &application, loader] {
+            loader, &branch_truce::SessionLoader::launchChanged, &application, [&session, &application, loader] {
                 if (loader->opening()) return;
-                QJsonArray files;
-                for (int row = 0; row < controller.files()->totalFiles(); ++row) {
-                    const auto index = controller.files()->index(row, 0);
-                    using Model = branch_truce::SessionModel;
-                    files.push_back(QJsonObject{
-                        {QStringLiteral("path"), controller.files()->data(index, Model::PathRole).toString()},
-                        {QStringLiteral("support"), controller.files()->data(index, Model::SupportRole).toString()},
-                        {QStringLiteral("detail"),
-                         controller.files()->data(index, Model::SupportDetailRole).toString()},
-                        {QStringLiteral("text"),
-                         QString::fromUtf8(
-                             QByteArray::fromStdString(controller.files()->fileAt(row)->current().draft.text))}});
-                }
-                const QJsonObject state{{QStringLiteral("state"), loader->startupState()},
-                                        {QStringLiteral("repository"), loader->repositoryRoot()},
-                                        {QStringLiteral("operation"), loader->operation()},
-                                        {QStringLiteral("detail"), loader->detail()},
-                                        {QStringLiteral("stage2"), loader->stage2()},
-                                        {QStringLiteral("stage3"), loader->stage3()},
-                                        {QStringLiteral("stage2CommitId"), loader->stage2CommitId()},
-                                        {QStringLiteral("stage3CommitId"), loader->stage3CommitId()},
-                                        {QStringLiteral("workflow"), loader->workflow()},
-                                        {QStringLiteral("resolved"), controller.files()->resolvedFiles()},
-                                        {QStringLiteral("files"), files}};
-                QTextStream(stdout) << "BRANCH_TRUCE_SESSION=" << QJsonDocument(state).toJson(QJsonDocument::Compact)
+                const auto report = branch_truce::startupReport(*loader, *session.files());
+                QTextStream(stdout) << "BRANCH_TRUCE_SESSION=" << QJsonDocument(report).toJson(QJsonDocument::Compact)
                                     << Qt::endl;
                 QTimer::singleShot(0, &application, &QCoreApplication::quit);
             });
@@ -150,8 +130,8 @@ int main(int argc, char *argv[])
     const auto directory = paths.isEmpty() ? QDir::currentPath() : QDir(paths.front()).absolutePath();
     const auto preferredFileId = parser.value(launchedPath);
     const auto chosenRecovery = parser.value(recoverySession);
-    QTimer::singleShot(0, &controller, [&controller, directory, preferredFileId, chosenRecovery] {
-        controller.loader()->openRepository(directory, preferredFileId, chosenRecovery);
+    QTimer::singleShot(0, &session, [&session, directory, preferredFileId, chosenRecovery] {
+        session.loader()->openRepository(directory, preferredFileId, chosenRecovery);
     });
     return application.exec();
 }

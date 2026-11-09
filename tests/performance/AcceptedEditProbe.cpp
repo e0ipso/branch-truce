@@ -1,5 +1,6 @@
 // Compare accepted controller edits with an active QML selected-file consumer.
-#include "app/ApplicationController.h"
+#include "app/AppPaths.h"
+#include "app/Application.h"
 #include "fixtures/ChoiceFile.h"
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -41,16 +42,16 @@ int main(int argc, char **argv)
     const auto left = makeFile(4000, 0);
     const auto right = makeFile(4000, 1);
     const auto initial = makeFile(4000, 2);
-    ApplicationController controller("/usr/bin/git");
-    if (!controller.files()->appendFile(test_support::choiceFile(left, right, initial))
-        || !controller.selectFile("choices"))
+    Application controller{Application::Config{"/usr/bin/git", newRecoveryDirectory(), {}}};
+    if (!controller.store()->appendFile(test_support::choiceFile(left, right, initial))
+        || !controller.selection()->select("choices"))
         return 1;
     QQmlEngine engine;
-    engine.rootContext()->setContextProperty("controller", &controller);
+    engine.rootContext()->setContextProperty("selectedFile", controller.selectedFile());
     QQmlComponent component(&engine);
     component.setData(R"(import QtQml
         QtObject {
-            property var file: controller.selectedFile
+            property var file: selectedFile
             property string result: file.resultText
             property string source: file.stage2.text
             property int passages: file.passages.length
@@ -71,12 +72,12 @@ int main(int argc, char **argv)
         const auto revision = consumer->property("revision").toString();
         QElapsedTimer timer;
         timer.start();
-        const bool accepted = controller.editResult("choices", revision, 0, 0, "x");
+        const bool accepted = controller.commands()->editResult("choices", revision, 0, 0, "x");
         QCoreApplication::processEvents();
         const auto ns = timer.nsecsElapsed();
         expected.insert(0, "x");
         const auto text = consumer->property("result").toString().toUtf8().toStdString();
-        if (!accepted || text != expected || controller.files()->file("choices")->current().draft.text != expected
+        if (!accepted || text != expected || controller.store()->file("choices")->current().draft.text != expected
             || consumer->property("revision").toString() == revision
             || consumer->property("source").toString().toUtf8().toStdString() != left
             || consumer->property("passages").toInt() <= 0)

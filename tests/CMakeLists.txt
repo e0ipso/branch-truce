@@ -12,6 +12,10 @@ add_test(NAME core.include-boundary
     COMMAND "${CMAKE_COMMAND}" "-DCORE_DIR=${PROJECT_SOURCE_DIR}/src/core"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/core/IncludeBoundaryTests.cmake")
 set_tests_properties(core.include-boundary PROPERTIES TIMEOUT 30 LABELS unit)
+add_test(NAME app.layer-boundary
+    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}/src"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/app/LayerBoundaryTests.cmake")
+set_tests_properties(app.layer-boundary PROPERTIES TIMEOUT 30 LABELS unit)
 add_test(NAME core.native-version
     COMMAND "${CMAKE_COMMAND}"
         "-DBRANCH_TRUCE_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
@@ -209,7 +213,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # The icon names are collected at build time from src/ui and from the model, which names
     # each file's status icon.
     file(GLOB theme_icon_sources CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/ui/*.qml")
-    list(APPEND theme_icon_sources "${PROJECT_SOURCE_DIR}/src/app/SessionModel.cpp")
+    list(APPEND theme_icon_sources "${PROJECT_SOURCE_DIR}/src/app/FilePresentation.cpp")
     list(JOIN theme_icon_sources "|" theme_icon_files)
     set(theme_icon_list "${CMAKE_CURRENT_BINARY_DIR}/theme-icon-names.txt")
     add_custom_command(OUTPUT "${theme_icon_list}"

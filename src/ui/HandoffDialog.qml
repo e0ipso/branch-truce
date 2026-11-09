@@ -9,12 +9,12 @@ import org.kde.kirigami as Kirigami
 
 Kirigami.Dialog {
     id: handoffDialog
-    required property ApplicationController controller
+    required property SessionCompletion completion
     // Asks the owner to set plain text on a message and each label inside it, once they exist.
     signal plainTextRequested(item: Item)
     // Builds one entry of a group from its handoff entry.
     required property Component rowDelegate
-    readonly property var summary: controller.handoff
+    readonly property var summary: completion.handoff
     objectName: "handoffDialog"
     title: qsTr("Session handoff")
     preferredWidth: Kirigami.Units.gridUnit * 36
@@ -26,7 +26,7 @@ Kirigami.Dialog {
             visible: !!handoffDialog.summary.clean
             icon.name: "dialog-ok-apply"
             text: qsTr("Finish")
-            onClicked: handoffDialog.controller.finishSession()
+            onClicked: handoffDialog.completion.finish()
         }
         Button {
             objectName: "handoffLeave"
@@ -34,7 +34,7 @@ Kirigami.Dialog {
             enabled: !!handoffDialog.summary.canLeave
             icon.name: "application-exit"
             text: qsTr("Leave with work outstanding")
-            onClicked: handoffDialog.controller.leaveSession()
+            onClicked: handoffDialog.completion.leave()
         }
     }
     DialogBody {

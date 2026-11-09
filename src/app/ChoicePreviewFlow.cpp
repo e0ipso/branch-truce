@@ -1,8 +1,10 @@
 // Choice previews show how a source action would change the result before the user confirms it.
 #include "ChoicePreviewFlow.h"
+#include "CommandFeedback.h"
 #include "CommandGuard.h"
 #include "EngineText.h"
 #include "ResultEditorAdapter.h"
+#include "Selection.h"
 #include "SessionModel.h"
 #include "SourceIdentity.h"
 #include "TextPositions.h"
@@ -62,9 +64,19 @@ private:
 };
 }
 
-ChoicePreviewFlow::ChoicePreviewFlow(SessionModel &files, ResultEditorAdapter &editor, Owners owners, QObject *parent)
-    : QObject(parent), files_(files), editor_(editor), owners_(std::move(owners))
+ChoicePreviewFlow::ChoicePreviewFlow(SessionStore &store, const SessionModel &files, const ResultEditorAdapter &editor,
+                                     const Selection &selection, CommandFeedback &feedback, QObject *parent)
+    : QObject(parent), store_(store), files_(files), editor_(editor), selection_(selection), feedback_(feedback)
 {
+    connect(this, &ChoicePreviewFlow::changed, this, [this](Scope scope) {
+        switch (scope) {
+        case Scope::Choice: Q_EMIT choicePreviewChanged(); break;
+        case Scope::NonConflicting: Q_EMIT nonConflictingPreviewChanged(); break;
+        case Scope::WholeFile: Q_EMIT wholeFilePreviewChanged(); break;
+        }
+    });
+    // A preview belongs to the file selected when it was made.
+    connect(&selection_, &Selection::changed, this, &ChoicePreviewFlow::cancel);
     // The view reads the pending file, which a session replacement can remove.
     connect(&files_, &SessionModel::modelReset, this, [this] {
         if (const auto scope = pendingScope()) Q_EMIT changed(*scope);
@@ -84,8 +96,8 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
 {
     cancel();
     const auto checked =
-        checkCommand(files_, owners_.selectedFileId(), editor_.composing(), fileId, revision, CommandCheck::Selected);
-    if (const auto *refused = std::get_if<Transition>(&checked)) return owners_.report(*refused);
+        checkCommand(store_, selection_.fileId(), editor_.composing(), fileId, revision, CommandCheck::Selected);
+    if (const auto *refused = std::get_if<Transition>(&checked)) return feedback_.report(*refused);
     const auto &[file, expected] = std::get<CommandTarget>(checked);
     decltype(pending_) pending;
     QString message;
@@ -94,8 +106,8 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
     case Scope::Choice: {
         const auto *value = std::get_if<Action>(&option);
         const auto action = value ? choiceAction(*value) : std::nullopt;
-        if (!action) return owners_.report(Transition::InvalidAnchor);
-        auto preview = previewChoice(*file, expected, target.toStdString(), *action);
+        if (!action) return feedback_.report(Transition::InvalidAnchor);
+        auto preview = branch_truce::previewChoice(*file, expected, target.toStdString(), *action);
         message = engine_text::choice(preview);
         accepted = preview.state == Transition::Applied || preview.state == Transition::ConfirmationRequired;
         pending = std::move(preview);
@@ -104,8 +116,8 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
     case Scope::NonConflicting: {
         const auto *value = std::get_if<NonConflicting>(&option);
         const auto kind = value ? nonConflictingScope(*value) : std::nullopt;
-        if (!kind) return owners_.report(Transition::InvalidAnchor);
-        auto preview = previewNonConflicting(*file, expected, *kind);
+        if (!kind) return feedback_.report(Transition::InvalidAnchor);
+        auto preview = branch_truce::previewNonConflicting(*file, expected, *kind);
         message = (preview.state == Transition::NoChange ? tr("No eligible non-conflicting changes. ") : QString{})
             + engine_text::batch(preview.note);
         accepted = preview.state == Transition::ConfirmationRequired;
@@ -115,15 +127,15 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
     case Scope::WholeFile: {
         const auto *value = std::get_if<Side>(&option);
         const auto side = value ? wholeFileSide(*value) : std::nullopt;
-        if (!side) return owners_.report(Transition::InvalidAnchor);
-        auto preview = previewWholeFile(*file, expected, *side);
+        if (!side) return feedback_.report(Transition::InvalidAnchor);
+        auto preview = branch_truce::previewWholeFile(*file, expected, *side);
         message = engine_text::wholeFile(preview.note);
         accepted = preview.state == Transition::ConfirmationRequired;
         pending = std::move(preview);
         break;
     }
     }
-    owners_.setMessage(message);
+    feedback_.show(message);
     if (accepted) {
         pending_ = std::move(pending);
         fileId_ = fileId;
@@ -134,25 +146,24 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
 
 bool ChoicePreviewFlow::apply(Scope scope, bool confirm)
 {
-    if (pendingScope() != scope || fileId_ != owners_.selectedFileId())
-        return owners_.report(Transition::StaleRevision);
-    if (editor_.composing()) return owners_.report(Transition::Blocked);
+    if (pendingScope() != scope || fileId_ != selection_.fileId()) return feedback_.report(Transition::StaleRevision);
+    if (editor_.composing()) return feedback_.report(Transition::Blocked);
     const auto pending = pending_;
     const auto id = fileId_.toStdString();
     auto result = Transition::Blocked;
     if (const auto *choice = std::get_if<ChoicePreview>(&pending))
-        result = files_.applyChoice(id, *choice, confirm);
+        result = store_.applyChoice(id, *choice, confirm);
     else if (const auto *changes = std::get_if<NonConflictingPreview>(&pending))
-        result = files_.applyNonConflicting(id, *changes, confirm);
+        result = store_.applyNonConflicting(id, *changes, confirm);
     else if (const auto *whole = std::get_if<WholeFilePreview>(&pending))
-        result = files_.applyWholeFile(id, *whole, confirm);
+        result = store_.applyWholeFile(id, *whole, confirm);
     // A single choice that replaces manual work stays pending until confirmed.
     if (scope != Scope::Choice || result != Transition::ConfirmationRequired) {
         pending_ = std::monostate{};
         fileId_.clear();
         Q_EMIT changed(scope);
     }
-    return owners_.report(result);
+    return feedback_.report(result);
 }
 
 void ChoicePreviewFlow::cancel()
@@ -160,13 +171,13 @@ void ChoicePreviewFlow::cancel()
     const auto previous = pendingScope();
     pending_ = std::monostate{};
     fileId_.clear();
-    owners_.setMessage({});
+    feedback_.show({});
     if (previous) Q_EMIT changed(*previous);
 }
 
 QVariantMap ChoicePreviewFlow::view(Scope scope) const
 {
-    const auto *file = files_.file(fileId_.toStdString());
+    const auto *file = store_.file(fileId_.toStdString());
     if (!file || !file->snapshots()) return {};
     switch (scope) {
     case Scope::Choice:
@@ -238,7 +249,7 @@ QVariantMap ChoicePreviewFlow::nonConflictingView(const NonConflictingPreview &p
                                       {QStringLiteral("before"), text(change.before)},
                                       {QStringLiteral("replacement"), text(change.replacement)}});
     }
-    return {{QStringLiteral("path"), owners_.displayPath(fileId_)},
+    return {{QStringLiteral("path"), files_.displayPath(fileId_.toStdString())},
             {QStringLiteral("scope"),
              preview.scope == NonConflictingScope::Left        ? tr("Left")
                  : preview.scope == NonConflictingScope::Right ? tr("Right")
@@ -295,7 +306,7 @@ QVariantMap ChoicePreviewFlow::wholeFileView(const WholeFilePreview &preview, co
             {QStringLiteral("replacement"),
              text(preview.replacement.substr(passage.source.begin, passage.source.end - passage.source.begin))}});
     }
-    return {{QStringLiteral("path"), owners_.displayPath(fileId_)},
+    return {{QStringLiteral("path"), files_.displayPath(fileId_.toStdString())},
             {QStringLiteral("side"), sideLabel(preview.side)},
             {QStringLiteral("source"),
              tr("%1\n%2").arg(

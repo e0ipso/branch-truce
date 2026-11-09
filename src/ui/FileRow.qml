@@ -12,14 +12,14 @@ KirigamiDelegates.SubtitleDelegate {
     id: row
     required property int index
     required property string fileId
-    required property string support
+    required property int support
     required property string path
     required property string statusIcon
     required property string statusLine
     required property bool resolved
     required property string summary
-    required property ApplicationController controller
-    readonly property bool current: fileId === row.controller.selectedFileId
+    required property Selection selection
+    readonly property bool current: fileId === row.selection.fileId
     // Supplied by the ListView bounds, rather than a delegate x binding.
     readonly property real plateOuterInset: Kirigami.Units.smallSpacing
     readonly property real plateHorizontalPadding: Kirigami.Units.largeSpacing
@@ -119,7 +119,7 @@ KirigamiDelegates.SubtitleDelegate {
                 maximumLineCount: 1
                 elide: Text.ElideRight
                 font: Kirigami.Theme.smallFont
-                color: row.resolved ? Kirigami.Theme.positiveTextColor : row.highlighted ? Qt.alpha(Kirigami.Theme.highlightedTextColor, 0.8) : row.support !== "supported" ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.disabledTextColor
+                color: row.resolved ? Kirigami.Theme.positiveTextColor : row.highlighted ? Qt.alpha(Kirigami.Theme.highlightedTextColor, 0.8) : row.support !== FileStates.SupportKind.Supported ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.disabledTextColor
             }
         }
 

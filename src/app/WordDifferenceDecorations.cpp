@@ -1,8 +1,8 @@
 // Word difference decorations highlight changed words without changing the result text.
 #include "WordDifferenceDecorations.h"
-#include "SessionModel.h"
 #include "core/FileWordDifferences.h"
 #include "highlighting/PaneHighlighter.h"
+#include "session/SessionStore.h"
 #include <QColor>
 #include <QJSValue>
 #include <QMetaMethod>
@@ -69,9 +69,8 @@ QList<std::pair<int, int>> utf16Ranges(std::string_view text, const std::vector<
 }
 }
 
-WordDifferenceDecorations::WordDifferenceDecorations(SessionModel &files, std::function<QString()> selectedFileId,
-                                                     QObject *parent)
-    : QObject(parent), files_(files), selectedFileId_(std::move(selectedFileId))
+WordDifferenceDecorations::WordDifferenceDecorations(const SessionStore &store, QObject *parent)
+    : QObject(parent), files_(store)
 {}
 
 void WordDifferenceDecorations::attach(QObject *editor, QTextDocument *document)
@@ -192,7 +191,7 @@ void WordDifferenceDecorations::refresh()
 {
     if (refreshing_) return;
     QScopedValueRollback guard(refreshing_, true);
-    const auto fileId = selectedFileId_();
+    const auto fileId = targetFileId_;
     const auto *file = files_.file(fileId.toStdString());
     if (!file || fileId != fileId_ || file->current().id != revision_ || file->correspondence() != mapping_
         || file->snapshots() != captures_)

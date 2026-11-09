@@ -18,7 +18,6 @@ class QLocalSocket;
 class QTimer;
 
 namespace branch_truce {
-class SessionModel;
 
 // Listens for blocking mergetool launchers and keeps their temporary inputs.
 // Exit success is sent only after Mark resolved has written the launched path.
@@ -32,7 +31,7 @@ public:
     enum class Listen { Listening, Elsewhere, Unavailable };
     // loadedRepository is the loaded operation that copied-launch checks
     // inspect, and gitExecutable the Git they run.
-    MergetoolSession(ResolutionPublisher &publisher, SessionModel &files, SessionCoordinator &coordinator,
+    MergetoolSession(ResolutionPublisher &publisher, SessionStore &files, SessionCoordinator &coordinator,
                      std::function<git::RepositoryContext()> loadedRepository, QString gitExecutable,
                      QObject *parent = nullptr);
     Listen listen(const git::RepositoryContext &repository, QString *error);
@@ -96,7 +95,7 @@ private:
     void settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity, const QString &failure);
 
     ResolutionPublisher &publisher_;
-    SessionModel &files_;
+    SessionStore &files_;
     SessionCoordinator &coordinator_;
     std::function<git::RepositoryContext()> loadedRepository_;
     const QString gitExecutable_;

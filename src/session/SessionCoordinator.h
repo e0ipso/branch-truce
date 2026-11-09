@@ -1,8 +1,8 @@
 // The session coordinator schedules guarded save and publication work and reconciles cancelled mutations.
 #pragma once
 
-#include "app/SessionModel.h"
 #include "git/GitAdapter.h"
+#include "session/SessionStore.h"
 #include <QByteArray>
 #include <QObject>
 #include <QString>
@@ -62,7 +62,7 @@ private:
     friend class SessionCoordinator;
 };
 
-// One application-owned coordinator, used only on the model's event-loop
+// One application-owned coordinator, used only on the store's event-loop
 // thread. Work/Inspect run in the thread pool on value snapshots; they must
 // not capture GUI objects. Completion runs on this object's thread, only for
 // an uncancelled, current session and revision. Git keeps its asynchronous
@@ -77,7 +77,7 @@ public:
     using Inspect = std::function<MutationObservation(const TaskInput &)>;
     using Completion = std::function<void(const TaskCompletion &)>;
 
-    explicit SessionCoordinator(SessionModel &model, QString gitExecutable, QObject *parent = nullptr);
+    explicit SessionCoordinator(SessionStore &store, QString gitExecutable, QObject *parent = nullptr);
     ~SessionCoordinator() override;
     // worktree is the verified repository root, not a launch subdirectory.
     // Canonicalization coalesces symlink aliases. Replacing cancels old work

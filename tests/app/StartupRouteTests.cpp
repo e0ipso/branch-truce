@@ -1,5 +1,6 @@
 #include "TestHarness.h"
-#include "app/ApplicationController.h"
+#include "app/AppPaths.h"
+#include "app/Application.h"
 #include "app/EngineText.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
@@ -307,7 +308,7 @@ private:
 // Runs the event loop until the loader stops opening, for at most 25 s. Opening takes
 // about 0.5 s on an idle host. At load averages of 25 to 36 on 8 cores it averaged 2.5 s
 // and some opens took over 10 s.
-void waitOpened(ApplicationController &controller, const std::string &what)
+void waitOpened(Application &controller, const std::string &what)
 {
     if (!controller.loader()->opening()) return;
     QEventLoop loop;
@@ -322,7 +323,7 @@ void waitOpened(ApplicationController &controller, const std::string &what)
     if (controller.loader()->opening()) throw std::runtime_error(what + " did not finish opening within 25 s");
 }
 
-void openController(ApplicationController &controller, const Repository &repo, const QString &recoverySession = {})
+void openController(Application &controller, const Repository &repo, const QString &recoverySession = {})
 {
     const auto before = repo.snapshot();
     repo.checkSocketDirectory();
@@ -345,20 +346,30 @@ void openController(ApplicationController &controller, const Repository &repo, c
     CHECK(after == before);
 }
 
-const FileSession &openedFile(ApplicationController &controller, const char *path = "tracked.txt")
+const FileSession &openedFile(Application &controller, const char *path = "tracked.txt")
 {
-    const auto *selected = controller.files()->file(QByteArray(path).toHex().toStdString());
+    const auto *selected = controller.store()->file(QByteArray(path).toHex().toStdString());
     CHECK(selected != nullptr);
     return *selected;
 }
 
-QVariant fileRole(ApplicationController &controller, const FileSession &file, int role)
+QVariant fileRole(Application &controller, const FileSession &file, int role)
 {
     auto *model = controller.files();
     for (int row = 0; row < model->totalFiles(); ++row)
         if (model->data(model->index(row), SessionModel::FileIdRole).toString().toStdString() == file.id())
             return model->data(model->index(row), role);
     throw std::runtime_error("fixture file has no model row");
+}
+
+// Files whose handoff entry names a blocker.
+int blockedFiles(Application &controller)
+{
+    int count = 0;
+    for (const auto &group : controller.completion()->handoff().groups)
+        for (const auto &entry : group.entries)
+            if (!entry.blockers.isEmpty()) ++count;
+    return count;
 }
 
 QMap<QString, QByteArray> storeContents(const QString &root)
@@ -372,7 +383,7 @@ QMap<QString, QByteArray> storeContents(const QString &root)
     return result;
 }
 
-void checkMutationAdmission(ApplicationController &controller, const FileSession &failed, const FileSession &healthy)
+void checkMutationAdmission(Application &controller, const FileSession &failed, const FileSession &healthy)
 {
     auto calls = std::make_shared<std::atomic_int>(0);
     QEventLoop loop;
@@ -459,9 +470,9 @@ public:
                     QString location;
                     Draft latest;
                     {
-                        ApplicationController controller(gitOnPath());
+                        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                         openController(controller, repo);
-                        auto *model = controller.files();
+                        auto *model = controller.store();
                         const auto id = openedFile(controller).id();
                         location = model->recoveryDirectory();
                         for (const auto &bytes :
@@ -495,12 +506,12 @@ public:
                     }
                     const auto repositoryBefore = repo.snapshot();
                     for (int reopening = 0; reopening < 2; ++reopening) {
-                        ApplicationController controller(gitOnPath());
+                        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                         openController(controller, repo);
                         const auto &restored = openedFile(controller);
-                        CHECK(controller.files()->recoveryDirectory() == location
+                        CHECK(controller.store()->recoveryDirectory() == location
                               && restored.current().draft == latest);
-                        CHECK(!controller.files()->hasRecoveryFailure(restored.id()));
+                        CHECK(!controller.store()->hasRecoveryFailure(restored.id()));
                         CHECK(fileRole(controller, restored, SessionModel::RecoveryErrorRole).toString().isEmpty());
                         CHECK(restored.written() && restored.written()->id == restored.current().id);
                         CHECK(restored.facts().resolved == staging);
@@ -520,9 +531,9 @@ public:
                           ScopedEnvironment environment(repo.environment);
                           QString location;
                           {
-                              ApplicationController controller(gitOnPath());
+                              Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                               openController(controller, repo);
-                              auto *model = controller.files();
+                              auto *model = controller.store();
                               const auto id = openedFile(controller).id();
                               auto draft = model->file(id)->current().draft;
                               draft.text = "first successfully written result\n";
@@ -548,12 +559,12 @@ public:
                                         .succeeded);
                           }
                           const auto before = repo.snapshot();
-                          ApplicationController controller(gitOnPath());
+                          Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                           openController(controller, repo);
                           const auto &restored = openedFile(controller);
                           const auto diagnostic =
                               fileRole(controller, restored, SessionModel::RecoveryErrorRole).toString();
-                          CHECK(controller.files()->hasRecoveryFailure(restored.id()));
+                          CHECK(controller.store()->hasRecoveryFailure(restored.id()));
                           CHECK(diagnostic.contains("Interrupted publication") && diagnostic.contains("uncertain"));
                           CHECK(!restored.facts().resolved && repo.snapshot() == before);
                           const auto replay = replayRecovery(storage::RecoveryStore(location));
@@ -569,9 +580,9 @@ public:
             QByteArray object;
             RevisionId revision = 0;
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
-                auto *model = controller.files();
+                auto *model = controller.store();
                 const auto id = openedFile(controller).id();
                 auto draft = model->file(id)->current().draft;
                 draft.text = "reviewed staged result\n";
@@ -592,10 +603,10 @@ public:
             const auto before = repo.snapshot();
             const auto records = storage::RecoveryStore(location).read().transactions.size();
             for (int reopening = 0; reopening < 2; ++reopening) {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto &restored = openedFile(controller);
-                CHECK(!controller.files()->hasRecoveryFailure(restored.id()) && restored.facts().resolved);
+                CHECK(!controller.store()->hasRecoveryFailure(restored.id()) && restored.facts().resolved);
                 CHECK(restored.staged() && restored.staged()->revision.id == revision);
                 CHECK(restored.staged()->objectId == object.toStdString() && restored.staged()->mode == "100644");
                 CHECK(restored.stageOutcome()->detail.find("verified against disk and index") != std::string::npos);
@@ -615,9 +626,9 @@ public:
             Draft saved, unsaved;
             std::optional<FileSnapshots> captured;
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
-                auto *model = controller.files();
+                auto *model = controller.store();
                 const auto &selected = openedFile(controller);
                 captured = *selected.snapshots();
                 const auto end = selected.current().draft.text.size();
@@ -635,17 +646,18 @@ public:
                 CHECK(!model->hasPendingRecovery());
             }
             for (int restart = 0; restart < 2; ++restart) {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto &restored = openedFile(controller);
-                CHECK(controller.files()->recoveryDirectory() == location);
+                CHECK(controller.store()->recoveryDirectory() == location);
                 CHECK(restored.current().draft == unsaved && *restored.snapshots() == *captured);
                 CHECK(restored.checkpoint() && restored.checkpoint()->draft == saved);
                 CHECK(restored.facts().unsaved && !restored.facts().resolved && restored.facts().needsReview);
                 CHECK(!restored.reviewed() && !restored.written() && !restored.staged());
-                CHECK(fileRole(controller, restored, SessionModel::RecoveryStateRole).toString() == "restored");
+                CHECK(fileRole(controller, restored, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+                      == FileStates::RecoveryState::Restored);
                 CHECK(!fileRole(controller, restored, SessionModel::PendingInputRole).toBool());
-                CHECK(!controller.files()->hasRecoveryFailures() && !controller.files()->canFinish());
+                CHECK(!controller.store()->hasRecoveryFailures() && !controller.completion()->handoff().clean);
             }
         });
         suite.run("an incomplete final record restores only acknowledged work with a pending-input diagnostic", [] {
@@ -655,25 +667,26 @@ public:
             QString location;
             Draft acknowledged;
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto &selected = openedFile(controller);
-                CHECK(controller.files()->editResult(selected.id(), 1, {{0, 0}, "acknowledged\n"})
+                CHECK(controller.store()->editResult(selected.id(), 1, {{0, 0}, "acknowledged\n"})
                       == Transition::Applied);
                 acknowledged = selected.current().draft;
-                location = controller.files()->recoveryDirectory();
+                location = controller.store()->recoveryDirectory();
             }
             QFile journal(location + "/journal");
             CHECK(journal.open(QIODevice::Append));
             CHECK(journal.write("{\"interrupted pending input\":", 29) == 29);
             journal.close();
-            ApplicationController controller(gitOnPath());
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo);
             const auto &restored = openedFile(controller);
             CHECK(restored.current().draft == acknowledged && restored.facts().unsaved);
             CHECK(controller.loader()->detail().contains("Pending input may need repeating"));
-            CHECK(!controller.files()->hasPendingRecovery() && !controller.files()->hasRecoveryFailures());
-            CHECK(fileRole(controller, restored, SessionModel::RecoveryStateRole).toString() == "restored");
+            CHECK(!controller.files()->hasPendingRecovery() && !controller.store()->hasRecoveryFailures());
+            CHECK(fileRole(controller, restored, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+                  == FileStates::RecoveryState::Restored);
         });
         for (const auto &condition : {QString("stale"), QString("corrupt"), QString("missing-payload"),
                                       QString("corrupt-payload"), QString("schema"), QString("locked")}) {
@@ -685,13 +698,13 @@ public:
                     QString abandoned;
                     const QByteArray oldDraft = "old acknowledged unsaved work\n";
                     {
-                        ApplicationController controller(gitOnPath());
+                        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                         openController(controller, repo);
                         const auto &selected = openedFile(controller);
                         auto edited = selected.current().draft;
                         edited.text = oldDraft.toStdString();
-                        CHECK(controller.files()->replaceDraft(selected.id(), 1, edited) == Transition::Applied);
-                        abandoned = controller.files()->recoveryDirectory();
+                        CHECK(controller.store()->replaceDraft(selected.id(), 1, edited) == Transition::Applied);
+                        abandoned = controller.store()->recoveryDirectory();
                     }
                     auto lock = std::make_unique<QLockFile>(abandoned + "/session.lock");
                     QString diagnostic;
@@ -723,21 +736,21 @@ public:
                             writeFile(path, "different payload bytes");
                         diagnostic = "payload";
                     }
-                    ApplicationController controller(gitOnPath());
+                    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                     openController(controller, repo);
                     const auto detail = controller.loader()->detail();
-                    CHECK(detail.contains(diagnostic) && controller.files()->recoveryDirectory() != abandoned);
-                    CHECK(!controller.files()->hasRecoveryFailures() && !controller.files()->hasPendingRecovery());
+                    CHECK(detail.contains(diagnostic) && controller.store()->recoveryDirectory() != abandoned);
+                    CHECK(!controller.store()->hasRecoveryFailures() && !controller.files()->hasPendingRecovery());
                     CHECK(openedFile(controller).current().draft.text != oldDraft.toStdString());
                     for (const auto path : {"tracked.txt", "excluded.txt"}) {
                         const auto &selected = openedFile(controller, path);
-                        CHECK(!controller.files()->hasRecoveryFailure(selected.id()));
+                        CHECK(!controller.store()->hasRecoveryFailure(selected.id()));
                         const auto id = QString::fromStdString(selected.id());
-                        CHECK(controller.selectFile(id) && controller.selectedFile()->canEdit());
-                        CHECK(controller.editResult(id, QString::number(selected.current().id), 0, 0,
-                                                    "live manual edit\n"));
-                        CHECK(controller.undo(id, QString::number(selected.current().id)));
-                        CHECK(controller.redo(id, QString::number(selected.current().id)));
+                        CHECK(controller.selection()->select(id) && controller.selectedFile()->canEdit());
+                        CHECK(controller.commands()->editResult(id, QString::number(selected.current().id), 0, 0,
+                                                                "live manual edit\n"));
+                        CHECK(controller.commands()->undo(id, QString::number(selected.current().id)));
+                        CHECK(controller.commands()->redo(id, QString::number(selected.current().id)));
                         CHECK(controller.loader()->detail() == detail && !controller.files()->hasPendingRecovery());
                     }
                 });
@@ -748,9 +761,9 @@ public:
             ScopedEnvironment environment(repo.environment);
             QString abandoned;
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
-                abandoned = controller.files()->recoveryDirectory();
+                abandoned = controller.store()->recoveryDirectory();
             }
             QFile journal(abandoned + "/journal");
             CHECK(journal.open(QIODevice::Append) && journal.write("corrupt complete frame\n") > 0);
@@ -762,18 +775,18 @@ public:
             CHECK(QDir().rename(abandoned, retired) && !QFileInfo::exists(abandoned));
             CHECK(storeContents(retired) == retained);
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 CHECK(!controller.loader()->detail().contains("rejected")
-                      && !controller.files()->hasRecoveryFailures());
+                      && !controller.store()->hasRecoveryFailures());
                 const auto &selected = openedFile(controller);
-                CHECK(controller.files()->editResult(selected.id(), selected.current().id, {{0, 0}, "live edit\n"})
+                CHECK(controller.store()->editResult(selected.id(), selected.current().id, {{0, 0}, "live edit\n"})
                       == Transition::Applied);
             }
             CHECK(QDir().rename(retired, abandoned) && storeContents(abandoned) == retained);
-            ApplicationController controller(gitOnPath());
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo);
-            CHECK(controller.loader()->detail().contains("integrity") && !controller.files()->hasRecoveryFailures());
+            CHECK(controller.loader()->detail().contains("integrity") && !controller.store()->hasRecoveryFailures());
             CHECK(openedFile(controller).current().draft.text.starts_with("live edit\n"));
         });
         suite.run("two windows closed before any edit leave later launches able to recover", [] {
@@ -782,36 +795,36 @@ public:
             ScopedEnvironment environment(repo.environment);
             QStringList untouched;
             {
-                ApplicationController first(gitOnPath());
+                Application first{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(first, repo);
-                ApplicationController second(gitOnPath());
+                Application second{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(second, repo);
-                untouched = {first.files()->recoveryDirectory(), second.files()->recoveryDirectory()};
+                untouched = {first.store()->recoveryDirectory(), second.store()->recoveryDirectory()};
                 CHECK(untouched.front() != untouched.back());
                 CHECK(second.loader()->detail().contains("active or unavailable"));
             }
             QString location;
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 CHECK(!controller.loader()->detail().contains("Multiple recovery sessions"));
                 CHECK(controller.loader()->detail().contains("without app edits that were set aside: 2"));
-                CHECK(!untouched.contains(controller.files()->recoveryDirectory()));
+                CHECK(!untouched.contains(controller.store()->recoveryDirectory()));
                 // Set aside, never deleted: each store keeps its journal next to the marker.
                 for (const auto &store : untouched)
                     CHECK(QFileInfo::exists(store + "/journal") && QFileInfo::exists(store + "/set-aside"));
                 const auto &selected = openedFile(controller);
-                CHECK(controller.files()->editResult(selected.id(), selected.current().id,
+                CHECK(controller.store()->editResult(selected.id(), selected.current().id,
                                                      {{0, 0}, "after two windows\n"})
                       == Transition::Applied);
-                location = controller.files()->recoveryDirectory();
+                location = controller.store()->recoveryDirectory();
             }
             for (int restart = 0; restart < 2; ++restart) {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 CHECK(!controller.loader()->detail().contains("Multiple recovery sessions"));
                 CHECK(controller.loader()->detail().contains("Recovered app drafts"));
-                CHECK(controller.files()->recoveryDirectory() == location);
+                CHECK(controller.store()->recoveryDirectory() == location);
                 CHECK(openedFile(controller).current().draft.text.starts_with("after two windows\n"));
             }
         });
@@ -822,40 +835,40 @@ public:
             QString first;
             QString second;
             {
-                ApplicationController one(gitOnPath());
+                Application one{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(one, repo);
-                ApplicationController two(gitOnPath());
+                Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(two, repo);
                 for (auto *controller : {&one, &two}) {
                     const auto &selected = openedFile(*controller);
                     const std::string text = controller == &one ? "first window\n" : "second window\n";
-                    CHECK(controller->files()->editResult(selected.id(), selected.current().id, {{0, 0}, text})
+                    CHECK(controller->store()->editResult(selected.id(), selected.current().id, {{0, 0}, text})
                           == Transition::Applied);
                 }
-                first = one.files()->recoveryDirectory();
-                second = two.files()->recoveryDirectory();
+                first = one.store()->recoveryDirectory();
+                second = two.store()->recoveryDirectory();
             }
             const auto firstName = QFileInfo(first).fileName();
             const auto secondName = QFileInfo(second).fileName();
             const auto retained = storeContents(second);
             // The block holds across launches; each blocked launch opens the live files.
             for (int restart = 0; restart < 2; ++restart) {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto detail = controller.loader()->detail();
                 CHECK(detail.contains("restoration is blocked rather than guessing")
                       && detail.contains("--recovery-session"));
                 CHECK(detail.contains(firstName) && detail.contains(secondName));
-                const auto location = controller.files()->recoveryDirectory();
-                CHECK(location != first && location != second && !controller.files()->hasRecoveryFailures());
+                const auto location = controller.store()->recoveryDirectory();
+                CHECK(location != first && location != second && !controller.store()->hasRecoveryFailures());
                 const auto &live = openedFile(controller);
                 CHECK(!live.current().draft.text.starts_with("first window")
                       && !live.current().draft.text.starts_with("second window"));
             }
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo, firstName);
-                CHECK(controller.files()->recoveryDirectory() == first);
+                CHECK(controller.store()->recoveryDirectory() == first);
                 CHECK(controller.loader()->detail().contains("Recovered app drafts"));
                 CHECK(controller.loader()->detail().contains(secondName + " was set aside, not deleted"));
                 CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
@@ -865,17 +878,17 @@ public:
             setAside.remove("set-aside");
             CHECK(setAside == retained);
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
-                CHECK(controller.files()->recoveryDirectory() == first
+                CHECK(controller.store()->recoveryDirectory() == first
                       && !controller.loader()->detail().contains("blocked"));
                 CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
             }
             // Choosing the set-aside session brings it back and sets the other one aside.
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo, secondName);
-                CHECK(controller.files()->recoveryDirectory() == second);
+                CHECK(controller.store()->recoveryDirectory() == second);
                 CHECK(controller.loader()->detail().contains(firstName + " was set aside, not deleted"));
                 CHECK(openedFile(controller).current().draft.text.starts_with("second window\n"));
             }
@@ -888,23 +901,23 @@ public:
             QString first;
             QString second;
             {
-                ApplicationController one(gitOnPath());
+                Application one{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(one, repo);
-                ApplicationController two(gitOnPath());
+                Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(two, repo);
                 for (auto *controller : {&one, &two}) {
                     const auto &selected = openedFile(*controller);
                     const std::string text = controller == &one ? "first window\n" : "second window\n";
-                    CHECK(controller->files()->editResult(selected.id(), selected.current().id, {{0, 0}, text})
+                    CHECK(controller->store()->editResult(selected.id(), selected.current().id, {{0, 0}, text})
                           == Transition::Applied);
                 }
-                first = one.files()->recoveryDirectory();
-                second = two.files()->recoveryDirectory();
+                first = one.store()->recoveryDirectory();
+                second = two.store()->recoveryDirectory();
             }
             const auto firstName = QFileInfo(first).fileName();
             const auto secondName = QFileInfo(second).fileName();
             const auto retained = storeContents(second);
-            const auto reload = [](ApplicationController &controller, const QString &session) {
+            const auto reload = [](Application &controller, const QString &session) {
                 if (!controller.loader()->chooseRecoverySession(session)) return false;
                 waitOpened(controller, "the chosen recovery session");
                 CHECK(!controller.loader()->opening() && controller.loader()->startupState() == "ready");
@@ -914,23 +927,23 @@ public:
             // A window with its own edits refuses to switch, so they are never left behind.
             QString third;
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 CHECK(controller.loader()->recoveryChoices().size() == 2);
                 const auto &live = openedFile(controller);
-                CHECK(controller.files()->editResult(live.id(), live.current().id, {{0, 0}, "third window\n"})
+                CHECK(controller.store()->editResult(live.id(), live.current().id, {{0, 0}, "third window\n"})
                       == Transition::Applied);
-                third = controller.files()->recoveryDirectory();
+                third = controller.store()->recoveryDirectory();
                 CHECK(!controller.loader()->chooseRecoverySession(firstName));
-                CHECK(controller.commandMessage().contains("already holds app edits"));
-                CHECK(controller.files()->recoveryDirectory() == third
+                CHECK(controller.feedback()->message().contains("already holds app edits"));
+                CHECK(controller.store()->recoveryDirectory() == third
                       && controller.loader()->recoveryChoices().size() == 2);
                 CHECK(!QFileInfo::exists(first + "/set-aside") && !QFileInfo::exists(second + "/set-aside"));
             }
             // Retire the third store outside v1 so the remaining checks see two choices again.
             CHECK(QDir().rename(third, repo.executables.path() + "/retired-third"));
 
-            ApplicationController controller(gitOnPath());
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo);
             const auto choices = controller.loader()->recoveryChoices();
             CHECK(choices.size() == 2);
@@ -945,23 +958,24 @@ public:
             QStringList expected{firstName, secondName};
             expected.sort();
             CHECK(sessions == expected);
-            const auto own = controller.files()->recoveryDirectory();
+            const auto own = controller.store()->recoveryDirectory();
 
             // Unknown sessions and sessions another window holds are refused without changes.
             CHECK(!controller.loader()->chooseRecoverySession(QUuid::createUuid().toString(QUuid::WithoutBraces)));
-            CHECK(controller.commandMessage().contains("not one of the choices"));
+            CHECK(controller.feedback()->message().contains("not one of the choices"));
             {
                 QLockFile held(second + "/session.lock");
                 CHECK(held.tryLock(0));
                 CHECK(!controller.loader()->chooseRecoverySession(firstName));
-                CHECK(controller.commandMessage().contains(secondName + " is open in another Branch Truce window"));
+                CHECK(
+                    controller.feedback()->message().contains(secondName + " is open in another Branch Truce window"));
             }
-            CHECK(controller.files()->recoveryDirectory() == own && controller.loader()->recoveryChoices().size() == 2);
+            CHECK(controller.store()->recoveryDirectory() == own && controller.loader()->recoveryChoices().size() == 2);
             CHECK(!QFileInfo::exists(first + "/set-aside") && !QFileInfo::exists(second + "/set-aside"));
 
             // The choice reloads through the startup restore: adopted, the other set aside, nothing deleted.
             CHECK(reload(controller, firstName));
-            CHECK(controller.files()->recoveryDirectory() == first && controller.loader()->recoveryChoices().isEmpty());
+            CHECK(controller.store()->recoveryDirectory() == first && controller.loader()->recoveryChoices().isEmpty());
             CHECK(controller.loader()->detail().contains("Recovered app drafts"));
             CHECK(controller.loader()->detail().contains(secondName + " was set aside, not deleted"));
             CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
@@ -973,7 +987,7 @@ public:
             CHECK(QFileInfo::exists(own + "/journal") && QFileInfo::exists(own + "/set-aside"));
             // Later edits go to the adopted store.
             const auto restoredId = openedFile(controller).id();
-            CHECK(controller.files()->editResult(restoredId, openedFile(controller).current().id, {{0, 0}, "kept\n"})
+            CHECK(controller.store()->editResult(restoredId, openedFile(controller).current().id, {{0, 0}, "kept\n"})
                   == Transition::Applied);
             const auto adopted = replayRecovery(storage::RecoveryStore(first));
             const auto kept = std::find_if(adopted.files.begin(), adopted.files.end(),
@@ -987,18 +1001,18 @@ public:
             ScopedEnvironment environment(repo.environment);
             QString first;
             {
-                ApplicationController one(gitOnPath());
+                Application one{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(one, repo);
-                ApplicationController two(gitOnPath());
+                Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(two, repo);
                 for (auto *controller : {&one, &two}) {
                     const auto &selected = openedFile(*controller);
-                    CHECK(controller->files()->editResult(selected.id(), selected.current().id, {{0, 0}, "edit\n"})
+                    CHECK(controller->store()->editResult(selected.id(), selected.current().id, {{0, 0}, "edit\n"})
                           == Transition::Applied);
                 }
-                first = one.files()->recoveryDirectory();
+                first = one.store()->recoveryDirectory();
             }
-            ApplicationController controller(gitOnPath());
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo);
             CHECK(controller.loader()->operation() == "Merge");
             repo.git({"merge", "--abort"});
@@ -1014,18 +1028,18 @@ public:
             QString first;
             QString second;
             {
-                ApplicationController one(gitOnPath());
+                Application one{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(one, repo);
-                ApplicationController two(gitOnPath());
+                Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(two, repo);
                 for (auto *controller : {&one, &two}) {
                     const auto &selected = openedFile(*controller);
                     const std::string text = controller == &one ? "first window\n" : "second window\n";
-                    CHECK(controller->files()->editResult(selected.id(), selected.current().id, {{0, 0}, text})
+                    CHECK(controller->store()->editResult(selected.id(), selected.current().id, {{0, 0}, text})
                           == Transition::Applied);
                 }
-                first = one.files()->recoveryDirectory();
-                second = two.files()->recoveryDirectory();
+                first = one.store()->recoveryDirectory();
+                second = two.store()->recoveryDirectory();
             }
             const auto firstName = QFileInfo(first).fileName();
             auto *gui = QThread::currentThread();
@@ -1039,10 +1053,10 @@ public:
                                    [&](const auto &read) { return read.first == directory; });
             };
 
-            ApplicationController controller(gitOnPath());
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo);
             CHECK(controller.loader()->recoveryChoices().size() == 2);
-            const auto own = controller.files()->recoveryDirectory();
+            const auto own = controller.store()->recoveryDirectory();
             const auto journal = own + "/journal";
             const auto intact = readFile(journal);
             // A complete line that is no recovery frame makes this window's store unreadable.
@@ -1058,8 +1072,8 @@ public:
             waitOpened(controller, "the choice refused by its unreadable store");
             auto reads = store_reads::stop();
             CHECK(controller.loader()->startupState() == "ready");
-            CHECK(controller.commandMessage().contains("This window's recovery store could not be read"));
-            CHECK(controller.files()->recoveryDirectory() == own && controller.loader()->recoveryChoices().size() == 2);
+            CHECK(controller.feedback()->message().contains("This window's recovery store could not be read"));
+            CHECK(controller.store()->recoveryDirectory() == own && controller.loader()->recoveryChoices().size() == 2);
             CHECK(!QFileInfo::exists(first + "/set-aside") && !QFileInfo::exists(second + "/set-aside"));
             CHECK(reads.size() == 1 && readOf(reads, own) && onWorkers(reads));
 
@@ -1070,7 +1084,7 @@ public:
             CHECK(controller.loader()->chooseRecoverySession(firstName));
             waitOpened(controller, "the chosen recovery session");
             reads = store_reads::stop();
-            CHECK(controller.loader()->startupState() == "ready" && controller.files()->recoveryDirectory() == first);
+            CHECK(controller.loader()->startupState() == "ready" && controller.store()->recoveryDirectory() == first);
             CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
             CHECK(readOf(reads, own) && readOf(reads, first) && readOf(reads, second) && onWorkers(reads));
         });
@@ -1081,28 +1095,28 @@ public:
             QString first;
             QString second;
             {
-                ApplicationController one(gitOnPath());
+                Application one{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(one, repo);
-                ApplicationController two(gitOnPath());
+                Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(two, repo);
                 for (auto *controller : {&one, &two}) {
                     const auto &selected = openedFile(*controller);
                     const std::string text = controller == &one ? "first window\n" : "second window\n";
-                    CHECK(controller->files()->editResult(selected.id(), selected.current().id, {{0, 0}, text})
+                    CHECK(controller->store()->editResult(selected.id(), selected.current().id, {{0, 0}, text})
                           == Transition::Applied);
                 }
-                first = one.files()->recoveryDirectory();
-                second = two.files()->recoveryDirectory();
+                first = one.store()->recoveryDirectory();
+                second = two.store()->recoveryDirectory();
             }
             const auto firstName = QFileInfo(first).fileName();
             const auto secondName = QFileInfo(second).fileName();
             const auto retainedFirst = storeContents(first);
             const auto retainedSecond = storeContents(second);
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 CHECK(controller.loader()->recoveryChoices().size() == 2);
-                const auto own = controller.files()->recoveryDirectory();
+                const auto own = controller.store()->recoveryDirectory();
                 CHECK(controller.loader()->chooseRecoverySession(firstName));
                 {
                     // Another window takes the chosen session after the choice
@@ -1112,7 +1126,7 @@ public:
                     waitOpened(controller, "the reload after the locked choice");
                     CHECK(!controller.loader()->opening() && controller.loader()->startupState() == "ready");
                 }
-                const auto location = controller.files()->recoveryDirectory();
+                const auto location = controller.store()->recoveryDirectory();
                 CHECK(location != first && location != second && location != own);
                 const auto detail = controller.loader()->detail();
                 CHECK(detail.contains(firstName + " is active or unavailable"));
@@ -1122,16 +1136,16 @@ public:
                 const auto choices = controller.loader()->recoveryChoices();
                 CHECK(choices.size() == 1 && choices.front().toMap().value("session").toString() == secondName);
                 CHECK(!openedFile(controller).current().draft.text.starts_with("second window"));
-                CHECK(!controller.files()->hasRecoveryFailures());
+                CHECK(!controller.store()->hasRecoveryFailures());
                 // Neither edited session is set aside or changed.
                 CHECK(storeContents(first) == retainedFirst && storeContents(second) == retainedSecond);
                 // The window's earlier store held only launch captures and is set aside.
                 CHECK(QFileInfo::exists(own + "/journal") && QFileInfo::exists(own + "/set-aside"));
             }
             // Once the other window lets go, the chosen session still restores.
-            ApplicationController controller(gitOnPath());
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo, firstName);
-            CHECK(controller.files()->recoveryDirectory() == first);
+            CHECK(controller.store()->recoveryDirectory() == first);
             CHECK(controller.loader()->detail().contains(secondName + " was set aside, not deleted"));
             CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
         });
@@ -1142,30 +1156,30 @@ public:
             const auto unknown = QUuid::createUuid().toString(QUuid::WithoutBraces);
             QString store;
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
-                store = controller.files()->recoveryDirectory();
+                store = controller.store()->recoveryDirectory();
             }
             // A lone store holding only launch captures has no work to choose
             // between, so it is still adopted.
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo, unknown);
-                CHECK(controller.files()->recoveryDirectory() == store);
+                CHECK(controller.store()->recoveryDirectory() == store);
                 CHECK(controller.loader()->detail().contains("Recovery session " + unknown
                                                              + " does not match this operation"));
                 CHECK(!controller.loader()->detail().contains("blocked")
                       && controller.loader()->recoveryChoices().isEmpty());
                 const auto &selected = openedFile(controller);
-                CHECK(controller.files()->editResult(selected.id(), selected.current().id, {{0, 0}, "edited\n"})
+                CHECK(controller.store()->editResult(selected.id(), selected.current().id, {{0, 0}, "edited\n"})
                       == Transition::Applied);
             }
             const auto storeName = QFileInfo(store).fileName();
             const auto retained = storeContents(store);
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo, unknown);
-                CHECK(controller.files()->recoveryDirectory() != store);
+                CHECK(controller.store()->recoveryDirectory() != store);
                 CHECK(controller.loader()->detail().contains("Recovery session " + unknown
                                                              + " does not match this operation"));
                 CHECK(controller.loader()->detail().contains("restoration is blocked rather than guessing")
@@ -1176,9 +1190,9 @@ public:
                 CHECK(storeContents(store) == retained);
             }
             // Without a name, the only edited store is restored as before.
-            ApplicationController controller(gitOnPath());
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo);
-            CHECK(controller.files()->recoveryDirectory() == store);
+            CHECK(controller.store()->recoveryDirectory() == store);
             CHECK(openedFile(controller).current().draft.text.starts_with("edited\n"));
         });
         suite.run("the recovery-session option reaches startup recovery", [&] {
@@ -1199,39 +1213,42 @@ public:
                 Draft recovered;
                 QString location;
                 {
-                    ApplicationController controller(gitOnPath());
+                    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                     openController(controller, repo);
                     const auto &selected = openedFile(controller);
-                    CHECK(controller.files()->editResult(selected.id(), 1, {{0, 0}, "acknowledged draft\n"})
+                    CHECK(controller.store()->editResult(selected.id(), 1, {{0, 0}, "acknowledged draft\n"})
                           == Transition::Applied);
                     recovered = selected.current().draft;
-                    location = controller.files()->recoveryDirectory();
+                    location = controller.store()->recoveryDirectory();
                 }
                 writeFile(repo.path("tracked.txt"), "resolved outside the app\n");
                 repo.git({"add", "--", "tracked.txt"});
                 for (int restart = 0; restart < 2; ++restart) {
-                    ApplicationController controller(gitOnPath());
+                    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                     openController(controller, repo);
-                    auto *model = controller.files();
+                    auto *model = controller.store();
                     const auto &failed = openedFile(controller);
                     const auto &healthy = openedFile(controller, "excluded.txt");
-                    CHECK(model->recoveryDirectory() == location && model->totalFiles() == 2);
+                    CHECK(model->recoveryDirectory() == location && controller.files()->totalFiles() == 2);
                     CHECK(model->hasRecoveryFailure(failed.id()) && !model->hasRecoveryFailure(healthy.id()));
-                    CHECK(!model->hasPendingRecovery() && !model->canFinish());
+                    CHECK(!model->hasPendingRecovery() && !controller.completion()->handoff().clean);
                     CHECK(failed.current().draft == recovered && failed.canUndo());
-                    CHECK(fileRole(controller, failed, SessionModel::RecoveryStateRole).toString() == "blocked");
+                    CHECK(
+                        fileRole(controller, failed, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+                        == FileStates::RecoveryState::Blocked);
                     CHECK(!fileRole(controller, failed, SessionModel::RecoveryErrorRole).toString().isEmpty());
                     CHECK(!fileRole(controller, failed, SessionModel::PendingInputRole).toBool());
                     CHECK(!fileRole(controller, failed, SessionModel::CanUndoRole).toBool());
                     const auto id = QString::fromStdString(failed.id());
-                    CHECK(controller.selectFile(id) && !controller.selectedFile()->canEdit());
-                    CHECK(!controller.editResult(id, QString::number(failed.current().id), 0, 0, "forbidden"));
-                    CHECK(!controller.undo(id, QString::number(failed.current().id)));
-                    CHECK(!controller.redo(id, QString::number(failed.current().id)));
+                    CHECK(controller.selection()->select(id) && !controller.selectedFile()->canEdit());
+                    CHECK(!controller.commands()->editResult(id, QString::number(failed.current().id), 0, 0,
+                                                             "forbidden"));
+                    CHECK(!controller.commands()->undo(id, QString::number(failed.current().id)));
+                    CHECK(!controller.commands()->redo(id, QString::number(failed.current().id)));
                     const auto target = test_support::choiceTarget(failed, SourceSide::Stage2, ChoiceScope::Section);
-                    CHECK(!controller.previewChoice(id, QString::number(failed.current().id),
-                                                    QString::fromStdString(target.source.contributionId),
-                                                    ChoicePreviewFlow::Action::Accept));
+                    CHECK(!controller.choices()->previewChoice(id, QString::number(failed.current().id),
+                                                               QString::fromStdString(target.source.contributionId),
+                                                               ChoicePreviewFlow::Action::Accept));
                     const auto preview =
                         previewChoice(failed, failed.current().id, target.source.contributionId, ChoiceAction::Accept);
                     CHECK(model->applyChoice(failed.id(), preview, true) == Transition::Blocked);
@@ -1242,23 +1259,24 @@ public:
                     CHECK(model->undo(failed.id(), failed.current().id) == Transition::Blocked);
                     CHECK(model->redo(failed.id(), failed.current().id) == Transition::Blocked);
                     const auto healthyId = QString::fromStdString(healthy.id());
-                    CHECK(controller.selectFile(healthyId) && controller.selectedFile()->canEdit());
-                    CHECK(controller.editResult(healthyId, QString::number(healthy.current().id), 0, 0,
-                                                "healthy manual edit\n"));
+                    CHECK(controller.selection()->select(healthyId) && controller.selectedFile()->canEdit());
+                    CHECK(controller.commands()->editResult(healthyId, QString::number(healthy.current().id), 0, 0,
+                                                            "healthy manual edit\n"));
                     const auto before = healthy.current().draft;
                     const auto healthyTarget =
                         test_support::choiceTarget(healthy, SourceSide::Stage2, ChoiceScope::Line);
-                    CHECK(controller.previewChoice(healthyId, QString::number(healthy.current().id),
-                                                   QString::fromStdString(healthyTarget.source.contributionId),
-                                                   ChoicePreviewFlow::Action::Accept));
-                    CHECK(controller.applyChoice(true));
+                    CHECK(
+                        controller.choices()->previewChoice(healthyId, QString::number(healthy.current().id),
+                                                            QString::fromStdString(healthyTarget.source.contributionId),
+                                                            ChoicePreviewFlow::Action::Accept));
+                    CHECK(controller.choices()->applyChoice(true));
                     const auto chosen = healthy.current().draft;
                     CHECK(chosen != before && chosen.text == before.text);
-                    CHECK(controller.undo(healthyId, QString::number(healthy.current().id))
+                    CHECK(controller.commands()->undo(healthyId, QString::number(healthy.current().id))
                           && healthy.current().draft == before);
-                    CHECK(controller.redo(healthyId, QString::number(healthy.current().id))
+                    CHECK(controller.commands()->redo(healthyId, QString::number(healthy.current().id))
                           && healthy.current().draft == chosen);
-                    CHECK(controller.undo(healthyId, QString::number(healthy.current().id)));
+                    CHECK(controller.commands()->undo(healthyId, QString::number(healthy.current().id)));
                     CHECK(fileRole(controller, healthy, SessionModel::CanUndoRole).toBool());
                     const auto repositoryBefore = repo.snapshot();
                     checkMutationAdmission(controller, failed, healthy);
@@ -1274,10 +1292,10 @@ public:
             QString location;
             std::optional<FileSession> captured;
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 captured = openedFile(controller);
-                location = controller.files()->recoveryDirectory();
+                location = controller.store()->recoveryDirectory();
             }
             CHECK(QDir(location).removeRecursively());
             const std::map<std::string, Decision> vocabulary{{"left", {DecisionValue::Accepted, 1}}, {"right", {}}};
@@ -1287,10 +1305,10 @@ public:
                       .commit(recoveryTransaction(legacy, "open", QUuid::createUuid().toString()))
                       .succeeded);
             for (int restart = 0; restart < 2; ++restart) {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto &restored = openedFile(controller);
-                CHECK(controller.files()->recoveryDirectory() == location);
+                CHECK(controller.store()->recoveryDirectory() == location);
                 CHECK(restored.current().draft.decisions == vocabulary && restored.facts().undecided == 1);
                 CHECK(!restored.choices().empty());
                 const auto target = test_support::choiceTarget(restored, SourceSide::Stage2, ChoiceScope::Section);
@@ -1298,81 +1316,83 @@ public:
                           .state
                       == Transition::Blocked);
                 const auto id = QString::fromStdString(restored.id());
-                CHECK(controller.selectFile(id) && controller.selectedFile()->canEdit());
+                CHECK(controller.selection()->select(id) && controller.selectedFile()->canEdit());
                 CHECK(controller.selectedFile()->choices().isEmpty());
                 CHECK(!controller.selectedFile()->choiceNotice().isEmpty());
-                CHECK(!controller.previewChoice(id, QString::number(restored.current().id),
-                                                QString::fromStdString(target.source.contributionId),
-                                                ChoicePreviewFlow::Action::Accept));
-                CHECK(controller.editResult(id, QString::number(restored.current().id), 0, 0, "legacy manual edit\n"));
+                CHECK(!controller.choices()->previewChoice(id, QString::number(restored.current().id),
+                                                           QString::fromStdString(target.source.contributionId),
+                                                           ChoicePreviewFlow::Action::Accept));
+                CHECK(controller.commands()->editResult(id, QString::number(restored.current().id), 0, 0,
+                                                        "legacy manual edit\n"));
                 CHECK(restored.current().draft.decisions == vocabulary);
-                CHECK(controller.undo(id, QString::number(restored.current().id)));
+                CHECK(controller.commands()->undo(id, QString::number(restored.current().id)));
                 CHECK(restored.current().draft.decisions == vocabulary);
             }
         });
         for (const auto &kind : {QString("publication"), QString("staging")}) {
             for (const bool resultPresent : {false, true}) {
-                suite.run(
-                    "interrupted " + kind.toStdString() + " remains uncertain against current disk and index "
-                        + std::to_string(resultPresent),
-                    [=] {
-                        Repository repo;
-                        repo.conflict("merge");
-                        ScopedEnvironment environment(repo.environment);
-                        const QByteArray candidate = "reviewed result awaiting completion\n";
-                        QString location;
-                        {
-                            ApplicationController controller(gitOnPath());
-                            openController(controller, repo);
-                            auto *model = controller.files();
-                            const auto &selected = openedFile(controller);
-                            auto edited = selected.current().draft;
-                            edited.text = candidate.toStdString();
-                            CHECK(model->replaceDraft(selected.id(), 1, edited) == Transition::Applied);
-                            const auto revision = selected.current().id;
-                            CHECK(model->beginMarkResolved(selected.id(), revision, true) == Transition::Applied);
-                            CHECK(model->recordCheckpoint(selected.id(), revision, Outcome::Succeeded)
-                                  == Transition::Applied);
-                            if (kind == "staging") {
-                                writeFile(repo.path("tracked.txt"), candidate);
-                                CHECK(model->recordWrite(selected.id(), revision, Outcome::Succeeded)
-                                      == Transition::Applied);
-                            }
-                            location = model->recoveryDirectory();
-                            CHECK(
-                                storage::RecoveryStore(location)
-                                    .commit(mutationRecoveryTransaction(selected, kind, QUuid::createUuid().toString()))
-                                    .succeeded);
-                        }
-                        if (resultPresent)
-                            writeFile(repo.path("tracked.txt"), candidate);
-                        else if (kind == "staging") {
-                            writeFile(repo.path("tracked.txt"), "different externally staged result\n");
-                            repo.git({"add", "--", "tracked.txt"});
-                        }
-                        const auto repositoryBefore = repo.snapshot();
-                        ApplicationController controller(gitOnPath());
-                        openController(controller, repo);
-                        const auto &restored = openedFile(controller);
-                        const auto diagnostic =
-                            fileRole(controller, restored, SessionModel::RecoveryErrorRole).toString();
-                        CHECK(diagnostic.contains("Interrupted " + kind)
-                              && diagnostic.contains("uncertain", Qt::CaseInsensitive));
-                        CHECK(diagnostic.contains(resultPresent ? "result bytes are present"
-                                                                : "cannot establish completion"));
-                        CHECK(restored.current().draft.text == candidate.toStdString());
-                        CHECK(!restored.facts().resolved && !restored.staged());
-                        CHECK(controller.files()->hasRecoveryFailure(restored.id())
-                              && !controller.files()->hasPendingRecovery());
-                        CHECK(fileRole(controller, restored, SessionModel::RecoveryStateRole).toString() == "blocked");
-                        CHECK(controller.files()->editResult(restored.id(), restored.current().id,
-                                                             {{0, 0}, "must inspect"})
-                              == Transition::Blocked);
-                        CHECK(repo.snapshot() == repositoryBefore);
-                        const auto replay = replayRecovery(storage::RecoveryStore(location));
-                        CHECK(replay.succeeded && replay.mutations.size() == 1
-                              && replay.mutations.front().observation.isEmpty());
-                    });
+                suite.run("interrupted " + kind.toStdString() + " remains uncertain against current disk and index "
+                              + std::to_string(resultPresent),
+                          [=] {
+                              Repository repo;
+                              repo.conflict("merge");
+                              ScopedEnvironment environment(repo.environment);
+                              const QByteArray candidate = "reviewed result awaiting completion\n";
+                              QString location;
+                              {
+                                  Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                                  openController(controller, repo);
+                                  auto *model = controller.store();
+                                  const auto &selected = openedFile(controller);
+                                  auto edited = selected.current().draft;
+                                  edited.text = candidate.toStdString();
+                                  CHECK(model->replaceDraft(selected.id(), 1, edited) == Transition::Applied);
+                                  const auto revision = selected.current().id;
+                                  CHECK(model->beginMarkResolved(selected.id(), revision, true) == Transition::Applied);
+                                  CHECK(model->recordCheckpoint(selected.id(), revision, Outcome::Succeeded)
+                                        == Transition::Applied);
+                                  if (kind == "staging") {
+                                      writeFile(repo.path("tracked.txt"), candidate);
+                                      CHECK(model->recordWrite(selected.id(), revision, Outcome::Succeeded)
+                                            == Transition::Applied);
+                                  }
+                                  location = model->recoveryDirectory();
+                                  CHECK(storage::RecoveryStore(location)
+                                            .commit(mutationRecoveryTransaction(selected, kind,
+                                                                                QUuid::createUuid().toString()))
+                                            .succeeded);
+                              }
+                              if (resultPresent)
+                                  writeFile(repo.path("tracked.txt"), candidate);
+                              else if (kind == "staging") {
+                                  writeFile(repo.path("tracked.txt"), "different externally staged result\n");
+                                  repo.git({"add", "--", "tracked.txt"});
+                              }
+                              const auto repositoryBefore = repo.snapshot();
+                              Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                              openController(controller, repo);
+                              const auto &restored = openedFile(controller);
+                              const auto diagnostic =
+                                  fileRole(controller, restored, SessionModel::RecoveryErrorRole).toString();
+                              CHECK(diagnostic.contains("Interrupted " + kind)
+                                    && diagnostic.contains("uncertain", Qt::CaseInsensitive));
+                              CHECK(diagnostic.contains(resultPresent ? "result bytes are present"
+                                                                      : "cannot establish completion"));
+                              CHECK(restored.current().draft.text == candidate.toStdString());
+                              CHECK(!restored.facts().resolved && !restored.staged());
+                              CHECK(controller.store()->hasRecoveryFailure(restored.id())
+                                    && !controller.files()->hasPendingRecovery());
+                              CHECK(fileRole(controller, restored, SessionModel::RecoveryStateRole)
+                                        .value<FileStates::RecoveryState>()
+                                    == FileStates::RecoveryState::Blocked);
+                              CHECK(controller.store()->editResult(restored.id(), restored.current().id,
+                                                                   {{0, 0}, "must inspect"})
+                                    == Transition::Blocked);
+                              CHECK(repo.snapshot() == repositoryBefore);
+                              const auto replay = replayRecovery(storage::RecoveryStore(location));
+                              CHECK(replay.succeeded && replay.mutations.size() == 1
+                                    && replay.mutations.front().observation.isEmpty());
+                          });
             }
         }
         suite.run(
@@ -1395,29 +1415,30 @@ public:
                 CHECK(expectedPaths.size() == 6);
                 const auto before = repo.snapshot();
                 ScopedEnvironment environment(repo.environment);
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
-                auto *model = controller.files();
-                CHECK(model->totalFiles() == 6 && controller.outsideAppFiles() == 1
-                      && controller.loadErrorFiles() == 1);
+                auto *model = controller.store();
+                CHECK(controller.files()->totalFiles() == 6 && controller.files()->outsideAppFiles() == 1
+                      && controller.files()->loadErrorFiles() == 1);
                 QSet<QByteArray> actualPaths;
-                for (int row = 0; row < model->totalFiles(); ++row) {
-                    const auto index = model->index(row);
-                    const auto path = QByteArray::fromStdString(model->fileAt(row)->path());
-                    const auto id = model->data(index, SessionModel::FileIdRole).toString();
+                for (int row = 0; row < controller.files()->totalFiles(); ++row) {
+                    const auto index = controller.files()->index(row);
+                    const auto path = QByteArray::fromStdString(controller.files()->fileAt(row)->path());
+                    const auto id = controller.files()->data(index, SessionModel::FileIdRole).toString();
                     actualPaths.insert(path);
-                    CHECK(id.toLatin1() == path.toHex() && controller.selectFile(id));
+                    CHECK(id.toLatin1() == path.toHex() && controller.selection()->select(id));
                     const auto selected = controller.selectedFile();
                     CHECK(selected->pathBytes() == path && selected->fileId() == id);
                     if (path == "binary.dat" || path == "missing.txt") {
-                        const auto expected = path == "binary.dat" ? "outside-app" : "unreadable";
-                        CHECK(selected->support() == QLatin1String(expected));
+                        const auto expected = path == "binary.dat" ? FileStates::SupportKind::OutsideApp
+                                                                   : FileStates::SupportKind::Unreadable;
+                        CHECK(selected->support() == expected);
                         CHECK(!selected->supportDetail().isEmpty());
                         CHECK(selected->stage2().isEmpty() && selected->initialResult().isEmpty());
                         CHECK(model->replaceDraft(id.toStdString(), 1, {"unsafe edit", {}, 0}) == Transition::Blocked);
                         continue;
                     }
-                    CHECK(selected->support() == "supported");
+                    CHECK(selected->supported());
                     const auto versions = additional.value(QString::fromUtf8(path), {"base\n", "main\n", "side\n"});
                     CHECK(selected->earlier().value("text").toString().toUtf8() == versions[0]);
                     CHECK(selected->stage2().value("text").toString().toUtf8() == versions[1]);
@@ -1425,16 +1446,21 @@ public:
                     const auto initial = readFile(repo.path(QString::fromUtf8(path)));
                     CHECK(selected->initialResult().value("text").toString().toUtf8() == initial);
                     CHECK(selected->resultText().toUtf8() == initial);
-                    CHECK(!controller.selectFile(QString::fromUtf8(path)) && controller.selectedFileId() == id);
+                    CHECK(!controller.selection()->select(QString::fromUtf8(path))
+                          && controller.selection()->fileId() == id);
                 }
                 CHECK(actualPaths == expectedPaths);
-                const auto selectedId = controller.selectedFileId();
-                CHECK(!controller.selectFile("not-an-exact-file-id") && controller.selectedFileId() == selectedId);
+                const auto selectedId = controller.selection()->fileId();
+                CHECK(!controller.selection()->select("not-an-exact-file-id")
+                      && controller.selection()->fileId() == selectedId);
                 // Adapter success callbacks complete supported rows without touching Git in this fixture.
                 // Publishing moves display rows. Capture stable identities before the first move.
                 std::vector<std::string> supportedIds;
-                for (int row = 0; row < model->totalFiles(); ++row) {
-                    const auto id = model->data(model->index(row), SessionModel::FileIdRole).toString().toStdString();
+                for (int row = 0; row < controller.files()->totalFiles(); ++row) {
+                    const auto id = controller.files()
+                                        ->data(controller.files()->index(row), SessionModel::FileIdRole)
+                                        .toString()
+                                        .toStdString();
                     if (model->file(id)->support() == Support::Supported) supportedIds.push_back(id);
                 }
                 CHECK(supportedIds.size() == 4);
@@ -1447,13 +1473,14 @@ public:
                     CHECK(model->recordStage(id, revision, Outcome::Succeeded, "fixture-verified-object", "100644")
                           == Transition::Applied);
                 }
-                CHECK(model->resolvedFiles() == 4 && !model->canFinish() && model->finishBlockers().size() == 2);
-                CHECK(controller.outsideAppFiles() == 1 && controller.loadErrorFiles() == 1);
+                CHECK(controller.files()->resolvedFiles() == 4 && !controller.completion()->handoff().clean
+                      && blockedFiles(controller) == 2);
+                CHECK(controller.files()->outsideAppFiles() == 1 && controller.files()->loadErrorFiles() == 1);
                 CHECK(controller.loader()->detail().contains("outside app remain outstanding"));
                 for (const auto path : {"binary.dat", "missing.txt"}) {
                     const auto &outstanding = openedFile(controller, path);
                     CHECK(!outstanding.supportDetail().empty() && !outstanding.facts().resolved);
-                    CHECK(controller.selectFile(QString::fromStdString(outstanding.id())));
+                    CHECK(controller.selection()->select(QString::fromStdString(outstanding.id())));
                     CHECK(!controller.selectedFile()->supportDetail().isEmpty());
                 }
                 CHECK(repo.snapshot() == before);
@@ -1470,10 +1497,10 @@ public:
             const auto smallOther = readFile(repo.path("excluded.txt"));
             ScopedEnvironment environment(repo.environment);
             const auto fault = std::make_shared<const FailingLargeFile>();
-            ApplicationController controller(gitOnPath(), nullptr, fault);
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), fault}};
             openController(controller, repo);
             CHECK(fault->failures == 1);
-            CHECK(controller.files()->totalFiles() == 3 && controller.loadErrorFiles() == 1);
+            CHECK(controller.files()->totalFiles() == 3 && controller.files()->loadErrorFiles() == 1);
             const auto &failed = openedFile(controller, "large.txt");
             CHECK(failed.support() == Support::Unreadable && failed.snapshots() && !failed.correspondence());
             CHECK(failed.loadFailure() == LoadFailure{LoadFailureReason::OutOfMemory});
@@ -1488,10 +1515,10 @@ public:
                       && small.snapshots()->stage3->worktree.utf8 == "side\n");
                 CHECK(small.current().draft.text
                       == (QByteArray(path) == "tracked.txt" ? repo.manual : smallOther).toStdString());
-                CHECK(controller.selectFile(QString::fromStdString(small.id())));
+                CHECK(controller.selection()->select(QString::fromStdString(small.id())));
                 CHECK(controller.selectedFile()->stage2().value("text").toString() == "main\n");
             }
-            CHECK(!controller.files()->hasPendingRecovery() && !controller.files()->canFinish());
+            CHECK(!controller.files()->hasPendingRecovery() && !controller.completion()->handoff().clean);
             CHECK(repo.snapshot() == before);
         });
         suite.run(
@@ -1508,19 +1535,25 @@ public:
                     auto isolatedEnvironment = repo.environment;
                     isolatedEnvironment.insert("XDG_DATA_HOME", recoveryData.path());
                     ScopedEnvironment isolated(isolatedEnvironment);
-                    ApplicationController controller(gitOnPath());
-                    auto *model = controller.files();
+                    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                    auto *model = controller.store();
                     const auto location = model->recoveryDirectory();
                     if (failRecovery) {
                         CHECK(QDir().mkpath(QFileInfo(location).path()));
                         writeFile(location, "block recovery storage with a regular file");
                     }
                     openController(controller, repo);
-                    CHECK(model->totalFiles() == 2 && model->hasPendingRecovery() == failRecovery);
-                    CHECK(controller.loadErrorFiles() == 0 && controller.outsideAppFiles() == 0);
-                    for (int row = 0; row < model->totalFiles(); ++row) {
-                        CHECK(model->data(model->index(row), SessionModel::PendingInputRole).toBool() == failRecovery);
-                        CHECK(model->data(model->index(row), SessionModel::RecoveryErrorRole).toString().isEmpty()
+                    CHECK(controller.files()->totalFiles() == 2 && model->hasPendingRecovery() == failRecovery);
+                    CHECK(controller.files()->loadErrorFiles() == 0 && controller.files()->outsideAppFiles() == 0);
+                    for (int row = 0; row < controller.files()->totalFiles(); ++row) {
+                        CHECK(controller.files()
+                                  ->data(controller.files()->index(row), SessionModel::PendingInputRole)
+                                  .toBool()
+                              == failRecovery);
+                        CHECK(controller.files()
+                                  ->data(controller.files()->index(row), SessionModel::RecoveryErrorRole)
+                                  .toString()
+                                  .isEmpty()
                               == !failRecovery);
                     }
                     for (const auto path : {"tracked.txt", "excluded.txt"}) {
@@ -1530,7 +1563,7 @@ public:
                         CHECK(loaded.current().draft.text == readFile(repo.path(path)).toStdString());
                         CHECK(loaded.snapshots()->stage2->worktree.utf8 == "main\n"
                               && loaded.snapshots()->stage3->worktree.utf8 == "side\n");
-                        CHECK(controller.selectFile(QString::fromStdString(loaded.id())));
+                        CHECK(controller.selection()->select(QString::fromStdString(loaded.id())));
                         CHECK(controller.selectedFile()->stage2().value("text").toString() == "main\n");
                         CHECK(controller.selectedFile()->resultText().toStdString() == loaded.current().draft.text);
                         if (failRecovery) {
@@ -1580,7 +1613,7 @@ public:
                 repo.conflict(operation);
                 const auto launchIdentity = identity(repo.path("tracked.txt"));
                 ScopedEnvironment environment(repo.environment);
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto &selected = openedFile(controller);
                 CHECK(selected.support() == Support::Supported && selected.snapshots());
@@ -1631,7 +1664,7 @@ public:
                 }
                 const auto &other = openedFile(controller, "excluded.txt");
                 CHECK(other.snapshots() && other.snapshots()->provenance == provenance);
-                auto *model = controller.files();
+                auto *model = controller.store();
                 auto edited = selected.current().draft;
                 edited.text = "later manual edit\n";
                 CHECK(model->replaceDraft(selected.id(), selected.current().id, edited) == Transition::Applied);
@@ -1676,7 +1709,7 @@ public:
                 writeFile(repo.path("tracked.txt"), format.launch);
                 const auto launchIdentity = identity(repo.path("tracked.txt"));
                 ScopedEnvironment environment(repo.environment);
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto &selected = openedFile(controller);
                 CHECK(selected.support() == Support::Supported && selected.snapshots());
@@ -1711,7 +1744,7 @@ public:
                 }
                 auto edited = selected.current().draft;
                 edited.text += " later";
-                CHECK(controller.files()->replaceDraft(selected.id(), selected.current().id, edited)
+                CHECK(controller.store()->replaceDraft(selected.id(), selected.current().id, edited)
                       == Transition::Applied);
                 CHECK(*selected.snapshots() == captured);
             }
@@ -1728,7 +1761,7 @@ public:
                 repo.git({"commit", "--quiet", "-m", "prepare earlier source"});
                 repo.conflict("merge");
                 ScopedEnvironment environment(repo.environment);
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto &selected = openedFile(controller);
                 CHECK(selected.support() == Support::Supported && selected.snapshots());
@@ -1745,7 +1778,7 @@ public:
                 }
                 auto edited = selected.current().draft;
                 edited.text = "edited after capture\n";
-                auto *model = controller.files();
+                auto *model = controller.store();
                 CHECK(model->replaceDraft(selected.id(), selected.current().id, edited) == Transition::Applied);
                 CHECK(model->undo(selected.id(), selected.current().id) == Transition::Applied);
                 CHECK(model->redo(selected.id(), selected.current().id) == Transition::Applied);
@@ -1856,50 +1889,50 @@ public:
             Draft baseline;
             Draft discarded;
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto id = QString::fromStdString(openedFile(controller).id());
-                CHECK(controller.selectFile(id));
+                CHECK(controller.selection()->select(id));
                 auto saved = openedFile(controller).current().draft;
                 saved.text += "saved app draft\n";
                 saved.decisions["kept"] = {DecisionValue::Accepted, 4};
-                CHECK(controller.files()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
+                CHECK(controller.store()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
                                                        saved)
                       == Transition::Applied);
                 CHECK(openedFile(controller).facts().unsaved && !openedFile(controller).checkpoint());
-                CHECK(controller.saveDraft(id, QString::number(openedFile(controller).current().id)));
+                CHECK(controller.commands()->saveDraft(id, QString::number(openedFile(controller).current().id)));
                 baseline = openedFile(controller).current().draft;
                 CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == baseline);
                 CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).written()
                       && !openedFile(controller).staged() && !openedFile(controller).reviewed());
-                CHECK(controller.commandMessage() == "Draft saved in Branch Truce; repository file unchanged.");
+                CHECK(controller.feedback()->message() == "Draft saved in Branch Truce; repository file unchanged.");
                 CHECK(controller.selectedFile()->status() == "Draft saved in Branch Truce; repository file unchanged");
                 CHECK(repo.snapshot() == before);
                 auto edited = baseline;
                 edited.text += "discarded edit\n";
                 edited.decisions["kept"] = {DecisionValue::Ignored, {}};
-                CHECK(controller.files()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
+                CHECK(controller.store()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
                                                        edited)
                       == Transition::Applied);
                 discarded = openedFile(controller).current().draft;
                 CHECK(openedFile(controller).facts().unsaved && openedFile(controller).checkpoint()->draft == baseline);
-                CHECK(controller.discardUnsaved(id, QString::number(openedFile(controller).current().id)));
+                CHECK(controller.commands()->discardUnsaved(id, QString::number(openedFile(controller).current().id)));
                 CHECK(openedFile(controller).current().draft == baseline);
                 CHECK(openedFile(controller).current().draft != discarded);
                 CHECK(openedFile(controller).current().draft.decisions.at("kept").value == DecisionValue::Accepted);
                 CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).written()
                       && !openedFile(controller).staged());
-                CHECK(controller.commandMessage()
+                CHECK(controller.feedback()->message()
                       == "Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.");
                 CHECK(repo.snapshot() == before);
-                location = controller.files()->recoveryDirectory();
+                location = controller.store()->recoveryDirectory();
                 const auto read = storage::RecoveryStore(location).read();
                 CHECK(read.succeeded && read.transactions.back().value("action") == "discard-to-checkpoint");
             }
-            ApplicationController controller(gitOnPath());
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo);
             const auto &restored = openedFile(controller);
-            CHECK(controller.files()->recoveryDirectory() == location);
+            CHECK(controller.store()->recoveryDirectory() == location);
             CHECK(restored.current().draft == baseline && restored.current().draft != discarded);
             CHECK(restored.checkpoint() && restored.checkpoint()->draft == baseline);
             CHECK(!restored.facts().unsaved && !restored.written() && !restored.staged());
@@ -1909,32 +1942,32 @@ public:
             Repository repo;
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
-            ApplicationController controller(gitOnPath());
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo);
             const auto trackedId = QString::fromStdString(openedFile(controller, "tracked.txt").id());
             const auto otherId = QString::fromStdString(openedFile(controller, "excluded.txt").id());
             const auto revision = [&] { return QString::number(openedFile(controller, "tracked.txt").current().id); };
-            CHECK(controller.selectFile(trackedId));
+            CHECK(controller.selection()->select(trackedId));
             auto saved = openedFile(controller, "tracked.txt").current().draft;
             saved.text += "saved app draft\n";
-            CHECK(controller.files()->replaceDraft(trackedId.toStdString(), revision().toULongLong(), saved)
+            CHECK(controller.store()->replaceDraft(trackedId.toStdString(), revision().toULongLong(), saved)
                   == Transition::Applied);
-            CHECK(controller.saveDraft(trackedId, revision()));
+            CHECK(controller.commands()->saveDraft(trackedId, revision()));
             auto edited = saved;
             edited.text += "discard me\n";
-            CHECK(controller.files()->replaceDraft(trackedId.toStdString(), revision().toULongLong(), edited)
+            CHECK(controller.store()->replaceDraft(trackedId.toStdString(), revision().toULongLong(), edited)
                   == Transition::Applied);
             {
                 recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
-                CHECK(!controller.discardUnsaved(trackedId, revision()));
+                CHECK(!controller.commands()->discardUnsaved(trackedId, revision()));
                 CHECK(recovery_faults::failures == 1);
             }
             // The other file has no Save, so a message built from it would say
             // the initial result was restored.
-            CHECK(controller.selectFile(otherId));
+            CHECK(controller.selection()->select(otherId));
             CHECK(openedFile(controller, "excluded.txt").facts().unsaved);
-            CHECK(controller.files()->retryPendingRecovery(trackedId));
-            CHECK(controller.commandMessage()
+            CHECK(controller.commands()->retryPendingRecovery(trackedId));
+            CHECK(controller.feedback()->message()
                   == "Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.");
             CHECK(openedFile(controller, "tracked.txt").current().draft == saved);
         });
@@ -1949,52 +1982,53 @@ public:
             QString request;
             qsizetype records = 0;
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto id = QString::fromStdString(openedFile(controller).id());
-                CHECK(controller.selectFile(id));
+                CHECK(controller.selection()->select(id));
                 auto saved = openedFile(controller).current().draft;
                 saved.text += "saved app draft\n";
                 saved.decisions["kept"] = {DecisionValue::Accepted, 4};
-                CHECK(controller.files()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
+                CHECK(controller.store()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
                                                        saved)
                       == Transition::Applied);
-                CHECK(controller.saveDraft(id, QString::number(openedFile(controller).current().id)));
+                CHECK(controller.commands()->saveDraft(id, QString::number(openedFile(controller).current().id)));
                 baseline = openedFile(controller).current().draft;
                 CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == baseline);
                 CHECK(repo.snapshot() == before);
                 auto next = baseline;
                 next.text += "retry me\n";
                 next.decisions["kept"] = {DecisionValue::Ignored, {}};
-                CHECK(controller.files()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
+                CHECK(controller.store()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
                                                        next)
                       == Transition::Applied);
                 edited = openedFile(controller).current().draft;
                 const auto revision = QString::number(openedFile(controller).current().id);
                 {
                     recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
-                    CHECK(!controller.saveDraft(id, revision));
+                    CHECK(!controller.commands()->saveDraft(id, revision));
                     CHECK(recovery_faults::failures == 1);
                 }
-                CHECK(controller.commandMessage() == "Draft save failed. The edited result is still available.");
+                CHECK(controller.feedback()->message() == "Draft save failed. The edited result is still available.");
                 CHECK(openedFile(controller).current().draft == edited);
                 CHECK(openedFile(controller).current().draft.decisions.at("kept").value == DecisionValue::Ignored);
                 CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == baseline);
                 CHECK(openedFile(controller).facts().unsaved && !openedFile(controller).written()
                       && !openedFile(controller).staged());
                 CHECK(controller.selectedFile()->status() == "Draft save failed");
-                CHECK(controller.selectedFile()->recoveryState() == "save-failed");
+                CHECK(controller.selectedFile()->recoveryState() == FileStates::RecoveryState::SaveFailed);
                 CHECK(!controller.selectedFile()->canEdit());
-                CHECK(!controller.undo(id, revision) && !controller.discardUnsaved(id, revision));
+                CHECK(!controller.commands()->undo(id, revision)
+                      && !controller.commands()->discardUnsaved(id, revision));
                 CHECK(openedFile(controller).current().draft == edited);
                 CHECK(repo.snapshot() == before);
-                const auto pending = storage::RecoveryStore(controller.files()->recoveryDirectory()).read();
+                const auto pending = storage::RecoveryStore(controller.store()->recoveryDirectory()).read();
                 CHECK(pending.succeeded && pending.transactions.back().value("action") == "manual-save");
                 records = pending.transactions.size();
                 request = pending.transactions.back().value("transactionId").toString();
                 CHECK(pending.transactions.back().value("written").isNull()
                       && pending.transactions.back().value("staged").isNull());
-                CHECK(controller.files()->retryPendingRecovery(id));
+                CHECK(controller.commands()->retryPendingRecovery(id));
                 CHECK(!controller.files()->hasPendingRecovery());
                 CHECK(openedFile(controller).current().draft == edited);
                 CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == edited);
@@ -2002,19 +2036,19 @@ public:
                       && !openedFile(controller).staged());
                 CHECK(controller.selectedFile()->status() == "Draft saved in Branch Truce; repository file unchanged");
                 CHECK(controller.selectedFile()->canEdit());
-                const auto committed = storage::RecoveryStore(controller.files()->recoveryDirectory()).read();
+                const auto committed = storage::RecoveryStore(controller.store()->recoveryDirectory()).read();
                 CHECK(committed.succeeded && committed.transactions.size() == records);
                 CHECK(committed.transactions.back().value("transactionId").toString() == request);
                 CHECK(committed.transactions.back().value("action") == "manual-save");
                 CHECK(committed.transactions.back().value("written").isNull()
                       && committed.transactions.back().value("staged").isNull());
                 CHECK(repo.snapshot() == before);
-                location = controller.files()->recoveryDirectory();
+                location = controller.store()->recoveryDirectory();
             }
-            ApplicationController controller(gitOnPath());
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo);
             const auto &restored = openedFile(controller);
-            CHECK(controller.files()->recoveryDirectory() == location);
+            CHECK(controller.store()->recoveryDirectory() == location);
             CHECK(restored.current().draft == edited && restored.current().draft != baseline);
             CHECK(restored.current().draft.decisions.at("kept").value == DecisionValue::Ignored);
             CHECK(restored.checkpoint() && restored.checkpoint()->draft == edited);
@@ -2037,7 +2071,7 @@ public:
                                         QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
             const auto path = qgetenv("PATH");
             CHECK(gitOnPath() != script);
-            ApplicationController controller(script);
+            Application controller{Application::Config{script, newRecoveryDirectory(), {}}};
             openController(controller, repo);
             CHECK(qgetenv("PATH") == path && gitOnPath() != script);
             // Opening the repository inspected it through the wrapper.
@@ -2054,16 +2088,16 @@ public:
             const auto trace = repo.executables.path() + "/git-argv";
             Draft kept;
             {
-                ApplicationController controller(gitOnPath());
+                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 const auto &tracked = openedFile(controller);
                 auto edited = tracked.current().draft;
                 edited.text += "kept app draft\n";
-                CHECK(controller.files()->replaceDraft(tracked.id(), tracked.current().id, edited)
+                CHECK(controller.store()->replaceDraft(tracked.id(), tracked.current().id, edited)
                       == Transition::Applied);
                 kept = openedFile(controller).current().draft;
                 const auto excluded = QString::fromLatin1(QByteArray("excluded.txt").toHex());
-                const auto summary = controller.handoff();
+                const auto summary = controller.completion()->handoffData();
                 CHECK(!summary.value("clean").toBool() && summary.value("canLeave").toBool());
                 CHECK(summary.value("leaveBlocker").toString().isEmpty());
                 CHECK(summary.value("totalFiles").toInt() == 2 && summary.value("outstandingFiles").toInt() == 2);
@@ -2076,23 +2110,23 @@ public:
                         if (fields.value("fileId").toString() == excluded)
                             CHECK(fields.value("category").toString() == "outside-app");
                         // A route opens its own file, including the outside-app one.
-                        CHECK(controller.selectFile(fields.value("fileId").toString()));
-                        CHECK(controller.selectedFileId() == fields.value("fileId").toString());
+                        CHECK(controller.selection()->select(fields.value("fileId").toString()));
+                        CHECK(controller.selection()->fileId() == fields.value("fileId").toString());
                         routes << fields.value("fileId").toString();
                     }
                 CHECK(routes.size() == 2 && routes.contains(excluded));
-                CHECK(!controller.finishSession());
+                CHECK(!controller.completion()->finish());
                 int ended = 0;
                 QString outcome;
                 bool clean = true;
-                QObject::connect(&controller, &ApplicationController::sessionEnded, &controller,
+                QObject::connect(controller.completion(), &SessionCompletion::sessionEnded, &controller,
                                  [&](const QString &text, bool value) {
                                      ++ended;
                                      outcome = text;
                                      clean = value;
                                  });
                 const auto calls = readFile(trace);
-                CHECK(controller.leaveSession());
+                CHECK(controller.completion()->leave());
                 // Give any Git child the leave could have started time to record its argv.
                 QElapsedTimer settle;
                 settle.start();
@@ -2102,13 +2136,13 @@ public:
                 CHECK(outcome
                       == "Left with 2 of 2 files outstanding. Drafts stay in Branch Truce; "
                          "the Git operation was not continued or committed.");
-                CHECK(controller.sessionOutcome() == outcome);
-                CHECK(!controller.handoff().value("canLeave").toBool());
-                CHECK(!controller.leaveSession() && !controller.finishSession() && ended == 1);
+                CHECK(controller.completion()->outcome() == outcome);
+                CHECK(!controller.completion()->handoffData().value("canLeave").toBool());
+                CHECK(!controller.completion()->leave() && !controller.completion()->finish() && ended == 1);
                 CHECK(openedFile(controller).current().draft == kept);
                 CHECK(repo.snapshot() == before);
             }
-            ApplicationController controller(gitOnPath());
+            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo);
             CHECK(openedFile(controller).current().draft == kept);
             CHECK(repo.snapshot() == before);

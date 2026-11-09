@@ -1,5 +1,6 @@
 #include "TestHarness.h"
-#include "app/ApplicationController.h"
+#include "app/AppPaths.h"
+#include "app/Application.h"
 #include "app/EngineText.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryFaults.h"
@@ -179,7 +180,7 @@ private:
     QMap<QByteArray, std::optional<QByteArray>> previous;
 };
 
-void openController(ApplicationController &controller, const Repository &repo)
+void openController(Application &controller, const Repository &repo)
 {
     const auto before = repo.snapshot();
     QEventLoop loop;
@@ -198,30 +199,30 @@ void openController(ApplicationController &controller, const Repository &repo)
     CHECK(repo.snapshot() == before);
 }
 
-const FileSession &openedFile(ApplicationController &controller, const char *path = "tracked.txt")
+const FileSession &openedFile(Application &controller, const char *path = "tracked.txt")
 {
-    const auto *selected = controller.files()->file(QByteArray(path).toHex().toStdString());
+    const auto *selected = controller.store()->file(QByteArray(path).toHex().toStdString());
     CHECK(selected != nullptr);
     return *selected;
 }
 
-QString selectTracked(ApplicationController &controller)
+QString selectTracked(Application &controller)
 {
     const auto id = QString::fromLatin1(QByteArray("tracked.txt").toHex());
-    CHECK(controller.selectFile(id));
+    CHECK(controller.selection()->select(id));
     return id;
 }
 
 QString revisionOf(const FileSession &file) { return QString::number(static_cast<qulonglong>(file.current().id)); }
 
-void waitFor(ApplicationController &controller, const std::function<bool()> &ready)
+void waitFor(Application &controller, const std::function<bool()> &ready)
 {
     QElapsedTimer timer;
     timer.start();
     while (!ready() && timer.elapsed() < 25000) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     if (!ready())
-        throw std::runtime_error((controller.commandMessage() + " | " + controller.selectedFile()->status()
-                                  + " | busy=" + QString::number(controller.resolutionBusy()))
+        throw std::runtime_error((controller.feedback()->message() + " | " + controller.selectedFile()->status()
+                                  + " | busy=" + QString::number(controller.commands()->resolutionBusy()))
                                      .toStdString());
 }
 
@@ -252,7 +253,7 @@ void expectUnchanged(const Repository &repo, const QMap<QString, QByteArray> &be
 struct Session {
     Repository repo;
     ScopedEnvironment environment;
-    ApplicationController controller{gitOnPath()};
+    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
     QString id;
     explicit Session(bool unsupportedResult = false) : environment(repo.environment)
     {
@@ -328,25 +329,25 @@ private:
     int release[2] = {-1, -1};
 };
 
-void publishWhileDraftChanges(ApplicationController &controller, const QString &id, const std::string &nextText)
+void publishWhileDraftChanges(Application &controller, const QString &id, const std::string &nextText)
 {
     PublishStall stall;
     const auto launched = revisionOf(openedFile(controller));
-    CHECK(controller.markResolved(id, launched, true));
+    CHECK(controller.commands()->markResolved(id, launched, true));
     CHECK(stall.waitForExchange());
     auto draft = openedFile(controller).current().draft;
     draft.text = nextText;
-    CHECK(controller.files()->replaceDraft(id.toStdString(), openedFile(controller).current().id, draft)
+    CHECK(controller.store()->replaceDraft(id.toStdString(), openedFile(controller).current().id, draft)
           == Transition::Applied);
     CHECK(revisionOf(openedFile(controller)) != launched);
     stall.releaseWorker();
-    waitFor(controller, [&] { return !controller.resolutionBusy(); });
+    waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
 }
 
 struct RestartedWrite {
     Repository repo;
     ScopedEnvironment environment;
-    std::unique_ptr<ApplicationController> controller;
+    std::unique_ptr<Application> controller;
     QString id;
     QByteArray edited;
     RestartedWrite()
@@ -356,21 +357,21 @@ struct RestartedWrite {
     {
         const auto hook = repo.path(".git/hooks/post-index-change");
         {
-            ApplicationController first(gitOnPath());
+            Application first{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(first, repo);
-            CHECK(first.selectFile(id));
+            CHECK(first.selection()->select(id));
             auto draft = openedFile(first).current().draft;
             draft.text = edited.toStdString();
             draft.unresolvedMarkers = 0;
-            CHECK(first.files()->replaceDraft(id.toStdString(), openedFile(first).current().id, draft)
+            CHECK(first.store()->replaceDraft(id.toStdString(), openedFile(first).current().id, draft)
                   == Transition::Applied);
             writeFile(hook, "#!/bin/sh\nexit 1\n");
             CHECK(
                 QFile::setPermissions(hook, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-            CHECK(first.markResolved(id, revisionOf(openedFile(first)), true));
+            CHECK(first.commands()->markResolved(id, revisionOf(openedFile(first)), true));
             waitFor(first, [&] {
                 const auto &file = openedFile(first);
-                return !first.resolutionBusy() && file.writeOutcome()
+                return !first.commands()->resolutionBusy() && file.writeOutcome()
                     && file.writeOutcome()->outcome == Outcome::Succeeded && file.stageOutcome();
             });
             CHECK(openedFile(first).stageOutcome()->outcome != Outcome::Succeeded);
@@ -378,9 +379,9 @@ struct RestartedWrite {
             CHECK(readFile(repo.path("tracked.txt")) == edited);
         }
         CHECK(QFile::remove(hook));
-        controller = std::make_unique<ApplicationController>(gitOnPath());
+        controller = std::make_unique<Application>(Application::Config{gitOnPath(), newRecoveryDirectory(), {}});
         openController(*controller, repo);
-        CHECK(controller->selectFile(id));
+        CHECK(controller->selection()->select(id));
         const auto &restored = openedFile(*controller);
         CHECK(restored.written() && restored.writeOutcome() && restored.writeOutcome()->outcome == Outcome::Succeeded);
         CHECK(!restored.facts().resolved);
@@ -395,9 +396,9 @@ struct SessionEnd {
     bool clean = false;
 };
 
-void watchSessionEnd(ApplicationController &controller, SessionEnd &end)
+void watchSessionEnd(Application &controller, SessionEnd &end)
 {
-    QObject::connect(&controller, &ApplicationController::sessionEnded, &controller,
+    QObject::connect(controller.completion(), &SessionCompletion::sessionEnded, &controller,
                      [&end](const QString &outcome, bool clean) {
                          ++end.count;
                          end.outcome = outcome;
@@ -440,22 +441,22 @@ int main(int argc, char **argv)
         Session session;
         const auto before = session.repo.snapshot();
         const auto text = openedFile(session.controller).current().draft.text;
-        CHECK(!session.controller.markResolved(session.id, session.revision(), false));
-        CHECK(session.controller.resolutionConfirmation());
-        CHECK(session.controller.commandMessage().contains(QStringLiteral("intentional")));
+        CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), false));
+        CHECK(session.controller.commands()->resolutionConfirmation());
+        CHECK(session.controller.feedback()->message().contains(QStringLiteral("intentional")));
         CHECK(!openedFile(session.controller).reviewed());
         expectUnchanged(session.repo, before);
-        session.controller.cancelResolution();
-        CHECK(!session.controller.resolutionConfirmation());
+        session.controller.commands()->cancelResolution();
+        CHECK(!session.controller.commands()->resolutionConfirmation());
         CHECK(openedFile(session.controller).current().draft.text == text);
         const auto stale = session.revision();
         auto edited = openedFile(session.controller).current().draft;
         edited.text += "later edit\n";
-        CHECK(session.controller.files()->replaceDraft(session.id.toStdString(),
+        CHECK(session.controller.store()->replaceDraft(session.id.toStdString(),
                                                        openedFile(session.controller).current().id, edited)
               == Transition::Applied);
-        CHECK(!session.controller.markResolved(session.id, stale, true));
-        CHECK(session.controller.commandMessage().contains(QStringLiteral("changed")));
+        CHECK(!session.controller.commands()->markResolved(session.id, stale, true));
+        CHECK(session.controller.feedback()->message().contains(QStringLiteral("changed")));
         CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
         expectUnchanged(session.repo, before);
         CHECK(!openedFile(session.controller).facts().resolved);
@@ -464,7 +465,7 @@ int main(int argc, char **argv)
         Session session;
         const auto before = session.repo.snapshot();
         recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
-        CHECK(!session.controller.markResolved(session.id, session.revision(), true));
+        CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), true));
         CHECK(recovery_faults::failures == 1);
         CHECK(session.controller.files()->hasPendingRecovery());
         CHECK(!openedFile(session.controller).reviewed());
@@ -475,9 +476,9 @@ int main(int argc, char **argv)
         Session session;
         CHECK(QFile::setPermissions(session.repo.path("tracked.txt"), QFileDevice::ReadOwner));
         const auto before = session.repo.snapshot();
-        CHECK(session.controller.markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
         waitFor(session.controller, [&] {
-            return !session.controller.resolutionBusy() && openedFile(session.controller).writeOutcome()
+            return !session.controller.commands()->resolutionBusy() && openedFile(session.controller).writeOutcome()
                 && openedFile(session.controller).writeOutcome()->outcome != Outcome::Succeeded;
         });
         const auto outcome = openedFile(session.controller).writeOutcome()->outcome;
@@ -495,10 +496,10 @@ int main(int argc, char **argv)
         writeFile(hook, "#!/bin/sh\nexit 1\n");
         CHECK(QFile::setPermissions(hook, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
         const auto before = session.repo.snapshot();
-        CHECK(session.controller.markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
         waitFor(session.controller, [&] {
             const auto &file = openedFile(session.controller);
-            return !session.controller.resolutionBusy() && file.writeOutcome()
+            return !session.controller.commands()->resolutionBusy() && file.writeOutcome()
                 && file.writeOutcome()->outcome == Outcome::Succeeded && file.stageOutcome();
         });
         CHECK(openedFile(session.controller).stageOutcome()->outcome == Outcome::Failed
@@ -509,14 +510,14 @@ int main(int argc, char **argv)
         CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
         expectUnchanged(session.repo, before, true);
         CHECK(unmerged(session.repo).contains("tracked.txt"));
-        CHECK(session.controller.commandMessage().contains(QStringLiteral("unresolved"))
+        CHECK(session.controller.feedback()->message().contains(QStringLiteral("unresolved"))
               || session.controller.selectedFile()->status().contains(QStringLiteral("unresolved"))
               || session.controller.selectedFile()->status().contains(QStringLiteral("uncertain")));
     });
     suite.run("Mark resolved publishes one unsaved path and leaves the other conflict", [] {
         Session session;
         CHECK(!openedFile(session.controller).checkpoint());
-        CHECK(session.controller.markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
         waitFor(session.controller, [&] { return openedFile(session.controller).facts().resolved; });
         CHECK(openedFile(session.controller).checkpoint());
         CHECK(openedFile(session.controller).facts().status == FileStatus::Resolved);
@@ -527,16 +528,16 @@ int main(int argc, char **argv)
         CHECK(!remaining.contains("tracked.txt") && remaining.contains("excluded.txt")
               && !remaining.contains("notes.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
-        CHECK(!session.controller.files()->canFinish());
-        CHECK(!session.controller.parentStagingOffer(session.id));
+        CHECK(!session.controller.completion()->handoff().clean);
+        CHECK(!session.controller.mergetool()->parentStagingOffer(session.id));
     });
     suite.run("parent-owned staging waits for Git and resolves only after that index entry matches", [] {
         Session session;
-        CHECK(session.controller.assignParentStaging("tracked.txt"));
-        CHECK(session.controller.markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.mergetool()->assignParentStaging("tracked.txt"));
+        CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
         waitFor(session.controller, [&] {
-            return !session.controller.resolutionBusy()
-                && session.controller.parentStagingOffer(session.id).has_value();
+            return !session.controller.commands()->resolutionBusy()
+                && session.controller.mergetool()->parentStagingOffer(session.id).has_value();
         });
         CHECK(openedFile(session.controller).writeOutcome()
               && openedFile(session.controller).writeOutcome()->outcome == Outcome::Succeeded);
@@ -544,33 +545,34 @@ int main(int argc, char **argv)
         CHECK(!openedFile(session.controller).facts().resolved);
         CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
-        const auto offered = session.controller.parentStagingOffer(session.id);
+        const auto offered = session.controller.mergetool()->parentStagingOffer(session.id);
         CHECK(offered && offered->path == "tracked.txt" && !offered->canonicalObjectId.isEmpty());
-        CHECK(session.controller.parentStagingPath().endsWith(QStringLiteral("tracked.txt")));
-        CHECK(session.controller.verifyParentAcknowledgment(session.id, session.revision()));
-        waitFor(session.controller, [&] { return !session.controller.resolutionBusy(); });
+        CHECK(session.controller.mergetool()->parentStagingPath().endsWith(QStringLiteral("tracked.txt")));
+        CHECK(session.controller.mergetool()->verifyParentAcknowledgment(session.id, session.revision()));
+        waitFor(session.controller, [&] { return !session.controller.commands()->resolutionBusy(); });
         CHECK(!openedFile(session.controller).facts().resolved);
-        CHECK(session.controller.parentStagingOffer(session.id));
+        CHECK(session.controller.mergetool()->parentStagingOffer(session.id));
         CHECK(unmerged(session.repo).contains("tracked.txt"));
         session.repo.git({"add", "--", "tracked.txt"});
         CHECK(!unmerged(session.repo).contains("tracked.txt"));
-        CHECK(session.controller.verifyParentAcknowledgment(session.id, session.revision()));
+        CHECK(session.controller.mergetool()->verifyParentAcknowledgment(session.id, session.revision()));
         waitFor(session.controller, [&] { return openedFile(session.controller).facts().resolved; });
-        CHECK(!session.controller.parentStagingOffer(session.id));
+        CHECK(!session.controller.mergetool()->parentStagingOffer(session.id));
         CHECK(unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
         CHECK(session.repo.git({"show", ":tracked.txt"}) == session.repo.manual);
-        CHECK(!session.controller.files()->canFinish());
+        CHECK(!session.controller.completion()->handoff().clean);
     });
     suite.run("a restarted retry keeps the successful write and resolves it", [] {
         RestartedWrite restarted;
-        CHECK(restarted.controller->markResolved(restarted.id, revisionOf(openedFile(*restarted.controller)), true));
+        CHECK(restarted.controller->commands()->markResolved(restarted.id,
+                                                             revisionOf(openedFile(*restarted.controller)), true));
         waitFor(*restarted.controller, [&] { return openedFile(*restarted.controller).facts().resolved; });
         const auto &file = openedFile(*restarted.controller);
         CHECK(file.writeOutcome() && file.writeOutcome()->outcome == Outcome::Succeeded
               && file.writeOutcome()->revision == file.current().id);
         CHECK(file.facts().status == FileStatus::Resolved);
-        CHECK(!restarted.controller->commandMessage().contains(QStringLiteral("no longer matches")));
+        CHECK(!restarted.controller->feedback()->message().contains(QStringLiteral("no longer matches")));
         CHECK(restarted.repo.git({"show", ":tracked.txt"}) == restarted.edited);
         CHECK(readFile(restarted.repo.path("tracked.txt")) == restarted.edited);
         const auto remaining = unmerged(restarted.repo);
@@ -581,12 +583,13 @@ int main(int argc, char **argv)
         RestartedWrite restarted;
         const auto tampered = QByteArray("tampered\n");
         writeFile(restarted.repo.path("tracked.txt"), tampered);
-        CHECK(!restarted.controller->markResolved(restarted.id, revisionOf(openedFile(*restarted.controller)), true));
-        CHECK(!restarted.controller->resolutionBusy());
+        CHECK(!restarted.controller->commands()->markResolved(restarted.id,
+                                                              revisionOf(openedFile(*restarted.controller)), true));
+        CHECK(!restarted.controller->commands()->resolutionBusy());
         const auto &file = openedFile(*restarted.controller);
         CHECK(file.writeOutcome() && file.writeOutcome()->outcome == Outcome::Failed);
         CHECK(!file.facts().resolved);
-        CHECK(restarted.controller->commandMessage().contains(QStringLiteral("written revision")));
+        CHECK(restarted.controller->feedback()->message().contains(QStringLiteral("written revision")));
         CHECK(readFile(restarted.repo.path("tracked.txt")) == tampered);
         const auto index = restarted.repo.git({"ls-files", "-s", "--", "tracked.txt"});
         CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
@@ -603,17 +606,17 @@ int main(int argc, char **argv)
         CHECK(written.current().draft.text == next);
         CHECK(!written.facts().resolved);
         CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
-        CHECK(session.controller.commandMessage().contains(QStringLiteral("draft changed")));
+        CHECK(session.controller.feedback()->message().contains(QStringLiteral("draft changed")));
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
-        CHECK(session.controller.markResolved(session.id, revisionOf(written), true));
+        CHECK(session.controller.commands()->markResolved(session.id, revisionOf(written), true));
         waitFor(session.controller, [&] { return openedFile(session.controller).facts().resolved; });
         const auto &resolved = openedFile(session.controller);
         CHECK(resolved.facts().status == FileStatus::Resolved);
         CHECK(readFile(session.repo.path("tracked.txt")) == QByteArray::fromStdString(next));
         CHECK(session.repo.git({"show", ":tracked.txt"}) == QByteArray::fromStdString(next));
-        CHECK(!session.controller.commandMessage().contains(QStringLiteral("identity changed")));
-        CHECK(session.controller.markResolved(session.id, revisionOf(resolved), true));
-        CHECK(session.controller.commandMessage().contains(QStringLiteral("Written and resolved")));
+        CHECK(!session.controller.feedback()->message().contains(QStringLiteral("identity changed")));
+        CHECK(session.controller.commands()->markResolved(session.id, revisionOf(resolved), true));
+        CHECK(session.controller.feedback()->message().contains(QStringLiteral("Written and resolved")));
         CHECK(!unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
     });
@@ -623,16 +626,17 @@ int main(int argc, char **argv)
         publishWhileDraftChanges(session.controller, session.id, next);
         const auto tampered = QByteArray("tampered after publish\n");
         writeFile(session.repo.path("tracked.txt"), tampered);
-        CHECK(session.controller.markResolved(session.id, revisionOf(openedFile(session.controller)), true));
+        CHECK(
+            session.controller.commands()->markResolved(session.id, revisionOf(openedFile(session.controller)), true));
         waitFor(session.controller, [&] {
             const auto &file = openedFile(session.controller);
-            return !session.controller.resolutionBusy() && file.writeOutcome()
+            return !session.controller.commands()->resolutionBusy() && file.writeOutcome()
                 && file.writeOutcome()->outcome == Outcome::Failed
                 && file.writeOutcome()->revision == file.current().id;
         });
         CHECK(!openedFile(session.controller).facts().resolved);
         CHECK(readFile(session.repo.path("tracked.txt")) == tampered);
-        CHECK(session.controller.commandMessage().contains(QStringLiteral("changed")));
+        CHECK(session.controller.feedback()->message().contains(QStringLiteral("changed")));
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
     });
@@ -644,18 +648,19 @@ int main(int argc, char **argv)
         auto draft = openedFile(session.controller).current().draft;
         draft.text = reviewed.toStdString();
         draft.unresolvedMarkers = 0;
-        CHECK(session.controller.files()->replaceDraft(session.id.toStdString(),
+        CHECK(session.controller.store()->replaceDraft(session.id.toStdString(),
                                                        openedFile(session.controller).current().id, draft)
               == Transition::Applied);
         const auto revision = session.revision();
         // git mergetool moves MERGED to BACKUP and copies it back before the tool runs.
         CHECK(QFile::rename(merged, backup) && QFile::copy(backup, merged));
         const auto offered = [&] {
-            CHECK(session.controller.assignParentStaging({}) && session.controller.assignParentStaging("tracked.txt"));
-            CHECK(session.controller.markResolved(session.id, revision, true));
+            CHECK(session.controller.mergetool()->assignParentStaging({})
+                  && session.controller.mergetool()->assignParentStaging("tracked.txt"));
+            CHECK(session.controller.commands()->markResolved(session.id, revision, true));
             waitFor(session.controller, [&] {
-                return !session.controller.resolutionBusy()
-                    && session.controller.parentStagingOffer(session.id).has_value();
+                return !session.controller.commands()->resolutionBusy()
+                    && session.controller.mergetool()->parentStagingOffer(session.id).has_value();
             });
         };
         const auto inode = [&] {
@@ -678,14 +683,15 @@ int main(int argc, char **argv)
         CHECK(inode() == written && readFile(merged) == reviewed);
         const QByteArray tampered("changed while Git was waiting\n");
         writeFile(merged, tampered);
-        CHECK(session.controller.assignParentStaging({}) && session.controller.assignParentStaging("tracked.txt"));
-        CHECK(session.controller.markResolved(session.id, revision, true));
+        CHECK(session.controller.mergetool()->assignParentStaging({})
+              && session.controller.mergetool()->assignParentStaging("tracked.txt"));
+        CHECK(session.controller.commands()->markResolved(session.id, revision, true));
         waitFor(session.controller, [&] {
             const auto &file = openedFile(session.controller);
-            return !session.controller.resolutionBusy() && file.writeOutcome()
+            return !session.controller.commands()->resolutionBusy() && file.writeOutcome()
                 && file.writeOutcome()->outcome == Outcome::Failed;
         });
-        CHECK(!session.controller.parentStagingOffer(session.id));
+        CHECK(!session.controller.mergetool()->parentStagingOffer(session.id));
         CHECK(!openedFile(session.controller).facts().resolved);
         CHECK(readFile(merged) == tampered);
         const auto index = session.repo.git({"ls-files", "-s", "--", "tracked.txt"});
@@ -699,7 +705,7 @@ int main(int argc, char **argv)
         auto draft = openedFile(session.controller).current().draft;
         draft.text = reviewed.toStdString();
         draft.unresolvedMarkers = 0;
-        CHECK(session.controller.files()->replaceDraft(session.id.toStdString(),
+        CHECK(session.controller.store()->replaceDraft(session.id.toStdString(),
                                                        openedFile(session.controller).current().id, draft)
               == Transition::Applied);
         const auto revision = session.revision();
@@ -707,10 +713,10 @@ int main(int argc, char **argv)
         const auto hook = session.repo.path(".git/hooks/post-index-change");
         writeFile(hook, "#!/bin/sh\nexit 1\n");
         CHECK(QFile::setPermissions(hook, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-        CHECK(session.controller.markResolved(session.id, revision, true));
+        CHECK(session.controller.commands()->markResolved(session.id, revision, true));
         waitFor(session.controller, [&] {
             const auto &file = openedFile(session.controller);
-            return !session.controller.resolutionBusy() && file.writeOutcome()
+            return !session.controller.commands()->resolutionBusy() && file.writeOutcome()
                 && file.writeOutcome()->outcome == Outcome::Succeeded && file.stageOutcome();
         });
         CHECK(openedFile(session.controller).stageOutcome()->outcome == Outcome::Failed);
@@ -719,15 +725,16 @@ int main(int argc, char **argv)
         CHECK(QFile::remove(hook));
         const QByteArray external("edited outside the app after the write\n");
         writeFile(merged, external);
-        CHECK(session.controller.markResolved(session.id, revision, true));
+        CHECK(session.controller.commands()->markResolved(session.id, revision, true));
         waitFor(session.controller, [&] {
             const auto &file = openedFile(session.controller);
-            return !session.controller.resolutionBusy() && file.writeOutcome()
+            return !session.controller.commands()->resolutionBusy() && file.writeOutcome()
                 && file.writeOutcome()->outcome == Outcome::Failed;
         });
         const auto &file = openedFile(session.controller);
         CHECK(file.writeOutcome()->revision == file.current().id && !file.facts().resolved);
-        CHECK(session.controller.commandMessage().contains(QStringLiteral("no longer matches the written revision")));
+        CHECK(session.controller.feedback()->message().contains(
+            QStringLiteral("no longer matches the written revision")));
         CHECK(file.stageOutcome() && file.stageOutcome()->outcome == Outcome::Failed);
         CHECK(readFile(merged) == external);
         const auto index = session.repo.git({"ls-files", "-s", "--", "tracked.txt"});
@@ -753,76 +760,76 @@ int main(int argc, char **argv)
         {
             recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
             CHECK(
-                controller.files()->replaceDraft(session.id.toStdString(), openedFile(controller).current().id, edited)
+                controller.store()->replaceDraft(session.id.toStdString(), openedFile(controller).current().id, edited)
                 == Transition::Blocked);
             CHECK(recovery_faults::failures == 1);
         }
         CHECK(controller.files()->hasPendingRecovery());
-        auto summary = controller.handoff();
+        auto summary = controller.completion()->handoffData();
         CHECK(!summary.value("canLeave").toBool() && summary.value("leaveBlocker").toString() == pendingBlocker);
         CHECK(!summary.value("clean").toBool() && summary.value("sessionBlockers").toStringList().isEmpty());
         CHECK(handoffEntry(summary, session.id).value("action").toString() == "retry-recovery");
-        CHECK(!controller.leaveSession());
-        CHECK(controller.commandMessage() == pendingBlocker);
-        CHECK(end.count == 0 && controller.sessionOutcome().isEmpty());
-        CHECK(!controller.finishSession());
-        CHECK(controller.commandMessage() == unclean && end.count == 0);
+        CHECK(!controller.completion()->leave());
+        CHECK(controller.feedback()->message() == pendingBlocker);
+        CHECK(end.count == 0 && controller.completion()->outcome().isEmpty());
+        CHECK(!controller.completion()->finish());
+        CHECK(controller.feedback()->message() == unclean && end.count == 0);
         CHECK(controller.files()->hasPendingRecovery());
         expectUnchanged(session.repo, before);
 
-        CHECK(controller.files()->retryPendingRecovery(session.id));
+        CHECK(controller.commands()->retryPendingRecovery(session.id));
         CHECK(openedFile(controller).current().draft == edited);
-        summary = controller.handoff();
+        summary = controller.completion()->handoffData();
         CHECK(summary.value("canLeave").toBool() && summary.value("leaveBlocker").toString().isEmpty());
         CHECK(handoffEntry(summary, session.id).value("category").toString() != "failed");
 
         {
             PublishStall stall;
-            CHECK(controller.markResolved(session.id, session.revision(), true));
+            CHECK(controller.commands()->markResolved(session.id, session.revision(), true));
             CHECK(stall.waitForExchange());
-            CHECK(controller.resolutionBusy());
-            summary = controller.handoff();
+            CHECK(controller.commands()->resolutionBusy());
+            summary = controller.completion()->handoffData();
             CHECK(!summary.value("canLeave").toBool() && summary.value("leaveBlocker").toString() == runningBlocker);
             CHECK(summary.value("sessionBlockers").toStringList()
                   == QStringList{"A resolution is still running; its outcome is not known yet."});
             CHECK(!summary.value("clean").toBool());
-            CHECK(!controller.leaveSession());
-            CHECK(controller.commandMessage() == runningBlocker);
-            CHECK(!controller.finishSession());
-            CHECK(controller.commandMessage() == unclean);
-            CHECK(end.count == 0 && controller.sessionOutcome().isEmpty());
+            CHECK(!controller.completion()->leave());
+            CHECK(controller.feedback()->message() == runningBlocker);
+            CHECK(!controller.completion()->finish());
+            CHECK(controller.feedback()->message() == unclean);
+            CHECK(end.count == 0 && controller.completion()->outcome().isEmpty());
             stall.releaseWorker();
-            waitFor(controller, [&] { return !controller.resolutionBusy(); });
+            waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
         }
         CHECK(openedFile(controller).facts().resolved);
 
         // One file stays outstanding, so finishing is still refused.
-        CHECK(!controller.handoff().value("clean").toBool());
-        CHECK(!controller.finishSession() && controller.commandMessage() == unclean && end.count == 0);
+        CHECK(!controller.completion()->handoffData().value("clean").toBool());
+        CHECK(!controller.completion()->finish() && controller.feedback()->message() == unclean && end.count == 0);
         const auto excluded = QString::fromLatin1(QByteArray("excluded.txt").toHex());
-        CHECK(controller.selectFile(excluded));
+        CHECK(controller.selection()->select(excluded));
         auto resolved = openedFile(controller, "excluded.txt").current().draft;
         resolved.text = "excluded resolved\n";
         resolved.unresolvedMarkers = 0;
-        CHECK(controller.files()->replaceDraft(excluded.toStdString(),
+        CHECK(controller.store()->replaceDraft(excluded.toStdString(),
                                                openedFile(controller, "excluded.txt").current().id, resolved)
               == Transition::Applied);
-        CHECK(controller.markResolved(excluded, revisionOf(openedFile(controller, "excluded.txt")), true));
+        CHECK(controller.commands()->markResolved(excluded, revisionOf(openedFile(controller, "excluded.txt")), true));
         waitFor(controller, [&] {
-            return !controller.resolutionBusy() && openedFile(controller, "excluded.txt").facts().resolved;
+            return !controller.commands()->resolutionBusy() && openedFile(controller, "excluded.txt").facts().resolved;
         });
         CHECK(unmerged(session.repo).isEmpty());
 
-        summary = controller.handoff();
+        summary = controller.completion()->handoffData();
         CHECK(summary.value("clean").toBool() && summary.value("canLeave").toBool());
         CHECK(summary.value("outstandingFiles").toInt() == 0 && summary.value("totalFiles").toInt() == 2);
-        CHECK(controller.finishSession());
+        CHECK(controller.completion()->finish());
         CHECK(end.count == 1 && end.clean);
-        CHECK(end.outcome == summary.value("outcome").toString() && controller.sessionOutcome() == end.outcome);
+        CHECK(end.outcome == summary.value("outcome").toString() && controller.completion()->outcome() == end.outcome);
         CHECK(end.outcome.startsWith("All 2 files in this session are written and resolved in Git."));
-        CHECK(!controller.handoff().value("canLeave").toBool());
-        CHECK(!controller.finishSession() && !controller.leaveSession());
-        CHECK(end.count == 1 && controller.sessionOutcome() == end.outcome);
+        CHECK(!controller.completion()->handoffData().value("canLeave").toBool());
+        CHECK(!controller.completion()->finish() && !controller.completion()->leave());
+        CHECK(end.count == 1 && controller.completion()->outcome() == end.outcome);
     });
     suite.run("a marker refusal names the markers and the first line and moves the cursor there", [] {
         Session session;
@@ -830,7 +837,7 @@ int main(int argc, char **argv)
         const auto replace = [&](std::string text) {
             auto draft = openedFile(session.controller).current().draft;
             draft.text = std::move(text);
-            CHECK(session.controller.files()->replaceDraft(session.id.toStdString(),
+            CHECK(session.controller.store()->replaceDraft(session.id.toStdString(),
                                                            openedFile(session.controller).current().id, draft)
                   == Transition::Applied);
         };
@@ -838,58 +845,60 @@ int main(int argc, char **argv)
         replace("caf\xc3\xa9 \xf0\x9f\x98\x80\nkept\n<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\n=======\n");
         QObject editor;
         editor.setProperty("cursorPosition", 0);
-        session.controller.attachResultEditor(&editor);
-        CHECK(session.controller.markerBlocker().isEmpty() && !session.controller.showFirstMarker());
-        CHECK(!session.controller.markResolved(session.id, session.revision(), true));
-        CHECK(session.controller.commandMessage()
+        session.controller.editor()->attach(&editor);
+        CHECK(session.controller.feedback()->markerBlocker().isEmpty()
+              && !session.controller.commands()->showFirstMarker());
+        CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.feedback()->message()
               == QStringLiteral(
                   "Mark resolved is blocked: 1 conflict-marker block and 1 stray conflict-marker line remain; "
                   "first at line 3. The repository file is unchanged."));
-        auto blocker = session.controller.markerBlocker();
+        auto blocker = session.controller.feedback()->markerBlocker();
         CHECK(blocker.value("fileId").toString() == session.id
               && blocker.value("revision").toString() == session.revision());
         CHECK(blocker.value("count").toULongLong() == 2 && blocker.value("line").toULongLong() == 3);
-        CHECK(session.controller.showFirstMarker());
+        CHECK(session.controller.commands()->showFirstMarker());
         CHECK(editor.property("cursorPosition").toInt() == 13);
         CHECK(!openedFile(session.controller).reviewed() && !openedFile(session.controller).facts().resolved);
         replace("top\n<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\nmid\n<<<<<<< ours\nc\n=======\nd\n>>>>>>> theirs\n");
         // A newer revision retires the action until Mark resolved is refused again.
-        CHECK(session.controller.markerBlocker().isEmpty() && !session.controller.showFirstMarker());
-        CHECK(!session.controller.markResolved(session.id, session.revision(), true));
-        CHECK(session.controller.commandMessage()
+        CHECK(session.controller.feedback()->markerBlocker().isEmpty()
+              && !session.controller.commands()->showFirstMarker());
+        CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.feedback()->message()
               == QStringLiteral("Mark resolved is blocked: 2 conflict-marker blocks remain; first at line 2. The "
                                 "repository file is unchanged."));
-        blocker = session.controller.markerBlocker();
+        blocker = session.controller.feedback()->markerBlocker();
         CHECK(blocker.value("count").toULongLong() == 2 && blocker.value("line").toULongLong() == 2);
         editor.setProperty("cursorPosition", 0);
-        CHECK(session.controller.showFirstMarker() && editor.property("cursorPosition").toInt() == 4);
+        CHECK(session.controller.commands()->showFirstMarker() && editor.property("cursorPosition").toInt() == 4);
         replace("only\n>>>>>>> theirs\n");
-        CHECK(!session.controller.markResolved(session.id, session.revision(), true));
-        CHECK(session.controller.commandMessage()
+        CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.feedback()->message()
               == QStringLiteral("Mark resolved is blocked: 1 stray conflict-marker line remains; first at line 2. The "
                                 "repository file is unchanged."));
         // The handoff keeps its label for the same blocker.
         CHECK(engine_text::blocker(Blocker::UnresolvedMarkers) == "Known conflict markers remain");
         const auto blockers = openedFile(session.controller).facts().blockers;
         CHECK(std::find(blockers.begin(), blockers.end(), Blocker::UnresolvedMarkers) != blockers.end());
-        session.controller.attachResultEditor(nullptr);
+        session.controller.editor()->attach(nullptr);
         CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
         CHECK(unmerged(session.repo).contains("tracked.txt"));
         expectUnchanged(session.repo, before);
     });
     suite.run("discard to staged restores the staged result behind the stale and blocked checks", [] {
         Session session;
-        CHECK(session.controller.markResolved(session.id, session.revision(), true));
+        CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
         waitFor(session.controller, [&] { return openedFile(session.controller).facts().resolved; });
         const auto stagedText = openedFile(session.controller).current().draft.text;
         const auto stagedRevision = session.revision();
         const auto before = session.repo.snapshot();
         // With no newer draft there is nothing to discard.
-        CHECK(session.controller.discardToStaged(session.id, stagedRevision));
-        CHECK(session.controller.commandMessage() == QStringLiteral("No change."));
+        CHECK(session.controller.commands()->discardToStaged(session.id, stagedRevision));
+        CHECK(session.controller.feedback()->message() == QStringLiteral("No change."));
         auto edited = openedFile(session.controller).current().draft;
         edited.text += "later edit\n";
-        CHECK(session.controller.files()->replaceDraft(session.id.toStdString(),
+        CHECK(session.controller.store()->replaceDraft(session.id.toStdString(),
                                                        openedFile(session.controller).current().id, edited)
               == Transition::Applied);
         const auto draftRevision = session.revision();
@@ -897,30 +906,30 @@ int main(int argc, char **argv)
         CHECK(session.controller.selectedFile()->progress().value("earlierResolved").toBool());
 
         // A stale revision is refused like every other command and keeps the draft.
-        CHECK(!session.controller.discardToStaged(session.id, stagedRevision));
-        CHECK(session.controller.commandMessage().contains(QStringLiteral("changed")));
+        CHECK(!session.controller.commands()->discardToStaged(session.id, stagedRevision));
+        CHECK(session.controller.feedback()->message().contains(QStringLiteral("changed")));
         CHECK(openedFile(session.controller).current().draft.text == edited.text);
 
         // A journal failure keeps the acknowledged draft, and the pending discard blocks other commands.
         {
             recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
-            CHECK(!session.controller.discardToStaged(session.id, draftRevision));
+            CHECK(!session.controller.commands()->discardToStaged(session.id, draftRevision));
             CHECK(recovery_faults::failures == 1);
         }
         CHECK(session.controller.files()->hasPendingRecovery());
-        CHECK(session.controller.commandMessage()
+        CHECK(session.controller.feedback()->message()
               == QStringLiteral("Discard was not completed. The draft is kept until retry finishes the discard."));
         CHECK(openedFile(session.controller).current().draft.text == edited.text);
         CHECK(session.revision() == draftRevision);
-        CHECK(!session.controller.discardToStaged(session.id, draftRevision));
-        CHECK(session.controller.commandMessage().contains(QStringLiteral("Command not completed")));
-        CHECK(!session.controller.saveDraft(session.id, draftRevision));
+        CHECK(!session.controller.commands()->discardToStaged(session.id, draftRevision));
+        CHECK(session.controller.feedback()->message().contains(QStringLiteral("Command not completed")));
+        CHECK(!session.controller.commands()->saveDraft(session.id, draftRevision));
         CHECK(openedFile(session.controller).current().draft.text == edited.text);
 
         // Retry commits the same discard: the staged revision is current and resolved again.
-        CHECK(session.controller.files()->retryPendingRecovery(session.id));
+        CHECK(session.controller.commands()->retryPendingRecovery(session.id));
         CHECK(!session.controller.files()->hasPendingRecovery());
-        CHECK(session.controller.commandMessage()
+        CHECK(session.controller.feedback()->message()
               == QStringLiteral(
                   "Discarded the draft. The result staged in Git is current again; the repository file is unchanged."));
         CHECK(session.revision() == stagedRevision);
@@ -928,14 +937,15 @@ int main(int argc, char **argv)
         CHECK(openedFile(session.controller).facts().resolved);
         CHECK(!openedFile(session.controller).facts().earlierStaged);
         CHECK(session.controller.selectedFile()->status() == "Written and resolved");
-        CHECK(handoffEntry(session.controller.handoff(), session.id).value("category").toString() == "published");
+        CHECK(handoffEntry(session.controller.completion()->handoffData(), session.id).value("category").toString()
+              == "published");
         expectUnchanged(session.repo, before);
     });
     suite.run("discard to staged without a staged result refuses and keeps the draft", [] {
         Session unstaged;
         const auto text = openedFile(unstaged.controller).current().draft.text;
-        CHECK(!unstaged.controller.discardToStaged(unstaged.id, unstaged.revision()));
-        CHECK(unstaged.controller.commandMessage()
+        CHECK(!unstaged.controller.commands()->discardToStaged(unstaged.id, unstaged.revision()));
+        CHECK(unstaged.controller.feedback()->message()
               == QStringLiteral(
                   "Discard was not completed. No verified result staged in Git to return to, so the draft is kept."));
         CHECK(openedFile(unstaged.controller).current().draft.text == text);
@@ -957,33 +967,40 @@ int main(int argc, char **argv)
         const std::vector<Command> commands{
             {"previewChoice",
              [&](const QString &id, const QString &revision) {
-                 return controller.previewChoice(id, revision, QStringLiteral("unknown"),
-                                                 ChoicePreviewFlow::Action::Accept);
+                 return controller.choices()->previewChoice(id, revision, QStringLiteral("unknown"),
+                                                            ChoicePreviewFlow::Action::Accept);
              },
              stale, QStringLiteral("This file cannot be edited in Branch Truce.")},
             {"previewNonConflicting",
              [&](const QString &id, const QString &revision) {
-                 return controller.previewNonConflicting(id, revision, ChoicePreviewFlow::NonConflicting::BothChanges);
+                 return controller.choices()->previewNonConflicting(id, revision,
+                                                                    ChoicePreviewFlow::NonConflicting::BothChanges);
              },
              QStringLiteral("The result changed. Preview the batch again."),
              QStringLiteral("This file cannot apply non-conflicting changes.")},
             {"previewWholeFile",
              [&](const QString &id, const QString &revision) {
-                 return controller.previewWholeFile(id, revision, ChoicePreviewFlow::Side::LeftSide);
+                 return controller.choices()->previewWholeFile(id, revision, ChoicePreviewFlow::Side::LeftSide);
              },
              QStringLiteral("The result changed. Inspect a new whole-file preview."),
              QStringLiteral("This file has no editable captured source.")},
             {"saveDraft",
-             [&](const QString &id, const QString &revision) { return controller.saveDraft(id, revision); }, stale,
-             blocked},
+             [&](const QString &id, const QString &revision) { return controller.commands()->saveDraft(id, revision); },
+             stale, blocked},
             {"markResolved",
-             [&](const QString &id, const QString &revision) { return controller.markResolved(id, revision, true); },
+             [&](const QString &id, const QString &revision) {
+                 return controller.commands()->markResolved(id, revision, true);
+             },
              stale, blocked},
             {"discardUnsaved",
-             [&](const QString &id, const QString &revision) { return controller.discardUnsaved(id, revision); }, stale,
-             blocked},
+             [&](const QString &id, const QString &revision) {
+                 return controller.commands()->discardUnsaved(id, revision);
+             },
+             stale, blocked},
             {"discardToStaged",
-             [&](const QString &id, const QString &revision) { return controller.discardToStaged(id, revision); },
+             [&](const QString &id, const QString &revision) {
+                 return controller.commands()->discardToStaged(id, revision);
+             },
              stale, blocked},
         };
         const auto before = session.repo.snapshot();
@@ -993,12 +1010,13 @@ int main(int argc, char **argv)
             if (command.run(QString::fromLatin1(QByteArray(path).toHex()), revision))
                 throw std::runtime_error(std::string(command.name) + " ran on " + path + " at revision "
                                          + revision.toStdString());
-            if (controller.commandMessage() != message)
+            if (controller.feedback()->message() != message)
                 throw std::runtime_error(std::string(command.name)
-                                         + " showed: " + controller.commandMessage().toStdString());
-            CHECK(controller.commandPreview().isEmpty() && controller.nonConflictingPreview().isEmpty()
-                  && controller.wholeFilePreview().isEmpty());
-            CHECK(!controller.resolutionBusy() && !controller.resolutionConfirmation());
+                                         + " showed: " + controller.feedback()->message().toStdString());
+            CHECK(controller.choices()->choicePreview().isEmpty()
+                  && controller.choices()->nonConflictingPreview().isEmpty()
+                  && controller.choices()->wholeFilePreview().isEmpty());
+            CHECK(!controller.commands()->resolutionBusy() && !controller.commands()->resolutionConfirmation());
             CHECK(openedFile(controller, path).current().id == draft.id
                   && openedFile(controller, path).current().draft == draft.draft);
         };
@@ -1015,18 +1033,18 @@ int main(int argc, char **argv)
 
         // An unsupported file, selected at its current revision.
         CHECK(openedFile(controller, "excluded.txt").support() != Support::Supported);
-        CHECK(controller.selectFile(QString::fromLatin1(QByteArray("excluded.txt").toHex())));
+        CHECK(controller.selection()->select(QString::fromLatin1(QByteArray("excluded.txt").toHex())));
         for (const auto &command : commands)
             refuses(command, "excluded.txt", revisionOf(openedFile(controller, "excluded.txt")),
                     command.unsupportedMessage);
 
         // Pending recovery input blocks the file at its current revision.
-        CHECK(controller.selectFile(session.id));
+        CHECK(controller.selection()->select(session.id));
         auto edited = openedFile(controller).current().draft;
         edited.text += "pending edit\n";
         {
             recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
-            CHECK(controller.files()->replaceDraft(session.id.toStdString(), current, edited) != Transition::Applied);
+            CHECK(controller.store()->replaceDraft(session.id.toStdString(), current, edited) != Transition::Applied);
             CHECK(recovery_faults::failures == 1);
         }
         CHECK(controller.files()->hasPendingRecovery());
@@ -1037,54 +1055,55 @@ int main(int argc, char **argv)
     suite.run("each concern notifies through its own signal and a new message notifies nothing else", [] {
         Session session;
         auto &controller = session.controller;
-        const auto *meta = controller.metaObject();
-        const std::vector<std::pair<const char *, QMetaMethod>> notifiers{
-            {"commandMessage", QMetaMethod::fromSignal(&ApplicationController::messageChanged)},
-            {"markerBlocker", QMetaMethod::fromSignal(&ApplicationController::messageChanged)},
-            {"commandPreview", QMetaMethod::fromSignal(&ApplicationController::commandPreviewChanged)},
-            {"nonConflictingPreview", QMetaMethod::fromSignal(&ApplicationController::nonConflictingPreviewChanged)},
-            {"wholeFilePreview", QMetaMethod::fromSignal(&ApplicationController::wholeFilePreviewChanged)},
-            {"resolutionConfirmation", QMetaMethod::fromSignal(&ApplicationController::resolutionChanged)},
-            {"resolutionFileId", QMetaMethod::fromSignal(&ApplicationController::resolutionChanged)},
-            {"resolutionRevision", QMetaMethod::fromSignal(&ApplicationController::resolutionChanged)},
-            {"resolutionBusy", QMetaMethod::fromSignal(&ApplicationController::resolutionChanged)},
-            {"parentStagingPath", QMetaMethod::fromSignal(&ApplicationController::mergetoolChanged)},
-            {"mergetoolWaiting", QMetaMethod::fromSignal(&ApplicationController::mergetoolChanged)},
-            {"parentSessionActive", QMetaMethod::fromSignal(&ApplicationController::mergetoolChanged)},
-            {"canEndParentSession", QMetaMethod::fromSignal(&ApplicationController::mergetoolChanged)},
-            {"handoff", QMetaMethod::fromSignal(&ApplicationController::handoffChanged)},
-        };
-        for (const auto &[name, signal] : notifiers) {
+        const auto notifies = [](const QObject *object, const char *name, QMetaMethod signal) {
+            const auto *meta = object->metaObject();
             if (meta->property(meta->indexOfProperty(name)).notifySignal() != signal)
                 throw std::runtime_error(std::string(name) + " notifies through another signal");
-        }
+        };
+        const auto feedback = QMetaMethod::fromSignal(&CommandFeedback::changed);
+        notifies(controller.feedback(), "message", feedback);
+        notifies(controller.feedback(), "markerBlocker", feedback);
+        notifies(controller.choices(), "choicePreview",
+                 QMetaMethod::fromSignal(&ChoicePreviewFlow::choicePreviewChanged));
+        notifies(controller.choices(), "nonConflictingPreview",
+                 QMetaMethod::fromSignal(&ChoicePreviewFlow::nonConflictingPreviewChanged));
+        notifies(controller.choices(), "wholeFilePreview",
+                 QMetaMethod::fromSignal(&ChoicePreviewFlow::wholeFilePreviewChanged));
+        const auto resolution = QMetaMethod::fromSignal(&FileCommands::resolutionChanged);
+        for (const auto *name : {"resolutionConfirmation", "resolutionFileId", "resolutionRevision", "resolutionBusy"})
+            notifies(controller.commands(), name, resolution);
+        const auto mergetool = QMetaMethod::fromSignal(&MergetoolStatus::changed);
+        for (const auto *name : {"parentStagingPath", "waiting", "parentSessionActive", "canEndParentSession"})
+            notifies(controller.mergetool(), name, mergetool);
+        notifies(controller.completion(), "handoff", QMetaMethod::fromSignal(&SessionCompletion::changed));
 
         // A pending preview, so a preview notification would have something to say.
-        CHECK(controller.previewWholeFile(session.id, session.revision(), ChoicePreviewFlow::Side::LeftSide));
-        CHECK(!controller.wholeFilePreview().isEmpty());
+        CHECK(
+            controller.choices()->previewWholeFile(session.id, session.revision(), ChoicePreviewFlow::Side::LeftSide));
+        CHECK(!controller.choices()->wholeFilePreview().isEmpty());
         std::map<std::string, int> emitted;
-        const auto count = [&](const char *name, auto signal) {
-            QObject::connect(&controller, signal, &controller, [&emitted, name] { ++emitted[name]; });
+        const auto count = [&](const char *name, auto *sender, auto signal) {
+            QObject::connect(sender, signal, &controller, [&emitted, name] { ++emitted[name]; });
         };
-        count("message", &ApplicationController::messageChanged);
-        count("commandPreview", &ApplicationController::commandPreviewChanged);
-        count("nonConflictingPreview", &ApplicationController::nonConflictingPreviewChanged);
-        count("wholeFilePreview", &ApplicationController::wholeFilePreviewChanged);
-        count("resolution", &ApplicationController::resolutionChanged);
-        count("mergetool", &ApplicationController::mergetoolChanged);
-        count("handoff", &ApplicationController::handoffChanged);
-        count("selection", &ApplicationController::selectedFileChanged);
+        count("message", controller.feedback(), &CommandFeedback::changed);
+        count("commandPreview", controller.choices(), &ChoicePreviewFlow::choicePreviewChanged);
+        count("nonConflictingPreview", controller.choices(), &ChoicePreviewFlow::nonConflictingPreviewChanged);
+        count("wholeFilePreview", controller.choices(), &ChoicePreviewFlow::wholeFilePreviewChanged);
+        count("resolution", controller.commands(), &FileCommands::resolutionChanged);
+        count("mergetool", controller.mergetool(), &MergetoolStatus::changed);
+        count("handoff", controller.completion(), &SessionCompletion::changed);
+        count("selection", controller.selection(), &Selection::changed);
 
         // A refused Save changes only the command message.
-        CHECK(!controller.saveDraft(session.id, QStringLiteral("not a revision")));
-        CHECK(controller.commandMessage() == QStringLiteral("The result changed. Select the scope again."));
+        CHECK(!controller.commands()->saveDraft(session.id, QStringLiteral("not a revision")));
+        CHECK(controller.feedback()->message() == QStringLiteral("The result changed. Select the scope again."));
         CHECK(emitted == (std::map<std::string, int>{{"message", 1}}));
-        CHECK(!controller.wholeFilePreview().isEmpty());
+        CHECK(!controller.choices()->wholeFilePreview().isEmpty());
 
         // Cancelling notifies the pending preview and the cleared message only.
         emitted.clear();
-        controller.cancelChoice();
-        CHECK(controller.wholeFilePreview().isEmpty() && controller.commandMessage().isEmpty());
+        controller.choices()->cancel();
+        CHECK(controller.choices()->wholeFilePreview().isEmpty() && controller.feedback()->message().isEmpty());
         CHECK(emitted == (std::map<std::string, int>{{"message", 1}, {"wholeFilePreview", 1}}));
     });
     return suite.report();

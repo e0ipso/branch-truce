@@ -1,15 +1,21 @@
 // SelectedFile exposes the selected row and publishes coherent comparison projections.
 #pragma once
+#include "FileStates.h"
 #include "SessionModel.h"
 #include "TextPositions.h"
 #include <QtQml/qqmlregistration.h>
 #include <map>
 
 namespace branch_truce {
+class Selection;
+
+// The selected file's row and comparison, kept in step with the selection and
+// the session. Each change of the comparison is published as one complete
+// projection, so a binding reading several of its lists sees one revision.
 class SelectedFile : public QObject {
     Q_OBJECT
     QML_ELEMENT
-    QML_UNCREATABLE("Owned by ApplicationController")
+    QML_UNCREATABLE("Owned by the application")
     Q_PROPERTY(QString fileId READ fileId NOTIFY identityChanged)
     Q_PROPERTY(QString path READ path NOTIFY identityChanged)
     Q_PROPERTY(QByteArray pathBytes READ pathBytes NOTIFY identityChanged)
@@ -30,10 +36,12 @@ class SelectedFile : public QObject {
     Q_PROPERTY(QVariantList regions READ regions NOTIFY comparisonChanged)
     Q_PROPERTY(QVariantList markerBlocks READ markerBlocks NOTIFY comparisonChanged)
     Q_PROPERTY(QVariantList markerOrphans READ markerOrphans NOTIFY comparisonChanged)
-    Q_PROPERTY(QString support READ support NOTIFY statusChanged)
+    Q_PROPERTY(branch_truce::FileStates::SupportKind support READ support NOTIFY statusChanged)
+    // Shorthand for support == Supported.
+    Q_PROPERTY(bool supported READ supported NOTIFY statusChanged)
     Q_PROPERTY(QString supportDetail READ supportDetail NOTIFY statusChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
-    Q_PROPERTY(branch_truce::SessionModel::StatusKind statusKind READ statusKind NOTIFY statusChanged)
+    Q_PROPERTY(branch_truce::FileStates::StatusKind statusKind READ statusKind NOTIFY statusChanged)
     Q_PROPERTY(bool unsaved READ unsaved NOTIFY statusChanged)
     Q_PROPERTY(bool reviewNeeded READ reviewNeeded NOTIFY statusChanged)
     Q_PROPERTY(bool resolved READ resolved NOTIFY statusChanged)
@@ -41,7 +49,7 @@ class SelectedFile : public QObject {
     Q_PROPERTY(int conflicts READ conflicts NOTIFY statusChanged)
     Q_PROPERTY(bool pendingInput READ pendingInput NOTIFY statusChanged)
     Q_PROPERTY(QString pendingText READ pendingText NOTIFY statusChanged)
-    Q_PROPERTY(QString recoveryState READ recoveryState NOTIFY statusChanged)
+    Q_PROPERTY(branch_truce::FileStates::RecoveryState recoveryState READ recoveryState NOTIFY statusChanged)
     Q_PROPERTY(QString recoveryError READ recoveryError NOTIFY statusChanged)
     Q_PROPERTY(QStringList finishBlockers READ finishBlockers NOTIFY statusChanged)
     Q_PROPERTY(QString currentRevision READ currentRevision NOTIFY statusChanged)
@@ -54,8 +62,9 @@ class SelectedFile : public QObject {
     Q_PROPERTY(QString summary READ summary NOTIFY statusChanged)
     Q_PROPERTY(bool canEdit READ canEdit NOTIFY statusChanged)
 public:
-    explicit SelectedFile(SessionModel &files, QObject *parent = nullptr);
-    void sync(const QString &fileId);
+    SelectedFile(const SessionModel &files, const Selection &selection, QObject *parent = nullptr);
+    // Reads the selected file again; the selection and the session call it.
+    void sync();
     [[nodiscard]] QString fileId() const { return fileId_; }
     [[nodiscard]] QString path() const { return path_; }
     [[nodiscard]] QByteArray pathBytes() const { return pathBytes_; }
@@ -76,14 +85,20 @@ public:
     [[nodiscard]] QVariantList regions() const { return regions_; }
     [[nodiscard]] QVariantList markerBlocks() const { return markerBlocks_; }
     [[nodiscard]] QVariantList markerOrphans() const { return markerOrphans_; }
-    [[nodiscard]] QString support() const { return role(SessionModel::SupportRole).toString(); }
+    // Unreadable without a selected file.
+    [[nodiscard]] FileStates::SupportKind support() const
+    {
+        const auto kind = role(SessionModel::SupportRole);
+        return kind.isValid() ? kind.value<FileStates::SupportKind>() : FileStates::SupportKind::Unreadable;
+    }
+    [[nodiscard]] bool supported() const { return support() == FileStates::SupportKind::Supported; }
     [[nodiscard]] QString supportDetail() const { return role(SessionModel::SupportDetailRole).toString(); }
     [[nodiscard]] QString status() const { return role(SessionModel::StatusRole).toString(); }
     // Unreadable without a selected file.
-    [[nodiscard]] SessionModel::StatusKind statusKind() const
+    [[nodiscard]] FileStates::StatusKind statusKind() const
     {
         const auto kind = role(SessionModel::StatusKindRole);
-        return kind.isValid() ? kind.value<SessionModel::StatusKind>() : SessionModel::StatusKind::Unreadable;
+        return kind.isValid() ? kind.value<FileStates::StatusKind>() : FileStates::StatusKind::Unreadable;
     }
     [[nodiscard]] bool unsaved() const { return role(SessionModel::UnsavedRole).toBool(); }
     [[nodiscard]] bool reviewNeeded() const { return role(SessionModel::ReviewNeededRole).toBool(); }
@@ -92,7 +107,12 @@ public:
     [[nodiscard]] int conflicts() const { return role(SessionModel::ConflictCountRole).toInt(); }
     [[nodiscard]] bool pendingInput() const { return role(SessionModel::PendingInputRole).toBool(); }
     [[nodiscard]] QString pendingText() const { return role(SessionModel::PendingTextRole).toString(); }
-    [[nodiscard]] QString recoveryState() const { return role(SessionModel::RecoveryStateRole).toString(); }
+    // Durable without a selected file.
+    [[nodiscard]] FileStates::RecoveryState recoveryState() const
+    {
+        const auto state = role(SessionModel::RecoveryStateRole);
+        return state.isValid() ? state.value<FileStates::RecoveryState>() : FileStates::RecoveryState::Durable;
+    }
     [[nodiscard]] QString recoveryError() const { return role(SessionModel::RecoveryErrorRole).toString(); }
     [[nodiscard]] QStringList finishBlockers() const { return role(SessionModel::FinishBlockersRole).toStringList(); }
     [[nodiscard]] QString currentRevision() const { return role(SessionModel::CurrentRevisionRole).toString(); }
@@ -137,8 +157,11 @@ private:
         stored = next;
         Q_EMIT(this->*changed)();
     }
-    SessionModel &files_;
+    const SessionModel &files_;
+    const Selection &selection_;
     const FileSnapshots *sourceIdentity_ = nullptr;
+    // The status roles last published, so statusChanged fires only on a change.
+    QVariantList status_;
     bool reset_ = true;
     QString projectedRevision_;
     Support projectedSupport_ = Support::Unreadable;

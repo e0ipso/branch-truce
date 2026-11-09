@@ -9,22 +9,23 @@ import org.kde.kirigami as Kirigami
 
 PreviewDialog {
     id: nonConflictingDialog
-    required property ApplicationController controller
+    required property ChoicePreviewFlow choices
+    required property CommandFeedback feedback
     objectName: "nonConflictingDialog"
-    title: qsTr("Apply non-conflicting changes · %1").arg(nonConflictingDialog.controller.nonConflictingPreview.scope || "")
-    path: nonConflictingDialog.controller.nonConflictingPreview.path || ""
-    summary: nonConflictingDialog.controller.nonConflictingPreview.summary || ""
-    detail: nonConflictingDialog.controller.nonConflictingPreview.detail || ""
+    title: qsTr("Apply non-conflicting changes · %1").arg(nonConflictingDialog.choices.nonConflictingPreview.scope || "")
+    path: nonConflictingDialog.choices.nonConflictingPreview.path || ""
+    summary: nonConflictingDialog.choices.nonConflictingPreview.summary || ""
+    detail: nonConflictingDialog.choices.nonConflictingPreview.detail || ""
     confirmText: qsTr("Apply changes")
-    onApplyRequested: nonConflictingDialog.refused = !nonConflictingDialog.controller.applyNonConflicting()
-    refusalMessage: nonConflictingDialog.controller.commandMessage
-    onRejected: nonConflictingDialog.controller.cancelChoice()
+    onApplyRequested: nonConflictingDialog.refused = !nonConflictingDialog.choices.applyNonConflicting()
+    refusalMessage: nonConflictingDialog.feedback.message
+    onRejected: nonConflictingDialog.choices.cancel()
     ListView {
         objectName: "nonConflictingChanges"
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true
-        model: nonConflictingDialog.controller.nonConflictingPreview.changes || []
+        model: nonConflictingDialog.choices.nonConflictingPreview.changes || []
         spacing: Kirigami.Units.largeSpacing
         delegate: ScopedChange {
             required property var modelData

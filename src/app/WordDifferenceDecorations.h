@@ -6,7 +6,6 @@
 #include <QString>
 #include <QTextLayout>
 #include <QtGlobal>
-#include <functional>
 #include <map>
 #include <utility>
 
@@ -14,10 +13,10 @@ class QTextDocument;
 
 namespace branch_truce {
 class CorrespondenceMap;
-class SessionModel;
+class SessionStore;
 struct FileSnapshots;
 
-// Draws the word-level differences of the selected file's current revision
+// Draws the word-level differences of one file's current revision
 // (fileWordDifferences) in each attached pane, through the pane document's
 // PaneHighlighter. A range gets the line's theme role as a translucent
 // background and an underline, so the cue survives without colour. The text
@@ -35,13 +34,15 @@ struct FileSnapshots;
 class WordDifferenceDecorations final : public QObject {
     Q_OBJECT
 public:
-    WordDifferenceDecorations(SessionModel &files, std::function<QString()> selectedFileId, QObject *parent = nullptr);
+    explicit WordDifferenceDecorations(const SessionStore &store, QObject *parent = nullptr);
+    // The file whose differences the panes show; refresh draws them.
+    void setFile(const QString &fileId) { targetFileId_ = fileId; }
     // Attaching the same editor again changes nothing. An editor without
     // wordDifferenceStyle, or without a highlighter yet, is left alone.
     void attach(QObject *editor, QTextDocument *document);
 
 public Q_SLOTS:
-    // Computes the ranges when the selected file or its revision changed, and
+    // Computes the ranges when the file or its revision changed, and
     // redraws every pane whose text, line kinds or colours changed.
     void refresh();
 
@@ -65,8 +66,8 @@ private:
     // ranges is null when the pane shows no word ranges.
     [[nodiscard]] QList<QTextLayout::FormatRange> formats(const Pane &pane, const PaneRanges *ranges) const;
 
-    SessionModel &files_;
-    std::function<QString()> selectedFileId_;
+    const SessionStore &files_;
+    QString targetFileId_;
     QList<Pane> panes_;
     // What the ranges were computed from.
     QString fileId_;

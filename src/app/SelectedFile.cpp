@@ -1,5 +1,6 @@
 // SelectedFile keeps immutable sources indexed while projecting changed result revisions.
 #include "SelectedFile.h"
+#include "Selection.h"
 #include "SourceIdentity.h"
 #include <algorithm>
 #include <set>
@@ -64,9 +65,12 @@ QString kindName(PassageKind kind)
 }
 
 }
-SelectedFile::SelectedFile(SessionModel &files, QObject *parent) : QObject(parent), files_(files)
+SelectedFile::SelectedFile(const SessionModel &files, const Selection &selection, QObject *parent)
+    : QObject(parent), files_(files), selection_(selection)
 {
     connect(&files_, &QAbstractItemModel::modelReset, this, [this] { reset_ = true; });
+    connect(&selection_, &Selection::changed, this, &SelectedFile::sync);
+    connect(&files_, &SessionModel::summaryChanged, this, &SelectedFile::sync);
 }
 QVariant SelectedFile::role(int role) const
 {
@@ -81,7 +85,7 @@ QString SelectedFile::mimeIcon() const
 QString SelectedFile::mimeDescription() const { return role(SessionModel::MimeDescriptionRole).toString(); }
 QString SelectedFile::formatDescription() const
 {
-    const auto *file = files_.file(fileId_.toStdString());
+    const auto *file = files_.store().file(fileId_.toStdString());
     const auto *snapshots = file ? file->snapshots() : nullptr;
     if (!snapshots || file->support() != Support::Supported) return {};
     const auto &format = snapshots->launchResult.text.format;
@@ -91,19 +95,20 @@ QString SelectedFile::formatDescription() const
     case SnapshotFormat::Encoding::Utf16LittleEndian: encoding = QStringLiteral("UTF-16 LE"); break;
     case SnapshotFormat::Encoding::Utf16BigEndian: encoding = QStringLiteral("UTF-16 BE"); break;
     }
-    if (format.bom) encoding += tr(" with BOM");
-    return encoding + QStringLiteral(" · ")
-        + (format.newline == SnapshotFormat::Newline::CrLf ? QStringLiteral("CRLF") : QStringLiteral("LF"));
+    const auto newline =
+        format.newline == SnapshotFormat::Newline::CrLf ? QStringLiteral("CRLF") : QStringLiteral("LF");
+    return format.bom ? tr("%1 with BOM · %2").arg(encoding, newline) : tr("%1 · %2").arg(encoding, newline);
 }
 bool SelectedFile::canEdit() const
 {
-    const auto *file = files_.file(fileId_.toStdString());
-    return file && file->support() == Support::Supported && !files_.hasPendingRecovery()
-        && !files_.hasRecoveryFailure(file->id());
+    const auto *file = files_.store().file(fileId_.toStdString());
+    return file && file->support() == Support::Supported && !files_.store().hasPendingRecovery()
+        && !files_.store().hasRecoveryFailure(file->id());
 }
-void SelectedFile::sync(const QString &fileId)
+void SelectedFile::sync()
 {
-    const auto *file = files_.file(fileId.toStdString());
+    const auto fileId = selection_.fileId();
+    const auto *file = files_.store().file(fileId.toStdString());
     const bool selectionChanged = fileId_ != fileId || reset_;
     if (selectionChanged) {
         fileId_ = fileId;
@@ -141,7 +146,7 @@ void SelectedFile::sync(const QString &fileId)
     update(decisions_, role(SessionModel::DecisionsRole).toList(), &SelectedFile::decisionsChanged);
     const auto revision = currentRevision();
     const auto support = file ? file->support() : Support::Unreadable;
-    const bool pending = file && files_.pendingDraft(file->id());
+    const bool pending = file && files_.store().pendingDraft(file->id());
     if (changedSources || revision != projectedRevision_ || support != projectedSupport_
         || pending != projectedPending_) {
         projectedRevision_ = revision;
@@ -149,7 +154,23 @@ void SelectedFile::sync(const QString &fileId)
         projectedPending_ = pending;
         project(file);
     }
-    Q_EMIT statusChanged();
+    // Every status property reads one of these roles, plus canEdit's session-wide recovery.
+    QVariantList status;
+    for (const auto role :
+         {SessionModel::SupportRole,       SessionModel::SupportDetailRole,  SessionModel::StatusRole,
+          SessionModel::StatusKindRole,    SessionModel::UnsavedRole,        SessionModel::ReviewNeededRole,
+          SessionModel::ResolvedRole,      SessionModel::UndecidedRole,      SessionModel::ConflictCountRole,
+          SessionModel::PendingInputRole,  SessionModel::PendingTextRole,    SessionModel::RecoveryStateRole,
+          SessionModel::RecoveryErrorRole, SessionModel::FinishBlockersRole, SessionModel::CurrentRevisionRole,
+          SessionModel::CanUndoRole,       SessionModel::CanRedoRole,        SessionModel::ProgressRole,
+          SessionModel::StatusIconRole,    SessionModel::StatusLineRole,     SessionModel::ChipsRole,
+          SessionModel::SummaryRole})
+        status.push_back(this->role(role));
+    status.push_back(canEdit());
+    if (status != status_ || selectionChanged) {
+        status_ = std::move(status);
+        Q_EMIT statusChanged();
+    }
 }
 void SelectedFile::project(const FileSession *file)
 {
@@ -255,12 +276,13 @@ void SelectedFile::project(const FileSession *file)
         else
             insertUnmapped(region, QStringLiteral("result"));
         regions.push_back(region);
+        const bool left = target.source.side == SourceSide::Stage2;
+        const auto label = target.scope == ChoiceScope::Section
+            ? (left ? tr("Left section, lines %1–%2") : tr("Right section, lines %1–%2")).arg(line).arg(last)
+            : (left ? tr("Left line %1") : tr("Right line %1")).arg(line);
         choices.push_back(QVariantMap{
             {QStringLiteral("id"), text(target.source.contributionId)},
-            {QStringLiteral("label"),
-             (target.source.side == SourceSide::Stage2 ? tr("Left") : tr("Right"))
-                 + (target.scope == ChoiceScope::Section ? tr(" section, lines %1–%2").arg(line).arg(last)
-                                                         : tr(" line %1").arg(line))},
+            {QStringLiteral("label"), label},
             {QStringLiteral("state"), states.join(QStringLiteral(", "))},
             {QStringLiteral("sourceText"),
              text(sourceText.substr(target.source.range.begin, target.source.range.end - target.source.range.begin))},
@@ -275,7 +297,7 @@ void SelectedFile::project(const FileSession *file)
     // target them. A pending editor draft has different lines, so it gets none.
     QVariantList markerBlocks;
     QVariantList markerOrphans;
-    if (file->support() == Support::Supported && !files_.pendingDraft(file->id())) {
+    if (file->support() == Support::Supported && !files_.store().pendingDraft(file->id())) {
         const auto &draft = file->current().draft.text;
         const TextPositions lines(draft);
         const auto scan = file->markers();

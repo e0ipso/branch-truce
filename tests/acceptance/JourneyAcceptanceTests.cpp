@@ -4,7 +4,8 @@
 // offscreen and drives it with mouse clicks and key events. Coverage notes and
 // the entry point are in tests/acceptance/README.md.
 #include "TestHarness.h"
-#include "app/ApplicationController.h"
+#include "app/AppPaths.h"
+#include "app/Application.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/QuickScene.h"
 #include "mergetool/MergetoolLauncher.h"
@@ -204,9 +205,9 @@ class Scene {
 public:
     explicit Scene(const Repository &repository) : repo(repository)
     {
-        controller = std::make_unique<ApplicationController>(gitOnPath());
+        controller = std::make_unique<Application>(Application::Config{gitOnPath(), newRecoveryDirectory(), {}});
         engine = std::make_unique<QQmlApplicationEngine>();
-        engine->setInitialProperties({{"controller", QVariant::fromValue(controller.get())}});
+        engine->setInitialProperties(controller->windowProperties());
         engine->loadFromModule("BranchTruce", "Main");
         CHECK(engine->rootObjects().size() == 1);
         window = qobject_cast<QQuickWindow *>(engine->rootObjects().front());
@@ -228,7 +229,7 @@ public:
         const auto socket = mergetoolSocketDirectory();
         if (socket != sandbox->runtime.path() + QStringLiteral("/branch-truce"))
             throw std::runtime_error("socket directory outside the private runtime directory: " + socket.toStdString());
-        CHECK(controller->mergetool()->listening() && QFileInfo(socket).isDir());
+        CHECK(controller->mergetoolSession()->listening() && QFileInfo(socket).isDir());
     }
     ~Scene()
     {
@@ -282,7 +283,7 @@ public:
     }
     const FileSession &file(const char *path) const
     {
-        const auto *found = controller->files()->file(fileId(path).toStdString());
+        const auto *found = controller->store()->file(fileId(path).toStdString());
         if (!found) throw std::runtime_error(std::string("missing session file: ") + path);
         return *found;
     }
@@ -291,7 +292,7 @@ public:
     QVariantMap progress() const { return controller->selectedFile()->progress(); }
 
     const Repository &repo;
-    std::unique_ptr<ApplicationController> controller;
+    std::unique_ptr<Application> controller;
     std::unique_ptr<QQmlApplicationEngine> engine;
     QQuickWindow *window = nullptr;
 };
@@ -461,7 +462,7 @@ void clickFile(Scene &scene, const char *path)
         });
     });
     test_support::clickItem(scene.window, target);
-    settleFor(std::string("selection of ") + path, [&] { return scene.controller->selectedFileId() == id; });
+    settleFor(std::string("selection of ") + path, [&] { return scene.controller->selection()->fileId() == id; });
 }
 
 void keyClick(Scene &scene, Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::NoModifier)
@@ -692,20 +693,21 @@ void appendToResult(Scene &scene, const char *text)
 void markResolvedByMouse(Scene &scene)
 {
     scene.click("markResolved");
-    settleFor("resolution confirmation", [&] { return scene.controller->resolutionConfirmation(); });
+    settleFor("resolution confirmation", [&] { return scene.controller->commands()->resolutionConfirmation(); });
     scene.click("confirmResolution");
     const auto finished = [&] {
-        return !scene.controller->resolutionBusy() && !scene.controller->resolutionConfirmation();
+        return !scene.controller->commands()->resolutionBusy()
+            && !scene.controller->commands()->resolutionConfirmation();
     };
     QElapsedTimer deadline;
     deadline.start();
     while (!finished() && deadline.elapsed() < 10000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     if (!finished())
-        throw std::runtime_error("resolution of " + scene.text("selectedPath").toStdString()
-                                 + " busy=" + std::to_string(scene.controller->resolutionBusy())
-                                 + " confirmation=" + std::to_string(scene.controller->resolutionConfirmation())
-                                 + " status=" + scene.text("selectedStatus").toStdString()
-                                 + " message=" + scene.controller->commandMessage().toStdString());
+        throw std::runtime_error("resolution of " + scene.text("selectedPath").toStdString() + " busy="
+                                 + std::to_string(scene.controller->commands()->resolutionBusy()) + " confirmation="
+                                 + std::to_string(scene.controller->commands()->resolutionConfirmation())
+                                 + " status=" + scene.controller->selectedFile()->status().toStdString()
+                                 + " message=" + scene.controller->feedback()->message().toStdString());
 }
 
 // Waits longer than settleFor: a launcher process discovers the repository before it attaches.
@@ -988,7 +990,7 @@ private:
 QMap<QString, QVariantMap> handoffEntries(Scene &scene)
 {
     QMap<QString, QVariantMap> entries;
-    for (const auto &group : scene.controller->handoff().value(QStringLiteral("groups")).toList())
+    for (const auto &group : scene.controller->completion()->handoffData().value(QStringLiteral("groups")).toList())
         for (const auto &entry : group.toMap().value(QStringLiteral("entries")).toList())
             entries.insert(entry.toMap().value(QStringLiteral("fileId")).toString(), entry.toMap());
     return entries;
@@ -1128,9 +1130,9 @@ std::string firstUndecidedInView(Scene &scene, bool snapshot = false)
                 {"pane", pane.side},
                 {"inView", inView},
                 {"screen", QJsonObject{{"width", scene.window->width()}, {"height", scene.window->height()}}},
-                {"selectedFileId", scene.controller->selectedFileId()},
-                {"editorPlacement", QJsonObject::fromVariantMap(scene.controller->editorPlacement())},
-                {"navigation", QJsonObject::fromVariantMap(scene.controller->navigationTarget())},
+                {"selectedFileId", scene.controller->selection()->fileId()},
+                {"editorPlacement", QJsonObject::fromVariantMap(scene.controller->editor()->placement())},
+                {"navigation", QJsonObject::fromVariantMap(scene.controller->navigator()->target())},
                 {"line", pane.line},
                 {"utf16Position", pane.position},
                 {"mappedSourceLine", pane.sourceLine},
@@ -1168,7 +1170,7 @@ std::string firstUndecidedInView(Scene &scene, bool snapshot = false)
 
 // Which journeys one run executes. Real merges and rebases make the journeys slow, so ctest
 // registers each group as its own entry with a timeout sized for it.
-enum class Selection { All, Review, Handoff, Window };
+enum class JourneySet { All, Review, Handoff, Window };
 
 // Forwards a journey to the suite only when its group is selected.
 class Group {
@@ -1187,12 +1189,12 @@ private:
 
 class JourneyAcceptanceTests {
 public:
-    int run(Selection selection)
+    int run(JourneySet selection)
     {
         test_support::Suite results("JourneyAcceptanceTests");
-        Group review(results, selection == Selection::All || selection == Selection::Review);
-        Group handoff(results, selection == Selection::All || selection == Selection::Handoff);
-        Group window(results, selection == Selection::All || selection == Selection::Window);
+        Group review(results, selection == JourneySet::All || selection == JourneySet::Review);
+        Group handoff(results, selection == JourneySet::All || selection == JourneySet::Handoff);
+        Group window(results, selection == JourneySet::All || selection == JourneySet::Window);
         review.run(
             "PRD.md:127 PRD.md:139 PRD.md:157 the full inventory keeps truthful sources around the preserved editable "
             "result",
@@ -1202,7 +1204,8 @@ public:
                 Scene scene(repo);
                 CHECK(scene.controller->loader()->operation() == QStringLiteral("Merge"));
                 expectText(scene.text("repositorySubtitle"), "Merging side into main", "merge operation with branches");
-                CHECK(scene.controller->files()->totalFiles() == 4 && scene.controller->outsideAppFiles() == 1);
+                CHECK(scene.controller->files()->totalFiles() == 4
+                      && scene.controller->files()->outsideAppFiles() == 1);
                 CHECK(!scene.item("inventoryWarning")->isVisible());
                 expectContains(scene.text("outsideAppCount"), "1 file to handle outside the app", "outside-app count");
                 for (const auto *path : {"story.txt", "notes.txt", "reading.txt", "removed.txt"})
@@ -1311,7 +1314,8 @@ public:
                 CHECK(scene.controller->loader()->operation() == QStringLiteral("Rebase"));
                 expectText(scene.text("repositorySubtitle"), "Rebasing side onto main",
                            "rebase operation with branches");
-                CHECK(scene.controller->files()->totalFiles() == 2 && scene.controller->outsideAppFiles() == 0);
+                CHECK(scene.controller->files()->totalFiles() == 2
+                      && scene.controller->files()->outsideAppFiles() == 0);
                 const auto left = "Current rebased state: " + utf8(repo.leftCommit).left(10);
                 const auto right = "Commit being replayed: " + utf8(repo.rightCommit).left(10);
                 expectSourcesAround(scene, repo, "story.txt", left, right);
@@ -1553,7 +1557,7 @@ public:
                 Repository repo("merge", journeyPaths());
                 const auto launched = repo.snapshot();
                 Scene scene(repo);
-                const auto status = [&] { return scene.controller->commandMessage(); };
+                const auto status = [&] { return scene.controller->feedback()->message(); };
 
                 // Save checkpoints an unfinished draft in the app only.
                 clickFile(scene, "notes.txt");
@@ -1574,10 +1578,11 @@ public:
                 const auto edited = work(scene, "story.txt");
                 CHECK(!scene.progress().value("saved").toBool());
                 scene.click("markResolved");
-                settleFor("resolution confirmation", [&] { return scene.controller->resolutionConfirmation(); });
-                expectContains(scene.controller->commandMessage(), "intentional", "confirmation message");
+                settleFor("resolution confirmation",
+                          [&] { return scene.controller->commands()->resolutionConfirmation(); });
+                expectContains(scene.controller->feedback()->message(), "intentional", "confirmation message");
                 scene.click("cancelResolution");
-                CHECK(!scene.controller->resolutionConfirmation());
+                CHECK(!scene.controller->commands()->resolutionConfirmation());
                 CHECK(work(scene, "story.txt") == edited);
                 CHECK(!scene.progress().value("reviewed").toBool() && !scene.progress().value("saved").toBool());
                 CHECK(repo.snapshot() == launched);
@@ -1827,7 +1832,7 @@ public:
                            "6 of 7 files in this session remain outstanding. This session is not finished.",
                            "handoff outcome");
                 CHECK(!scene.item("handoffFinish")->isVisible()
-                      && !scene.controller->handoff().value("clean").toBool());
+                      && !scene.controller->completion()->handoffData().value("clean").toBool());
                 const auto entries = handoffEntries(scene);
                 const QMap<QString, QString> expected{{"done.txt", "published"},     {"newer.txt", "newer-draft"},
                                                       {"saved.txt", "saved-draft"},  {"typed.txt", "undecided"},
@@ -1860,15 +1865,15 @@ public:
                     scene.click(("handoffRoute-" + fileId(path)).toLatin1().constData());
                     // Until its fade-out ends the closing dialog's overlay takes the next click.
                     settleFor("handoff closed by route", [&] { return !dialog->property("visible").toBool(); });
-                    CHECK(scene.controller->selectedFileId() == fileId(path));
+                    CHECK(scene.controller->selection()->fileId() == fileId(path));
                 }
                 CHECK(scene.item("selectedProblem")->isVisible());
 
                 // Leaving after the warning runs no Git command and keeps every outstanding file unresolved.
                 int ended = 0;
                 bool clean = true;
-                QObject::connect(scene.controller.get(), &ApplicationController::sessionEnded, scene.controller.get(),
-                                 [&](const QString &, bool value) {
+                QObject::connect(scene.controller->completion(), &SessionCompletion::sessionEnded,
+                                 scene.controller.get(), [&](const QString &, bool value) {
                                      ++ended;
                                      clean = value;
                                  });
@@ -1880,12 +1885,13 @@ public:
                 scene.click("handoffLeave");
                 if (ended != 1 || clean)
                     throw std::runtime_error(
-                        "leave ended=" + std::to_string(ended) + " clean=" + std::to_string(clean) + " outcome="
-                        + scene.controller->sessionOutcome().toStdString() + " opened=" + std::to_string(opened())
-                        + " message=" + scene.controller->commandMessage().toStdString()
-                        + " blocker=" + scene.controller->handoff().value("leaveBlocker").toString().toStdString());
+                        "leave ended=" + std::to_string(ended) + " clean=" + std::to_string(clean)
+                        + " outcome=" + scene.controller->completion()->outcome().toStdString()
+                        + " opened=" + std::to_string(opened())
+                        + " message=" + scene.controller->feedback()->message().toStdString() + " blocker="
+                        + scene.controller->completion()->handoffData().value("leaveBlocker").toString().toStdString());
                 CHECK(ended == 1 && !clean);
-                expectContains(scene.controller->sessionOutcome(), "Left with 6 of 7 files outstanding.",
+                expectContains(scene.controller->completion()->outcome(), "Left with 6 of 7 files outstanding.",
                                "leave outcome");
                 CHECK(repo.snapshot() == beforeLeave && readFile(sandbox->argvLog) == traced);
                 for (const auto *path : {"saved.txt", "typed.txt", "written.txt", "locked/failing.txt", "removed.txt"})
@@ -1949,18 +1955,18 @@ public:
             expectText(scene.text("resultText"), staged, "staged result");
             CHECK(!scene.progress().value("earlierResolved").toBool());
             expectText(
-                scene.controller->commandMessage(),
+                scene.controller->feedback()->message(),
                 "Discarded the draft. The result staged in Git is current again; the repository file is unchanged.",
                 "discard message");
             expectText(handoffEntries(scene).value(id).value("category").toString(), "published",
                        "handoff after discard");
-            CHECK(scene.controller->handoff().value("clean").toBool());
+            CHECK(scene.controller->completion()->handoffData().value("clean").toBool());
             CHECK(repo.snapshot() == published);
 
             // A discard the recovery journal cannot record keeps the draft and shows an error.
             newerDraft();
             {
-                QLockFile busy(scene.controller->files()->recoveryDirectory() + QStringLiteral("/journal.lock"));
+                QLockFile busy(scene.controller->store()->recoveryDirectory() + QStringLiteral("/journal.lock"));
                 CHECK(busy.tryLock(0));
                 clickOverflowAction(scene, "discardToStaged");
                 test_support::clickItem(scene.window,
@@ -2013,7 +2019,7 @@ public:
                 settleFor("handoff opened by close", [&] { return dialog->property("opened").toBool(); });
                 CHECK(scene.window->isVisible());
                 scene.click("handoffLeave");
-                CHECK(!scene.controller->sessionOutcome().isEmpty());
+                CHECK(!scene.controller->completion()->outcome().isEmpty());
                 checkOffline(scene);
             }
             CHECK(repo.snapshot() == launched);
@@ -2036,17 +2042,17 @@ public:
                             {{"shared.txt", QByteArray("shared base\n"), QByteArray("shared left\n"),
                               QByteArray("shared right\n"), QByteArray("shared chosen by hand\n")}});
             const auto id = fileId("shared.txt").toStdString();
-            const auto edit = [&](ApplicationController &controller, const std::string &text) {
-                const auto *file = controller.files()->file(id);
+            const auto edit = [&](Application &controller, const std::string &text) {
+                const auto *file = controller.store()->file(id);
                 CHECK(file
-                      && controller.files()->editResult(id, file->current().id, {{0, 0}, text}) == Transition::Applied);
+                      && controller.store()->editResult(id, file->current().id, {{0, 0}, text}) == Transition::Applied);
             };
             QString first;
             QString second;
             {
                 // Two windows on one merge each keep their own edits.
                 Scene one(repo);
-                ApplicationController two(gitOnPath());
+                Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 CHECK(two.loader()->openRepository(repo.root));
                 // The load runs Git and the recovery restore off the GUI thread, so it gets the
                 // deadline of a process, not the layout deadline of settleFor.
@@ -2056,8 +2062,8 @@ public:
                 CHECK(two.loader()->startupState() == QStringLiteral("ready"));
                 edit(*one.controller, "first window\n");
                 edit(two, "second window\n");
-                first = one.controller->files()->recoveryDirectory();
-                second = two.files()->recoveryDirectory();
+                first = one.controller->store()->recoveryDirectory();
+                second = two.store()->recoveryDirectory();
             }
             const auto firstName = QFileInfo(first).fileName();
             const auto secondName = QFileInfo(second).fileName();
@@ -2082,7 +2088,7 @@ public:
                 },
                 [&] { return loaderState(*scene.controller->loader()); });
             CHECK(scene.controller->loader()->startupState() == QStringLiteral("ready"));
-            CHECK(scene.controller->files()->recoveryDirectory() == first);
+            CHECK(scene.controller->store()->recoveryDirectory() == first);
             expectContains(scene.controller->loader()->detail(), secondName + " was set aside, not deleted",
                            "set aside");
             settleFor("restored text",
@@ -2109,15 +2115,16 @@ public:
                 return texts.join('\n');
             };
             const auto state = [&] {
-                return "waiting=" + scene.controller->mergetool()->waitingPath().toStdString()
-                    + " staging=" + scene.controller->parentStagingPath().toStdString()
-                    + " message=" + scene.controller->commandMessage().toStdString();
+                return "waiting=" + scene.controller->mergetoolSession()->waitingPath().toStdString()
+                    + " staging=" + scene.controller->mergetool()->parentStagingPath().toStdString()
+                    + " message=" + scene.controller->feedback()->message().toStdString();
             };
             auto parent = startMergetool(repo, {"launched.txt"});
             waitFor(
                 "Git to launch launched.txt",
-                [&] { return scene.controller->mergetool()->waitingPath() == QByteArray("launched.txt"); }, state);
-            CHECK(scene.controller->parentSessionActive());
+                [&] { return scene.controller->mergetoolSession()->waitingPath() == QByteArray("launched.txt"); },
+                state);
+            CHECK(scene.controller->mergetool()->parentSessionActive());
 
             // A path Git has not launched yet says so while Git is still running.
             clickFile(scene, "later.txt");
@@ -2135,13 +2142,13 @@ public:
                 "the staged resolution",
                 [&] {
                     return scene.progress().value("resolved").toBool()
-                        && scene.controller->parentStagingPath().isEmpty();
+                        && scene.controller->mergetool()->parentStagingPath().isEmpty();
                 },
                 state);
             CHECK(scene.controller->files()->resolvedFiles() == 1);
 
             // Git has exited and the parent session stays open until the user ends it.
-            CHECK(scene.controller->parentSessionActive() && !scene.controller->mergetoolWaiting());
+            CHECK(scene.controller->mergetool()->parentSessionActive() && !scene.controller->mergetool()->waiting());
             CHECK(!scene.item("mergetoolWait")->isVisible());
             const auto resolvedTexts = shownTexts();
             if (resolvedTexts.contains(QStringLiteral("It is not resolved"))
@@ -2171,9 +2178,9 @@ public:
                                 });
                 Scene scene(repo);
                 const auto state = [&] {
-                    return "waiting=" + scene.controller->mergetool()->waitingPath().toStdString()
-                        + " selected=" + scene.controller->selectedFileId().toStdString()
-                        + " message=" + scene.controller->commandMessage().toStdString();
+                    return "waiting=" + scene.controller->mergetoolSession()->waitingPath().toStdString()
+                        + " selected=" + scene.controller->selection()->fileId().toStdString()
+                        + " message=" + scene.controller->feedback()->message().toStdString();
                 };
                 const auto waitingShown = [&] {
                     return scene.item("mergetoolHolding")->isVisible() && scene.item("leaveMergetool")->isVisible()
@@ -2184,20 +2191,21 @@ public:
                 auto parent = startMergetool(repo, {"launched.txt"});
                 waitFor(
                     "Git to launch launched.txt",
-                    [&] { return scene.controller->mergetool()->waitingPath() == QByteArray("launched.txt"); }, state);
+                    [&] { return scene.controller->mergetoolSession()->waitingPath() == QByteArray("launched.txt"); },
+                    state);
                 settleFor("waiting state on the selected launched path", waitingShown);
 
                 // Git is not waiting on the other file, so it has no Leave control.
                 clickFile(scene, "other.txt");
                 settleFor("waiting text on the other file", [&] { return scene.item("mergetoolWait")->isVisible(); });
-                CHECK(!scene.controller->mergetoolWaiting());
+                CHECK(!scene.controller->mergetool()->waiting());
                 CHECK(!scene.item("mergetoolHolding")->isVisible() && !scene.item("leaveMergetool")->isVisible());
 
                 // Clicking the launched path in the file list again brings both back.
                 clickFile(scene, "launched.txt");
                 settleFor("waiting state after re-selecting the launched path", waitingShown);
-                CHECK(scene.controller->mergetoolWaiting());
-                CHECK(scene.controller->mergetool()->waitingPath() == QByteArray("launched.txt"));
+                CHECK(scene.controller->mergetool()->waiting());
+                CHECK(scene.controller->mergetoolSession()->waitingPath() == QByteArray("launched.txt"));
                 CHECK(scene.item("leaveMergetool")->isEnabled());
                 expectText(scene.text("leaveMergetool"), QStringLiteral("Leave unresolved"), "leave control");
                 CHECK(parent->state() != QProcess::NotRunning);
@@ -2566,7 +2574,7 @@ Item {
                              geometry.c_str());
             };
             QObject placementObserver;
-            QObject::connect(scene.controller.get(), &ApplicationController::editorPlaced, &placementObserver,
+            QObject::connect(scene.controller->editor(), &ResultEditorAdapter::placed, &placementObserver,
                              [&] { recordPlacement("editorPlaced"); });
             recordPlacement("before-long-selection");
             clickFile(scene, "long.txt");
@@ -2771,7 +2779,7 @@ Item {
             {
                 Scene scene(repo);
                 clickFile(scene, "kept.txt");
-                auto &files = *scene.controller->files();
+                auto &files = *scene.controller->store();
                 auto *prompt = scene.object("recoveryCloseDialog");
                 auto *handoff = scene.object("handoffDialog");
                 const auto closeWindow = [&] {
@@ -2806,7 +2814,7 @@ Item {
                 expectText(QString::fromStdString(scene.file("kept.txt").current().draft.text), "kept by hand\n!",
                            "kept input");
                 scene.click("handoffLeave");
-                CHECK(!scene.controller->sessionOutcome().isEmpty());
+                CHECK(!scene.controller->completion()->outcome().isEmpty());
                 checkOffline(scene);
             }
             CHECK(repo.snapshot() == launched);
@@ -2873,13 +2881,13 @@ int main(int argc, char **argv)
     if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
     // No argument runs every journey; "review", "handoff" and "window" select one ctest entry's share.
     const auto arguments = QCoreApplication::arguments();
-    auto selection = Selection::All;
+    auto selection = JourneySet::All;
     if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("review"))
-        selection = Selection::Review;
+        selection = JourneySet::Review;
     else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("handoff"))
-        selection = Selection::Handoff;
+        selection = JourneySet::Handoff;
     else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("window"))
-        selection = Selection::Window;
+        selection = JourneySet::Window;
     else if (arguments.size() != 1)
         return 2;
     const auto result = JourneyAcceptanceTests{}.run(selection);

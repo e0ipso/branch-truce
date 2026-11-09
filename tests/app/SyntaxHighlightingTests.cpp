@@ -1,5 +1,6 @@
 #include "TestHarness.h"
-#include "app/ApplicationController.h"
+#include "app/AppPaths.h"
+#include "app/Application.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/QuickScene.h"
@@ -51,11 +52,11 @@ class Fixture {
 public:
     Fixture()
     {
-        CHECK(controller.files()->appendFile(pythonFile("app", "src/app.py")));
-        CHECK(controller.files()->appendFile(pythonFile("unknown", "src/app.unknownext")));
-        CHECK(controller.files()->appendFile(pythonFile("notes", "docs/notes.txt")));
-        CHECK(controller.selectFile("app"));
-        engine.setInitialProperties({{"controller", QVariant::fromValue(&controller)}});
+        CHECK(controller.store()->appendFile(pythonFile("app", "src/app.py")));
+        CHECK(controller.store()->appendFile(pythonFile("unknown", "src/app.unknownext")));
+        CHECK(controller.store()->appendFile(pythonFile("notes", "docs/notes.txt")));
+        CHECK(controller.selection()->select("app"));
+        engine.setInitialProperties(controller.windowProperties());
         engine.loadFromModule("BranchTruce", "Main");
         CHECK(engine.rootObjects().size() == 1);
         window = qobject_cast<QQuickWindow *>(engine.rootObjects().front());
@@ -87,11 +88,11 @@ public:
     }
     qsizetype transactions()
     {
-        return storage::RecoveryStore(controller.files()->recoveryDirectory()).read().transactions.size();
+        return storage::RecoveryStore(controller.store()->recoveryDirectory()).read().transactions.size();
     }
-    const FileSession &file(const std::string &id = "app") { return *controller.files()->file(id); }
+    const FileSession &file(const std::string &id = "app") { return *controller.store()->file(id); }
 
-    ApplicationController controller{gitOnPath()};
+    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };
@@ -208,9 +209,9 @@ public:
                 CHECK(highlighter->theme().name() == QStringLiteral("Breeze Light"));
                 checkPythonColours(fixture.document(pane));
             }
-            CHECK(fixture.controller.selectFile("unknown"));
+            CHECK(fixture.controller.selection()->select("unknown"));
             settlePlain(fixture);
-            CHECK(fixture.controller.selectFile("app"));
+            CHECK(fixture.controller.selection()->select("app"));
             settleHighlighted(fixture);
             for (const auto *pane : panes)
                 CHECK(fixture.highlighter(pane)->definition().name() == QStringLiteral("Python"));
@@ -255,7 +256,7 @@ public:
             }
             CHECK(foreground(result, QStringLiteral("def")) != lightKeyword);
             unchanged();
-            fixture.controller.setSyntaxBackground(QColor(QStringLiteral("#eff0f1")));
+            fixture.controller.editor()->setSyntaxBackground(QColor(QStringLiteral("#eff0f1")));
             CHECK(foreground(result, QStringLiteral("def")) == lightKeyword);
             unchanged();
             // A real edit is still one revision and one transaction, and stays highlighted.
@@ -316,9 +317,9 @@ public:
             };
             for (const auto *pane : panes) fixture.highlighter(pane)->rehighlight();
             unchanged();
-            fixture.controller.setSyntaxBackground(QColor(QStringLiteral("#202326")));
+            fixture.controller.editor()->setSyntaxBackground(QColor(QStringLiteral("#202326")));
             unchanged();
-            fixture.controller.setSyntaxBackground(QColor(QStringLiteral("#eff0f1")));
+            fixture.controller.editor()->setSyntaxBackground(QColor(QStringLiteral("#eff0f1")));
             unchanged();
             // An edit moves the ranges with the text of its revision.
             auto *editor = fixture.item("resultText");
@@ -334,7 +335,7 @@ public:
         });
         suite.run("a .txt file keeps one highlighter attached to every pane", [] {
             Fixture fixture;
-            CHECK(fixture.controller.selectFile("notes"));
+            CHECK(fixture.controller.selection()->select("notes"));
             settlePlain(fixture);
         });
         suite.run("scattered decorations publish one document change without changing text or history", [] {
@@ -381,7 +382,7 @@ public:
         });
         suite.run("a decoration pass creates no revision and no recovery transaction", [] {
             Fixture fixture;
-            CHECK(fixture.controller.selectFile("notes"));
+            CHECK(fixture.controller.selection()->select("notes"));
             settlePlain(fixture);
             auto *result = fixture.document("resultText");
             const auto before = fixture.file("notes").current();

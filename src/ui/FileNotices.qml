@@ -14,7 +14,9 @@ import org.kde.kirigami as Kirigami
 // wrapping column would take a spacing and a share of the height even with nothing to show.
 ObjectModel {
     id: fileNotices
-    required property ApplicationController controller
+    required property FileCommands commands
+    required property CommandFeedback feedback
+    required property MergetoolStatus mergetool
     required property SelectedFile selectedFile
     required property bool supportedSelection
     // True while an input method composes text that the result has not acknowledged.
@@ -31,8 +33,8 @@ ObjectModel {
         type: Kirigami.MessageType.Error
         text: fileNotices.selectedFile.recoveryError || qsTr("Pending input needs recovery.")
         actions: [
-            NamedAction { controlName: "retryRecovery"; text: qsTr("Retry keeping pending input"); visible: !!fileNotices.selectedFile.pendingInput && fileNotices.selectedFile.recoveryState !== "save-failed"; onTriggered: fileNotices.controller.files.retryPendingRecovery(fileNotices.controller.selectedFileId) },
-            NamedAction { controlName: "retrySave"; text: qsTr("Retry Save"); visible: fileNotices.selectedFile.recoveryState === "save-failed"; onTriggered: fileNotices.controller.files.retryPendingRecovery(fileNotices.controller.selectedFileId) }
+            NamedAction { controlName: "retryRecovery"; text: qsTr("Retry keeping pending input"); visible: !!fileNotices.selectedFile.pendingInput && fileNotices.selectedFile.recoveryState !== FileStates.RecoveryState.SaveFailed; onTriggered: fileNotices.commands.retryPendingRecovery(fileNotices.selectedFile.fileId) },
+            NamedAction { controlName: "retrySave"; text: qsTr("Retry Save"); visible: fileNotices.selectedFile.recoveryState === FileStates.RecoveryState.SaveFailed; onTriggered: fileNotices.commands.retryPendingRecovery(fileNotices.selectedFile.fileId) }
         ]
     }
     PlainInlineMessage {
@@ -41,16 +43,16 @@ ObjectModel {
         type: Kirigami.MessageType.Information
         icon.name: "dialog-information"
         Layout.fillWidth: true
-        visible: fileNotices.controller.commandMessage.length > 0 && !fileNotices.controller.resolutionConfirmation
-        text: fileNotices.controller.commandMessage
+        visible: fileNotices.feedback.message.length > 0 && !fileNotices.commands.resolutionConfirmation
+        text: fileNotices.feedback.message
         actions: [
             Kirigami.Action {
                 objectName: "showFirstMarker"
-                text: qsTr("Go to line %1").arg(fileNotices.controller.markerBlocker.line || 0)
+                text: qsTr("Go to line %1").arg(fileNotices.feedback.markerBlocker.line || 0)
                 icon.name: "go-jump"
-                visible: !!fileNotices.controller.markerBlocker.line
+                visible: !!fileNotices.feedback.markerBlocker.line
                 onTriggered: {
-                    if (fileNotices.controller.showFirstMarker())
+                    if (fileNotices.commands.showFirstMarker())
                         fileNotices.firstMarkerShown()
                 }
             }
@@ -60,9 +62,9 @@ ObjectModel {
         objectName: "fileFailureNotice"
         onPlainTextRequested: item => fileNotices.plainTextRequested(item)
         Layout.fillWidth: true
-        visible: fileNotices.selectedFile.statusKind === SessionModel.WriteFailed
-            || (fileNotices.selectedFile.statusKind === SessionModel.WrittenUnresolved
-                && fileNotices.controller.parentStagingPath.length === 0)
+        visible: fileNotices.selectedFile.statusKind === FileStates.StatusKind.WriteFailed
+            || (fileNotices.selectedFile.statusKind === FileStates.StatusKind.WrittenUnresolved
+                && fileNotices.mergetool.parentStagingPath.length === 0)
         type: Kirigami.MessageType.Error
         text: fileNotices.selectedFile.status
     }
@@ -80,9 +82,9 @@ ObjectModel {
         type: Kirigami.MessageType.Warning
         icon.name: "vcs-locally-modified"
         Layout.fillWidth: true
-        visible: fileNotices.controller.parentStagingPath.length > 0
-        text: qsTr("Written, unresolved. Waiting for Git to stage %1.").arg(fileNotices.controller.parentStagingPath)
-        actions: [NamedAction { controlName: "recheckParentStaging"; text: qsTr("Check Git staging"); enabled: !fileNotices.controller.resolutionBusy; onTriggered: fileNotices.controller.recheckParentAcknowledgment() }]
+        visible: fileNotices.mergetool.parentStagingPath.length > 0
+        text: qsTr("Written, unresolved. Waiting for Git to stage %1.").arg(fileNotices.mergetool.parentStagingPath)
+        actions: [NamedAction { controlName: "recheckParentStaging"; text: qsTr("Check Git staging"); enabled: !fileNotices.commands.resolutionBusy; onTriggered: fileNotices.mergetool.recheckParentAcknowledgment() }]
     }
     PlainInlineMessage {
         objectName: "mergetoolHolding"
@@ -90,9 +92,9 @@ ObjectModel {
         type: Kirigami.MessageType.Information
         icon.name: "vcs-conflicting"
         Layout.fillWidth: true
-        visible: fileNotices.controller.mergetoolWaiting
+        visible: fileNotices.mergetool.waiting
         text: qsTr("Git is waiting on this path. Mark resolved hands it back. Leave keeps the draft and returns the original file.")
-        actions: [NamedAction { controlName: "leaveMergetool"; text: qsTr("Leave unresolved"); enabled: !fileNotices.controller.resolutionBusy; onTriggered: fileNotices.controller.leaveMergetool() }]
+        actions: [NamedAction { controlName: "leaveMergetool"; text: qsTr("Leave unresolved"); enabled: !fileNotices.commands.resolutionBusy; onTriggered: fileNotices.mergetool.leave() }]
     }
     // A path whose result Git already staged is not waiting for a launch.
     PlainInlineMessage {
@@ -101,8 +103,8 @@ ObjectModel {
         type: Kirigami.MessageType.Warning
         icon.name: "chronometer"
         Layout.fillWidth: true
-        visible: fileNotices.controller.parentSessionActive && !fileNotices.controller.mergetoolWaiting
-                 && fileNotices.controller.parentStagingPath.length === 0 && fileNotices.supportedSelection
+        visible: fileNotices.mergetool.parentSessionActive && !fileNotices.mergetool.waiting
+                 && fileNotices.mergetool.parentStagingPath.length === 0 && fileNotices.supportedSelection
                  && !fileNotices.selectedFile.resolved
                  && !(fileNotices.selectedFile.progress && fileNotices.selectedFile.progress.earlierResolved)
         text: qsTr("Waiting for Git to launch this path. It is not resolved.")
@@ -111,9 +113,9 @@ ObjectModel {
         objectName: "parentSessionNotice"
         onPlainTextRequested: item => fileNotices.plainTextRequested(item)
         Layout.fillWidth: true
-        visible: fileNotices.controller.canEndParentSession
+        visible: fileNotices.mergetool.canEndParentSession
         text: qsTr("The parent Git session can be finished.")
-        actions: [NamedAction { controlName: "endParentSession"; text: qsTr("Parent Git is finished"); onTriggered: fileNotices.controller.endParentSession() }]
+        actions: [NamedAction { controlName: "endParentSession"; text: qsTr("Parent Git is finished"); onTriggered: fileNotices.mergetool.endParentSession() }]
     }
     // Derived from the current revision: an undo that reopens a choice hides it again. It is
     // not review, and Git still sees the conflict until Mark resolved.
@@ -125,7 +127,7 @@ ObjectModel {
         icon.name: "checkmark"
         visible: fileNotices.supportedSelection
             && !!fileNotices.selectedFile.progress && !!fileNotices.selectedFile.progress.settled
-            && !fileNotices.controller.resolutionConfirmation
+            && !fileNotices.commands.resolutionConfirmation
         text: qsTr("Every choice is decided and no conflict markers remain. Review the result, then Mark resolved to write it and resolve the file in Git.")
     }
     PlainInlineMessage {
@@ -133,17 +135,17 @@ ObjectModel {
         onPlainTextRequested: item => fileNotices.plainTextRequested(item)
         Layout.fillWidth: true
         type: Kirigami.MessageType.Warning
-        visible: fileNotices.controller.resolutionConfirmation
-            && fileNotices.controller.resolutionFileId === fileNotices.controller.selectedFileId
-            && fileNotices.controller.resolutionRevision === fileNotices.selectedFile.currentRevision
-        text: fileNotices.controller.commandMessage
+        visible: fileNotices.commands.resolutionConfirmation
+            && fileNotices.commands.resolutionFileId === fileNotices.selectedFile.fileId
+            && fileNotices.commands.resolutionRevision === fileNotices.selectedFile.currentRevision
+        text: fileNotices.feedback.message
         actions: [
-            NamedAction { controlName: "confirmResolution"; text: qsTr("Confirm resolution"); enabled: !fileNotices.controller.resolutionBusy && !fileNotices.composing; onTriggered: fileNotices.controller.markResolved(fileNotices.controller.selectedFileId, fileNotices.selectedFile.currentRevision, true) },
-            NamedAction { controlName: "cancelResolution"; text: qsTr("Cancel"); onTriggered: fileNotices.controller.cancelResolution() }
+            NamedAction { controlName: "confirmResolution"; text: qsTr("Confirm resolution"); enabled: !fileNotices.commands.resolutionBusy && !fileNotices.composing; onTriggered: fileNotices.commands.markResolved(fileNotices.selectedFile.fileId, fileNotices.selectedFile.currentRevision, true) },
+            NamedAction { controlName: "cancelResolution"; text: qsTr("Cancel"); onTriggered: fileNotices.commands.cancelResolution() }
         ]
     }
     SnapshotPane {
-        visible: !!fileNotices.selectedFile.pendingInput && fileNotices.selectedFile.recoveryState !== "save-failed"
+        visible: !!fileNotices.selectedFile.pendingInput && fileNotices.selectedFile.recoveryState !== FileStates.RecoveryState.SaveFailed
         paneName: "pendingInput"
         paneTitle: qsTr("Pending input · not acknowledged")
         paneText: fileNotices.selectedFile.pendingText || ""

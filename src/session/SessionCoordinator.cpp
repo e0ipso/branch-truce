@@ -60,19 +60,19 @@ public:
         std::optional<FileSession> mutationTarget;
     };
 
-    State(SessionCoordinator &owner, SessionModel &model, QString executable)
-        : owner(owner), model(model), executable(std::move(executable))
+    State(SessionCoordinator &owner, SessionStore &store, QString executable)
+        : owner(owner), store(store), executable(std::move(executable))
     {}
 
     [[nodiscard]] bool owningThread() const
     {
-        return QThread::currentThread() == owner.thread() && model.thread() == owner.thread();
+        return QThread::currentThread() == owner.thread() && store.thread() == owner.thread();
     }
     [[nodiscard]] TaskDisposition disposition(const TaskStamp &stamp) const
     {
         if (stamp.generation != generation || stamp.worktree != worktree || stamp.operation != operation)
             return TaskDisposition::StaleSession;
-        const auto *file = model.file(stamp.fileId);
+        const auto *file = store.file(stamp.fileId);
         if (!file || file->current().id != stamp.inputRevision || file->current().result != stamp.resultRevision
             || file->current().decisions != stamp.decisionRevision)
             return TaskDisposition::StaleRevision;
@@ -91,7 +91,7 @@ public:
         if (!owningThread() || replacing || generation == 0 || nextId == 0
             || jobs.size() >= static_cast<std::size_t>(std::numeric_limits<int>::max()))
             return 0;
-        const auto *file = model.file(fileId);
+        const auto *file = store.file(fileId);
         if (!file || file->current().id != expected) return 0;
         const auto &revision = file->current();
         const auto id = nextId++;
@@ -150,10 +150,9 @@ public:
             }
             if (job->mutation && queues.at(job->input.stamp.worktree).front() != id) continue;
             if (job->mutation) {
-                const auto *file = model.file(job->input.stamp.fileId);
-                auto &journal = model.recoveryJournal();
-                const auto leaseError = journal.ensureLease();
-                if (!file || model.hasPendingRecovery() || model.hasRecoveryFailure(file->id())
+                const auto *file = store.file(job->input.stamp.fileId);
+                const auto leaseError = store.ensureRecoveryLease();
+                if (!file || store.hasPendingRecovery() || store.hasRecoveryFailure(file->id())
                     || !leaseError.isEmpty()) {
                     finish(job,
                            {TaskStatus::Failed,
@@ -166,14 +165,14 @@ public:
                 }
                 const auto mutationId = QUuid::createUuid().toString(QUuid::WithoutBraces);
                 const auto kind = job->gitRequest ? QStringLiteral("staging") : QStringLiteral("publication");
-                const auto committed = journal.commit(mutationRecoveryTransaction(*file, kind, mutationId));
+                const auto committed = store.commitRecord(mutationRecoveryTransaction(*file, kind, mutationId));
                 if (!committed.succeeded) {
-                    model.recordRecoveryFailure(file->id(), committed.error);
+                    store.recordRecoveryFailure(file->id(), committed.error);
                     finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, committed.error, {}});
                     if (!alive) return;
                     continue;
                 }
-                job->recoveryDirectory = model.recoveryDirectory();
+                job->recoveryDirectory = store.recoveryDirectory();
                 job->mutationId = mutationId;
                 job->mutationTarget = *file;
             }
@@ -278,8 +277,8 @@ public:
             case MutationObservation::ObservedChanged: observation = QStringLiteral("changed"); break;
             case MutationObservation::Uncertain: observation = QStringLiteral("uncertain"); break;
             }
-            storage::RecoveryStore store(job->recoveryDirectory);
-            const auto committed = store.commit(mutationRecoveryTransaction(
+            storage::RecoveryStore journal(job->recoveryDirectory);
+            const auto committed = journal.commit(mutationRecoveryTransaction(
                 *job->mutationTarget, job->gitRequest ? QStringLiteral("staging") : QStringLiteral("publication"),
                 job->mutationId, observation));
             if (!committed.succeeded) {
@@ -288,8 +287,8 @@ public:
                     result.mutation = MutationObservation::Uncertain;
                 result.diagnostic +=
                     QStringLiteral("; recovery could not retain the mutation outcome: ") + committed.error;
-                if (job->input.stamp.worktree == worktree && job->recoveryDirectory == model.recoveryDirectory())
-                    model.recordRecoveryFailure(job->input.stamp.fileId, result.diagnostic);
+                if (job->input.stamp.worktree == worktree && job->recoveryDirectory == store.recoveryDirectory())
+                    store.recordRecoveryFailure(job->input.stamp.fileId, result.diagnostic);
             }
         }
         const auto id = job->input.stamp.id;
@@ -312,7 +311,7 @@ public:
     }
 
     SessionCoordinator &owner;
-    SessionModel &model;
+    SessionStore &store;
     const QString executable;
     quint64 generation = 0;
     TaskId nextId = 1;
@@ -325,8 +324,8 @@ public:
     std::vector<TaskCompletion> mutations;
 };
 
-SessionCoordinator::SessionCoordinator(SessionModel &model, QString gitExecutable, QObject *parent)
-    : QObject(parent), d(std::make_unique<State>(*this, model, std::move(gitExecutable)))
+SessionCoordinator::SessionCoordinator(SessionStore &store, QString gitExecutable, QObject *parent)
+    : QObject(parent), d(std::make_unique<State>(*this, store, std::move(gitExecutable)))
 {}
 SessionCoordinator::~SessionCoordinator()
 {
@@ -347,7 +346,7 @@ bool SessionCoordinator::replaceSession(const QString &worktree, const QString &
 bool SessionCoordinator::completeSessionLoad(const TaskStamp &stamp, std::vector<FileSession> files)
 {
     if (!d->owningThread() || d->replacing || d->disposition(stamp) != TaskDisposition::Current
-        || !d->model.canCompleteLoad(files))
+        || !d->store.canCompleteLoad(files))
         return false;
     return replaceSession(d->worktree, d->operation, std::move(files), true);
 }
@@ -356,7 +355,7 @@ bool SessionCoordinator::completeRecoveryLoad(const TaskStamp &stamp, std::vecto
                                               RecoveryRestore restore)
 {
     if (!d->owningThread() || d->replacing || d->disposition(stamp) != TaskDisposition::Current
-        || !d->model.canRestoreLoad())
+        || !d->store.canRestoreLoad())
         return false;
     const bool recovered = restore.found;
     auto files = recovered ? std::move(restore.files) : std::move(observed);
@@ -370,7 +369,7 @@ bool SessionCoordinator::completeRecoveryLoad(const TaskStamp &stamp, std::vecto
 bool SessionCoordinator::replaceSession(const QString &worktree, const QString &operation,
                                         std::vector<FileSession> files, bool completingLoad, RecoveryRestore *restore)
 {
-    if (!d->owningThread() || d->replacing || (!completingLoad && d->model.hasPendingRecovery()) || operation.isEmpty()
+    if (!d->owningThread() || d->replacing || (!completingLoad && d->store.hasPendingRecovery()) || operation.isEmpty()
         || d->generation == std::numeric_limits<quint64>::max()
         || files.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
         return false;
@@ -386,7 +385,7 @@ bool SessionCoordinator::replaceSession(const QString &worktree, const QString &
     d->worktree = QDir::cleanPath(canonical);
     d->operation = operation;
     cancelAll();
-    d->model.replaceFiles(std::move(files), restore);
+    d->store.replaceFiles(std::move(files), restore);
     d->replacing = false;
     Q_EMIT sessionChanged();
     return true;
@@ -409,7 +408,7 @@ TaskId SessionCoordinator::submitGit(const std::string &fileId, RevisionId expec
                                      Completion completion)
 {
     if (!d->owningThread() || d->replacing) return 0;
-    const auto *file = d->model.file(fileId);
+    const auto *file = d->store.file(fileId);
     const bool mutation = request.operation == git::Operation::StageFile;
     if (!file || (mutation && request.path != QByteArray::fromStdString(file->path()))) return 0;
     request.directory = d->worktree;

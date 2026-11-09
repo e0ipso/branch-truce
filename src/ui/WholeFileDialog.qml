@@ -9,17 +9,18 @@ import org.kde.kirigami as Kirigami
 
 PreviewDialog {
     id: wholeFileDialog
-    required property ApplicationController controller
+    required property ChoicePreviewFlow choices
+    required property CommandFeedback feedback
     objectName: "wholeFileDialog"
-    title: qsTr("Replace whole file from %1").arg(wholeFileDialog.controller.wholeFilePreview.side || "")
-    path: wholeFileDialog.controller.wholeFilePreview.path || ""
-    summary: wholeFileDialog.controller.wholeFilePreview.source || ""
-    detail: wholeFileDialog.controller.wholeFilePreview.detail || ""
+    title: qsTr("Replace whole file from %1").arg(wholeFileDialog.choices.wholeFilePreview.side || "")
+    path: wholeFileDialog.choices.wholeFilePreview.path || ""
+    summary: wholeFileDialog.choices.wholeFilePreview.source || ""
+    detail: wholeFileDialog.choices.wholeFilePreview.detail || ""
     detailName: "wholeFileWarning"
     confirmText: qsTr("Replace whole file")
-    onApplyRequested: wholeFileDialog.refused = !wholeFileDialog.controller.applyWholeFile()
-    refusalMessage: wholeFileDialog.controller.commandMessage
-    onRejected: wholeFileDialog.controller.cancelChoice()
+    onApplyRequested: wholeFileDialog.refused = !wholeFileDialog.choices.applyWholeFile()
+    refusalMessage: wholeFileDialog.feedback.message
+    onRejected: wholeFileDialog.choices.cancel()
     TabBar {
         id: wholeFileTabs
         Layout.fillWidth: true
@@ -35,17 +36,17 @@ PreviewDialog {
             BeforeAfterPanes {
                 namePrefix: "wholeFile"
                 beforeTitle: qsTr("Full current result, including manual edits")
-                beforeText: wholeFileDialog.controller.wholeFilePreview.before || ""
+                beforeText: wholeFileDialog.choices.wholeFilePreview.before || ""
                 afterTitle: qsTr("Full proposed result")
-                afterText: wholeFileDialog.controller.wholeFilePreview.replacement || ""
+                afterText: wholeFileDialog.choices.wholeFilePreview.replacement || ""
             }
             Item { Layout.fillHeight: true }
         }
         ColumnLayout {
             PlainLabel {
                 Layout.fillWidth: true
-                visible: !!wholeFileDialog.controller.wholeFilePreview.retainedDecisions
-                text: wholeFileDialog.controller.wholeFilePreview.retainedDecisions || ""
+                visible: !!wholeFileDialog.choices.wholeFilePreview.retainedDecisions
+                text: wholeFileDialog.choices.wholeFilePreview.retainedDecisions || ""
                 wrapMode: Text.Wrap
             }
             ListView {
@@ -53,7 +54,7 @@ PreviewDialog {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
-                model: wholeFileDialog.controller.wholeFilePreview.contributions || []
+                model: wholeFileDialog.choices.wholeFilePreview.contributions || []
                 spacing: Kirigami.Units.largeSpacing
                 delegate: ColumnLayout {
                     id: wholeContribution
@@ -86,7 +87,7 @@ PreviewDialog {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
-                model: wholeFileDialog.controller.wholeFilePreview.differences || []
+                model: wholeFileDialog.choices.wholeFilePreview.differences || []
                 spacing: Kirigami.Units.largeSpacing
                 delegate: ScopedChange {
                     id: wholeDifference

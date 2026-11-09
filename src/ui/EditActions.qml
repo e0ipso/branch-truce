@@ -9,7 +9,8 @@ import org.kde.kirigami as Kirigami
 QtObject {
     id: editActions
     objectName: "resultEditActions"
-    required property ApplicationController controller
+    required property ResultEditorAdapter editor
+    required property FileCommands commands
     required property SelectedFile file
     required property bool composing
     function trigger(name: string): void {
@@ -19,8 +20,8 @@ QtObject {
     }
     // Native TextArea key events use the same actions as the window shortcuts.
     readonly property Connections editorKeys: Connections {
-        target: editActions.controller
-        function onResultEditActionRequested(name: string): void {
+        target: editActions.editor
+        function onEditActionRequested(name: string): void {
             editActions.trigger(name)
         }
     }
@@ -33,8 +34,8 @@ QtObject {
         readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Undo)
         shortcut: bindings.length ? bindings[0] : ""
         alternateSequences: bindings.slice(1)
-        enabled: !!editActions.controller.resultEditable && !!editActions.file.canUndo && !editActions.composing
-        onTriggered: editActions.controller.undo(editActions.controller.selectedFileId, editActions.file.currentRevision)
+        enabled: !!editActions.editor.editable && !!editActions.file.canUndo && !editActions.composing
+        onTriggered: editActions.commands.undo(editActions.file.fileId, editActions.file.currentRevision)
     }
     readonly property NamedAction redo: NamedAction {
         controlName: "redoCommand"
@@ -45,8 +46,8 @@ QtObject {
         readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Redo)
         shortcut: bindings.length ? bindings[0] : ""
         alternateSequences: bindings.slice(1)
-        enabled: !!editActions.controller.resultEditable && !!editActions.file.canRedo && !editActions.composing
-        onTriggered: editActions.controller.redo(editActions.controller.selectedFileId, editActions.file.currentRevision)
+        enabled: !!editActions.editor.editable && !!editActions.file.canRedo && !editActions.composing
+        onTriggered: editActions.commands.redo(editActions.file.fileId, editActions.file.currentRevision)
     }
     readonly property NamedAction copy: NamedAction {
         controlName: "copyResult"
@@ -57,8 +58,8 @@ QtObject {
         readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Copy)
         shortcut: bindings.length ? bindings[0] : ""
         alternateSequences: bindings.slice(1)
-        enabled: !!editActions.controller.resultHasSelection
-        onTriggered: editActions.controller.resultClipboard(ResultEditorAdapter.Copy)
+        enabled: !!editActions.editor.hasSelection
+        onTriggered: editActions.editor.clipboard(ResultEditorAdapter.Copy)
     }
     readonly property NamedAction paste: NamedAction {
         controlName: "pasteResult"
@@ -69,8 +70,8 @@ QtObject {
         readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Paste)
         shortcut: bindings.length ? bindings[0] : ""
         alternateSequences: bindings.slice(1)
-        enabled: !!editActions.controller.resultEditable && !!editActions.controller.resultCanPaste
+        enabled: !!editActions.editor.editable && !!editActions.editor.canPaste
             && !editActions.composing
-        onTriggered: editActions.controller.resultClipboard(ResultEditorAdapter.Paste)
+        onTriggered: editActions.editor.clipboard(ResultEditorAdapter.Paste)
     }
 }
