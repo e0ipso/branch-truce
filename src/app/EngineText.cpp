@@ -178,7 +178,8 @@ QString loadFailure(const LoadFailure &failure)
 
 QString supportDetail(const FileSession &file)
 {
-    return file.loadFailure() ? loadFailure(*file.loadFailure()) : utf8(file.supportDetail());
+    const auto &failure = file.loadFailure();
+    return failure ? loadFailure(*failure) : utf8(file.supportDetail());
 }
 
 QString choice(const ChoicePreview &preview)

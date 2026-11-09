@@ -139,7 +139,8 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, Suppor
             return;
         }
     }
-    open(launch(1, std::move(initial), true, initializeChoices));
+    // Only a file the app edits is aligned: its texts passed every check above.
+    open(launch(1, std::move(initial), support_ == Support::Supported, initializeChoices));
 }
 
 FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool correspond,
@@ -475,11 +476,11 @@ Transition FileSession::recordStage(RevisionId revision, Outcome outcome, std::s
 Transition FileSession::discardToStaged(RevisionId expected)
 {
     if (expected != current().id) return Transition::StaleRevision;
-    if (support_ != Support::Supported || !publication_.stagedVerified()) return Transition::Blocked;
-    const auto &staged = publication_.staged()->revision;
-    if (current().id == staged.id) return Transition::NoChange;
+    const auto &staged = publication_.staged();
+    if (support_ != Support::Supported || !staged || !publication_.stagedVerified()) return Transition::Blocked;
+    if (current().id == staged->revision.id) return Transition::NoChange;
     const auto floor = history_.nextId();
-    history_.reopen(staged);
+    history_.reopen(staged->revision);
     publication_.discardedToStaged(floor);
     return Transition::Applied;
 }

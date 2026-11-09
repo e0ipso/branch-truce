@@ -141,19 +141,19 @@ private:
         if (!end) return std::nullopt;
         std::optional<std::size_t> found;
         for (std::size_t i = 0; i < lines.size(); ++i) {
-            if (!copied(base, lines[i], *end)) continue;
+            if (!copied(*sources_, base, lines[i], *end)) continue;
             if (found) return std::nullopt;
             found = i;
         }
         return found;
     }
 
-    [[nodiscard]] bool copied(ByteRange base, ByteRange separator, std::size_t end) const
+    [[nodiscard]] bool copied(const RegionSources &sources, ByteRange base, ByteRange separator, std::size_t end) const
     {
         const auto region = slice(text_, {base.begin, separator.begin});
-        if (std::find(sources_->bases.begin(), sources_->bases.end(), region) != sources_->bases.end()) return true;
-        return wholeLines(sources_->earlier, slice(text_, {base.end, separator.begin}))
-            && wholeLines(sources_->right, slice(text_, {separator.end, end}));
+        if (std::find(sources.bases.begin(), sources.bases.end(), region) != sources.bases.end()) return true;
+        return wholeLines(sources.earlier, slice(text_, {base.end, separator.begin}))
+            && wholeLines(sources.right, slice(text_, {separator.end, end}));
     }
 
     std::string_view text_;

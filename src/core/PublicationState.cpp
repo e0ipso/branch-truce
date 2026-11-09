@@ -118,6 +118,7 @@ void PublicationState::discardedToStaged(RevisionId floor)
 {
     // Selecting this previously saved, verified state deliberately discards
     // the newer draft and checkpoint. No external state changes or new review occur.
+    if (!staged_) return;
     const auto &revision = staged_->revision;
     outcomeFloor_ = floor;
     checkpoint_ = revision;

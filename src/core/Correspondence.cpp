@@ -665,15 +665,15 @@ const ResultAnchor *CorrespondenceMap::anchor(const std::string &id) const noexc
 
 bool CorrespondenceMap::bind(SourceAnchor source)
 {
-    const auto *text = this->source(source.side);
-    if (source.contributionId.empty() || !text || !validByteRange(*text, source.range)
+    const auto &captured = sources_->source(source.side);
+    if (source.contributionId.empty() || !captured || !validByteRange(captured->worktree.utf8, source.range)
         || anchors_.contains(source.contributionId))
         return false;
     if (!resultLines_) resultLines_ = std::make_shared<const std::vector<std::size_t>>(lineStarts(text_));
     const LinePairing pairing{sourceLines_->at(source.side), *resultLines_};
     const auto projected = project(passages_.at(source.side), source.range, source.affinity, &pairing);
     const auto id = source.contributionId;
-    const AnchorOrigin origin{sources_->provenance.sessionId, sources_->path, sources_->source(source.side)->objectId};
+    const AnchorOrigin origin{sources_->provenance.sessionId, sources_->path, captured->objectId};
     // Launch text that differs from its source needs confirmation to replace,
     // but nobody has edited it by hand yet.
     anchors_.emplace(

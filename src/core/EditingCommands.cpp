@@ -13,9 +13,11 @@ bool sharesPlace(ByteRange a, ByteRange b) { return a == b || overlaps(a, b); }
 
 bool adjoining(ByteRange a, ByteRange b) { return a == b || a.end == b.begin || b.end == a.begin; }
 
-bool mapped(const ResultAnchor *anchor) noexcept
+// The result range of a mapped anchor, or nothing when it has none.
+std::optional<ByteRange> mappedRange(const ResultAnchor *anchor) noexcept
 {
-    return anchor && anchor->state == AnchorState::Mapped && anchor->result;
+    if (!anchor || anchor->state != AnchorState::Mapped) return std::nullopt;
+    return anchor->result;
 }
 
 Decision decision(const Draft &draft, const std::string &id)
@@ -66,6 +68,7 @@ using Refusal = std::optional<std::pair<Transition, ChoiceNote>>;
 struct Competitor {
     const ChoiceTarget *target = nullptr;
     const ResultAnchor *anchor = nullptr;
+    ByteRange range;
     std::size_t matches = 0;
 };
 
@@ -78,8 +81,9 @@ Competitor competitor(const Selection &selected, bool marked)
             || target.source.side == selected.target.source.side)
             continue;
         const auto *candidate = selected.mapping.anchor(target.source.contributionId);
-        if (!mapped(candidate) || !(marked || adjoining(selected.range, *candidate->result))) continue;
-        const bool sameRange = selected.range == *candidate->result;
+        const auto range = mappedRange(candidate);
+        if (!range || !(marked || adjoining(selected.range, *range))) continue;
+        const bool sameRange = selected.range == *range;
         // Neighboring lines are also adjacent. An exact competing range has
         // priority, so an unrelated adjacent line cannot make it ambiguous.
         if (sameRange && !exact) {
@@ -90,6 +94,7 @@ Competitor competitor(const Selection &selected, bool marked)
         ++found.matches;
         found.target = &target;
         found.anchor = candidate;
+        found.range = *range;
     }
     return found;
 }
@@ -104,11 +109,12 @@ Refusal unselectedContribution(const Selection &selected, const EditingCommand &
         for (const auto &id : target.decisions) {
             if (command.decisions.contains(id) || !inspected.insert(id).second) continue;
             const auto *unselected = selected.mapping.anchor(id);
-            if (!mapped(unselected)) {
+            const auto place = mappedRange(unselected);
+            if (!place) {
                 if (target.section == selected.target.section)
                     return {{Transition::AmbiguousTarget, ChoiceNote::UnplacedSectionLines}};
             } else if (std::any_of(replaced.begin(), replaced.end(),
-                                   [&](const auto &range) { return sharesPlace(range, *unselected->result); })) {
+                                   [&](const auto &range) { return sharesPlace(range, *place); })) {
                 return {{Transition::AmbiguousTarget, ChoiceNote::ReplacesUnselected}};
             }
         }
@@ -122,7 +128,7 @@ std::vector<ResultEdit> combinationEdits(const Selection &selected, const Compet
 {
     const auto &snapshots = *selected.file.snapshots();
     const auto mine = selected.range;
-    const auto theirs = *other.anchor->result;
+    const auto theirs = other.range;
     // Joining the two scopes of a split block would move text across the
     // shared lines and the other sections. Each scope keeps its own side's
     // text instead, and the decisions' order puts them together when the
@@ -171,7 +177,7 @@ ChoicePreview previewCombination(ChoicePreview preview, const Selection &selecte
         preview.replacement += sourceText(*selected.file.snapshots(), target->source);
         ++order;
     }
-    const auto theirs = *other.anchor->result;
+    const auto theirs = other.range;
     const ByteRange affected{std::min(selected.range.begin, theirs.begin), std::max(selected.range.end, theirs.end)};
     // A split block's combination edits only this section's two scopes, so
     // only text inside them could be replaced.
@@ -203,9 +209,10 @@ const ResultAnchor *replacementAnchor(const Selection &selected)
     if (selected.target.source.range.begin != selected.target.source.range.end) return &selected.anchor;
     const auto *opposite = selected.choices.opposite(selected.target);
     const auto *anchor = opposite ? selected.mapping.anchor(opposite->source.contributionId) : nullptr;
-    if (!mapped(anchor)) return nullptr;
+    const auto range = mappedRange(anchor);
+    if (!range) return nullptr;
     const auto at = selected.range.begin;
-    if (at != anchor->result->begin && at != anchor->result->end && !selected.marked()) return nullptr;
+    if (at != range->begin && at != range->end && !selected.marked()) return nullptr;
     return anchor;
 }
 
@@ -226,7 +233,7 @@ const ResultAnchor *acceptedPlace(const Selection &selected, const ChoiceTarget 
 Refusal planReplacement(const Selection &selected, ChoicePreview &preview)
 {
     const auto *replaced = replacementAnchor(selected);
-    if (!replaced) return {{Transition::AmbiguousTarget, ChoiceNote::UncertainDeletion}};
+    if (!replaced || !replaced->result) return {{Transition::AmbiguousTarget, ChoiceNote::UncertainDeletion}};
     if (replaced != &selected.anchor) preview.command.targets.push_back(*replaced);
     const auto range = *replaced->result;
     preview.before = std::string(slice(selected.draft.text, range));
@@ -254,10 +261,10 @@ Refusal planCompetitors(const Selection &selected, ChoicePreview &preview)
     for (const auto &competing : opposite->decisions) {
         const auto *other = selected.mapping.anchor(competing);
         if (line) {
-            if (!mapped(other)) return {{Transition::AmbiguousTarget, ChoiceNote::UncertainCompetingLine}};
-            if (!sharesPlace(selected.range, *other->result)) continue;
-            if (*other->result != selected.range)
-                return {{Transition::AmbiguousTarget, ChoiceNote::NoExactCompetingLine}};
+            const auto place = mappedRange(other);
+            if (!place) return {{Transition::AmbiguousTarget, ChoiceNote::UncertainCompetingLine}};
+            if (!sharesPlace(selected.range, *place)) continue;
+            if (*place != selected.range) return {{Transition::AmbiguousTarget, ChoiceNote::NoExactCompetingLine}};
         }
         if (decision(selected.draft, competing).value == DecisionValue::Accepted)
             return {{Transition::Blocked, ChoiceNote::CompetingAccepted}};
@@ -340,12 +347,13 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected, const 
     if (!found || !mapping || !file.snapshots())
         return failed(std::move(preview), Transition::InvalidAnchor, ChoiceNote::UnknownScope);
     const auto *anchor = mapping->anchor(target);
-    if (!mapped(anchor))
+    const auto range = mappedRange(anchor);
+    if (!range)
         return failed(std::move(preview),
                       anchor && anchor->state == AnchorState::Ambiguous ? Transition::AmbiguousTarget
                                                                         : Transition::InvalidAnchor,
                       ChoiceNote::UnmappedScope);
-    const Selection selected{file, *mapping, file.catalogue(), file.current().draft, *found, *anchor, *anchor->result};
+    const Selection selected{file, *mapping, file.catalogue(), file.current().draft, *found, *anchor, *range};
     if (action == ChoiceAction::CombineLeftFirst || action == ChoiceAction::CombineRightFirst)
         return previewCombination(std::move(preview), selected);
     return previewSingleSide(std::move(preview), selected);
@@ -394,9 +402,10 @@ public:
             }))
             return std::nullopt;
         const auto *anchor = mapping_.anchor(target.earlier.contributionId);
-        if (!mapped(anchor)) return std::nullopt;
+        if (!mappedRange(anchor)) return std::nullopt;
         const auto replacement = sourceText(snapshots_, target.source);
         anchor = present(target, *anchor, replacement);
+        if (!anchor->result) return std::nullopt;
         const auto range = *anchor->result;
         const auto before = std::string(slice(draft_.text, range));
         const auto base = sourceText(snapshots_, target.earlier);
@@ -414,10 +423,10 @@ private:
     {
         if (target.earlier.range.begin != target.earlier.range.end) return &earlier;
         const auto *inserted = mapping_.anchor(target.source.contributionId);
+        const auto range = mappedRange(inserted);
+        if (!earlier.result || !range) return &earlier;
         const auto at = earlier.result->begin;
-        if (mapped(inserted) && (at == inserted->result->begin || at == inserted->result->end)
-            && slice(draft_.text, *inserted->result) == replacement)
-            return inserted;
+        if ((at == range->begin || at == range->end) && slice(draft_.text, *range) == replacement) return inserted;
         return &earlier;
     }
 
@@ -430,7 +439,8 @@ private:
                 || std::find(target.decisions.begin(), target.decisions.end(), entry.first) != target.decisions.end())
                 return false;
             const auto *accepted = mapping_.anchor(entry.first);
-            return !mapped(accepted) || sharesPlace(range, *accepted->result);
+            const auto place = mappedRange(accepted);
+            return !place || sharesPlace(range, *place);
         });
     }
 

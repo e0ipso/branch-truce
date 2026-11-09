@@ -47,11 +47,14 @@ bool fills(const CorrespondenceMap &mapping, const ChoiceTarget &target, ByteRan
     return anchor && anchor->state == AnchorState::Mapped && anchor->result == region;
 }
 
-// Ignored text is removed only where it is still exactly what the source put there.
-bool removable(const ResultAnchor *anchor, ByteRange region)
+// Ignored text is removed only where it is still exactly what the source
+// put there: the range to remove, or nothing.
+std::optional<ByteRange> removable(const ResultAnchor *anchor, ByteRange region)
 {
-    return anchor && anchor->state == AnchorState::Mapped && anchor->result && !anchor->handEdited
-        && !anchor->manualOverlap && contains(region, *anchor->result);
+    if (!anchor || anchor->state != AnchorState::Mapped || !anchor->result || anchor->handEdited
+        || anchor->manualOverlap || !contains(region, *anchor->result))
+        return std::nullopt;
+    return anchor->result;
 }
 
 // The section whose two source scopes fill the block's side regions.
@@ -200,14 +203,14 @@ private:
         dropped_.back()[index] = all;
         if (all) ignored = {target.source.contributionId};
         for (const auto &id : ignored) {
-            const auto *removed = mapping_.anchor(id);
             if (all && region.begin == region.end) continue;
-            if (!removable(removed, region)) {
+            const auto removed = removable(mapping_.anchor(id), region);
+            if (!removed) {
                 complete_ = false;
                 continue;
             }
-            removals_.push_back({*removed->result, id, {}});
-            cuts_.back()[index].push_back(*removed->result);
+            removals_.push_back({*removed, id, {}});
+            cuts_.back()[index].push_back(*removed);
         }
     }
 

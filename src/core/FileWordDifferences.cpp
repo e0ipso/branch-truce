@@ -41,13 +41,14 @@ public:
     // While a section is undecided its two sides are compared with each other.
     void addCompetingSections()
     {
-        const auto &snapshots = inputs_.snapshots;
-        if (!snapshots.stage2 || !snapshots.stage3) return;
+        const auto &left = inputs_.snapshots.stage2;
+        const auto &right = inputs_.snapshots.stage3;
+        if (!left || !right) return;
         for (const auto &ours : inputs_.choices.targets()) {
             if (ours.scope != ChoiceScope::Section || ours.source.side != SourceSide::Stage2) continue;
             const auto *theirs = inputs_.choices.section(ours.section, SourceSide::Stage3);
             if (!theirs || (!undecided(inputs_.decisions, ours) && !undecided(inputs_.decisions, *theirs))) continue;
-            addCompetingPair(ours, *theirs);
+            addCompetingPair(ours, *theirs, left->worktree.utf8, right->worktree.utf8);
         }
     }
 
@@ -72,10 +73,9 @@ public:
     }
 
 private:
-    void addCompetingPair(const ChoiceTarget &ours, const ChoiceTarget &theirs)
+    void addCompetingPair(const ChoiceTarget &ours, const ChoiceTarget &theirs, std::string_view left,
+                          std::string_view right)
     {
-        const std::string_view left = inputs_.snapshots.stage2->worktree.utf8;
-        const std::string_view right = inputs_.snapshots.stage3->worktree.utf8;
         const auto l = ours.source.range;
         const auto r = theirs.source.range;
         if (!validByteRange(left, l) || !validByteRange(right, r)) return;
