@@ -1,3 +1,10 @@
+## [1.4.0](https://github.com/e0ipso/branch-truce/compare/v1.3.2...v1.4.0) (2026-11-09)
+
+### Features
+
+* ask before loading files over 4000 lines ([1b6bb81](https://github.com/e0ipso/branch-truce/commit/1b6bb8109f863cd0dafe78b2fd14eb64fba6f31f))
+* show a settled file as ready to mark resolved ([8601e8e](https://github.com/e0ipso/branch-truce/commit/8601e8e8cd9d7a1b02559bf7564fd385b6025cb2))
+
 ## [1.3.2](https://github.com/e0ipso/branch-truce/compare/v1.3.1...v1.3.2) (2026-11-09)
 
 ### Bug Fixes
