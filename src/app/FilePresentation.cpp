@@ -1,6 +1,7 @@
 // File presentation turns a stored file's facts and recovery state into the states and sentences views show.
 #include "FilePresentation.h"
 #include "EngineText.h"
+#include "QtText.h"
 #include <array>
 
 namespace branch_truce {
@@ -8,12 +9,6 @@ namespace {
 using FileStates::HandoffCategory;
 using FileStates::NextAction;
 using FileStates::StatusKind;
-
-QString revisionText(RevisionId revision)
-{
-    // Decimal strings retain all 64 bits across the QML/JavaScript boundary.
-    return QString::number(static_cast<qulonglong>(revision));
-}
 
 // One row per handoff category, in handoff order. Icon names are written as
 // designated initializers so the theme icon check collects them from this file.
@@ -133,11 +128,12 @@ QVariantMap FilePresentation::progressData(std::size_t row) const
         {QStringLiteral("resolved"), facts.resolved},
         {QStringLiteral("earlierResolved"), facts.earlierStaged},
         {QStringLiteral("settled"), facts.settled},
-        {QStringLiteral("currentRevision"), revisionText(file.current().id)},
+        {QStringLiteral("currentRevision"), qt_text::revision(file.current().id)},
         {QStringLiteral("savedRevision"),
-         facts.saved && file.checkpoint() ? revisionText(file.checkpoint()->id) : QString{}},
-        {QStringLiteral("reviewedRevision"), facts.reviewed ? revisionText(file.reviewed()->revision.id) : QString{}},
-        {QStringLiteral("stagedRevision"), file.staged() ? revisionText(file.staged()->revision.id) : QString{}}};
+         facts.saved && file.checkpoint() ? qt_text::revision(file.checkpoint()->id) : QString{}},
+        {QStringLiteral("reviewedRevision"),
+         facts.reviewed ? qt_text::revision(file.reviewed()->revision.id) : QString{}},
+        {QStringLiteral("stagedRevision"), file.staged() ? qt_text::revision(file.staged()->revision.id) : QString{}}};
 }
 
 StatusKind FilePresentation::statusKind(std::size_t row) const

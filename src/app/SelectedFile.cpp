@@ -1,5 +1,6 @@
 // SelectedFile keeps immutable sources indexed while projecting changed result revisions.
 #include "SelectedFile.h"
+#include "QtText.h"
 #include "Selection.h"
 #include "SourceIdentity.h"
 #include <algorithm>
@@ -7,24 +8,22 @@
 #include <utility>
 
 namespace branch_truce {
+using qt_text::baseName;
+using qt_text::utf8;
 namespace {
-QString text(const std::string &value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
-
-// The undecorated last path component, for syntax definition lookup.
-QString baseName(const std::string &path) { return text(path.substr(path.rfind('/') + 1)); }
 
 QVariantMap sourceData(const std::optional<SourceSnapshot> &source)
 {
     if (!source) return {};
-    const auto commitId = source->commitId ? text(*source->commitId) : QString{};
+    const auto commitId = source->commitId ? utf8(*source->commitId) : QString{};
     return {{QStringLiteral("available"), true},
-            {QStringLiteral("text"), text(source->worktree.utf8)},
-            {QStringLiteral("label"), sourceRole(text(source->label), commitId)},
+            {QStringLiteral("text"), utf8(source->worktree.utf8)},
+            {QStringLiteral("label"), sourceRole(utf8(source->label), commitId)},
             {QStringLiteral("shortCommitId"), shortId(commitId)},
-            {QStringLiteral("shortObjectId"), shortId(text(source->objectId))},
-            {QStringLiteral("objectId"), text(source->objectId)},
-            {QStringLiteral("commitId"), source->commitId ? text(*source->commitId) : QString{}},
-            {QStringLiteral("mode"), text(source->mode)}};
+            {QStringLiteral("shortObjectId"), shortId(utf8(source->objectId))},
+            {QStringLiteral("objectId"), utf8(source->objectId)},
+            {QStringLiteral("commitId"), source->commitId ? utf8(*source->commitId) : QString{}},
+            {QStringLiteral("mode"), utf8(source->mode)}};
 }
 
 void insertUnmapped(QVariantMap &map, const QString &prefix)
@@ -127,7 +126,7 @@ void SelectedFile::sync()
         stage3_ = snapshots ? sourceData(snapshots->stage3) : QVariantMap{};
         earlier_ = snapshots ? sourceData(snapshots->earlier) : QVariantMap{};
         initialResult_ =
-            snapshots ? QVariantMap{{QStringLiteral("text"), text(snapshots->launchResult.text.utf8)}} : QVariantMap{};
+            snapshots ? QVariantMap{{QStringLiteral("text"), utf8(snapshots->launchResult.text.utf8)}} : QVariantMap{};
         sourcePositions_.clear();
         sourceTexts_.clear();
         if (snapshots) {
@@ -142,7 +141,7 @@ void SelectedFile::sync()
         Q_EMIT sourcesChanged();
     }
     reset_ = false;
-    update(resultText_, file && !held ? text(file->current().draft.text) : QString{}, &SelectedFile::resultTextChanged);
+    update(resultText_, file && !held ? utf8(file->current().draft.text) : QString{}, &SelectedFile::resultTextChanged);
     update(decisions_, role(SessionModel::DecisionsRole).toList(), &SelectedFile::decisionsChanged);
     const auto revision = currentRevision();
     const auto support = file ? file->support() : Support::Unreadable;
@@ -245,7 +244,7 @@ void SelectedFile::project(const FileSession *file)
             states.push_back(state == DecisionValue::Accepted      ? tr("accepted")
                                  : state == DecisionValue::Ignored ? tr("ignored")
                                                                    : tr("undecided"));
-            decisionIds.push_back(text(id));
+            decisionIds.push_back(utf8(id));
         }
         states.removeDuplicates();
         const auto *anchor =
@@ -256,11 +255,11 @@ void SelectedFile::project(const FileSession *file)
         // Only editor changes set this, never text that differed at launch.
         const bool handEdited = anchor && anchor->handEdited;
         // Any undecided line keeps the region undecided, so outstanding work stays visible.
-        QVariantMap region{{QStringLiteral("id"), text(target.source.contributionId)},
+        QVariantMap region{{QStringLiteral("id"), utf8(target.source.contributionId)},
                            {QStringLiteral("side"), sideName(target.source.side)},
                            {QStringLiteral("scope"),
                             target.scope == ChoiceScope::Section ? QStringLiteral("section") : QStringLiteral("line")},
-                           {QStringLiteral("section"), text(target.section)},
+                           {QStringLiteral("section"), utf8(target.section)},
                            {QStringLiteral("decisionIds"), decisionIds},
                            {QStringLiteral("state"),
                             anyUndecided     ? QStringLiteral("undecided")
@@ -281,11 +280,11 @@ void SelectedFile::project(const FileSession *file)
             ? (left ? tr("Left section, lines %1–%2") : tr("Right section, lines %1–%2")).arg(line).arg(last)
             : (left ? tr("Left line %1") : tr("Right line %1")).arg(line);
         choices.push_back(QVariantMap{
-            {QStringLiteral("id"), text(target.source.contributionId)},
+            {QStringLiteral("id"), utf8(target.source.contributionId)},
             {QStringLiteral("label"), label},
             {QStringLiteral("state"), states.join(QStringLiteral(", "))},
             {QStringLiteral("sourceText"),
-             text(sourceText.substr(target.source.range.begin, target.source.range.end - target.source.range.begin))},
+             utf8(sourceText.substr(target.source.range.begin, target.source.range.end - target.source.range.begin))},
             {QStringLiteral("available"), available},
             {QStringLiteral("combinationAvailable"), mapped},
             {QStringLiteral("detail"),
@@ -309,7 +308,7 @@ void SelectedFile::project(const FileSession *file)
             QStringList blockSections;
             for (const auto &section : sections)
                 if (section.block == block)
-                    for (const auto &id : section.sections) blockSections.push_back(text(id));
+                    for (const auto &id : section.sections) blockSections.push_back(utf8(id));
             markerBlocks.push_back(QVariantMap{{QStringLiteral("resultLineBegin"), lines.line(block.begin.bytes.begin)},
                                                {QStringLiteral("resultLineEnd"), lines.line(block.end.bytes.begin) + 1},
                                                {QStringLiteral("folded"), true},

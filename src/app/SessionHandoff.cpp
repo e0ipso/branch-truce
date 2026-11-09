@@ -1,14 +1,14 @@
 // The session handoff says which files remain outstanding and whether the session may finish or be left.
 #include "SessionHandoff.h"
+#include "QtText.h"
 #include "git/GitAdapter.h"
 #include "session/SessionStore.h"
 #include <QMetaEnum>
 
 namespace branch_truce {
+using qt_text::utf8;
 namespace {
 using FileStates::HandoffCategory;
-
-QString text(const std::string &value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
 
 constexpr HandoffCategory order[] = {HandoffCategory::Undecided,         HandoffCategory::SavedDraft,
                                      HandoffCategory::ReviewNeeded,      HandoffCategory::NewerDraft,
@@ -17,7 +17,7 @@ constexpr HandoffCategory order[] = {HandoffCategory::Undecided,         Handoff
 
 QVariantMap entryData(const HandoffEntry &entry)
 {
-    return {{QStringLiteral("fileId"), text(entry.fileId)},
+    return {{QStringLiteral("fileId"), utf8(entry.fileId)},
             {QStringLiteral("path"), entry.path},
             {QStringLiteral("category"), FilePresentation::categoryKey(entry.category)},
             {QStringLiteral("icon"), FilePresentation::categoryIcon(entry.category)},

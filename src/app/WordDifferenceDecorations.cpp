@@ -1,5 +1,6 @@
 // Word difference decorations highlight changed words without changing the result text.
 #include "WordDifferenceDecorations.h"
+#include "QtText.h"
 #include "core/FileWordDifferences.h"
 #include "highlighting/PaneHighlighter.h"
 #include "session/SessionStore.h"
@@ -16,17 +17,13 @@
 #include <vector>
 
 namespace branch_truce {
+using qt_text::documentText;
 namespace {
 const char *const kStyle = "wordDifferenceStyle";
 // The share of the role colour the range background takes. The background
 // roles are already this hue mixed into the base colour, so a higher share
 // of it reads as a stronger tint of the same role.
 constexpr float kTint = 0.35F;
-
-QString documentText(const QTextDocument &document)
-{
-    return document.toRawText().replace(QChar(0x2029), QLatin1Char('\n'));
-}
 
 QVariantMap style(const QObject &editor)
 {

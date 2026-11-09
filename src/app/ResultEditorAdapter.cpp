@@ -2,6 +2,7 @@
 #include "ResultEditorAdapter.h"
 #include "EngineText.h"
 #include "NavigationTargets.h"
+#include "QtText.h"
 #include "TextChange.h"
 #include "core/ResourceLimits.h"
 #include "session/SessionStore.h"
@@ -23,11 +24,10 @@
 #include <string_view>
 
 namespace branch_truce {
+using qt_text::baseName;
+using qt_text::documentText;
+using qt_text::utf8;
 namespace {
-QString text(const std::string &value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
-
-// The undecorated last path component, for syntax definition lookup.
-QString baseName(const std::string &path) { return text(path.substr(path.rfind('/') + 1)); }
 
 QTextDocument *textDocument(QObject *editor)
 {
@@ -43,11 +43,6 @@ QQuickItem *scrollViewport(QObject *editor)
     for (auto *parent = item ? item->parentItem() : nullptr; parent; parent = parent->parentItem())
         if (parent->property("contentX").isValid() && parent->property("contentY").isValid()) return parent;
     return nullptr;
-}
-
-QString documentText(const QTextDocument &document)
-{
-    return document.toRawText().replace(QChar(0x2029), QLatin1Char('\n'));
 }
 
 QString envelopeRejection(std::string_view bytes)
@@ -173,7 +168,7 @@ void ResultEditorAdapter::capture()
     }
     const auto *file = shownFile();
     const auto old = text_;
-    if (!file || old != text(file->current().draft.text)
+    if (!file || old != utf8(file->current().draft.text)
         || std::max(old.size(), next.size()) > std::numeric_limits<int>::max()) {
         Q_EMIT editRejected();
         sync();
@@ -233,7 +228,7 @@ bool ResultEditorAdapter::eventFilter(QObject *watched, QEvent *event)
         auto *key = static_cast<QKeyEvent *>(event);
         const bool newline = key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter;
         const auto modifiers = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
-        // Backspace and Delete carry a control character in text() but remove
+        // Backspace and Delete carry a control character in utf8() but remove
         // text. Predicting that character as an insertion rejects a deletion
         // when the line or buffer is already exactly at its limit.
         const bool deletion = key->key() == Qt::Key_Backspace || key->key() == Qt::Key_Delete;
@@ -304,7 +299,7 @@ void ResultEditorAdapter::sync()
         return;
     }
     // A large file is not put in the editor until the user loads it.
-    const auto desired = file && file->support() != Support::LargeFile ? text(stored) : QString{};
+    const auto desired = file && file->support() != Support::LargeFile ? utf8(stored) : QString{};
     const auto shown = documentText(*document_);
     // Undo, redo or a choice replaces the text of the file already shown.
     const auto kept = file && shown != desired && placedFileId_ == fileId_ ? location() : Location{};
@@ -385,7 +380,7 @@ void ResultEditorAdapter::restoreLocation()
     if (text_ != heldLocation_.text) return;
     const auto *file = shownFile();
     const auto *pending = file ? store_.pendingDraft(file->id()) : nullptr;
-    const auto current = file ? text(pending ? pending->text : file->current().draft.text) : QString{};
+    const auto current = file ? utf8(pending ? pending->text : file->current().draft.text) : QString{};
     if (current != heldLocation_.text) return;
     // select() places the cursor at the second offset and keeps that range.
     const int anchor = heldLocation_.cursor == heldLocation_.selectionStart ? heldLocation_.selectionEnd
@@ -412,7 +407,7 @@ QVariantMap ResultEditorAdapter::firstUndecidedPlacement(const FileSession *file
 {
     QVariantMap placement{{QStringLiteral("fileId"), fileId_}, {QStringLiteral("count"), 0}};
     const auto targets = file ? undecidedTargets(*file) : std::vector<ScopeTarget>{};
-    if (targets.empty() || loaded != text(file->current().draft.text)) return placement;
+    if (targets.empty() || loaded != utf8(file->current().draft.text)) return placement;
     const auto &first = targets.front();
     const auto &result = file->current().draft.text;
     const int begin = first.resultRange ? utf16Offset(result, first.byteBegin) : -1;
@@ -421,7 +416,7 @@ QVariantMap ResultEditorAdapter::firstUndecidedPlacement(const FileSession *file
             {QStringLiteral("scope"), first.resultRange ? QStringLiteral("result") : QStringLiteral("unmapped-source")},
             {QStringLiteral("utf16Begin"), begin},
             {QStringLiteral("utf16End"), end},
-            {QStringLiteral("contributionId"), text(first.contributionId)},
+            {QStringLiteral("contributionId"), utf8(first.contributionId)},
             {QStringLiteral("count"), static_cast<int>(targets.size())}};
 }
 }

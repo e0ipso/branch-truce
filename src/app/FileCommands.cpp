@@ -2,6 +2,7 @@
 #include "FileCommands.h"
 #include "CommandFeedback.h"
 #include "NavigationTargets.h"
+#include "QtText.h"
 #include "ResultEditorAdapter.h"
 #include "Selection.h"
 #include "mergetool/MergetoolSession.h"
@@ -9,8 +10,8 @@
 #include "session/SessionStore.h"
 
 namespace branch_truce {
+using qt_text::utf8;
 namespace {
-QString text(const std::string &value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
 
 bool scalarBoundary(const QString &value, int offset)
 {
@@ -67,7 +68,7 @@ bool FileCommands::editResult(const QString &fileId, const QString &revision, in
 {
     const auto target = admit(fileId, revision, CommandCheck::Edit);
     if (!target) return false;
-    const auto old = text(target->file->current().draft.text);
+    const auto old = utf8(target->file->current().draft.text);
     if (begin > end || !scalarBoundary(old, begin) || !scalarBoundary(old, end)
         || QString::fromUtf8(replacement.toUtf8()) != replacement)
         return feedback_.report(Transition::InvalidAnchor);

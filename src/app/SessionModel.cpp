@@ -1,20 +1,15 @@
 // The session model lists the store's files for the window, unresolved files first.
 #include "SessionModel.h"
 #include "EngineText.h"
+#include "QtText.h"
 #include "git/GitAdapter.h"
 #include <QMimeDatabase>
 #include <algorithm>
 #include <numeric>
 
 namespace branch_truce {
+using qt_text::utf8;
 namespace {
-QString text(const std::string &value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
-
-QString revisionText(RevisionId revision)
-{
-    // Decimal strings retain all 64 bits across the QML/JavaScript boundary.
-    return QString::number(static_cast<qulonglong>(revision));
-}
 
 QVariantList decisionData(const Draft &draft)
 {
@@ -26,8 +21,8 @@ QVariantList decisionData(const Draft &draft)
         case DecisionValue::Accepted: value = QStringLiteral("accepted"); break;
         case DecisionValue::Ignored: value = QStringLiteral("ignored"); break;
         }
-        QVariantMap entry{{QStringLiteral("id"), text(id)}, {QStringLiteral("value"), value}};
-        if (decision.order) entry.insert(QStringLiteral("order"), revisionText(*decision.order));
+        QVariantMap entry{{QStringLiteral("id"), utf8(id)}, {QStringLiteral("value"), value}};
+        if (decision.order) entry.insert(QStringLiteral("order"), qt_text::revision(*decision.order));
         result.push_back(entry);
     }
     return result;
@@ -145,11 +140,11 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     const auto *failure = store_.recoveryFailure(file.id());
     const bool recoveryFailed = failure != nullptr;
     switch (role) {
-    case FileIdRole: return text(file.id());
+    case FileIdRole: return utf8(file.id());
     case Qt::DisplayRole:
     case PathRole: return pathText(file.path());
     case DecisionsRole: return decisionData(file.current().draft);
-    case CurrentRevisionRole: return revisionText(file.current().id);
+    case CurrentRevisionRole: return qt_text::revision(file.current().id);
     case SupportRole: return QVariant::fromValue(FilePresentation::supportKind(file.support()));
     case SupportDetailRole: return engine_text::supportDetail(file);
     case UndecidedRole: return QVariant::fromValue(static_cast<qulonglong>(facts.undecided));
@@ -163,7 +158,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case CanUndoRole: return !pendingInput && !recoveryFailed && file.canUndo();
     case CanRedoRole: return !pendingInput && !recoveryFailed && file.canRedo();
     case PendingInputRole: return pendingInput;
-    case PendingTextRole: return pendingInput ? text(pendingDraft->text) : QString{};
+    case PendingTextRole: return pendingInput ? utf8(pendingDraft->text) : QString{};
     case RecoveryStateRole: return QVariant::fromValue(presentation_.recoveryState(row));
     case RecoveryErrorRole: return recoveryFailed ? *failure : store_.pendingError(file.id());
     case ProgressRole: return presentation_.progressData(row);
@@ -173,7 +168,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case MimeIconRole:
     case MimeDescriptionRole: {
         // Use the captured path, never a later read of the mutable worktree or draft.
-        const auto mime = QMimeDatabase().mimeTypeForFile(text(file.path()), QMimeDatabase::MatchExtension);
+        const auto mime = QMimeDatabase().mimeTypeForFile(utf8(file.path()), QMimeDatabase::MatchExtension);
         if (role == MimeDescriptionRole) return mime.isDefault() ? QString{} : mime.comment();
         const auto icon = mime.iconName();
         return mime.isDefault() || icon.isEmpty() ? QStringLiteral("unknown") : icon;
@@ -232,7 +227,7 @@ const FileSession *SessionModel::fileAt(int row) const
 QString SessionModel::fileIdAt(int row) const
 {
     const auto *file = fileAt(row);
-    return file ? text(file->id()) : QString{};
+    return file ? utf8(file->id()) : QString{};
 }
 
 FilePresentation::Progress SessionModel::progress(int row) const

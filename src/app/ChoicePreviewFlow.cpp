@@ -3,6 +3,7 @@
 #include "CommandFeedback.h"
 #include "CommandGuard.h"
 #include "EngineText.h"
+#include "QtText.h"
 #include "ResultEditorAdapter.h"
 #include "Selection.h"
 #include "SessionModel.h"
@@ -12,8 +13,8 @@
 #include <map>
 
 namespace branch_truce {
+using qt_text::utf8;
 namespace {
-QString text(const std::string &value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
 
 std::optional<ChoiceAction> choiceAction(ChoicePreviewFlow::Action action)
 {
@@ -210,11 +211,11 @@ QVariantMap ChoicePreviewFlow::choiceView(const ChoicePreview &preview, const Fi
     for (const auto &scope : preview.sourceOrder) {
         scopes.push_back(tr("%1 · %2").arg(
             rangeLabel(sideLabel(scope.side), sources.lines(scope.side), scope.range),
-            sourceIdentity(text(sources.at(scope.side).label),
-                           sources.at(scope.side).commitId ? text(*sources.at(scope.side).commitId) : QString{})));
+            sourceIdentity(utf8(sources.at(scope.side).label),
+                           sources.at(scope.side).commitId ? utf8(*sources.at(scope.side).commitId) : QString{})));
     }
-    return {{QStringLiteral("before"), text(preview.before)},
-            {QStringLiteral("replacement"), text(preview.replacement)},
+    return {{QStringLiteral("before"), utf8(preview.before)},
+            {QStringLiteral("replacement"), utf8(preview.replacement)},
             {QStringLiteral("detail"), engine_text::choice(preview)},
             {QStringLiteral("orderedCombination"), !preview.sourceOrder.empty()},
             {QStringLiteral("order"),
@@ -234,8 +235,8 @@ QVariantMap ChoicePreviewFlow::nonConflictingView(const NonConflictingPreview &p
             const auto side = sideLabel(source.side);
             const auto &lines = sources.lines(source.side);
             const auto label =
-                sourceIdentity(text(sources.at(source.side).label),
-                               sources.at(source.side).commitId ? text(*sources.at(source.side).commitId) : QString{});
+                sourceIdentity(utf8(sources.at(source.side).label),
+                               sources.at(source.side).commitId ? utf8(*sources.at(source.side).commitId) : QString{});
             scopes.push_back(
                 source.range.begin == source.range.end
                     ? tr("%1 deletion at line %2 · %3").arg(side).arg(lines.line(source.range.begin)).arg(label)
@@ -246,8 +247,8 @@ QVariantMap ChoicePreviewFlow::nonConflictingView(const NonConflictingPreview &p
                           .arg(label));
         }
         changes.push_back(QVariantMap{{QStringLiteral("scope"), scopes.join(QLatin1Char('\n'))},
-                                      {QStringLiteral("before"), text(change.before)},
-                                      {QStringLiteral("replacement"), text(change.replacement)}});
+                                      {QStringLiteral("before"), utf8(change.before)},
+                                      {QStringLiteral("replacement"), utf8(change.replacement)}});
     }
     return {{QStringLiteral("path"), files_.displayPath(fileId_.toStdString())},
             {QStringLiteral("scope"),
@@ -285,10 +286,10 @@ QVariantMap ChoicePreviewFlow::wholeFileView(const WholeFilePreview &preview, co
             QVariantMap{{QStringLiteral("scope"),
                          tr("%1 · %2").arg(
                              rangeLabel(sideLabel(side), sources.lines(side), contribution.source.range),
-                             sourceIdentity(text(sources.at(side).label),
-                                            sources.at(side).commitId ? text(*sources.at(side).commitId) : QString{}))},
+                             sourceIdentity(utf8(sources.at(side).label),
+                                            sources.at(side).commitId ? utf8(*sources.at(side).commitId) : QString{}))},
                         {QStringLiteral("sourceText"),
-                         text(value.substr(contribution.source.range.begin,
+                         utf8(value.substr(contribution.source.range.begin,
                                            contribution.source.range.end - contribution.source.range.begin))},
                         {QStringLiteral("beforeState"), decisionLabel(contribution.before)},
                         {QStringLiteral("afterState"), decisionLabel(contribution.after)}});
@@ -302,18 +303,18 @@ QVariantMap ChoicePreviewFlow::wholeFileView(const WholeFilePreview &preview, co
              tr("%1 → %2").arg(rangeLabel(tr("Current result"), before, passage.result),
                                rangeLabel(tr("Selected source"), replacement, passage.source))},
             {QStringLiteral("before"),
-             text(preview.before.substr(passage.result.begin, passage.result.end - passage.result.begin))},
+             utf8(preview.before.substr(passage.result.begin, passage.result.end - passage.result.begin))},
             {QStringLiteral("replacement"),
-             text(preview.replacement.substr(passage.source.begin, passage.source.end - passage.source.begin))}});
+             utf8(preview.replacement.substr(passage.source.begin, passage.source.end - passage.source.begin))}});
     }
     return {{QStringLiteral("path"), files_.displayPath(fileId_.toStdString())},
             {QStringLiteral("side"), sideLabel(preview.side)},
             {QStringLiteral("source"),
              tr("%1\n%2").arg(
-                 sourceIdentity(text(selected->label), selected->commitId ? text(*selected->commitId) : QString{}),
-                 text(selected->objectId))},
-            {QStringLiteral("before"), text(preview.before)},
-            {QStringLiteral("replacement"), text(preview.replacement)},
+                 sourceIdentity(utf8(selected->label), selected->commitId ? utf8(*selected->commitId) : QString{}),
+                 utf8(selected->objectId))},
+            {QStringLiteral("before"), utf8(preview.before)},
+            {QStringLiteral("replacement"), utf8(preview.replacement)},
             {QStringLiteral("detail"), engine_text::wholeFile(preview.note)},
             {QStringLiteral("contributions"), contributions},
             {QStringLiteral("differences"), differences},
