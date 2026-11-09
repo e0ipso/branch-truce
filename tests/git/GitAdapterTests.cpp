@@ -1063,6 +1063,25 @@ int main(int argc, char **argv)
         test_support::waitUntil([&] { return destroyed; }, "the staging operation did not start");
         CHECK(QFile::exists(repo.path(".terminated")));
     });
+    suite.run("real Git and a scripted answer keep the same runner contract", [] {
+        Repository repo;
+        GitAdapter adapter(repo.program());
+        InterceptedGit scripted(
+            repo.program(),
+            [](const Request &) -> std::optional<Result> {
+                Result failed;
+                failed.outcome = Outcome::ExitFailure;
+                return failed;
+            },
+            nullptr);
+        for (GitRunner *runner : std::initializer_list<GitRunner *>{&adapter, &scripted}) {
+            test_support::AsyncCompletion<GitRunner, Result> completion(*runner, &GitRunner::finished);
+            const auto result = completion.run(repo.readRequest());
+            CHECK(result.request.operation == Operation::ReadObject && result.request.sessionGeneration == 71);
+            runner->cancel();
+            CHECK(!runner->busy());
+        }
+    });
     suite.run("only staging is a mutation", [] {
         for (const auto operation :
              {Operation::DiscoverRepository, Operation::InspectIndex, Operation::ReadObject, Operation::ReadAttributes,

@@ -18,6 +18,11 @@
 #include <QList>
 #include <QString>
 #include <QTemporaryDir>
+#include <QTimer>
+
+#include <functional>
+#include <memory>
+#include <optional>
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -144,6 +149,49 @@ case "$1" in
 private:
     QTemporaryDir executables_;
 };
+
+// A Git runner for the code under test: real Git, except that `intercept` sees each request
+// first. It may change the repository and return nothing, so real Git runs the request, or
+// return a result that is delivered from the event loop instead, as Git failing would.
+class InterceptedGit final : public GitRunner {
+public:
+    using Intercept = std::function<std::optional<Result>(const Request &)>;
+    InterceptedGit(const GitProgram &program, Intercept intercept, QObject *parent)
+        : GitRunner(parent), adapter_(program, this), intercept_(std::move(intercept))
+    {
+        QObject::connect(&adapter_, &GitRunner::finished, this,
+                         [this](const Result &result) { Q_EMIT finished(result); });
+    }
+    bool start(const Request &request) override
+    {
+        if (busy()) return false;
+        auto scripted = intercept_(request);
+        if (!scripted) return adapter_.start(request);
+        scripted->request = request;
+        scripted_ = true;
+        QTimer::singleShot(0, this, [this, result = *scripted] {
+            scripted_ = false;
+            Q_EMIT finished(result);
+        });
+        return true;
+    }
+    // A scripted answer is already known, so a cancel leaves it as it is.
+    void cancel() override { adapter_.cancel(); }
+    bool busy() const override { return scripted_ || adapter_.busy(); }
+
+private:
+    GitAdapter adapter_;
+    Intercept intercept_;
+    bool scripted_ = false;
+};
+
+// Runners for a classifier or conversion that all share one intercept.
+inline GitRunners intercepted(const GitProgram &program, InterceptedGit::Intercept intercept)
+{
+    return [program, intercept](QObject *parent) -> std::unique_ptr<GitRunner> {
+        return std::make_unique<InterceptedGit>(program, intercept, parent);
+    };
+}
 
 // The adapter's results, with run() also checking that the result carries the request identity.
 class Completion : public test_support::AsyncCompletion<GitAdapter, Result> {

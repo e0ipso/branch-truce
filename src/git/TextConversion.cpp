@@ -63,9 +63,9 @@ public:
         FinalPolicy,
         FinalIndex
     };
-    State(TextConversion *owner, GitProgram program) : q(owner), adapter(std::move(program), owner)
+    State(TextConversion *owner, const GitRunners &runners) : q(owner), adapter(runners(owner))
     {
-        QObject::connect(&adapter, &GitAdapter::finished, q, [this](const Result &result) { consume(result); });
+        QObject::connect(adapter.get(), &GitRunner::finished, q, [this](const Result &result) { consume(result); });
     }
     void complete(Outcome outcome, const QString &diagnostic = {})
     {
@@ -93,7 +93,7 @@ public:
         gitRequest.input = input;
         gitRequest.sessionGeneration = request.sessionGeneration;
         gitRequest.inputRevision = request.inputRevision;
-        if (!adapter.start(gitRequest))
+        if (!adapter->start(gitRequest))
             complete(Outcome::ProcessFailure, QStringLiteral("Conversion adapter was unexpectedly busy"));
     }
     void begin()
@@ -257,7 +257,7 @@ public:
         }
     }
     TextConversion *q;
-    GitAdapter adapter;
+    std::unique_ptr<GitRunner> adapter;
     TextConversionResult result;
     ConvertedText text;
     Step step = Step::Attributes;
@@ -265,11 +265,14 @@ public:
     bool cancelled = false;
 };
 
-TextConversion::TextConversion(GitProgram program, QObject *parent)
-    : QObject(parent), d(std::make_unique<State>(this, std::move(program)))
+TextConversion::TextConversion(const GitRunners &runners, QObject *parent)
+    : QObject(parent), d(std::make_unique<State>(this, runners))
 {
     qRegisterMetaType<TextConversionResult>();
 }
+TextConversion::TextConversion(GitProgram program, QObject *parent)
+    : TextConversion(gitAdapters(std::move(program)), parent)
+{}
 TextConversion::TextConversion(const QString &executable, QObject *parent)
     : TextConversion(GitProgram{executable, GitEnvironment::fromProcess()}, parent)
 {}
@@ -291,7 +294,7 @@ void TextConversion::cancel()
     Q_ASSERT(QThread::currentThread() == thread());
     if (!d->active) return;
     d->cancelled = true;
-    d->adapter.cancel();
+    d->adapter->cancel();
 }
 bool TextConversion::busy() const { return d->active; }
 } // namespace branch_truce::git

@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -397,6 +398,60 @@ int main(int argc, char **argv)
         CHECK_EQ(run(later, {repo.root(), 71, 93}).outcome, Outcome::Success);
         CHECK_EQ(completions, 0);
         CHECK_EQ(repo.index(), before);
+    });
+    suite.run("a conversion configuration change before the recheck excludes the conflict", [] {
+        Repository repo;
+        mergeStopped(repo);
+        int discoveries = 0;
+        // The second discovery is the recheck after every source was read.
+        ConflictClassifier classifier(intercepted(repo.program(), [&](const Request &request) -> std::optional<Result> {
+            if (request.operation == Operation::DiscoverRepository && ++discoveries == 2)
+                repo.git({"config", "core.autocrlf", "true"});
+            return std::nullopt;
+        }));
+        const auto result = run(classifier, {repo.root(), 71, 93});
+        CHECK_EQ(discoveries, 2);
+        CHECK_EQ(result.outcome, Outcome::Success);
+        CHECK_EQ(result.conflicts.size(), 1);
+        const auto &conflict = result.conflicts.front();
+        CHECK(!conflict.editable());
+        CHECK_EQ(conflict.support, ConflictSupport::UnsupportedConversion);
+        CHECK(conflict.reason.contains("conversion configuration changed during classification"));
+    });
+    suite.run("a source over the Git read limit is a load failure that names the limit", [] {
+        Repository repo;
+        mergeStopped(repo);
+        ConflictClassifier classifier(intercepted(repo.program(), [](const Request &request) -> std::optional<Result> {
+            if (request.operation != Operation::MaterializeSource) return std::nullopt;
+            Result limited;
+            limited.outcome = Outcome::OutputLimit;
+            limited.outputIncomplete = true;
+            limited.diagnostic = QStringLiteral("Git output exceeded the limit; captured prefix is incomplete");
+            return limited;
+        }));
+        const auto result = run(classifier, {repo.root(), 71, 93});
+        CHECK_EQ(result.outcome, Outcome::Success);
+        CHECK_EQ(result.conflicts.size(), 1);
+        const auto &conflict = result.conflicts.front();
+        CHECK_EQ(conflict.support, ConflictSupport::LoadFailure);
+        CHECK(conflict.reason.startsWith("Load error: stage "));
+        CHECK(conflict.reason.contains(QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))
+                                       + " byte Git read limit"));
+    });
+    suite.run("a discovery that times out offers nothing", [] {
+        Repository repo;
+        mergeStopped(repo);
+        ConflictClassifier classifier(intercepted(repo.program(), [](const Request &request) -> std::optional<Result> {
+            if (request.operation != Operation::DiscoverRepository) return std::nullopt;
+            Result late;
+            late.outcome = Outcome::TimedOut;
+            late.diagnostic = QStringLiteral("Git exceeded the 30 second deadline");
+            return late;
+        }));
+        const auto result = run(classifier, {repo.root(), 71, 93});
+        CHECK_EQ(result.outcome, Outcome::TimedOut);
+        CHECK(result.diagnostic.contains("deadline"));
+        for (const auto &conflict : result.conflicts) CHECK(!conflict.editable());
     });
     return suite.report();
 }

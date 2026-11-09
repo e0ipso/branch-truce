@@ -6,6 +6,7 @@
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <functional>
 #include <memory>
 
 class QProcessEnvironment;
@@ -146,9 +147,30 @@ struct GitProgram {
     int deadlineMs = kGitRequestDeadlineMs;
 };
 
-// Use on the owning event-loop thread. Requests cannot override the program,
-// its environment, or its command arguments.
-class GitAdapter final : public QObject {
+// What a consumer of Git requests depends on. Every implementation, fakes
+// included, keeps this contract on its owning event-loop thread:
+// - start() returns false while a request runs, and that refusal emits nothing;
+// - every accepted request emits finished() exactly once, later, from the
+//   event loop, never inside start();
+// - cancel() ends a running request as Cancelled unless its outcome is
+//   already known, and does nothing when idle;
+// - destruction cancels and emits nothing.
+class GitRunner : public QObject {
+    Q_OBJECT
+public:
+    using QObject::QObject;
+    virtual bool start(const Request &request) = 0;
+    virtual void cancel() = 0;
+    [[nodiscard]] virtual bool busy() const = 0;
+Q_SIGNALS:
+    void finished(const branch_truce::git::Result &result);
+};
+// Builds one runner for a consumer, as a child of parent.
+using GitRunners = std::function<std::unique_ptr<GitRunner>(QObject *parent)>;
+
+// Runs requests with real Git, supervised and bounded. Requests cannot
+// override the program, its environment, or its command arguments.
+class GitAdapter final : public GitRunner {
     Q_OBJECT
 public:
     explicit GitAdapter(GitProgram program, QObject *parent = nullptr);
@@ -156,18 +178,17 @@ public:
     // that hold only the executable.
     explicit GitAdapter(const QString &executable, QObject *parent = nullptr);
     ~GitAdapter() override;
-    // Busy returns false without a result. Every accepted request completes once,
-    // asynchronously. Destruction cancels without publishing a result.
-    bool start(const Request &request);
-    void cancel();
-    [[nodiscard]] bool busy() const;
-Q_SIGNALS:
-    void finished(const branch_truce::git::Result &result);
+    bool start(const Request &request) override;
+    void cancel() override;
+    [[nodiscard]] bool busy() const override;
 
 private:
     class State;
     std::unique_ptr<State> d;
 };
+
+// Runners that are GitAdapters for program.
+[[nodiscard]] GitRunners gitAdapters(GitProgram program);
 
 // Runs one request to completion in a nested event loop and returns its
 // result. The adapter's own deadline bounds the wait. For headless callers

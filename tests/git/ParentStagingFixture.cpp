@@ -56,7 +56,7 @@ int resolve(const QString &scenario, const QString &merged)
 {
     installHazard(scenario);
     GitAdapter adapter(test_support::gitExecutable());
-    test_support::AsyncCompletion completion(adapter, &GitAdapter::finished);
+    test_support::AsyncCompletion<GitAdapter, Result> completion(adapter, &GitAdapter::finished);
     const Request request{Operation::CheckParentStaging, QDir::currentPath(), QFile::encodeName(merged), {}, 71, 93};
     const auto preflight = completion.run(request);
     CHECK(preflight.request.operation == request.operation && preflight.request.directory == request.directory);

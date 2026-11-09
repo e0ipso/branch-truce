@@ -97,7 +97,7 @@ void GitAdapter::State::reject(const QString &message)
     complete();
 }
 GitAdapter::GitAdapter(GitProgram program, QObject *parent)
-    : QObject(parent), d(std::make_unique<State>(this, std::move(program)))
+    : GitRunner(parent), d(std::make_unique<State>(this, std::move(program)))
 {
     qRegisterMetaType<Result>();
 }
@@ -143,6 +143,13 @@ void GitAdapter::cancel()
     d->stop(Outcome::Cancelled, QStringLiteral("Git request cancelled"));
 }
 bool GitAdapter::busy() const { return d->active; }
+
+GitRunners gitAdapters(GitProgram program)
+{
+    return [program = std::move(program)](QObject *parent) -> std::unique_ptr<GitRunner> {
+        return std::make_unique<GitAdapter>(program, parent);
+    };
+}
 
 Result runBlocking(const GitProgram &program, const Request &request)
 {

@@ -120,18 +120,20 @@ void excludeUnreadResult(Conflict &conflict, ResultRead read)
                 QStringLiteral("Outside app: current result must be a regular file without symlink traversal"));
     } else {
         exclude(conflict, ConflictSupport::LoadFailure,
-                QStringLiteral("Load error: current result could not be read completely and stably within the 8388608 "
-                               "byte limit; check the file and reopen the session"));
+                QStringLiteral("Load error: current result could not be read completely and stably within the %1 "
+                               "byte limit; check the file and reopen the session")
+                    .arg(static_cast<qulonglong>(branch_truce::kMaxRecoveryPayloadBytes)));
     }
 }
 } // namespace
 
 class ConflictClassifier::State {
 public:
-    State(ConflictClassifier *owner, const GitProgram &program)
-        : q(owner), adapter(program, owner), conversion(program, owner)
+    State(ConflictClassifier *owner, const GitRunners &runners)
+        : q(owner), adapter(runners(owner)), conversion(runners, owner)
     {
-        QObject::connect(&adapter, &GitAdapter::finished, q, [this](const Result &observed) { discovered(observed); });
+        QObject::connect(adapter.get(), &GitRunner::finished, q,
+                         [this](const Result &observed) { discovered(observed); });
         QObject::connect(&conversion, &TextConversion::finished, q,
                          [this](const TextConversionResult &observed) { converted(observed); });
     }
@@ -155,7 +157,7 @@ public:
             return;
         }
         const auto &r = result.request;
-        if (!adapter.start({Operation::DiscoverRepository, r.directory, {}, {}, r.sessionGeneration, r.inputRevision}))
+        if (!adapter->start({Operation::DiscoverRepository, r.directory, {}, {}, r.sessionGeneration, r.inputRevision}))
             complete(Outcome::ProcessFailure, QStringLiteral("Outside app: conflict discovery was unexpectedly busy"));
     }
     void discovered(const Result &observed)
@@ -315,7 +317,14 @@ public:
             return;
         }
         auto &conflict = result.conflicts[offset];
-        if (observed.outcome != Outcome::Success || !observed.text) {
+        if (observed.outcome == Outcome::OutputLimit) {
+            // Over the size envelope, like a result too large to load, not unreadable.
+            exclude(conflict, ConflictSupport::LoadFailure,
+                    QStringLiteral("Load error: stage %1 is larger than the %2 byte Git read limit; the captured "
+                                   "file was not loaded")
+                        .arg(conflict.stages[source].stage)
+                        .arg(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes)));
+        } else if (observed.outcome != Outcome::Success || !observed.text) {
             const auto support = observed.outcome != Outcome::Rejected       ? ConflictSupport::InspectionFailure
                 : observed.failure == TextConversionFailure::UnsupportedText ? ConflictSupport::UnsupportedText
                                                                              : ConflictSupport::UnsupportedConversion;
@@ -344,7 +353,7 @@ public:
         next();
     }
     ConflictClassifier *q;
-    GitAdapter adapter;
+    std::unique_ptr<GitRunner> adapter;
     TextConversion conversion;
     ConflictClassificationResult result;
     Result snapshot;
@@ -357,11 +366,14 @@ public:
     bool rechecking = false;
 };
 
-ConflictClassifier::ConflictClassifier(GitProgram program, QObject *parent)
-    : QObject(parent), d(std::make_unique<State>(this, program))
+ConflictClassifier::ConflictClassifier(const GitRunners &runners, QObject *parent)
+    : QObject(parent), d(std::make_unique<State>(this, runners))
 {
     qRegisterMetaType<ConflictClassificationResult>();
 }
+ConflictClassifier::ConflictClassifier(GitProgram program, QObject *parent)
+    : ConflictClassifier(gitAdapters(std::move(program)), parent)
+{}
 ConflictClassifier::ConflictClassifier(const QString &executable, QObject *parent)
     : ConflictClassifier(GitProgram{executable, GitEnvironment::fromProcess()}, parent)
 {}
@@ -387,7 +399,7 @@ void ConflictClassifier::cancel()
     Q_ASSERT(QThread::currentThread() == thread());
     if (!d->active) return;
     d->cancelled = true;
-    d->adapter.cancel();
+    d->adapter->cancel();
     d->conversion.cancel();
 }
 bool ConflictClassifier::busy() const { return d->active; }
