@@ -1160,6 +1160,7 @@ int main(int argc, char **argv)
         CHECK(clock.elapsed() >= 25000 && clock.elapsed() < 35000);
     });
     suite.run("expanding canonical text is size-validated before reading", [] {
+        const auto gitLimit = QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes));
         Repository repo;
         writeFile(repo.path(".gitattributes"), "tracked.txt working-tree-encoding=UTF-16LE\n");
         const auto objects = repo.git({"count-objects", "-v"});
@@ -1182,11 +1183,11 @@ int main(int argc, char **argv)
             } else if (inputSize == 3000000) {
                 CHECK(result.outcome == Outcome::Rejected && result.canonicalBytes.isEmpty());
                 CHECK(result.diagnostic.contains("4425000 bytes")
-                      && result.diagnostic.contains("4194304 byte output limit"));
+                      && result.diagnostic.contains(gitLimit + " byte output limit"));
             } else {
                 CHECK(result.outcome == Outcome::Rejected && result.canonicalBytes.isEmpty());
                 CHECK(result.diagnostic.contains("6000000 bytes")
-                      && result.diagnostic.contains("4194304 byte input limit"));
+                      && result.diagnostic.contains(gitLimit + " byte input limit"));
             }
             CHECK(repo.git({"count-objects", "-v"}) == objects);
             CHECK(repo.git({"ls-files", "--stage", "-z"}) == index);
