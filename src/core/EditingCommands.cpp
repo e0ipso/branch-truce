@@ -31,11 +31,9 @@ Decision decision(const FileSession &file, const std::string &id)
     return found == file.current().draft.decisions.end() ? Decision{} : found->second;
 }
 
-bool overlaps(ByteRange a, ByteRange b)
-{
-    if (a == b) return true;
-    return a.begin < b.end && b.begin < a.end;
-}
+// Whether two result ranges claim the same text or the same insertion site.
+// Unlike overlaps, two equal empty ranges do.
+bool sharesPlace(ByteRange a, ByteRange b) { return a == b || overlaps(a, b); }
 
 bool adjoining(ByteRange a, ByteRange b) { return a == b || a.end == b.begin || b.end == a.begin; }
 
@@ -137,7 +135,7 @@ ChoicePreview previewCombination(const FileSession &file, RevisionId expected, c
                         Transition::AmbiguousTarget,
                         "Other lines in this section cannot be located safely. Use a section or edit manually.");
             } else if (std::any_of(replaced.begin(), replaced.end(),
-                                   [&](const auto &range) { return overlaps(range, *unselected->result); })) {
+                                   [&](const auto &range) { return sharesPlace(range, *unselected->result); })) {
                 return fail(
                     Transition::AmbiguousTarget,
                     "This combination would replace an unselected contribution. Use a section or edit manually.");
@@ -302,7 +300,7 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected, const 
                 if (section != targets.end()) other = file.correspondence()->anchor(section->source.contributionId);
                 if (other && other->state != AnchorState::Mapped) other = nullptr;
             }
-            if (!other || !other->result || overlaps(*replacementAnchor->result, *other->result))
+            if (!other || !other->result || sharesPlace(*replacementAnchor->result, *other->result))
                 return fail(
                     Transition::Blocked,
                     "Accepted text may overlap this choice. Preview an ordered combination or undo its acceptance.");
@@ -320,7 +318,7 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected, const 
                 if (!other || !other->result || other->state != AnchorState::Mapped)
                     return fail(Transition::AmbiguousTarget,
                                 "The competing line scope is uncertain. Use a section or edit manually.");
-                if (!overlaps(*anchor->result, *other->result)) continue;
+                if (!sharesPlace(*anchor->result, *other->result)) continue;
                 if (*other->result != *anchor->result)
                     return fail(Transition::AmbiguousTarget,
                                 "This line has no exact competing scope. Use a section or edit manually.");
@@ -380,7 +378,7 @@ std::vector<NonConflictingTarget> nonConflictingTargets(const FileSnapshots &sna
     const auto competes = [](ByteRange first, ByteRange second) {
         if (first.begin == first.end) return second.begin <= first.begin && first.begin <= second.end;
         if (second.begin == second.end) return first.begin <= second.begin && second.begin <= first.end;
-        return overlaps(first, second);
+        return sharesPlace(first, second);
     };
     std::vector<NonConflictingTarget> result;
     const auto add = [&](SourceSide side, const auto &own, const auto &other, const std::string &text,
@@ -491,7 +489,7 @@ NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId 
                     return false;
                 const auto *accepted = mapping->anchor(entry.first);
                 return !accepted || accepted->state != AnchorState::Mapped || !accepted->result
-                    || overlaps(range, *accepted->result);
+                    || sharesPlace(range, *accepted->result);
             });
         if (acceptedOverlap) {
             skip();
@@ -507,7 +505,7 @@ NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId 
         for (std::size_t j = i + 1; j < candidates.size(); ++j) {
             const auto &a = candidates[i].change;
             const auto &b = candidates[j].change;
-            const bool collides = overlaps(a.result, b.result)
+            const bool collides = sharesPlace(a.result, b.result)
                 || (a.before != a.replacement && b.before != b.replacement && a.result.begin == b.result.begin);
             if (collides
                 && (a.result != b.result || a.replacement != b.replacement

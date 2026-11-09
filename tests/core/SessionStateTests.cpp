@@ -1577,14 +1577,14 @@ public:
             const auto plain = scanMarkers(text);
             CHECK(plain.blocks.size() == 1 && plain.orphans.size() == 1 && plain.orphans.front().line == 1);
             // Unordered, overlapping ranges merge, and the heading underline inside them is content.
-            const auto filtered = scanMarkers(text, {{6, 14}, {0, 10}});
+            const auto filtered = scanMarkers(text, {.known = {{6, 14}, {0, 10}}});
             CHECK(filtered.orphans.empty() && filtered.blocks == plain.blocks);
             // Only a range covering the whole line makes it content.
-            CHECK(scanMarkers(text, {{6, 13}}) == plain);
+            CHECK(scanMarkers(text, {.known = {{6, 13}}}) == plain);
             // Blocks are assembled from the lines left over.
             const std::string inside = "<<<<<<< ours\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
             CHECK(scanMarkers(inside).orphans.size() == 1 && scanMarkers(inside).blocks.front().separator.line == 2);
-            const auto assembled = scanMarkers(inside, {{13, 27}});
+            const auto assembled = scanMarkers(inside, {.known = {{13, 27}}});
             CHECK(assembled.orphans.empty() && assembled.blocks.size() == 1
                   && assembled.blocks.front().separator.line == 3);
         });
@@ -1633,14 +1633,14 @@ public:
             CHECK(plain.blocks.front().separator.line == 4 && plain.orphans.size() == 1
                   && plain.orphans.front().line == 5);
             // The underline lies in the earlier text, so the next separator closes the base.
-            const auto assembled = scanMarkers(text, {}, {{31, 45}});
+            const auto assembled = scanMarkers(text, {.earlier = {{31, 45}}});
             CHECK(assembled.orphans.empty() && assembled.blocks.size() == 1);
             CHECK(assembled.blocks.front().base->line == 2 && assembled.blocks.front().separator.line == 5);
             // Earlier text before the base line or after the separator is not content.
             const std::string heading = "Title\n=======\n<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\n";
-            CHECK(scanMarkers(heading, {}, {{0, 14}}) == scanMarkers(heading));
-            CHECK(scanMarkers(heading, {}, {{0, heading.size()}}) == scanMarkers(heading));
-            CHECK(scanMarkers(text, {}, {{0, 31}, {31, 45}, {53, text.size()}}) == assembled);
+            CHECK(scanMarkers(heading, {.earlier = {{0, 14}}}) == scanMarkers(heading));
+            CHECK(scanMarkers(heading, {.earlier = {{0, heading.size()}}}) == scanMarkers(heading));
+            CHECK(scanMarkers(text, {.earlier = {{0, 31}, {31, 45}, {53, text.size()}}}) == assembled);
         });
         suite.run("a heading underline in the diff3 base is content and the block resolves", [] {
             auto file = test_support::underlinedBaseFile();
@@ -1686,20 +1686,23 @@ public:
                 "<<<<<<< ours\nleft\n||||||| base\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
             const ByteRange title{31, 37}, lines{37, 53}, right{53, 59};
             // Without right-side text after the second line, the first one closes the base.
-            CHECK(scanMarkers(text, {}, {title}, {lines}) == scanMarkers(text));
-            CHECK(scanMarkers(text, {right}, {title}, {}, {right}) == scanMarkers(text, {right}));
-            const auto assembled = scanMarkers(text, {right}, {title}, {lines}, {right});
+            CHECK(scanMarkers(text, {.earlier = {title}, .uncertain = {lines}}) == scanMarkers(text));
+            CHECK(scanMarkers(text, {.known = {right}, .earlier = {title}, .right = {right}})
+                  == scanMarkers(text, {.known = {right}}));
+            const auto assembled =
+                scanMarkers(text, {.known = {right}, .earlier = {title}, .uncertain = {lines}, .right = {right}});
             CHECK(assembled.orphans.empty() && assembled.blocks.size() == 1);
             CHECK(assembled.blocks.front().base->line == 2 && assembled.blocks.front().separator.line == 5);
             // The end marker shows an empty right region just as well.
             const std::string empty = "<<<<<<< ours\nleft\n||||||| base\nTitle\n=======\n=======\n>>>>>>> theirs\n";
-            const auto closed = scanMarkers(empty, {}, {title}, {lines});
+            const auto closed = scanMarkers(empty, {.earlier = {title}, .uncertain = {lines}});
             CHECK(closed.orphans.empty() && closed.blocks.front().separator.line == 5);
             // A separator line the earlier text cannot hold still closes the base.
-            CHECK(scanMarkers(text, {right}, {title}, {{45, 53}}, {right}) == scanMarkers(text, {right}));
+            CHECK(scanMarkers(text, {.known = {right}, .earlier = {title}, .uncertain = {{45, 53}}, .right = {right}})
+                  == scanMarkers(text, {.known = {right}}));
             // Outside a base region nothing changes.
             const std::string twoWay = "<<<<<<< ours\nleft\n=======\n=======\nright\n>>>>>>> theirs\n";
-            CHECK(scanMarkers(twoWay, {}, {}, {{18, 34}}, {{34, 40}}) == scanMarkers(twoWay));
+            CHECK(scanMarkers(twoWay, {.uncertain = {{18, 34}}, .right = {{34, 40}}}) == scanMarkers(twoWay));
         });
         suite.run("a diff3 base ending in a heading underline is closed by Git's separator", [] {
             for (const bool deleted : {false, true}) {

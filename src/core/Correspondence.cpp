@@ -25,12 +25,11 @@ std::vector<Line> lines(std::string_view text, std::map<std::string_view, std::s
 {
     std::vector<Line> result;
     for (std::size_t begin = 0; begin < text.size();) {
-        const auto newline = text.find('\n', begin);
-        const auto end = newline == std::string_view::npos ? text.size() : newline + 1;
-        const auto [entry, inserted] = tokens.try_emplace(text.substr(begin, end - begin), tokens.size());
+        const auto range = lineAt(text, begin);
+        const auto [entry, inserted] = tokens.try_emplace(slice(text, range), tokens.size());
         (void)inserted;
-        result.push_back({begin, end, entry->second});
-        begin = end;
+        result.push_back({range.begin, range.end, entry->second});
+        begin = range.end;
     }
     return result;
 }
@@ -92,17 +91,6 @@ void boundaryAlignment(std::span<const Line> source, std::span<const Line> resul
     boundaryAlignment(source.first(middle), result.first(split), sourceOffset, resultOffset, last, matches);
     boundaryAlignment(source.subspan(middle), result.subspan(split), sourceOffset + middle, resultOffset + split, last,
                       matches);
-}
-
-std::vector<std::size_t> lineStarts(std::string_view text)
-{
-    std::vector<std::size_t> starts;
-    for (std::size_t begin = 0; begin < text.size();) {
-        starts.push_back(begin);
-        const auto newline = text.find('\n', begin);
-        begin = newline == std::string_view::npos ? text.size() : newline + 1;
-    }
-    return starts;
 }
 
 std::optional<std::size_t> lineIndex(const std::vector<std::size_t> &starts, std::size_t offset)
@@ -191,21 +179,6 @@ void invalidate(ResultAnchor &anchor, AnchorState state)
     anchor.result.reset();
 }
 
-// Ranges in text order, with overlapping or touching ones joined.
-std::vector<ByteRange> joined(std::vector<ByteRange> ranges)
-{
-    std::sort(ranges.begin(), ranges.end(),
-              [](const auto &a, const auto &b) { return a.begin != b.begin ? a.begin < b.begin : a.end < b.end; });
-    std::vector<ByteRange> result;
-    for (const auto &range : ranges) {
-        if (!result.empty() && range.begin <= result.back().end)
-            result.back().end = std::max(result.back().end, range.end);
-        else
-            result.push_back(range);
-    }
-    return result;
-}
-
 // Hand-edited ranges after `edit` replaced its range with `inserted` bytes.
 // The replaced text leaves them, and a hand edit adds the text it wrote.
 std::vector<ByteRange> editedRanges(const std::vector<ByteRange> &ranges, ByteRange edit, std::size_t inserted,
@@ -225,7 +198,7 @@ std::vector<ByteRange> editedRanges(const std::vector<ByteRange> &ranges, ByteRa
         if (range.end > edit.end) result.push_back({shift(std::max(range.begin, edit.end)), shift(range.end)});
     }
     if (manual) result.push_back({edit.begin, edit.begin + inserted});
-    return joined(std::move(result));
+    return mergeRanges(std::move(result));
 }
 
 // Hand-edited ranges after a whole-buffer update with these old-to-new
@@ -248,7 +221,7 @@ std::vector<ByteRange> recomputedRanges(const std::vector<ByteRange> &ranges, co
     for (const auto &range : ranges) result.push_back({moved(range.begin, false), moved(range.end, true)});
     for (const auto &passage : changes)
         if (passage.kind != PassageKind::Equal) result.push_back(passage.result);
-    return joined(std::move(result));
+    return mergeRanges(std::move(result));
 }
 
 // Insertions at the edges of a nonempty range stay outside it, as in editing.
@@ -614,7 +587,6 @@ CorrespondenceMap CorrespondenceMap::rebuilt(RevisionId revision, ByteRange rang
             if (cut.end <= offset) moved -= cut.end - cut.begin;
         return moved;
     };
-    const auto overlaps = [](ByteRange a, ByteRange b) { return a.begin < b.end && b.begin < a.end; };
     // The anchor's range in the new text, empty for one on exactly a dropped range.
     const auto relocated = [&](ByteRange old) -> std::optional<ByteRange> {
         for (std::size_t i = 0; i < spans.size(); ++i) {
@@ -692,7 +664,7 @@ CorrespondenceMap CorrespondenceMap::rebuilt(RevisionId revision, ByteRange rang
         const ByteRange inside{std::max(old.begin, range.begin), std::min(old.end, range.end)};
         for (std::size_t i = 0; inside.begin < inside.end && i < spans.size(); ++i) keptPieces(i, inside);
     }
-    result.handEditedRanges_ = joined(std::move(edited));
+    result.handEditedRanges_ = mergeRanges(std::move(edited));
     result.text_.replace(range.begin, range.end - range.begin, replacement);
     result.align();
     return result;

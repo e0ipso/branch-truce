@@ -268,6 +268,8 @@ private:
     Support support_;
     std::string supportDetail_;
     std::shared_ptr<const FileSnapshots> snapshots_;
+    // The conflict-marker-size Git used for this file.
+    std::size_t markerSize_ = kDefaultConflictMarkerSize;
     std::shared_ptr<const std::vector<ChoiceTarget>> choices_;
     std::shared_ptr<const std::vector<NonConflictingTarget>> nonConflictingTargets_;
     // Marker lines and base text of each complete block in the launch result.

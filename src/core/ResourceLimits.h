@@ -16,6 +16,9 @@ inline constexpr std::size_t kLargeFileLines = 4000;
 inline constexpr std::size_t kMaxLineBytes = 262144;
 inline constexpr std::size_t kMaxGitReadBytes = 4194304;
 inline constexpr std::size_t kMaxRecoveryPayloadBytes = 8388608;
+// Longest conflict marker the engine recognizes. Git's default is 7, and
+// projects that change it with conflict-marker-size use a few dozen.
+inline constexpr std::size_t kMaxConflictMarkerSize = 1024;
 
 enum class TextLimit { Within, LineBytes, RecoveryPayload };
 

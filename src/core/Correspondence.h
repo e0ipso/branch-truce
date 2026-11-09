@@ -1,6 +1,7 @@
 // Passage correspondence maps captured source ranges to one revision of the editable result.
 #pragma once
 
+#include "ByteRanges.h"
 #include "FileSnapshot.h"
 #include "RevisionId.h"
 #include <map>
@@ -12,13 +13,6 @@
 #include <vector>
 
 namespace branch_truce {
-
-// All ranges are half-open UTF-8 byte offsets, including empty insertion sites.
-struct ByteRange {
-    std::size_t begin = 0;
-    std::size_t end = 0;
-    bool operator==(const ByteRange &) const = default;
-};
 
 enum class SourceSide { Earlier, Stage2, Stage3 };
 enum class InsertionAffinity { Before, After };

@@ -58,45 +58,38 @@ bool validDecisions(const std::map<std::string, Decision> &decisions)
 // around its separator, show which separator line Git wrote. Choices change
 // side regions but not base regions, so after launch the launch blocks' base
 // regions show it too. Files without a correspondence keep the plain scan.
-MarkerScan resultMarkers(std::string_view text, const CorrespondenceMap *mapping,
+MarkerScan resultMarkers(std::string_view text, std::size_t markerSize, const CorrespondenceMap *mapping,
                          const std::set<std::vector<std::string>> *launch = nullptr)
 {
-    std::vector<ByteRange> content;
-    std::vector<ByteRange> earlier;
-    std::vector<ByteRange> uncertain;
-    std::vector<ByteRange> right;
-    std::optional<RegionSources> sources;
+    MarkerContext context;
+    context.markerSize = markerSize;
     if (mapping) {
         const auto *earlierText = mapping->source(SourceSide::Earlier);
         const auto *rightText = mapping->source(SourceSide::Stage3);
-        if (earlierText && rightText) sources = RegionSources{*earlierText, *rightText, {}};
-        if (sources && launch)
+        if (earlierText && rightText) context.sources = RegionSources{*earlierText, *rightText, {}};
+        if (context.sources && launch)
             for (const auto &frame : *launch)
-                if (!frame[1].empty()) sources->bases.push_back(frame[1]);
+                if (!frame[1].empty()) context.sources->bases.push_back(frame[1]);
         for (const auto side : {SourceSide::Stage2, SourceSide::Stage3, SourceSide::Earlier}) {
             const auto *passages = mapping->passages(side);
             if (!passages) continue;
             for (const auto &passage : *passages) {
                 if (side == SourceSide::Earlier && passage.kind == PassageKind::Ambiguous)
-                    uncertain.push_back(passage.result);
+                    context.uncertain.push_back(passage.result);
                 if (passage.kind != PassageKind::Equal) continue;
-                (side == SourceSide::Earlier ? earlier : content).push_back(passage.result);
-                if (side == SourceSide::Stage3) right.push_back(passage.result);
+                (side == SourceSide::Earlier ? context.earlier : context.known).push_back(passage.result);
+                if (side == SourceSide::Stage3) context.right.push_back(passage.result);
             }
         }
     }
-    return scanMarkers(text, std::move(content), std::move(earlier), std::move(uncertain), std::move(right), sources);
+    return scanMarkers(text, std::move(context));
 }
 
-Draft withMarkers(Draft draft, const CorrespondenceMap *mapping, const std::set<std::vector<std::string>> *launch)
+Draft withMarkers(Draft draft, std::size_t markerSize, const CorrespondenceMap *mapping,
+                  const std::set<std::vector<std::string>> *launch)
 {
-    draft.unresolvedMarkers = resultMarkers(draft.text, mapping, launch).count();
+    draft.unresolvedMarkers = resultMarkers(draft.text, markerSize, mapping, launch).count();
     return draft;
-}
-
-std::string slice(std::string_view text, ByteRange range)
-{
-    return std::string(text.substr(range.begin, range.end - range.begin));
 }
 
 // Everything in a block except its two side regions. A hand edit to any of it
@@ -105,8 +98,9 @@ std::vector<std::string> frame(const MarkerRange &block, std::string_view text)
 {
     const auto base =
         block.base ? block.base->bytes : ByteRange{block.separator.bytes.begin, block.separator.bytes.begin};
-    return {slice(text, block.begin.bytes), slice(text, {base.begin, block.separator.bytes.begin}),
-            slice(text, block.separator.bytes), slice(text, block.end.bytes)};
+    return {std::string(slice(text, block.begin.bytes)),
+            std::string(slice(text, {base.begin, block.separator.bytes.begin})),
+            std::string(slice(text, block.separator.bytes)), std::string(slice(text, block.end.bytes))};
 }
 
 ByteRange sideRegion(const MarkerRange &block, SourceSide side)
@@ -119,9 +113,9 @@ ByteRange sideRegion(const MarkerRange &block, SourceSide side)
 // the marker lines and the other regions holds one side's text. A side whose
 // identical lines leave anchors ambiguous in the whole result can still map
 // them there. Only a scan that explains every marker line shows that text.
-void settle(CorrespondenceMap &mapping, std::string_view text)
+void settle(CorrespondenceMap &mapping, std::string_view text, std::size_t markerSize)
 {
-    const auto scan = resultMarkers(text, &mapping);
+    const auto scan = resultMarkers(text, markerSize, &mapping);
     if (scan.blocks.empty() || !scan.orphans.empty()) return;
     for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
         std::vector<ByteRange> dropped;
@@ -142,13 +136,11 @@ bool fills(const CorrespondenceMap &mapping, const ChoiceTarget &target, ByteRan
     return anchor && anchor->state == AnchorState::Mapped && anchor->result == region;
 }
 
-bool inside(ByteRange range, ByteRange region) { return region.begin <= range.begin && range.end <= region.end; }
-
 // Ignored text is removed only where it is still exactly what the source put there.
 bool removable(const ResultAnchor *anchor, ByteRange region)
 {
     return anchor && anchor->state == AnchorState::Mapped && anchor->result && !anchor->handEdited
-        && !anchor->manualOverlap && inside(*anchor->result, region);
+        && !anchor->manualOverlap && contains(region, *anchor->result);
 }
 
 // The section whose two source scopes fill the block's side regions.
@@ -200,7 +192,7 @@ std::vector<std::string> enclosedSections(const std::vector<ChoiceTarget> &choic
         const auto index = target.source.side == SourceSide::Stage2 ? 0u : 1u;
         const auto region = sideRegion(block, target.source.side);
         const auto range = *anchor->result;
-        if (range.begin == range.end ? region.begin < range.begin && range.end < region.end : inside(range, region))
+        if (range.begin == range.end ? region.begin < range.begin && range.end < region.end : contains(region, range))
             placed[index].push_back({range, target.section});
     }
     auto &[left, right] = placed;
@@ -240,6 +232,19 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, Suppor
             throw std::invalid_argument("Captured sources and launch result must belong to this file session");
         }
         snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
+    }
+    if (snapshots_) {
+        const auto &attributes = snapshots_->conversion.attributes;
+        const auto attribute = attributes.find("conflict-marker-size");
+        const auto size = attribute == attributes.end() ? std::optional{kDefaultConflictMarkerSize}
+                                                        : conflictMarkerSize(attribute->second);
+        if (!size && support_ == Support::Supported) {
+            support_ = Support::OutsideApp;
+            supportDetail_ = "Outside app: conflict-marker-size is over " + std::to_string(kMaxConflictMarkerSize);
+            open(launch(1, std::move(initial), false, false));
+            return;
+        }
+        markerSize_ = size.value_or(kDefaultConflictMarkerSize);
     }
     const auto resultBudget = assessText(initial.text);
     if (resultBudget.limit != TextLimit::Within) {
@@ -299,7 +304,7 @@ FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool
                 if (!bound->bind(target.earlier) || !bound->bind(target.source))
                     throw std::invalid_argument("Invalid non-conflicting scope");
             }
-            settle(*bound, initial.text);
+            settle(*bound, initial.text, markerSize_);
             correspondence = std::move(bound);
             result.choices = std::move(choices);
             result.nonConflictingTargets = std::move(nonConflicting);
@@ -311,11 +316,11 @@ FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool
     }
     if (snapshots_) {
         std::set<std::vector<std::string>> blocks;
-        for (const auto &block : resultMarkers(initial.text, correspondence.get()).blocks)
+        for (const auto &block : resultMarkers(initial.text, markerSize_, correspondence.get()).blocks)
             blocks.insert(frame(block, initial.text));
         result.launchBlocks = std::make_shared<const std::set<std::vector<std::string>>>(std::move(blocks));
     }
-    auto draft = withMarkers(std::move(initial), correspondence.get(), result.launchBlocks.get());
+    auto draft = withMarkers(std::move(initial), markerSize_, correspondence.get(), result.launchBlocks.get());
     result.revisions.emplace(revision,
                              Revision{revision, revision, revision, std::move(draft), std::move(correspondence)});
     return result;
@@ -350,7 +355,7 @@ const std::vector<NonConflictingTarget> &FileSession::nonConflictingTargets() co
 
 MarkerScan FileSession::markers() const
 {
-    return resultMarkers(current().draft.text, correspondence(), launchBlocks_.get());
+    return resultMarkers(current().draft.text, markerSize_, correspondence(), launchBlocks_.get());
 }
 
 std::vector<ByteRange> FileSession::conflictRegions() const
@@ -376,7 +381,7 @@ std::vector<MarkerSection> FileSession::markerSections(const std::string &text, 
 {
     std::vector<MarkerSection> result;
     if (!launchBlocks_ || !choices_) return result;
-    for (const auto &block : resultMarkers(text, &mapping, launchBlocks_.get()).blocks) {
+    for (const auto &block : resultMarkers(text, markerSize_, &mapping, launchBlocks_.get()).blocks) {
         if (!launchBlocks_->contains(frame(block, text))) continue;
         if (auto section = filledSection(*choices_, mapping, block))
             result.push_back({block, {std::move(*section)}});
@@ -426,7 +431,7 @@ std::vector<FileSession::MarkerEdit> FileSession::markerEdits(const Draft &draft
                 const auto region = regions[index];
                 const auto *anchor = mapping.anchor(side.source.contributionId);
                 // A deletion's insertion point lies outside the block.
-                if (anchor && anchor->result && inside(*anchor->result, region))
+                if (anchor && anchor->result && contains(region, *anchor->result))
                     scopes[index].push_back(*anchor->result);
                 else
                     placed = false;
@@ -489,7 +494,7 @@ std::vector<FileSession::MarkerEdit> FileSession::markerEdits(const Draft &draft
                     auto kept = cuts[i][index];
                     std::sort(kept.begin(), kept.end(), [](const auto &a, const auto &b) { return a.begin < b.begin; });
                     for (std::size_t at = 0; at < kept.size(); ++at)
-                        if (!inside(kept[at], scopes[index][i]) || (at && kept[at].begin < kept[at - 1].end))
+                        if (!contains(scopes[index][i], kept[at]) || (at && kept[at].begin < kept[at - 1].end))
                             complete = false;
                     spans.push_back({scopes[index][i], std::move(kept)});
                 }
@@ -530,7 +535,7 @@ RevisionId FileSession::advance(const Draft &edited, std::shared_ptr<const Corre
             std::make_shared<const CorrespondenceMap>(previous.correspondence->recomputed(id, edited.text));
     }
     // Counted against this revision's own passages, so replay derives the same count.
-    const auto draft = withMarkers(edited, correspondence.get(), launchBlocks_.get());
+    const auto draft = withMarkers(edited, markerSize_, correspondence.get(), launchBlocks_.get());
     const auto result = draft.text == previous.draft.text ? previous.result : id;
     const auto decisions =
         draft.decisions == previous.draft.decisions && draft.unresolvedMarkers == previous.draft.unresolvedMarkers

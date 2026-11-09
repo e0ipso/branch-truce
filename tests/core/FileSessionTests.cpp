@@ -25,6 +25,23 @@ FileSession captured(const std::string &text)
     return FileSession("limit", sources.path, {text, {}, 0}, Support::Supported, {}, sources);
 }
 
+FileSession withMarkerSize(const std::string &attribute, std::size_t size)
+{
+    const auto marker = [&](char c) { return std::string(size, c); };
+    const std::string left = "head\nleft\ntail\n";
+    const std::string right = "head\nright\ntail\n";
+    const auto result =
+        "head\n" + marker('<') + " ours\nleft\n" + marker('=') + "\nright\n" + marker('>') + " theirs\ntail\n";
+    FileSnapshots sources;
+    sources.path = "marked.txt";
+    sources.provenance.sessionId = "markers";
+    sources.conversion.attributes = {{"conflict-marker-size", attribute}};
+    sources.stage2 = SourceSnapshot{"left-object", "100644", left, {left, left, {}}, "left-commit", "Left"};
+    sources.stage3 = SourceSnapshot{"right-object", "100644", right, {right, right, {}}, "right-commit", "Right"};
+    sources.launchResult.text = {result, result, {}};
+    return FileSession("marked", sources.path, {result, {}, 0}, Support::Supported, {}, sources, true);
+}
+
 void discardAfterLoadingALargeFileRestoresItsLaunchText()
 {
     const auto text = lines(kLargeFileLines + 1);
@@ -62,6 +79,19 @@ void onlyAcceptedDecisionsCarryAnOrder()
     CHECK(file.replaceDraft(1, {"text\n", {{"left", {DecisionValue::Accepted, 1}}}, 0}) == Transition::Applied);
 }
 
+void markersFollowTheCapturedMarkerSize()
+{
+    auto file = withMarkerSize("32", 32);
+    CHECK(file.support() == Support::Supported && file.current().draft.unresolvedMarkers == 1);
+    CHECK(file.markers().blocks.size() == 1 && file.markerSections().size() == 1);
+    CHECK(file.beginMarkResolved(1) == Transition::Blocked);
+    // Git falls back to seven for a value that is not a positive number.
+    CHECK(withMarkerSize("unset", 7).current().draft.unresolvedMarkers == 1);
+    CHECK(withMarkerSize("unset", 32).current().draft.unresolvedMarkers == 0);
+    const auto oversized = withMarkerSize(std::to_string(kMaxConflictMarkerSize + 1), 7);
+    CHECK(oversized.support() == Support::OutsideApp && !oversized.correspondence());
+}
+
 void launchTextOutsideTheInvariantIsUnreadable()
 {
     for (const auto *text : {"bad \xff\n", "crlf\r\n"}) {
@@ -82,5 +112,6 @@ int main()
     suite.run("whole drafts and edits keep UTF-8 text with LF line endings", wholeDraftsKeepTheTextInvariant);
     suite.run("only accepted decisions carry a combination order", onlyAcceptedDecisionsCarryAnOrder);
     suite.run("launch text outside that invariant is unreadable", launchTextOutsideTheInvariantIsUnreadable);
+    suite.run("markers follow the captured conflict-marker-size", markersFollowTheCapturedMarkerSize);
     return suite.report();
 }

@@ -163,7 +163,8 @@ bool GitAdapter::State::captureAttributes()
     for (qsizetype i = 0; i + 2 < fields.size(); i += 3) {
         if (fields[i] != result.request.path || fields[i + 1].isEmpty()) return false;
         const auto &name = fields[i + 1];
-        if (name == "text" || name == "eol" || name == "ident" || name == "working-tree-encoding" || name == "filter") {
+        if (name == "text" || name == "eol" || name == "ident" || name == "working-tree-encoding" || name == "filter"
+            || name == "conflict-marker-size") {
             if (result.conversionPolicy.attributes.contains(name)) return false;
             result.conversionPolicy.attributes.insert(name, fields[i + 2]);
         }
