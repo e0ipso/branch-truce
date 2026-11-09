@@ -8,25 +8,25 @@
 #include "fixtures/EventLoop.h"
 #include "fixtures/Files.h"
 #include "fixtures/GitRepository.h"
+#include "fixtures/ScriptGate.h"
 #include "git/ConflictClassifier.h"
 #include "git/GitAdapter.h"
 #include "git/TextConversion.h"
 
 #include <QByteArray>
 #include <QDir>
-#include <QFileSystemWatcher>
 #include <QList>
 #include <QString>
 #include <QTemporaryDir>
 
-#include <fcntl.h>
-#include <functional>
 #include <sys/stat.h>
 #include <unistd.h>
 
 namespace git_fixture {
 using namespace branch_truce::git;
 using test_support::readFile;
+using test_support::ScriptGate;
+using test_support::WhenCreated;
 using test_support::writeFile;
 
 // Filenames that a pathspec, an option parser or a UTF-8 decoder would misread.
@@ -129,58 +129,6 @@ case "$1" in
 
 private:
     QTemporaryDir executables_;
-};
-
-// A gate a scripted Git blocks on with `read -r line < <name>` until the case opens it. The
-// case holds the FIFO open for writing, so the script never sees end of file early and opening
-// it never blocks. open() writes enough lines that every later read passes too.
-class ScriptGate {
-public:
-    explicit ScriptGate(const QString &path)
-    {
-        const auto native = QFile::encodeName(path);
-        CHECK(::mkfifo(native.constData(), 0600) == 0);
-        fd_ = ::open(native.constData(), O_RDWR | O_NONBLOCK | O_CLOEXEC);
-        CHECK(fd_ >= 0);
-    }
-    ~ScriptGate()
-    {
-        if (fd_ >= 0) ::close(fd_);
-    }
-    ScriptGate(const ScriptGate &) = delete;
-    ScriptGate &operator=(const ScriptGate &) = delete;
-    void open()
-    {
-        const QByteArray lines(256, '\n');
-        EXPECT(::write(fd_, lines.constData(), static_cast<std::size_t>(lines.size())) == lines.size());
-    }
-
-private:
-    int fd_ = -1;
-};
-
-// Calls `action` once, from the event loop, when `path` first exists. The directory is watched
-// through inotify, so a script's marker file is seen without polling.
-class WhenCreated {
-public:
-    WhenCreated(const QString &path, std::function<void()> action) : path_(path), action_(std::move(action))
-    {
-        CHECK(watcher_.addPath(QFileInfo(path).absolutePath()));
-        QObject::connect(&watcher_, &QFileSystemWatcher::directoryChanged, &watcher_, [this] { fire(); });
-        fire();
-    }
-
-private:
-    void fire()
-    {
-        if (done_ || !QFileInfo::exists(path_)) return;
-        done_ = true;
-        action_();
-    }
-    QString path_;
-    std::function<void()> action_;
-    QFileSystemWatcher watcher_;
-    bool done_ = false;
 };
 
 // The adapter's results, with run() also checking that the result carries the request identity.

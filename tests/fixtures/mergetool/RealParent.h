@@ -9,6 +9,7 @@
 #include "fixtures/EventLoop.h"
 #include "fixtures/Files.h"
 #include "fixtures/GitRepository.h"
+#include "fixtures/ScriptGate.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -71,7 +72,7 @@ class ParentRepository {
 public:
     // The documented tool: assign Git's unexported variables, then run the launcher.
     static constexpr const char *Tool = "truce";
-    // The same command, then the parent waits for a release file before it stages or restores.
+    // The same command, then the parent waits for release() before it stages or restores.
     static constexpr const char *GatedTool = "truce-gated";
     // The same command, then the parent overwrites MERGED with other bytes before Git stages it.
     static constexpr const char *TamperTool = "truce-tamper";
@@ -92,6 +93,7 @@ public:
                                     QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
         environment.insert("XDG_RUNTIME_DIR", runtime_.path());
         environment.insert("BRANCH_TRUCE_MERGETOOL_NO_SPAWN", "1");
+        releaseGate_ = std::make_unique<test_support::ScriptGate>(releaseFile());
         configureGlobal(launcher);
         createConflict();
     }
@@ -133,7 +135,8 @@ public:
     // The gated tool appends "<MERGED> <launcher status>" here after each launcher exit.
     QString exitsFile() const { return probe + QStringLiteral("/exits"); }
     QByteArray exits() const { return QFile::exists(exitsFile()) ? readFile(exitsFile()) : QByteArray(); }
-    void release() const { writeFile(releaseFile(), "go\n"); }
+    // Lets one gated tool command finish, now or when it next waits.
+    void release() const { releaseGate_->pass(); }
 
     QString root;
     QString probe;
@@ -146,9 +149,8 @@ private:
         const auto invoke = QStringLiteral("MERGED=\"$MERGED\" BASE=\"$BASE\" LOCAL=\"$LOCAL\" REMOTE=\"$REMOTE\" ")
             + shellQuote(launcher) + QStringLiteral(" --mergetool");
         const auto gated = invoke + QStringLiteral("; status=$?; printf '%s %s\\n' \"$MERGED\" \"$status\" >> ")
-            + shellQuote(exitsFile()) + QStringLiteral("; waited=0; while [ ! -e ") + shellQuote(releaseFile())
-            + QStringLiteral(" ] && [ $waited -lt 600 ]; do sleep 0.05; waited=$((waited + 1)); done; rm -f ")
-            + shellQuote(releaseFile()) + QStringLiteral("; exit $status");
+            + shellQuote(exitsFile()) + QStringLiteral("; read -r line < ") + shellQuote(releaseFile())
+            + QStringLiteral("; exit $status");
         // Git word-splits the configured command before eval, so it carries no literal newline.
         const auto tamper = invoke + QStringLiteral("; status=$?; if [ $status -eq 0 ]; then printf '%s\\n' ")
             + shellQuote(QString::fromLatin1(TamperedBytes).chopped(1))
@@ -202,6 +204,8 @@ private:
     // The worktree, the private home and the global configuration fixture Git and the parent read.
     test_support::GitRepository repository_;
     QTemporaryDir probe_;
+    // The FIFO the gated tool reads before it lets Git stage or restore.
+    std::unique_ptr<test_support::ScriptGate> releaseGate_;
     // Under a long TMPDIR a QTemporaryDir would push the socket path past its
     // length limit, and the session would fall back to the shared
     // /tmp/branch-truce-<uid>. A short base under /tmp keeps it private.

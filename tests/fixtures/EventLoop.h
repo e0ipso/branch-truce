@@ -6,15 +6,19 @@
 //
 //   waitUntil(ready, detail)         runs the loop until ready() holds.
 //   AsyncCompletion(service, signal) drives one request of a start()/busy()/finished() service.
+//   WhenCreated(path, action)        runs action from the event loop once a file appears.
 
 #include "TestHarness.h"
 
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QObject>
 #include <QTimer>
 
 #include <exception>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -104,6 +108,31 @@ public:
 private:
     Service &service_;
     QEventLoop loop_;
+};
+
+// Calls `action` once, from the event loop, when `path` first exists. The directory is watched
+// through inotify, so a script's marker file is seen without polling.
+class WhenCreated {
+public:
+    WhenCreated(const QString &path, std::function<void()> action) : path_(path), action_(std::move(action))
+    {
+        CHECK(watcher_.addPath(QFileInfo(path).absolutePath()));
+        QObject::connect(&watcher_, &QFileSystemWatcher::directoryChanged, &watcher_, [this] { fire(); });
+        fire();
+    }
+
+private:
+    void fire()
+    {
+        if (done_ || !QFileInfo::exists(path_)) return;
+        done_ = true;
+        // It runs inside a Qt slot, so a failure is recorded rather than thrown.
+        contain(action_);
+    }
+    QString path_;
+    std::function<void()> action_;
+    QFileSystemWatcher watcher_;
+    bool done_ = false;
 };
 
 } // namespace test_support
