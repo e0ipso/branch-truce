@@ -13,10 +13,14 @@
 #include <QJsonDocument>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
+#include <QSocketNotifier>
 #include <QStandardPaths>
 #include <QTextStream>
 #include <QTimer>
 #include <algorithm>
+#include <csignal>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace {
 // The KDE style takes its colours from the user's KDE colour scheme. Fusion
@@ -30,6 +34,29 @@ void selectControlsStyle(const QQmlEngine &engine)
     });
     QQuickStyle::setStyle(kdeStyle ? QStringLiteral("org.kde.desktop") : QStringLiteral("Fusion"));
     if (kdeStyle) QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
+}
+
+// SIGTERM, SIGINT and SIGHUP end the event loop instead of the process, so the
+// session closes its launcher socket and stops its Git processes in order. The
+// handler only writes to a pipe; the event loop reads it.
+int signalPipe[2]{-1, -1};
+void quitOnSignals(QCoreApplication &application)
+{
+    if (::pipe2(signalPipe, O_CLOEXEC | O_NONBLOCK) != 0) return;
+    struct sigaction action{};
+    action.sa_handler = [](int) {
+        const char byte = 1;
+        [[maybe_unused]] const auto written = ::write(signalPipe[1], &byte, 1);
+    };
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_RESTART;
+    for (const int signal : {SIGTERM, SIGINT, SIGHUP}) ::sigaction(signal, &action, nullptr);
+    auto *notifier = new QSocketNotifier(signalPipe[0], QSocketNotifier::Read, &application);
+    QObject::connect(notifier, &QSocketNotifier::activated, &application, [] {
+        char byte = 0;
+        while (::read(signalPipe[0], &byte, 1) > 0) {}
+        QCoreApplication::quit();
+    });
 }
 }
 
@@ -47,6 +74,7 @@ int main(int argc, char *argv[])
     // QApplication rather than QGuiApplication: the org.kde.desktop style draws its
     // controls through QApplication::style(). See docs/platform-validation.md.
     QApplication application(argc, argv);
+    quitOnSignals(application);
     branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("Branch Truce"));
