@@ -28,35 +28,42 @@ bool validDigest(const QByteArray &value)
     return true;
 }
 
-bool privateDirectory(const QString &path)
+// Creates path when missing and adds its parent to unsynced, so a power loss
+// cannot drop the new entry once a record that depends on it is durable.
+bool privateDirectory(const FileSystem &files, const QString &path, std::set<QString> &unsynced)
 {
     const QFileInfo before(path);
     if (before.isSymLink() || (before.exists() && !before.isDir())) return false;
-    if (!QDir().mkpath(path, directoryPermissions)) return false;
-    const QFileInfo created(path);
-    return created.ownerId() == ::geteuid() && QFile::setPermissions(path, directoryPermissions);
+    if (!before.exists()) {
+        if (!QDir().mkpath(path, directoryPermissions)) return false;
+        unsynced.insert(QFileInfo(path).absolutePath());
+    }
+    const QFileInfo existing(path);
+    return existing.ownerId() == files.effectiveUser() && QFile::setPermissions(path, directoryPermissions);
 }
 
-bool regularPrivateFile(const QString &path)
+bool regularPrivateFile(const FileSystem &files, const QString &path)
 {
     const QFileInfo info(path);
-    return !info.isSymLink() && info.isFile() && info.ownerId() == ::geteuid()
+    return !info.isSymLink() && info.isFile() && info.ownerId() == files.effectiveUser()
         && (info.permissions()
             & (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup | QFileDevice::ReadOther
                | QFileDevice::WriteOther | QFileDevice::ExeOther))
         == 0;
 }
 
-bool atomicFile(const QString &path, const QByteArray &bytes)
+// Writes a new file through a synced temporary and a rename. The caller syncs
+// the directory before anything refers to the file.
+bool atomicFile(const FileSystem &files, const QString &path, const QByteArray &bytes)
 {
     if (QFileInfo::exists(path) || QFileInfo(path).isSymLink()) return false;
     QSaveFile file(path);
     file.setDirectWriteFallback(false);
     return file.open(QIODevice::WriteOnly) && file.setPermissions(filePermissions) && file.write(bytes) == bytes.size()
-        && file.flush() && ::fsync(file.handle()) == 0 && file.commit();
+        && file.flush() && files.sync(file.handle()) == 0 && file.commit();
 }
 
-bool synchronize(QFile &file) { return file.flush() && ::fsync(file.handle()) == 0; }
+bool synchronize(const FileSystem &files, QFile &file) { return file.flush() && files.sync(file.handle()) == 0; }
 
 // The digest of a state as the journal stores it, so a state handed to commit
 // and the same state read back compare equal.
@@ -67,7 +74,9 @@ QByteArray stateDigest(const QJsonObject &state)
 }
 }
 
-RecoveryStore::RecoveryStore(QString directory) : directory_(std::move(directory)) {}
+RecoveryStore::RecoveryStore(QString directory, std::shared_ptr<const FileSystem> files)
+    : directory_(std::move(directory)), files_(std::move(files))
+{}
 
 QByteArray RecoveryStore::digest(const QByteArray &bytes)
 {
@@ -78,7 +87,7 @@ QByteArray RecoveryStore::payload(const QByteArray &hash, QString *error) const
 {
     const auto path = directory_ + QStringLiteral("/payloads/") + QString::fromLatin1(hash);
     QFile file(path);
-    if (!validDigest(hash) || !regularPrivateFile(path) || !file.open(QIODevice::ReadOnly)) {
+    if (!validDigest(hash) || !regularPrivateFile(*files_, path) || !file.open(QIODevice::ReadOnly)) {
         if (error) *error = QStringLiteral("Recovery payload is missing or unsafe.");
         return {};
     }
@@ -108,8 +117,8 @@ bool RecoveryStore::openJournal(QFile &file, RecoveryRead &result) const
     const QFileInfo root(directory_);
     const QFileInfo payloads(directory_ + QStringLiteral("/payloads"));
     file.setFileName(path);
-    if (root.isSymLink() || !root.isDir() || payloads.isSymLink() || !payloads.isDir() || !regularPrivateFile(path)
-        || !file.open(QIODevice::ReadOnly)) {
+    if (root.isSymLink() || !root.isDir() || payloads.isSymLink() || !payloads.isDir()
+        || !regularPrivateFile(*files_, path) || !file.open(QIODevice::ReadOnly)) {
         result.error = QStringLiteral("Recovery journal is unavailable or unsafe.");
         return false;
     }
@@ -234,14 +243,18 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
     if (transaction.state.value(QStringLiteral("schema")).toInt() != 1
         || transaction.state.value(QStringLiteral("transactionId")).toString().isEmpty())
         return {false, QStringLiteral("Invalid recovery transaction.")};
-    if (!privateDirectory(directory_) || !privateDirectory(directory_ + QStringLiteral("/payloads")))
+    const auto payloadDirectory = directory_ + QStringLiteral("/payloads");
+    if (!privateDirectory(*files_, directory_, unsynced_) || !privateDirectory(*files_, payloadDirectory, unsynced_))
         return {false,
                 QStringLiteral("Could not create private recovery storage; retry after repairing its location.")};
     QLockFile lock(directory_ + QStringLiteral("/journal.lock"));
     if (!lock.tryLock(0)) return {false, QStringLiteral("Recovery storage is busy; retry the pending action.")};
     const auto journalPath = directory_ + QStringLiteral("/journal");
-    if (!QFileInfo::exists(journalPath) && !atomicFile(journalPath, header))
-        return {false, QStringLiteral("Could not initialize the recovery journal.")};
+    if (!QFileInfo::exists(journalPath)) {
+        if (!atomicFile(*files_, journalPath, header))
+            return {false, QStringLiteral("Could not initialize the recovery journal.")};
+        unsynced_.insert(directory_);
+    }
     QString readError;
     const auto *current = refreshEnd(&readError);
     if (!current) return {false, readError};
@@ -255,12 +268,21 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
                         "Recovery payload of %1 bytes exceeds the 8388608 byte limit; pending input is retained.")
                         .arg(entry.value().size())};
         const auto path = directory_ + QStringLiteral("/payloads/") + QString::fromLatin1(entry.key());
-        if (!QFileInfo::exists(path) && !atomicFile(path, entry.value()))
-            return {false, QStringLiteral("Could not commit a recovery payload; pending input is retained.")};
+        if (!QFileInfo::exists(path)) {
+            if (!atomicFile(*files_, path, entry.value()))
+                return {false, QStringLiteral("Could not commit a recovery payload; pending input is retained.")};
+            unsynced_.insert(payloadDirectory);
+        }
         QString error;
         (void)payload(entry.key(), &error);
         if (!error.isEmpty()) return {false, error};
         references.push_back(QString::fromLatin1(entry.key()));
+    }
+    // The record must not outlive the directory entries it depends on: the
+    // store, the journal and its payloads.
+    for (auto pending = unsynced_.begin(); pending != unsynced_.end(); pending = unsynced_.erase(pending)) {
+        if (!syncDirectory(*files_, *pending))
+            return {false, QStringLiteral("Could not sync recovery storage; pending input is retained for retry.")};
     }
     QFile journal(journalPath);
     const auto validBytes = static_cast<qint64>(current->bytes.size());
@@ -273,7 +295,7 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
     if (const auto committed = current->committed.find(transactionId); committed != current->committed.end()) {
         if (committed->second != stateDigest(transaction.state))
             return {false, QStringLiteral("Recovery transaction identity was reused for different work.")};
-        return synchronize(journal)
+        return synchronize(*files_, journal)
             ? RecoveryCommit{true, {}}
             : RecoveryCommit{false, QStringLiteral("Could not flush the pending recovery transaction; retry.")};
     }
@@ -288,7 +310,7 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
                                                  {QStringLiteral("sha256"), QString::fromLatin1(bodyDigest)}})
                            .toJson(QJsonDocument::Compact)
         + '\n';
-    if (journal.write(frame) != frame.size() || !synchronize(journal))
+    if (journal.write(frame) != frame.size() || !synchronize(*files_, journal))
         return {false, QStringLiteral("Recovery commit failed; pending input is retained for retry.")};
     if (end_) {
         end_->bytes += frame;

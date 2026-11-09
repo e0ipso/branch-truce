@@ -1,7 +1,7 @@
 #include "TestHarness.h"
 #include "core/ResourceLimits.h"
 #include "fixtures/Files.h"
-#include "fixtures/RecoveryFaults.h"
+#include "fixtures/SyncFaults.h"
 #include "storage/RecoveryStore.h"
 #include <QCoreApplication>
 #include <QFile>
@@ -11,12 +11,16 @@
 #include <QLockFile>
 #include <QProcess>
 #include <QTemporaryDir>
+#include <algorithm>
 #include <array>
+#include <memory>
 #include <string>
 #include <utility>
 
 using namespace branch_truce::storage;
+using test_support::ArmedFault;
 using test_support::readFile;
+using test_support::SyncFaults;
 using test_support::writeFile;
 
 namespace {
@@ -110,25 +114,29 @@ int main(int argc, char **argv)
               == QByteArray("first\0exact bytes", 17));
         CHECK(error.isEmpty());
     });
-    for (const auto &[point, name] : {std::pair{recovery_faults::Point::PayloadSync, "payload sync"},
-                                      std::pair{recovery_faults::Point::JournalSync, "journal sync"}}) {
+    for (const auto &[point, name] : {std::pair{SyncFaults::Point::PayloadSync, "payload sync"},
+                                      std::pair{SyncFaults::Point::DirectorySync, "directory sync"},
+                                      std::pair{SyncFaults::Point::JournalSync, "journal sync"}}) {
         suite.run(std::string("recovery write failure retains the prior commit and idempotent retry: ") + name,
                   [point] {
                       QTemporaryDir directory;
                       CHECK(directory.isValid());
-                      RecoveryStore store(directory.path() + "/recovery");
+                      const auto files = std::make_shared<SyncFaults>();
+                      RecoveryStore store(directory.path() + "/recovery", files);
                       const auto first = transaction("first", "already acknowledged");
                       const auto pending = transaction("stable-retry-identity", "new pending bytes");
                       CHECK(store.commit(first).succeeded);
-                      recovery_faults::Failure fault(point);
-                      const auto failed = store.commit(pending);
-                      CHECK(recovery_faults::failures == 1 && !failed.succeeded && !failed.error.isEmpty());
+                      {
+                          ArmedFault fault(*files, point);
+                          const auto failed = store.commit(pending);
+                          CHECK(files->failures == 1 && !failed.succeeded && !failed.error.isEmpty());
+                      }
                       const auto interrupted = store.read();
                       CHECK(interrupted.succeeded && interrupted.transactions.front() == first.state);
-                      if (point == recovery_faults::Point::PayloadSync)
-                          CHECK(interrupted.transactions == QList<QJsonObject>{first.state});
-                      else
+                      if (point == SyncFaults::Point::JournalSync)
                           CHECK(interrupted.transactions == QList<QJsonObject>{first.state, pending.state});
+                      else
+                          CHECK(interrupted.transactions == QList<QJsonObject>{first.state});
                       CHECK(store.commit(pending).succeeded && store.commit(pending).succeeded);
                       const auto recovered = RecoveryStore(store.directory()).read();
                       CHECK(recovered.succeeded && !recovered.incompleteTail);
@@ -138,6 +146,24 @@ int main(int argc, char **argv)
                       CHECK(error.isEmpty());
                   });
     }
+    suite.run("a record is appended only after the directories of its new entries are synced", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto files = std::make_shared<SyncFaults>();
+        const auto inventory = QFileInfo(directory.path()).canonicalFilePath() + "/inventory";
+        RecoveryStore store(inventory + "/store", files);
+        CHECK(store.commit(transaction("first", "one")).succeeded);
+        const auto synced = files->syncedDirectories();
+        for (const auto &expected : {inventory, inventory + "/store", inventory + "/store/payloads"}) {
+            SCOPE(expected.toStdString());
+            CHECK(std::find(synced.begin(), synced.end(), expected.toStdString()) != synced.end());
+        }
+        // A payload that already exists adds no directory entry, so nothing needs a sync.
+        const auto before = files->syncedDirectories().size();
+        auto same = transaction("second", "one");
+        CHECK(store.commit(same).succeeded);
+        CHECK_EQ(files->syncedDirectories().size(), before);
+    });
     suite.run("recovery payload envelope keeps the boundary and the acknowledged journal", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
@@ -208,13 +234,14 @@ int main(int argc, char **argv)
     suite.run("a retry after a failed journal sync appends nothing even when other records followed", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        RecoveryStore store(directory.path() + "/recovery");
+        const auto files = std::make_shared<SyncFaults>();
+        RecoveryStore store(directory.path() + "/recovery", files);
         const auto first = transaction("first", "open of a");
         const auto other = transaction("other", "open of b");
         {
-            recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+            ArmedFault fault(*files, SyncFaults::Point::JournalSync);
             CHECK(!store.commit(first).succeeded);
-            CHECK_EQ(recovery_faults::failures.load(), 1);
+            CHECK_EQ(files->failures.load(), 1);
         }
         CHECK(store.commit(other).succeeded);
         CHECK(store.commit(first).succeeded);

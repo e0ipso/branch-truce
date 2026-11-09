@@ -8,33 +8,27 @@
 #include <QTemporaryDir>
 #include <QtEndian>
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <fcntl.h>
 #include <functional>
 #include <sys/stat.h>
 #include <sys/xattr.h>
 #include <unistd.h>
+#include <vector>
 
 using namespace branch_truce::storage;
 using test_support::readFile;
 using test_support::writeFile;
 
 namespace {
-struct Interception;
-Interception *active = nullptr;
-
-struct Interception {
-    Interception()
-    {
-        CHECK(!active);
-        active = this;
-    }
-    ~Interception() { active = nullptr; }
-    Interception(const Interception &) = delete;
-    Interception &operator=(const Interception &) = delete;
-    int writes = 0;
-    int syncs = 0;
-    int exchanges = 0;
+// Fails or observes the destination writer's system calls. Each case gives its snapshot one of
+// these, so nothing outside the case sees the faults.
+class Interception final : public FileSystem {
+public:
+    mutable std::atomic<int> writes = 0;
+    mutable std::atomic<int> syncs = 0;
+    mutable std::atomic<int> exchanges = 0;
     int failSync = 0;
     int exchangeError = 0;
     bool exchangeBeforeError = false;
@@ -46,7 +40,64 @@ struct Interception {
     bool foreignIdentity = false;
     std::function<void()> beforeExchange;
     std::function<void()> afterExchange;
+
+    ssize_t write(int fd, const void *bytes, size_t size) const override
+    {
+        if (++writes == 1 && interruptWrite) {
+            errno = EINTR;
+            return -1;
+        }
+        if (zeroWrite) return 0;
+        if (fullDisk) {
+            errno = ENOSPC;
+            return -1;
+        }
+        if (shortWrites) size = std::min(size, size_t{3});
+        return FileSystem::write(fd, bytes, size);
+    }
+    int sync(int fd) const override
+    {
+        if (++syncs == failSync) {
+            errno = EIO;
+            return -1;
+        }
+        return FileSystem::sync(fd);
+    }
+    int exchange(int source, const char *from, int destination, const char *to) const override
+    {
+        ++exchanges;
+        // Inside the code under test nothing may throw, so failures here are recorded.
+        if (beforeExchange) test_support::contain(beforeExchange);
+        if (exchangeError && !exchangeBeforeError) {
+            errno = exchangeError;
+            return -1;
+        }
+        const auto result = FileSystem::exchange(source, from, destination, to);
+        if (result == 0) {
+            if (afterExchange) test_support::contain(afterExchange);
+            if (exchangeError) {
+                errno = exchangeError;
+                return -1;
+            }
+        }
+        return result;
+    }
+    int unlink(int fd, const char *name, int flags) const override
+    {
+        if (failUnlink) {
+            errno = EACCES;
+            return -1;
+        }
+        return FileSystem::unlink(fd, name, flags);
+    }
+    uid_t effectiveUser() const override { return FileSystem::effectiveUser() + (foreignIdentity ? 1 : 0); }
 };
+
+int openDescriptors()
+{
+    return static_cast<int>(
+        QDir("/proc/self/fd").entryList(QDir::AllEntries | QDir::System | QDir::Hidden | QDir::NoDotAndDotDot).size());
+}
 
 class Fixture {
 public:
@@ -59,9 +110,9 @@ public:
     }
     QString path() const { return root + "/result.txt"; }
     QByteArray native() const { return QFile::encodeName(path()); }
-    DestinationSnapshot capture() const
+    DestinationSnapshot capture(std::shared_ptr<const FileSystem> files = systemFileSystem()) const
     {
-        const auto observed = captureDestination(root, "result.txt");
+        const auto observed = captureDestination(root, "result.txt", std::move(files));
         CHECK(observed.destination && observed.failure == DestinationFailure::None);
         CHECK(observed.destination->bytes() == original);
         return *observed.destination;
@@ -93,75 +144,6 @@ void retained(const Fixture &fixture, const PublicationResult &result, const QBy
 }
 } // namespace
 
-extern "C" {
-ssize_t __real_write(int, const void *, size_t);
-int __real_fsync(int);
-int __real_renameat2(int, const char *, int, const char *, unsigned int);
-int __real_unlinkat(int, const char *, int);
-uid_t __real_geteuid();
-
-ssize_t __wrap_write(int fd, const void *bytes, size_t size)
-{
-    if (active) {
-        ++active->writes;
-        if (active->interruptWrite && active->writes == 1) {
-            errno = EINTR;
-            return -1;
-        }
-        if (active->zeroWrite) return 0;
-        if (active->fullDisk) {
-            errno = ENOSPC;
-            return -1;
-        }
-        if (active->shortWrites) size = std::min(size, size_t{3});
-    }
-    return __real_write(fd, bytes, size);
-}
-int __wrap_fsync(int fd)
-{
-    if (active && ++active->syncs == active->failSync) {
-        errno = EIO;
-        return -1;
-    }
-    return __real_fsync(fd);
-}
-int __wrap_renameat2(int source, const char *from, int destination, const char *to, unsigned int flags)
-{
-    if (active) {
-        ++active->exchanges;
-        // Inside the code under test nothing may throw, so failures here are recorded.
-        EXPECT_EQ(flags, static_cast<unsigned int>(RENAME_EXCHANGE));
-        if (active->beforeExchange) test_support::contain(active->beforeExchange);
-        if (active->exchangeError && !active->exchangeBeforeError) {
-            errno = active->exchangeError;
-            return -1;
-        }
-    }
-    const auto result = __real_renameat2(source, from, destination, to, flags);
-    if (active && result == 0) {
-        if (active->afterExchange) test_support::contain(active->afterExchange);
-        if (active->exchangeError) {
-            errno = active->exchangeError;
-            return -1;
-        }
-    }
-    return result;
-}
-int __wrap_unlinkat(int fd, const char *name, int flags)
-{
-    if (active && active->failUnlink) {
-        errno = EACCES;
-        return -1;
-    }
-    return __real_unlinkat(fd, name, flags);
-}
-uid_t __wrap_geteuid()
-{
-    const auto real = __real_geteuid();
-    return active && active->foreignIdentity ? real + 1 : real;
-}
-}
-
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
@@ -191,6 +173,19 @@ int main(int argc, char **argv)
             fixture.clean();
         }
     });
+    suite.run("kept snapshots hold no open descriptors and still publish", [] {
+        Fixture fixture;
+        const auto before = openDescriptors();
+        std::vector<DestinationSnapshot> kept;
+        // More than a 1024-descriptor limit would allow if each snapshot pinned its path.
+        for (int index = 0; index < 400; ++index) kept.push_back(fixture.capture());
+        CHECK_EQ(openDescriptors(), before);
+        const auto result = publishDestination(kept.back(), fixture.edited, "100644", [] { return true; });
+        CHECK(result.state == PublicationState::Published && result.destination);
+        CHECK_EQ(openDescriptors(), before);
+        CHECK(readFile(fixture.path()) == fixture.edited);
+        fixture.clean();
+    });
     suite.run("unsafe paths and symlinks are rejected before capture", [] {
         Fixture fixture;
         for (const auto &path : QList<QByteArray>{"", "/result.txt", "../result.txt", "./result.txt", "a//b",
@@ -213,11 +208,12 @@ int main(int argc, char **argv)
     suite.run("admission cancellation and mode disagreement create no publication files", [] {
         Fixture fixture;
         const auto baseline = fixture.capture();
-        unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", {}), DestinationFailure::InvalidPath);
+        unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", {}),
+                  DestinationFailure::InvalidRequest);
         unchanged(fixture, publishDestination(baseline, fixture.edited, "100755", [] { return true; }),
-                  DestinationFailure::InvalidPath);
+                  DestinationFailure::InvalidRequest);
         unchanged(fixture, publishDestination(baseline, fixture.edited, "120000", [] { return true; }),
-                  DestinationFailure::InvalidPath);
+                  DestinationFailure::InvalidRequest);
         unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return false; }),
                   DestinationFailure::Cancelled);
     });
@@ -264,8 +260,8 @@ int main(int argc, char **argv)
     suite.run("ancestor replacement and post-admission edits are caught before exchange", [] {
         for (const bool ancestor : {false, true}) {
             Fixture fixture;
-            const auto baseline = fixture.capture();
-            Interception interception;
+            const auto interception = std::make_shared<Interception>();
+            const auto baseline = fixture.capture(interception);
             const auto result = publishDestination(baseline, fixture.edited, "100644", [&] {
                 test_support::contain([&] {
                     if (ancestor) {
@@ -277,7 +273,7 @@ int main(int argc, char **argv)
                 return true;
             });
             CHECK(result.state == PublicationState::Unchanged && !result.destination);
-            CHECK(interception.exchanges == 0 && readFile(fixture.path()) == "external\n");
+            CHECK(interception->exchanges == 0 && readFile(fixture.path()) == "external\n");
             CHECK(result.failure == (ancestor ? DestinationFailure::PathChanged : DestinationFailure::ContentChanged));
             if (ancestor) {
                 CHECK(readFile(fixture.root + "-moved/result.txt") == fixture.original);
@@ -306,13 +302,13 @@ int main(int argc, char **argv)
                                  static_cast<size_t>(acl.size()), 0)
                       == 0);
             }
-            const auto baseline = fixture.capture();
-            Interception interception;
+            const auto interception = std::make_shared<Interception>();
+            const auto baseline = fixture.capture(interception);
             // Inject the effective identity mismatch; no chown privilege is required.
-            interception.foreignIdentity = QByteArray(scenario) == "foreign-owner";
+            interception->foreignIdentity = QByteArray(scenario) == "foreign-owner";
             unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return true; }),
                       DestinationFailure::UnsupportedMetadata);
-            CHECK(interception.writes == 0 && interception.exchanges == 0);
+            CHECK(interception->writes == 0 && interception->exchanges == 0);
         }
     });
     suite.run("read-only destinations and directories reject replacement", [] {
@@ -335,65 +331,65 @@ int main(int argc, char **argv)
     });
     suite.run("short writes and EINTR preserve the complete reviewed result", [] {
         Fixture fixture;
-        const auto baseline = fixture.capture();
-        Interception interception;
-        interception.interruptWrite = true;
-        interception.shortWrites = true;
+        const auto interception = std::make_shared<Interception>();
+        const auto baseline = fixture.capture(interception);
+        interception->interruptWrite = true;
+        interception->shortWrites = true;
         const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
-        CHECK(result.state == PublicationState::Published && result.destination && interception.writes > 2);
+        CHECK(result.state == PublicationState::Published && result.destination && interception->writes > 2);
         CHECK(readFile(fixture.path()) == fixture.edited && result.destination->bytes() == fixture.edited);
         fixture.clean();
     });
     suite.run("zero writes and ENOSPC leave the original destination intact", [] {
         for (const bool full : {false, true}) {
             Fixture fixture;
-            const auto baseline = fixture.capture();
-            Interception interception;
-            interception.fullDisk = full;
-            interception.zeroWrite = !full;
+            const auto interception = std::make_shared<Interception>();
+            const auto baseline = fixture.capture(interception);
+            interception->fullDisk = full;
+            interception->zeroWrite = !full;
             unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return true; }),
                       DestinationFailure::IoError);
-            CHECK(interception.exchanges == 0);
+            CHECK(interception->exchanges == 0);
         }
     });
     suite.run("each sync failure preserves the observed side of exchange", [] {
         for (int failSync = 1; failSync <= 4; ++failSync) {
             Fixture fixture;
-            const auto baseline = fixture.capture();
-            Interception interception;
-            interception.failSync = failSync;
+            const auto interception = std::make_shared<Interception>();
+            const auto baseline = fixture.capture(interception);
+            interception->failSync = failSync;
             const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
-            CHECK(interception.syncs == failSync && result.failure == DestinationFailure::IoError);
+            CHECK(interception->syncs == failSync && result.failure == DestinationFailure::IoError);
             if (failSync <= 2)
                 unchanged(fixture, result, DestinationFailure::IoError);
             else
                 retained(fixture, result, fixture.original);
-            CHECK(interception.exchanges == (failSync <= 2 ? 0 : 1));
+            CHECK(interception->exchanges == (failSync <= 2 ? 0 : 1));
         }
     });
     suite.run("unsupported exchange has no overwriting rename fallback", [] {
         for (const int error : {ENOSYS, EINVAL, EOPNOTSUPP, EXDEV, EACCES}) {
             Fixture fixture;
-            const auto baseline = fixture.capture();
-            Interception interception;
-            interception.exchangeError = error;
+            const auto interception = std::make_shared<Interception>();
+            const auto baseline = fixture.capture(interception);
+            interception->exchangeError = error;
             unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return true; }),
                       error == EACCES ? DestinationFailure::PermissionDenied
                                       : DestinationFailure::UnsupportedFilesystem);
-            CHECK(interception.exchanges == 1);
+            CHECK(interception->exchanges == 1);
         }
     });
     suite.run("lost exchange replies retain both possible outcomes without rollback", [] {
         for (const int error : {EIO, ESTALE, ETIMEDOUT}) {
             for (const bool committed : {false, true}) {
                 Fixture fixture;
-                const auto baseline = fixture.capture();
-                Interception interception;
-                interception.exchangeError = error;
-                interception.exchangeBeforeError = committed;
+                const auto interception = std::make_shared<Interception>();
+                const auto baseline = fixture.capture(interception);
+                interception->exchangeError = error;
+                interception->exchangeBeforeError = committed;
                 const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
                 CHECK(result.state == PublicationState::Uncertain && result.failure == DestinationFailure::IoError);
-                CHECK(!result.destination && !result.retainedPath.isEmpty() && interception.exchanges == 1);
+                CHECK(!result.destination && !result.retainedPath.isEmpty() && interception->exchanges == 1);
                 CHECK(readFile(fixture.path()) == (committed ? fixture.edited : fixture.original));
                 CHECK(readFile(QFile::decodeName(result.retainedPath))
                       == (committed ? fixture.original : fixture.edited));
@@ -403,15 +399,15 @@ int main(int argc, char **argv)
     suite.run("late displaced edits and replacements require reconciliation without rollback", [] {
         for (const bool replacement : {false, true}) {
             Fixture fixture;
-            const auto baseline = fixture.capture();
-            Interception interception;
-            interception.beforeExchange = [&] {
+            const auto interception = std::make_shared<Interception>();
+            const auto baseline = fixture.capture(interception);
+            interception->beforeExchange = [&] {
                 if (replacement) CHECK(QFile::rename(fixture.path(), fixture.root + "/saved-original"));
                 writeFile(fixture.path(), "external late edit\n");
             };
             const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
             retained(fixture, result, "external late edit\n");
-            CHECK(interception.exchanges == 1);
+            CHECK(interception->exchanges == 1);
             CHECK(result.failure
                   == (replacement ? DestinationFailure::PathChanged : DestinationFailure::ContentChanged));
             CHECK(baseline.bytes() == fixture.original);
@@ -420,27 +416,27 @@ int main(int argc, char **argv)
     });
     suite.run("external edits after exchange survive without restoring the old result", [] {
         Fixture fixture;
-        const auto baseline = fixture.capture();
-        Interception interception;
-        interception.afterExchange = [&] { writeFile(fixture.path(), "newer external edit\n"); };
+        const auto interception = std::make_shared<Interception>();
+        const auto baseline = fixture.capture(interception);
+        interception->afterExchange = [&] { writeFile(fixture.path(), "newer external edit\n"); };
         const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
         CHECK(result.state == PublicationState::Uncertain && result.failure == DestinationFailure::ContentChanged);
-        CHECK(!result.destination && interception.exchanges == 1);
+        CHECK(!result.destination && interception->exchanges == 1);
         CHECK(readFile(fixture.path()) == "newer external edit\n");
         CHECK(readFile(QFile::decodeName(result.retainedPath)) == fixture.original);
     });
     suite.run("a late symlink is retained without following its target or rolling back", [] {
         Fixture fixture;
         writeFile(fixture.root + "/outside.txt", "external target\n");
-        const auto baseline = fixture.capture();
-        Interception interception;
-        interception.beforeExchange = [&] {
+        const auto interception = std::make_shared<Interception>();
+        const auto baseline = fixture.capture(interception);
+        interception->beforeExchange = [&] {
             CHECK(QFile::remove(fixture.path()));
             CHECK(::symlink("outside.txt", fixture.native().constData()) == 0);
         };
         const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
         CHECK(result.state == PublicationState::Uncertain && result.failure == DestinationFailure::Symlink);
-        CHECK(!result.destination && interception.exchanges == 1 && !result.retainedPath.isEmpty());
+        CHECK(!result.destination && interception->exchanges == 1 && !result.retainedPath.isEmpty());
         struct stat metadata{};
         CHECK(::lstat(result.retainedPath.constData(), &metadata) == 0 && S_ISLNK(metadata.st_mode));
         CHECK(readFile(fixture.path()) == fixture.edited);
@@ -448,17 +444,17 @@ int main(int argc, char **argv)
     });
     suite.run("a late ancestor replacement retains the exchange in its pinned directory", [] {
         Fixture fixture;
-        const auto baseline = fixture.capture();
+        const auto interception = std::make_shared<Interception>();
+        const auto baseline = fixture.capture(interception);
         const auto moved = fixture.root + "-relocated";
-        Interception interception;
-        interception.beforeExchange = [&] {
+        interception->beforeExchange = [&] {
             CHECK(QDir().rename(fixture.root, moved));
             CHECK(QDir().mkdir(fixture.root));
             writeFile(fixture.path(), "replacement directory's external file\n");
         };
         const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
         CHECK(result.state == PublicationState::Uncertain && result.failure == DestinationFailure::PathChanged);
-        CHECK(!result.destination && interception.exchanges == 1);
+        CHECK(!result.destination && interception->exchanges == 1);
         const auto originalRoot = QFile::encodeName(fixture.root);
         CHECK(result.retainedPath.startsWith(originalRoot + '/'));
         const auto actualRetained = QFile::encodeName(moved) + result.retainedPath.mid(originalRoot.size());
@@ -471,17 +467,17 @@ int main(int argc, char **argv)
     suite.run("cleanup failures retain private entries and never authorize another write", [] {
         for (const bool exchanged : {false, true}) {
             Fixture fixture;
-            const auto baseline = fixture.capture();
-            Interception interception;
-            interception.failUnlink = true;
-            if (!exchanged) interception.exchangeError = EOPNOTSUPP;
+            const auto interception = std::make_shared<Interception>();
+            const auto baseline = fixture.capture(interception);
+            interception->failUnlink = true;
+            if (!exchanged) interception->exchangeError = EOPNOTSUPP;
             const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
             CHECK(result.state == (exchanged ? PublicationState::Published : PublicationState::Unchanged));
             CHECK(result.failure == DestinationFailure::CleanupFailure && !result.destination
                   && !result.retainedPath.isEmpty());
             CHECK(readFile(fixture.path()) == (exchanged ? fixture.edited : fixture.original));
             CHECK(readFile(QFile::decodeName(result.retainedPath)) == (exchanged ? fixture.original : fixture.edited));
-            CHECK(interception.exchanges == 1);
+            CHECK(interception->exchanges == 1);
         }
     });
     return suite.report();

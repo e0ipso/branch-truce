@@ -140,12 +140,11 @@ if(Python3_Interpreter_FOUND)
 endif()
 if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(storage.text-format storage/TextFormatTests.cpp LIBS branch_truce_storage)
-    branch_truce_add_unit_test(storage.recovery-store storage/RecoveryStoreTests.cpp LIBS branch_truce_storage
-        WRAP fsync)
-    # Faults and exchange races are intercepted only in this test executable. Its read-only cases
-    # skip when it runs as root, which can write anyway.
+    branch_truce_add_unit_test(storage.recovery-store storage/RecoveryStoreTests.cpp LIBS branch_truce_storage)
+    # Faults and exchange races go in through the snapshot's FileSystem. Its read-only cases skip
+    # when it runs as root, which can write anyway.
     branch_truce_add_unit_test(storage.destination-writer storage/DestinationWriterTests.cpp
-        LIBS branch_truce_storage WRAP write fsync renameat2 unlinkat geteuid TIMEOUT 30)
+        LIBS branch_truce_storage TIMEOUT 30)
 
     add_executable(branch_truce_model_tests app/SessionModelTests.cpp)
     target_include_directories(branch_truce_model_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

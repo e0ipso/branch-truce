@@ -1,13 +1,16 @@
 // The recovery store persists app-owned journals and text payloads under an exclusive session lease.
 #pragma once
 
+#include "storage/FileSystem.h"
 #include <QByteArray>
 #include <QJsonObject>
 #include <QList>
 #include <QMap>
 #include <QString>
 #include <map>
+#include <memory>
 #include <optional>
+#include <set>
 
 class QFile;
 class QIODevice;
@@ -37,7 +40,7 @@ struct RecoveryCommit {
 // authorize restoration against a repository or perform any repository writes.
 class RecoveryStore {
 public:
-    explicit RecoveryStore(QString directory);
+    explicit RecoveryStore(QString directory, std::shared_ptr<const FileSystem> files = systemFileSystem());
     [[nodiscard]] const QString &directory() const { return directory_; }
     [[nodiscard]] RecoveryRead read() const;
     // Verifies the journal as read() does unless its bytes are exactly those
@@ -63,7 +66,10 @@ private:
     [[nodiscard]] const JournalEnd *refreshEnd(QString *error);
 
     QString directory_;
+    std::shared_ptr<const FileSystem> files_;
     std::optional<JournalEnd> end_;
+    // Directories with an entry this store created that no sync covers yet.
+    std::set<QString> unsynced_;
 };
 
 }

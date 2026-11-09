@@ -2,6 +2,7 @@
 #pragma once
 
 #include "core/FileSnapshot.h"
+#include "storage/FileSystem.h"
 #include <QByteArray>
 #include <QString>
 #include <functional>
@@ -11,6 +12,8 @@
 namespace branch_truce::storage {
 enum class DestinationFailure {
     None,
+    // The caller gave no admission callback or a mode that is not the file's.
+    InvalidRequest,
     InvalidPath,
     Symlink,
     NotRegularFile,
@@ -27,8 +30,11 @@ enum class PublicationState { Unchanged, Published, Uncertain };
 struct DestinationCapture;
 struct PublicationResult;
 
-// Capture at launch or after a verified write, before the user edits. Copies pin
-// the same inodes. A fresh capture must not silently accept an external edit.
+// Capture at launch or after a verified write, before the user edits. It keeps
+// the identity of the file and of every directory above it, not open
+// descriptors, so a session may hold one per file. Publication reopens the path
+// and refuses any component whose identity changed. A fresh capture must not
+// silently accept an external edit.
 class DestinationSnapshot {
 public:
     struct State;
@@ -40,7 +46,8 @@ public:
 private:
     explicit DestinationSnapshot(std::shared_ptr<const State> state);
     std::shared_ptr<const State> d;
-    friend DestinationCapture captureDestination(const QString &, const QByteArray &);
+    friend DestinationCapture captureDestination(const QString &, const QByteArray &,
+                                                 std::shared_ptr<const FileSystem>);
     friend PublicationResult publishDestination(const DestinationSnapshot &, const QByteArray &, const QByteArray &,
                                                 const std::function<bool()> &);
 };
@@ -64,12 +71,15 @@ struct PublicationResult {
 };
 
 // Requires an absolute canonical worktree root and exact relative filename bytes.
-// Rejects symlinks in every component, including the root's ancestry.
-[[nodiscard]] DestinationCapture captureDestination(const QString &worktreeRoot, const QByteArray &path);
+// Rejects symlinks in every component, including the root's ancestry. The
+// snapshot publishes through files.
+[[nodiscard]] DestinationCapture captureDestination(const QString &worktreeRoot, const QByteArray &path,
+                                                    std::shared_ptr<const FileSystem> files = systemFileSystem());
 
-// Synchronous worker operation. Caller owns draft persistence, review/revision,
-// operation/index/conversion guards, the worktree mutation queue and Git staging.
-// beginMutation is mandatory and runs before creating any temporary entry.
+// Blocking: reads and writes the destination, so run it on a worker thread.
+// Caller owns draft persistence, review/revision, operation/index/conversion
+// guards, the worktree mutation queue and Git staging. beginMutation is
+// mandatory and runs before creating any temporary entry.
 // No draft buffer is consumed or changed. Failures never authorize staging.
 [[nodiscard]] PublicationResult publishDestination(const DestinationSnapshot &expected,
                                                    const QByteArray &serializedBytes, const QByteArray &agreedGitMode,
