@@ -7,6 +7,7 @@ One suite per unit under test, each its own CTest entry:
 | `GitAdapterTests.cpp` | `git.adapter` | discovery, literal paths, helper and offline policy, staging, failure, cancellation and limits |
 | `ConflictClassifierTests.cpp` | `git.conflict-classification` | which conflicts are editable and why the others are not |
 | `TextConversionTests.cpp` | `git.text-conversion` | decoding sources, preparing and verifying results, per text format |
+| `GitParsingTests.cpp` | `git.parsing` | object ids, relative filenames and index records, one row per input |
 | `UserConfigIsolationTests.cpp` | `git.user-config-isolation` | whether the adapter's Git reads the account's or the system's configuration |
 | `MergetoolParentTests.cpp` | `git.mergetool-parent` | a real `git mergetool` parent against the launcher |
 

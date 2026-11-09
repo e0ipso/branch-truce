@@ -1,6 +1,8 @@
 // ConflictClassifier against real Git: which conflicts it offers for editing, why it refuses the
 // others, and that classifying never changes the repository.
 #include "TestHarness.h"
+#include "core/ResourceLimits.h"
+#include "fixtures/mergetool/GitGate.h"
 #include "git/GitFixtures.h"
 
 #include <QCoreApplication>
@@ -8,11 +10,29 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 using namespace git_fixture;
+
+namespace {
+// A merge of conflictHistory() stopped on tracked.txt, with a manual result.
+ConflictHistory mergeStopped(Repository &repo)
+{
+    const auto history = conflictHistory(repo);
+    repo.git({"merge", "--no-edit", "side"}, {}, 1);
+    writeFile(repo.path("tracked.txt"), "manual result\n");
+    return history;
+}
+
+// Holds the classifier's first source read: its Git waits on `check-attr ... -- tracked.txt`.
+void waitForHeldSourceRead(const mergetool_fixture::GitGate &gate)
+{
+    test_support::waitUntil([&] { return !gate.held().isEmpty(); }, "no source read reached Git");
+}
+} // namespace
 
 int main(int argc, char **argv)
 {
@@ -39,7 +59,9 @@ int main(int argc, char **argv)
              {"symlink-result", ConflictSupport::TopologyConflict},
              {"excluded-attributes", ConflictSupport::UnsupportedConversion},
              {"filter", ConflictSupport::UnsupportedConversion},
-             {"unverified-source", ConflictSupport::UnverifiedSource}}) {
+             {"unverified-source", ConflictSupport::UnverifiedSource},
+             {"oversized-result", ConflictSupport::LoadFailure},
+             {"overlong-line-result", ConflictSupport::LoadFailure}}) {
         suite.run("complete-conflict classification matrix: " + scenario.toStdString(), [=] {
             Repository repo;
             ConflictContents contents;
@@ -89,6 +111,13 @@ int main(int argc, char **argv)
                     CHECK(::symlink("outside.txt", QFile::encodeName(repo.path("tracked.txt")).constData()) == 0);
                 }
             }
+            if (scenario == "oversized-result")
+                writeFile(
+                    repo.path("tracked.txt"),
+                    QByteArray("x\n").repeated(static_cast<qsizetype>(branch_truce::kMaxRecoveryPayloadBytes / 2 + 1)));
+            if (scenario == "overlong-line-result")
+                writeFile(repo.path("tracked.txt"),
+                          QByteArray(static_cast<qsizetype>(branch_truce::kMaxLineBytes + 1), 'a') + '\n');
             if (scenario == "excluded-attributes")
                 writeFile(repo.path(".gitattributes"), "tracked.txt -text eol=crlf\n");
             if (scenario == "filter") {
@@ -109,6 +138,9 @@ int main(int argc, char **argv)
                 CHECK(conflict.mode == (scenario == "executable" ? "100755" : "100644"));
             } else {
                 CHECK(!conflict.reason.isEmpty() && conflict.sources.isEmpty() && !conflict.result);
+                if (scenario.endsWith("-result") && expected == ConflictSupport::LoadFailure
+                    && scenario != "missing-result")
+                    CHECK(conflict.reason.contains(QStringLiteral("Load error")));
             }
             CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
             CHECK(repo.git({"count-objects", "-v"}) == objects);
@@ -272,6 +304,99 @@ int main(int argc, char **argv)
             CHECK(repo.git({"rev-parse", "HEAD"}).trimmed() == history.main);
             checkConversionCleanup(repo);
         }
+    });
+    suite.run("a cancel before the queued start completes once as cancelled", [] {
+        Repository repo;
+        mergeStopped(repo);
+        ConflictClassifier classifier(test_support::gitExecutable());
+        test_support::AsyncCompletion completion(classifier, &ConflictClassifier::finished);
+        CHECK(classifier.start({repo.root(), 71, 93}));
+        classifier.cancel();
+        classifier.cancel();
+        const auto result = completion.wait();
+        CHECK_EQ(result.outcome, Outcome::Cancelled);
+        CHECK(result.diagnostic.contains("cancelled"));
+        CHECK(result.conflicts.isEmpty());
+        classifier.cancel();
+        CHECK(!classifier.busy());
+    });
+    suite.run("a cancel while a source is read completes once as cancelled and offers nothing", [] {
+        Repository repo;
+        mergeStopped(repo);
+        const auto before = repo.index();
+        mergetool_fixture::GitGate gate("tracked.txt");
+        gate.close(QStringLiteral("check-attr"));
+        ConflictClassifier classifier(gate.executable());
+        test_support::AsyncCompletion completion(classifier, &ConflictClassifier::finished);
+        CHECK(classifier.start({repo.root(), 71, 93}));
+        waitForHeldSourceRead(gate);
+        classifier.cancel();
+        gate.open();
+        gate.releaseAll();
+        const auto result = completion.wait();
+        CHECK_EQ(result.outcome, Outcome::Cancelled);
+        for (const auto &conflict : result.conflicts) CHECK(!conflict.editable());
+        CHECK_EQ(repo.index(), before);
+    });
+    suite.run("an index change while sources are read fails the recheck", [] {
+        Repository repo;
+        mergeStopped(repo);
+        mergetool_fixture::GitGate gate("tracked.txt");
+        gate.close(QStringLiteral("check-attr"));
+        ConflictClassifier classifier(gate.executable());
+        test_support::AsyncCompletion completion(classifier, &ConflictClassifier::finished);
+        CHECK(classifier.start({repo.root(), 71, 93}));
+        waitForHeldSourceRead(gate);
+        // As a user running `git add` while the app classifies.
+        repo.git({"add", "--", "tracked.txt"});
+        gate.open();
+        gate.releaseAll();
+        const auto result = completion.wait();
+        CHECK_EQ(result.outcome, Outcome::InspectionFailure);
+        CHECK(result.diagnostic.contains("operation or index changed during classification"));
+        for (const auto &conflict : result.conflicts) CHECK(!conflict.editable());
+    });
+    suite.run("a result rewritten while sources are read is excluded by the recheck", [] {
+        Repository repo;
+        mergeStopped(repo);
+        mergetool_fixture::GitGate gate("tracked.txt");
+        gate.close(QStringLiteral("check-attr"));
+        ConflictClassifier classifier(gate.executable());
+        test_support::AsyncCompletion completion(classifier, &ConflictClassifier::finished);
+        CHECK(classifier.start({repo.root(), 71, 93}));
+        waitForHeldSourceRead(gate);
+        writeFile(repo.path("tracked.txt"), "written by another editor\n");
+        gate.open();
+        gate.releaseAll();
+        const auto result = completion.wait();
+        CHECK_EQ(result.outcome, Outcome::Success);
+        CHECK_EQ(result.conflicts.size(), 1);
+        const auto &conflict = result.conflicts.front();
+        CHECK(!conflict.editable());
+        CHECK_EQ(conflict.support, ConflictSupport::TopologyConflict);
+        CHECK(conflict.reason.contains("current result changed or became unreadable during classification"));
+    });
+    suite.run("destroying the classifier with a held Git call publishes no result", [] {
+        Repository repo;
+        mergeStopped(repo);
+        const auto before = repo.index();
+        mergetool_fixture::GitGate gate("tracked.txt");
+        gate.close(QStringLiteral("check-attr"));
+        QObject receiver;
+        int completions = 0;
+        auto classifier = std::make_unique<ConflictClassifier>(gate.executable());
+        QObject::connect(classifier.get(), &ConflictClassifier::finished, &receiver,
+                         [&](const ConflictClassificationResult &) { ++completions; });
+        CHECK(classifier->start({repo.root(), 71, 93}));
+        waitForHeldSourceRead(gate);
+        classifier.reset();
+        gate.open();
+        gate.releaseAll();
+        // A later classification's result is queued behind anything the destroyed one posted.
+        ConflictClassifier later(test_support::gitExecutable());
+        CHECK_EQ(run(later, {repo.root(), 71, 93}).outcome, Outcome::Success);
+        CHECK_EQ(completions, 0);
+        CHECK_EQ(repo.index(), before);
     });
     return suite.report();
 }

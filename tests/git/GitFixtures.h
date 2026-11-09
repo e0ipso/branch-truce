@@ -50,7 +50,7 @@ inline QList<QByteArray> oddPaths()
 // scripted Git executables.
 class Repository : public test_support::GitRepository {
 public:
-    Repository()
+    explicit Repository(const QStringList &initArguments = {}) : GitRepository(initArguments)
     {
         CHECK(executables_.isValid());
         writeFile(path("tracked.txt"), "before\n");

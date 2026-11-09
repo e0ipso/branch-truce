@@ -2,12 +2,14 @@
 // reviewed bytes, and verifying what was published, across the supported text formats.
 #include "TestHarness.h"
 #include "fixtures/conversions/ConversionCases.h"
+#include "fixtures/mergetool/GitGate.h"
 #include "git/GitFixtures.h"
 
 #include <QCoreApplication>
 #include <QFile>
 #include <QFileInfo>
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -295,6 +297,58 @@ int main(int argc, char **argv)
         const auto wrongWorktree = run(conversion, verify);
         CHECK(wrongWorktree.outcome == Outcome::Rejected && !wrongWorktree.text);
         CHECK(wrongWorktree.diagnostic.contains("worktree identity changed"));
+    });
+    suite.run("a cancel before the queued start completes once as cancelled", [] {
+        Repository repo;
+        const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+        TextConversion conversion(test_support::gitExecutable());
+        test_support::AsyncCompletion completion(conversion, &TextConversion::finished);
+        CHECK(conversion.start(textRequest(repo, TextOperation::ReadSource, object)));
+        conversion.cancel();
+        conversion.cancel();
+        const auto result = completion.wait();
+        CHECK_EQ(result.outcome, Outcome::Cancelled);
+        CHECK(!result.text);
+        conversion.cancel();
+        CHECK(!conversion.busy());
+    });
+    suite.run("a cancel while Git reads the source completes once as cancelled", [] {
+        Repository repo;
+        const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+        mergetool_fixture::GitGate gate("tracked.txt");
+        gate.close(QStringLiteral("check-attr"));
+        TextConversion conversion(gate.executable());
+        test_support::AsyncCompletion completion(conversion, &TextConversion::finished);
+        CHECK(conversion.start(textRequest(repo, TextOperation::ReadSource, object)));
+        test_support::waitUntil([&] { return !gate.held().isEmpty(); }, "the source read never reached Git");
+        conversion.cancel();
+        gate.open();
+        gate.releaseAll();
+        const auto result = completion.wait();
+        CHECK_EQ(result.outcome, Outcome::Cancelled);
+        CHECK(!result.text);
+        // The same service runs the next request normally.
+        CHECK_EQ(run(conversion, textRequest(repo, TextOperation::ReadSource, object)).outcome, Outcome::Success);
+    });
+    suite.run("destroying the conversion with a held Git call publishes no result", [] {
+        Repository repo;
+        const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+        mergetool_fixture::GitGate gate("tracked.txt");
+        gate.close(QStringLiteral("check-attr"));
+        QObject receiver;
+        int completions = 0;
+        auto conversion = std::make_unique<TextConversion>(gate.executable());
+        QObject::connect(conversion.get(), &TextConversion::finished, &receiver,
+                         [&](const TextConversionResult &) { ++completions; });
+        CHECK(conversion->start(textRequest(repo, TextOperation::ReadSource, object)));
+        test_support::waitUntil([&] { return !gate.held().isEmpty(); }, "the source read never reached Git");
+        conversion.reset();
+        gate.open();
+        gate.releaseAll();
+        // A later conversion's result is queued behind anything the destroyed one posted.
+        TextConversion later(test_support::gitExecutable());
+        CHECK_EQ(run(later, textRequest(repo, TextOperation::ReadSource, object)).outcome, Outcome::Success);
+        CHECK_EQ(completions, 0);
     });
     return suite.report();
 }

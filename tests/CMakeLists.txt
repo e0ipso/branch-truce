@@ -353,6 +353,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(git.conflict-classification git/ConflictClassifierTests.cpp LIBS branch_truce_git
         PRIVATE_XDG TIMEOUT 30)
     branch_truce_add_unit_test(git.text-conversion git/TextConversionTests.cpp LIBS branch_truce_git PRIVATE_XDG)
+    branch_truce_add_unit_test(git.parsing git/GitParsingTests.cpp LIBS branch_truce_git)
     # Fails while GitAdapter's Git reads the invoking account's ~/.gitconfig and /etc/gitconfig.
     # WILL_FAIL keeps that known defect visible; remove it once the adapter takes its Git
     # environment from its caller, and this entry then has to pass.

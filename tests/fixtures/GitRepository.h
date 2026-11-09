@@ -76,11 +76,12 @@ private:
 
 class GitRepository {
 public:
-    GitRepository()
+    // `initArguments` go to `git init`, for example --object-format=sha256.
+    explicit GitRepository(const QStringList &initArguments = {})
     {
         CHECK(directory_.isValid());
         root_ = QFileInfo(directory_.path()).canonicalFilePath();
-        git({"init", "--quiet", "--initial-branch=main"});
+        git(QStringList{"init", "--quiet", "--initial-branch=main"} + initArguments);
     }
     ~GitRepository()
     {

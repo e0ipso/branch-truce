@@ -1209,5 +1209,44 @@ int main(int argc, char **argv)
         CHECK(repo.git({"count-objects", "-v"}) == objects);
         checkConversionCleanup(repo);
     });
+    suite.run("a SHA-256 repository is discovered, classified and staged like a SHA-1 one", [] {
+        Repository repo({"--object-format=sha256"});
+        CHECK_EQ(repo.git({"rev-parse", "--show-object-format"}).trimmed(), QByteArray("sha256"));
+        const auto history = conflictHistory(repo);
+        CHECK_EQ(history.main.size(), 64);
+        repo.git({"merge", "--no-edit", "side"}, {}, 1);
+        GitAdapter adapter(test_support::gitExecutable());
+        const auto discovered = run(adapter, repo.request(Operation::DiscoverRepository));
+        checkOperationIdentity(discovered, history, RepositoryOperation::Merge);
+        CHECK_EQ(discovered.indexEntries.size(), 3);
+        for (const auto &entry : discovered.indexEntries) CHECK_EQ(entry.objectId.size(), 64);
+        writeFile(repo.path("tracked.txt"), "manual result\n");
+        ConflictClassifier classifier(test_support::gitExecutable());
+        const auto classified = run(classifier, {repo.root(), 71, 93});
+        CHECK_EQ(classified.outcome, Outcome::Success);
+        CHECK_EQ(classified.conflicts.size(), 1);
+        CHECK(classified.conflicts.front().editable());
+        CHECK_EQ(classified.conflicts.front().sources.size(), 3);
+        const auto staged = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
+        CHECK_EQ(staged.outcome, Outcome::Success);
+        CHECK_EQ(staged.mutation, Mutation::ObservedChanged);
+        const auto expected = repo.git({"hash-object", "--stdin"}, "manual result\n").trimmed();
+        CHECK_EQ(expected.size(), 64);
+        CHECK_EQ(staged.indexAfter, "100644 " + expected + " 0\ttracked.txt" + QByteArray(1, '\0'));
+        CHECK(repo.git({"ls-files", "--unmerged", "-z"}).isEmpty());
+    });
+    suite.run("standard error shares the output limit and stops a flooding operation", [] {
+        Repository repo;
+        const auto fake =
+            repo.fakeGit(": > .after-add\nprintf 'error prefix' >&2\n/usr/bin/head -c 9000000 /dev/zero >&2\n");
+        GitAdapter adapter(fake);
+        const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
+        CHECK_EQ(result.outcome, Outcome::OutputLimit);
+        CHECK(result.outputIncomplete);
+        CHECK(result.standardError.startsWith("error prefix"));
+        CHECK_LE(result.standardError.size(), static_cast<qsizetype>(branch_truce::kMaxGitReadBytes) + 4096);
+        CHECK(result.diagnostic.contains(QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))));
+        CHECK_EQ(result.mutation, Mutation::ObservedChanged);
+    });
     return suite.report();
 }
