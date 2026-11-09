@@ -554,6 +554,8 @@ bool settled(Progress &progress)
 
 void tick()
 {
+    // A request that arrived while another was served starts once that one has replied.
+    if (!current) startNext();
     if (!current) return;
     auto &[request, handler, progress] = *current;
     if (progress.deadline.elapsed() > request.timeoutMs) {
