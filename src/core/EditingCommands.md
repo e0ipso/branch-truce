@@ -1,6 +1,6 @@
 # Scoped choices and application history
 
-`choiceTargets` groups differing passages between the two immutable captured
+`choiceTargets` (ChoiceCatalogue.h) groups differing passages between the two immutable captured
 sides into sections. Each nonempty source line has a stable byte-range decision
 ID. Section controls share those IDs with their line controls. An empty source
 scope represents a deletion and has a section control, without a misleading
@@ -47,7 +47,8 @@ recovery replay restore the same text and decisions. A hand edit to a marker lin
 the block.
 Ignored text that holds a hand edit or pre-launch work keeps the whole block.
 In all these cases the markers stay for direct editing and keep blocking Mark
-resolved. A deletion side fills only an empty region. The preview says when a choice removes the markers.
+resolved. A deletion side fills only an empty region. A preview's `MarkerEffect` says when a choice removes the
+markers.
 
 A source deletion uses the mapped competing section as its replacement range
 and validates both anchors. It cannot infer a deletion range from neighboring
@@ -79,7 +80,11 @@ source contributions with their current and proposed decisions. The chosen
 source's recorded contributions become accepted; the other source's become
 ignored. Previous combination orders are cleared. Earlier recovered drafts keep
 their exact decision vocabulary, and decisions without a source scope remain
-unchanged. The preview explains the text and contributions given up.
+unchanged. The preview's note tells the app to explain the text and contributions given up.
+
+Previews carry no sentences. A `ChoiceNote`, `BatchNote` or `WholeFileNote` says
+what an applicable preview does or why one was refused, and the app turns it
+into translated text (src/app/EngineText.cpp).
 
 Whole-file confirmation regenerates and compares the entire preview, including
 session, file, source identity and current revision. Cancellation changes no text,
