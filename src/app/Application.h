@@ -38,6 +38,8 @@ public:
         QString recoveryDirectory;
         // Loaded files align their sources with this, or with the engine's default.
         std::shared_ptr<const CorrespondenceAlgorithm> correspondence;
+        // The file system the recovery store and repository publication write through.
+        std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem();
     };
     explicit Application(Config config, QObject *parent = nullptr);
 

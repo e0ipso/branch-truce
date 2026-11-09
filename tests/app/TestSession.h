@@ -14,8 +14,10 @@ namespace test_support {
 // presentation rows through `rows`, the SessionModel the window lists.
 class TestSession : public branch_truce::SessionStore {
 public:
-    explicit TestSession(QString directory = branch_truce::newRecoveryDirectory())
-        : SessionStore(std::move(directory)), rows(*this)
+    explicit TestSession(
+        QString directory = branch_truce::newRecoveryDirectory(),
+        std::shared_ptr<const branch_truce::storage::FileSystem> files = branch_truce::storage::systemFileSystem())
+        : SessionStore(std::move(directory), std::move(files)), rows(*this)
     {}
     branch_truce::SessionModel rows;
 

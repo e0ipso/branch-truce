@@ -107,23 +107,11 @@ QByteArray payload(const storage::RecoveryStore &store, const QJsonValue &refere
     CHECK(error.isEmpty());
     return bytes;
 }
-void checkDraft(const storage::RecoveryStore &store, const QJsonObject &encoded, const Draft &expected)
+// A draft a record holds: its text and decisions. Records do not hold the marker count.
+void checkDraft(const Draft &recorded, const Draft &expected)
 {
-    CHECK(payload(store, encoded.value("text")) == QByteArray::fromStdString(expected.text));
-    CHECK(encoded.value("unresolvedMarkers").toString() == QString::number(expected.unresolvedMarkers));
-    const auto decisions = encoded.value("decisions").toArray();
-    CHECK(decisions.size() == static_cast<qsizetype>(expected.decisions.size()));
-    for (const auto &value : decisions) {
-        const auto decision = value.toObject();
-        const auto id = payload(store, decision.value("id")).toStdString();
-        CHECK(expected.decisions.contains(id));
-        const auto &wanted = expected.decisions.at(id);
-        CHECK(decision.value("value").toInt() == static_cast<int>(wanted.value));
-        if (wanted.order)
-            CHECK(decision.value("order").toString() == QString::number(*wanted.order));
-        else
-            CHECK(!decision.contains("order"));
-    }
+    CHECK(recorded.text == expected.text);
+    CHECK(recorded.decisions == expected.decisions);
 }
 Draft savedDraft()
 {
@@ -185,12 +173,10 @@ void checkRecoveredHistory(TestSession &model, const Draft &before, const Draft 
     CHECK(reopened.redo(reopened.current().id) == Transition::Applied && reopened.current().draft == chosen);
 }
 
-QString recordIntent(TestSession &model, const std::string &id, const QString &kind)
+QString recordIntent(TestSession &model, const std::string &id, MutationKind kind)
 {
     const auto mutation = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    CHECK(storage::RecoveryStore(model.recoveryDirectory())
-              .commit(mutationRecoveryTransaction(*model.file(id), kind, mutation))
-              .succeeded);
+    CHECK(model.commitRecord(mutationRecoveryTransaction(*model.file(id), {mutation, kind, {}})).succeeded);
     return mutation;
 }
 
@@ -384,8 +370,9 @@ public:
                 });
         }
         for (const bool staging : {false, true}) {
-            const auto kind = staging ? QStringLiteral("staging") : QStringLiteral("publication");
-            suite.run("successive successful outcomes retain every earlier completion " + kind.toStdString(), [=] {
+            const auto kind = staging ? MutationKind::Staging : MutationKind::Publication;
+            const auto kindName = staging ? std::string("staging") : std::string("publication");
+            suite.run("successive successful outcomes retain every earlier completion " + kindName, [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
                 TestSession model(directory.path() + "/recovery");
@@ -411,7 +398,7 @@ public:
                 }
                 CHECK(replay.files.front().current().draft.text == "second published\n");
             });
-            suite.run("earlier same-revision success cannot complete a later intent " + kind.toStdString(), [=] {
+            suite.run("earlier same-revision success cannot complete a later intent " + kindName, [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
                 TestSession model(directory.path() + "/recovery");
@@ -426,26 +413,24 @@ public:
                 CHECK(replay.mutations[1].id == interrupted && !replay.mutations[1].completed);
                 CHECK(replay.mutations[0].target.current().id == replay.mutations[1].target.current().id);
             });
-            suite.run("a later revision outcome leaves an unmatched earlier interruption uncertain "
-                          + kind.toStdString(),
-                      [=] {
-                          QTemporaryDir directory;
-                          CHECK(directory.isValid());
-                          TestSession model(directory.path() + "/recovery");
-                          CHECK(model.appendFile(recoverableFile()));
-                          preparePublication(model, "recoverable", staging);
-                          const auto interrupted = recordIntent(model, "recoverable", kind);
-                          auto edited = model.file("recoverable")->current().draft;
-                          edited.text = "newer successful revision\n";
-                          CHECK(model.replaceDraft("recoverable", 1, edited) == Transition::Applied);
-                          preparePublication(model, "recoverable", staging);
-                          const auto completed = recordIntent(model, "recoverable", kind);
-                          completePublication(model, "recoverable", staging);
-                          const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
-                          CHECK(replay.succeeded && replay.mutations.size() == 2);
-                          CHECK(replay.mutations[0].id == interrupted && !replay.mutations[0].completed);
-                          CHECK(replay.mutations[1].id == completed && replay.mutations[1].completed);
-                      });
+            suite.run("a later revision outcome leaves an unmatched earlier interruption uncertain " + kindName, [=] {
+                QTemporaryDir directory;
+                CHECK(directory.isValid());
+                TestSession model(directory.path() + "/recovery");
+                CHECK(model.appendFile(recoverableFile()));
+                preparePublication(model, "recoverable", staging);
+                const auto interrupted = recordIntent(model, "recoverable", kind);
+                auto edited = model.file("recoverable")->current().draft;
+                edited.text = "newer successful revision\n";
+                CHECK(model.replaceDraft("recoverable", 1, edited) == Transition::Applied);
+                preparePublication(model, "recoverable", staging);
+                const auto completed = recordIntent(model, "recoverable", kind);
+                completePublication(model, "recoverable", staging);
+                const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+                CHECK(replay.succeeded && replay.mutations.size() == 2);
+                CHECK(replay.mutations[0].id == interrupted && !replay.mutations[0].completed);
+                CHECK(replay.mutations[1].id == completed && replay.mutations[1].completed);
+            });
         }
         suite.run("outcomes match the file and kind and failed staging does not complete an intent", [] {
             QTemporaryDir directory;
@@ -458,9 +443,9 @@ public:
                                                Support::Supported, {}, captures)));
             preparePublication(model, "recoverable", false);
             preparePublication(model, "other", false);
-            recordIntent(model, "recoverable", "publication");
-            recordIntent(model, "recoverable", "staging");
-            recordIntent(model, "other", "publication");
+            recordIntent(model, "recoverable", MutationKind::Publication);
+            recordIntent(model, "recoverable", MutationKind::Staging);
+            recordIntent(model, "other", MutationKind::Publication);
             completePublication(model, "recoverable", false);
             CHECK(model.recordStage("recoverable", 1, Outcome::Failed, {}, {}, "stage failed") == Transition::Applied);
             auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
@@ -573,26 +558,29 @@ public:
                 "invalid schema session or file identity rejects the entire replay " + std::to_string(corruption), [=] {
                     QTemporaryDir directory;
                     CHECK(directory.isValid());
-                    storage::RecoveryStore store(directory.path() + "/recovery");
+                    const auto lease = test_support::leasedStore(directory.path() + "/recovery");
+                    const auto &store = lease->store();
                     auto file = recoverableFile();
-                    CHECK(store.commit(recoveryTransaction(file, "open", QUuid::createUuid().toString())).succeeded);
+                    CHECK(lease
+                              ->commit(
+                                  recoveryTransaction(file, RecoveryAction::Open, QUuid::createUuid().toString(), {}))
+                              .succeeded);
                     const auto valid = replayRecovery(store);
                     CHECK(valid.succeeded && valid.files.size() == 1);
+                    const auto before = file.current().draft.text;
                     CHECK(file.replaceDraft(1, unsavedDraft()) == Transition::Applied);
-                    auto invalid = recoveryTransaction(file, "replace-draft", QUuid::createUuid().toString());
+                    auto invalid =
+                        recoveryTransaction(file, RecoveryAction::ReplaceDraft, QUuid::createUuid().toString(), before);
                     QString expected;
                     if (corruption == 0) {
                         expected = "schema";
                     } else if (corruption == 1) {
-                        auto snapshots = invalid.state.value("snapshots").toObject();
-                        auto provenance = snapshots.value("provenance").toObject();
+                        // Only a launch record may carry captures.
                         const QByteArray wrong = "another-session";
                         const auto hash = storage::RecoveryStore::digest(wrong);
                         invalid.payloads.insert(hash, wrong);
-                        provenance.insert("sessionId", QString::fromLatin1(hash));
-                        snapshots.insert("provenance", provenance);
-                        invalid.state.insert("snapshots", snapshots);
-                        expected = "identity";
+                        invalid.state.insert("snapshots", QJsonObject{{"sessionId", QString::fromLatin1(hash)}});
+                        expected = "does not match the acknowledged record";
                     } else {
                         const QByteArray wrong = "another-file";
                         const auto hash = storage::RecoveryStore::digest(wrong);
@@ -600,11 +588,12 @@ public:
                         invalid.state.insert("fileId", QString::fromLatin1(hash));
                         expected = "matching open file";
                     }
-                    CHECK(store.commit(invalid).succeeded);
+                    CHECK(lease->commit(invalid).succeeded);
                     if (corruption == 0)
                         test_support::rewriteLastRecoveryState(store.directory(),
                                                                [](QJsonObject &state) { state.insert("schema", 99); });
-                    CHECK(store.read().succeeded == (corruption != 0));
+                    // The store checks frames; the state belongs to replay.
+                    CHECK(store.read().succeeded);
                     const auto replay = replayRecovery(store);
                     CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
                     CHECK(replay.error.contains(expected));
@@ -630,20 +619,20 @@ public:
                 CHECK(restored.current().draft.decisions.size() == 3);
                 const auto recovered = reopened.read();
                 CHECK(recovered.succeeded && !recovered.incompleteTail && recovered.transactions.size() == 5);
-                const auto last = recovered.transactions.back();
+                const auto last = recovered.transactions.back().state;
                 const auto current = last.value("current").toObject();
-                CHECK(last.value("schema").toInt() == 1 && !last.value("transactionId").toString().isEmpty());
-                CHECK(current.value("id") == "4" && current.value("result") == "3"
-                      && current.value("decisions") == "4");
-                checkDraft(reopened, current.value("draft").toObject(), finalDecision());
+                CHECK(last.value("schema").toInt() == 2 && !recovered.transactions.back().id.isEmpty());
+                CHECK(current.value("id") == "4" && current.value("result") == "3");
+                checkDraft(test_support::recordedDrafts(reopened).back(), finalDecision());
                 const auto checkpoint = last.value("checkpoint").toObject();
                 CHECK(checkpoint.value("id") == "2");
-                checkDraft(reopened, checkpoint.value("draft").toObject(), savedDraft());
                 CHECK(last.value("reviewed").isNull() && last.value("written").isNull()
                       && last.value("staged").isNull());
                 const auto expected = recoverableFile();
                 CHECK(payload(reopened, last.value("path")) == QByteArray::fromStdString(expected.path()));
-                const auto snapshots = last.value("snapshots").toObject();
+                // The launch record carries the captures; later records do not repeat them.
+                CHECK(!last.contains("snapshots"));
+                const auto snapshots = recovered.transactions.front().state.value("snapshots").toObject();
                 CHECK(snapshots.value("earlier").isNull());
                 const auto left = snapshots.value("stage2").toObject();
                 CHECK(payload(reopened, left.value("rawBytes")) == "left\n");
@@ -695,7 +684,7 @@ public:
             storage::RecoveryStore store(model.recoveryDirectory());
             const auto before = store.read();
             CHECK(before.succeeded && before.transactions.size() == 2);
-            const auto request = before.transactions.back().value("transactionId");
+            const auto request = before.transactions.back().id;
             CHECK(model.retryPendingRecovery("recoverable"));
             CHECK(!model.hasPendingRecovery() && !model.pendingDraft("recoverable"));
             CHECK(model.file("recoverable")->current().id == 2
@@ -705,10 +694,8 @@ public:
             CHECK(role(model, SessionModel::RecoveryErrorRole).toString().isEmpty());
             CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->checkpoint());
             const auto after = store.read();
-            CHECK(after.succeeded && after.transactions.size() == 2
-                  && after.transactions.back().value("transactionId") == request);
-            checkDraft(store, after.transactions.back().value("current").toObject().value("draft").toObject(),
-                       unsavedDraft());
+            CHECK(after.succeeded && after.transactions.size() == 2 && after.transactions.back().id == request);
+            checkDraft(test_support::recordedDrafts(store).back(), unsavedDraft());
             CHECK(model.undo("recoverable", 2) == Transition::Applied);
             CHECK(model.file("recoverable")->current().draft == original);
         });
@@ -1160,46 +1147,21 @@ public:
         suite.run("replay recomputes markers from the restored text", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            storage::RecoveryStore store(directory.path() + "/recovery");
+            const auto lease = test_support::leasedStore(directory.path() + "/recovery");
             auto file = recoverableFile();
-            CHECK(store.commit(recoveryTransaction(file, "open", QUuid::createUuid().toString())).succeeded);
+            CHECK(lease->commit(recoveryTransaction(file, RecoveryAction::Open, QUuid::createUuid().toString(), {}))
+                      .succeeded);
             auto stripped = savedDraft();
             stripped.text += "left\n=======\nright\n>>>>>>> theirs\n";
+            const auto before = file.current().draft.text;
             CHECK(file.replaceDraft(1, stripped) == Transition::Applied);
             CHECK(file.current().draft.unresolvedMarkers == 2);
-            const auto transaction = recoveryTransaction(file, "replace-draft", QUuid::createUuid().toString());
-            CHECK(transaction.state.value("current")
-                      .toObject()
-                      .value("draft")
-                      .toObject()
-                      .value("unresolvedMarkers")
-                      .toString()
-                  == "2");
-            // A count of 0 for this text is what a scan of only <<<<<<< lines
-            // recorded. Replay counts again and never adopts it.
-            auto stale = transaction;
-            auto current = stale.state.value("current").toObject();
-            auto draft = current.value("draft").toObject();
-            draft.insert("unresolvedMarkers", "0");
-            current.insert("draft", draft);
-            stale.state.insert("current", current);
-            {
-                QTemporaryDir copy;
-                CHECK(copy.isValid());
-                storage::RecoveryStore staleStore(copy.path() + "/recovery");
-                CHECK(staleStore.commit(recoveryTransaction(recoverableFile(), "open", QUuid::createUuid().toString()))
-                          .succeeded);
-                CHECK(staleStore.commit(stale).succeeded);
-                const auto replay = replayRecovery(staleStore);
-                CHECK(replay.succeeded && replay.files.size() == 1);
-                const auto &restored = replay.files.front();
-                CHECK(restored.current().draft.text == stripped.text
-                      && restored.current().draft.unresolvedMarkers == 2);
-                const auto blockers = restored.facts().blockers;
-                CHECK(std::find(blockers.begin(), blockers.end(), Blocker::UnresolvedMarkers) != blockers.end());
-            }
-            CHECK(store.commit(transaction).succeeded);
-            const auto replay = replayRecovery(store);
+            const auto transaction =
+                recoveryTransaction(file, RecoveryAction::ReplaceDraft, QUuid::createUuid().toString(), before);
+            // The record holds no marker count; replay scans the text again.
+            CHECK(!transaction.state.value("current").toObject().contains("unresolvedMarkers"));
+            CHECK(lease->commit(transaction).succeeded);
+            const auto replay = replayRecovery(lease->store());
             CHECK(replay.succeeded && replay.files.size() == 1);
             const auto &restored = replay.files.front();
             CHECK(restored.current().draft.text == stripped.text && restored.current().draft.unresolvedMarkers == 2);
@@ -1376,17 +1338,21 @@ public:
                   && !model.file("recoverable")->staged());
             storage::RecoveryStore store(model.recoveryDirectory());
             auto read = store.read();
-            CHECK(read.succeeded && read.transactions.back().value("action") == "discard-to-checkpoint");
-            checkDraft(store, read.transactions.back().value("current").toObject().value("draft").toObject(),
-                       savedDraft());
+            CHECK(read.succeeded && read.transactions.back().state.value("action") == "discard-to-checkpoint");
+            const auto drafts = test_support::recordedDrafts(store);
+            checkDraft(drafts.back(), savedDraft());
             bool sawManualSave = false;
             bool sawLaterEdit = false;
-            for (const auto &state : read.transactions) {
+            for (qsizetype index = 0; index < read.transactions.size(); ++index) {
+                const auto &state = read.transactions[index].state;
                 if (state.value("action") == "manual-save") {
                     sawManualSave = true;
                     CHECK(state.value("written").isNull() && state.value("staged").isNull()
                           && state.value("reviewed").isNull());
-                    checkDraft(store, state.value("checkpoint").toObject().value("draft").toObject(), savedDraft());
+                    // Save checkpoints the current draft, which the record holds.
+                    CHECK(state.value("checkpoint").toObject().value("id")
+                          == state.value("current").toObject().value("id"));
+                    checkDraft(drafts[static_cast<std::size_t>(index)], savedDraft());
                 } else if (sawManualSave && state.value("action") == "replace-draft")
                     sawLaterEdit = true;
             }
@@ -1426,9 +1392,9 @@ public:
             CHECK(role(model, SessionModel::StatusRole).toString()
                   == "Draft saved in Branch Truce; repository file unchanged");
             read = storage::RecoveryStore(model.recoveryDirectory()).read();
-            CHECK(read.succeeded && read.transactions.back().value("action") == "manual-save");
-            CHECK(read.transactions.back().value("written").isNull()
-                  && read.transactions.back().value("staged").isNull());
+            CHECK(read.succeeded && read.transactions.back().state.value("action") == "manual-save");
+            CHECK(read.transactions.back().state.value("written").isNull()
+                  && read.transactions.back().state.value("staged").isNull());
             const auto retried = replayedFile(model.recoveryDirectory());
             CHECK(retried.current().draft == unsavedDraft() && retried.checkpoint()
                   && retried.checkpoint()->draft == unsavedDraft() && !retried.written() && !retried.staged());
@@ -1449,7 +1415,7 @@ public:
             const auto otherDraft = model.file("other")->current().draft;
             storage::RecoveryStore store(model.recoveryDirectory());
             qsizetype records = 0;
-            QJsonValue request;
+            QString request;
             {
                 recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
                 CHECK(model.discardToCheckpoint("recoverable", discardedRevision) == Transition::Blocked);
@@ -1468,11 +1434,11 @@ public:
             CHECK(model.file("recoverable")->current().draft == unsavedDraft());
             {
                 const auto pending = store.read();
-                CHECK(pending.succeeded && pending.transactions.back().value("action") == "discard-to-checkpoint");
+                CHECK(pending.succeeded
+                      && pending.transactions.back().state.value("action") == "discard-to-checkpoint");
                 records = pending.transactions.size();
-                request = pending.transactions.back().value("transactionId");
-                checkDraft(store, pending.transactions.back().value("current").toObject().value("draft").toObject(),
-                           savedDraft());
+                request = pending.transactions.back().id;
+                checkDraft(test_support::recordedDrafts(store).back(), savedDraft());
             }
             CHECK(model.retryPendingRecovery("recoverable"));
             CHECK(!model.hasPendingRecovery() && model.file("recoverable")->current().draft == savedDraft());
@@ -1481,12 +1447,11 @@ public:
             {
                 const auto committed = store.read();
                 CHECK(committed.succeeded && committed.transactions.size() == records);
-                CHECK(committed.transactions.back().value("transactionId") == request);
-                CHECK(committed.transactions.back().value("action") == "discard-to-checkpoint");
-                CHECK(committed.transactions.back().value("written").isNull()
-                      && committed.transactions.back().value("staged").isNull());
-                checkDraft(store, committed.transactions.back().value("current").toObject().value("draft").toObject(),
-                           savedDraft());
+                CHECK(committed.transactions.back().id == request);
+                CHECK(committed.transactions.back().state.value("action") == "discard-to-checkpoint");
+                CHECK(committed.transactions.back().state.value("written").isNull()
+                      && committed.transactions.back().state.value("staged").isNull());
+                checkDraft(test_support::recordedDrafts(store).back(), savedDraft());
             }
             CHECK(model.replaceDraft("other", otherRevision, draft("other stayed editable")) == Transition::Applied);
 
@@ -1517,13 +1482,12 @@ public:
             CHECK(model.file("recoverable")->current().draft == unsavedDraft());
             {
                 const auto pending = store.read();
-                CHECK(pending.succeeded && pending.transactions.back().value("action") == "manual-save");
+                CHECK(pending.succeeded && pending.transactions.back().state.value("action") == "manual-save");
                 records = pending.transactions.size();
-                request = pending.transactions.back().value("transactionId");
-                CHECK(pending.transactions.back().value("written").isNull()
-                      && pending.transactions.back().value("staged").isNull());
-                checkDraft(store, pending.transactions.back().value("checkpoint").toObject().value("draft").toObject(),
-                           unsavedDraft());
+                request = pending.transactions.back().id;
+                CHECK(pending.transactions.back().state.value("written").isNull()
+                      && pending.transactions.back().state.value("staged").isNull());
+                checkDraft(test_support::recordedDrafts(store).back(), unsavedDraft());
             }
             CHECK(model.retryPendingRecovery("recoverable"));
             CHECK(!model.hasPendingRecovery() && model.file("recoverable")->current().draft == unsavedDraft());
@@ -1537,13 +1501,11 @@ public:
             {
                 const auto committed = store.read();
                 CHECK(committed.succeeded && committed.transactions.size() == records);
-                CHECK(committed.transactions.back().value("transactionId") == request);
-                CHECK(committed.transactions.back().value("action") == "manual-save");
-                CHECK(committed.transactions.back().value("written").isNull()
-                      && committed.transactions.back().value("staged").isNull());
-                checkDraft(store,
-                           committed.transactions.back().value("checkpoint").toObject().value("draft").toObject(),
-                           unsavedDraft());
+                CHECK(committed.transactions.back().id == request);
+                CHECK(committed.transactions.back().state.value("action") == "manual-save");
+                CHECK(committed.transactions.back().state.value("written").isNull()
+                      && committed.transactions.back().state.value("staged").isNull());
+                checkDraft(test_support::recordedDrafts(store).back(), unsavedDraft());
             }
             CHECK(model.replaceDraft("other", otherEdited.id, draft("unblocked after retry")) == Transition::Applied);
             const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));

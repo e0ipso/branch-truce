@@ -114,6 +114,37 @@
     </message>
 </context>
 <context>
+    <name>branch_truce::ResolutionPublisher</name>
+    <message numerus="yes">
+        <source>%n conflict-marker block(s)</source>
+        <translation>
+            <numerusform>%n conflict-marker block</numerusform>
+            <numerusform>%n conflict-marker blocks</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n conflict-marker block(s) remain</source>
+        <translation>
+            <numerusform>%n conflict-marker block remains</numerusform>
+            <numerusform>%n conflict-marker blocks remain</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n stray conflict-marker line(s)</source>
+        <translation>
+            <numerusform>%n stray conflict-marker line</numerusform>
+            <numerusform>%n stray conflict-marker lines</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n stray conflict-marker line(s) remain</source>
+        <translation>
+            <numerusform>%n stray conflict-marker line remains</numerusform>
+            <numerusform>%n stray conflict-marker lines remain</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
     <name>branch_truce::SessionCompletion</name>
     <message numerus="yes">
         <source>Left with %1 of %n file(s) outstanding. Drafts stay in Branch Truce; the Git operation was not continued or committed. %2</source>

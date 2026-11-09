@@ -486,16 +486,16 @@ public:
                             const auto revision = file.current().id;
                             CHECK(model->beginMarkResolved(id, revision, true) == Transition::Applied);
                             CHECK(model->recordCheckpoint(id, revision, Outcome::Succeeded) == Transition::Applied);
-                            CHECK(storage::RecoveryStore(location)
-                                      .commit(mutationRecoveryTransaction(file, "publication",
-                                                                          QUuid::createUuid().toString()))
+                            CHECK(model
+                                      ->commitRecord(mutationRecoveryTransaction(
+                                          file, {QUuid::createUuid().toString(), MutationKind::Publication, {}}))
                                       .succeeded);
                             writeFile(repo.path("tracked.txt"), bytes);
                             CHECK(model->recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
                             if (staging) {
-                                CHECK(storage::RecoveryStore(location)
-                                          .commit(mutationRecoveryTransaction(file, "staging",
-                                                                              QUuid::createUuid().toString()))
+                                CHECK(model
+                                          ->commitRecord(mutationRecoveryTransaction(
+                                              file, {QUuid::createUuid().toString(), MutationKind::Staging, {}}))
                                           .succeeded);
                                 repo.git({"add", "--", "tracked.txt"});
                                 const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
@@ -524,54 +524,56 @@ public:
                 });
         }
         for (const bool laterRevision : {false, true}) {
-            suite.run("an unmatched publication after an earlier success stays uncertain on reopen "
-                          + std::to_string(laterRevision),
-                      [=] {
-                          Repository repo;
-                          repo.conflict("merge");
-                          ScopedEnvironment environment(repo.environment);
-                          QString location;
-                          {
-                              Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
-                              openController(controller, repo);
-                              auto *model = controller.store();
-                              const auto id = openedFile(controller).id();
-                              auto draft = model->file(id)->current().draft;
-                              draft.text = "first successfully written result\n";
-                              CHECK(model->replaceDraft(id, 1, draft) == Transition::Applied);
-                              CHECK(model->beginMarkResolved(id, 2, true) == Transition::Applied);
-                              CHECK(model->recordCheckpoint(id, 2, Outcome::Succeeded) == Transition::Applied);
-                              location = model->recoveryDirectory();
-                              CHECK(storage::RecoveryStore(location)
-                                        .commit(mutationRecoveryTransaction(*model->file(id), "publication",
-                                                                            QUuid::createUuid().toString()))
-                                        .succeeded);
-                              writeFile(repo.path("tracked.txt"), QByteArray::fromStdString(draft.text));
-                              CHECK(model->recordWrite(id, 2, Outcome::Succeeded) == Transition::Applied);
-                              if (laterRevision) {
-                                  draft.text = "later interrupted result\n";
-                                  CHECK(model->replaceDraft(id, 2, draft) == Transition::Applied);
-                                  CHECK(model->beginMarkResolved(id, 3, true) == Transition::Applied);
-                                  CHECK(model->recordCheckpoint(id, 3, Outcome::Succeeded) == Transition::Applied);
-                              }
-                              CHECK(storage::RecoveryStore(location)
-                                        .commit(mutationRecoveryTransaction(*model->file(id), "publication",
-                                                                            QUuid::createUuid().toString()))
-                                        .succeeded);
-                          }
-                          const auto before = repo.snapshot();
-                          Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
-                          openController(controller, repo);
-                          const auto &restored = openedFile(controller);
-                          const auto diagnostic =
-                              fileRole(controller, restored, SessionModel::RecoveryErrorRole).toString();
-                          CHECK(controller.store()->hasRecoveryFailure(restored.id()));
-                          CHECK(diagnostic.contains("Interrupted publication") && diagnostic.contains("uncertain"));
-                          CHECK(!restored.facts().resolved && repo.snapshot() == before);
-                          const auto replay = replayRecovery(storage::RecoveryStore(location));
-                          CHECK(replay.succeeded && replay.mutations.size() == 2);
-                          CHECK(replay.mutations[0].completed && !replay.mutations[1].completed);
-                      });
+            suite.run(
+                "an unmatched publication after an earlier success stays uncertain on reopen "
+                    + std::to_string(laterRevision),
+                [=] {
+                    Repository repo;
+                    repo.conflict("merge");
+                    ScopedEnvironment environment(repo.environment);
+                    QString location;
+                    {
+                        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                        openController(controller, repo);
+                        auto *model = controller.store();
+                        const auto id = openedFile(controller).id();
+                        auto draft = model->file(id)->current().draft;
+                        draft.text = "first successfully written result\n";
+                        CHECK(model->replaceDraft(id, 1, draft) == Transition::Applied);
+                        CHECK(model->beginMarkResolved(id, 2, true) == Transition::Applied);
+                        CHECK(model->recordCheckpoint(id, 2, Outcome::Succeeded) == Transition::Applied);
+                        location = model->recoveryDirectory();
+                        CHECK(
+                            model
+                                ->commitRecord(mutationRecoveryTransaction(
+                                    *model->file(id), {QUuid::createUuid().toString(), MutationKind::Publication, {}}))
+                                .succeeded);
+                        writeFile(repo.path("tracked.txt"), QByteArray::fromStdString(draft.text));
+                        CHECK(model->recordWrite(id, 2, Outcome::Succeeded) == Transition::Applied);
+                        if (laterRevision) {
+                            draft.text = "later interrupted result\n";
+                            CHECK(model->replaceDraft(id, 2, draft) == Transition::Applied);
+                            CHECK(model->beginMarkResolved(id, 3, true) == Transition::Applied);
+                            CHECK(model->recordCheckpoint(id, 3, Outcome::Succeeded) == Transition::Applied);
+                        }
+                        CHECK(
+                            model
+                                ->commitRecord(mutationRecoveryTransaction(
+                                    *model->file(id), {QUuid::createUuid().toString(), MutationKind::Publication, {}}))
+                                .succeeded);
+                    }
+                    const auto before = repo.snapshot();
+                    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                    openController(controller, repo);
+                    const auto &restored = openedFile(controller);
+                    const auto diagnostic = fileRole(controller, restored, SessionModel::RecoveryErrorRole).toString();
+                    CHECK(controller.store()->hasRecoveryFailure(restored.id()));
+                    CHECK(diagnostic.contains("Interrupted publication") && diagnostic.contains("uncertain"));
+                    CHECK(!restored.facts().resolved && repo.snapshot() == before);
+                    const auto replay = replayRecovery(storage::RecoveryStore(location));
+                    CHECK(replay.succeeded && replay.mutations.size() == 2);
+                    CHECK(replay.mutations[0].completed && !replay.mutations[1].completed);
+                });
         }
         suite.run("exact staged evidence durably recovers a missing staging completion only once", [] {
             Repository repo;
@@ -594,9 +596,9 @@ public:
                 writeFile(repo.path("tracked.txt"), QByteArray::fromStdString(draft.text));
                 CHECK(model->recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
                 location = model->recoveryDirectory();
-                CHECK(storage::RecoveryStore(location)
-                          .commit(
-                              mutationRecoveryTransaction(*model->file(id), "staging", QUuid::createUuid().toString()))
+                CHECK(model
+                          ->commitRecord(mutationRecoveryTransaction(
+                              *model->file(id), {QUuid::createUuid().toString(), MutationKind::Staging, {}}))
                           .succeeded);
                 repo.git({"add", "--", "tracked.txt"});
                 object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
@@ -614,7 +616,7 @@ public:
                 CHECK(repo.snapshot() == before);
                 const auto read = storage::RecoveryStore(location).read();
                 CHECK(read.succeeded && read.transactions.size() == records + 1);
-                CHECK(read.transactions.back().value("action") == "stage-outcome");
+                CHECK(read.transactions.back().state.value("action") == "stage-outcome");
                 const auto replay = replayRecovery(storage::RecoveryStore(location));
                 CHECK(replay.succeeded && replay.mutations.size() == 1 && replay.mutations.front().completed);
             }
@@ -809,11 +811,10 @@ public:
                 Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
                 openController(controller, repo);
                 CHECK(!controller.loader()->detail().contains("Multiple recovery sessions"));
-                CHECK(controller.loader()->detail().contains("without app edits that were set aside: 2"));
+                CHECK(controller.loader()->detail().contains("without app edits that were deleted: 2"));
                 CHECK(!untouched.contains(controller.store()->recoveryDirectory()));
-                // Set aside, never deleted: each store keeps its journal next to the marker.
-                for (const auto &store : untouched)
-                    CHECK(QFileInfo::exists(store + "/journal") && QFileInfo::exists(store + "/set-aside"));
+                // A store holding only launch captures has nothing to restore later, so it is deleted.
+                for (const auto &store : untouched) CHECK(!QFileInfo::exists(store));
                 const auto &selected = openedFile(controller);
                 CHECK(controller.store()->editResult(selected.id(), selected.current().id,
                                                      {{0, 0}, "after two windows\n"})
@@ -952,7 +953,7 @@ public:
             for (const auto &entry : choices) {
                 const auto choice = entry.toMap();
                 sessions.push_back(choice.value("session").toString());
-                CHECK(QDateTime::fromString(choice.value("lastChanged").toString(), Qt::ISODate).isValid());
+                CHECK(!choice.value("lastChanged").toString().isEmpty());
                 CHECK(choice.value("paths").toStringList() == QStringList{"tracked.txt"});
             }
             sessions.sort();
@@ -984,8 +985,8 @@ public:
             CHECK(setAside.contains("set-aside"));
             setAside.remove("set-aside");
             CHECK(setAside == retained);
-            // The window's earlier store held only launch captures and is set aside too.
-            CHECK(QFileInfo::exists(own + "/journal") && QFileInfo::exists(own + "/set-aside"));
+            // The window's earlier store held only launch captures and is deleted.
+            CHECK(!QFileInfo::exists(own));
             // Later edits go to the adopted store.
             const auto restoredId = openedFile(controller).id();
             CHECK(controller.store()->editResult(restoredId, openedFile(controller).current().id, {{0, 0}, "kept\n"})
@@ -1140,8 +1141,8 @@ public:
                 CHECK(!controller.store()->hasRecoveryFailures());
                 // Neither edited session is set aside or changed.
                 CHECK(storeContents(first) == retainedFirst && storeContents(second) == retainedSecond);
-                // The window's earlier store held only launch captures and is set aside.
-                CHECK(QFileInfo::exists(own + "/journal") && QFileInfo::exists(own + "/set-aside"));
+                // The window's earlier store held only launch captures and is deleted.
+                CHECK(!QFileInfo::exists(own));
             }
             // Once the other window lets go, the chosen session still restores.
             Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
@@ -1302,8 +1303,8 @@ public:
             const std::map<std::string, Decision> vocabulary{{"left", {DecisionValue::Accepted, 1}}, {"right", {}}};
             const FileSession legacy(captured->id(), captured->path(), {captured->current().draft.text, vocabulary, 0},
                                      Support::Supported, {}, *captured->snapshots());
-            CHECK(storage::RecoveryStore(location)
-                      .commit(recoveryTransaction(legacy, "open", QUuid::createUuid().toString()))
+            CHECK(test_support::leasedStore(location)
+                      ->commit(recoveryTransaction(legacy, RecoveryAction::Open, QUuid::createUuid().toString(), {}))
                       .succeeded);
             for (int restart = 0; restart < 2; ++restart) {
                 Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
@@ -1358,10 +1359,14 @@ public:
                                             == Transition::Applied);
                                   }
                                   location = model->recoveryDirectory();
-                                  CHECK(storage::RecoveryStore(location)
-                                            .commit(mutationRecoveryTransaction(selected, kind,
-                                                                                QUuid::createUuid().toString()))
-                                            .succeeded);
+                                  CHECK(
+                                      model
+                                          ->commitRecord(mutationRecoveryTransaction(
+                                              selected,
+                                              {QUuid::createUuid().toString(),
+                                               (kind == "staging" ? MutationKind::Staging : MutationKind::Publication),
+                                               {}}))
+                                          .succeeded);
                               }
                               if (resultPresent)
                                   writeFile(repo.path("tracked.txt"), candidate);
@@ -1392,7 +1397,7 @@ public:
                               CHECK(repo.snapshot() == repositoryBefore);
                               const auto replay = replayRecovery(storage::RecoveryStore(location));
                               CHECK(replay.succeeded && replay.mutations.size() == 1
-                                    && replay.mutations.front().observation.isEmpty());
+                                    && !replay.mutations.front().observation.has_value());
                           });
             }
         }
@@ -1589,16 +1594,16 @@ public:
                     // Successful placeholders may precede the two final captured-file records.
                     for (qsizetype row = recovered.transactions.size() - 2; row < recovered.transactions.size();
                          ++row) {
-                        const auto &state = recovered.transactions[row];
+                        const auto &state = recovered.transactions[row].state;
                         const auto sources = state.value("snapshots").toObject();
-                        CHECK(!sources.isEmpty()
-                              && state.value("support").toInt() == static_cast<int>(Support::Supported));
+                        CHECK(!sources.isEmpty() && state.value("support") == "supported");
                         QString error;
+                        // A launch record inserts its whole text.
                         const auto encodedText = state.value("current")
                                                      .toObject()
-                                                     .value("draft")
-                                                     .toObject()
                                                      .value("text")
+                                                     .toObject()
+                                                     .value("insert")
                                                      .toString()
                                                      .toLatin1();
                         CHECK(!store.payload(encodedText, &error).isEmpty() && error.isEmpty());
@@ -1928,7 +1933,7 @@ public:
                 CHECK(repo.snapshot() == before);
                 location = controller.store()->recoveryDirectory();
                 const auto read = storage::RecoveryStore(location).read();
-                CHECK(read.succeeded && read.transactions.back().value("action") == "discard-to-checkpoint");
+                CHECK(read.succeeded && read.transactions.back().state.value("action") == "discard-to-checkpoint");
             }
             Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
             openController(controller, repo);
@@ -2024,11 +2029,11 @@ public:
                 CHECK(openedFile(controller).current().draft == edited);
                 CHECK(repo.snapshot() == before);
                 const auto pending = storage::RecoveryStore(controller.store()->recoveryDirectory()).read();
-                CHECK(pending.succeeded && pending.transactions.back().value("action") == "manual-save");
+                CHECK(pending.succeeded && pending.transactions.back().state.value("action") == "manual-save");
                 records = pending.transactions.size();
-                request = pending.transactions.back().value("transactionId").toString();
-                CHECK(pending.transactions.back().value("written").isNull()
-                      && pending.transactions.back().value("staged").isNull());
+                request = pending.transactions.back().id;
+                CHECK(pending.transactions.back().state.value("written").isNull()
+                      && pending.transactions.back().state.value("staged").isNull());
                 CHECK(controller.commands()->retryPendingRecovery(id));
                 CHECK(!controller.files()->hasPendingRecovery());
                 CHECK(openedFile(controller).current().draft == edited);
@@ -2039,10 +2044,10 @@ public:
                 CHECK(controller.selectedFile()->canEdit());
                 const auto committed = storage::RecoveryStore(controller.store()->recoveryDirectory()).read();
                 CHECK(committed.succeeded && committed.transactions.size() == records);
-                CHECK(committed.transactions.back().value("transactionId").toString() == request);
-                CHECK(committed.transactions.back().value("action") == "manual-save");
-                CHECK(committed.transactions.back().value("written").isNull()
-                      && committed.transactions.back().value("staged").isNull());
+                CHECK(committed.transactions.back().id == request);
+                CHECK(committed.transactions.back().state.value("action") == "manual-save");
+                CHECK(committed.transactions.back().state.value("written").isNull()
+                      && committed.transactions.back().state.value("staged").isNull());
                 CHECK(repo.snapshot() == before);
                 location = controller.store()->recoveryDirectory();
             }

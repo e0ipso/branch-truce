@@ -16,7 +16,7 @@
 
 namespace test_support {
 
-class SyncFaults final : public branch_truce::storage::FileSystem {
+class SyncFaults : public branch_truce::storage::FileSystem {
 public:
     // What the next failing sync must be: a recovery payload, a recovery journal or a directory.
     enum class Point { None, PayloadSync, JournalSync, DirectorySync };

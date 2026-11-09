@@ -673,8 +673,8 @@ int recoveryWorker(const std::string &name, const std::string &mode, std::size_t
     if (!payload.isEmpty()) payload[0] = '\0';
     const auto hash = branch_truce::storage::RecoveryStore::digest(payload);
     branch_truce::storage::RecoveryTransaction transaction;
-    transaction.state =
-        QJsonObject{{QStringLiteral("schema"), 1}, {QStringLiteral("transactionId"), QStringLiteral("measurement")}};
+    transaction.id = QStringLiteral("measurement");
+    transaction.state = QJsonObject{{QStringLiteral("measurement"), true}};
     transaction.payloads.insert(badDigest ? QByteArray(64, '0') : hash, payload);
     if (overload) {
         if (std::signal(SIGXFSZ, SIG_IGN) == SIG_ERR) {
@@ -696,7 +696,10 @@ int recoveryWorker(const std::string &name, const std::string &mode, std::size_t
         }
     }
     const auto started = std::chrono::steady_clock::now();
-    const auto committed = store.commit(transaction);
+    const auto lease = branch_truce::storage::RecoveryLease::acquire(directory);
+    const auto committed = lease
+        ? lease->commit(transaction)
+        : branch_truce::storage::RecoveryCommit{false, QStringLiteral("recovery store is held")};
     const auto commitMs = since(started);
     const auto listing = store.read();
     QString payloadError;

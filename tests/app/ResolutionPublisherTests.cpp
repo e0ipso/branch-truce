@@ -4,7 +4,7 @@
 #include "app/EngineText.h"
 #include "app/Translations.h"
 #include "fixtures/GitOnPath.h"
-#include "fixtures/RecoveryFaults.h"
+#include "fixtures/SyncFaults.h"
 #include "mergetool/MergetoolProtocol.h"
 #include <QCoreApplication>
 #include <QDirIterator>
@@ -41,30 +41,34 @@ std::atomic<int> readyWrite{-1};
 std::atomic<int> releaseRead{-1};
 }
 
-extern "C" int __real_renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
-                                unsigned int flags);
-extern "C" int __wrap_renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
-                                unsigned int flags)
-{
-    const int result = __real_renameat2(olddirfd, oldpath, newdirfd, newpath, flags);
-    if (result != 0 || (flags & RENAME_EXCHANGE) == 0 || !publish_stall::arm.exchange(false)) return result;
-    const int ready = publish_stall::readyWrite.load();
-    if (ready >= 0) {
-        const char token = 1;
-        ssize_t sent = 0;
-        do {
-            sent = ::send(ready, &token, 1, MSG_NOSIGNAL);
-        } while (sent < 0 && errno == EINTR);
+namespace {
+// The file system a session's recovery store and publisher use: SyncFaults' journal faults, and
+// an exchange that PublishStall can hold after it lands.
+class PublishFiles final : public test_support::SyncFaults {
+public:
+    int exchange(int fromDirectory, const char *from, int toDirectory, const char *to) const override
+    {
+        const int result = FileSystem::exchange(fromDirectory, from, toDirectory, to);
+        if (result != 0 || !publish_stall::arm.exchange(false)) return result;
+        const int ready = publish_stall::readyWrite.load();
+        if (ready >= 0) {
+            const char token = 1;
+            ssize_t sent = 0;
+            do {
+                sent = ::send(ready, &token, 1, MSG_NOSIGNAL);
+            } while (sent < 0 && errno == EINTR);
+        }
+        const int release = publish_stall::releaseRead.load();
+        if (release >= 0) {
+            char ack = 0;
+            ssize_t received = 0;
+            do {
+                received = ::recv(release, &ack, 1, 0);
+            } while (received < 0 && errno == EINTR);
+        }
+        return result;
     }
-    const int release = publish_stall::releaseRead.load();
-    if (release >= 0) {
-        char ack = 0;
-        ssize_t received = 0;
-        do {
-            received = ::recv(release, &ack, 1, 0);
-        } while (received < 0 && errno == EINTR);
-    }
-    return result;
+};
 }
 
 namespace {
@@ -254,7 +258,8 @@ void expectUnchanged(const Repository &repo, const QMap<QString, QByteArray> &be
 struct Session {
     Repository repo;
     ScopedEnvironment environment;
-    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+    std::shared_ptr<PublishFiles> files = std::make_shared<PublishFiles>();
+    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}, files}};
     QString id;
     explicit Session(bool unsupportedResult = false) : environment(repo.environment)
     {
@@ -467,9 +472,9 @@ int main(int argc, char **argv)
     suite.run("a failed review persist publishes nothing", [] {
         Session session;
         const auto before = session.repo.snapshot();
-        recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+        test_support::ArmedFault fault(*session.files, test_support::SyncFaults::Point::JournalSync);
         CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), true));
-        CHECK(recovery_faults::failures == 1);
+        CHECK(session.files->failures == 1);
         CHECK(session.controller.files()->hasPendingRecovery());
         CHECK(!openedFile(session.controller).reviewed());
         expectUnchanged(session.repo, before);
@@ -761,11 +766,11 @@ int main(int argc, char **argv)
         edited.text = "pending input before leaving\n";
         edited.unresolvedMarkers = 0;
         {
-            recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+            test_support::ArmedFault fault(*session.files, test_support::SyncFaults::Point::JournalSync);
             CHECK(
                 controller.store()->replaceDraft(session.id.toStdString(), openedFile(controller).current().id, edited)
                 == Transition::Blocked);
-            CHECK(recovery_faults::failures == 1);
+            CHECK(session.files->failures == 1);
         }
         CHECK(controller.files()->hasPendingRecovery());
         auto summary = controller.completion()->handoffData();
@@ -826,8 +831,12 @@ int main(int argc, char **argv)
         summary = controller.completion()->handoffData();
         CHECK(summary.value("clean").toBool() && summary.value("canLeave").toBool());
         CHECK(summary.value("outstandingFiles").toInt() == 0 && summary.value("totalFiles").toInt() == 2);
+        const auto store = controller.store()->recoveryDirectory();
+        CHECK(QFileInfo::exists(store + "/journal"));
         CHECK(controller.completion()->finish());
         CHECK(end.count == 1 && end.clean);
+        // Nothing in the finished session's recovery store is needed any more.
+        CHECK(!QFileInfo::exists(store));
         CHECK(end.outcome == summary.value("outcome").toString() && controller.completion()->outcome() == end.outcome);
         CHECK(end.outcome.startsWith("All 2 files in this session are written and resolved in Git."));
         CHECK(!controller.completion()->handoffData().value("canLeave").toBool());
@@ -915,9 +924,9 @@ int main(int argc, char **argv)
 
         // A journal failure keeps the acknowledged draft, and the pending discard blocks other commands.
         {
-            recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+            test_support::ArmedFault fault(*session.files, test_support::SyncFaults::Point::JournalSync);
             CHECK(!session.controller.commands()->discardToStaged(session.id, draftRevision));
-            CHECK(recovery_faults::failures == 1);
+            CHECK(session.files->failures == 1);
         }
         CHECK(session.controller.files()->hasPendingRecovery());
         CHECK(session.controller.feedback()->message()
@@ -1046,9 +1055,9 @@ int main(int argc, char **argv)
         auto edited = openedFile(controller).current().draft;
         edited.text += "pending edit\n";
         {
-            recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+            test_support::ArmedFault fault(*session.files, test_support::SyncFaults::Point::JournalSync);
             CHECK(controller.store()->replaceDraft(session.id.toStdString(), current, edited) != Transition::Applied);
-            CHECK(recovery_faults::failures == 1);
+            CHECK(session.files->failures == 1);
         }
         CHECK(controller.files()->hasPendingRecovery());
         CHECK(openedFile(controller).current().id == current);

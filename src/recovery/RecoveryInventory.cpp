@@ -1,0 +1,231 @@
+// Recovery inventory lists, leases, chooses, sets aside and expires the stores under the recovery root.
+#include "recovery/RecoveryRestore.h"
+#include "recovery/SessionIdentity.h"
+#include <QDir>
+#include <QFileInfo>
+#include <QSaveFile>
+#include <algorithm>
+
+namespace branch_truce {
+namespace {
+struct RecoveryCandidate {
+    std::shared_ptr<storage::RecoveryLease> lease;
+    RecoveryReplay replay;
+    bool setAside = false;
+    [[nodiscard]] QString name() const { return QFileInfo(lease->directory()).fileName(); }
+};
+
+QString setAsideMarker(const QString &directory) { return directory + QStringLiteral("/set-aside"); }
+
+QDateTime lastChanged(const QString &directory)
+{
+    return QFileInfo(directory + QStringLiteral("/journal")).lastModified(QTimeZone::UTC);
+}
+
+bool expired(const QString &directory, const QDateTime &now)
+{
+    const auto marked = QFileInfo(setAsideMarker(directory)).lastModified(QTimeZone::UTC);
+    return now.isValid() && marked.isValid() && marked.addDays(kSetAsideLifetimeDays) < now;
+}
+
+// Marks a store whose lease this launch holds. The journal and payloads stay
+// complete and in place, so choosing the store later restores it.
+QString setAside(const QString &directory)
+{
+    const auto path = setAsideMarker(directory);
+    QSaveFile marker(path);
+    const auto text = QStringLiteral("Set aside by Branch Truce. Start Branch Truce with --recovery-session %1 to "
+                                     "restore it within %2 days; after that it is deleted.\n")
+                          .arg(QFileInfo(directory).fileName())
+                          .arg(kSetAsideLifetimeDays)
+                          .toUtf8();
+    if (!marker.open(QIODevice::WriteOnly) || marker.write(text) != text.size() || !marker.commit())
+        return marker.errorString();
+    if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner))
+        return QStringLiteral("Could not restrict the set-aside marker permissions.");
+    return {};
+}
+
+const FileSession *firstCaptured(const std::vector<FileSession> &files)
+{
+    const auto found = std::find_if(files.begin(), files.end(), [](const auto &file) { return file.snapshots(); });
+    return found == files.end() ? nullptr : &*found;
+}
+}
+
+QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
+                               const git::RepositoryContext &repository, const QString &gitExecutable)
+{
+    return revalidateCopiedLaunch(captured, identity, repository, RepositoryProbe(gitExecutable));
+}
+
+RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude,
+                                const git::RepositoryContext &repository, const std::vector<FileSession> &observed,
+                                const QString &executable, const QString &chosenSession, const RestoreOptions &options)
+{
+    RecoveryRestore result;
+    std::vector<RecoveryCandidate> candidates;
+    bool chosenUnavailable = false;
+    for (const auto &entry : QDir(inventory).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+        if (entry.absoluteFilePath() == exclude) continue;
+        if (entry.isSymLink() || entry.ownerId() != options.files->effectiveUser()) {
+            result.diagnostics.push_back(
+                QStringLiteral("Unsafe recovery directory rejected: %1").arg(entry.fileName()));
+            continue;
+        }
+        auto lease = storage::RecoveryLease::acquire(entry.absoluteFilePath(), options.files);
+        if (!lease) {
+            result.diagnostics.push_back(
+                QStringLiteral("Recovery session %1 is active or unavailable; it was not restored.")
+                    .arg(entry.fileName()));
+            chosenUnavailable = chosenUnavailable || entry.fileName() == chosenSession;
+            continue;
+        }
+        // A set-aside store returns only when the user names it, until it expires.
+        const bool setAside = QFileInfo::exists(setAsideMarker(entry.absoluteFilePath()));
+        if (setAside && entry.fileName() != chosenSession) {
+            if (expired(entry.absoluteFilePath(), options.now)) {
+                if (lease->remove())
+                    result.diagnostics.push_back(
+                        QStringLiteral("Recovery session %1 was set aside more than %2 days ago and was deleted.")
+                            .arg(entry.fileName())
+                            .arg(kSetAsideLifetimeDays));
+            }
+            continue;
+        }
+        auto replay = replayRecovery(lease->store(), options.correspondence);
+        if (!replay.succeeded) {
+            result.diagnostics.push_back(
+                QStringLiteral("Recovery %1 rejected: %2").arg(entry.fileName(), replay.error));
+            continue;
+        }
+        const auto *captured = firstCaptured(replay.files);
+        if (!captured) continue;
+        const auto &provenance = captured->snapshots()->provenance;
+        if (provenance.worktreeRoot != repository.worktreeRoot.toStdString()) continue;
+        if (!sameOperation(provenance, repository)) {
+            result.diagnostics.push_back(
+                QStringLiteral("Recovery %1 rejected: worktree/operation session identity does not match.")
+                    .arg(entry.fileName()));
+            continue;
+        }
+        candidates.push_back({std::move(lease), std::move(replay), setAside});
+    }
+
+    RecoveryCandidate *adopted = nullptr;
+    bool chosen = false;
+    if (!chosenSession.isEmpty()) {
+        const auto match = std::find_if(candidates.begin(), candidates.end(),
+                                        [&](const auto &candidate) { return candidate.name() == chosenSession; });
+        if (match == candidates.end()) {
+            if (!chosenUnavailable)
+                result.diagnostics.push_back(
+                    QStringLiteral("Recovery session %1 does not match this operation; it was not restored.")
+                        .arg(chosenSession));
+        } else if (match->setAside && !QFile::remove(setAsideMarker(match->lease->directory()))) {
+            result.diagnostics.push_back(
+                QStringLiteral(
+                    "Recovery session %1 is set aside and its marker could not be removed; it was not restored.")
+                    .arg(chosenSession));
+            candidates.erase(match);
+        } else {
+            adopted = &*match;
+            chosen = true;
+        }
+    }
+    // A named session that was not restored is never replaced by another
+    // session with app edits. Only a lone store holding launch captures, which
+    // leaves nothing to choose between, is still adopted.
+    const bool lostChoice = !chosenSession.isEmpty() && !chosen;
+    std::vector<RecoveryCandidate *> edited;
+    for (auto &candidate : candidates)
+        if (candidate.replay.userWork) edited.push_back(&candidate);
+    if (!adopted && candidates.size() == 1 && (!lostChoice || edited.empty())) adopted = &candidates.front();
+    // Stores holding only launch captures carry no work, so they cannot make
+    // the choice ambiguous. Several edited stores still block.
+    if (!adopted && !lostChoice && edited.size() == 1) adopted = edited.front();
+    if (!adopted && (edited.size() > 1 || (lostChoice && !edited.empty()))) {
+        result.diagnostics.push_back(
+            (lostChoice ? QStringLiteral("Recovery session %1 was not restored, and no other recovery session with app "
+                                         "edits is restored in its place; "
+                                         "restoration is blocked rather than guessing. ")
+                              .arg(chosenSession)
+                        : QStringLiteral("Multiple recovery sessions with app edits match this operation; restoration "
+                                         "is blocked rather than guessing. "))
+            + QStringLiteral(
+                "To restore one, choose it in this window, or close every Branch Truce window and start Branch Truce "
+                "with --recovery-session followed by the session to keep. The other sessions are set aside, not "
+                "deleted."));
+        for (const auto *candidate : edited) {
+            const auto &directory = candidate->lease->directory();
+            RecoveryChoice choice{candidate->name(), directory, lastChanged(directory), {}};
+            for (const auto &file : candidate->replay.files)
+                if (candidate->replay.editedFiles.contains(file.id())) choice.paths.push_back(file.path());
+            result.diagnostics.push_back(QStringLiteral("Recovery session %1 was last changed %2.")
+                                             .arg(choice.session, choice.lastChanged.toString(Qt::ISODate)));
+            result.choices.push_back(std::move(choice));
+        }
+    }
+    int removedWithoutEdits = 0;
+    for (auto &candidate : candidates) {
+        if (&candidate == adopted) continue;
+        // A store without app edits holds nothing to restore later.
+        if (!candidate.replay.userWork) {
+            if (candidate.lease->remove()) ++removedWithoutEdits;
+            continue;
+        }
+        if (candidates.size() < 2 || !chosen) continue;
+        if (const auto error = setAside(candidate.lease->directory()); !error.isEmpty())
+            result.diagnostics.push_back(
+                QStringLiteral("Recovery session %1 could not be set aside: %2").arg(candidate.name(), error));
+        else
+            result.diagnostics.push_back(
+                QStringLiteral("Recovery session %1 was set aside, not deleted; it is kept for %2 days.")
+                    .arg(candidate.name())
+                    .arg(kSetAsideLifetimeDays));
+    }
+    if (removedWithoutEdits > 0)
+        result.diagnostics.push_back(
+            QStringLiteral("Recovery sessions without app edits that were deleted: %1.").arg(removedWithoutEdits));
+
+    if (!adopted) return result;
+    auto &replay = adopted->replay;
+    const auto sessionId = firstCaptured(replay.files)->snapshots()->provenance.sessionId;
+    result.found = true;
+    AdoptedStore store{adopted->lease, replay.userWork, {}};
+    if (replay.incompleteTail)
+        result.diagnostics.push_back(
+            QStringLiteral("An interrupted final recovery record was ignored. Pending input may need repeating."));
+    const RepositoryProbe probe(executable);
+    for (auto &file : replay.files) {
+        const auto reconciled = reconcile(file, replay.mutations, observed, repository, probe, *adopted->lease);
+        if (!reconciled.failure.isEmpty()) store.failures.emplace(file.id(), reconciled.failure);
+        if (reconciled.copied) result.copiedLaunches.emplace(file.id(), *reconciled.copied);
+        result.files.push_back(std::move(file));
+    }
+    for (const auto &file : observed) {
+        if (std::any_of(result.files.begin(), result.files.end(),
+                        [&](const auto &recovered) { return recovered.id() == file.id(); }))
+            continue;
+        result.newFiles.insert(file.id());
+        auto snapshots = file.snapshots() ? std::optional<FileSnapshots>(*file.snapshots()) : std::nullopt;
+        if (snapshots) snapshots->provenance.sessionId = sessionId;
+        result.files.emplace_back(file.id(), file.path(), file.current().draft, file.support(), file.supportDetail(),
+                                  std::move(snapshots), false, options.correspondence);
+    }
+    git::Request request;
+    request.operation = git::Operation::DiscoverRepository;
+    request.directory = repository.worktreeRoot;
+    const auto fresh = probe.inspect(request);
+    for (const auto &file : result.files) {
+        if (!file.snapshots()) continue;
+        if (fresh.outcome != git::Outcome::Success || !sameOperation(file.snapshots()->provenance, fresh.repository)) {
+            store.failures.insert_or_assign(
+                file.id(), QStringLiteral("Operation identity changed during recovery validation; work remains outstanding."));
+            result.copiedLaunches.erase(file.id());
+        }
+    }
+    result.adopted = std::move(store);
+    return result;
+}
+}

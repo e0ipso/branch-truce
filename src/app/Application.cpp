@@ -4,10 +4,10 @@
 namespace branch_truce {
 Application::Application(Config config, QObject *parent)
     : QObject(parent),
-      store_(std::move(config.recoveryDirectory), this),
+      store_(std::move(config.recoveryDirectory), config.files, this),
       files_(store_, this),
       coordinator_(store_, config.gitExecutable, this),
-      publisher_(store_, coordinator_, config.gitExecutable, this),
+      publisher_(store_, coordinator_, config.gitExecutable, config.files, this),
       mergetool_(
           publisher_, store_, coordinator_, [this] { return loader_.repository(); }, config.gitExecutable, this),
       editor_(store_, this),

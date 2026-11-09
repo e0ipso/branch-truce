@@ -1341,9 +1341,9 @@ public:
             sources.launchResult.text.format.encoding = SnapshotFormat::Encoding::Utf16LittleEndian;
             sources.launchResult.text.format.newline = SnapshotFormat::Newline::CrLf;
             sources.launchResult.text.format.bom = true;
-            const auto encoded =
-                storage::serializeText(QByteArray::fromStdString(sources.launchResult.text.utf8),
-                                       {storage::TextEncoding::Utf16LittleEndian, true, storage::Newline::CrLf, true});
+            const auto encoded = storage::serializeText(
+                QByteArray::fromStdString(sources.launchResult.text.utf8),
+                {SnapshotFormat::Encoding::Utf16LittleEndian, true, SnapshotFormat::Newline::CrLf, true});
             CHECK(encoded.document);
             sources.launchResult.text.bytes = encoded.document->originalBytes.toStdString();
             sources.launchResult.identity.size = encoded.document->originalBytes.size();
@@ -1852,9 +1852,9 @@ public:
             CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
             const auto savedStore = storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()).read();
             CHECK(savedStore.succeeded);
-            CHECK(std::any_of(savedStore.transactions.cbegin(), savedStore.transactions.cend(), [](const auto &state) {
-                return state.value("action") == "manual-save" && state.value("written").isNull()
-                    && state.value("staged").isNull();
+            CHECK(std::any_of(savedStore.transactions.cbegin(), savedStore.transactions.cend(), [](const auto &stored) {
+                return stored.state.value("action") == "manual-save" && stored.state.value("written").isNull()
+                    && stored.state.value("staged").isNull();
             }));
             auto discarded = saved;
             discarded.text += "discarded edit\n";
@@ -1870,7 +1870,7 @@ public:
             CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
             const auto discardedStore = storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()).read();
             CHECK(discardedStore.succeeded
-                  && discardedStore.transactions.back().value("action") == "discard-to-checkpoint");
+                  && discardedStore.transactions.back().state.value("action") == "discard-to-checkpoint");
             const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
             CHECK(replay.succeeded && replay.files.front().current().draft == saved);
             CHECK(replay.files.front().current().draft != discarded && !replay.files.front().written()
@@ -3671,9 +3671,9 @@ public:
             CHECK(!fixture.item("markResolved")->isEnabled());
             storage::RecoveryStore store(fixture.controller.store()->recoveryDirectory());
             const auto pending = store.read();
-            CHECK(pending.succeeded && pending.transactions.back().value("action") == "discard-to-checkpoint");
+            CHECK(pending.succeeded && pending.transactions.back().state.value("action") == "discard-to-checkpoint");
             const auto records = pending.transactions.size();
-            const auto request = pending.transactions.back().value("transactionId");
+            const auto request = pending.transactions.back().id;
             fixture.click("retryRecovery");
             settle([&] { return !fixture.controller.files()->hasPendingRecovery(); });
             CHECK(fixture.file().current().draft == saved && fixture.file().current().draft != discarded);
@@ -3683,8 +3683,8 @@ public:
             CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
             const auto committed = store.read();
             CHECK(committed.succeeded && committed.transactions.size() == records);
-            CHECK(committed.transactions.back().value("transactionId") == request);
-            CHECK(committed.transactions.back().value("action") == "discard-to-checkpoint");
+            CHECK(committed.transactions.back().id == request);
+            CHECK(committed.transactions.back().state.value("action") == "discard-to-checkpoint");
             const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
             CHECK(replay.succeeded && replay.files.front().current().draft == saved);
             CHECK(!replay.files.front().written() && !replay.files.front().staged());

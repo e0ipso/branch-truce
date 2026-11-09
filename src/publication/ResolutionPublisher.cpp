@@ -1,5 +1,6 @@
 // Resolution publishing writes a reviewed result and verifies its Git staging or parent handoff.
 #include "publication/ResolutionPublisher.h"
+#include "recovery/SessionIdentity.h"
 
 #include <QHash>
 #include <QPointer>
@@ -13,109 +14,15 @@ bool succeeded(const std::optional<OperationOutcome> &outcome, RevisionId revisi
     return outcome && outcome->revision == revision && outcome->outcome == Outcome::Succeeded;
 }
 
-storage::TextFormat launchFormat(const SnapshotFormat &format)
-{
-    storage::TextFormat result;
-    switch (format.encoding) {
-    case SnapshotFormat::Encoding::Utf8: result.encoding = storage::TextEncoding::Utf8; break;
-    case SnapshotFormat::Encoding::Utf16LittleEndian: result.encoding = storage::TextEncoding::Utf16LittleEndian; break;
-    case SnapshotFormat::Encoding::Utf16BigEndian: result.encoding = storage::TextEncoding::Utf16BigEndian; break;
-    }
-    result.bom = format.bom;
-    result.newline = format.newline == SnapshotFormat::Newline::CrLf ? storage::Newline::CrLf : storage::Newline::Lf;
-    result.finalNewline = format.finalNewline;
-    return result;
-}
-
-std::optional<QByteArray> writtenRevisionBytes(const FileSession &session)
-{
-    const auto *snapshots = session.snapshots();
-    if (!snapshots || !session.written()) return std::nullopt;
-    const auto serialized = storage::serializeText(QByteArray::fromStdString(session.written()->draft.text),
-                                                   launchFormat(snapshots->launchResult.text.format));
-    if (!serialized.document) return std::nullopt;
-    return serialized.document->originalBytes;
-}
-
 QString remainingMarkers(const MarkerScan &markers)
 {
-    const auto blocks = static_cast<qulonglong>(markers.blocks.size());
-    const auto stray = static_cast<qulonglong>(markers.orphans.size());
-    const auto blockText = blocks == 1 ? ResolutionPublisher::tr("1 conflict-marker block")
-                                       : ResolutionPublisher::tr("%1 conflict-marker blocks").arg(blocks);
-    const auto strayText = stray == 1 ? ResolutionPublisher::tr("1 stray conflict-marker line")
-                                      : ResolutionPublisher::tr("%1 stray conflict-marker lines").arg(stray);
-    if (stray == 0)
-        return blocks == 1 ? ResolutionPublisher::tr("%1 remains").arg(blockText)
-                           : ResolutionPublisher::tr("%1 remain").arg(blockText);
-    if (blocks == 0)
-        return stray == 1 ? ResolutionPublisher::tr("%1 remains").arg(strayText)
-                          : ResolutionPublisher::tr("%1 remain").arg(strayText);
-    return ResolutionPublisher::tr("%1 and %2 remain").arg(blockText, strayText);
-}
-
-bool samePairs(const std::map<std::string, std::string> &expected, const QHash<QByteArray, QByteArray> &live)
-{
-    if (expected.size() != static_cast<std::size_t>(live.size())) return false;
-    for (auto it = live.cbegin(); it != live.cend(); ++it) {
-        const auto found = expected.find(it.key().toStdString());
-        if (found == expected.end() || found->second != it.value().toStdString()) return false;
-    }
-    return true;
-}
-
-bool samePolicy(const ConversionSnapshot &expected, const git::ConversionPolicy &live)
-{
-    return samePairs(expected.attributes, live.attributes) && samePairs(expected.configuration, live.configuration);
-}
-
-bool sameOperation(const SnapshotProvenance &provenance, const git::RepositoryContext &repository)
-{
-    if (!repository.supported || repository.worktreeRoot.toStdString() != provenance.worktreeRoot
-        || repository.gitDirectory.toStdString() != provenance.gitDirectory)
-        return false;
-    if (repository.operation == git::RepositoryOperation::Merge)
-        return provenance.operation == SnapshotProvenance::Operation::Merge
-            && repository.stage2.commitId.toStdString() == provenance.stage2CommitId
-            && repository.stage3.commitId.toStdString() == provenance.stage3CommitId;
-    if (repository.operation == git::RepositoryOperation::Rebase)
-        return provenance.operation == SnapshotProvenance::Operation::Rebase
-            && repository.stage2.commitId.toStdString() == provenance.stage2CommitId
-            && repository.stage3.commitId.toStdString() == provenance.stage3CommitId;
-    return false;
-}
-
-QList<git::IndexEntry> capturedStages(const FileSnapshots &snapshots)
-{
-    QList<git::IndexEntry> stages;
-    const auto path = QByteArray::fromStdString(snapshots.path);
-    auto add = [&](unsigned int stage, const std::optional<SourceSnapshot> &source) {
-        if (!source) return;
-        stages.push_back(
-            {path, QByteArray::fromStdString(source->mode), QByteArray::fromStdString(source->objectId), stage});
-    };
-    add(1, snapshots.earlier);
-    add(2, snapshots.stage2);
-    add(3, snapshots.stage3);
-    return stages;
-}
-
-bool originalConflict(const QList<git::IndexEntry> &entries, const FileSnapshots &snapshots)
-{
-    const int expected = (snapshots.earlier ? 1 : 0) + 2;
-    if (entries.size() != expected || !snapshots.stage2 || !snapshots.stage3) return false;
-    bool seen[4]{};
-    for (const auto &entry : entries) {
-        const auto &source = entry.stage == 1 ? snapshots.earlier
-            : entry.stage == 2                ? snapshots.stage2
-                                              : snapshots.stage3;
-        if (entry.stage < 1 || entry.stage > 3 || seen[entry.stage] || !source) return false;
-        if (entry.path.toStdString() != snapshots.path || entry.objectId.toStdString() != source->objectId
-            || entry.mode.toStdString() != source->mode)
-            return false;
-        seen[entry.stage] = true;
-    }
-    return seen[2] && seen[3] && (!snapshots.earlier || seen[1]);
+    const auto blocks = static_cast<int>(markers.blocks.size());
+    const auto stray = static_cast<int>(markers.orphans.size());
+    if (stray == 0) return ResolutionPublisher::tr("%n conflict-marker block(s) remain", nullptr, blocks);
+    if (blocks == 0) return ResolutionPublisher::tr("%n stray conflict-marker line(s) remain", nullptr, stray);
+    return ResolutionPublisher::tr("%1 and %2 remain")
+        .arg(ResolutionPublisher::tr("%n conflict-marker block(s)", nullptr, blocks),
+             ResolutionPublisher::tr("%n stray conflict-marker line(s)", nullptr, stray));
 }
 
 bool stageZero(const QList<git::IndexEntry> &entries, const QByteArray &path, const QByteArray &mode,
@@ -138,11 +45,12 @@ Outcome failedObservation(const TaskResult &result)
 }
 
 ResolutionPublisher::ResolutionPublisher(SessionStore &files, SessionCoordinator &coordinator, QString gitExecutable,
-                                         QObject *parent)
+                                         std::shared_ptr<const storage::FileSystem> destinations, QObject *parent)
     : QObject(parent),
       files_(files),
       coordinator_(coordinator),
       executable_(std::move(gitExecutable)),
+      destinations_(std::move(destinations)),
       conversion_(executable_, this)
 {
     connect(&conversion_, &git::TextConversion::finished, this, [this](const git::TextConversionResult &result) {
@@ -175,8 +83,8 @@ void ResolutionPublisher::captureBaselines(const git::RepositoryContext &reposit
         const auto *session = &file;
         if (session->support() != Support::Supported || !session->snapshots()) continue;
         Baseline baseline;
-        const auto captured =
-            storage::captureDestination(repository.worktreeRoot, QByteArray::fromStdString(session->path()));
+        const auto captured = storage::captureDestination(repository.worktreeRoot,
+                                                          QByteArray::fromStdString(session->path()), destinations_);
         const auto &launch = session->snapshots()->launchResult;
         if (!captured.destination)
             baseline.diagnostic = captured.diagnostic;
@@ -195,8 +103,8 @@ bool ResolutionPublisher::adoptCopiedLaunch(const std::string &fileId, const Sna
     if ((attempt_ && attempt_->fileId == fileId) || !session || session->support() != Support::Supported
         || !session->snapshots())
         return false;
-    const auto captured =
-        storage::captureDestination(repository_.worktreeRoot, QByteArray::fromStdString(session->path()));
+    const auto captured = storage::captureDestination(repository_.worktreeRoot,
+                                                      QByteArray::fromStdString(session->path()), destinations_);
     if (!captured.destination || captured.destination->identity() != identity
         || captured.destination->bytes().toStdString() != session->snapshots()->launchResult.text.bytes)
         return false;
@@ -385,7 +293,7 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
         return recordWrite(fileId, expected, Outcome::Failed,
                            tr("Repository write failed. The saved draft is still available."));
     const auto serialized = storage::serializeText(QByteArray::fromStdString(session->current().draft.text),
-                                                   launchFormat(session->snapshots()->launchResult.text.format));
+                                                   session->snapshots()->launchResult.text.format);
     if (!serialized.document)
         return recordWrite(fileId, expected, Outcome::Failed,
                            serialized.diagnostic.isEmpty()
@@ -403,9 +311,9 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
         // Restart only has the launch snapshot. A successful write already replaced
         // that file, so keep the write when the live bytes are still that revision.
         if (!previouslyWritten(*session, expected)) return missingLaunch();
-        const auto live =
-            storage::captureDestination(repository_.worktreeRoot, QByteArray::fromStdString(session->path()));
-        const auto writtenBytes = writtenRevisionBytes(*session);
+        const auto live = storage::captureDestination(repository_.worktreeRoot,
+                                                      QByteArray::fromStdString(session->path()), destinations_);
+        const auto writtenBytes = serializedRevision(*session, *session->written());
         if (!live.destination || !writtenBytes || live.destination->bytes() != *writtenBytes
             || *writtenBytes != serialized.document->originalBytes) {
             return recordWrite(fileId, expected, Outcome::Failed,
@@ -475,7 +383,7 @@ bool ResolutionPublisher::startPrepare()
     request.directory = repository_.worktreeRoot;
     request.path = attempt_->path;
     request.stages = capturedStages(*session->snapshots());
-    request.launchResultFormat = launchFormat(session->snapshots()->launchResult.text.format);
+    request.launchResultFormat = session->snapshots()->launchResult.text.format;
     request.editedUtf8 = QByteArray::fromStdString(session->current().draft.text);
     request.sessionGeneration = attempt_->generation;
     request.inputRevision = attempt_->revision;
@@ -558,7 +466,7 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
         return;
     }
     const auto &entries = gitResult.indexEntries;
-    const bool conflict = originalConflict(entries, *session->snapshots());
+    const bool conflict = matchesCapturedConflict(entries, *session->snapshots());
     const bool resolved = stageZero(entries, attempt_->path, attempt_->mode, attempt_->prepared->canonicalObjectId);
     if (attempt_->acknowledging) {
         if (conflict) {
@@ -588,8 +496,8 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
     const bool written = previouslyWritten(*session, attempt_->revision) && baselines_.contains(attempt_->fileId)
         && baselines_.at(attempt_->fileId).destination
         && baselines_.at(attempt_->fileId).destination->bytes() == attempt_->serialized;
-    const auto current =
-        written ? storage::captureDestination(repository_.worktreeRoot, attempt_->path) : storage::DestinationCapture{};
+    const auto current = written ? storage::captureDestination(repository_.worktreeRoot, attempt_->path, destinations_)
+                                 : storage::DestinationCapture{};
     if (written && !attempt_->parentOwned
         && (!current.destination || current.destination->bytes() != attempt_->serialized)) {
         fail(Outcome::Failed,
@@ -618,7 +526,7 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
     // A failed exit moves that backup back over a written file, so the launch
     // bytes are accepted after a write as well.
     if (attempt_->parentOwned) {
-        auto live = storage::captureDestination(repository_.worktreeRoot, attempt_->path);
+        auto live = storage::captureDestination(repository_.worktreeRoot, attempt_->path, destinations_);
         auto baseline = baselines_.find(attempt_->fileId);
         if (!live.destination || baseline == baselines_.end() || !baseline->second.destination
             || (live.destination->bytes() != baseline->second.destination->bytes()
@@ -653,8 +561,8 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
             if (evidence->state == storage::PublicationState::Uncertain) result.diagnostic = evidence->diagnostic;
             return result;
         },
-        [baseline, bytes](const TaskInput &) {
-            const auto observed = storage::captureDestination(baseline->worktreeRoot(), baseline->path());
+        [baseline, bytes, files = destinations_](const TaskInput &) {
+            const auto observed = storage::captureDestination(baseline->worktreeRoot(), baseline->path(), files);
             if (!observed.destination) return MutationObservation::Uncertain;
             if (observed.destination->bytes() == bytes) return MutationObservation::ObservedChanged;
             if (observed.destination->bytes() == baseline->bytes()) return MutationObservation::ObservedUnchanged;
@@ -784,7 +692,7 @@ void ResolutionPublisher::noteStale(const TaskCompletion &completion)
         // Exchange already replaced the launch inode. Adopt the live destination
         // only while it still holds the bytes this publish wrote. Different bytes
         // keep the previous baseline, so a later resolution fails closed.
-        auto live = storage::captureDestination(repository_.worktreeRoot, attempt_->path);
+        auto live = storage::captureDestination(repository_.worktreeRoot, attempt_->path, destinations_);
         if (live.destination && live.destination->bytes() == attempt_->serialized) {
             auto baseline = baselines_.find(attempt_->fileId);
             if (baseline == baselines_.end())

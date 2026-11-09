@@ -36,7 +36,9 @@ public:
         std::optional<MarkerScan> markers;
     };
 
+    // destinations is the file system repository files are captured and written through.
     ResolutionPublisher(SessionStore &files, SessionCoordinator &coordinator, QString gitExecutable,
+                        std::shared_ptr<const storage::FileSystem> destinations = storage::systemFileSystem(),
                         QObject *parent = nullptr);
 
     void captureBaselines(const git::RepositoryContext &repository);
@@ -104,6 +106,7 @@ private:
     SessionStore &files_;
     SessionCoordinator &coordinator_;
     const QString executable_;
+    const std::shared_ptr<const storage::FileSystem> destinations_;
     git::RepositoryContext repository_;
     git::TextConversion conversion_;
     std::map<std::string, Baseline> baselines_;

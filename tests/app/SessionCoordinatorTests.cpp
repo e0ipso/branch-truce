@@ -4,6 +4,7 @@
 #include "app/Application.h"
 #include "app/Translations.h"
 #include "fixtures/ChoiceFile.h"
+#include "fixtures/Files.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryJournal.h"
 #include "recovery/RecoveryRestore.h"
@@ -796,7 +797,7 @@ public:
             snapshot = replayed();
             CHECK(snapshot.first == std::vector<bool>{false, false, false, true, true, false, true, true, true, true});
         });
-        test("journals without recorded hand edits replay with none and unknown anchors are rejected", [] {
+        test("records must list their hand edits, and unknown anchors are rejected", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
             test_support::TestSession model(directory.path() + "/recovery");
@@ -805,22 +806,22 @@ public:
             CHECK(model.editResult("choices", 1, {{at, at}, "hand "}) == Transition::Applied);
             const auto recorded = model.file("choices")->correspondence()->handEditedAnchors();
             CHECK(recorded.size() == 4);
-            // A writer from before the field existed recorded the same draft without
-            // it, or the hand-edited ranges recorded after it.
+            auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            CHECK(replay.succeeded && replay.files.size() == 1);
+            CHECK(replay.files.front().correspondence()->handEditedAnchors() == recorded);
+            // A record without the field is refused rather than read as having none.
+            const auto journal = test_support::readFile(model.recoveryDirectory() + "/journal");
             test_support::rewriteLastRecoveryState(model.recoveryDirectory(), [&](QJsonObject &state) {
                 auto current = state.value("current").toObject();
                 CHECK(current.value("handEdited").toArray().size() == static_cast<qsizetype>(recorded.size()));
                 CHECK(current.value("handEditedRanges").toArray().size() == 1);
                 current.remove("handEdited");
-                current.remove("handEditedRanges");
                 state.insert("current", current);
             });
-            auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
-            CHECK(replay.succeeded && replay.files.size() == 1);
-            CHECK(replay.files.front().current().draft == model.file("choices")->current().draft);
-            CHECK(replay.files.front().correspondence()->handEditedAnchors().empty());
-            CHECK(replay.files.front().correspondence()->handEditedRanges().empty());
+            replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            CHECK(!replay.succeeded && replay.error.contains("hand edits"));
             // Every recorded hand edit must name an anchor of the replayed draft.
+            test_support::writeFile(model.recoveryDirectory() + "/journal", journal);
             test_support::rewriteLastRecoveryState(model.recoveryDirectory(), [](QJsonObject &state) {
                 auto current = state.value("current").toObject();
                 current.insert("handEdited", QJsonArray{state.value("path")});
@@ -1093,6 +1094,33 @@ public:
             CHECK(f.finished[0].result.mutation == MutationObservation::ObservedChanged
                   && f.finished[0].result.data == "first\n");
             CHECK(f.coordinator->mutationOutcomes()[0].stamp.id == id);
+        });
+        test("a mutation records its observation under the lease its intent was committed with", [] {
+            Fixture f;
+            Gate inspect;
+            const auto id = f.coordinator->submitMutation(
+                "file", 1,
+                [](const TaskInput &input, const TaskControl &control) {
+                    return writeResult(input, control, "first\n");
+                },
+                [state = inspect.state](const TaskInput &) {
+                    state->pause();
+                    return MutationObservation::ObservedChanged;
+                });
+            CHECK(id != 0);
+            inspect.wait();
+            const auto original = f.model.recoveryDirectory();
+            // The session moves to a new store while the mutation is still inspecting.
+            CHECK(f.model.startNewRecoveryStore() && f.model.recoveryDirectory() != original);
+            CHECK(storage::RecoveryLease::acquire(original) == nullptr);
+            inspect.open();
+            f.wait(1);
+            const auto replay = replayRecovery(storage::RecoveryStore(original));
+            CHECK(replay.succeeded && replay.mutations.size() == 1);
+            CHECK(replay.mutations.front().kind == MutationKind::Publication);
+            CHECK(replay.mutations.front().observation == MutationObservation::ObservedChanged);
+            // Once the observation is recorded the old store is free again.
+            CHECK(storage::RecoveryLease::acquire(original) != nullptr);
         });
         test("session replacement through a symlink retains an active worktree queue", [] {
             Fixture f;

@@ -170,7 +170,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_recovery_boundary_tests app/RecoveryBoundaryFaultTests.cpp)
     target_include_directories(branch_truce_recovery_boundary_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_recovery_boundary_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    target_link_options(branch_truce_recovery_boundary_tests PRIVATE "LINKER:--wrap=fsync")
     add_test(NAME app.recovery-boundary-faults COMMAND branch_truce_recovery_boundary_tests)
     set_tests_properties(app.recovery-boundary-faults PROPERTIES TIMEOUT 60)
 
@@ -178,8 +177,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_include_directories(branch_truce_recovery_record_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_recovery_record_tests PRIVATE branch_truce_controller branch_truce_storage
         branch_truce_build_options)
-    target_compile_definitions(branch_truce_recovery_record_tests PRIVATE
-        BRANCH_TRUCE_RECOVERY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/recovery")
     add_test(NAME app.recovery-record COMMAND branch_truce_recovery_record_tests)
 
     find_package(Qt6 6.6 REQUIRED COMPONENTS Test QuickTest)
@@ -319,7 +316,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_resolution_tests app/ResolutionPublisherTests.cpp)
     target_include_directories(branch_truce_resolution_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_resolution_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    target_link_options(branch_truce_resolution_tests PRIVATE "LINKER:--wrap=fsync" "LINKER:--wrap=renameat2")
     add_test(NAME app.resolution COMMAND branch_truce_resolution_tests)
     set_tests_properties(app.resolution PROPERTIES TIMEOUT 90)
 
