@@ -54,7 +54,7 @@ void theAdaptersGitReadsNoAccountOrSystemConfiguration()
             .toUtf8());
 
     GitAdapter adapter(repo.program(recorder));
-    CHECK_EQ(run(adapter, repo.request(Operation::Status)).outcome, Outcome::Success);
+    CHECK_EQ(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome, Outcome::Success);
 
     int calls = 0;
     QHash<QByteArray, QString> variables;

@@ -6,9 +6,6 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QFileInfo>
-#include <QMutex>
-#include <QMutexLocker>
-#include <QSet>
 #include <QThread>
 #include <optional>
 
@@ -18,8 +15,6 @@ using detail::exactPath;
 using detail::objectId;
 using detail::outputLimit;
 using detail::relativeFile;
-QMutex mutationMutex;
-QSet<QString> mutatingGitDirectories;
 } // namespace
 
 QString displayPath(const QByteArray &path)
@@ -54,16 +49,14 @@ void GitAdapter::State::begin()
         reject(QStringLiteral("An absolute directory and trusted executable outside it are required"));
         return;
     }
-    if (operationArguments().isEmpty()) {
+    spec = detail::operationSpec(r.operation);
+    if (!spec) {
         reject(QStringLiteral("Unknown Git operation"));
         return;
     }
-    const bool pathRequired = r.operation == Operation::InspectIndex || r.operation == Operation::ReadAttributes
-        || r.operation == Operation::MaterializeSource || r.operation == Operation::CanonicalizeText || stagingPolicy();
-    const bool objectRequired = r.operation == Operation::ReadObject || r.operation == Operation::MaterializeSource;
-    if ((pathRequired && !relativeFile(r.path)) || (!pathRequired && !r.path.isEmpty())
-        || (objectRequired && !objectId(r.objectId)) || (!objectRequired && !r.objectId.isEmpty())
-        || (r.operation != Operation::CanonicalizeText && !r.input.isEmpty())) {
+    if ((spec->path && !relativeFile(r.path)) || (!spec->path && !r.path.isEmpty())
+        || (spec->object && !objectId(r.objectId)) || (!spec->object && !r.objectId.isEmpty())
+        || (!spec->input && !r.input.isEmpty())) {
         reject(QStringLiteral("Invalid operands for the named Git operation"));
         return;
     }
@@ -80,7 +73,6 @@ void GitAdapter::State::complete()
 {
     deadline.stop();
     escalation.stop();
-    releaseMutation();
     if (temporaryObjects) {
         if (!temporaryObjects->remove()) {
             if (result.outcome == Outcome::Success) result.outcome = Outcome::ProcessFailure;
@@ -104,26 +96,6 @@ void GitAdapter::State::reject(const QString &message)
     result.diagnostic = message;
     complete();
 }
-void GitAdapter::State::reserveMutation(const QString &key)
-{
-    // On success mutationKey holds the reservation until complete() releases it.
-    const QMutexLocker lock(&mutationMutex);
-    if (mutatingGitDirectories.contains(key)) {
-        result.diagnostic = QStringLiteral("Another app-owned mutation is active for this worktree");
-    } else {
-        mutationKey = key;
-        mutatingGitDirectories.insert(key);
-    }
-}
-void GitAdapter::State::releaseMutation()
-{
-    if (!mutationKey.isEmpty()) {
-        const QMutexLocker lock(&mutationMutex);
-        mutatingGitDirectories.remove(mutationKey);
-        mutationKey.clear();
-    }
-}
-
 GitAdapter::GitAdapter(GitProgram program, QObject *parent)
     : QObject(parent), d(std::make_unique<State>(this, std::move(program)))
 {
@@ -140,6 +112,7 @@ bool GitAdapter::start(const Request &request)
         return false;
     }
     d->result = Result{};
+    d->spec = nullptr;
     d->discovery.reset();
     d->result.request = request;
     d->bytesRead = 0;

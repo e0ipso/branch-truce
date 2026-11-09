@@ -76,7 +76,7 @@ int main(int argc, char **argv)
             writeFile(repo.path("tracked.txt"), manual);
 
             GitAdapter adapter(repo.program());
-            auto entries = run(adapter, repo.request(Operation::ListUnmerged)).indexEntries;
+            auto entries = run(adapter, repo.request(Operation::DiscoverRepository)).indexEntries;
             for (auto &entry : entries) {
                 if (entry.stage == 3 && scenario == "mode-disagreement") entry.mode = "100755";
                 if ((entry.stage == 3 && scenario == "symlink-source")

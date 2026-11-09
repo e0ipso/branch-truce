@@ -14,11 +14,8 @@ namespace branch_truce::git {
 
 enum class Operation {
     DiscoverRepository,
-    ListUnmerged,
-    Status,
     InspectIndex,
     ReadObject,
-    ReadConfiguration,
     ReadAttributes,
     MaterializeSource,
     StageFile,
@@ -29,6 +26,8 @@ enum class Operation {
     // Clean/checkout in a private object store. Does not write the repository.
     CanonicalizeText
 };
+// Whether the operation can change the index. Callers run at most one of these per worktree at a time.
+[[nodiscard]] bool isMutation(Operation operation);
 enum class Outcome {
     Success,
     Rejected,
@@ -99,11 +98,13 @@ struct Result {
     Request request;
     Outcome outcome = Outcome::Rejected;
     Mutation mutation = Mutation::NotAttempted;
+    // The operation's own output. Policy checks before it never add theirs, since a
+    // configuration listing can hold credentials.
     QByteArray standardOutput;
     QByteArray standardError;
     QByteArray indexBefore;
     QByteArray indexAfter;
-    QList<IndexEntry> indexEntries; // Exact stages from DiscoverRepository/ListUnmerged/InspectIndex.
+    QList<IndexEntry> indexEntries; // Exact stages from DiscoverRepository/InspectIndex.
     RepositoryContext repository; // Structured DiscoverRepository snapshot, even when unsupported.
     QString diagnostic;
     int exitCode = -1; // Requested operation only; -1 if no normal exit occurred.

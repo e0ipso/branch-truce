@@ -60,6 +60,14 @@ public:
     {
         return {operation, root(), file, {}, 71, 93};
     }
+    // A plain read any Git answers: the staged blob of tracked.txt. The scripted Git runs its
+    // operation script for it.
+    Request readRequest() const
+    {
+        auto read = request(Operation::ReadObject);
+        read.objectId = git({"rev-parse", ":tracked.txt"}).trimmed();
+        return read;
+    }
     // Git as the code under test runs it: the fixture's configuration only, never the account's
     // or the system's.
     GitProgram program(const QString &executable = test_support::gitExecutable(),
@@ -76,8 +84,8 @@ public:
         return selected;
     }
     // A scripted Git for the adapter's failure paths. It answers preflight and inspection the way
-    // a one-file repository would, runs `operation` for add, status and cat-file, and exits 97
-    // for anything else. Literal path and index handling is covered against real Git instead.
+    // a one-file repository would, runs `operation` for add and cat-file, and exits 97 for
+    // anything else. Literal path and index handling is covered against real Git instead.
     QString fakeGit(
         const QByteArray &operation,
         const QByteArray &inspection = "printf '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\\ttracked.txt\\0'\n",
@@ -113,7 +121,6 @@ case "$1" in
         script += R"SH(
         ;;
     ls-files)
-        case "$*" in *--cached*) printf 'tracked.txt\0'; exit 0 ;; esac
         if [ -e .after-add ]; then
 )SH";
         script += inspection;
@@ -121,7 +128,7 @@ case "$1" in
         else
             printf '100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\ttracked.txt\0'
         fi ;;
-    add|status|cat-file)
+    add|cat-file)
 )SH";
         script += operation;
         script += "\n;;\n*) exit 97 ;;\nesac\n";

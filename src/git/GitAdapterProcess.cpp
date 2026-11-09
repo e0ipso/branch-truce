@@ -145,7 +145,7 @@ GitAdapter::State::State(GitAdapter *owner, GitProgram selected)
             stop(Outcome::ProcessFailure, QStringLiteral("Could not send Git operation input"));
         }
         process.closeWriteChannel();
-        if (!nativeLaunchFailed && phase == Phase::Operation && isMutation()) {
+        if (!nativeLaunchFailed && phase == Phase::Operation && spec->flow == detail::Flow::Stage) {
             mutationStarted = true;
             result.mutation = Mutation::Uncertain;
         }
@@ -191,10 +191,20 @@ GitAdapter::State::State(GitAdapter *owner, GitProgram selected)
 GitAdapter::State::~State()
 {
     QObject::disconnect(&process, nullptr, q, nullptr);
-    signalGroup(SIGKILL);
-    process.kill();
+    // Git removes its lock files, such as the index.lock of an interrupted
+    // `git add`, when SIGTERM stops it. SIGKILL follows only when it has not
+    // exited after the grace period, which bounds this wait.
+    if (process.state() != QProcess::NotRunning) {
+        signalGroup(SIGTERM);
+        process.terminate();
+        if (!process.waitForFinished(killGraceMs)) {
+            signalGroup(SIGKILL);
+            process.kill();
+            process.waitForFinished(killGraceMs);
+        }
+    }
+    signalGroup(SIGKILL); // Descendants left in the private session.
     closeLaunchPipe();
-    releaseMutation();
 }
 void GitAdapter::State::signalGroup(int signal)
 {
@@ -333,12 +343,6 @@ void GitAdapter::State::drain(bool error)
         if (chunk.isEmpty()) {
             break;
         }
-        if (!error && phase == Phase::Attributes && result.request.operation == Operation::Status) {
-            // Status policy can cover the entire index. Consume records as
-            // they arrive without charging them to the operation's output.
-            if (!stopping && !consumeStatusAttributes(chunk)) stop(Outcome::Rejected, result.diagnostic);
-            continue;
-        }
         const auto limit = phase == Phase::Inspection ? inspectionLimit : outputLimit;
         const auto keep = std::min(chunk.size(), std::max(qsizetype{0}, limit - bytesRead));
         if (error) {
@@ -363,6 +367,6 @@ void GitAdapter::State::inspectMutation()
     deadline.start(inspectionMs);
     stopping = false;
     bytesRead = 0; // A separate budget makes reinspection possible after overflow.
-    launch(Phase::Inspection, indexArguments());
+    launch(Phase::Inspection, detail::indexArguments(result.request.path));
 }
 } // namespace branch_truce::git
