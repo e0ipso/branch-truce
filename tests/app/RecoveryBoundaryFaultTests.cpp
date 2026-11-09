@@ -1,7 +1,10 @@
 #include "TestHarness.h"
-#include "app/ApplicationController.h"
+#include "TestSession.h"
+#include "app/AppPaths.h"
+#include "app/Application.h"
 #include "app/EngineText.h"
 #include "app/SessionModel.h"
+#include "app/Translations.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryJournal.h"
 #include "mergetool/MergetoolProtocol.h"
@@ -122,7 +125,7 @@ void emitObservation(const char *label, const FileSession &file)
 }
 
 template <typename ModelAction, typename FileAction>
-[[noreturn]] void commitBoundary(SessionModel &model, const QString &crash, ModelAction modelAction,
+[[noreturn]] void commitBoundary(test_support::TestSession &model, const QString &crash, ModelAction modelAction,
                                  FileAction fileAction)
 {
     auto predicted = *model.file("file");
@@ -135,19 +138,22 @@ template <typename ModelAction, typename FileAction>
     std::_Exit(0);
 }
 
-void openBase(SessionModel &model) { CHECK(model.appendFile(FileSession("file", "file.txt", baseDraft()))); }
-void saveCheckpoint(SessionModel &model)
+void openBase(test_support::TestSession &model)
+{
+    CHECK(model.appendFile(FileSession("file", "file.txt", baseDraft())));
+}
+void saveCheckpoint(test_support::TestSession &model)
 {
     openBase(model);
     CHECK(model.replaceDraft("file", 1, savedDraft()) == Transition::Applied);
     CHECK(model.recordCheckpoint("file", model.file("file")->current().id, Outcome::Succeeded) == Transition::Applied);
 }
-void reviewSaved(SessionModel &model)
+void reviewSaved(test_support::TestSession &model)
 {
     saveCheckpoint(model);
     CHECK(model.beginMarkResolved("file", model.file("file")->current().id) == Transition::Applied);
 }
-void writeSaved(SessionModel &model)
+void writeSaved(test_support::TestSession &model)
 {
     reviewSaved(model);
     CHECK(model.recordWrite("file", model.file("file")->current().id, Outcome::Succeeded) == Transition::Applied);
@@ -156,11 +162,12 @@ void writeSaved(SessionModel &model)
 [[noreturn]] void runBoundary(const QString &name, const QString &directory, const QString &crash)
 {
     CHECK(QDir::isAbsolutePath(directory));
-    SessionModel model(directory);
+    test_support::TestSession model(directory);
     if (name == QLatin1String("edit")) {
         openBase(model);
         commitBoundary(
-            model, crash, [](SessionModel &session) { return session.replaceDraft("file", 1, savedDraft()); },
+            model, crash,
+            [](test_support::TestSession &session) { return session.replaceDraft("file", 1, savedDraft()); },
             [](FileSession &file) { return file.replaceDraft(file.current().id, savedDraft()); });
     }
     if (name == QLatin1String("checkpoint")) {
@@ -169,7 +176,9 @@ void writeSaved(SessionModel &model)
         const auto revision = model.file("file")->current().id;
         commitBoundary(
             model, crash,
-            [=](SessionModel &session) { return session.recordCheckpoint("file", revision, Outcome::Succeeded); },
+            [=](test_support::TestSession &session) {
+                return session.recordCheckpoint("file", revision, Outcome::Succeeded);
+            },
             [=](FileSession &file) { return file.recordCheckpoint(revision, Outcome::Succeeded); });
     }
     if (name == QLatin1String("discard")) {
@@ -177,7 +186,8 @@ void writeSaved(SessionModel &model)
         CHECK(model.replaceDraft("file", model.file("file")->current().id, discardedDraft()) == Transition::Applied);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
-            model, crash, [=](SessionModel &session) { return session.discardToCheckpoint("file", revision); },
+            model, crash,
+            [=](test_support::TestSession &session) { return session.discardToCheckpoint("file", revision); },
             [=](FileSession &file) { return file.discardToCheckpoint(file.current().id); });
     }
     if (name == QLatin1String("write")) {
@@ -185,7 +195,9 @@ void writeSaved(SessionModel &model)
         const auto revision = model.file("file")->current().id;
         commitBoundary(
             model, crash,
-            [=](SessionModel &session) { return session.recordWrite("file", revision, Outcome::Succeeded); },
+            [=](test_support::TestSession &session) {
+                return session.recordWrite("file", revision, Outcome::Succeeded);
+            },
             [=](FileSession &file) { return file.recordWrite(revision, Outcome::Succeeded); });
     }
     if (name == QLatin1String("stage")) {
@@ -193,7 +205,7 @@ void writeSaved(SessionModel &model)
         const auto revision = model.file("file")->current().id;
         commitBoundary(
             model, crash,
-            [=](SessionModel &session) {
+            [=](test_support::TestSession &session) {
                 return session.recordStage("file", revision, Outcome::Succeeded, "verified-object", "100644");
             },
             [=](FileSession &file) {
@@ -206,7 +218,7 @@ void writeSaved(SessionModel &model)
         const auto revision = model.file("file")->current().id;
         commitBoundary(
             model, crash,
-            [=](SessionModel &session) {
+            [=](test_support::TestSession &session) {
                 return session.recordCheckpoint("file", revision, Outcome::Failed, "checkpoint sync failed");
             },
             [=](FileSession &file) {
@@ -218,7 +230,7 @@ void writeSaved(SessionModel &model)
         const auto revision = model.file("file")->current().id;
         commitBoundary(
             model, crash,
-            [=](SessionModel &session) {
+            [=](test_support::TestSession &session) {
                 return session.recordWrite("file", revision, Outcome::Failed, "repository write failed");
             },
             [=](FileSession &file) { return file.recordWrite(revision, Outcome::Failed, "repository write failed"); });
@@ -228,7 +240,7 @@ void writeSaved(SessionModel &model)
         const auto revision = model.file("file")->current().id;
         commitBoundary(
             model, crash,
-            [=](SessionModel &session) {
+            [=](test_support::TestSession &session) {
                 return session.recordWrite("file", revision, Outcome::Uncertain, "destination changed during write");
             },
             [=](FileSession &file) {
@@ -240,7 +252,7 @@ void writeSaved(SessionModel &model)
         const auto revision = model.file("file")->current().id;
         commitBoundary(
             model, crash,
-            [=](SessionModel &session) {
+            [=](test_support::TestSession &session) {
                 return session.recordStage("file", revision, Outcome::Failed, {}, {}, "index update failed");
             },
             [=](FileSession &file) {
@@ -398,13 +410,13 @@ public:
         git({QStringLiteral("merge"), QStringLiteral("--no-edit"), QStringLiteral("side")}, 1);
         writeFile(path(QStringLiteral("result.txt")), manual);
         scoped.apply(environment);
-        controller = std::make_unique<ApplicationController>(gitOnPath());
+        controller = std::make_unique<Application>(Application::Config{gitOnPath(), newRecoveryDirectory(), {}});
         open();
-        CHECK(controller->selectFile(id));
+        CHECK(controller->selection()->select(id));
         auto draft = file().current().draft;
         draft.text = reviewed.toStdString();
         draft.unresolvedMarkers = 0;
-        CHECK(controller->files()->replaceDraft(id.toStdString(), file().current().id, draft) == Transition::Applied);
+        CHECK(controller->store()->replaceDraft(id.toStdString(), file().current().id, draft) == Transition::Applied);
     }
     IndexConflict(const IndexConflict &) = delete;
     IndexConflict &operator=(const IndexConflict &) = delete;
@@ -429,24 +441,25 @@ public:
     }
     const FileSession &file() const
     {
-        const auto *selected = controller->files()->file(id.toStdString());
+        const auto *selected = controller->store()->file(id.toStdString());
         CHECK(selected != nullptr);
         return *selected;
     }
     // Starts the real publisher on the current revision and waits until it records an outcome.
     void markResolved()
     {
-        CHECK(controller->markResolved(id, QString::number(static_cast<qulonglong>(file().current().id)), true));
+        CHECK(controller->commands()->markResolved(id, QString::number(static_cast<qulonglong>(file().current().id)),
+                                                   true));
         QElapsedTimer timer;
         timer.start();
         const auto settled = [&] {
-            return !controller->resolutionBusy()
+            return !controller->commands()->resolutionBusy()
                 && (file().stageOutcome()
                     || (file().writeOutcome() && file().writeOutcome()->outcome != Outcome::Succeeded));
         };
         while (!settled() && timer.elapsed() < 25000) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
         if (!settled())
-            throw std::runtime_error("publisher did not settle: " + controller->commandMessage().toStdString());
+            throw std::runtime_error("publisher did not settle: " + controller->feedback()->message().toStdString());
     }
 
     QTemporaryDir directory;
@@ -456,7 +469,7 @@ public:
     QString root;
     QProcessEnvironment environment;
     ScopedEnvironment scoped;
-    std::unique_ptr<ApplicationController> controller; // Destroyed before the environment is restored.
+    std::unique_ptr<Application> controller; // Destroyed before the environment is restored.
     const QString id = QString::fromLatin1(QByteArray("result.txt").toHex());
     const QByteArray manual = "manual merge bytes\n";
     const QByteArray reviewed = "reviewed in app\n";
@@ -509,7 +522,7 @@ void retryBoundary(const char *name, Prepare prepare, ModelAction modelAction, F
 {
     QTemporaryDir directory;
     CHECK(directory.isValid());
-    SessionModel model(directory.path());
+    test_support::TestSession model(directory.path());
     prepare(model);
     auto predicted = *model.file("file");
     CHECK(fileAction(predicted) == Transition::Applied);
@@ -642,17 +655,18 @@ public:
         });
         suite.run("recovery-write retry keeps one edit and its decisions", [] {
             retryBoundary(
-                "edit", openBase, [](SessionModel &session) { return session.replaceDraft("file", 1, savedDraft()); },
+                "edit", openBase,
+                [](test_support::TestSession &session) { return session.replaceDraft("file", 1, savedDraft()); },
                 [](FileSession &file) { return file.replaceDraft(file.current().id, savedDraft()); });
         });
         suite.run("checkpoint sync failure retains the draft and retries one manual save", [] {
             retryBoundary(
                 "checkpoint",
-                [](SessionModel &session) {
+                [](test_support::TestSession &session) {
                     openBase(session);
                     CHECK(session.replaceDraft("file", 1, savedDraft()) == Transition::Applied);
                 },
-                [](SessionModel &session) {
+                [](test_support::TestSession &session) {
                     return session.recordCheckpoint("file", session.file("file")->current().id, Outcome::Succeeded);
                 },
                 [](FileSession &file) { return file.recordCheckpoint(file.current().id, Outcome::Succeeded); });
@@ -660,7 +674,7 @@ public:
         suite.run("publication sync failure retains the reviewed draft and retries one write", [] {
             retryBoundary(
                 "write", reviewSaved,
-                [](SessionModel &session) {
+                [](test_support::TestSession &session) {
                     return session.recordWrite("file", session.file("file")->current().id, Outcome::Succeeded);
                 },
                 [](FileSession &file) { return file.recordWrite(file.current().id, Outcome::Succeeded); });
@@ -669,7 +683,7 @@ public:
         suite.run("stage outcome journal sync failure retains the written draft and retries one stage", [] {
             retryBoundary(
                 "stage", writeSaved,
-                [](SessionModel &session) {
+                [](test_support::TestSession &session) {
                     return session.recordStage("file", session.file("file")->current().id, Outcome::Succeeded,
                                                "verified-object", "100644");
                 },
@@ -737,7 +751,7 @@ public:
             const auto captured = storage::captureDestination(root, "result.txt");
             CHECK(captured.destination && captured.failure == storage::DestinationFailure::None);
             writeFile(root + QStringLiteral("/result.txt"), external);
-            SessionModel model(root + QStringLiteral("/recovery"));
+            test_support::TestSession model(root + QStringLiteral("/recovery"));
             CHECK(model.appendFile(FileSession("file", "result.txt", draft)));
             int admissions = 0;
             const auto published = storage::publishDestination(*captured.destination,
@@ -786,7 +800,7 @@ public:
             CHECK(readFile(conflict.path(QStringLiteral("result.txt"))) == conflict.manual);
             CHECK(conflict.indexEntries() == replacedIndex);
             CHECK(!conflict.controller->files()->hasPendingRecovery());
-            const auto replay = replayedJournal(conflict.controller->files()->recoveryDirectory());
+            const auto replay = replayedJournal(conflict.controller->store()->recoveryDirectory());
             CHECK(replay.mutations.empty());
             const auto &restored = replay.files.front();
             CHECK(observation(restored) == observation(file));
@@ -816,7 +830,7 @@ public:
             CHECK(QFile::exists(lock));
             CHECK(!conflict.controller->files()->hasPendingRecovery());
             CHECK(QFile::remove(lock));
-            const auto replay = replayedJournal(conflict.controller->files()->recoveryDirectory());
+            const auto replay = replayedJournal(conflict.controller->store()->recoveryDirectory());
             const auto *publication = journalMutation(replay, "publication");
             const auto *staging = journalMutation(replay, "staging");
             CHECK(publication && publication->observation == QLatin1String("changed") && publication->completed);
@@ -833,6 +847,8 @@ public:
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
     const auto arguments = application.arguments();
     if (arguments.size() >= 5 && arguments.at(1) == QLatin1String("--boundary")) {
         QString boundary, directory, crash;

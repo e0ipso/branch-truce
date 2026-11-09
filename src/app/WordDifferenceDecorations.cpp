@@ -1,8 +1,9 @@
 // Word difference decorations highlight changed words without changing the result text.
 #include "WordDifferenceDecorations.h"
-#include "SessionModel.h"
+#include "QtText.h"
 #include "core/FileWordDifferences.h"
 #include "highlighting/PaneHighlighter.h"
+#include "session/SessionStore.h"
 #include <QColor>
 #include <QJSValue>
 #include <QMetaMethod>
@@ -16,17 +17,13 @@
 #include <vector>
 
 namespace branch_truce {
+using qt_text::documentText;
 namespace {
 const char *const kStyle = "wordDifferenceStyle";
 // The share of the role colour the range background takes. The background
 // roles are already this hue mixed into the base colour, so a higher share
 // of it reads as a stronger tint of the same role.
 constexpr float kTint = 0.35F;
-
-QString documentText(const QTextDocument &document)
-{
-    return document.toRawText().replace(QChar(0x2029), QLatin1Char('\n'));
-}
 
 QVariantMap style(const QObject &editor)
 {
@@ -69,9 +66,8 @@ QList<std::pair<int, int>> utf16Ranges(std::string_view text, const std::vector<
 }
 }
 
-WordDifferenceDecorations::WordDifferenceDecorations(SessionModel &files, std::function<QString()> selectedFileId,
-                                                     QObject *parent)
-    : QObject(parent), files_(files), selectedFileId_(std::move(selectedFileId))
+WordDifferenceDecorations::WordDifferenceDecorations(const SessionStore &store, QObject *parent)
+    : QObject(parent), files_(store)
 {}
 
 void WordDifferenceDecorations::attach(QObject *editor, QTextDocument *document)
@@ -192,7 +188,7 @@ void WordDifferenceDecorations::refresh()
 {
     if (refreshing_) return;
     QScopedValueRollback guard(refreshing_, true);
-    const auto fileId = selectedFileId_();
+    const auto fileId = targetFileId_;
     const auto *file = files_.file(fileId.toStdString());
     if (!file || fileId != fileId_ || file->current().id != revision_ || file->correspondence() != mapping_
         || file->snapshots() != captures_)

@@ -137,7 +137,7 @@ Outcome failedObservation(const TaskResult &result)
 }
 }
 
-ResolutionPublisher::ResolutionPublisher(SessionModel &files, SessionCoordinator &coordinator, QString gitExecutable,
+ResolutionPublisher::ResolutionPublisher(SessionStore &files, SessionCoordinator &coordinator, QString gitExecutable,
                                          QObject *parent)
     : QObject(parent),
       files_(files),
@@ -171,9 +171,9 @@ void ResolutionPublisher::captureBaselines(const git::RepositoryContext &reposit
 {
     repository_ = repository;
     baselines_.clear();
-    for (int row = 0; row < files_.totalFiles(); ++row) {
-        const auto *session = files_.fileAt(row);
-        if (!session || session->support() != Support::Supported || !session->snapshots()) continue;
+    for (const auto &file : files_.files()) {
+        const auto *session = &file;
+        if (session->support() != Support::Supported || !session->snapshots()) continue;
         Baseline baseline;
         const auto captured =
             storage::captureDestination(repository.worktreeRoot, QByteArray::fromStdString(session->path()));
@@ -213,10 +213,9 @@ bool ResolutionPublisher::assignParentStaging(const QByteArray &path)
         Q_EMIT changed(tr("Parent staging is not assigned."));
         return true;
     }
-    for (int row = 0; row < files_.totalFiles(); ++row) {
-        const auto *session = files_.fileAt(row);
-        if (!session || session->support() != Support::Supported || QByteArray::fromStdString(session->path()) != path)
-            continue;
+    for (const auto &file : files_.files()) {
+        const auto *session = &file;
+        if (session->support() != Support::Supported || QByteArray::fromStdString(session->path()) != path) continue;
         parentPath_ = path;
         offer_.reset();
         Q_EMIT changed(tr("Git will stage this path. Branch Truce will not stage it."));

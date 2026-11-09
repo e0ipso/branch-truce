@@ -1,6 +1,9 @@
 #include "TestHarness.h"
+#include "TestSession.h"
 #include "app/SelectedFile.h"
+#include "app/Selection.h"
 #include "app/SessionModel.h"
+#include "app/Translations.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/RecoveryFaults.h"
 #include "fixtures/RecoveryJournal.h"
@@ -24,13 +27,17 @@
 #include <limits>
 
 using namespace branch_truce;
+using test_support::TestSession;
 
 namespace {
+struct NoSelectionGuard : SelectionGuard {
+    [[nodiscard]] bool holdsSelection() const override { return false; }
+};
 constexpr auto recoverySessionId = "42c4588c-5cc2-4fba-964f-3e98a066e671";
 
 Draft draft(std::string text = "result\n") { return {std::move(text), {{"left", {DecisionValue::Accepted, 1}}}, 0}; }
-QVariant role(const SessionModel &model, int value, int row = 0) { return model.data(model.index(row), value); }
-void resolve(SessionModel &model, const std::string &id)
+QVariant role(const TestSession &model, int value, int row = 0) { return model.data(model.index(row), value); }
+void resolve(TestSession &model, const std::string &id)
 {
     const auto revision = model.file(id)->current().id;
     CHECK(model.beginMarkResolved(id, revision) == Transition::Applied);
@@ -140,7 +147,7 @@ Draft finalDecision()
 }
 int acknowledgeAndCrash(const QString &directory)
 {
-    SessionModel model(directory);
+    TestSession model(directory);
     CHECK(model.appendFile(recoverableFile()));
     CHECK(model.replaceDraft("recoverable", 1, savedDraft()) == Transition::Applied);
     CHECK(model.recordCheckpoint("recoverable", 2, Outcome::Succeeded) == Transition::Applied);
@@ -158,7 +165,7 @@ FileSession replayedFile(const QString &directory)
     CHECK(replay.succeeded && replay.error.isEmpty() && replay.files.size() == 1);
     return replay.files.front();
 }
-void checkRecoveredHistory(SessionModel &model, const Draft &before, const Draft &chosen)
+void checkRecoveredHistory(TestSession &model, const Draft &before, const Draft &chosen)
 {
     const auto captures = *model.file("choices")->snapshots();
     const auto check = [&](const Draft &expected) {
@@ -178,7 +185,7 @@ void checkRecoveredHistory(SessionModel &model, const Draft &before, const Draft
     CHECK(reopened.redo(reopened.current().id) == Transition::Applied && reopened.current().draft == chosen);
 }
 
-QString recordIntent(SessionModel &model, const std::string &id, const QString &kind)
+QString recordIntent(TestSession &model, const std::string &id, const QString &kind)
 {
     const auto mutation = QUuid::createUuid().toString(QUuid::WithoutBraces);
     CHECK(storage::RecoveryStore(model.recoveryDirectory())
@@ -187,7 +194,7 @@ QString recordIntent(SessionModel &model, const std::string &id, const QString &
     return mutation;
 }
 
-void preparePublication(SessionModel &model, const std::string &id, bool staging)
+void preparePublication(TestSession &model, const std::string &id, bool staging)
 {
     const auto revision = model.file(id)->current().id;
     CHECK(model.beginMarkResolved(id, revision, true) == Transition::Applied);
@@ -195,7 +202,7 @@ void preparePublication(SessionModel &model, const std::string &id, bool staging
     if (staging) CHECK(model.recordWrite(id, revision, Outcome::Succeeded) == Transition::Applied);
 }
 
-void completePublication(SessionModel &model, const std::string &id, bool staging)
+void completePublication(TestSession &model, const std::string &id, bool staging)
 {
     const auto revision = model.file(id)->current().id;
     CHECK((staging ? model.recordStage(id, revision, Outcome::Succeeded, "verified-object", "100644")
@@ -212,10 +219,12 @@ public:
         suite.run("comparison bindings receive one complete projection per revision", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(test_support::choiceFile()));
-            SelectedFile selected(model);
-            selected.sync(QStringLiteral("choices"));
+            const NoSelectionGuard guard;
+            Selection selection(model.rows, guard);
+            SelectedFile selected(model.rows, selection);
+            CHECK(selection.select(QStringLiteral("choices")));
             QQmlEngine engine;
             engine.rootContext()->setContextProperty(QStringLiteral("selected"), &selected);
             QQmlExpression binding(
@@ -249,18 +258,19 @@ public:
             };
             CHECK(model.editResult("choices", model.file("choices")->current().id, {{0, 0}, "manual prefix\n"})
                   == Transition::Applied);
-            selected.sync(QStringLiteral("choices"));
+            selected.sync();
             CHECK(checkPublication() != initial);
             // Status-only refreshes must not recompute the same QML projection.
-            selected.sync(QStringLiteral("choices"));
+            selected.sync();
             CHECK(observed.isEmpty() && focused.isEmpty());
             CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
-            selected.sync(QStringLiteral("choices"));
+            selected.sync();
             CHECK(checkPublication() == initial);
             CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
-            selected.sync(QStringLiteral("choices"));
+            selected.sync();
             CHECK(checkPublication() != initial);
-            selected.sync(QString{});
+            // Without files nothing is selected and the projection empties.
+            model.replaceFiles({});
             checkPublication();
             CHECK(selected.passages().isEmpty() && selected.regions().isEmpty() && selected.handEditedLines().isEmpty()
                   && selected.choices().isEmpty());
@@ -273,7 +283,7 @@ public:
                     [=] {
                         QTemporaryDir directory;
                         CHECK(directory.isValid());
-                        SessionModel model(directory.path() + "/recovery");
+                        TestSession model(directory.path() + "/recovery");
                         CHECK(model.appendFile(test_support::combinationFile(scope)));
                         CHECK(model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
                         CHECK(model.recordCheckpoint("choices", 2, Outcome::Succeeded) == Transition::Applied);
@@ -301,7 +311,7 @@ public:
                 [=] {
                     QTemporaryDir directory;
                     CHECK(directory.isValid());
-                    SessionModel model(directory.path() + "/recovery");
+                    TestSession model(directory.path() + "/recovery");
                     CHECK(model.appendFile(test_support::batchFile()));
                     CHECK(model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
                     CHECK(model.recordCheckpoint("choices", 2, Outcome::Succeeded) == Transition::Applied);
@@ -324,7 +334,7 @@ public:
                 [=] {
                     QTemporaryDir directory;
                     CHECK(directory.isValid());
-                    SessionModel model(directory.path() + "/recovery");
+                    TestSession model(directory.path() + "/recovery");
                     CHECK(model.appendFile(test_support::choiceFile()));
                     CHECK(model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
                     CHECK(model.recordCheckpoint("choices", 2, Outcome::Succeeded) == Transition::Applied);
@@ -346,7 +356,7 @@ public:
                 [=] {
                     QTemporaryDir directory;
                     CHECK(directory.isValid());
-                    SessionModel model(directory.path() + "/recovery");
+                    TestSession model(directory.path() + "/recovery");
                     CHECK(model.appendFile(operation == 1 ? test_support::batchFile() : test_support::choiceFile()));
                     const auto before = model.file("choices")->current().draft;
                     const auto target =
@@ -378,7 +388,7 @@ public:
             suite.run("successive successful outcomes retain every earlier completion " + kind.toStdString(), [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
-                SessionModel model(directory.path() + "/recovery");
+                TestSession model(directory.path() + "/recovery");
                 CHECK(model.appendFile(recoverableFile()));
                 QStringList identities;
                 std::vector<RevisionId> revisions;
@@ -404,7 +414,7 @@ public:
             suite.run("earlier same-revision success cannot complete a later intent " + kind.toStdString(), [=] {
                 QTemporaryDir directory;
                 CHECK(directory.isValid());
-                SessionModel model(directory.path() + "/recovery");
+                TestSession model(directory.path() + "/recovery");
                 CHECK(model.appendFile(recoverableFile()));
                 preparePublication(model, "recoverable", staging);
                 const auto first = recordIntent(model, "recoverable", kind);
@@ -421,7 +431,7 @@ public:
                       [=] {
                           QTemporaryDir directory;
                           CHECK(directory.isValid());
-                          SessionModel model(directory.path() + "/recovery");
+                          TestSession model(directory.path() + "/recovery");
                           CHECK(model.appendFile(recoverableFile()));
                           preparePublication(model, "recoverable", staging);
                           const auto interrupted = recordIntent(model, "recoverable", kind);
@@ -440,7 +450,7 @@ public:
         suite.run("outcomes match the file and kind and failed staging does not complete an intent", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(recoverableFile()));
             auto captures = *recoverableFile().snapshots();
             captures.path = "other.txt";
@@ -470,7 +480,7 @@ public:
                 [=] {
                     QTemporaryDir directory;
                     CHECK(directory.isValid());
-                    SessionModel model(directory.path() + "/recovery");
+                    TestSession model(directory.path() + "/recovery");
                     CHECK(model.appendFile(test_support::choiceFile()));
                     CHECK(model.editResult("choices", 1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
                     CHECK(model.recordCheckpoint("choices", 2, Outcome::Succeeded) == Transition::Applied);
@@ -503,7 +513,7 @@ public:
         suite.run("a failed choice retains its atomic candidate until durable retry", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(test_support::choiceFile()));
             const auto before = model.file("choices")->current().draft;
             const auto target =
@@ -516,7 +526,8 @@ public:
             CHECK(model.pendingDraft("choices") && model.pendingDraft("choices")->decisions != before.decisions);
             const auto pending = *model.pendingDraft("choices");
             CHECK(role(model, SessionModel::PendingInputRole).toBool());
-            CHECK(role(model, SessionModel::RecoveryStateRole).toString() == "failed");
+            CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+                  == FileStates::RecoveryState::Failed);
             CHECK(!model.hasRecoveryFailure("choices") && !role(model, SessionModel::CanUndoRole).toBool());
             CHECK(model.undo("choices", 1) == Transition::Blocked);
             CHECK(model.retryRecovery("choices") == Transition::Applied);
@@ -532,7 +543,7 @@ public:
                 const auto location = directory.path() + "/recovery";
                 Draft retained;
                 {
-                    SessionModel model(location);
+                    TestSession model(location);
                     CHECK(model.appendFile(recoverableFile()));
                     if (checkpoint != 0) {
                         CHECK(model.replaceDraft("recoverable", 1, savedDraft()) == Transition::Applied);
@@ -661,7 +672,7 @@ public:
         suite.run("failed recovery retains pending input separately and retries its completed record once", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(recoverableFile()));
             const auto original = model.file("recoverable")->current().draft;
             recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
@@ -674,7 +685,8 @@ public:
             CHECK(role(model, SessionModel::PendingTextRole).toString().toUtf8()
                   == QByteArray::fromStdString(unsavedDraft().text));
             CHECK(model.pendingDraft("recoverable")->decisions.size() == 2);
-            CHECK(role(model, SessionModel::RecoveryStateRole).toString() == "failed");
+            CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+                  == FileStates::RecoveryState::Failed);
             CHECK(role(model, SessionModel::RecoveryErrorRole).toString().contains("retry"));
             CHECK(!role(model, SessionModel::CanUndoRole).toBool() && !model.canFinish());
             CHECK(model.replaceDraft("recoverable", 1, draft("must not overwrite pending")) == Transition::Blocked);
@@ -688,7 +700,8 @@ public:
             CHECK(!model.hasPendingRecovery() && !model.pendingDraft("recoverable"));
             CHECK(model.file("recoverable")->current().id == 2
                   && model.file("recoverable")->current().draft == unsavedDraft());
-            CHECK(role(model, SessionModel::RecoveryStateRole).toString() == "durable");
+            CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+                  == FileStates::RecoveryState::Durable);
             CHECK(role(model, SessionModel::RecoveryErrorRole).toString().isEmpty());
             CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->checkpoint());
             const auto after = store.read();
@@ -700,16 +713,15 @@ public:
             CHECK(model.file("recoverable")->current().draft == original);
         });
         suite.run("empty model and invalid indexes", [] {
-            SessionModel model;
+            TestSession model;
             CHECK(model.totalFiles() == 0 && model.rowCount() == 0 && model.resolvedFiles() == 0);
-            CHECK(!model.canFinish() && model.finishBlockers().size() == 1);
-            CHECK(model.finishBlockers().first().toMap().value("blockers").toStringList()
-                  == QStringList{"No files loaded"});
+            CHECK(!model.canFinish() && model.finishBlockers().isEmpty());
+            CHECK(model.handoff().value("outcome").toString() == "No files are loaded in this session.");
             CHECK(!model.file("missing") && !model.data({}, SessionModel::PathRole).isValid());
             CHECK(model.appendFile(FileSession("id", "file", draft())));
             CHECK(model.rowCount(model.index(0)) == 0 && !model.index(1).isValid());
             CHECK(!model.data(model.index(0), -1).isValid());
-            SessionModel other;
+            TestSession other;
             CHECK(other.appendFile(FileSession("other", "path", draft())));
             CHECK(!model.data(other.index(0), SessionModel::PathRole).isValid());
         });
@@ -723,16 +735,16 @@ public:
             // The earlier build's root: AppLocalDataLocation with no organization name.
             const auto earlier =
                 QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + "/recovery/v1";
-            CHECK(earlier == root && SessionModel::recoveryRoot() == root);
+            CHECK(earlier == root && recoveryRoot() == root);
             const auto stored = root + "/" + QUuid::createUuid().toString(QUuid::WithoutBraces);
             {
-                SessionModel written(stored);
+                TestSession written(stored);
                 CHECK(written.appendFile(recoverableFile()));
                 CHECK(written.replaceDraft("recoverable", 1, unsavedDraft()) == Transition::Applied);
             }
             QCoreApplication::setOrganizationName("Example Organization");
-            CHECK(SessionModel::recoveryRoot() == root);
-            SessionModel model;
+            CHECK(recoveryRoot() == root);
+            TestSession model;
             CHECK(QFileInfo(model.recoveryDirectory()).absolutePath() == root);
             CHECK(QDir(root).entryList(QDir::Dirs | QDir::NoDotAndDotDot).contains(QFileInfo(stored).fileName()));
             const auto replay = replayRecovery(storage::RecoveryStore(stored));
@@ -742,7 +754,7 @@ public:
             QCoreApplication::setOrganizationName(organization);
         });
         suite.run("named roles preserve byte paths, Unicode and 64-bit decision order", [] {
-            SessionModel model;
+            TestSession model;
             auto unicode = draft("A\xc3\xa9\xf0\x9f\x98\x80\n");
             unicode.decisions["left"].order = std::numeric_limits<std::uint64_t>::max();
             unicode.decisions["right"] = {DecisionValue::Ignored, {}};
@@ -776,7 +788,7 @@ public:
         suite.run("conflict counts follow marker history without erasing source decisions", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(test_support::splitFile()));
             const auto launch = model.file("choices")->current().draft;
             CHECK(role(model, SessionModel::ConflictCountRole).toInt() == 1);
@@ -798,7 +810,7 @@ public:
         suite.run("saved and reviewed drafts do not receive the published check tile", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(sessionFile("status")));
             const auto revision = model.file("status")->current().id;
             CHECK(role(model, SessionModel::StatusIconRole).toString() != "emblem-checked");
@@ -813,17 +825,17 @@ public:
             CHECK(role(model, SessionModel::StatusIconRole).toString() == "emblem-checked");
         });
         suite.run("row insertion and notifications occur only for applied commands", [] {
-            SessionModel model;
+            TestSession model;
             int summaries = 0;
             int changes = 0;
             int insertions = 0;
-            QObject::connect(&model, &SessionModel::summaryChanged, &model, [&] { ++summaries; });
-            QObject::connect(&model, &QAbstractItemModel::rowsInserted, &model,
+            QObject::connect(&model.rows, &SessionModel::summaryChanged, &model, [&] { ++summaries; });
+            QObject::connect(&model.rows, &QAbstractItemModel::rowsInserted, &model,
                              [&](const QModelIndex &parent, int first, int last) {
                                  CHECK(!parent.isValid() && first == last);
                                  ++insertions;
                              });
-            QObject::connect(&model, &QAbstractItemModel::dataChanged, &model,
+            QObject::connect(&model.rows, &QAbstractItemModel::dataChanged, &model,
                              [&](const QModelIndex &top, const QModelIndex &bottom, const QList<int> &roles) {
                                  CHECK(top.row() == 0 && top == bottom && roles.isEmpty());
                                  ++changes;
@@ -847,7 +859,7 @@ public:
             CHECK(insertions == 2 && summaries == 4);
         });
         suite.run("Save and publication roles stay distinct and handoff includes every file", [] {
-            SessionModel model;
+            TestSession model;
             CHECK(model.appendFile(FileSession("first", "a", draft())));
             CHECK(model.recordCheckpoint("first", 1, Outcome::Succeeded) == Transition::Applied);
             CHECK(!role(model, SessionModel::UnsavedRole).toBool());
@@ -862,12 +874,14 @@ public:
             CHECK(model.file("first")->staged()->mode == "100644");
             CHECK(model.appendFile(FileSession("second", "b", draft(), Support::OutsideApp, "binary")));
             CHECK(model.totalFiles() == 2 && model.resolvedFiles() == 1 && !model.canFinish());
-            CHECK(role(model, SessionModel::SupportRole, 1).toString() == "outside-app");
+            CHECK(role(model, SessionModel::SupportRole, 1).value<FileStates::SupportKind>()
+                  == FileStates::SupportKind::OutsideApp);
             CHECK(role(model, SessionModel::SupportDetailRole, 1).toString() == "binary");
             CHECK(model.finishBlockers().size() == 1);
             CHECK(model.finishBlockers()[0].toMap().value("fileId").toString() == "second");
             CHECK(model.setSupport("second", Support::Unreadable, "read failed") == Transition::Applied);
-            CHECK(role(model, SessionModel::SupportRole, 1).toString() == "unreadable");
+            CHECK(role(model, SessionModel::SupportRole, 1).value<FileStates::SupportKind>()
+                  == FileStates::SupportKind::Unreadable);
             CHECK(!model.canFinish());
             CHECK(model.setSupport("second", Support::Supported) == Transition::Applied);
             resolve(model, "second");
@@ -877,10 +891,18 @@ public:
             CHECK(model.file("second")->checkpointOutcome()->detail == "disk full");
             CHECK(role(model, SessionModel::StatusRole, 1).toString() == "Draft save failed");
         });
+        suite.run("the English catalog supplies the plural forms of numerus messages", [] {
+            const auto left = [](int count) {
+                return QCoreApplication::translate("FilePresentation", "%n conflict(s) left", nullptr, count);
+            };
+            CHECK(left(1) == "1 conflict left" && left(2) == "2 conflicts left");
+            CHECK(QCoreApplication::translate("SessionFooter", "%1 of %n file(s) resolved", nullptr, 1).arg(0)
+                  == "0 of 1 file resolved");
+        });
         suite.run("handoff counts use singular and plural file wording", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(sessionFile("first")));
             CHECK(model.handoff().value("outcome").toString().startsWith("1 of 1 file in this session remains"));
             resolve(model, "first");
@@ -893,7 +915,7 @@ public:
         suite.run("handoff puts each mixed outcome in one category and pending input stays failed until retried", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             auto choices = draft();
             choices.decisions["left"] = {};
             CHECK(model.appendFile(sessionFile("undecided", choices)));
@@ -924,23 +946,24 @@ public:
 
             struct Expected {
                 const char *category;
-                const char *action;
+                FileStates::NextAction action;
             };
+            using enum FileStates::NextAction;
             const QMap<QString, Expected> expected{
-                {"undecided", {"undecided", "decide"}},           {"saved", {"saved-draft", "mark-resolved"}},
-                {"review", {"review-needed", "mark-resolved"}},   {"newer", {"newer-draft", "apply-or-discard"}},
-                {"written", {"written-unresolved", "check-git"}}, {"published", {"published", ""}},
-                {"failed", {"failed", "mark-resolved"}},          {"outside", {"outside-app", "outside-app"}},
-                {"pending", {"failed", "retry-recovery"}}};
+                {"undecided", {"undecided", Decide}},          {"saved", {"saved-draft", MarkResolved}},
+                {"review", {"review-needed", MarkResolved}},   {"newer", {"newer-draft", ApplyOrDiscard}},
+                {"written", {"written-unresolved", CheckGit}}, {"published", {"published", None}},
+                {"failed", {"failed", MarkResolved}},          {"outside", {"outside-app", ExplainOutsideApp}},
+                {"pending", {"failed", RetryRecovery}}};
             auto summary = model.handoff();
             auto entries = handoffEntries(summary);
             CHECK(entries.size() == expected.size());
             for (auto wanted = expected.cbegin(); wanted != expected.cend(); ++wanted) {
                 const auto entry = entries.value(wanted.key());
                 if (entry.value("category").toString() != wanted->category
-                    || entry.value("action").toString() != wanted->action)
+                    || entry.value("action").value<FileStates::NextAction>() != wanted->action)
                     throw std::runtime_error((wanted.key() + ": " + entry.value("category").toString() + "/"
-                                              + entry.value("action").toString())
+                                              + QString::number(entry.value("action").toInt()))
                                                  .toStdString());
                 CHECK(entry.value("outstanding").toBool() == (wanted.key() != "published"));
                 CHECK(entry.value("outstanding").toBool() != entry.value("blockers").toStringList().isEmpty());
@@ -977,7 +1000,8 @@ public:
             summary = model.handoff();
             entries = handoffEntries(summary);
             CHECK(entries.value("pending").value("category").toString() == "review-needed");
-            CHECK(entries.value("pending").value("action").toString() == "mark-resolved");
+            CHECK(entries.value("pending").value("action").value<FileStates::NextAction>()
+                  == FileStates::NextAction::MarkResolved);
             CHECK(entries.value("pending").value("status").toString() == "Current result needs review");
             CHECK(!entries.value("pending")
                        .value("blockers")
@@ -990,7 +1014,7 @@ public:
         suite.run("a failed write, stage or recovery shows the handoff's icon in the list", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             for (const auto *id : {"write", "stage", "recovery"}) CHECK(model.appendFile(sessionFile(id)));
             const auto icon = [&](const std::string &id) {
                 return role(model, SessionModel::StatusIconRole, model.rowOf(id)).toString();
@@ -1021,7 +1045,7 @@ public:
         suite.run("rows carry one status line, toned chips, a summary and the escaped path", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             auto choices = draft();
             choices.decisions["left"] = {};
             CHECK(model.appendFile(sessionFile("undecided", choices)));
@@ -1044,9 +1068,14 @@ public:
             const auto at = [&](const std::string &id, int value) { return role(model, value, model.rowOf(id)); };
 
             CHECK(at("undecided", SessionModel::StatusLineRole).toString() == "1 undecided");
-            CHECK(at("published", SessionModel::StatusLineRole).toString() == "Written and resolved");
-            CHECK(at("outside", SessionModel::StatusLineRole).toString() == "image content");
-            CHECK(at("unreadable", SessionModel::StatusLineRole).toString() == "File could not be read");
+            CHECK(at("published", SessionModel::StatusLineRole).toString() == "Resolved");
+            CHECK(at("outside", SessionModel::StatusLineRole).toString() == "Handle outside the app");
+            CHECK(at("unreadable", SessionModel::StatusLineRole).toString() == "Load error");
+            // Views branch on the kind, never on the translated status text.
+            CHECK(at("published", SessionModel::StatusKindRole).value<FileStates::StatusKind>()
+                  == FileStates::StatusKind::Resolved);
+            CHECK(at("unreadable", SessionModel::StatusKindRole).value<FileStates::StatusKind>()
+                  == FileStates::StatusKind::Unreadable);
             CHECK(at("undecided", SessionModel::StatusIconRole).toString() == "vcs-conflicting");
             CHECK(at("published", SessionModel::StatusIconRole).toString() == "emblem-checked");
             CHECK(at("outside", SessionModel::StatusIconRole).toString() == "unknown");
@@ -1104,7 +1133,7 @@ public:
             CHECK(blocked);
         });
         suite.run("Qt history restores atomic decisions, invalidates review and fences discard callbacks", [] {
-            SessionModel model;
+            TestSession model;
             CHECK(model.appendFile(FileSession("id", "file", draft())));
             resolve(model, "id");
             auto changed = draft("new result");
@@ -1181,7 +1210,7 @@ public:
         suite.run("replay restores the text and markers a full decision left", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(test_support::markedFile(true)));
             const auto choose = [&](SourceSide side, ChoiceAction action) {
                 const auto &file = *model.file("choices");
@@ -1216,7 +1245,7 @@ public:
         suite.run("a settled file reads ready to mark resolved until undo reopens a choice", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(test_support::markedFile()));
             const auto row = [&] { return model.rowOf("choices"); };
             const auto choose = [&](SourceSide side, std::size_t section) {
@@ -1249,7 +1278,7 @@ public:
         suite.run("replay derives the marker count against the captured sources", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(test_support::headingFile()));
             CHECK(model.file("choices")->current().draft.unresolvedMarkers == 1);
             auto launch = replayedFile(model.recoveryDirectory());
@@ -1266,12 +1295,12 @@ public:
             CHECK(replay.beginMarkResolved(replay.current().id, true) == Transition::Applied);
         });
         suite.run("unconfirmed choices and marker blockers are visible without mutation", [] {
-            SessionModel model;
+            TestSession model;
             auto undecided = draft();
             undecided.decisions["left"] = {};
             CHECK(model.appendFile(FileSession("id", "file", undecided)));
             int changes = 0;
-            QObject::connect(&model, &SessionModel::summaryChanged, &model, [&] { ++changes; });
+            QObject::connect(&model.rows, &SessionModel::summaryChanged, &model, [&] { ++changes; });
             CHECK(model.beginMarkResolved("id", 1) == Transition::ConfirmationRequired);
             CHECK(changes == 0 && !model.file("id")->reviewed());
             CHECK(role(model, SessionModel::UndecidedRole).toULongLong() == 1);
@@ -1287,14 +1316,14 @@ public:
         for (const auto outcome : {Outcome::Succeeded, Outcome::Failed, Outcome::Uncertain}) {
             suite.run("delayed write stays visible after a newer Save " + std::to_string(static_cast<int>(outcome)),
                       [=] {
-                          SessionModel model;
+                          TestSession model;
                           CHECK(model.appendFile(FileSession("id", "file", draft())));
                           CHECK(model.beginMarkResolved("id", 1) == Transition::Applied);
                           CHECK(model.recordCheckpoint("id", 1, Outcome::Succeeded) == Transition::Applied);
                           CHECK(model.replaceDraft("id", 1, draft("new saved draft")) == Transition::Applied);
                           CHECK(model.recordCheckpoint("id", 2, Outcome::Succeeded) == Transition::Applied);
                           int changes = 0;
-                          QObject::connect(&model, &SessionModel::summaryChanged, &model, [&] { ++changes; });
+                          QObject::connect(&model.rows, &SessionModel::summaryChanged, &model, [&] { ++changes; });
                           CHECK(model.recordWrite("id", 1, outcome, "delayed diagnostic") == Transition::Applied);
                           CHECK(changes == 1);
                           const auto &result = *model.file("id")->writeOutcome();
@@ -1317,7 +1346,7 @@ public:
         suite.run("manual Save and discard stay distinct from recovery and publication", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(recoverableFile()));
             CHECK(model.replaceDraft("recoverable", 1, savedDraft()) == Transition::Applied);
             CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->checkpoint());
@@ -1339,7 +1368,8 @@ public:
                 CHECK(recovery_faults::failures == 1);
             }
             CHECK(model.hasPendingRecovery() && model.file("recoverable")->current().draft == unsavedDraft());
-            CHECK(role(model, SessionModel::RecoveryStateRole).toString() == "failed");
+            CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+                  == FileStates::RecoveryState::Failed);
             CHECK(model.retryPendingRecovery("recoverable"));
             CHECK(model.file("recoverable")->current().draft == savedDraft());
             CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->written()
@@ -1381,7 +1411,8 @@ public:
             CHECK(model.file("recoverable")->facts().unsaved);
             CHECK(role(model, SessionModel::StatusRole).toString() == "Draft save failed");
             CHECK(role(model, SessionModel::UnsavedRole).toBool());
-            CHECK(role(model, SessionModel::RecoveryStateRole).toString() == "save-failed");
+            CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+                  == FileStates::RecoveryState::SaveFailed);
             CHECK(model.file("recoverable")->current().draft.text == unsavedDraft().text);
             CHECK(role(model, SessionModel::FinishBlockersRole)
                       .toStringList()
@@ -1405,7 +1436,7 @@ public:
         suite.run("failed Save and discard reuse one transaction and block the session until retry", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
-            SessionModel model(directory.path() + "/recovery");
+            TestSession model(directory.path() + "/recovery");
             CHECK(model.appendFile(recoverableFile()));
             CHECK(model.appendFile(FileSession("other", "other.txt", draft())));
             CHECK(!model.hasPendingRecovery());
@@ -1427,7 +1458,8 @@ public:
             CHECK(model.hasPendingRecovery() && model.file("recoverable")->current().draft == unsavedDraft());
             CHECK(model.pendingDraft("recoverable") && *model.pendingDraft("recoverable") == savedDraft());
             CHECK(model.file("recoverable")->checkpoint()->draft == savedDraft());
-            CHECK(role(model, SessionModel::RecoveryStateRole).toString() == "failed");
+            CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+                  == FileStates::RecoveryState::Failed);
             CHECK(model.replaceDraft("other", otherRevision, draft("blocked other")) == Transition::Blocked);
             CHECK(model.undo("recoverable", discardedRevision) == Transition::Blocked);
             CHECK(model.recordCheckpoint("recoverable", discardedRevision, Outcome::Succeeded) == Transition::Blocked);
@@ -1474,7 +1506,8 @@ public:
             CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->written()
                   && !model.file("recoverable")->staged());
             CHECK(role(model, SessionModel::StatusRole).toString() == "Draft save failed");
-            CHECK(role(model, SessionModel::RecoveryStateRole).toString() == "save-failed");
+            CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+                  == FileStates::RecoveryState::SaveFailed);
             CHECK(model.file("recoverable")->current().draft.text == unsavedDraft().text);
             CHECK(model.replaceDraft("other", otherEdited.id, draft("must stay blocked")) == Transition::Blocked);
             CHECK(model.undo("recoverable", editedRevision) == Transition::Blocked);
@@ -1530,6 +1563,8 @@ public:
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(app);
     if (app.arguments().size() == 3 && app.arguments()[1] == "--acknowledge-and-crash")
         return acknowledgeAndCrash(app.arguments()[2]);
     QTemporaryDir data;

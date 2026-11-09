@@ -1,9 +1,10 @@
 # Revisioned session state
 
 `core/SessionState.h` is C++20 value state with no Qt, filesystem or Git
-dependency. `app/SessionModel.h` adapts it to a Qt list model exposed as
-`applicationController.files`. `applicationController.coordinator` owns session
-replacement and background execution. Repository loading, storage and editor
+dependency. `session/SessionStore.h` holds each file's session and its recovery
+journal and runs every command on them; `app/SessionModel.h` lists the store's
+files as a Qt list model for the window. `session/SessionCoordinator.h` owns
+session replacement and background execution. Repository loading, storage and editor
 integration still need their adapters. This change
 does not make the startup window a working conflict resolver.
 
@@ -59,7 +60,7 @@ by storage and Git adapters, always for the captured transaction ID:
    written. Staging success requires the adapter's opaque canonical object ID
    and mode. A child process exit alone is insufficient verification.
 
-`ApplicationController::markResolved` runs that sequence for the selected
+`FileCommands::markResolved` runs that sequence for the selected
 revision. It does not require a prior Save. Repository mode stages only that
 literal path. A path assigned to parent staging is written and then left
 unresolved until `verifyParentAcknowledgment` sees the canonical index entry.
@@ -157,7 +158,7 @@ Mark resolved publishes and verifies one reviewed revision.
 of every file. `finishBlockers` includes each file ID and display path for
 navigation. Empty sessions are blocked.
 
-`SessionModel::handoff` places each file in exactly one category: undecided,
+`SessionHandoff::build` places each file in exactly one category: undecided,
 saved-draft, review-needed, newer-draft, written-unresolved, published, failed
 (including uncertain outcomes, unreadable files and recovery problems) or
 outside-app. Each entry keeps its blockers and the next action. The controller

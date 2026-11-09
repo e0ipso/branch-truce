@@ -13,7 +13,9 @@ ColumnLayout {
     id: comparison
     objectName: "comparisonView"
     spacing: Kirigami.Units.smallSpacing
-    required property ApplicationController controller
+    required property ResultEditorAdapter editorAdapter
+    required property FileNavigator navigator
+    required property SessionLoader loader
     required property SelectedFile file
     required property EditActions edits
     readonly property bool inputMethodComposing: resultPane.editor.inputMethodComposing
@@ -32,7 +34,7 @@ ColumnLayout {
     signal choiceChosen(target: string, action: int)
     readonly property bool choosing: !!file.canEdit && !inputMethodComposing
     readonly property var markerFold: kept("fold", paneMarks.folds(file.markerBlocks, showMarkers))
-    // The controller picks Breeze Light or Breeze Dark syntax colours from its lightness.
+    // The editor adapter picks Breeze Light or Breeze Dark syntax colours from its lightness.
     readonly property color schemeBackground: Kirigami.Theme.backgroundColor
 
     // Pointer and focus are temporary decoration; navigation remains untouched.
@@ -55,7 +57,7 @@ ColumnLayout {
             focusTarget = null
         }
     }
-    readonly property var decorationTarget: hoverTarget || focusTarget || controller.navigationTarget
+    readonly property var decorationTarget: hoverTarget || focusTarget || navigator.target
     function setHover(owner: string, target: var): void {
         if (target) {
             hoverOwner = owner
@@ -136,7 +138,7 @@ ColumnLayout {
                                file.markerBlocks, file.markerOrphans)
     }
     function navigationRanges(pane: string, target: var): var {
-        return paneMarks.current(pane, target, controller.selectedFileId, file.passages, file.regions, resultPane.blocks)
+        return paneMarks.current(pane, target, file.fileId, file.passages, file.regions, resultPane.blocks)
     }
     // Each projection follows the two text layouts and their scrolling positions.
     component BandProjection: ConnectorBands {
@@ -228,9 +230,13 @@ ColumnLayout {
                     && (section.first < 0 || region.resultLineBegin < section.first))
                 section.first = region.resultLineBegin
         }
-        const sideNames = {stage2: qsTr("Left"), stage3: qsTr("Right")}
-        const stateNames = {accepted: qsTr("accepted"), ignored: qsTr("ignored"),
-            manual: qsTr("edited by hand"), undecided: qsTr("undecided")}
+        // One whole phrase per side and state, so translators can order each.
+        const sideStates = {
+            stage2: {accepted: qsTr("Left accepted"), ignored: qsTr("Left ignored"),
+                manual: qsTr("Left edited by hand"), undecided: qsTr("Left undecided")},
+            stage3: {accepted: qsTr("Right accepted"), ignored: qsTr("Right ignored"),
+                manual: qsTr("Right edited by hand"), undecided: qsTr("Right undecided")}}
+        const sideState = side => sideStates[side][section.sides[side].region.state] || ""
         const decisions = {}
         const combinations = {}
         for (let i = 0; i < order.length; ++i) {
@@ -247,18 +253,15 @@ ColumnLayout {
                 decisions[line] = {
                     state: states.indexOf("manual") >= 0 ? "manual" : states.indexOf("accepted") >= 0 ? "accepted" : "ignored",
                     label: sides.length === 2
-                        ? qsTr("%1 %2, %3 %4").arg(sideNames[sides[0]])
-                            .arg(stateNames[section.sides[sides[0]].region.state] || "")
-                            .arg(sideNames[sides[1]]).arg(stateNames[section.sides[sides[1]].region.state] || "")
-                        : qsTr("%1 %2").arg(sideNames[sides[0]])
-                            .arg(stateNames[section.sides[sides[0]].region.state] || "")
+                        ? qsTr("%1, %2").arg(sideState(sides[0])).arg(sideState(sides[1]))
+                        : sideState(sides[0])
                 }
             } else if (row > 0 && sides.length === 2 && section.sides.stage2.choice.combinationAvailable
                        && (fold.rows[row].sections || []).indexOf(order[i]) >= 0) {
                 if (!combinations[row])
                     combinations[row] = []
                 combinations[row].push({id: section.sides.stage2.choice.id,
-                    label: sides.map(side => section.sides[side].choice.label).join(qsTr(" and "))})
+                    label: qsTr("%1 and %2").arg(section.sides.stage2.choice.label).arg(section.sides.stage3.choice.label)})
             }
         }
         return {decisions: decisions, combinations: combinations}
@@ -268,7 +271,7 @@ ColumnLayout {
     // or an empty object when no undecided conflict is left. Folded marker blocks move
     // the cursor past them, so the stepper's stop and the next conflict also count.
     readonly property var activeConflict: kept("conflict:active", activeConflictFor(file,
-        resultPane.blocks.lineAt(resultPane.editor.cursorPosition), controller.navigationTarget))
+        resultPane.blocks.lineAt(resultPane.editor.cursorPosition), navigator.target))
     // The undecided conflict at the cursor's line, its marker lines included; else the
     // stepper's undecided stop in this file; else the next undecided conflict after the
     // cursor, wrapping to the first.
@@ -317,7 +320,7 @@ ColumnLayout {
         const here = conflicts.find(entry => entry.begin > 0 && line >= entry.begin && line < entry.end)
         if (here)
             return view(here)
-        if (navigation && navigation.fileId === controller.selectedFileId && navigation.contributionId) {
+        if (navigation && navigation.fileId === file.fileId && navigation.contributionId) {
             const stop = conflicts.find(entry => entry.section === owners[navigation.contributionId])
             if (stop)
                 return view(stop)
@@ -350,10 +353,10 @@ ColumnLayout {
     // at the reference row of every pane, or at the top without one. A
     // navigation in the file since then keeps its own position.
     function placePanes(): void {
-        const target = controller.editorPlacement
-        if (!target || target.fileId !== controller.selectedFileId)
+        const target = editorAdapter.placement
+        if (!target || target.fileId !== file.fileId)
             return
-        const navigation = controller.navigationTarget
+        const navigation = navigator.target
         if (navigation.fileId === target.fileId
                 && (navigation.scope === "result" || navigation.scope === "unmapped-source"))
             return
@@ -369,16 +372,19 @@ ColumnLayout {
         panesByRole.place("result", 1)
     }
     function followNavigation(): void {
-        const target = controller.navigationTarget
-        if (target.fileId === controller.selectedFileId && target.scope === "result") {
+        const target = navigator.target
+        if (target.fileId === file.fileId && target.scope === "result") {
             resultPane.editor.forceActiveFocus(Qt.ShortcutFocusReason)
             panesByRole.follow("result")
         }
     }
     Connections {
-        target: comparison.controller
-        function onEditorPlaced(): void { Qt.callLater(comparison.placePanes) }
-        function onNavigationChanged(): void { Qt.callLater(comparison.followNavigation) }
+        target: comparison.editorAdapter
+        function onPlaced(): void { Qt.callLater(comparison.placePanes) }
+    }
+    Connections {
+        target: comparison.navigator
+        function onChanged(): void { Qt.callLater(comparison.followNavigation) }
     }
     // Shows the markers when the cursor is on a folded line, as after going to a marker.
     function revealCursorLine(): void {
@@ -386,10 +392,10 @@ ColumnLayout {
             markersRevealed()
     }
     Component.onCompleted: {
-        controller.setSyntaxBackground(schemeBackground)
+        editorAdapter.setSyntaxBackground(schemeBackground)
         Qt.callLater(placePanes)
     }
-    onSchemeBackgroundChanged: controller.setSyntaxBackground(schemeBackground)
+    onSchemeBackgroundChanged: editorAdapter.setSyntaxBackground(schemeBackground)
 
     function paneMinimumHeight(lines: int): real {
         return Math.ceil(lines * rowHeight + resultPane.editor.topPadding
@@ -424,6 +430,7 @@ ColumnLayout {
         id: passageSearch
         panes: panesByRole
         earlierShown: comparison.showEarlier && !!comparison.file.earlier && !!comparison.file.earlier.available
+        matchColor: Qt.alpha(Kirigami.Theme.neutralBackgroundColor, 0.75)
         onScopeIndexChanged: comparison.updateSearch()
     }
 
@@ -498,8 +505,8 @@ ColumnLayout {
                 onResolveHovered: hovered => comparison.setHover("stage2Resolve", hovered && comparison.resolvable("stage2")
                     ? comparison.choiceTarget(comparison.activeConflict.stage2.id) : null)
                 source: comparison.file.stage2 || ({})
-                versionName: source.commitId === comparison.controller.loader.stage2CommitId
-                    ? comparison.controller.loader.stage2Name : ""
+                versionName: source.commitId === comparison.loader.stage2CommitId
+                    ? comparison.loader.stage2Name : ""
                 marks: comparison.kept("marks:stage2", comparison.paneLineMarks(leftPane.paneName))
                 current: comparison.kept("current:stage2", comparison.navigationRanges(leftPane.paneName, comparison.decorationTarget))
                 tabStop: comparison.tabStop
@@ -508,14 +515,14 @@ ColumnLayout {
                 minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
                 onLineHovered: line => comparison.setHover("stage2", line > 0 ? comparison.targetAt("stage2", line) : null)
                 onScrolled: byUser => panesByRole.paneScrolled(leftPane.paneName, byUser)
-                onEditorCompleted: comparison.controller.attachSourceEditor(leftPane.editor)
+                onEditorCompleted: comparison.editorAdapter.attachSource(leftPane.editor)
             }
             ResultPane {
                 id: resultPane
                 edits: comparison.edits
                 SplitView.minimumWidth: Kirigami.Units.gridUnit * 10
                 SplitView.preferredWidth: panes.defaultPaneWidth
-                controller: comparison.controller
+                editorAdapter: comparison.editorAdapter
                 file: comparison.file
                 marks: comparison.kept("marks:result", comparison.paneLineMarks("result"))
                 current: comparison.kept("current:result", comparison.navigationRanges("result", comparison.decorationTarget))
@@ -554,8 +561,8 @@ ColumnLayout {
                 onResolveHovered: hovered => comparison.setHover("stage3Resolve", hovered && comparison.resolvable("stage3")
                     ? comparison.choiceTarget(comparison.activeConflict.stage3.id) : null)
                 source: comparison.file.stage3 || ({})
-                versionName: source.commitId === comparison.controller.loader.stage3CommitId
-                    ? comparison.controller.loader.stage3Name : ""
+                versionName: source.commitId === comparison.loader.stage3CommitId
+                    ? comparison.loader.stage3Name : ""
                 marks: comparison.kept("marks:stage3", comparison.paneLineMarks(rightPane.paneName))
                 current: comparison.kept("current:stage3", comparison.navigationRanges(rightPane.paneName, comparison.decorationTarget))
                 tabStop: comparison.tabStop
@@ -564,7 +571,7 @@ ColumnLayout {
                 minimumTextHeight: comparison.paneMinimumHeight(comparison.minimumPaneLines)
                 onLineHovered: line => comparison.setHover("stage3", line > 0 ? comparison.targetAt("stage3", line) : null)
                 onScrolled: byUser => panesByRole.paneScrolled(rightPane.paneName, byUser)
-                onEditorCompleted: comparison.controller.attachSourceEditor(rightPane.editor)
+                onEditorCompleted: comparison.editorAdapter.attachSource(rightPane.editor)
             }
         }
         Item {
@@ -610,7 +617,7 @@ ColumnLayout {
         showWhitespace: comparison.showWhitespace
         minimumTextHeight: comparison.paneMinimumHeight(3)
         onScrolled: byUser => panesByRole.paneScrolled(earlierPane.paneName, byUser)
-        onEditorCompleted: comparison.controller.attachSourceEditor(earlierPane.editor)
+        onEditorCompleted: comparison.editorAdapter.attachSource(earlierPane.editor)
         onVisibleChanged: if (visible)
             Qt.callLater(comparison.followEarlier)
     }

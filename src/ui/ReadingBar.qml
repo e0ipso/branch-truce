@@ -46,6 +46,10 @@ RowLayout {
         text: qsTr("Previous")
         icon.name: "go-up"
         display: AbstractButton.IconOnly
+        // An icon-only button names its action in a tooltip, as the toolbars do.
+        ToolTip.text: text
+        ToolTip.visible: hovered
+        ToolTip.delay: Kirigami.Units.toolTipDelay
         onClicked: readingBar.findRequested(false)
     }
     ToolButton {
@@ -53,6 +57,10 @@ RowLayout {
         text: qsTr("Next")
         icon.name: "go-down"
         display: AbstractButton.IconOnly
+        // An icon-only button names its action in a tooltip, as the toolbars do.
+        ToolTip.text: text
+        ToolTip.visible: hovered
+        ToolTip.delay: Kirigami.Units.toolTipDelay
         onClicked: readingBar.findRequested(true)
     }
     ToolButton {
@@ -81,6 +89,10 @@ RowLayout {
         text: qsTr("Close search")
         icon.name: "window-close"
         display: AbstractButton.IconOnly
+        // An icon-only button names its action in a tooltip, as the toolbars do.
+        ToolTip.text: text
+        ToolTip.visible: hovered
+        ToolTip.delay: Kirigami.Units.toolTipDelay
         onClicked: readingBar.visible = false
     }
     onVisibleChanged: changed()

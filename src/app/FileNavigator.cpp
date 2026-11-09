@@ -1,7 +1,9 @@
 // File and conflict navigation keeps the selected file and result cursor on the requested work.
 #include "FileNavigator.h"
+#include "FilePresentation.h"
 #include "NavigationTargets.h"
 #include "ResultEditorAdapter.h"
+#include "Selection.h"
 #include "SessionModel.h"
 #include <QScopedValueRollback>
 #include <vector>
@@ -20,9 +22,14 @@ QString modeName(FileNavigator::Mode mode)
     return {};
 }
 }
-FileNavigator::FileNavigator(SessionModel &files, ResultEditorAdapter &editor, Owners owners, QObject *parent)
-    : QObject(parent), files_(files), editor_(editor), owners_(std::move(owners))
-{}
+FileNavigator::FileNavigator(const SessionStore &store, const SessionModel &files, ResultEditorAdapter &editor,
+                             Selection &selection, QObject *parent)
+    : QObject(parent), store_(store), files_(files), editor_(editor), selection_(selection)
+{
+    connect(&selection_, &Selection::changed, this, [this] {
+        if (!selecting_) clear();
+    });
+}
 
 bool FileNavigator::navigate(Mode mode, int direction)
 {
@@ -32,11 +39,6 @@ bool FileNavigator::navigate(Mode mode, int direction)
         return navigateWithinFile(mode, direction);
     if (mode == Mode::Unfinished || mode == Mode::SavedOrReviewed) return navigateAcrossFiles(mode, direction);
     return false;
-}
-
-void FileNavigator::selectionChanged()
-{
-    if (!selecting_) clear();
 }
 
 void FileNavigator::clear()
@@ -59,8 +61,8 @@ void FileNavigator::clear()
 
 bool FileNavigator::navigateWithinFile(Mode mode, int direction)
 {
-    const auto selectedFileId = owners_.selectedFileId();
-    const auto *file = files_.file(selectedFileId.toStdString());
+    const auto selectedFileId = selection_.fileId();
+    const auto *file = store_.file(selectedFileId.toStdString());
     const auto fail = [&](const QString &label) {
         target_ = {{QStringLiteral("mode"), modeName(mode)},
                    {QStringLiteral("fileId"), selectedFileId},
@@ -210,7 +212,7 @@ bool FileNavigator::navigateAcrossFiles(Mode mode, int direction)
         int row = 0;
         QString id;
         QString path;
-        QString support;
+        FileStates::SupportKind support = FileStates::SupportKind::Supported;
         bool saved = false;
         bool reviewed = false;
         bool resolved = false;
@@ -229,15 +231,8 @@ bool FileNavigator::navigateAcrossFiles(Mode mode, int direction)
             if (progress.resolved && !outside) continue;
         } else if (!progress.saved && !progress.reviewed)
             continue;
-        QString support = QStringLiteral("supported");
-        if (file->support() == Support::OutsideApp)
-            support = QStringLiteral("outside-app");
-        else if (file->support() == Support::Unreadable)
-            support = QStringLiteral("unreadable");
-        else if (file->support() == Support::LargeFile)
-            support = QStringLiteral("large-file");
-        stops.push_back({row, id, owners_.displayPath(id), support, progress.saved, progress.reviewed,
-                         progress.resolved, progress.earlierStaged, outside});
+        stops.push_back({row, id, files_.displayPath(file->id()), FilePresentation::supportKind(file->support()),
+                         progress.saved, progress.reviewed, progress.resolved, progress.earlierStaged, outside});
     }
     if (stops.empty()) {
         target_ = {
@@ -249,7 +244,7 @@ bool FileNavigator::navigateAcrossFiles(Mode mode, int direction)
     }
     // The first stop past the selected row in the walk's direction, wrapping
     // to the first stop in that direction.
-    const int current = owners_.selectedRow();
+    const int current = selection_.row();
     const int size = static_cast<int>(stops.size());
     int chosen = direction > 0 ? 0 : size - 1;
     for (int step = 0; step < size; ++step) {
@@ -260,9 +255,9 @@ bool FileNavigator::navigateAcrossFiles(Mode mode, int direction)
         }
     }
     const auto &stop = stops[static_cast<std::size_t>(chosen)];
-    if (stop.id != owners_.selectedFileId()) {
+    if (stop.id != selection_.fileId()) {
         QScopedValueRollback<bool> guard(selecting_, true);
-        if (!owners_.selectFile(stop.id)) return false;
+        if (!selection_.select(stop.id)) return false;
     }
     const auto scope = stop.outside ? QStringLiteral("outside-editor") : QStringLiteral("file");
     const QString label = unfinished && stop.outside ? tr("Unfinished file · outside the editor · %1").arg(stop.path)
@@ -271,7 +266,7 @@ bool FileNavigator::navigateAcrossFiles(Mode mode, int direction)
     target_ = {{QStringLiteral("mode"), modeName(mode)},
                {QStringLiteral("fileId"), stop.id},
                {QStringLiteral("scope"), scope},
-               {QStringLiteral("support"), stop.support},
+               {QStringLiteral("support"), QVariant::fromValue(stop.support)},
                {QStringLiteral("path"), stop.path},
                {QStringLiteral("saved"), stop.saved},
                {QStringLiteral("reviewed"), stop.reviewed},

@@ -18,7 +18,9 @@
 // path. For the icon check, run app/CollectIconNames.cmake over the QML files plus a fixture QML
 // file that names a missing icon, and pass that list.
 #include "TestHarness.h"
-#include "app/ApplicationController.h"
+#include "app/AppPaths.h"
+#include "app/Application.h"
+#include "app/Translations.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/QuickScene.h"
@@ -102,10 +104,10 @@ public:
     explicit Scene(FileSession file)
     {
         const auto id = file.id();
-        CHECK(controller.files()->appendFile(std::move(file)));
-        CHECK(controller.selectFile(QString::fromStdString(id)));
+        CHECK(controller.store()->appendFile(std::move(file)));
+        CHECK(controller.selection()->select(QString::fromStdString(id)));
         selectControlsStyle(engine);
-        engine.setInitialProperties({{"controller", QVariant::fromValue(&controller)}});
+        engine.setInitialProperties(controller.windowProperties());
         engine.loadFromModule("BranchTruce", "Main");
         CHECK(engine.rootObjects().size() == 1);
         window = qobject_cast<QQuickWindow *>(engine.rootObjects().front());
@@ -134,7 +136,7 @@ public:
         test_support::waitForLayout(window, QStringLiteral("earlierViewport"), 60);
     }
 
-    ApplicationController controller{gitOnPath()};
+    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };
@@ -469,7 +471,7 @@ void diagnoseTyping(Scene &scene)
     auto *result = scene.item(QStringLiteral("resultText"));
     auto *viewport = scene.item(QStringLiteral("resultViewport"));
     auto *document = result->property("textDocument").value<QQuickTextDocument *>()->textDocument();
-    const auto file = [&] { return scene.controller.files()->file("workload"); };
+    const auto file = [&] { return scene.controller.store()->file("workload"); };
     test_support::TypingTrace trace;
     const auto dispatched = trace.add(QStringLiteral("input.sendEvent.return"));
     const auto model = trace.add(QStringLiteral("session.dataChanged"));
@@ -486,10 +488,9 @@ void diagnoseTyping(Scene &scene)
     const auto summary = trace.add(QStringLiteral("session.summaryChanged"));
     const auto frame = trace.add(QStringLiteral("input.acknowledgedFrame"));
     QObject::connect(scene.controller.files(), &QAbstractItemModel::dataChanged, &trace, [&] { trace.mark(model); });
-    QObject::connect(&scene.controller, &ApplicationController::resultEditorChanged, &trace,
+    QObject::connect(scene.controller.editor(), &ResultEditorAdapter::stateChanged, &trace,
                      [&] { trace.mark(editor); });
-    QObject::connect(&scene.controller, &ApplicationController::selectedFileChanged, &trace,
-                     [&] { trace.mark(selected); });
+    QObject::connect(scene.controller.selection(), &Selection::changed, &trace, [&] { trace.mark(selected); });
     QObject::connect(scene.controller.selectedFile(), &SelectedFile::statusChanged, &trace,
                      [&] { trace.mark(projected); });
     QObject::connect(scene.controller.selectedFile(), &SelectedFile::comparisonChanged, &trace,
@@ -626,7 +627,7 @@ int checkCost()
     });
     std::cout << "workload " << kWorkloadLines << " lines, conflict every " << kRegionEvery
               << " lines, loaded and highlighted in " << loadClock.elapsed() << " ms\n";
-    const auto file = [&] { return scene.controller.files()->file("workload"); };
+    const auto file = [&] { return scene.controller.store()->file("workload"); };
     std::vector<qint64> typingMedians;
     std::vector<qint64> scrollMedians;
     for (int repeat = 0; repeat < kRepeats; ++repeat) {
@@ -746,6 +747,8 @@ int main(int argc, char **argv)
     qputenv("XDG_CACHE_HOME", (data.path() + "/cache").toUtf8());
     if (mode == QStringLiteral("roles") && !writeColourScheme(configHome, argument)) return 2;
     QApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName("BranchTruceThemeTests");
     if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
     if (mode == QStringLiteral("icons") && argc == 3) return checkIcons(argument);

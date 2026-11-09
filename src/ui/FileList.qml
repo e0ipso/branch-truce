@@ -9,7 +9,8 @@ import org.kde.kirigami as Kirigami
 
 Rectangle {
     id: fileListPane
-    required property ApplicationController controller
+    required property SessionModel files
+    required property Selection selection
     // Builds one row from the model's roles.
     required property Component rowDelegate
     property alias currentIndex: fileList.currentIndex
@@ -31,7 +32,7 @@ Rectangle {
         spacing: Kirigami.Units.largeSpacing
         height: Math.max(0, fileListPane.headerHeight - listSeparator.height)
         Kirigami.Heading { Layout.fillWidth: true; level: 5; type: Kirigami.Heading.Type.Primary; text: qsTr("Conflicted files") }
-        Pill { text: String(fileListPane.controller.files.totalFiles) }
+        Pill { text: String(fileListPane.files.totalFiles) }
     }
     Kirigami.Separator { id: listSeparator; anchors.top: listHeading.bottom; anchors.left: parent.left; anchors.right: parent.right }
     ListView {
@@ -51,10 +52,10 @@ Rectangle {
         activeFocusOnTab: true
         keyNavigationEnabled: true
         clip: true
-        model: fileListPane.controller.files
+        model: fileListPane.files
         currentIndex: 0
         function revealSelection(): void {
-            const row = fileListPane.controller.selectedRow()
+            const row = fileListPane.selection.row()
             if (row < 0 || row >= count)
                 return
             currentIndex = row
@@ -62,8 +63,15 @@ Rectangle {
         }
         Component.onCompleted: revealSelection()
         Connections {
-            target: fileListPane.controller
-            function onSelectedFileChanged(): void {
+            target: fileListPane.selection
+            function onChanged(): void {
+                fileList.revealSelection()
+            }
+        }
+        // Publishing or restoring a file moves its row.
+        Connections {
+            target: fileListPane.files
+            function onSummaryChanged(): void {
                 fileList.revealSelection()
             }
         }

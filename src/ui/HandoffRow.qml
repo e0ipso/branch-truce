@@ -12,7 +12,7 @@ import org.kde.kirigami as Kirigami
 RowLayout {
     id: handoffEntry
     required property var modelData
-    required property ApplicationController controller
+    required property Selection selection
     signal routed()
     // The file is selected; the owner confirms before the draft is discarded.
     signal discardStagedRequested()
@@ -59,18 +59,18 @@ RowLayout {
             icon.name: "go-jump"
             text: handoffEntry.modelData.actionLabel || qsTr("Open file")
             onClicked: {
-                if (handoffEntry.controller.selectFile(handoffEntry.modelData.fileId))
+                if (handoffEntry.selection.select(handoffEntry.modelData.fileId))
                     handoffEntry.routed();
             }
         }
         Button {
             objectName: "handoffDiscardStaged-" + handoffEntry.modelData.fileId
             Layout.fillWidth: true
-            visible: handoffEntry.modelData.action === "apply-or-discard"
+            visible: handoffEntry.modelData.action === FileStates.NextAction.ApplyOrDiscard
             icon.name: "document-revert"
             text: qsTr("Discard draft and use staged result")
             onClicked: {
-                if (handoffEntry.controller.selectFile(handoffEntry.modelData.fileId))
+                if (handoffEntry.selection.select(handoffEntry.modelData.fileId))
                     handoffEntry.discardStagedRequested();
             }
         }

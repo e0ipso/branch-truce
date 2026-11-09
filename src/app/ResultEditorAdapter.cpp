@@ -1,9 +1,11 @@
 // The result editor adapter journals text edits and connects native editing actions to file history.
 #include "ResultEditorAdapter.h"
 #include "EngineText.h"
-#include "SessionModel.h"
+#include "NavigationTargets.h"
+#include "QtText.h"
 #include "TextChange.h"
 #include "core/ResourceLimits.h"
+#include "session/SessionStore.h"
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QGuiApplication>
@@ -22,8 +24,10 @@
 #include <string_view>
 
 namespace branch_truce {
+using qt_text::baseName;
+using qt_text::documentText;
+using qt_text::utf8;
 namespace {
-QString text(const std::string &value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
 
 QTextDocument *textDocument(QObject *editor)
 {
@@ -41,17 +45,13 @@ QQuickItem *scrollViewport(QObject *editor)
     return nullptr;
 }
 
-QString documentText(const QTextDocument &document)
-{
-    return document.toRawText().replace(QChar(0x2029), QLatin1Char('\n'));
-}
-
 QString envelopeRejection(std::string_view bytes)
 {
     const auto assessment = assessText(bytes);
     if (assessment.limit == TextLimit::Within) return {};
-    return engine_text::textLimit(assessment)
-        + QStringLiteral(". The existing edit was kept and this change was not acknowledged.");
+    return QCoreApplication::translate("ResultEditorAdapter",
+                                       "%1. The existing edit was kept and this change was not acknowledged.")
+        .arg(engine_text::textLimit(assessment));
 }
 
 QString envelopeRejection(const QString &text)
@@ -61,16 +61,22 @@ QString envelopeRejection(const QString &text)
 }
 }
 
-ResultEditorAdapter::ResultEditorAdapter(SessionModel &files, std::function<QString()> selectedFileId,
-                                         Placement placement, QObject *parent)
-    : QObject(parent),
-      files_(files),
-      selectedFileId_(std::move(selectedFileId)),
-      placementFor_(std::move(placement)),
-      words_(files, [this] { return selectedFileId_(); })
+ResultEditorAdapter::ResultEditorAdapter(const SessionStore &store, QObject *parent)
+    : QObject(parent), store_(store), words_(store)
 {}
 
-const FileSession *ResultEditorAdapter::selectedFile() const { return files_.file(selectedFileId_().toStdString()); }
+const FileSession *ResultEditorAdapter::shownFile() const { return store_.file(fileId_.toStdString()); }
+
+void ResultEditorAdapter::show(const QString &fileId)
+{
+    if (fileId_ != fileId) {
+        fileId_ = fileId;
+        const auto *file = shownFile();
+        syntax_.setFileName(file ? baseName(file->path()) : QString{});
+        words_.setFile(fileId);
+    }
+    sync();
+}
 
 void ResultEditorAdapter::attach(QObject *editor)
 {
@@ -113,8 +119,6 @@ void ResultEditorAdapter::attachSource(QObject *editor)
     syntax_.attach(document);
     words_.attach(editor, document);
 }
-
-void ResultEditorAdapter::setSyntaxFileName(const QString &fileName) { syntax_.setFileName(fileName); }
 
 void ResultEditorAdapter::setSyntaxBackground(const QColor &background) { syntax_.setBackground(background); }
 
@@ -162,9 +166,9 @@ void ResultEditorAdapter::capture()
         Q_EMIT notice(rejection);
         return;
     }
-    const auto *file = selectedFile();
+    const auto *file = shownFile();
     const auto old = text_;
-    if (!file || old != text(file->current().draft.text)
+    if (!file || old != utf8(file->current().draft.text)
         || std::max(old.size(), next.size()) > std::numeric_limits<int>::max()) {
         Q_EMIT editRejected();
         sync();
@@ -174,7 +178,7 @@ void ResultEditorAdapter::capture()
     // an IME commit with several document notifications, as one domain command.
     const auto change = changedRange(old, next);
     text_ = next;
-    Q_EMIT edited(selectedFileId_(), QString::number(file->current().id), static_cast<int>(change.begin),
+    Q_EMIT edited(fileId_, QString::number(file->current().id), static_cast<int>(change.begin),
                   static_cast<int>(change.oldEnd), next.mid(change.begin, change.newEnd - change.begin));
     sync();
 }
@@ -214,7 +218,7 @@ bool ResultEditorAdapter::clipboard(ClipboardAction action)
         invoked = QMetaObject::invokeMethod(editor_, method, Qt::DirectConnection);
     }
     capture();
-    return invoked && !files_.hasPendingRecovery();
+    return invoked && !store_.hasPendingRecovery();
 }
 
 bool ResultEditorAdapter::eventFilter(QObject *watched, QEvent *event)
@@ -224,7 +228,7 @@ bool ResultEditorAdapter::eventFilter(QObject *watched, QEvent *event)
         auto *key = static_cast<QKeyEvent *>(event);
         const bool newline = key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter;
         const auto modifiers = key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier);
-        // Backspace and Delete carry a control character in text() but remove
+        // Backspace and Delete carry a control character in utf8() but remove
         // text. Predicting that character as an insertion rejects a deletion
         // when the line or buffer is already exactly at its limit.
         const bool deletion = key->key() == Qt::Key_Backspace || key->key() == Qt::Key_Delete;
@@ -278,12 +282,12 @@ bool ResultEditorAdapter::eventFilter(QObject *watched, QEvent *event)
 void ResultEditorAdapter::sync()
 {
     if (!document_ || !editor_ || syncing_) return;
-    const auto *file = selectedFile();
-    const auto *pending = file ? files_.pendingDraft(file->id()) : nullptr;
+    const auto *file = shownFile();
+    const auto *pending = file ? store_.pendingDraft(file->id()) : nullptr;
     const auto stored = file ? (pending ? pending->text : file->current().draft.text) : std::string{};
     if (file && !withinTextEnvelope(stored)) {
-        const auto rejection = engine_text::textLimit(assessText(stored))
-            + QStringLiteral(". The captured text was kept and was not loaded into the editor.");
+        const auto rejection = tr("%1. The captured text was kept and was not loaded into the editor.")
+                                   .arg(engine_text::textLimit(assessText(stored)));
         syncing_ = true;
         document_->setPlainText({});
         text_.clear();
@@ -291,22 +295,22 @@ void ResultEditorAdapter::sync()
         syncing_ = false;
         words_.refresh();
         Q_EMIT loadRefused(rejection);
-        if (placedFileId_ != selectedFileId_()) place(nullptr, {});
+        if (placedFileId_ != fileId_) place(nullptr, {});
         return;
     }
     // A large file is not put in the editor until the user loads it.
-    const auto desired = file && file->support() != Support::LargeFile ? text(stored) : QString{};
+    const auto desired = file && file->support() != Support::LargeFile ? utf8(stored) : QString{};
     const auto shown = documentText(*document_);
     // Undo, redo or a choice replaces the text of the file already shown.
-    const auto kept = file && shown != desired && placedFileId_ == selectedFileId_() ? location() : Location{};
+    const auto kept = file && shown != desired && placedFileId_ == fileId_ ? location() : Location{};
     syncing_ = true;
     if (shown != desired) document_->setPlainText(desired);
     text_ = desired;
     const auto loaded = documentText(*document_);
     const bool lossless = loaded == desired && !desired.contains(QChar(0x2028)) && !desired.contains(QChar(0x2029))
         && !desired.contains(QLatin1Char('\r'));
-    setEditable(file && file->support() == Support::Supported && lossless && !files_.hasPendingRecovery()
-                && !files_.hasRecoveryFailure(file->id()));
+    setEditable(file && file->support() == Support::Supported && lossless && !store_.hasPendingRecovery()
+                && !store_.hasRecoveryFailure(file->id()));
     if (!lossless && file && file->support() == Support::Supported)
         Q_EMIT notice(
             tr("This text cannot be edited losslessly by the current editor. Its captured result is retained."));
@@ -315,7 +319,7 @@ void ResultEditorAdapter::sync()
     words_.refresh();
     // A new selection, or a loading placeholder replaced by its supported file.
     const bool supported = file && file->support() == Support::Supported;
-    if (placedFileId_ != selectedFileId_() || placedSupported_ != supported)
+    if (placedFileId_ != fileId_ || placedSupported_ != supported)
         place(file, desired);
     else if (kept.valid)
         keepPlace(kept, shown, loaded);
@@ -340,9 +344,9 @@ void ResultEditorAdapter::keepPlace(const Location &place, const QString &before
 // where placementFor_ says, or at the start.
 void ResultEditorAdapter::place(const FileSession *file, const QString &loaded)
 {
-    placedFileId_ = selectedFileId_();
+    placedFileId_ = fileId_;
     placedSupported_ = file && file->support() == Support::Supported;
-    auto placement = placementFor_(placedSupported_ ? file : nullptr, loaded);
+    auto placement = firstUndecidedPlacement(placedSupported_ ? file : nullptr, loaded);
     const int begin = placement.value(QStringLiteral("utf16Begin")).toInt();
     setCursorPosition(begin >= 0 ? begin : 0);
     placement_ = std::move(placement);
@@ -354,7 +358,7 @@ ResultEditorAdapter::Location ResultEditorAdapter::location() const
     Location location;
     if (!editor_) return location;
     location.valid = true;
-    location.fileId = selectedFileId_();
+    location.fileId = fileId_;
     location.text = text_;
     const auto selection = caret();
     location.cursor = selection.cursor;
@@ -372,11 +376,11 @@ void ResultEditorAdapter::holdLocation() { heldLocation_ = location(); }
 
 void ResultEditorAdapter::restoreLocation()
 {
-    if (!heldLocation_.valid || !editor_ || heldLocation_.fileId != selectedFileId_()) return;
+    if (!heldLocation_.valid || !editor_ || heldLocation_.fileId != fileId_) return;
     if (text_ != heldLocation_.text) return;
-    const auto *file = selectedFile();
-    const auto *pending = file ? files_.pendingDraft(file->id()) : nullptr;
-    const auto current = file ? text(pending ? pending->text : file->current().draft.text) : QString{};
+    const auto *file = shownFile();
+    const auto *pending = file ? store_.pendingDraft(file->id()) : nullptr;
+    const auto current = file ? utf8(pending ? pending->text : file->current().draft.text) : QString{};
     if (current != heldLocation_.text) return;
     // select() places the cursor at the second offset and keeps that range.
     const int anchor = heldLocation_.cursor == heldLocation_.selectionStart ? heldLocation_.selectionEnd
@@ -395,5 +399,24 @@ void ResultEditorAdapter::restoreLocation()
         if (auto *window = viewport->window())
             connect(window, &QQuickWindow::afterAnimating, viewport, apply, Qt::SingleShotConnection);
     }
+}
+
+// A newly shown file puts the cursor at its first undecided region, or at the
+// start without one.
+QVariantMap ResultEditorAdapter::firstUndecidedPlacement(const FileSession *file, const QString &loaded) const
+{
+    QVariantMap placement{{QStringLiteral("fileId"), fileId_}, {QStringLiteral("count"), 0}};
+    const auto targets = file ? undecidedTargets(*file) : std::vector<ScopeTarget>{};
+    if (targets.empty() || loaded != utf8(file->current().draft.text)) return placement;
+    const auto &first = targets.front();
+    const auto &result = file->current().draft.text;
+    const int begin = first.resultRange ? utf16Offset(result, first.byteBegin) : -1;
+    const int end = first.resultRange ? utf16Offset(result, first.byteEnd) : -1;
+    return {{QStringLiteral("fileId"), fileId_},
+            {QStringLiteral("scope"), first.resultRange ? QStringLiteral("result") : QStringLiteral("unmapped-source")},
+            {QStringLiteral("utf16Begin"), begin},
+            {QStringLiteral("utf16End"), end},
+            {QStringLiteral("contributionId"), utf8(first.contributionId)},
+            {QStringLiteral("count"), static_cast<int>(targets.size())}};
 }
 }

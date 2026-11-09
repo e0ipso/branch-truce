@@ -36,7 +36,7 @@ public:
         std::optional<MarkerScan> markers;
     };
 
-    ResolutionPublisher(SessionModel &files, SessionCoordinator &coordinator, QString gitExecutable,
+    ResolutionPublisher(SessionStore &files, SessionCoordinator &coordinator, QString gitExecutable,
                         QObject *parent = nullptr);
 
     void captureBaselines(const git::RepositoryContext &repository);
@@ -101,7 +101,7 @@ private:
     void noteStale(const TaskCompletion &completion);
     [[nodiscard]] bool accept(const TaskCompletion &completion) const;
 
-    SessionModel &files_;
+    SessionStore &files_;
     SessionCoordinator &coordinator_;
     const QString executable_;
     git::RepositoryContext repository_;

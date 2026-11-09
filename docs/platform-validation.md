@@ -377,7 +377,7 @@ mergetool intake path do not use it. On Linux Qt does put it into
 `QStandardPaths::AppLocalDataLocation`, so setting one moves that directory,
 and with it the recovery journals of earlier runs.
 
-`SessionModel::recoveryRoot()` no longer reads `AppLocalDataLocation`. It is
+`recoveryRoot()` in `app/AppPaths.h` no longer reads `AppLocalDataLocation`. It is
 `GenericDataLocation` plus `/Branch Truce/recovery/v1`, which is the path the
 app already used with no organization name, so stores written by earlier
 builds are found where they are and nothing is moved. A later change that sets

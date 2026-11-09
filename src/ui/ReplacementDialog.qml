@@ -9,32 +9,35 @@ import org.kde.kirigami as Kirigami
 
 PreviewDialog {
     id: replacementDialog
-    required property ApplicationController controller
+    required property ChoicePreviewFlow choices
+    required property CommandFeedback feedback
+    required property SelectedFile selectedFile
     objectName: "replacementDialog"
-    title: replacementDialog.controller.commandPreview.orderedCombination
-        ? qsTr("Preview %1").arg(replacementDialog.controller.commandPreview.order)
+    title: replacementDialog.choices.choicePreview.orderedCombination
+        ? qsTr("Preview %1").arg(replacementDialog.choices.choicePreview.order)
         : qsTr("Replace manual work in this scope?")
-    path: replacementDialog.controller.selectedFile.path || ""
-    summary: replacementDialog.controller.commandPreview.orderedCombination
-        ? replacementDialog.controller.commandPreview.sourceScopes || "" : ""
-    detail: replacementDialog.controller.commandPreview.detail || ""
+    path: replacementDialog.selectedFile.path || ""
+    summary: replacementDialog.choices.choicePreview.orderedCombination
+        ? replacementDialog.choices.choicePreview.sourceScopes || "" : ""
+    detail: replacementDialog.choices.choicePreview.detail || ""
     confirmText: qsTr("Apply choice")
-    onConfirmed: replacementDialog.controller.applyChoice(true)
-    onRejected: replacementDialog.controller.cancelChoice()
+    onApplyRequested: replacementDialog.refused = !replacementDialog.choices.applyChoice(true)
+    refusalMessage: replacementDialog.feedback.message
+    onRejected: replacementDialog.choices.cancel()
     PlainLabel {
         objectName: "manualReplacementNotice"
         Layout.fillWidth: true
-        visible: !!replacementDialog.controller.commandPreview.replacesManual
+        visible: !!replacementDialog.choices.choicePreview.replacesManual
         text: qsTr("Manual or pre-existing edits in the current scope below will be replaced. Confirm to replace this work, or cancel to keep it.")
         wrapMode: Text.Wrap
     }
     BeforeAfterPanes {
         namePrefix: "replacement"
         beforeTitle: qsTr("Current text in this scope")
-        beforeText: replacementDialog.controller.commandPreview.before || ""
-        afterTitle: replacementDialog.controller.commandPreview.orderedCombination
-            ? qsTr("Proposed text · %1").arg(replacementDialog.controller.commandPreview.order)
+        beforeText: replacementDialog.choices.choicePreview.before || ""
+        afterTitle: replacementDialog.choices.choicePreview.orderedCombination
+            ? qsTr("Proposed text · %1").arg(replacementDialog.choices.choicePreview.order)
             : qsTr("Replacement from the selected source")
-        afterText: replacementDialog.controller.commandPreview.replacement || ""
+        afterText: replacementDialog.choices.choicePreview.replacement || ""
     }
 }

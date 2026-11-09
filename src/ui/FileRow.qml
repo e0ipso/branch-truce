@@ -12,18 +12,14 @@ KirigamiDelegates.SubtitleDelegate {
     id: row
     required property int index
     required property string fileId
-    required property string support
+    required property int support
     required property string path
     required property string statusIcon
     required property string statusLine
     required property bool resolved
-    required property int undecidedCount
-    required property int conflictCount
-    required property string recoveryState
-    required property string status
     required property string summary
-    required property ApplicationController controller
-    readonly property bool current: fileId === row.controller.selectedFileId
+    required property Selection selection
+    readonly property bool current: fileId === row.selection.fileId
     // Supplied by the ListView bounds, rather than a delegate x binding.
     readonly property real plateOuterInset: Kirigami.Units.smallSpacing
     readonly property real plateHorizontalPadding: Kirigami.Units.largeSpacing
@@ -43,19 +39,7 @@ KirigamiDelegates.SubtitleDelegate {
     bottomInset: 0
     // The path alone names the row, so a screen reader reads it as the list item's name.
     text: row.path
-    subtitle: row.recoveryState === "failed" || row.recoveryState === "save-failed" || row.recoveryState === "blocked"
-        ? row.status
-        : row.support === "unreadable" ? qsTr("Load error")
-        : row.support === "large-file" ? qsTr("Large file not loaded")
-        : row.support !== "supported" ? qsTr("Handle outside the app")
-        : row.resolved ? qsTr("Resolved")
-        : row.status === "Repository write failed" || row.status === "Written, unresolved"
-            || row.status === "Draft save failed" || row.status === "Outcome uncertain; verification required"
-            || row.status === "Earlier result staged; current draft not applied" ? row.status
-        : row.conflictCount > 0 ? (row.conflictCount === 1
-            ? qsTr("%n conflict left", "", row.conflictCount)
-            : qsTr("%n conflicts left", "", row.conflictCount))
-        : row.statusLine
+    subtitle: row.statusLine
     Accessible.description: row.summary
     icon.name: row.statusIcon
     highlighted: current
@@ -135,7 +119,7 @@ KirigamiDelegates.SubtitleDelegate {
                 maximumLineCount: 1
                 elide: Text.ElideRight
                 font: Kirigami.Theme.smallFont
-                color: row.resolved ? Kirigami.Theme.positiveTextColor : row.highlighted ? Qt.alpha(Kirigami.Theme.highlightedTextColor, 0.8) : row.support !== "supported" ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.disabledTextColor
+                color: row.resolved ? Kirigami.Theme.positiveTextColor : row.highlighted ? Qt.alpha(Kirigami.Theme.highlightedTextColor, 0.8) : row.support !== FileStates.SupportKind.Supported ? Kirigami.Theme.neutralTextColor : Kirigami.Theme.disabledTextColor
             }
         }
 

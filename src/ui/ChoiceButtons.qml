@@ -127,7 +127,9 @@ Row {
         onTapped: buttons.openMenu()
     }
     Keys.onPressed: event => {
-        if (event.key === Qt.Key_Menu || event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier)) {
+        // The same gestures as ContextMenuHost: Menu alone, or Shift+F10 alone.
+        if (event.key === Qt.Key_Menu && event.modifiers === Qt.NoModifier
+                || event.key === Qt.Key_F10 && event.modifiers === Qt.ShiftModifier) {
             buttons.openMenu()
             event.accepted = true
         }
@@ -238,7 +240,8 @@ Row {
             enabled: !!buttons.contextEditor
             onTriggered: buttons.contextEditor.selectAll()
         }
-        MenuSeparator {}
+        // The range choices follow this separator, wherever the items above it end.
+        MenuSeparator { id: entriesStart }
         Instantiator {
             model: buttons.entries
             delegate: MenuItem {
@@ -248,7 +251,12 @@ Row {
                 enabled: buttons.choosing && modelData.enabled
                 onTriggered: buttons.choose(modelData.target, modelData.action)
             }
-            onObjectAdded: (index, entry) => entryMenu.insertItem(index + 6, entry as MenuItem)
+            onObjectAdded: (index, entry) => {
+                let first = 0
+                while (first < entryMenu.count && entryMenu.itemAt(first) !== entriesStart)
+                    ++first
+                entryMenu.insertItem(first + 1 + index, entry as MenuItem)
+            }
             onObjectRemoved: (index, entry) => entryMenu.removeItem(entry as MenuItem)
         }
     }

@@ -12,7 +12,7 @@ import org.kde.kirigami as Kirigami
 ColumnLayout {
     id: resultPane
     spacing: 0
-    required property ApplicationController controller
+    required property ResultEditorAdapter editorAdapter
     required property SelectedFile file
     required property EditActions edits
     // Line marks for the gutter and backgrounds, and the navigation target's line ranges.
@@ -61,13 +61,22 @@ ColumnLayout {
         identity: qsTr("Editable")
         description: identity
     }
-    Rectangle {
+    ContextMenuHost {
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.minimumHeight: resultPane.minimumTextHeight
         Kirigami.Theme.colorSet: Kirigami.Theme.View
         Kirigami.Theme.inherit: false
-        color: Kirigami.Theme.backgroundColor
+        editor: resultEditor
+        onPointerMenuRequested: position => resultMenu.popup(resultEditor, position.x, position.y)
+        onKeyboardMenuRequested: {
+            const rect = resultEditor.cursorRectangle
+            resultMenu.popup(resultEditor, rect.x, rect.y + rect.height)
+        }
+        Rectangle {
+            anchors.fill: parent
+            color: Kirigami.Theme.backgroundColor
+        }
         Flickable {
             id: resultViewport
             objectName: "resultViewport"
@@ -109,7 +118,7 @@ ColumnLayout {
                 id: resultEditor
                 objectName: "resultText"
                 // The adapter permits edits only after a lossless, durable load.
-                readOnly: !resultPane.controller.resultEditable
+                readOnly: !resultPane.editorAdapter.editable
                 selectByMouse: true
                 persistentSelection: true
                 textFormat: TextEdit.PlainText
@@ -144,7 +153,7 @@ ColumnLayout {
                     : Math.max(resultViewport.width, implicitWidth)
                 wrapMode: resultPane.wrapLines ? TextEdit.Wrap : TextEdit.NoWrap
                 Accessible.name: qsTr("Editable result")
-                Component.onCompleted: resultPane.controller.attachResultEditor(resultEditor)
+                Component.onCompleted: resultPane.editorAdapter.attach(resultEditor)
                 // A document replacement must be spaced before the adapter restores
                 // its cursor and viewport against the new layout.
                 onTextChanged: resultBlocks.flushSpacing()
@@ -156,13 +165,9 @@ ColumnLayout {
                     resultBlocks.keyPressed(event.key)
                     event.accepted = false
                 }
-                TapHandler {
-                    acceptedButtons: Qt.RightButton
-                    onTapped: resultMenu.popup()
-                }
                 ResultContextMenu {
                     id: resultMenu
-                    controller: resultPane.controller
+                    editorAdapter: resultPane.editorAdapter
                     edits: resultPane.edits
                     editor: resultEditor
                 }
