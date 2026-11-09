@@ -230,7 +230,7 @@ build_succeeds() {
     pass
     [[ "$(sed -n 9p "$manifest")" =~ ^source_changed_paths$'\t'[0-9]+$ ]] || fail "$target changed paths"
     pass
-    [[ "$(sed -n 10p "$manifest")" == "source_date_epoch	$(git -C "$root" log -1 --format=%at -- CMakeLists.txt cmake src packaging \
+    [[ "$(sed -n 10p "$manifest")" == "source_date_epoch	$(git -C "$root" log -1 --format=%at -- CMakeLists.txt cmake src LICENSE packaging \
         assets/branding/platform/linux assets/branding/svg)" ]] \
         || fail "$target source date epoch"
     pass
