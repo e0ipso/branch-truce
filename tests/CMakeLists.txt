@@ -16,6 +16,8 @@ add_test(NAME core.native-version
     COMMAND "${CMAKE_COMMAND}"
         "-DBRANCH_TRUCE_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/core/NativeVersionTests.cmake")
+# Skipped, not passed, on a host with none of dpkg, rpm and vercmp to check the order.
+set_tests_properties(core.native-version PROPERTIES TIMEOUT 60 LABELS unit SKIP_REGULAR_EXPRESSION "SKIPPED: ")
 # Engine unit tests: one executable per source file, Qt-free and without a display.
 function(branch_truce_add_core_test name source)
     string(REPLACE "." "_" target "branch_truce_${name}_tests")
@@ -32,6 +34,8 @@ branch_truce_add_core_test(correspondence core/CorrespondenceTests.cpp)
 branch_truce_add_core_test(editing-commands core/EditingCommandsTests.cpp)
 branch_truce_add_core_test(resource-limits core/ResourceLimitsTests.cpp)
 branch_truce_add_core_test(word-differences core/WordDifferencesTests.cpp)
+# The harness every suite shares: failure messages, deferred failures, skips and the case filter.
+branch_truce_add_core_test(test-harness core/TestHarnessTests.cpp)
 find_program(BASH_EXECUTABLE bash REQUIRED)
 add_test(NAME tooling.icon-name-collection
     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
@@ -41,10 +45,47 @@ set_tests_properties(tooling.icon-name-collection PROPERTIES TIMEOUT 30)
 add_test(NAME lifecycle.cli-guards
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/SetupGuards.sh")
 set_tests_properties(lifecycle.cli-guards PROPERTIES TIMEOUT 30)
+add_test(NAME lifecycle.hook-installer
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/HookInstaller.sh")
+set_tests_properties(lifecycle.hook-installer PROPERTIES TIMEOUT 30)
 # Entries that start the real binary or Qt Quick run through this wrapper. It gives them a private
 # HOME and XDG directories, removes those afterwards and fails the run when it created anything
 # under the recovery root of the invoking user's real data directory.
 set(private_xdg "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/with-private-xdg.sh")
+# One test executable from one source file, registered as one CTest entry with the shared defaults:
+# a 60 s TIMEOUT, the LABELS "unit", and exit status 77 reported as skipped. LIBS are the libraries
+# under test, WRAP the symbols the executable replaces at link time, DEPENDS targets it runs and ARGS
+# the arguments after the executable. PRIVATE_XDG runs it through with-private-xdg.sh. WILL_FAIL
+# marks a case that documents a known defect, so CTest reports it once it starts to pass.
+function(branch_truce_add_unit_test name source)
+    cmake_parse_arguments(PARSE_ARGV 2 unit "PRIVATE_XDG;WILL_FAIL" "TIMEOUT" "LIBS;WRAP;DEPENDS;ARGS;LABELS")
+    string(REGEX REPLACE "[.-]" "_" target "branch_truce_${name}_tests")
+    add_executable(${target} ${source})
+    target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(${target} PRIVATE ${unit_LIBS} branch_truce_build_options)
+    if(unit_WRAP)
+        list(JOIN unit_WRAP ",--wrap=" wrapped)
+        target_link_options(${target} PRIVATE "LINKER:--wrap=${wrapped}")
+    endif()
+    if(unit_DEPENDS)
+        add_dependencies(${target} ${unit_DEPENDS})
+    endif()
+    set(command $<TARGET_FILE:${target}> ${unit_ARGS})
+    if(unit_PRIVATE_XDG)
+        set(command ${private_xdg} ${command})
+    endif()
+    if(NOT unit_TIMEOUT)
+        set(unit_TIMEOUT 60)
+    endif()
+    if(NOT unit_LABELS)
+        set(unit_LABELS unit)
+    endif()
+    add_test(NAME ${name} COMMAND ${command})
+    set_tests_properties(${name} PROPERTIES TIMEOUT ${unit_TIMEOUT} LABELS "${unit_LABELS}" SKIP_RETURN_CODE 77)
+    if(unit_WILL_FAIL)
+        set_tests_properties(${name} PROPERTIES WILL_FAIL TRUE)
+    endif()
+endfunction()
 add_test(NAME lifecycle.private-xdg-isolation
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/PrivateXdgIsolation.sh")
 set_tests_properties(lifecycle.private-xdg-isolation PROPERTIES TIMEOUT 30)
@@ -94,25 +135,13 @@ if(Python3_Interpreter_FOUND)
     endif()
 endif()
 if(BRANCH_TRUCE_BUILD_DESKTOP)
-    add_executable(branch_truce_text_format_tests storage/TextFormatTests.cpp)
-    target_include_directories(branch_truce_text_format_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_text_format_tests PRIVATE branch_truce_storage branch_truce_build_options)
-    add_test(NAME storage.text-format COMMAND branch_truce_text_format_tests)
-
-    add_executable(branch_truce_recovery_tests storage/RecoveryStoreTests.cpp)
-    target_include_directories(branch_truce_recovery_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_recovery_tests PRIVATE branch_truce_storage branch_truce_build_options)
-    target_link_options(branch_truce_recovery_tests PRIVATE "LINKER:--wrap=fsync")
-    add_test(NAME storage.recovery-store COMMAND branch_truce_recovery_tests)
-
-    add_executable(branch_truce_destination_tests storage/DestinationWriterTests.cpp)
-    target_include_directories(branch_truce_destination_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_destination_tests PRIVATE branch_truce_storage branch_truce_build_options)
-    # Faults and exchange races are intercepted only in this test executable.
-    target_link_options(branch_truce_destination_tests PRIVATE
-        "LINKER:--wrap=write,--wrap=fsync,--wrap=renameat2,--wrap=unlinkat,--wrap=geteuid")
-    add_test(NAME storage.destination-writer COMMAND branch_truce_destination_tests)
-    set_tests_properties(storage.destination-writer PROPERTIES TIMEOUT 30)
+    branch_truce_add_unit_test(storage.text-format storage/TextFormatTests.cpp LIBS branch_truce_storage)
+    branch_truce_add_unit_test(storage.recovery-store storage/RecoveryStoreTests.cpp LIBS branch_truce_storage
+        WRAP fsync)
+    # Faults and exchange races are intercepted only in this test executable. Its read-only cases
+    # skip when it runs as root, which can write anyway.
+    branch_truce_add_unit_test(storage.destination-writer storage/DestinationWriterTests.cpp
+        LIBS branch_truce_storage WRAP write fsync renameat2 unlinkat geteuid TIMEOUT 30)
 
     add_executable(branch_truce_model_tests app/SessionModelTests.cpp)
     target_include_directories(branch_truce_model_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -301,14 +330,10 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # The timeout must be at least twice the slowest measured run.
     set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 360)
 
-    # Installed /usr/bin/git runs `git mergetool` against the launcher and an in-process session.
-    add_executable(branch_truce_mergetool_parent_tests git/MergetoolParentTests.cpp)
-    target_include_directories(branch_truce_mergetool_parent_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_mergetool_parent_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    add_dependencies(branch_truce_mergetool_parent_tests branch-truce)
-    add_test(NAME git.mergetool-parent COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_parent_tests> $<TARGET_FILE:branch-truce>)
+    # The fixture Git runs `git mergetool` against the launcher and an in-process session.
     # The timeout must be at least twice the slowest measured run.
-    set_tests_properties(git.mergetool-parent PROPERTIES TIMEOUT 450)
+    branch_truce_add_unit_test(git.mergetool-parent git/MergetoolParentTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG TIMEOUT 450 LABELS git DEPENDS branch-truce ARGS $<TARGET_FILE:branch-truce>)
 
     add_executable(branch_truce_coordinator_tests app/SessionCoordinatorTests.cpp)
     target_include_directories(branch_truce_coordinator_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -316,14 +341,24 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_test(NAME app.session-coordinator COMMAND branch_truce_coordinator_tests)
     set_tests_properties(app.session-coordinator PROPERTIES TIMEOUT 30)
 
-    add_executable(branch_truce_git_tests git/GitAdapterTests.cpp)
-    target_include_directories(branch_truce_git_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_git_tests PRIVATE branch_truce_git branch_truce_build_options)
-    add_test(NAME git.adapter COMMAND branch_truce_git_tests)
-    add_test(NAME git.conflict-classification COMMAND branch_truce_git_tests --classification-only)
-    set_tests_properties(git.conflict-classification PROPERTIES TIMEOUT 30)
+    # The Git suites run real Git in fixture repositories. They run under the private HOME and XDG
+    # wrapper, and fixture Git reads only the fixture's global configuration.
+    # The tool `git mergetool` runs in the adapter's parent staging cases.
+    add_executable(branch_truce_parent_staging_fixture git/ParentStagingFixture.cpp)
+    target_include_directories(branch_truce_parent_staging_fixture PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_parent_staging_fixture PRIVATE branch_truce_git branch_truce_build_options)
     # The timeout must be at least twice the slowest measured run, including the Git operation deadline.
-    set_tests_properties(git.adapter PROPERTIES TIMEOUT 90)
+    branch_truce_add_unit_test(git.adapter git/GitAdapterTests.cpp LIBS branch_truce_git PRIVATE_XDG TIMEOUT 90
+        DEPENDS branch_truce_parent_staging_fixture ARGS $<TARGET_FILE:branch_truce_parent_staging_fixture>)
+    branch_truce_add_unit_test(git.conflict-classification git/ConflictClassifierTests.cpp LIBS branch_truce_git
+        PRIVATE_XDG TIMEOUT 30)
+    branch_truce_add_unit_test(git.text-conversion git/TextConversionTests.cpp LIBS branch_truce_git PRIVATE_XDG)
+    branch_truce_add_unit_test(git.parsing git/GitParsingTests.cpp LIBS branch_truce_git)
+    # Fails while GitAdapter's Git reads the invoking account's ~/.gitconfig and /etc/gitconfig.
+    # WILL_FAIL keeps that known defect visible; remove it once the adapter takes its Git
+    # environment from its caller, and this entry then has to pass.
+    branch_truce_add_unit_test(git.user-config-isolation git/UserConfigIsolationTests.cpp LIBS branch_truce_git
+        PRIVATE_XDG WILL_FAIL)
 
     # The standalone editor fixture checks native text selection, editing and scrolling without product targets.
     set(editor_fixture "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/editor")

@@ -1,18 +1,15 @@
 #pragma once
 
 #include "core/EditingCommands.h"
-#include <array>
-#include <cerrno>
+#include "fixtures/FixtureGit.h"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
-#include <spawn.h>
 #include <stdexcept>
 #include <string>
 #include <sys/wait.h>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -120,69 +117,33 @@ inline branch_truce::FileSession diff3File(const std::string &left, const std::s
     return FileSession("choices", sources.path, {std::move(result), {}, 0}, Support::Supported, {}, sources, true);
 }
 
-// A process's standard output and its wait status, which is -1 when the
-// process could not be started.
-struct ProcessOutput {
-    std::string text;
-    int status = -1;
-};
-
-// Runs `arguments` from the PATH without a shell and reads its standard
-// output to the end.
-inline ProcessOutput readProcess(std::vector<std::string> arguments)
-{
-    ProcessOutput output;
-    std::array<int, 2> ends{};
-    if (pipe(ends.data()) != 0) return output;
-    std::vector<char *> argv;
-    argv.reserve(arguments.size() + 1);
-    for (auto &argument : arguments) argv.push_back(argument.data());
-    argv.push_back(nullptr);
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, ends[1], STDOUT_FILENO);
-    posix_spawn_file_actions_addclose(&actions, ends[0]);
-    posix_spawn_file_actions_addclose(&actions, ends[1]);
-    pid_t child = 0;
-    const bool started = posix_spawnp(&child, argv.front(), &actions, nullptr, argv.data(), environ) == 0;
-    posix_spawn_file_actions_destroy(&actions);
-    close(ends[1]);
-    std::array<char, 4096> buffer{};
-    while (started) {
-        const auto count = read(ends[0], buffer.data(), buffer.size());
-        if (count == 0 || (count < 0 && errno != EINTR)) break;
-        if (count > 0) output.text.append(buffer.data(), static_cast<std::size_t>(count));
-    }
-    // Closing the read end first lets a child still writing end on SIGPIPE.
-    close(ends[0]);
-    if (!started) return output;
-    int status = 0;
-    while (waitpid(child, &status, 0) == -1) {
-        if (errno != EINTR) return output;
-    }
-    output.status = status;
-    return output;
-}
-
-// What `git merge-file --diff3` on the PATH writes for three versions, with
-// the labels a merge gives them. Its exit status counts the conflicts, so one
-// above 127 or a signal is a failure.
+// What `git merge-file --diff3` writes for three versions, with the labels a merge gives them.
+// It runs the fixture Git without the user's or the system's configuration. Its exit status
+// counts the conflicts, so one above 127 or a signal is a failure.
 inline std::string gitDiff3(const std::string &left, const std::string &earlier, const std::string &right)
 {
     auto pattern = (std::filesystem::temp_directory_path() / "branch-truce-diff3.XXXXXX").string();
     if (!mkdtemp(pattern.data())) throw std::runtime_error("cannot create a directory for git merge-file");
     const std::filesystem::path directory(pattern);
-    std::vector<std::string> arguments{"git",  "merge-file", "--diff3", "-p", "-L",
-                                       "ours", "-L",         "base",    "-L", "theirs"};
+    std::vector<std::string> arguments{fixtureGit(), "merge-file", "--diff3", "-p", "-L",
+                                       "ours",       "-L",         "base",    "-L", "theirs"};
     const std::pair<const char *, const std::string *> versions[] = {
         {"left", &left}, {"base", &earlier}, {"right", &right}};
     arguments.reserve(arguments.size() + std::size(versions));
+    bool written = true;
     for (const auto &[name, text] : versions) {
-        std::ofstream(directory / name, std::ios::binary) << *text;
+        std::ofstream file(directory / name, std::ios::binary);
+        file << *text;
+        file.close();
+        written = written && !file.fail();
         arguments.push_back((directory / name).string());
     }
-    const auto merged = readProcess(std::move(arguments));
+    std::vector<std::string> environment;
+    for (const auto &[name, value] : isolatedGitVariables(directory.string(), "/dev/null"))
+        environment.push_back(name + '=' + value);
+    const auto merged = written ? readProcess(std::move(arguments), environment) : ProcessOutput{};
     std::filesystem::remove_all(directory);
+    if (!written) throw std::runtime_error("cannot write the versions for git merge-file");
     if (merged.status == -1 || !WIFEXITED(merged.status) || WEXITSTATUS(merged.status) > 127)
         throw std::runtime_error("git merge-file failed");
     return merged.text;
