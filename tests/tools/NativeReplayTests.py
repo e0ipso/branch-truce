@@ -17,6 +17,7 @@ import zlib
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/native-replay'))
 from NativeCalibrationTests import ContractTests
+from calibration import cleanup_confirmed
 import capture_profile
 from ledger import assemble
 from fixture import PATHS, GitError, git, make_fixture, png, reference_bytes, unmerged
@@ -372,8 +373,24 @@ class AcceptanceEvidenceTests(PrivateBaseTestCase):
                     raise RuntimeError('interrupted replay')
             evidence = json.loads(receipt.read_text())
             self.assertFalse(private.exists())
-            self.assertTrue(evidence['private_root_removed'])
-            self.assertTrue(evidence['owned_processes_reaped'])
+            self.assertEqual(evidence, dict(private_root=str(private), private_root_removed=True,
+                                            owned_processes_reaped=True))
+
+    def test_cleanup_is_confirmed_only_by_complete_receipts(self):
+        receipts = []
+        for name in ('one', 'two'):
+            receipts.append(self.base / f'{name}.json')
+            with self.owned(receipts[-1]):
+                pass
+        self.assertTrue(cleanup_confirmed(receipts))
+        self.assertFalse(cleanup_confirmed([]))
+        self.assertFalse(cleanup_confirmed(receipts + [self.base / 'missing.json']))
+        for change in (dict(owned_processes_reaped=False), dict(private_root_removed=False),
+                       dict(private_root=str(self.base))):
+            with self.subTest(change=change):
+                broken = self.base / 'broken.json'
+                broken.write_text(json.dumps(dict(json.loads(receipts[0].read_text()), **change)))
+                self.assertFalse(cleanup_confirmed(receipts + [broken]))
 
 
 if __name__ == '__main__':

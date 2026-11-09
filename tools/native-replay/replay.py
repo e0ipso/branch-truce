@@ -21,7 +21,8 @@ import time
 # Keep the source checkout read only, including when it has no bytecode cache.
 sys.dont_write_bytecode = True
 
-from calibration import ImageTool, build_provenance, capture_inputs, colour_scheme, compare, load_contract, validate_profile
+from calibration import (ImageTool, build_provenance, capture_inputs, cleanup_confirmed, colour_scheme, compare,
+                         load_contract, validate_profile)
 import capture_profile
 from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged
 
@@ -116,8 +117,7 @@ class OwnedResources:
         if self.cleanup_receipt:
             write_json(self.cleanup_receipt, dict(private_root=str(self.root),
                 private_root_removed=not self.root.exists(),
-                owned_processes_reaped=all(process.returncode is not None for process in self.processes),
-                unrelated_outputs_touched=False))
+                owned_processes_reaped=all(process.returncode is not None for process in self.processes)))
         require(not self.reader_errors, 'Owned log reader failed: ' + '; '.join(
             f'{type(error).__name__}: {error}' for error in self.reader_errors))
 
@@ -527,7 +527,7 @@ def replay_once(*, app, driver, tool, source, out, theme, scheme, repeat, size, 
 
 def documentation_preview(*, app, source, docs, size):
     """Run the README preview recipe for notes.md on its own private compositor."""
-    with OwnedResources() as owned:
+    with OwnedResources(docs / 'cleanup.json') as owned:
         env = private_environment(owned.root / 'home')
         compositor = boot_compositor(owned, env, size, docs / 'compositor.log')
         preview_env = dict(compositor.env, PREVIEW_FILE='notes.md', PREVIEW_SIZE='1440x900',
@@ -577,26 +577,30 @@ def capture(*, source, build, output, size, repeat, documentation, schemes, font
         output.mkdir(exist_ok=False)
         write_json(output / 'build-provenance.json', build_provenance(source, build))
         driver, tool = build_driver(output / 'driver-build')
-        records = []
+        records, receipts = [], []
         for index in range(1, repeat + 1):
             for theme, scheme in schemes.items():
                 out = output / f'replay-{index}-{theme}'
                 out.mkdir()
+                receipts.append(out / 'cleanup.json')
                 records += replay_once(app=app, driver=driver, tool=tool, source=source, out=out, theme=theme,
                                        scheme=scheme, repeat=index, size=size, scheme_dir=scheme_dir, fonts=fonts)
         if documentation:
             docs = output / 'documentation-readme'
             docs.mkdir()
+            receipts.append(docs / 'cleanup.json')
             documentation_preview(app=app, source=source, docs=docs, size=size)
         comparisons = compare_repeats(records, tool, schemes)
+        cleaned = cleanup_confirmed(receipts)
         write_json(output / 'verification.json', dict(captures=records, comparisons=comparisons,
             source=str(source), build=str(build), height=size[1],
             themes=list(schemes), kinds=list(KINDS), repeat=repeat,
             environment=dict(platform='wayland', renderer='pixman', quick_backend='software'),
-            cleanup_confirmed=True, source_inputs=capture_inputs(source),
+            cleanup_confirmed=cleaned, source_inputs=capture_inputs(source),
             artifact_hashes={str(p.relative_to(output)): sha256(p) for p in output.rglob('*')
                              if p.is_file() and 'driver-build' not in p.relative_to(output).parts}))
         require(all(row['differing_pixels'] == 0 for row in comparisons), 'Clean replays differ in decoded pixels')
+        require(cleaned, 'A cleanup receipt does not confirm its private root removed and processes reaped')
         print(f'{len(records)} native captures; {len(comparisons)} comparisons, zero differing decoded pixels; cleanup confirmed')
 
 

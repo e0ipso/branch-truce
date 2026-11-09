@@ -267,6 +267,18 @@ def capture_inputs(source):
     return {str(p.relative_to(source)): sha256(p) for p in sorted(paths)}
 
 
+def cleanup_confirmed(receipts):
+    """Whether there are receipts and each shows its private root removed and its processes reaped."""
+    for path in receipts:
+        if not Path(path).is_file():
+            return False
+        receipt = json.loads(Path(path).read_text())
+        if (receipt.get('private_root_removed') is not True or receipt.get('owned_processes_reaped') is not True
+                or Path(receipt['private_root']).exists()):
+            return False
+    return bool(receipts)
+
+
 def verify_capture(output, source):
     report = json.loads((output / 'verification.json').read_text())
     if report['source_inputs'] != capture_inputs(source):
@@ -281,9 +293,8 @@ def verify_capture(output, source):
     for row in report['captures']:
         state = json.loads(Path(row['file']).with_name(Path(row['file']).stem+'-state.json').read_text())
         validate_profile(state['state'], state['metadata'])
-        cleanup = json.loads((Path(row['file']).parent / 'cleanup.json').read_text())
-        if not cleanup['private_root_removed'] or not cleanup['owned_processes_reaped'] or Path(cleanup['private_root']).exists():
-            raise ValueError('Replay cleanup incomplete')
+    if not cleanup_confirmed({Path(row['file']).parent / 'cleanup.json' for row in report['captures']}):
+        raise ValueError('Replay cleanup incomplete')
     if any(r['differing_pixels'] for r in report['comparisons']):
         raise ValueError('Native repeat pixels differ')
     print(f"{len(report['captures'])} captures, {len(report['comparisons'])} repeat comparisons: "
