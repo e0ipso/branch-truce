@@ -17,10 +17,6 @@ KirigamiDelegates.SubtitleDelegate {
     required property string statusIcon
     required property string statusLine
     required property bool resolved
-    required property int undecidedCount
-    required property int conflictCount
-    required property string recoveryState
-    required property string status
     required property string summary
     required property ApplicationController controller
     readonly property bool current: fileId === row.controller.selectedFileId
@@ -43,19 +39,7 @@ KirigamiDelegates.SubtitleDelegate {
     bottomInset: 0
     // The path alone names the row, so a screen reader reads it as the list item's name.
     text: row.path
-    subtitle: row.recoveryState === "failed" || row.recoveryState === "save-failed" || row.recoveryState === "blocked"
-        ? row.status
-        : row.support === "unreadable" ? qsTr("Load error")
-        : row.support === "large-file" ? qsTr("Large file not loaded")
-        : row.support !== "supported" ? qsTr("Handle outside the app")
-        : row.resolved ? qsTr("Resolved")
-        : row.status === "Repository write failed" || row.status === "Written, unresolved"
-            || row.status === "Draft save failed" || row.status === "Outcome uncertain; verification required"
-            || row.status === "Earlier result staged; current draft not applied" ? row.status
-        : row.conflictCount > 0 ? (row.conflictCount === 1
-            ? qsTr("%n conflict left", "", row.conflictCount)
-            : qsTr("%n conflicts left", "", row.conflictCount))
-        : row.statusLine
+    subtitle: row.statusLine
     Accessible.description: row.summary
     icon.name: row.statusIcon
     highlighted: current

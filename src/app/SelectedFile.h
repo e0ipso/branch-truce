@@ -33,6 +33,7 @@ class SelectedFile : public QObject {
     Q_PROPERTY(QString support READ support NOTIFY statusChanged)
     Q_PROPERTY(QString supportDetail READ supportDetail NOTIFY statusChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
+    Q_PROPERTY(branch_truce::SessionModel::StatusKind statusKind READ statusKind NOTIFY statusChanged)
     Q_PROPERTY(bool unsaved READ unsaved NOTIFY statusChanged)
     Q_PROPERTY(bool reviewNeeded READ reviewNeeded NOTIFY statusChanged)
     Q_PROPERTY(bool resolved READ resolved NOTIFY statusChanged)
@@ -78,6 +79,12 @@ public:
     [[nodiscard]] QString support() const { return role(SessionModel::SupportRole).toString(); }
     [[nodiscard]] QString supportDetail() const { return role(SessionModel::SupportDetailRole).toString(); }
     [[nodiscard]] QString status() const { return role(SessionModel::StatusRole).toString(); }
+    // Unreadable without a selected file.
+    [[nodiscard]] SessionModel::StatusKind statusKind() const
+    {
+        const auto kind = role(SessionModel::StatusKindRole);
+        return kind.isValid() ? kind.value<SessionModel::StatusKind>() : SessionModel::StatusKind::Unreadable;
+    }
     [[nodiscard]] bool unsaved() const { return role(SessionModel::UnsavedRole).toBool(); }
     [[nodiscard]] bool reviewNeeded() const { return role(SessionModel::ReviewNeededRole).toBool(); }
     [[nodiscard]] bool resolved() const { return role(SessionModel::ResolvedRole).toBool(); }

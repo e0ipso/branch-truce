@@ -58,9 +58,31 @@ public:
         MimeIconRole,
         MimeDescriptionRole,
         SummaryRole,
-        ConflictCountRole
+        ConflictCountRole,
+        StatusKindRole
     };
     Q_ENUM(Role)
+    // What the status role says, for views that branch on it instead of on
+    // its translated text. The values up to ReviewNeeded mirror FileStatus;
+    // the recovery states outrank every file status.
+    enum class StatusKind {
+        OutsideApp,
+        Unreadable,
+        LargeFile,
+        OutcomeUncertain,
+        CheckpointFailed,
+        WriteFailed,
+        StageFailed,
+        EarlierStaged,
+        Resolved,
+        WrittenUnresolved,
+        SavedDraft,
+        Undecided,
+        ReviewNeeded,
+        RecoveryBlocked,
+        RecoveryPending
+    };
+    Q_ENUM(StatusKind)
 
     explicit SessionModel(QObject *parent = nullptr);
     explicit SessionModel(QString recoveryDirectory, QObject *parent = nullptr);
@@ -175,6 +197,7 @@ private:
     [[nodiscard]] Progress progressAt(std::size_t row) const;
     [[nodiscard]] QVariantMap progressData(std::size_t row) const;
     // The one status rule for the status role and the handoff.
+    [[nodiscard]] StatusKind statusKindAt(std::size_t row) const;
     [[nodiscard]] QString statusAt(std::size_t row) const;
     [[nodiscard]] QString statusLineAt(std::size_t row) const;
     [[nodiscard]] QVariantList chipsAt(std::size_t row) const;

@@ -60,8 +60,8 @@ ObjectModel {
         objectName: "fileFailureNotice"
         onPlainTextRequested: item => fileNotices.plainTextRequested(item)
         Layout.fillWidth: true
-        visible: fileNotices.selectedFile.status === "Repository write failed"
-            || (fileNotices.selectedFile.status === "Written, unresolved"
+        visible: fileNotices.selectedFile.statusKind === SessionModel.WriteFailed
+            || (fileNotices.selectedFile.statusKind === SessionModel.WrittenUnresolved
                 && fileNotices.controller.parentStagingPath.length === 0)
         type: Kirigami.MessageType.Error
         text: fileNotices.selectedFile.status

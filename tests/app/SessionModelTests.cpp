@@ -1044,9 +1044,14 @@ public:
             const auto at = [&](const std::string &id, int value) { return role(model, value, model.rowOf(id)); };
 
             CHECK(at("undecided", SessionModel::StatusLineRole).toString() == "1 undecided");
-            CHECK(at("published", SessionModel::StatusLineRole).toString() == "Written and resolved");
-            CHECK(at("outside", SessionModel::StatusLineRole).toString() == "image content");
-            CHECK(at("unreadable", SessionModel::StatusLineRole).toString() == "File could not be read");
+            CHECK(at("published", SessionModel::StatusLineRole).toString() == "Resolved");
+            CHECK(at("outside", SessionModel::StatusLineRole).toString() == "Handle outside the app");
+            CHECK(at("unreadable", SessionModel::StatusLineRole).toString() == "Load error");
+            // Views branch on the kind, never on the translated status text.
+            CHECK(at("published", SessionModel::StatusKindRole).value<SessionModel::StatusKind>()
+                  == SessionModel::StatusKind::Resolved);
+            CHECK(at("unreadable", SessionModel::StatusKindRole).value<SessionModel::StatusKind>()
+                  == SessionModel::StatusKind::Unreadable);
             CHECK(at("undecided", SessionModel::StatusIconRole).toString() == "vcs-conflicting");
             CHECK(at("published", SessionModel::StatusIconRole).toString() == "emblem-checked");
             CHECK(at("outside", SessionModel::StatusIconRole).toString() == "unknown");

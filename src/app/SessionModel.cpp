@@ -271,6 +271,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case ReviewNeededRole: return facts.needsReview;
     case ResolvedRole: return resolvedAt(row);
     case StatusRole: return statusAt(row);
+    case StatusKindRole: return QVariant::fromValue(statusKindAt(row));
     case FinishBlockersRole: return blockersAt(row);
     case CanUndoRole: return !pendingInput && !recoveryFailed && file.canUndo();
     case CanRedoRole: return !pendingInput && !recoveryFailed && file.canRedo();
@@ -326,7 +327,8 @@ QHash<int, QByteArray> SessionModel::roleNames() const
             {MimeIconRole, "mimeIcon"},
             {MimeDescriptionRole, "mimeDescription"},
             {SummaryRole, "summary"},
-            {ConflictCountRole, "conflictCount"}};
+            {ConflictCountRole, "conflictCount"},
+            {StatusKindRole, "statusKind"}};
 }
 
 const FileSession *SessionModel::file(const std::string &id) const
@@ -462,29 +464,57 @@ QVariantMap SessionModel::progressData(std::size_t row) const
             {QStringLiteral("stagedRevision"), file.staged() ? revisionText(file.staged()->revision.id) : QString{}}};
 }
 
-QString SessionModel::statusAt(std::size_t row) const
+static_assert(static_cast<int>(SessionModel::StatusKind::OutsideApp) == static_cast<int>(FileStatus::OutsideApp)
+                  && static_cast<int>(SessionModel::StatusKind::ReviewNeeded)
+                      == static_cast<int>(FileStatus::ReviewNeeded),
+              "StatusKind mirrors FileStatus");
+
+SessionModel::StatusKind SessionModel::statusKindAt(std::size_t row) const
 {
     const auto &id = files_[row].id();
-    if (journal_.failure(id)) return tr("Recovery requires attention; work remains outstanding");
-    if (const auto *pending = journal_.pending(id)) {
-        return pending->action == QLatin1String("manual-save") ? engine_text::status(FileStatus::CheckpointFailed)
-                                                               : tr("Recovery failed; pending input retained");
-    }
-    return engine_text::status(facts_[row].status);
+    if (journal_.failure(id)) return StatusKind::RecoveryBlocked;
+    if (const auto *pending = journal_.pending(id))
+        return pending->action == QLatin1String("manual-save") ? StatusKind::CheckpointFailed
+                                                               : StatusKind::RecoveryPending;
+    return static_cast<StatusKind>(facts_[row].status);
 }
 
-// A file outside the app names its reason, an unresolved file its undecided
-// count and a settled file that Mark resolved is next; otherwise the status.
+QString SessionModel::statusAt(std::size_t row) const
+{
+    switch (const auto kind = statusKindAt(row)) {
+    case StatusKind::RecoveryBlocked: return tr("Recovery requires attention; work remains outstanding");
+    case StatusKind::RecoveryPending: return tr("Recovery failed; pending input retained");
+    default: return engine_text::status(static_cast<FileStatus>(kind));
+    }
+}
+
+// The row's one status line, in this order: a recovery problem, a file the
+// app cannot edit, a resolved file, a publication or Save outcome to act on,
+// the conflicts left, the undecided choices, then Mark resolved as next step.
 QString SessionModel::statusLineAt(std::size_t row) const
 {
     const auto &file = files_[row];
-    if (file.support() != Support::Supported) {
-        const auto detail = engine_text::supportDetail(file);
-        return detail.isEmpty() ? statusAt(row) : detail;
+    const auto kind = statusKindAt(row);
+    const bool recoveryProblem = journal_.failure(file.id()) || journal_.pending(file.id());
+    if (recoveryProblem) return statusAt(row);
+    switch (file.support()) {
+    case Support::Unreadable: return tr("Load error");
+    case Support::LargeFile: return tr("Large file not loaded");
+    case Support::OutsideApp: return tr("Handle outside the app");
+    case Support::Supported: break;
+    }
+    if (resolvedAt(row)) return tr("Resolved");
+    switch (kind) {
+    case StatusKind::WriteFailed:
+    case StatusKind::WrittenUnresolved:
+    case StatusKind::CheckpointFailed:
+    case StatusKind::OutcomeUncertain:
+    case StatusKind::EarlierStaged: return statusAt(row);
+    default: break;
     }
     const auto progress = progressAt(row);
-    if (progress.undecided > 0 && !progress.resolved)
-        return tr("%1 undecided").arg(static_cast<qulonglong>(progress.undecided));
+    if (progress.conflicts > 0) return tr("%n conflict(s) left", nullptr, static_cast<int>(progress.conflicts));
+    if (progress.undecided > 0) return tr("%n undecided", nullptr, static_cast<int>(progress.undecided));
     if (progress.settled) return tr("Ready to mark resolved");
     return statusAt(row);
 }
