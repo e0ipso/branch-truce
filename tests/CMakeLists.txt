@@ -32,6 +32,8 @@ branch_truce_add_core_test(correspondence core/CorrespondenceTests.cpp)
 branch_truce_add_core_test(editing-commands core/EditingCommandsTests.cpp)
 branch_truce_add_core_test(resource-limits core/ResourceLimitsTests.cpp)
 branch_truce_add_core_test(word-differences core/WordDifferencesTests.cpp)
+# The harness every suite shares: failure messages, deferred failures, skips and the case filter.
+branch_truce_add_core_test(test-harness core/TestHarnessTests.cpp)
 find_program(BASH_EXECUTABLE bash REQUIRED)
 add_test(NAME tooling.icon-name-collection
     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
