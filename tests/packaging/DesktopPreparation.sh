@@ -41,13 +41,13 @@ for cache_enabled in 0 1; do
             grep -q '^groupadd ' "$PREPARATION_LOG"
             grep -q '^runuser -u bt-test ' "$PREPARATION_LOG"
         else
-            ! grep -q '^useradd ' "$PREPARATION_LOG"
+            if grep -q '^useradd ' "$PREPARATION_LOG"; then echo 'FAIL: useradd for an existing account' >&2; exit 1; fi
             grep -q '^runuser -u fixture-user ' "$PREPARATION_LOG"
         fi
         if [ "$cache_enabled" = 1 ]; then
             grep -q '^usermod -a -G root ' "$PREPARATION_LOG"
         else
-            ! grep -q '^usermod ' "$PREPARATION_LOG"
+            if grep -q '^usermod ' "$PREPARATION_LOG"; then echo 'FAIL: usermod without a compiler cache' >&2; exit 1; fi
         fi
     done
 done

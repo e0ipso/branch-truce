@@ -60,5 +60,5 @@ EOF
         done
         isolated git add -- "$@" && isolated git commit --quiet -m "$label" || return 1
     done
-    ! isolated git merge --no-edit side >/dev/null 2>&1
+    if isolated git merge --no-edit side >/dev/null 2>&1; then return 1; fi
 }

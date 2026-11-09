@@ -135,8 +135,8 @@ if ! grep -qF 'complete native container logs' "$work/log-recovery/containers/ar
 fi
 : > "$work/engine.log"
 NATIVE_FINAL_LOG_FAIL=1 expect_failure 'FAILED' bash "$runner" --format arch-pkg --version 1.2.3 --output "$work/log-failure"
-[ "$(cat "$work/log-failure/containers/arch-pkg/baseline.exit")" = 0 ]
-! grep -q '^rm ' "$work/engine.log"
 # A log-collection failure must retain the successful container for diagnosis.
 # Its recorded native exit remains zero even though the stage fails.
+[ "$(cat "$work/log-failure/containers/arch-pkg/baseline.exit")" = 0 ]
+if grep -q '^rm ' "$work/engine.log"; then echo 'FAIL: a container was removed after its logs were lost' >&2; exit 1; fi
 echo 'all native integration contracts passed'
