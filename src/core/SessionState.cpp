@@ -163,10 +163,14 @@ FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool
             result.choices = std::move(choices);
             result.nonConflictingTargets = std::move(nonConflicting);
         } catch (const std::bad_alloc &) {
-            // The algorithm contract allows no other failure, and the texts
-            // were checked before, so anything else is a programming error.
             result.support = Support::Unreadable;
             result.failure = LoadFailure{LoadFailureReason::OutOfMemory};
+        } catch (const std::exception &) {
+            // The algorithm contract allows only bad_alloc and the texts were
+            // checked before, so this is a defect. Hold the file back instead
+            // of failing the whole session load.
+            result.support = Support::Unreadable;
+            result.failure = LoadFailure{LoadFailureReason::AlignmentFailed};
         }
     }
     auto scan = resultMarkers(initial.text, markerSize_, correspondence.get());

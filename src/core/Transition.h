@@ -22,7 +22,10 @@ enum class LoadFailureReason {
     // A conflict-marker-size over kMaxConflictMarkerSize.
     MarkerSizeTooLarge,
     // Aligning the sources with the result ran out of memory.
-    OutOfMemory
+    OutOfMemory,
+    // The alignment failed for any other reason. The texts were checked
+    // before, so this is a defect; the file stays readable as plain text.
+    AlignmentFailed
 };
 struct LoadFailure {
     LoadFailureReason reason;

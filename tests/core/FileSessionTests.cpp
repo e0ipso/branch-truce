@@ -24,19 +24,27 @@ using test_support::titled;
 
 namespace {
 // The engine's alignment, counting its calls and failing the one numbered
-// failAt with the only failure the algorithm contract allows.
+// failAt: with the only failure the algorithm contract allows, or with a
+// defect that breaks the contract.
 class CountingAlgorithm final : public CorrespondenceAlgorithm {
 public:
-    explicit CountingAlgorithm(int failAt = 0) : failAt_(failAt) {}
+    enum class Failure { OutOfMemory, Defect };
+    explicit CountingAlgorithm(int failAt = 0, Failure failure = Failure::OutOfMemory)
+        : failAt_(failAt), failure_(failure)
+    {}
     [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override
     {
-        if (++calls == failAt_) throw std::bad_alloc();
+        if (++calls == failAt_) {
+            if (failure_ == Failure::OutOfMemory) throw std::bad_alloc();
+            throw std::logic_error("alignment defect");
+        }
         return ExactLineCorrespondence{}.compare(source, result);
     }
     mutable int calls = 0;
 
 private:
     int failAt_;
+    Failure failure_;
 };
 
 Draft draft(std::string text = "result\n")
@@ -282,6 +290,14 @@ void aFailedOpeningLeavesNothingHalfBuilt()
     CHECK(file.current().draft.decisions.empty() && file.markerSections().empty());
     CHECK(file.snapshots() && file.current().draft.text == file.snapshots()->launchResult.text.utf8);
     CHECK(file.editResult(1, {{0, 0}, "x"}) == Transition::Blocked);
+}
+
+void aDefectiveAlignmentHoldsTheFileBack()
+{
+    auto file = diff3Session(std::make_shared<CountingAlgorithm>(2, CountingAlgorithm::Failure::Defect));
+    CHECK(file.support() == Support::Unreadable && !file.correspondence());
+    CHECK(file.loadFailure() == LoadFailure{LoadFailureReason::AlignmentFailed});
+    CHECK(file.current().draft.text == file.snapshots()->launchResult.text.utf8);
 }
 
 void commandsCheckTheirAnchorsAgainstTheCurrentRevision()
@@ -989,6 +1005,7 @@ int main()
     suite.run("undo reaches back as far as the history size allows", undoReachesBackAsFarAsTheHistorySizeAllows);
     suite.run("the session aligns with the algorithm it is given", theSessionAlignsWithTheAlgorithmItIsGiven);
     suite.run("a failed opening leaves nothing half built", aFailedOpeningLeavesNothingHalfBuilt);
+    suite.run("a defective alignment holds the file back", aDefectiveAlignmentHoldsTheFileBack);
     suite.run("commands check their anchors against the current revision",
               commandsCheckTheirAnchorsAgainstTheCurrentRevision);
     suite.run("source captures survive edits history checkpoints and staged discards",

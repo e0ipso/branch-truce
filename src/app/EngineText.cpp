@@ -172,6 +172,8 @@ QString loadFailure(const LoadFailure &failure)
             .arg(static_cast<qulonglong>(kMaxConflictMarkerSize));
     case LoadFailureReason::OutOfMemory:
         return QCoreApplication::translate("EngineText", "Load error: not enough memory to align the captured sources");
+    case LoadFailureReason::AlignmentFailed:
+        return QCoreApplication::translate("EngineText", "Load error: could not align the captured sources");
     }
     return {};
 }
