@@ -32,6 +32,8 @@ void SyntaxHighlighting::attach(QTextDocument *document)
 {
     if (!document || document->findChild<PaneHighlighter *>(QString(), Qt::FindDirectChildrenOnly)) return;
     auto *highlighter = new PaneHighlighter(document);
+    // Destroyed documents take their highlighters along; drop them here as the plain-text build does.
+    d_->highlighters.removeAll(nullptr);
     d_->highlighters.push_back(highlighter);
     highlighter->highlight(d_->definition, d_->theme);
 }
