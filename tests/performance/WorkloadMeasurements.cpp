@@ -751,6 +751,20 @@ int recoveryWorker(const std::string &name, const std::string &mode, std::size_t
     return 0;
 }
 
+// Reports a completed record and then dies on SIGTERM, as a worker does that crashes in teardown
+// after its measurement. The supervisor must not count that record as completed.
+int selfCheckWorker(const std::string &name)
+{
+    auto record = baseRecord("self-check", name, "signal", {}, 0, 0, 0);
+    record.elapsedMs = 0;
+    record.outcome = "completed";
+    record.detail = "reported before the worker was signalled";
+    emitRecord(record);
+    std::signal(SIGTERM, SIG_DFL);
+    std::raise(SIGTERM);
+    return 0;
+}
+
 struct Args {
     std::string kind;
     std::string name;
@@ -803,6 +817,7 @@ int workerMain(int argc, char **argv)
     if (args.kind == "git")
         return gitWorker(args.name, args.mode, args.bytes, args.scratch, std::max(1000, args.timeoutMs - 1000));
     if (args.kind == "recovery") return recoveryWorker(args.name, args.mode, args.bytes, args.scratch);
+    if (args.kind == "self-check") return selfCheckWorker(args.name);
     std::cerr << "unknown worker\n";
     return 2;
 }
@@ -1002,6 +1017,15 @@ std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std
     std::vector<std::string> failures;
     removeScratch(scratch, &failures);
     if (!failures.empty()) *problem = failures.front();
+    // A worker that reported and then failed on its own, by exit status or by a signal the
+    // supervisor did not send, cannot vouch for what it reported.
+    std::string failedExit;
+    if (!resource && !timedOut) {
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0)
+            failedExit = "worker exited " + std::to_string(WEXITSTATUS(status));
+        else if (WIFSIGNALED(status))
+            failedExit = "worker ended by signal " + std::to_string(WTERMSIG(status));
+    }
     std::vector<Record> records;
     std::istringstream lines(output);
     std::string line;
@@ -1020,8 +1044,10 @@ std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std
         record.rssKb = std::strtoull(fields[8].c_str(), nullptr, 10);
         record.detail = fields[9];
         record.metric = metricOf(record.name, spec.mode);
-        if (WIFEXITED(status) && WEXITSTATUS(status) != 0 && record.outcome == "completed")
+        if (!failedExit.empty() && record.outcome == "completed") {
             record.outcome = "inconsistent";
+            record.detail = failedExit + " after reporting: " + record.detail;
+        }
         records.push_back(record);
     }
     if (resource || timedOut || records.empty()) {
@@ -1444,6 +1470,7 @@ std::vector<OwnedSpec> buildGate()
     add("recovery", "recovery", "recovery-65536", "commit", 0, 65536, 20000, false);
     add("recovery-probe", "recovery", "recovery-bad-digest", "bad-digest", 0, 64, 20000, false);
     add("recovery-probe", "recovery", "recovery-overload", "overload", 0, 1024ull * 1024ull, 20000, false);
+    add("self-check", "self-check", "worker-signalled-after-report", "signal", 0, 0, 20000, false);
     for (auto &owned : specs) owned.spec.name = owned.name.c_str();
     return specs;
 }
@@ -1476,6 +1503,8 @@ const std::vector<Expectation> kGate = {
     {"git-read-65536", "completed", "api=Success"},
     {"recovery-65536-commit", "completed", "acknowledged=1"},
     {"recovery-65536-reload", "completed", nullptr},
+    // The supervisor itself: a record from a worker that then died on a signal is not completed.
+    {"worker-signalled-after-report", "inconsistent", "worker ended by signal 15"},
 };
 }
 
