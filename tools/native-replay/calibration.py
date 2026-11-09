@@ -8,11 +8,11 @@ from pathlib import Path
 import shutil
 import subprocess
 
+import capture_profile
 from fixture import sha256
 
 HERE = Path(__file__).resolve().parent
 CONTRACT = HERE / 'reference-contract.json'
-PROFILE = HERE / 'capture-profile.json'
 # The narrow regions each kind of reference exception may name.
 EXCEPTION_REGIONS = {'truthful-identity': {'source_identity', 'incoming_identity'},
                      'truthful-metadata': {'footer_facts'}, 'renderer': {'glyph'},
@@ -236,7 +236,7 @@ def colour_scheme(path):
 
 
 def validate_profile(state, metadata):
-    profile = json.loads(PROFILE.read_text())
+    profile = capture_profile.load()
     actual = state['profile']
     for key, expected in profile['pinned_observations'].items():
         if actual.get(key) != expected:

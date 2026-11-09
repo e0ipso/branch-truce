@@ -17,6 +17,7 @@ import zlib
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/native-replay'))
 from NativeCalibrationTests import ContractTests
+import capture_profile
 from ledger import assemble
 from fixture import PATHS, GitError, git, make_fixture, png, reference_bytes, unmerged
 from replay import (NativeClient, OwnedResources, await_compositor, item, private_environment, replay_lock,
@@ -146,11 +147,13 @@ class ResourceTests(PrivateBaseTestCase):
         schemes = self.base / 'schemes'
         schemes.mkdir()
         (schemes / 'BreezeDark.colors').write_text('[Colors:Window]\nBackgroundNormal=32,35,38\n')
-        path = write_kdeglobals(self.base, 'BreezeDark', schemes)
+        fonts = capture_profile.run_shape(capture_profile.load()).kdeglobals_fonts
+        path = write_kdeglobals(self.base, 'BreezeDark', schemes, fonts)
         self.assertEqual(path, self.base / 'kdeglobals')
-        text = path.read_text()
-        self.assertTrue(text.startswith('[Colors:Window]\nBackgroundNormal=32,35,38\n'))
-        self.assertIn('\n[General]\nColorScheme=BreezeDark\n', text)
+        self.assertEqual(path.read_text(), '[Colors:Window]\nBackgroundNormal=32,35,38\n\n[General]\n'
+                         'ColorScheme=BreezeDark\nfont=Noto Sans,10,-1,5,50,0,0,0,0,0\n'
+                         'fixed=Hack,9,-1,5,50,0,0,0,0,0\n')
+
 
     def test_reader_failure_is_reported_after_private_cleanup(self):
         def broken_reader():
@@ -209,6 +212,31 @@ class ResourceTests(PrivateBaseTestCase):
         released = subprocess.run([sys.executable, '-B', '-c', script, str(lock)], env=env, capture_output=True)
         self.assertEqual(released.returncode, 0)
         self.assertEqual(released.stdout, b'acquired\n')
+
+
+class CaptureProfileTests(unittest.TestCase):
+    def test_run_shape_comes_from_the_capture_profile(self):
+        shape = capture_profile.run_shape(capture_profile.load())
+        self.assertEqual(shape.schemes, {'light': 'BreezeLight', 'dark': 'BreezeDark'})
+        self.assertEqual(shape.sizes, ((1280, 720), (1280, 800)))
+        self.assertEqual(shape.heights, (720, 800))
+        self.assertEqual(shape.size(800), (1280, 800))
+        self.assertEqual(shape.repeat, 2)
+        self.assertEqual(list(shape.kdeglobals_fonts), ['font', 'fixed'])
+        with self.assertRaisesRegex(ValueError, '900 is not a logical height'):
+            shape.size(900)
+
+    def test_malformed_run_shape_is_rejected(self):
+        profile = capture_profile.load()
+        for change, message in [(lambda p: p.update(clean_replays=1), 'clean_replays'),
+                                (lambda p: p['environment'].update(colour_schemes={}), 'colour_schemes'),
+                                (lambda p: p['environment'].update(logical_sizes=[[1280, 0]]), 'logical_sizes'),
+                                (lambda p: p['environment'].update(logical_sizes=[[1280, 720], [1440, 720]]),
+                                 'repeat a height')]:
+            candidate = json.loads(json.dumps(profile))
+            change(candidate)
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                capture_profile.run_shape(candidate)
 
 
 class ReadinessTests(PrivateBaseTestCase):
@@ -310,6 +338,30 @@ class AcceptanceEvidenceTests(PrivateBaseTestCase):
             self.assertEqual(row['residuals'][0]['differing_pixels'], 12)
             self.assertEqual(len(row['missing_evidence']), 2)
             self.assertIsNone(row['original_inspection'])
+
+    def write_verification(self, root, height, repeat, captures=None, **changes):
+        themes, kinds = ['light', 'dark'], ['text', 'binary']
+        shots = [dict(theme=t, kind=k) for t in themes for k in kinds]
+        report = dict(themes=themes, kinds=kinds, repeat=repeat, cleanup_confirmed=True,
+                      captures=shots * repeat if captures is None else shots[:1] * captures,
+                      comparisons=[dict(differing_pixels=0)] * (len(shots) * (repeat - 1)))
+        report.update(changes)
+        (root / str(height)).mkdir(parents=True, exist_ok=True)
+        (root / str(height) / 'verification.json').write_text(json.dumps(report))
+
+    def test_ledger_expects_every_theme_kind_and_repeat_the_report_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_verification(root, 720, 3)
+            self.write_verification(root, 800, 2)
+            self.assertTrue(all(row['missing_evidence'] == [] for row in assemble(root)['callouts']
+                                if row['calibrated_regions']))
+            # Three repeats need twelve shots and eight comparisons; eight and four are not enough.
+            self.write_verification(root, 720, 3, captures=8, comparisons=[dict(differing_pixels=0)] * 4)
+            self.write_verification(root, 800, 2, themes=['light'])
+            missing = next(row for row in assemble(root)['callouts'] if row['calibrated_regions'])['missing_evidence']
+            self.assertEqual(missing, ['720: successful complete replay receipt unavailable',
+                                       '800: successful complete replay receipt unavailable'])
 
     def test_error_cleanup_publishes_only_actual_owned_disposition(self):
         with tempfile.TemporaryDirectory() as directory:

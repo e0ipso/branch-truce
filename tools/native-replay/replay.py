@@ -22,6 +22,7 @@ import time
 sys.dont_write_bytecode = True
 
 from calibration import ImageTool, build_provenance, capture_inputs, colour_scheme, compare, load_contract, validate_profile
+import capture_profile
 from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged
 
 HERE = Path(__file__).resolve().parent
@@ -319,17 +320,16 @@ def callout_closeups(state, shot, tool, output):
                transforms='exact native pixels, no scaling, overlays or target substitution'))
 
 
-THEMES = {'light': 'BreezeLight', 'dark': 'BreezeDark'}
 KINDS = ('text', 'binary')
 SHOT_PATHS = {'text': 'src/net/retry.cpp', 'binary': 'assets/logo.png'}
 
 
-def write_kdeglobals(config_home, scheme, scheme_dir):
+def write_kdeglobals(config_home, scheme, scheme_dir, fonts):
     """Configure the private session's colour scheme and fonts. Returns the kdeglobals path."""
     colours = Path(scheme_dir) / f'{scheme}.colors'
     path = Path(config_home) / 'kdeglobals'
-    path.write_text(colours.read_text() +
-        f'\n[General]\nColorScheme={scheme}\nfont=Noto Sans,10,-1,5,50,0,0,0,0,0\nfixed=Hack,9,-1,5,50,0,0,0,0,0\n')
+    path.write_text(colours.read_text() + f'\n[General]\nColorScheme={scheme}\n'
+                    + ''.join(f'{key}={value}\n' for key, value in fonts.items()))
     return path
 
 
@@ -447,7 +447,7 @@ class Replay:
                                              os_release=Path('/etc/os-release').read_text(), physical_desktop=False,
                                              scheme_roles=colour_scheme(self.kdeglobals)),
                     reference_provenance_sha256=sha256(REFERENCE / 'provenance.json'),
-                    capture_profile_sha256=sha256(HERE / 'capture-profile.json'),
+                    capture_profile_sha256=sha256(capture_profile.PROFILE),
                     reference_contract_sha256=sha256(HERE / 'reference-contract.json'))
 
 
@@ -505,7 +505,7 @@ def drive_app(owned, compositor, replay, *, app, driver, tool, repo, source, out
     return captures
 
 
-def replay_once(*, app, driver, tool, source, out, theme, repeat, size, scheme_dir):
+def replay_once(*, app, driver, tool, source, out, theme, scheme, repeat, size, scheme_dir, fonts):
     """One clean replay: a new fixture, private home and compositor, the app and its shots."""
     with OwnedResources(out / 'cleanup.json') as owned:
         env = private_environment(owned.root / 'home')
@@ -513,8 +513,7 @@ def replay_once(*, app, driver, tool, source, out, theme, repeat, size, scheme_d
         fixture = make_fixture(fixture_root)
         repo = fixture_root / 'retry-service'
         write_json(out / 'fixture.json', fixture)
-        scheme = THEMES[theme]
-        kdeglobals = write_kdeglobals(env['XDG_CONFIG_HOME'], scheme, scheme_dir)
+        kdeglobals = write_kdeglobals(env['XDG_CONFIG_HOME'], scheme, scheme_dir, fonts)
         compositor = boot_compositor(owned, env, size, out / 'compositor.log')
         replay = Replay(theme=theme, repeat=repeat, size=size, fixture=fixture,
                         fixture_sha256=sha256(out / 'fixture.json'), executable_sha256=sha256(app),
@@ -554,10 +553,10 @@ def build_driver(directory):
     return directory / 'libnative_replay.so', ImageTool(directory / 'native-replay-image')
 
 
-def compare_repeats(records, tool):
+def compare_repeats(records, tool, themes):
     """Compare each later repeat's decoded pixels with the first repeat of the same theme and kind."""
     comparisons = []
-    for theme in THEMES:
+    for theme in themes:
         for kind in KINDS:
             selected = [r for r in records if r['theme'] == theme and r['kind'] == kind]
             for row in selected[1:]:
@@ -567,7 +566,7 @@ def compare_repeats(records, tool):
     return comparisons
 
 
-def capture(*, source, build, output, size, repeat, documentation, scheme_dir):
+def capture(*, source, build, output, size, repeat, documentation, schemes, fonts, scheme_dir):
     require((source / 'tools/native-replay/replay.py').resolve() == Path(__file__).resolve(),
             '--source must name the checkout containing this replay tool')
     app = build / 'src/app/branch-truce'
@@ -580,18 +579,19 @@ def capture(*, source, build, output, size, repeat, documentation, scheme_dir):
         driver, tool = build_driver(output / 'driver-build')
         records = []
         for index in range(1, repeat + 1):
-            for theme in THEMES:
+            for theme, scheme in schemes.items():
                 out = output / f'replay-{index}-{theme}'
                 out.mkdir()
-                records += replay_once(app=app, driver=driver, tool=tool, source=source, out=out,
-                                       theme=theme, repeat=index, size=size, scheme_dir=scheme_dir)
+                records += replay_once(app=app, driver=driver, tool=tool, source=source, out=out, theme=theme,
+                                       scheme=scheme, repeat=index, size=size, scheme_dir=scheme_dir, fonts=fonts)
         if documentation:
             docs = output / 'documentation-readme'
             docs.mkdir()
             documentation_preview(app=app, source=source, docs=docs, size=size)
-        comparisons = compare_repeats(records, tool)
+        comparisons = compare_repeats(records, tool, schemes)
         write_json(output / 'verification.json', dict(captures=records, comparisons=comparisons,
             source=str(source), build=str(build), height=size[1],
+            themes=list(schemes), kinds=list(KINDS), repeat=repeat,
             environment=dict(platform='wayland', renderer='pixman', quick_backend='software'),
             cleanup_confirmed=True, source_inputs=capture_inputs(source),
             artifact_hashes={str(p.relative_to(output)): sha256(p) for p in output.rglob('*')
@@ -601,6 +601,7 @@ def capture(*, source, build, output, size, repeat, documentation, scheme_dir):
 
 
 def main():
+    shape = capture_profile.run_shape(capture_profile.load())
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='mode', required=True)
     fixture = sub.add_parser('fixture', help='Create a new deterministic merge without starting the app')
@@ -609,9 +610,11 @@ def main():
     native.add_argument('--source', required=True, type=Path)
     native.add_argument('--build', required=True, type=Path)
     native.add_argument('--output', required=True, type=Path)
-    native.add_argument('--height', type=int, choices=(720, 800), default=720)
+    native.add_argument('--height', type=int, choices=shape.heights, default=shape.heights[0],
+                        help='logical output height from capture-profile.json (default %(default)s)')
     native.add_argument('--documentation', action='store_true', help='Also retain the fresh README preview pair')
-    native.add_argument('--repeat', type=int, default=2)
+    native.add_argument('--repeat', type=int, default=shape.repeat,
+                        help='clean replays per theme, at least 2 (default %(default)s)')
     args = parser.parse_args()
     def interrupted(signum, _frame):
         raise SystemExit(128 + signum)
@@ -620,8 +623,8 @@ def main():
         print(json.dumps(make_fixture(args.output.resolve()), indent=2))
     else:
         capture(source=args.source.resolve(), build=args.build.resolve(), output=args.output.resolve(),
-                size=(1280, args.height), repeat=args.repeat, documentation=args.documentation,
-                scheme_dir=COLOUR_SCHEMES)
+                size=shape.size(args.height), repeat=args.repeat, documentation=args.documentation,
+                schemes=shape.schemes, fonts=shape.kdeglobals_fonts, scheme_dir=COLOUR_SCHEMES)
 
 
 if __name__ == '__main__':
