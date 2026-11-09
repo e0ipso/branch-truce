@@ -82,10 +82,11 @@ echo "Copied source: $source_dir (from $root at $(git -C "$root" rev-parse --sho
 
 source "$root/packaging/scripts/compiler-cache.sh"
 cache_begin install-prefix-Release "$fixture"
+mapfile -t cache_args < <(cache_cmake_args)
 step "Configure, build and install"
 run cmake -S "$source_dir" -B "$build" -G 'Unix Makefiles' -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_TESTING=OFF -DBRANCH_TRUCE_BUILD_DESKTOP=ON -DBRANCH_TRUCE_WARNINGS_AS_ERRORS=ON \
-    "-DCMAKE_INSTALL_PREFIX=$prefix" "${cache_cmake_args[@]}"
+    "-DCMAKE_INSTALL_PREFIX=$prefix" "${cache_args[@]}"
 cache_build_status=0
 run cmake --build "$build" --parallel 2 || cache_build_status=$?
 cache_end

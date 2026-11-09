@@ -76,7 +76,9 @@ arch_package_main() {
     if [ "$(id -u)" -eq 0 ]; then
         chown -R builder:builder "$work"
         # The stats log is written by makepkg's actual compiler user.
-        [ -z "$cache_report" ] || chown builder:builder "$cache_report"*
+        local report
+        report=$(cache_report_path)
+        [ -z "$report" ] || chown builder:builder "$report"*
         (cd "$work" && runuser -u builder -- makepkg --noconfirm --clean) || build_status=$?
     else
         (cd "$work" && makepkg --noconfirm --clean) || build_status=$?

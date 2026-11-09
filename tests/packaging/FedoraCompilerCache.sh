@@ -47,6 +47,7 @@ cp "%{_vpath_builddir}/cache-fixture" "$CACHE_RPM_FIXTURE_BINARY"
 %{_bindir}/cache-fixture
 SPEC
     cache_begin native-rpm-distro "$cache_rpm_build"
+    cache_rpm_report=$(cache_report_path)
     export CACHE_RPM_FIXTURE_BINARY="$cache_rpm_build/compiled-fixture"
     if ! rpmbuild -bb --define "_topdir $cache_rpm_build/rpmbuild" \
         --define '_smp_mflags -j2' "$cache_rpm_build/probe.spec" > "$cache_rpm_build/rpm.log" 2>&1; then
@@ -56,8 +57,8 @@ SPEC
     cache_end
     [ "$("$CACHE_RPM_FIXTURE_BINARY")" = "$cache_rpm_value" ]
     readelf --debug-dump=info "$CACHE_RPM_FIXTURE_BINARY" | grep 'DW_AT_comp_dir.* /bt/build' >/dev/null
-    cache_rpm_hits="$(awk '$1 == "direct_cache_hit" || $1 == "preprocessed_cache_hit" { total += $2 } END { print total+0 }' "$cache_report.stats")"
-    cache_rpm_misses="$(awk '$1 == "cache_miss" { print $2 }' "$cache_report.stats")"
+    cache_rpm_hits="$(awk '$1 == "direct_cache_hit" || $1 == "preprocessed_cache_hit" { total += $2 } END { print total+0 }' "$cache_rpm_report.stats")"
+    cache_rpm_misses="$(awk '$1 == "cache_miss" { print $2 }' "$cache_rpm_report.stats")"
     if [ "$cache_rpm_pass" = warm ]; then
         [ "$cache_rpm_hits" -gt 0 ] && [ "$cache_rpm_misses" -eq 0 ] || {
             echo 'FAIL: relocated native RPM compiler never reads the cache' >&2; exit 1;
