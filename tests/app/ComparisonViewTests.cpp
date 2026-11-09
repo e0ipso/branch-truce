@@ -1612,6 +1612,39 @@ public:
             checkEnabled("paste", "pasteResult", "resultMenuPaste", true);
             QGuiApplication::clipboard()->clear();
         });
+        suite.run("the result menu opens from a right click, the Menu key and Shift+F10", [] {
+            Fixture fixture;
+            settlePanes(fixture);
+            auto *editor = fixture.item("resultText");
+            auto *menu = fixture.object("resultContextMenu");
+            const auto closeMenu = [&] {
+                QTest::keyClick(fixture.window, Qt::Key_Escape);
+                settle([&] { return !menu->property("visible").toBool(); });
+            };
+            editor->forceActiveFocus(Qt::TabFocusReason);
+            settle([&] { return editor->hasActiveFocus(); });
+            QTest::keyClick(fixture.window, Qt::Key_Menu);
+            settle([&] { return menu->property("opened").toBool(); });
+            closeMenu();
+            editor->forceActiveFocus(Qt::TabFocusReason);
+            QTest::keyClick(fixture.window, Qt::Key_F10, Qt::ShiftModifier);
+            settle([&] { return menu->property("opened").toBool(); });
+            closeMenu();
+            // Another modifier with F10 is not a menu request.
+            editor->forceActiveFocus(Qt::TabFocusReason);
+            QTest::keyClick(fixture.window, Qt::Key_F10, Qt::ShiftModifier | Qt::ControlModifier);
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            CHECK(!menu->property("visible").toBool());
+            const auto point = editor->mapToScene(QPointF(editor->width() / 2, 10)).toPoint();
+            QTest::mouseClick(fixture.window, Qt::RightButton, Qt::NoModifier, point);
+            settle([&] { return menu->property("opened").toBool(); });
+            // Only the app's menu opens, never the editor's default text menu.
+            int openMenus = 0;
+            for (auto *popup : fixture.window->findChildren<QObject *>())
+                if (popup->inherits("QQuickMenu") && popup->property("visible").toBool()) ++openMenus;
+            CHECK(openMenus == 1);
+            closeMenu();
+        });
         suite.run("lossless editing gates toolbar menu and native paste together", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "line\xe2\x80\xa8separator\n"));
             const auto before = fixture.file().current();

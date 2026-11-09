@@ -1,18 +1,18 @@
-// The source menu host routes desktop context-menu gestures from a read-only editor to its range choices.
-#include "SourceContextMenuHost.h"
+// The context menu host routes desktop context-menu gestures from a text editor to the app's own menu.
+#include "ContextMenuHost.h"
 
 #include <QContextMenuEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 
 namespace branch_truce {
-SourceContextMenuHost::SourceContextMenuHost(QQuickItem *parent) : QQuickItem(parent)
+ContextMenuHost::ContextMenuHost(QQuickItem *parent) : QQuickItem(parent)
 {
     setFiltersChildMouseEvents(true);
     setAcceptedMouseButtons(Qt::RightButton);
 }
 
-void SourceContextMenuHost::setEditor(QQuickItem *editor)
+void ContextMenuHost::setEditor(QQuickItem *editor)
 {
     if (m_editor == editor) return;
     if (m_editor) m_editor->removeEventFilter(this);
@@ -28,7 +28,7 @@ void SourceContextMenuHost::setEditor(QQuickItem *editor)
     emit editorChanged();
 }
 
-bool SourceContextMenuHost::childMouseEventFilter(QQuickItem *item, QEvent *event)
+bool ContextMenuHost::childMouseEventFilter(QQuickItem *item, QEvent *event)
 {
     if (!m_editor || (item != m_editor && !m_editor->isAncestorOf(item)) || event->type() != QEvent::MouseButtonPress)
         return false;
@@ -45,7 +45,7 @@ bool SourceContextMenuHost::childMouseEventFilter(QQuickItem *item, QEvent *even
     return true;
 }
 
-void SourceContextMenuHost::mouseReleaseEvent(QMouseEvent *event)
+void ContextMenuHost::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() != Qt::RightButton || !m_rightPressed) {
         event->ignore();
@@ -59,13 +59,13 @@ void SourceContextMenuHost::mouseReleaseEvent(QMouseEvent *event)
         emit pointerMenuRequested(m_menuPosition);
 }
 
-void SourceContextMenuHost::mouseUngrabEvent()
+void ContextMenuHost::mouseUngrabEvent()
 {
     m_rightPressed = false;
     setKeepMouseGrab(false);
 }
 
-bool SourceContextMenuHost::eventFilter(QObject *watched, QEvent *event)
+bool ContextMenuHost::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == m_editor && event->type() == QEvent::ContextMenu) {
         // Newer Qt versions also deliver a separate context-menu event after

@@ -127,7 +127,9 @@ Row {
         onTapped: buttons.openMenu()
     }
     Keys.onPressed: event => {
-        if (event.key === Qt.Key_Menu || event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier)) {
+        // The same gestures as ContextMenuHost: Menu alone, or Shift+F10 alone.
+        if (event.key === Qt.Key_Menu && event.modifiers === Qt.NoModifier
+                || event.key === Qt.Key_F10 && event.modifiers === Qt.ShiftModifier) {
             buttons.openMenu()
             event.accepted = true
         }

@@ -108,7 +108,7 @@ ColumnLayout {
             }
         }
     }
-    SourceContextMenuHost {
+    ContextMenuHost {
         id: sourceSurface
         Layout.fillWidth: true
         Layout.fillHeight: true

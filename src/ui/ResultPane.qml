@@ -61,13 +61,22 @@ ColumnLayout {
         identity: qsTr("Editable")
         description: identity
     }
-    Rectangle {
+    ContextMenuHost {
         Layout.fillWidth: true
         Layout.fillHeight: true
         Layout.minimumHeight: resultPane.minimumTextHeight
         Kirigami.Theme.colorSet: Kirigami.Theme.View
         Kirigami.Theme.inherit: false
-        color: Kirigami.Theme.backgroundColor
+        editor: resultEditor
+        onPointerMenuRequested: position => resultMenu.popup(resultEditor, position.x, position.y)
+        onKeyboardMenuRequested: {
+            const rect = resultEditor.cursorRectangle
+            resultMenu.popup(resultEditor, rect.x, rect.y + rect.height)
+        }
+        Rectangle {
+            anchors.fill: parent
+            color: Kirigami.Theme.backgroundColor
+        }
         Flickable {
             id: resultViewport
             objectName: "resultViewport"
@@ -155,10 +164,6 @@ ColumnLayout {
                     resultPane.settleCursor()
                     resultBlocks.keyPressed(event.key)
                     event.accepted = false
-                }
-                TapHandler {
-                    acceptedButtons: Qt.RightButton
-                    onTapped: resultMenu.popup()
                 }
                 ResultContextMenu {
                     id: resultMenu
