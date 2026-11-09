@@ -13,7 +13,7 @@ target_include_directories(branch_truce_controller PUBLIC "${CMAKE_CURRENT_SOURC
 target_link_libraries(branch_truce_controller PUBLIC Qt6::Core Qt6::Network Qt6::Qml Qt6::Quick
     branch_truce_core branch_truce_git branch_truce_recovery branch_truce_session
     branch_truce_publication branch_truce_mergetool branch_truce_highlighting
-    PRIVATE branch_truce_storage branch_truce_build_options)
+    PRIVATE branch_truce_storage branch_truce_build_info branch_truce_build_options)
 # The UI module imports the controller module, and the executable owns both plugins.
 add_subdirectory("${PROJECT_SOURCE_DIR}/src/ui" "${PROJECT_BINARY_DIR}/src/ui")
 qt_add_executable(branch-truce main.cpp)
