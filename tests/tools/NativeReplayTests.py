@@ -18,7 +18,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/native-replay'))
 from NativeCalibrationTests import ContractTests
 from ledger import assemble
-from fixture import PATHS, git, make_fixture, png, reference_bytes, unmerged
+from fixture import PATHS, GitError, git, make_fixture, png, reference_bytes, unmerged
 from replay import NativeClient, OwnedResources, await_compositor, private_environment, replay_lock, item
 
 
@@ -49,6 +49,15 @@ class FixtureTests(unittest.TestCase):
         for branch, key in [('main', 'main'), ('feature/backoff', 'incoming')]:
             self.assertEqual(git(repo, 'rev-parse', branch).stdout.decode().strip(), first[key])
             self.assertEqual(git(repo, 'rev-parse', branch + '^').stdout.decode().strip(), first['base'])
+
+    def test_unlisted_reference_names_the_provenance_file(self):
+        with self.assertRaisesRegex(KeyError, 'missing.cpp is not listed in .*/provenance.json'):
+            reference_bytes('missing.cpp')
+
+    def test_failed_git_command_reports_its_stderr(self):
+        with self.assertRaisesRegex(GitError, 'git rev-parse HEAD in .* exited 128: fatal: not a git repository'):
+            git(self.root, 'rev-parse', 'HEAD')
+        self.assertEqual(git(self.root, 'rev-parse', 'HEAD', check=False).returncode, 128)
 
     def test_png_chunks_crc_dimensions_and_decoded_pixels(self):
         for colour in [(100, 100, 100), (61, 174, 233), (39, 174, 96)]:
