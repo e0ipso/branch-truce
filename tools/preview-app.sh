@@ -58,12 +58,14 @@ set -euo pipefail
 schemes=(BreezeLight BreezeDark)
 fixture_files=(tracked.txt notes.md image.bin)
 
-usage() { echo "Usage: $0 [APP]" >&2; exit 2; }
+usage() { echo "Usage: $0 [APP]"; }
 die() { echo "preview-app: $*" >&2; exit 1; }
 
-(($# <= 1)) || usage
-[[ "${1:-}" != -* ]] || usage
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+(($# <= 1)) || { usage >&2; exit 2; }
+[[ "${1:-}" != -* ]] || { usage >&2; exit 2; }
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$root/tools/lib/fixture.sh"
 app=${1:-$root/build/desktop/src/app/branch-truce}
 [[ -x "$app" && -f "$app" ]] || die "no executable app at $app; build it or pass its path"
 app=$(cd -- "$(dirname -- "$app")" && pwd -P)/$(basename -- "$app")
@@ -194,22 +196,10 @@ fi
 mkdir -m 700 -- "$fixture_dir" || die "could not create $fixture_dir"
 work=$fixture_dir
 
-source "$root/tools/merge-fixture.sh"
-
-# The isolated environment of the fixture's Git commands and the app.
-base_env=(
-    "PATH=/usr/bin:/bin" "HOME=$home" "TMPDIR=$home/tmp" "LC_ALL=C.UTF-8"
-    "XDG_DATA_HOME=$home/data" "XDG_CONFIG_HOME=$home/config" "XDG_CACHE_HOME=$home/cache"
-    "XDG_RUNTIME_DIR=$home/runtime" "GIT_CONFIG_NOSYSTEM=1" "GIT_CONFIG_GLOBAL=$home/gitconfig"
-    "GIT_TERMINAL_PROMPT=0"
-)
-# The fixture's Git commands also get fixed commit dates. The identity is fixed
-# in the gitconfig that make_merge_fixture writes. Together they make the
-# commit ids the same on every run. The app does not get these.
-fixture_env=(
-    "GIT_AUTHOR_DATE=2000-01-01T00:00:00+0000" "GIT_COMMITTER_DATE=2000-01-01T00:00:00+0000"
-)
-isolated() { (cd "$repo" && env -i "${base_env[@]}" "${fixture_env[@]}" "$@"); }
+# The isolated environment of the app. fixture_merge_repo gives the fixture's
+# Git commands the same one, plus fixed commit dates; with the fixed identity
+# in the gitconfig, the commit ids are the same on every run.
+mapfile -d '' base_env < <(fixture_env "$home")
 
 has_window() {
     swaymsg -t get_tree | jq -e --argjson pid "$app_pid" 'any(.. | objects; .pid? == $pid)' >/dev/null
@@ -243,7 +233,8 @@ capture() {
     local colors=/usr/share/color-schemes/$scheme.colors file=$output/branch-truce-$scheme${size:+-$size}.png
     log=$work/$scheme.log
     local deadline rect=
-    make_merge_fixture "$app" "${fixture_files[@]}" || die "the fixture merge did not stop on a conflict"
+    fixture_home "$home" && fixture_gitconfig "$home" "$app" \
+        && fixture_merge_repo "$home" "$repo" "${fixture_files[@]}" || die "the fixture merge did not stop on a conflict"
     { cat "$colors"; printf '\n[General]\nColorScheme=%s\n' "$scheme"; } > "$home/config/kdeglobals"
     # A new window opens on the focused workspace.
     if [[ -n "$screen" ]]; then

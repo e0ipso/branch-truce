@@ -2,7 +2,7 @@
 # Run version checks anywhere; native vercmp checks also run in the Arch image.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-source "$root/packaging/scripts/package-arch.sh"
+arch_native_version() { "$root/packaging/scripts/native-version.sh" --style plain "$@"; }
 expect_version() {
     local got
     got="$(arch_native_version "$1")"
@@ -34,7 +34,7 @@ if [[ "${1-}" = --lifecycle ]]; then
     # Requires a disposable Arch target and genuine candidate/predecessor files.
     candidate="${2:?candidate package}"; previous="${3:?previous package}"
     version="${4:?candidate application version}"
-    checker="$root/packaging/scripts/check-arch.sh"
+    checker="$root/packaging/scripts/check-package.sh"
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
     reject() {
@@ -48,19 +48,19 @@ if [[ "${1-}" = --lifecycle ]]; then
         fi
         echo "ok: rejected $message before install"
     }
-    reject 'candidate version' bash "$checker" --version 99.0.0 --package "$candidate"
-    reject 'not older' bash "$checker" --version "$version" --package "$candidate" --previous "$candidate"
+    reject 'candidate identity' bash "$checker" --format arch-pkg --version 99.0.0 --package "$candidate"
+    reject 'not older' bash "$checker" --format arch-pkg --version "$version" --package "$candidate" --previous "$candidate"
     # Modify genuine package metadata to exercise the validator, not a pacman stub.
     for field in arch pkgname depend; do
         mkdir "$work/$field"
         bsdtar -xf "$candidate" -C "$work/$field"
         case "$field" in
-            arch) sed -i 's/^arch = .*/arch = aarch64/' "$work/$field/.PKGINFO"; message='candidate architecture' ;;
-            pkgname) sed -i 's/^pkgname = .*/pkgname = another-app/' "$work/$field/.PKGINFO"; message='candidate name' ;;
-            depend) sed -i '/^depend = qt6-wayland/d' "$work/$field/.PKGINFO"; message='missing runtime dependency qt6-wayland' ;;
+            arch) sed -i 's/^arch = .*/arch = aarch64/' "$work/$field/.PKGINFO"; message='candidate identity' ;;
+            pkgname) sed -i 's/^pkgname = .*/pkgname = another-app/' "$work/$field/.PKGINFO"; message='candidate identity' ;;
+            depend) sed -i '/^depend = qt6-wayland/d' "$work/$field/.PKGINFO"; message='does not declare the recipe dependency qt6-wayland' ;;
         esac
         bsdtar --zstd -cf "$work/$field.pkg.tar.zst" -C "$work/$field" .PKGINFO .BUILDINFO .MTREE usr
-        reject "$message" bash "$checker" --version "$version" --package "$work/$field.pkg.tar.zst"
+        reject "$message" bash "$checker" --format arch-pkg --version "$version" --package "$work/$field.pkg.tar.zst"
     done
-    bash "$checker" --version "$version" --package "$candidate" --previous "$previous"
+    bash "$checker" --format arch-pkg --version "$version" --package "$candidate" --previous "$previous"
 fi

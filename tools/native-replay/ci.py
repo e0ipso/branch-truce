@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect both required native sizes and keep failures and pending acceptance visible."""
+"""Collect every native size in capture-profile.json and keep failures and pending acceptance visible."""
 import argparse
 from datetime import datetime, timezone
 import json
@@ -9,9 +9,13 @@ import subprocess
 import shutil
 import sys
 
-sys.dont_write_bytecode = True
-from ledger import assemble
-from fixture import sha256
+if __name__ == '__main__':
+    # Keep the source checkout read only when run as a script, including without -B.
+    sys.dont_write_bytecode = True
+
+import capture_profile  # noqa: E402
+from fixture import sha256  # noqa: E402
+from ledger import assemble  # noqa: E402
 
 
 def main():
@@ -19,6 +23,9 @@ def main():
     for name in ('source', 'build', 'output'):
         parser.add_argument('--' + name, required=True, type=Path)
     args = parser.parse_args()
+    # The replay that runs is the one in --source, so its profile sets the run shape.
+    shape = capture_profile.run_shape(capture_profile.load(args.source / 'tools/native-replay/capture-profile.json'))
+    heights = shape.heights
     args.output.mkdir(exist_ok=False)
     (args.output / 'inputs').mkdir()
     (args.output / 'executables').mkdir()
@@ -47,11 +54,11 @@ def main():
         receipt.write_text(json.dumps(context, indent=2) + '\n')
 
     save()
-    for height in (720, 800):
+    for height in heights:
         command = [sys.executable, str(args.source / 'tools/native-replay/replay.py'), 'capture',
                    '--source', str(args.source), '--build', str(args.build),
-                   '--height', str(height), '--repeat', '2', '--output', str(args.output / str(height))]
-        if height == 720:
+                   '--height', str(height), '--repeat', str(shape.repeat), '--output', str(args.output / str(height))]
+        if height == heights[0]:
             command.append('--documentation')
         log = args.output / f'{height}.log'
         with log.open('wb') as stream:
@@ -74,7 +81,7 @@ def main():
             context['checks'].append(dict(argv=command, cwd=str(args.source), exit_code=checked.returncode,
                                           log=f'{height}-integrity.log'))
             save()
-    image_tool = args.output / '720/driver-build/native-replay-image'
+    image_tool = args.output / str(heights[0]) / 'driver-build/native-replay-image'
     if image_tool.is_file():
         command = [sys.executable, str(args.source / 'tests/tools/NativeCalibrationTests.py'),
                    '--image-tool', str(image_tool)]
@@ -83,7 +90,7 @@ def main():
         context['checks'].append(dict(argv=command, cwd=str(args.source), exit_code=checked.returncode,
                                       log='calibration-tests.log'))
         save()
-    ledger = assemble(args.output)
+    ledger = assemble(args.output, shape=shape)
     (args.output / 'acceptance-ledger.json').write_text(json.dumps(ledger, indent=2) + '\n')
     context['finished_at_utc'] = datetime.now(timezone.utc).isoformat()
     context['acceptance'] = 'pending original-image and per-callout independent inspection'

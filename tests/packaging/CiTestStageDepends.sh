@@ -21,7 +21,8 @@ test_stage_words() {
     awk '/^FROM / { on = ($0 ~ / AS test$/) } on' "$1" | sed 's/\\$//' | tr -s ' \t' '\n'
 }
 
-mapfile -t depends < <(field_names Depends)
+source "$root/packaging/scripts/pkg-deb.sh"
+mapfile -t depends < <(pkg_recipe_depends "$root")
 mapfile -t build_depends < <(field_names Build-Depends)
 ((${#depends[@]} > 0)) || { echo "FAIL: no Depends found in $control" >&2; exit 1; }
 

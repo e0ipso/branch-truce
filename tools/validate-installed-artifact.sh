@@ -44,7 +44,8 @@
 #
 # DIR receives <package>.validation (this report), the screenshots and the
 # AT-SPI tree. CONTAINER_ENGINE defaults to docker. The container is removed
-# on exit; the image stays.
+# on exit; the image stays. Exit status: 0 every check passed, 1 a check
+# failed, 2 usage error.
 set -euo pipefail
 
 app_id=com.canpicasoft.branch-truce
@@ -52,17 +53,17 @@ home=/tmp/bt-home
 repo=/tmp/bt-repo
 wayland_socket=/run/bt-wayland/wayland-0
 result_text='merged é ü'
-# make_merge_fixture, shared with tools/preview-app.sh. host_main copies it into
-# /validate next to this script.
-source "$(dirname -- "${BASH_SOURCE[0]}")/merge-fixture.sh"
+# The shared fixture helpers. host_main copies them into /validate/lib.
+source "$(dirname -- "${BASH_SOURCE[0]}")/lib/fixture.sh"
 
-usage() { echo "Usage: $0 --target kubuntu|tuxedo --package DEB --output DIR [--wayland]" >&2; exit 2; }
+usage() { echo "Usage: $0 --target kubuntu|tuxedo --package DEB --output DIR [--wayland]"; }
+usage_error() { usage >&2; exit 2; }
 
 base_for() {
     case "$1" in
         kubuntu) echo kubuntu26.04 ;;
         tuxedo) echo tuxedo24.04 ;;
-        *) usage ;;
+        *) usage_error ;;
     esac
 }
 
@@ -72,14 +73,15 @@ host_main() {
     local target= package= output= wayland=0
     while (($# > 0)); do
         case "$1" in
-            --target) [[ $# -ge 2 ]] || usage; target=$2; shift 2 ;;
-            --package) [[ $# -ge 2 ]] || usage; package=$2; shift 2 ;;
-            --output) [[ $# -ge 2 ]] || usage; output=$2; shift 2 ;;
+            -h|--help) usage; return 0 ;;
+            --target) [[ $# -ge 2 ]] || usage_error; target=$2; shift 2 ;;
+            --package) [[ $# -ge 2 ]] || usage_error; package=$2; shift 2 ;;
+            --output) [[ $# -ge 2 ]] || usage_error; output=$2; shift 2 ;;
             --wayland) wayland=1; shift ;;
-            *) usage ;;
+            *) usage_error ;;
         esac
     done
-    [[ -n "$target" && -f "$package" && -n "$output" ]] || usage
+    [[ -n "$target" && -f "$package" && -n "$output" ]] || usage_error
     local root base image socket=
     root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
     engine=${CONTAINER_ENGINE:-docker}
@@ -112,8 +114,10 @@ host_main() {
     fixture=$(mktemp -d "${TMPDIR:-/tmp}/bt-validate.XXXXXXXX")
     container=bt-validate-$target-$$
     trap host_cleanup EXIT
-    cp -- "$root/tools/validate-installed-artifact.sh" "$root/tools/merge-fixture.sh" \
+    cp -- "$root/tools/validate-installed-artifact.sh" \
         "$root/tools/artifact-baseline.sh" "$root/tools/atspi-probe.py" "$fixture/"
+    mkdir -p -- "$fixture/lib"
+    cp -- "$root/tools/lib/fixture.sh" "$fixture/lib/"
     local mounts=(--volume "$package:/artifact/$name.deb:ro" --volume "$fixture:/validate:ro")
     ((wayland == 0)) || mounts+=(--volume "$socket:$wayland_socket")
     "$engine" run --detach --init --name "$container" "${mounts[@]}" "$image" sleep infinity >/dev/null
@@ -262,20 +266,21 @@ pass() { printf 'PASS %s\n' "$*"; }
 fail() { printf 'FAIL %s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
 
-# The isolated environment of every application and Git command.
-base_env=(
-    "PATH=/usr/bin:/bin" "HOME=$home" "TMPDIR=$home/tmp" "LC_ALL=C.UTF-8"
-    "XDG_DATA_HOME=$home/data" "XDG_CONFIG_HOME=$home/config" "XDG_CACHE_HOME=$home/cache"
-    "XDG_RUNTIME_DIR=$home/runtime" "GIT_CONFIG_NOSYSTEM=1" "GIT_CONFIG_GLOBAL=$home/gitconfig"
-    "GIT_TERMINAL_PROMPT=0"
-)
+# private [NAME=VALUE...] COMMAND...: COMMAND with only the private environment
+# of $home, which every application and Git command gets. isolated runs it in $repo.
+private() {
+    local -a base_env
+    mapfile -d '' base_env < <(fixture_env "$home")
+    env -i "${base_env[@]}" "$@"
+}
+isolated() { (cd "$repo" && private "$@"); }
 offscreen_env=("QT_QPA_PLATFORM=offscreen" "QT_QUICK_BACKEND=software")
-isolated() { (cd "$repo" && env -i "${base_env[@]}" "$@"); }
 
 # A fresh home and a repository stopped on one merge conflict in tracked.txt.
 fresh_fixture() {
     pkill -x branch-truce 2>/dev/null || true
-    make_merge_fixture /usr/bin/branch-truce tracked.txt || fail "fixture merge did not conflict"
+    fixture_home "$home" && fixture_gitconfig "$home" /usr/bin/branch-truce \
+        && fixture_merge_repo "$home" "$repo" tracked.txt || fail "fixture merge did not conflict"
 }
 
 gui_pids() {
@@ -307,7 +312,7 @@ stop_gui() {
 }
 
 probe() {
-    env -i "${base_env[@]}" "DBUS_SESSION_BUS_ADDRESS=$(cat "$home/dbus.address")" \
+    private "DBUS_SESSION_BUS_ADDRESS=$(cat "$home/dbus.address")" \
         python3 -I /validate/atspi-probe.py 'Branch Truce' "$@"
 }
 
@@ -356,16 +361,15 @@ c_cli() {
     step "Command line of the installed binary"
     fresh_fixture
     local out
-    out=$(isolated "${offscreen_env[@]}" branch-truce --version 2>&1) \
+    # The application runs with a deadline, so a hang fails the step.
+    out=$(isolated "${offscreen_env[@]}" timeout 60 branch-truce --version 2>&1) \
         && pass "branch-truce --version: $out" || fail "--version: $out"
-    isolated "${offscreen_env[@]}" branch-truce --help > /tmp/help.txt 2>&1 \
+    isolated "${offscreen_env[@]}" timeout 60 branch-truce --help > /tmp/help.txt 2>&1 \
         && pass "branch-truce --help ($(wc -l < /tmp/help.txt) lines)" || fail "--help"
     isolated "${offscreen_env[@]}" QML_IMPORT_TRACE=1 QT_DEBUG_PLUGINS=1 \
-        branch-truce --smoke-test "$repo" > /tmp/smoke.log 2>&1 || fail "smoke test exited $?"
-    local record
-    record=$(sed -n 's/^BRANCH_TRUCE_SESSION=//p' /tmp/smoke.log)
-    echo "session $record"
-    [[ "$record" == *'"state":"ready"'* && "$record" == *'"path":"tracked.txt"'* ]] \
+        timeout 60 branch-truce --smoke-test "$repo" > /tmp/smoke.log 2>&1 || fail "smoke test exited $?"
+    echo "session $(sed -n 's/^BRANCH_TRUCE_SESSION=//p' /tmp/smoke.log)"
+    smoke_record_ready "$(cat /tmp/smoke.log)" \
         && pass "--smoke-test opened the merge session" || fail "--smoke-test did not open the session"
     step "Installed resource lookup during --smoke-test"
     local paths path owner unowned=0 embedded
@@ -391,7 +395,7 @@ c_desktop() {
     local exec_line pid
     exec_line=$(sed -n 's/^Exec=//p' "/usr/share/applications/$app_id.desktop")
     echo "Exec=$exec_line"
-    (cd / && env -i "${base_env[@]}" "${offscreen_env[@]}" \
+    (cd / && private "${offscreen_env[@]}" \
         setsid gio launch "/usr/share/applications/$app_id.desktop" "$repo" > /tmp/desktop.log 2>&1 < /dev/null &)
     if wait_until 60 session_socket; then
         pid=$(gui_pids | head -1)
@@ -409,7 +413,7 @@ c_mergetool_leave() {
     local before
     before=$(sha256sum < "$repo/tracked.txt")
     echo "git $(isolated git --version)"
-    (cd "$repo" && env -i "${base_env[@]}" "${offscreen_env[@]}" setsid bash -c \
+    (isolated "${offscreen_env[@]}" setsid bash -c \
         'git mergetool --tool truce --no-prompt tracked.txt > "$0/mergetool.log" 2>&1; echo $? > "$0/mergetool.status"' \
         "$home" < /dev/null &)
     if wait_until 60 session_socket && wait_until 30 intake_present; then
@@ -433,7 +437,7 @@ c_wayland_minimal() {
     step "Wayland with the installed closure only"
     fresh_fixture
     local status=0
-    env -i "${base_env[@]}" "QT_QPA_PLATFORM=wayland" "WAYLAND_DISPLAY=$wayland_socket" \
+    private "QT_QPA_PLATFORM=wayland" "WAYLAND_DISPLAY=$wayland_socket" \
         timeout 60 branch-truce --smoke-test "$repo" > /tmp/wayland-minimal.log 2>&1 || status=$?
     grep -E 'qt.qpa|platform plugin|BRANCH_TRUCE_SESSION' /tmp/wayland-minimal.log | cut -c1-200 | sed 's/^/  /' || true
     echo "qt6-wayland: $(dpkg-query -W -f='${db:Status-Status} ${Version}' qt6-wayland 2>/dev/null || echo not-installed)"
@@ -463,7 +467,7 @@ c_gui_start() {
         > "$home/config/kdeglobals"
     local launch=(branch-truce "$repo")
     [[ "$how" == direct ]] || launch=(gio launch "/usr/share/applications/$app_id.desktop" "$repo")
-    (cd / && env -i "${base_env[@]}" "${wayland_env[@]}" "QT_SCALE_FACTOR=$scale" \
+    (cd / && private "${wayland_env[@]}" "QT_SCALE_FACTOR=$scale" \
         "DBUS_SESSION_BUS_ADDRESS=$(cat "$home/dbus.address")" \
         setsid "${launch[@]}" > "$home/gui.log" 2>&1 < /dev/null &)
     echo "started ${launch[*]} with QT_SCALE_FACTOR=$scale, colour scheme $scheme"
@@ -503,7 +507,12 @@ c_atspi_check() {
 
 c_editor_input() {
     step "Editor input through the Wayland virtual keyboard"
-    probe focus 'Editable result'
+    local focus
+    if ! focus=$(probe focus 'Editable result' 2>&1); then
+        fail "AT-SPI focus on the editable result: $focus"
+        return 0
+    fi
+    echo "$focus"
     # The first keys after wtype uploads its keymap can be lost, so it waits.
     if env "WAYLAND_DISPLAY=$wayland_socket" wtype -s 400 -M ctrl a -m ctrl -s 100 "$result_text" -k Return; then
         pass "wtype sent Ctrl+A, '$result_text' and Return"
@@ -522,7 +531,7 @@ c_mergetool_start() {
     step "Mergetool handoff with real Git on Wayland"
     fresh_fixture
     cp "/usr/share/color-schemes/BreezeLight.colors" "$home/config/kdeglobals"
-    (cd "$repo" && env -i "${base_env[@]}" "${wayland_env[@]}" "QT_SCALE_FACTOR=1" \
+    (isolated "${wayland_env[@]}" "QT_SCALE_FACTOR=1" \
         "DBUS_SESSION_BUS_ADDRESS=$(cat "$home/dbus.address")" setsid bash -c \
         'git mergetool --tool truce --no-prompt tracked.txt > "$0/mergetool.log" 2>&1; echo $? > "$0/mergetool.status"' \
         "$home" < /dev/null &)
@@ -532,8 +541,12 @@ c_mergetool_start() {
 c_mergetool_resolve() {
     c_wait_ready || { fail "session not ready"; return 0; }
     c_editor_input
-    probe press 'Mark resolved'
-    probe wait 'Confirm resolution' 30 && probe press 'Confirm resolution' || fail "no Confirm resolution"
+    local pressed
+    pressed=$(probe press 'Mark resolved' 2>&1) || { fail "press Mark resolved: $pressed"; return 0; }
+    echo "$pressed"
+    probe wait 'Confirm resolution' 30 || { fail "no Confirm resolution"; return 0; }
+    pressed=$(probe press 'Confirm resolution' 2>&1) || { fail "press Confirm resolution: $pressed"; return 0; }
+    echo "$pressed"
     wait_until 60 mergetool_done || fail "git mergetool did not finish"
     sed 's/^/  /' "$home/mergetool.log"
     local status expected staged
@@ -573,7 +586,7 @@ container_main() {
         mergetool-start) c_mergetool_start ;;
         mergetool-resolve) c_mergetool_resolve ;;
         gui-stop) c_gui_stop ;;
-        *) usage ;;
+        *) usage_error ;;
     esac
 }
 

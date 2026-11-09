@@ -173,7 +173,7 @@ test('falls back when gh is not installed', (t) => {
   const box = fixture(t, [{ tag: 'v1.2.2', assets: [kubuntu('1.2.2')] }]);
   const tools = join(box.root, 'tools');
   mkdirSync(tools);
-  for (const tool of ['bash', 'dirname']) {
+  for (const tool of ['bash', 'dirname', 'awk']) {
     symlinkSync(execFileSync('bash', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).trim(), join(tools, tool));
   }
   const result = box.run('kubuntu-deb', '1.2.3', tools);

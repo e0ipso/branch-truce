@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Prints the distribution, Qt 6, KDE Frameworks 6 and Git versions of a build
-# environment and fails when they are older than the supported baseline.
+# Prints the distribution, toolchain, Qt 6, KDE Frameworks 6 and Git versions
+# of a CI build image and fails when one is older than the supported baseline
+# in ../minimum-versions.tsv (packaging/minimum-versions.tsv).
 #
 #   baseline.sh --format kubuntu-deb|fedora-rpm|arch-pkg
-
+#
+# Every failure is reported with the version found. Exit status: 0 the image
+# meets the baseline, 1 it does not, 2 usage error.
 set -euo pipefail
 
-usage() {
-    echo "usage: $0 --format kubuntu-deb|fedora-rpm|arch-pkg" >&2
-    exit 2
-}
-
-format=""
+usage() { echo "usage: $0 --format kubuntu-deb|fedora-rpm|arch-pkg"; }
+format=''
 while [ $# -gt 0 ]; do
     case "$1" in
-        --format) format="${2-}"; shift 2 || usage ;;
-        *) usage ;;
+        -h|--help) usage; exit 0 ;;
+        --format) [ $# -ge 2 ] || { usage >&2; exit 2; }; format=$2; shift 2 ;;
+        *) usage >&2; exit 2 ;;
     esac
 done
 
@@ -23,74 +23,54 @@ done
 . /etc/os-release
 failures=0
 fail() { echo "error: $*" >&2; failures=$((failures + 1)); }
+found="${ID-} ${VERSION_ID-}"
 
 case "$format" in
     kubuntu-deb)
-        [ "${ID-}" = ubuntu ] && [ "${VERSION_ID-}" = 26.04 ] \
-            || fail "expected Ubuntu 26.04, found ${ID-} ${VERSION_ID-}"
-        ;;
+        column=3
+        [ "$found" = 'ubuntu 26.04' ] || fail "expected Ubuntu 26.04, found $found"
+        toolchain() { dpkg-query -W g++ cmake extra-cmake-modules dpkg-dev debhelper; }
+        # A library is resolved to the package that ships it.
+        package_of() {
+            case "$1" in
+                *.so) dpkg -S "*/$1.*" 2>/dev/null | head -n 1 | cut -d: -f1 ;;
+                *) printf '%s\n' "$1" ;;
+            esac
+        }
+        installed() { dpkg-query -W -f '${Version}' "$1" 2>/dev/null; }
+        at_least() {
+            local upstream=${1#*:}
+            dpkg --compare-versions "${upstream%%[-+~]*}" ge "$2"
+        } ;;
     fedora-rpm)
-        [ "${ID-}" = fedora ] && [ "${VERSION_ID-}" = 44 ] || fail "expected Fedora 44"
-        ;;
+        column=4
+        [ "$found" = 'fedora 44' ] || fail "expected Fedora 44, found $found"
+        toolchain() { rpm -q gcc-c++ cmake extra-cmake-modules qt6-qtdeclarative rpm rpm-build redhat-rpm-config; }
+        package_of() { printf '%s\n' "$1"; }
+        installed() { rpm -q --qf '%{VERSION}' "$1" 2>/dev/null; }
+        at_least() { [ "$(OLD="$1" NEW="$2" rpm --eval '%{lua:print(rpm.vercmp(os.getenv("OLD"), os.getenv("NEW")))}')" != -1 ]; } ;;
     arch-pkg)
-        [ "${ID-}" = arch ] || fail "expected Arch Linux"
-        ;;
-    *) usage ;;
+        column=5
+        [ "${ID-}" = arch ] || fail "expected Arch Linux, found $found"
+        toolchain() { pacman -Q gcc cmake extra-cmake-modules qt6-declarative pacman && makepkg --version; }
+        package_of() { printf '%s\n' "$1"; }
+        installed() { pacman -Q "$1" 2>/dev/null | awk '{ print $2 }'; }
+        at_least() { [ "$(vercmp "$1" "$2")" -ge 0 ]; } ;;
+    *) usage >&2; exit 2 ;;
 esac
 
-if [ "$format" != kubuntu-deb ]; then
-    echo "os ${PRETTY_NAME:-$ID}"
-    if [ "$format" = fedora-rpm ]; then
-        installed() { rpm -q --qf '%{VERSION}' "$1"; }
-        at_least() { [ "$(OLD="$1" NEW="$2" rpm --eval '%{lua:print(rpm.vercmp(os.getenv("OLD"), os.getenv("NEW")))}')" != -1 ]; }
-        packages="qt6-qtbase:6.6.0 kf6-kirigami:6.0.0 kf6-syntax-highlighting:6.0.0 git:2.43.0"
-        rpm -q gcc-c++ cmake extra-cmake-modules qt6-qtdeclarative rpm rpm-build redhat-rpm-config
-    else
-        installed() { pacman -Q "$1" | awk '{print $2}'; }
-        at_least() { [ "$(vercmp "$1" "$2")" -ge 0 ]; }
-        packages="qt6-base:6.6.0 kirigami:6.0.0 syntax-highlighting:6.0.0 git:2.43.0"
-        pacman -Q gcc cmake extra-cmake-modules qt6-declarative pacman
-        makepkg --version
-    fi
-    for entry in $packages; do
-        IFS=: read -r package minimum <<< "$entry"
-        version="$(installed "$package")" || { fail "missing $package"; continue; }
-        echo "library/tool $package $version"
-        at_least "$version" "$minimum" || fail "$package $version is older than $minimum"
-    done
-    [ "$failures" -eq 0 ]
-    exit
-fi
-
-dpkg-query -W g++ cmake extra-cmake-modules dpkg-dev debhelper
-libraries="qt:libQt6Core.so:6.6.0 kf:libKirigami.so:6.0.0 kf:libKF6SyntaxHighlighting.so:6.0.0"
-
-owner() { dpkg -S "*/$1.*" 2>/dev/null | head -n 1 | cut -d: -f1; }
-installed() { dpkg-query -W -f '${Version}' "$1"; }
-at_least() { dpkg --compare-versions "$1" ge "$2"; }
-
-echo "os ${PRETTY_NAME:-${ID-} ${VERSION_ID-}}"
-for entry in $libraries; do
-    IFS=: read -r label library minimum <<<"$entry"
-    package="$(owner "$library")" || package=""
-    if [ -z "$package" ] || ! version="$(installed "$package" 2>/dev/null)" || [ -z "$version" ]; then
-        fail "no installed package ships $library ($label)"
+echo "os ${PRETTY_NAME:-$found}"
+toolchain || fail 'the toolchain is incomplete'
+while IFS=$'\t' read -r component minimum name; do
+    package=$(package_of "$name") || package=''
+    version=''
+    [ -z "$package" ] || version=$(installed "$package") || version=''
+    if [ -z "$version" ]; then
+        fail "no installed package provides $component ($name)"
         continue
     fi
-    echo "$label $package $version"
-    upstream="${version#*:}"
-    upstream="${upstream%%[-+~]*}"
-    at_least "$upstream" "$minimum" || fail "$package $version is older than $minimum"
-done
-
-git_pkg_version="$(installed git 2>/dev/null || true)"
-if [ -z "$git_pkg_version" ]; then
-    fail "git is not installed"
-else
-    echo "git git $git_pkg_version"
-    git_upstream="${git_pkg_version#*:}"
-    git_upstream="${git_upstream%%[-+~]*}"
-    at_least "$git_upstream" "2.43.0" || fail "git $git_pkg_version is older than 2.43.0"
-fi
-
+    echo "$component $package $version"
+    at_least "$version" "$minimum" || fail "$component: $package $version is older than $minimum"
+done < <(awk -F '\t' -v column="$column" '!/^#/ && NF { print $1 "\t" $2 "\t" $column }' \
+    "$(dirname -- "${BASH_SOURCE[0]}")/../minimum-versions.tsv")
 [ "$failures" -eq 0 ]

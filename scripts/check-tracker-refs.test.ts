@@ -16,10 +16,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// check-tracker-refs.ts scans the git repository around its own location, so each test copies the
-// script into a throwaway git repository and runs it there. Nothing touches the real checkout.
-// The fixtures build the forbidden strings from parts: a literal ticket ID or plan path in this file
-// would trip the check on the repository that holds it.
+import { CLEAN_MESSAGE, findReferences, isReference } from './check-tracker-refs.ts';
+
+// The scan itself is findReferences(), which these tests call on throwaway git repositories. A few
+// end-to-end tests copy the script into such a repository and run it there, for its output and exit
+// status. Nothing touches the real checkout. The fixtures build the forbidden strings from parts: a
+// literal ticket ID or plan path in this file would trip the check on the repository that holds it.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..');
@@ -27,7 +29,6 @@ const SCRIPT = join(HERE, 'check-tracker-refs.ts');
 
 const ticket = (n: string) => ['TRUCE', n].join('-');
 const PLANS = ['.ai', 'strikethroo', 'plans'].join('/');
-const CLEAN_MESSAGE = 'No ticket or plan references in tracked files.';
 
 type Fixture = { root: string; write: (path: string, content: string | Buffer) => void };
 
@@ -63,8 +64,11 @@ function track(root: string): void {
   git(root, 'add', '-A', '--force');
 }
 
-function run(root: string): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, [join(root, 'scripts', 'check-tracker-refs.ts')], {
+/** The hits of the scan of ROOT, sorted. */
+const hits = (root: string) => findReferences(root).sort();
+
+function run(root: string, ...args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync(process.execPath, [join(root, 'scripts', 'check-tracker-refs.ts'), ...args], {
     cwd: root,
     env: cleanEnv(),
     encoding: 'utf8',
@@ -76,6 +80,8 @@ function run(root: string): { status: number | null; stdout: string; stderr: str
 function hitLines(stderr: string): string[] {
   return stderr.split('\n').filter((line) => /:\d+$/.test(line));
 }
+
+// --- The command line: output, summary and exit status
 
 test('a repository with no references passes and says so', (t) => {
   const { root, write } = repo(t);
@@ -112,188 +118,16 @@ test('a plan path is reported and several hits across files use the plural summa
   assert.match(result.stderr, /^2 tracked lines cite a ticket ID or a plan path:/);
 });
 
-test('every ticket pattern edge: digit count, word boundaries and near misses', (t) => {
-  const { root, write } = repo(t);
-  const lines = [
-    `${ticket('1')}`, //                    1 match: one digit is enough
-    `(${ticket('123456')})`, //             2 match: long IDs, punctuation boundary
-    `x ${ticket('0001')}.`, //              3 match: trailing period
-    `A${ticket('0001')}`, //                4 miss: letter before TRUCE
-    `${ticket('0001')}x`, //                5 miss: letter after the digits
-    `${ticket('0001')}_`, //                6 miss: underscore is a word character
-    `TRUCE-`, //                            7 miss: no digits
-    ticket('0001').toLowerCase(), //        8 match: case does not bypass the rule
-    `T${ticket('0001')}`, //                9 miss: extra letter
-    `${ticket('')}x`, //                    10 miss
-    `TRUCE 0001`, //                        11 miss: no hyphen
-  ];
-  write('notes.txt', lines.join('\n') + '\n');
-  track(root);
-  const result = run(root);
-  assert.equal(result.status, 1);
-  assert.deepEqual(hitLines(result.stderr), ['notes.txt:1', 'notes.txt:2', 'notes.txt:3', 'notes.txt:8']);
-});
-
-test('a partial plan path does not match', (t) => {
-  const { root, write } = repo(t);
-  write('a.md', ['.ai/strikethroo', '.ai/sift/plans', 'strikethroo/plans'].join('\n') + '\n');
-  track(root);
-  assert.equal(run(root).status, 0);
-});
-
-test('only files inside the Sift tracker may cite ticket IDs', (t) => {
-  const { root, write } = repo(t);
-  const sift = ['.ai', 'sift'].join('/');
-  for (const path of [`${sift}/open/a.md`, `${sift}/archive/a.md`, `${sift}/README.md`]) {
-    write(path, `cites ${ticket('0001')}\n`);
-  }
-  track(root);
-  const skipped = run(root);
-  assert.equal(skipped.status, 0, skipped.stderr);
-  assert.equal(skipped.stdout.trim(), CLEAN_MESSAGE);
-
-  const forbidden = [
-    '.ai/kenkeep/nodes/practice.md',
-    `${PLANS}/a.md`,
-    '.agents/skills/s/SKILL.md',
-    '.claude/settings.json',
-    '.cursor/rules/r.mdc',
-    '.codex/config.toml',
-    'tests/core/Smoke.cpp',
-    'skills-lock.json',
-    '.kkignore',
-    `${sift}-notes/a.md`,
-    `docs/${sift}/a.md`,
-    `${sift}.md`,
-  ];
-  for (const path of forbidden) write(path, `cites ${ticket('0001')}\n`);
-  track(root);
-  const result = run(root);
-  assert.equal(result.status, 1);
-  assert.deepEqual(hitLines(result.stderr).sort(), forbidden.map((path) => `${path}:1`).sort());
-});
-
-test('the existing agent and test exclusions apply only to plan paths', (t) => {
-  const { root, write } = repo(t);
-  for (const path of [
-    '.ai/kenkeep/nodes/practice.md',
-    '.agents/skills/s/SKILL.md',
-    '.claude/settings.json',
-    '.cursor/rules/r.mdc',
-    '.codex/config.toml',
-    'tests/core/Smoke.cpp',
-    'skills-lock.json',
-    '.kkignore',
-  ]) {
-    write(path, `see ${PLANS}/1\n`);
-  }
-  track(root);
-  const result = run(root);
-  assert.equal(result.status, 0, result.stderr);
-
-  // Plan exclusions still match root directories and exact filenames only.
-  const near = [
-    '.ai-notes/x.md',
-    'docs/.ai/x.md',
-    'packages/.claude/x.md',
-    '.aiX/x.md',
-    'skills-lock.json.bak',
-    'sub/skills-lock.json',
-    '.kkignore.old',
-  ];
-  for (const path of near) write(path, `see ${PLANS}/1\n`);
-  track(root);
-  const hits = run(root);
-  assert.equal(hits.status, 1);
-  assert.deepEqual(hitLines(hits.stderr).sort(), near.map((path) => `${path}:1`).sort());
-});
-
-test('untracked and gitignored files are not scanned', (t) => {
-  const { root, write } = repo(t);
-  write('.gitignore', 'ignored.md\n');
-  write('tracked.md', 'clean\n');
-  track(root);
-  write('untracked.md', `${ticket('0001')}\n`);
-  write('ignored.md', `${ticket('0001')}\n`);
-  const result = run(root);
-  assert.equal(result.status, 0, result.stderr);
-});
-
-test('a staged hit is found even before it is committed, a hit removed from the index is not', (t) => {
-  const { root, write } = repo(t);
-  write('a.md', `${ticket('5')}\n`);
-  track(root);
-  assert.equal(run(root).status, 1);
-  git(root, 'rm', '-q', '--cached', 'a.md');
-  assert.equal(run(root).status, 0);
-});
-
-test('paths with spaces, quotes and non-ASCII characters are listed intact', (t) => {
-  const { root, write } = repo(t);
-  const names = ['has space.md', 'quo"te.md', 'café/über ☃.md'];
-  for (const name of names) write(name, `${ticket('3')}\n`);
-  track(root);
-  const result = run(root);
-  assert.equal(result.status, 1);
-  assert.deepEqual(hitLines(result.stderr).sort(), names.map((name) => `${name}:1`).sort());
-});
-
-test('binary files are skipped even when they contain a reference', (t) => {
-  const { root, write } = repo(t);
-  write('image.bin', Buffer.concat([Buffer.from(`${ticket('0001')}\n`), Buffer.from([0, 1, 2, 3])]));
-  write('text.md', 'clean\n');
-  track(root);
-  assert.equal(run(root).status, 0);
-});
-
-test('a NUL byte past the first chunk still marks the file binary', (t) => {
-  const { root, write } = repo(t);
-  write('late.bin', Buffer.concat([Buffer.from(`${ticket('0001')}\n`), Buffer.alloc(200_000, 0x61), Buffer.from([0])]));
-  track(root);
-  assert.equal(run(root).status, 0);
-});
-
-test('a tracked symlink is not followed to the file it points at', (t) => {
-  const { root, write } = repo(t);
-  write('target.md', 'clean\n');
-  symlinkSync('target.md', join(root, 'link.md'));
-  // A link to a file outside the repository, and a dangling link, must not crash the scan.
-  const outside = mkdtempSync(join(tmpdir(), 'branch-truce-tracker-refs-out-'));
-  t.after(() => rmSync(outside, { recursive: true, force: true }));
-  writeFileSync(join(outside, 'secret.md'), `${ticket('0001')}\n`);
-  symlinkSync(join(outside, 'secret.md'), join(root, 'escape.md'));
-  symlinkSync('missing.md', join(root, 'dangling.md'));
-  track(root);
-  const result = run(root);
-  assert.equal(result.status, 0, result.stderr);
-});
-
-test('a tracked file deleted from the working tree is skipped, not fatal', (t) => {
-  const { root, write } = repo(t);
-  write('gone.md', `${ticket('0001')}\n`);
-  write('kept.md', 'clean\n');
-  track(root);
-  unlinkSync(join(root, 'gone.md'));
-  const result = run(root);
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), CLEAN_MESSAGE);
-});
-
-test('the working-tree content is scanned, not the staged blob', (t) => {
-  const { root, write } = repo(t);
-  write('a.md', 'clean\n');
-  track(root);
-  write('a.md', `${ticket('8')}\n`);
-  assert.equal(run(root).status, 1);
-});
-
-test('a CRLF file reports the right line and a file without a trailing newline is scanned', (t) => {
-  const { root, write } = repo(t);
-  write('crlf.md', `one\r\ntwo\r\n${ticket('4')}\r\n`);
-  write('nonl.md', `one\n${ticket('4')}`);
-  track(root);
-  const result = run(root);
-  assert.deepEqual(hitLines(result.stderr), ['crlf.md:3', 'nonl.md:2']);
+test('--help prints the usage on stdout and an unknown argument is a usage error', (t) => {
+  const { root } = repo(t);
+  const help = run(root, '--help');
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /^usage: /);
+  assert.equal(help.stderr, '');
+  const unknown = run(root, '--fix');
+  assert.equal(unknown.status, 2);
+  assert.equal(unknown.stdout, '');
+  assert.match(unknown.stderr, /^usage: /);
 });
 
 test('an unreadable tracked file fails loudly instead of passing', (t) => {
@@ -317,12 +151,179 @@ test('outside a git repository the script fails instead of reporting a clean tre
   const result = run(root);
   assert.notEqual(result.status, 0);
   assert.doesNotMatch(result.stdout, /No ticket or plan references/);
+  assert.throws(() => findReferences(root));
+});
+
+// --- The scan
+
+test('every ticket pattern edge: digit count, word boundaries and near misses', () => {
+  const lines = [
+    [`${ticket('1')}`, true], //                   one digit is enough
+    [`(${ticket('123456')})`, true], //            long IDs, punctuation boundary
+    [`x ${ticket('0001')}.`, true], //             trailing period
+    [`A${ticket('0001')}`, false], //              letter before TRUCE
+    [`${ticket('0001')}x`, false], //              letter after the digits
+    [`${ticket('0001')}_`, false], //              underscore is a word character
+    ['TRUCE-', false], //                          no digits
+    [ticket('0001').toLowerCase(), true], //       case does not bypass the rule
+    [`T${ticket('0001')}`, false], //              extra letter
+    [`${ticket('')}x`, false],
+    ['TRUCE 0001', false], //                      no hyphen
+  ] as const;
+  for (const [line, expected] of lines) assert.equal(isReference('notes.txt', line), expected, line);
+});
+
+test('a partial plan path does not match', (t) => {
+  const { root, write } = repo(t);
+  write('a.md', ['.ai/strikethroo', '.ai/sift/plans', 'strikethroo/plans'].join('\n') + '\n');
+  track(root);
+  assert.deepEqual(hits(root), []);
+});
+
+test('only files inside the Sift tracker may cite ticket IDs', (t) => {
+  const { root, write } = repo(t);
+  const sift = ['.ai', 'sift'].join('/');
+  for (const path of [`${sift}/open/a.md`, `${sift}/archive/a.md`, `${sift}/README.md`]) {
+    write(path, `cites ${ticket('0001')}\n`);
+  }
+  track(root);
+  assert.deepEqual(hits(root), []);
+
+  const forbidden = [
+    '.ai/kenkeep/nodes/practice.md',
+    `${PLANS}/a.md`,
+    '.agents/skills/s/SKILL.md',
+    '.claude/settings.json',
+    '.cursor/rules/r.mdc',
+    '.codex/config.toml',
+    'tests/core/Smoke.cpp',
+    'skills-lock.json',
+    '.kkignore',
+    `${sift}-notes/a.md`,
+    `docs/${sift}/a.md`,
+    `${sift}.md`,
+  ];
+  for (const path of forbidden) write(path, `cites ${ticket('0001')}\n`);
+  track(root);
+  assert.deepEqual(hits(root), forbidden.map((path) => `${path}:1`).sort());
+});
+
+test('the existing agent and test exclusions apply only to plan paths', (t) => {
+  const { root, write } = repo(t);
+  for (const path of [
+    '.ai/kenkeep/nodes/practice.md',
+    '.agents/skills/s/SKILL.md',
+    '.claude/settings.json',
+    '.cursor/rules/r.mdc',
+    '.codex/config.toml',
+    'tests/core/Smoke.cpp',
+    'skills-lock.json',
+    '.kkignore',
+  ]) {
+    write(path, `see ${PLANS}/1\n`);
+  }
+  track(root);
+  assert.deepEqual(hits(root), []);
+
+  // Plan exclusions still match root directories and exact filenames only.
+  const near = [
+    '.ai-notes/x.md',
+    'docs/.ai/x.md',
+    'packages/.claude/x.md',
+    '.aiX/x.md',
+    'skills-lock.json.bak',
+    'sub/skills-lock.json',
+    '.kkignore.old',
+  ];
+  for (const path of near) write(path, `see ${PLANS}/1\n`);
+  track(root);
+  assert.deepEqual(hits(root), near.map((path) => `${path}:1`).sort());
+});
+
+test('untracked and gitignored files are not scanned', (t) => {
+  const { root, write } = repo(t);
+  write('.gitignore', 'ignored.md\n');
+  write('tracked.md', 'clean\n');
+  track(root);
+  write('untracked.md', `${ticket('0001')}\n`);
+  write('ignored.md', `${ticket('0001')}\n`);
+  assert.deepEqual(hits(root), []);
+});
+
+test('a staged hit is found even before it is committed, a hit removed from the index is not', (t) => {
+  const { root, write } = repo(t);
+  write('a.md', `${ticket('5')}\n`);
+  track(root);
+  assert.deepEqual(hits(root), ['a.md:1']);
+  git(root, 'rm', '-q', '--cached', 'a.md');
+  assert.deepEqual(hits(root), []);
+});
+
+test('paths with spaces, quotes and non-ASCII characters are listed intact', (t) => {
+  const { root, write } = repo(t);
+  const names = ['has space.md', 'quo"te.md', 'café/über ☃.md'];
+  for (const name of names) write(name, `${ticket('3')}\n`);
+  track(root);
+  assert.deepEqual(hits(root), names.map((name) => `${name}:1`).sort());
+});
+
+test('binary files are skipped even when they contain a reference', (t) => {
+  const { root, write } = repo(t);
+  write('image.bin', Buffer.concat([Buffer.from(`${ticket('0001')}\n`), Buffer.from([0, 1, 2, 3])]));
+  write('text.md', 'clean\n');
+  track(root);
+  assert.deepEqual(hits(root), []);
+});
+
+test('a NUL byte past the first chunk still marks the file binary', (t) => {
+  const { root, write } = repo(t);
+  write('late.bin', Buffer.concat([Buffer.from(`${ticket('0001')}\n`), Buffer.alloc(200_000, 0x61), Buffer.from([0])]));
+  track(root);
+  assert.deepEqual(hits(root), []);
+});
+
+test('a tracked symlink is not followed to the file it points at', (t) => {
+  const { root, write } = repo(t);
+  write('target.md', 'clean\n');
+  symlinkSync('target.md', join(root, 'link.md'));
+  // A link to a file outside the repository, and a dangling link, must not crash the scan.
+  const outside = mkdtempSync(join(tmpdir(), 'branch-truce-tracker-refs-out-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFileSync(join(outside, 'secret.md'), `${ticket('0001')}\n`);
+  symlinkSync(join(outside, 'secret.md'), join(root, 'escape.md'));
+  symlinkSync('missing.md', join(root, 'dangling.md'));
+  track(root);
+  assert.deepEqual(hits(root), []);
+});
+
+test('a tracked file deleted from the working tree is skipped, not fatal', (t) => {
+  const { root, write } = repo(t);
+  write('gone.md', `${ticket('0001')}\n`);
+  write('kept.md', 'clean\n');
+  track(root);
+  unlinkSync(join(root, 'gone.md'));
+  assert.deepEqual(hits(root), []);
+});
+
+test('the working-tree content is scanned, not the staged blob', (t) => {
+  const { root, write } = repo(t);
+  write('a.md', 'clean\n');
+  track(root);
+  write('a.md', `${ticket('8')}\n`);
+  assert.deepEqual(hits(root), ['a.md:1']);
+});
+
+test('a CRLF file reports the right line and a file without a trailing newline is scanned', (t) => {
+  const { root, write } = repo(t);
+  write('crlf.md', `one\r\ntwo\r\n${ticket('4')}\r\n`);
+  write('nonl.md', `one\n${ticket('4')}`);
+  track(root);
+  assert.deepEqual(hits(root), ['crlf.md:3', 'nonl.md:2']);
 });
 
 test('an empty repository passes', (t) => {
   const { root } = repo(t);
-  const result = run(root);
-  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(hits(root), []);
 });
 
 test('the gate is wired into npm and CI', () => {

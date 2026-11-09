@@ -34,14 +34,31 @@ esac
 STUB
 chmod +x "$work/bin/dpkg-deb"
 export DEB_TREE="$work/tree"
+touch "$work/candidate.deb"
+check() { PATH="$work/bin:$PATH" bash "$root/packaging/scripts/check-package.sh" --format kubuntu-deb "$@" > "$work/result" 2>&1; }
+# reject MESSAGE ARGUMENTS...: the checker refuses before anything on the target changes.
+reject() {
+    local message=$1
+    shift
+    if check "$@"; then echo "FAIL: accepted $message" >&2; exit 1; fi
+    grep -qF -- "$message" "$work/result" || { cat "$work/result"; exit 1; }
+    if grep -qF 'before metadata rejection' "$work/result"; then cat "$work/result"; exit 1; fi
+}
 for field in Package Version Architecture; do
     export DEB_NAME=branch-truce DEB_VERSION=1.2.3 DEB_ARCH=amd64
     case "$field" in Package) DEB_NAME=other ;; Version) DEB_VERSION=99.0.0 ;; Architecture) DEB_ARCH=arm64 ;; esac
-    touch "$work/candidate.deb"
-    if PATH="$work/bin:$PATH" bash "$root/packaging/scripts/check-package.sh" --version 1.2.3 --package "$work/candidate.deb" > "$work/result" 2>&1; then
-        echo "FAIL: accepted invalid $field" >&2; exit 1
-    fi
-    grep -qF 'invalid candidate metadata; target unchanged' "$work/result" || { cat "$work/result"; exit 1; }
-    if grep -qF 'before metadata rejection' "$work/result"; then cat "$work/result"; exit 1; fi
+    reject "candidate identity $DEB_NAME|$DEB_VERSION|$DEB_ARCH differs from branch-truce|1.2.3|amd64" \
+        --version 1.2.3 --package "$work/candidate.deb"
+done
+export DEB_NAME=branch-truce DEB_VERSION=1.2.3 DEB_ARCH=amd64
+# The payload must be exactly the installed files, plus the Debian documentation.
+reject 'payload differs from the expected files' --version 1.2.3 --package "$work/candidate.deb"
+# Usage errors and unsupported versions exit 2.
+for arguments in '--version 1.2.3' '--version 1.2.3-rc.0 --package candidate.deb' '--version 1.2.3 --package candidate.rpm'; do
+    status=0
+    # shellcheck disable=SC2086
+    (cd "$work" && touch candidate.rpm && PATH="$work/bin:$PATH" bash "$root/packaging/scripts/check-package.sh" \
+        --format kubuntu-deb $arguments) > "$work/result" 2>&1 || status=$?
+    [ "$status" = 2 ] || { cat "$work/result"; echo "FAIL: '$arguments' exited $status, not 2" >&2; exit 1; }
 done
 echo 'all Debian preflight rejections passed without target mutation'

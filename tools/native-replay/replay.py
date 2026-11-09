@@ -2,6 +2,7 @@
 """Generate the approved fixture or replay its real native controls on private sway."""
 import argparse
 from contextlib import contextmanager
+from dataclasses import dataclass
 import fcntl
 import json
 import math
@@ -17,13 +18,17 @@ import sys
 import tempfile
 import time
 
-# Keep the source checkout read only, including when it has no bytecode cache.
-sys.dont_write_bytecode = True
+if __name__ == '__main__':
+    # Keep the source checkout read only when run as a script, including without -B.
+    sys.dont_write_bytecode = True
 
-from calibration import build_provenance, capture_inputs, colour_scheme, compare, load_contract, validate_profile
-from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged
+from calibration import (ImageTool, build_provenance, capture_inputs, cleanup_confirmed,  # noqa: E402
+                         colour_scheme, compare, load_contract, validate_profile)
+import capture_profile  # noqa: E402
+from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
+COLOUR_SCHEMES = Path('/usr/share/color-schemes')
 
 
 def require(condition, message):
@@ -50,10 +55,14 @@ def replay_lock(path=None):
 
 
 class OwnedResources:
-    """Own only this invocation's private directory and process groups."""
-    def __init__(self, cleanup_receipt=None):
+    """Own only this invocation's private directory and process groups.
+
+    The directory goes under base_dir, which defaults to /var/tmp: a short path keeps the private
+    Wayland and sway sockets under the AF_UNIX length limit, whatever TMPDIR says.
+    """
+    def __init__(self, cleanup_receipt=None, base_dir=Path('/var/tmp')):
         self.cleanup_receipt = cleanup_receipt
-        self.directory = tempfile.TemporaryDirectory(prefix='bt-r-', dir='/var/tmp')
+        self.directory = tempfile.TemporaryDirectory(prefix='bt-r-', dir=base_dir)
         self.root = Path(self.directory.name)
         self.processes = []
         self.logs = []
@@ -109,8 +118,7 @@ class OwnedResources:
         if self.cleanup_receipt:
             write_json(self.cleanup_receipt, dict(private_root=str(self.root),
                 private_root_removed=not self.root.exists(),
-                owned_processes_reaped=all(process.returncode is not None for process in self.processes),
-                unrelated_outputs_touched=False))
+                owned_processes_reaped=all(process.returncode is not None for process in self.processes)))
         require(not self.reader_errors, 'Owned log reader failed: ' + '; '.join(
             f'{type(error).__name__}: {error}' for error in self.reader_errors))
 
@@ -288,7 +296,7 @@ def verify_binary(state):
     require(item(state, 'fileFacts')['text'] == 'PNG image · 18.20 KiB', 'Wrong binary facts')
 
 
-def callout_closeups(state, shot, image_tool, output):
+def callout_closeups(state, shot, tool, output):
     output.mkdir()
     regions = {}
     for name in ('fileList', 'selectedPath', 'fileToolBar', 'stage2Identity', 'stage3Identity',
@@ -305,7 +313,7 @@ def callout_closeups(state, shot, image_tool, output):
             continue
         rect = [x, y, right-x, bottom-y]
         destination = output / f'{name}.png'
-        subprocess.run([str(image_tool), '--crop', str(shot), str(destination), *map(str, rect)], check=True)
+        tool.crop(shot, destination, rect)
         regions[name] = dict(observed_scene_rect=[row[key] for key in ('x', 'y', 'width', 'height')],
                              native_pixel_crop=rect, file=destination.name,
                              acceptance='pending original-image inspection; native diagnostic only')
@@ -313,196 +321,294 @@ def callout_closeups(state, shot, image_tool, output):
                transforms='exact native pixels, no scaling, overlays or target substitution'))
 
 
-def capture_one(args, driver, out, theme, repeat):
+KINDS = ('text', 'binary')
+SHOT_PATHS = {'text': 'src/net/retry.cpp', 'binary': 'assets/logo.png'}
+
+
+def write_kdeglobals(config_home, scheme, scheme_dir, fonts):
+    """Configure the private session's colour scheme and fonts. Returns the kdeglobals path."""
+    colours = Path(scheme_dir) / f'{scheme}.colors'
+    path = Path(config_home) / 'kdeglobals'
+    path.write_text(colours.read_text() + f'\n[General]\nColorScheme={scheme}\n'
+                    + ''.join(f'{key}={value}\n' for key, value in fonts.items()))
+    return path
+
+
+@dataclass(frozen=True)
+class Compositor:
+    """A private headless sway, its single output and the environment that reaches it."""
+    process: subprocess.Popen
+    drain: threading.Thread
+    env: dict
+    output: dict
+
+
+def boot_compositor(owned, env, size, log_path):
+    config = owned.root / 'sway.conf'
+    config.write_text(f'output * mode {size[0]}x{size[1]} scale 1\n'
+                      'default_border none\ndefault_floating_border none\n'
+                      'seat seat0 fallback true\nfocus_follows_mouse no\n')
+    sway_env = dict(env, WLR_BACKENDS='headless', WLR_LIBINPUT_NO_DEVICES='1',
+                    WLR_RENDERER='pixman', WLR_HEADLESS_OUTPUTS='1')
+    process, log = owned.spawn(['sway', '--verbose', '--config', str(config)],
+                               env=sway_env, log=log_path, pipe=True)
+    display = await_compositor(process, log)
+    # The readiness prefix has been consumed. Send later logs directly to the owned log.
+    # Keep draining the pipe on a thread so compositor diagnostics cannot fill it.
+    def drain(source, destination):
+        while chunk := source.read(65536):
+            destination.write(chunk)
+            destination.flush()
+    drain_thread = owned.start_reader(drain, process.stdout, log)
+    sockets = list(Path(env['XDG_RUNTIME_DIR']).glob('sway-ipc.*.sock'))
+    require(len(sockets) == 1, 'Expected one private sway socket')
+    env = dict(env, WAYLAND_DISPLAY=str(Path(env['XDG_RUNTIME_DIR']) / display),
+               SWAYSOCK=str(sockets[0]), QT_QPA_PLATFORM='wayland')
+    outputs = json.loads(subprocess.check_output(['swaymsg', '-t', 'get_outputs', '-r'], env=env))
+    require(len(outputs) == 1 and outputs[0]['active'] and outputs[0]['rect']['width'] == size[0]
+            and outputs[0]['rect']['height'] == size[1], 'Private output geometry differs')
+    return Compositor(process, drain_thread, env, outputs[0])
+
+
+def stop_compositor(compositor):
+    # Stop the owned compositor before joining its log reader and deleting private paths.
+    if compositor.process.poll() is None:
+        compositor.process.terminate()
+    compositor.process.wait(timeout=10)
+    compositor.drain.join(timeout=5)
+    require(not compositor.drain.is_alive(), 'Compositor log reader did not finish')
+
+
+def run_journey(client, repo, out):
+    """Resolve the text and release-note conflicts through native controls and verify the result."""
+    client.command(path='src/net/retry.cpp', target='choiceAccept-section/1/392/446')
+    client.command('click', target='choiceAccept-section/1/392/446')
+    client.command('click', target='choiceIgnore-section/2/392/450')
+    client.command('click-path', target='docs/release-notes.md')
+    client.command(path='docs/release-notes.md', target='choiceAccept-section/1/17/37')
+    client.command('click', target='choiceAccept-section/1/17/37')
+    client.command('click', target='choiceIgnore-section/2/17/46')
+    client.toolbar('markResolved')
+    client.command(target='workflowStatus', text='1 of 3 files resolved')
+    client.command('click-path', target='src/net/retry.cpp')
+    client.command(path='src/net/retry.cpp')
+    client.toolbar('undoCommand')
+    undone = client.command(target='choiceIgnore-section/2/392/450')
+    write_json(out / 'undo-state.json', undone)
+    require(any(row['name'] == 'choiceIgnore-section/2/392/450' and row.get('onScreen', True)
+                for row in undone['items']), 'Undo must restore undecided controls')
+    client.toolbar('redoCommand')
+    for side, line, gesture in [('stage2', 19, 'Menu'), ('stage3', 20, 'Shift+F10'),
+                                 ('stage2', 10, 'right-click')]:
+        menu = client.source_menu(side, line, gesture)
+        require(any(row['name'].startswith('choiceResolve-') for row in menu['items']),
+                f'{gesture} did not open a real range menu at {side}:{line}')
+        write_json(out / f'{side}-{line}-menu-state.json', menu)
+        client.command('escape')
+    client.command('click', target='stage2Label')
+    verify_text(client.command('neutral'), repo)
+
+
+def show_binary(client, out):
+    """Select the binary file and check its technical details before its shot."""
+    client.command('click-path', target='assets/logo.png')
+    verify_binary(client.command('neutral', path='assets/logo.png'))
+    client.command('click-accessible', target='Technical details')
+    details = client.command()
+    diagnostic = item(details, 'selectedProblemDiagnostic')
+    require(diagnostic['text'] == details['supportDetail'] and 'UTF-8' in diagnostic['text'],
+            'Technical details changed or lost the captured decoder diagnostic')
+    require(diagnostic['readOnly'] and diagnostic['plainText'] and diagnostic['selectByMouse'],
+            'Technical details must remain selectable plain text')
+    write_json(out / 'binary-details-state.json', details)
+    client.command('escape')
+
+
+@dataclass(frozen=True)
+class Replay:
+    """What every shot of one clean replay records about its inputs and environment."""
+    theme: str
+    repeat: int
+    size: tuple
+    fixture: dict
+    fixture_sha256: str
+    executable_sha256: str
+    driver_sha256: str
+    scheme: str
+    kdeglobals: Path
+    output: dict
+
+    def metadata(self, kind, shot, decoded_sha256):
+        return dict(theme=self.theme, kind=kind, repeat=self.repeat, height=self.size[1],
+                    fixture=self.fixture, fixture_sha256=self.fixture_sha256,
+                    executable_sha256=self.executable_sha256, driver_sha256=self.driver_sha256,
+                    capture_sha256=sha256(shot), decoded_sha256=decoded_sha256,
+                    capture_environment=dict(colour_scheme=self.scheme, kdeglobals_sha256=sha256(self.kdeglobals),
+                                             output=self.output, renderer='pixman', quick_backend='software',
+                                             os_release=Path('/etc/os-release').read_text(), physical_desktop=False,
+                                             scheme_roles=colour_scheme(self.kdeglobals)),
+                    reference_provenance_sha256=sha256(REFERENCE / 'provenance.json'),
+                    capture_profile_sha256=sha256(capture_profile.PROFILE),
+                    reference_contract_sha256=sha256(HERE / 'reference-contract.json'))
+
+
+def capture_shot(client, replay, kind, *, repo, env, tool, source, out):
+    """Wait for settled frames, shoot the private output and keep the shot's evidence."""
+    state = client.command('capture-ready', path=SHOT_PATHS[kind])
+    if kind == 'text':
+        verify_text(state, repo)
+    else:
+        verify_binary(state)
+    require((state['width'], state['height']) == tuple(replay.size), 'Window geometry differs')
+    name = f'{replay.theme}-{kind}'
+    shot = out / f'{name}.png'
+    subprocess.run(['grim', '-o', replay.output['name'], str(shot)], env=env, check=True)
+    image = tool.decode(shot)
+    require((image['width'], image['height']) == tuple(replay.size), 'Capture geometry differs')
+    metadata = replay.metadata(kind, shot, image['decoded_sha256'])
+    validate_profile(state, metadata)
+    write_json(out / f'{name}-state.json', dict(metadata=metadata, state=state))
+    callout_closeups(state, shot, tool, out / f'{name}-callouts')
+    compare(source, shot, state, tool.path, out / f'{name}-comparison')
+    return dict(file=str(shot), **metadata)
+
+
+def drive_app(owned, compositor, replay, *, app, driver, tool, repo, source, out):
+    """Run the app under the preload driver, replay the journey and capture each kind of shot."""
     captures = []
+    parent, child = socket.socketpair()
+    client = NativeClient(parent, out)
+    env = dict(compositor.env, LD_PRELOAD=str(driver), BRANCH_TRUCE_REPLAY_FD=str(child.fileno()))
+    try:
+        process, _ = owned.spawn([str(app), '--mergetool-path', 'src/net/retry.cpp'.encode().hex(), str(repo)],
+                                 env=env, log=out / 'app.log', pass_fds=(child.fileno(),))
+        child.close()
+        run_journey(client, repo, out)
+        for kind in KINDS:
+            if kind == 'binary':
+                show_binary(client, out)
+            captures.append(capture_shot(client, replay, kind, repo=repo, env=compositor.env, tool=tool,
+                                         source=source, out=out))
+        client.command('quit')
+        require(process.wait(timeout=10) == 0, 'Application exit failed')
+    except BaseException as error:
+        # Keep the actual failing scene even when a semantic/readiness check
+        # stops the replay before its normal capture boundary.
+        failure = subprocess.run(['grim', '-o', compositor.output['name'], str(out / 'failure.png')],
+                                 env=compositor.env, capture_output=True)
+        write_json(out / 'failure.json', dict(error=str(error), capture_exit=failure.returncode,
+            capture_stderr=failure.stderr.decode(errors='replace'),
+            scene='actual private output at failure; not an approved final state'))
+        raise
+    finally:
+        child.close()
+        client.close()
+    return captures
+
+
+def replay_once(*, app, driver, tool, source, out, theme, scheme, repeat, size, scheme_dir, fonts):
+    """One clean replay: a new fixture, private home and compositor, the app and its shots."""
     with OwnedResources(out / 'cleanup.json') as owned:
         env = private_environment(owned.root / 'home')
         fixture_root = owned.root / 'fixture'
         fixture = make_fixture(fixture_root)
         repo = fixture_root / 'retry-service'
         write_json(out / 'fixture.json', fixture)
-        scheme = 'BreezeLight' if theme == 'light' else 'BreezeDark'
-        colours = Path('/usr/share/color-schemes') / f'{scheme}.colors'
-        (Path(env['XDG_CONFIG_HOME']) / 'kdeglobals').write_text(colours.read_text() +
-            f'\n[General]\nColorScheme={scheme}\nfont=Noto Sans,10,-1,5,50,0,0,0,0,0\nfixed=Hack,9,-1,5,50,0,0,0,0,0\n')
-        config = owned.root / 'sway.conf'
-        config.write_text(f'output * mode 1280x{args.height} scale 1\n'
-                          'default_border none\ndefault_floating_border none\n'
-                          'seat seat0 fallback true\nfocus_follows_mouse no\n')
-        sway_env = dict(env, WLR_BACKENDS='headless', WLR_LIBINPUT_NO_DEVICES='1',
-                        WLR_RENDERER='pixman', WLR_HEADLESS_OUTPUTS='1')
-        compositor, log = owned.spawn(['sway', '--verbose', '--config', str(config)],
-                                      env=sway_env, log=out / 'compositor.log', pipe=True)
-        display = await_compositor(compositor, log)
-        # The readiness prefix has been consumed. Send later logs directly to the owned log.
-        # Keep draining the pipe on a thread so compositor diagnostics cannot fill it.
-        def drain(source, destination):
-            while chunk := source.read(65536):
-                destination.write(chunk)
-                destination.flush()
-        drain_thread = owned.start_reader(drain, compositor.stdout, log)
-        sockets = list(Path(env['XDG_RUNTIME_DIR']).glob('sway-ipc.*.sock'))
-        require(len(sockets) == 1, 'Expected one private sway socket')
-        env.update(WAYLAND_DISPLAY=str(Path(env['XDG_RUNTIME_DIR']) / display),
-                   SWAYSOCK=str(sockets[0]), QT_QPA_PLATFORM='wayland')
-        outputs = json.loads(subprocess.check_output(['swaymsg', '-t', 'get_outputs', '-r'], env=env))
-        require(len(outputs) == 1 and outputs[0]['active'] and outputs[0]['rect']['width'] == 1280
-                and outputs[0]['rect']['height'] == args.height, 'Private output geometry differs')
-        parent, child = socket.socketpair()
-        client = NativeClient(parent, out)
-        app_env = dict(env, LD_PRELOAD=str(driver), BRANCH_TRUCE_REPLAY_FD=str(child.fileno()))
-        try:
-            app, _ = owned.spawn([str(args.build / 'src/app/branch-truce'), '--mergetool-path',
-                                  'src/net/retry.cpp'.encode().hex(), str(repo)], env=app_env,
-                                 log=out / 'app.log', pass_fds=(child.fileno(),))
-            child.close()
-            client.command(path='src/net/retry.cpp', target='choiceAccept-section/1/392/446')
-            client.command('click', target='choiceAccept-section/1/392/446')
-            client.command('click', target='choiceIgnore-section/2/392/450')
-            client.command('click-path', target='docs/release-notes.md')
-            client.command(path='docs/release-notes.md', target='choiceAccept-section/1/17/37')
-            client.command('click', target='choiceAccept-section/1/17/37')
-            client.command('click', target='choiceIgnore-section/2/17/46')
-            client.toolbar('markResolved')
-            client.command(target='workflowStatus', text='1 of 3 files resolved')
-            client.command('click-path', target='src/net/retry.cpp')
-            client.command(path='src/net/retry.cpp')
-            client.toolbar('undoCommand')
-            undone = client.command(target='choiceIgnore-section/2/392/450')
-            write_json(out / 'undo-state.json', undone)
-            require(any(row['name'] == 'choiceIgnore-section/2/392/450' and row.get('onScreen', True)
-                        for row in undone['items']), 'Undo must restore undecided controls')
-            client.toolbar('redoCommand')
-            for side, line, gesture in [('stage2', 19, 'Menu'), ('stage3', 20, 'Shift+F10'),
-                                         ('stage2', 10, 'right-click')]:
-                menu = client.source_menu(side, line, gesture)
-                require(any(row['name'].startswith('choiceResolve-') for row in menu['items']),
-                        f'{gesture} did not open a real range menu at {side}:{line}')
-                write_json(out / f'{side}-{line}-menu-state.json', menu)
-                client.command('escape')
-            client.command('click', target='stage2Label')
-            state = client.command('neutral')
-            verify_text(state, repo)
-            for kind in ('text', 'binary'):
-                if kind == 'binary':
-                    client.command('click-path', target='assets/logo.png')
-                    state = client.command('neutral', path='assets/logo.png')
-                    verify_binary(state)
-                    client.command('click-accessible', target='Technical details')
-                    details = client.command()
-                    diagnostic = item(details, 'selectedProblemDiagnostic')
-                    require(diagnostic['text'] == details['supportDetail'] and 'UTF-8' in diagnostic['text'],
-                            'Technical details changed or lost the captured decoder diagnostic')
-                    require(diagnostic['readOnly'] and diagnostic['plainText'] and diagnostic['selectByMouse'],
-                            'Technical details must remain selectable plain text')
-                    write_json(out / 'binary-details-state.json', details)
-                    client.command('escape')
-                state = client.command('capture-ready', path='src/net/retry.cpp' if kind == 'text' else 'assets/logo.png')
-                if kind == 'text':
-                    verify_text(state, repo)
-                else:
-                    verify_binary(state)
-                require(state['width'] == 1280 and state['height'] == args.height, 'Window geometry differs')
-                name = f'{theme}-{kind}'
-                shot = out / f'{name}.png'
-                subprocess.run(['grim', '-o', outputs[0]['name'], str(shot)], env=env, check=True)
-                image = json.loads(subprocess.check_output([str(driver.parent / 'native-replay-image'), str(shot)]))
-                require((image['width'], image['height']) == (1280, args.height), 'Capture geometry differs')
-                decoded = image['decoded_sha256']
-                metadata = dict(theme=theme, kind=kind, repeat=repeat, height=args.height,
-                                fixture=fixture, fixture_sha256=sha256(out / 'fixture.json'), executable_sha256=sha256(args.build / 'src/app/branch-truce'),
-                                driver_sha256=sha256(driver), capture_sha256=sha256(shot), decoded_sha256=decoded,
-                                capture_environment=dict(colour_scheme=scheme, kdeglobals_sha256=sha256(Path(env['XDG_CONFIG_HOME']) / 'kdeglobals'),
-                                                         output=outputs[0], renderer='pixman', quick_backend='software',
-                                                         os_release=Path('/etc/os-release').read_text(), physical_desktop=False,
-                                                         scheme_roles=colour_scheme(Path(env['XDG_CONFIG_HOME']) / 'kdeglobals')),
-                                reference_provenance_sha256=sha256(REFERENCE / 'provenance.json'))
-                metadata.update(capture_profile_sha256=sha256(HERE / 'capture-profile.json'),
-                                reference_contract_sha256=sha256(HERE / 'reference-contract.json'))
-                validate_profile(state, metadata)
-                write_json(out / f'{name}-state.json', dict(metadata=metadata, state=state))
-                callout_closeups(state, shot, driver.parent / 'native-replay-image', out / f'{name}-callouts')
-                compare(args.source, shot, state, driver.parent / 'native-replay-image', out / f'{name}-comparison')
-                captures.append(dict(file=str(shot), **metadata))
-            if getattr(args, 'documentation', False) and repeat == 1 and theme == 'light':
-                docs = args.output / 'documentation-readme'
-                docs.mkdir()
-                preview_env = dict(env, PREVIEW_FILE='notes.md', PREVIEW_SIZE='1440x900',
-                                   PREVIEW_OUTPUT=str(docs))
-                with (docs / 'preview.log').open('wb') as preview_log:
-                    subprocess.run([str(args.source / 'tools/preview-app.sh'),
-                                    str(args.build / 'src/app/branch-truce')],
-                                   env=preview_env, stdout=preview_log, stderr=subprocess.STDOUT, check=True)
-                write_json(docs / 'provenance.json', dict(
-                    command=['tools/preview-app.sh', str(args.build / 'src/app/branch-truce')],
-                    environment={key: preview_env[key] for key in ('PREVIEW_FILE', 'PREVIEW_SIZE')},
-                    captured_at_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-                    executable_sha256=sha256(args.build / 'src/app/branch-truce'),
-                    build_provenance='../build-provenance.json', physical_desktop=False,
-                    images={path.name: sha256(path) for path in docs.glob('*.png')},
-                    acceptance='pending original-image inspection; development build, not installed validation'))
-            client.command('quit')
-            require(app.wait(timeout=10) == 0, 'Application exit failed')
-        except BaseException as error:
-            # Keep the actual failing scene even when a semantic/readiness check
-            # stops the replay before its normal capture boundary.
-            failure = subprocess.run(['grim', '-o', outputs[0]['name'], str(out / 'failure.png')],
-                                     env=env, capture_output=True)
-            write_json(out / 'failure.json', dict(error=str(error), capture_exit=failure.returncode,
-                capture_stderr=failure.stderr.decode(errors='replace'),
-                scene='actual private output at failure; not an approved final state'))
-            raise
-        finally:
-            child.close()
-            client.close()
-        # Stop the owned compositor before joining its log reader and deleting private paths.
-        if compositor.poll() is None:
-            compositor.terminate()
-        compositor.wait(timeout=10)
-        drain_thread.join(timeout=5)
-        require(not drain_thread.is_alive(), 'Compositor log reader did not finish')
+        kdeglobals = write_kdeglobals(env['XDG_CONFIG_HOME'], scheme, scheme_dir, fonts)
+        compositor = boot_compositor(owned, env, size, out / 'compositor.log')
+        replay = Replay(theme=theme, repeat=repeat, size=size, fixture=fixture,
+                        fixture_sha256=sha256(out / 'fixture.json'), executable_sha256=sha256(app),
+                        driver_sha256=sha256(driver), scheme=scheme, kdeglobals=kdeglobals,
+                        output=compositor.output)
+        captures = drive_app(owned, compositor, replay, app=app, driver=driver, tool=tool, repo=repo,
+                             source=source, out=out)
+        stop_compositor(compositor)
     return captures
 
 
-def capture(args):
-    require((args.source / 'tools/native-replay/replay.py').resolve() == Path(__file__).resolve(),
+def documentation_preview(*, app, source, docs, size):
+    """Run the README preview recipe for notes.md on its own private compositor."""
+    with OwnedResources(docs / 'cleanup.json') as owned:
+        env = private_environment(owned.root / 'home')
+        compositor = boot_compositor(owned, env, size, docs / 'compositor.log')
+        preview_env = dict(compositor.env, PREVIEW_FILE='notes.md', PREVIEW_SIZE='1440x900',
+                           PREVIEW_OUTPUT=str(docs))
+        with (docs / 'preview.log').open('wb') as preview_log:
+            subprocess.run([str(source / 'tools/preview-app.sh'), str(app)],
+                           env=preview_env, stdout=preview_log, stderr=subprocess.STDOUT, check=True)
+        stop_compositor(compositor)
+    write_json(docs / 'provenance.json', dict(
+        command=['tools/preview-app.sh', str(app)],
+        environment={key: preview_env[key] for key in ('PREVIEW_FILE', 'PREVIEW_SIZE')},
+        captured_at_utc=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        executable_sha256=sha256(app),
+        build_provenance='../build-provenance.json', physical_desktop=False,
+        images={path.name: sha256(path) for path in docs.glob('*.png')},
+        acceptance='pending original-image inspection; development build, not installed validation'))
+
+
+def build_driver(directory):
+    """Build the preload driver and image tool outside the app build. Returns both paths."""
+    subprocess.run(['cmake', '-S', str(HERE), '-B', str(directory)], check=True)
+    subprocess.run(['cmake', '--build', str(directory), '--parallel', '2'], check=True)
+    return directory / 'libnative_replay.so', ImageTool(directory / 'native-replay-image')
+
+
+def compare_repeats(records, tool, themes):
+    """Compare each later repeat's decoded pixels with the first repeat of the same theme and kind."""
+    comparisons = []
+    for theme in themes:
+        for kind in KINDS:
+            selected = [r for r in records if r['theme'] == theme and r['kind'] == kind]
+            for row in selected[1:]:
+                comparison = tool.compare(selected[0]['file'], row['file'])
+                comparisons.append(dict(theme=theme, kind=kind, repeat=row['repeat'],
+                                        differing_pixels=comparison['differing_pixels']))
+    return comparisons
+
+
+def capture(*, source, build, output, size, repeat, documentation, schemes, fonts, scheme_dir):
+    """Replay and capture every theme repeat times at one size. Returns the verification.json report."""
+    require((source / 'tools/native-replay/replay.py').resolve() == Path(__file__).resolve(),
             '--source must name the checkout containing this replay tool')
-    require((args.build / 'src/app/branch-truce').is_file(), '--build must contain src/app/branch-truce')
-    require(args.repeat >= 2, 'Capture requires at least two clean replays for pixel comparison')
-    load_contract(args.source)
+    app = build / 'src/app/branch-truce'
+    require(app.is_file(), '--build must contain src/app/branch-truce')
+    require(repeat >= 2, 'Capture requires at least two clean replays for pixel comparison')
+    load_contract(source)
     with replay_lock():
-        args.output.mkdir(exist_ok=False)
-        write_json(args.output / 'build-provenance.json', build_provenance(args.source, args.build))
-        driver_build = args.output / 'driver-build'
-        subprocess.run(['cmake', '-S', str(HERE), '-B', str(driver_build)], check=True)
-        subprocess.run(['cmake', '--build', str(driver_build), '--parallel', '2'], check=True)
-        driver = driver_build / 'libnative_replay.so'
-        records = []
-        for repeat in range(args.repeat):
-            for theme in ('light', 'dark'):
-                out = args.output / f'replay-{repeat+1}-{theme}'
+        output.mkdir(exist_ok=False)
+        write_json(output / 'build-provenance.json', build_provenance(source, build))
+        driver, tool = build_driver(output / 'driver-build')
+        records, receipts = [], []
+        for index in range(1, repeat + 1):
+            for theme, scheme in schemes.items():
+                out = output / f'replay-{index}-{theme}'
                 out.mkdir()
-                records += capture_one(args, driver, out, theme, repeat+1)
-        comparisons = []
-        for theme in ('light', 'dark'):
-            for kind in ('text', 'binary'):
-                selected = [r for r in records if r['theme'] == theme and r['kind'] == kind]
-                for row in selected[1:]:
-                    comparison = json.loads(subprocess.check_output([str(driver_build / 'native-replay-image'),
-                                                                      selected[0]['file'], row['file']]))
-                    comparisons.append(dict(theme=theme, kind=kind, repeat=row['repeat'],
-                                            differing_pixels=comparison['differing_pixels']))
-        write_json(args.output / 'verification.json', dict(captures=records, comparisons=comparisons,
-            source=str(args.source), build=str(args.build), height=args.height,
+                receipts.append(out / 'cleanup.json')
+                records += replay_once(app=app, driver=driver, tool=tool, source=source, out=out, theme=theme,
+                                       scheme=scheme, repeat=index, size=size, scheme_dir=scheme_dir, fonts=fonts)
+        if documentation:
+            docs = output / 'documentation-readme'
+            docs.mkdir()
+            receipts.append(docs / 'cleanup.json')
+            documentation_preview(app=app, source=source, docs=docs, size=size)
+        comparisons = compare_repeats(records, tool, schemes)
+        cleaned = cleanup_confirmed(receipts)
+        report = dict(captures=records, comparisons=comparisons,
+            source=str(source), build=str(build), height=size[1],
+            themes=list(schemes), kinds=list(KINDS), repeat=repeat,
             environment=dict(platform='wayland', renderer='pixman', quick_backend='software'),
-            cleanup_confirmed=True, source_inputs=capture_inputs(args.source),
-            artifact_hashes={str(p.relative_to(args.output)): sha256(p) for p in args.output.rglob('*')
-                             if p.is_file() and 'driver-build' not in p.relative_to(args.output).parts}))
+            cleanup_confirmed=cleaned, source_inputs=capture_inputs(source),
+            artifact_hashes={str(p.relative_to(output)): sha256(p) for p in output.rglob('*')
+                             if p.is_file() and 'driver-build' not in p.relative_to(output).parts})
+        write_json(output / 'verification.json', report)
         require(all(row['differing_pixels'] == 0 for row in comparisons), 'Clean replays differ in decoded pixels')
-        print(f'{len(records)} native captures; {len(comparisons)} comparisons, zero differing decoded pixels; cleanup confirmed')
+        require(cleaned, 'A cleanup receipt does not confirm its private root removed and processes reaped')
+    return report
 
 
 def main():
+    shape = capture_profile.run_shape(capture_profile.load())
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='mode', required=True)
     fixture = sub.add_parser('fixture', help='Create a new deterministic merge without starting the app')
@@ -511,20 +617,23 @@ def main():
     native.add_argument('--source', required=True, type=Path)
     native.add_argument('--build', required=True, type=Path)
     native.add_argument('--output', required=True, type=Path)
-    native.add_argument('--height', type=int, choices=(720, 800), default=720)
+    native.add_argument('--height', type=int, choices=shape.heights, default=shape.heights[0],
+                        help='logical output height from capture-profile.json (default %(default)s)')
     native.add_argument('--documentation', action='store_true', help='Also retain the fresh README preview pair')
-    native.add_argument('--repeat', type=int, default=2)
+    native.add_argument('--repeat', type=int, default=shape.repeat,
+                        help='clean replays per theme, at least 2 (default %(default)s)')
     args = parser.parse_args()
     def interrupted(signum, _frame):
         raise SystemExit(128 + signum)
     signal.signal(signal.SIGTERM, interrupted)
-    for key in ('source', 'build', 'output'):
-        if hasattr(args, key):
-            setattr(args, key, getattr(args, key).resolve())
     if args.mode == 'fixture':
-        print(json.dumps(make_fixture(args.output), indent=2))
+        print(json.dumps(make_fixture(args.output.resolve()), indent=2))
     else:
-        capture(args)
+        report = capture(source=args.source.resolve(), build=args.build.resolve(), output=args.output.resolve(),
+                         size=shape.size(args.height), repeat=args.repeat, documentation=args.documentation,
+                         schemes=shape.schemes, fonts=shape.kdeglobals_fonts, scheme_dir=COLOUR_SCHEMES)
+        print(f"{len(report['captures'])} native captures; {len(report['comparisons'])} comparisons, "
+              'zero differing decoded pixels; cleanup confirmed')
 
 
 if __name__ == '__main__':

@@ -3,80 +3,72 @@
 # Missing tools/releases/assets and failed downloads visibly select the real
 # synthetic upgrade check. Downloaded bytes with bad size/digest are fatal.
 #
-# package-info owns target filenames, architectures and native revisions.
-# The supported version subset has the same order in dpkg, RPM and vercmp;
-# compare its canonical tilde form with dpkg on the Ubuntu workflow host.
+#   previous-package.sh --format <id> --version <semver> --output <dir>
+#
+# packaging/formats.tsv owns the file names and release asset labels.
+# The supported version subset has the same order in dpkg, RPM and vercmp,
+# and in sort -V on its canonical tilde form.
 # Clean native runtime checks independently verify actual package metadata and
 # strictly older ordering with the target's own package manager before install.
 
 set -euo pipefail
 
-usage() {
-    echo "usage: $0 --format kubuntu-deb|fedora-rpm|arch-pkg --version <version> --output <dir>" >&2
-    exit 2
-}
+source "$(dirname -- "${BASH_SOURCE[0]}")/../scripts/package-info.sh"
+usage() { echo "usage: $0 --format $(format_ids | paste -sd '|' -) --version <semver> --output <dir>"; }
 
 format=""
 version=""
 output=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --format) format="${2-}"; shift 2 || usage ;;
-        --version) version="${2-}"; shift 2 || usage ;;
-        --output) output="${2-}"; shift 2 || usage ;;
-        *) usage ;;
+        -h|--help) usage; exit 0 ;;
+        --format|--version|--output)
+            [ $# -ge 2 ] || { usage >&2; exit 2; }
+            case "$1" in --format) format=$2 ;; --version) version=$2 ;; --output) output=$2 ;; esac
+            shift 2 ;;
+        *) usage >&2; exit 2 ;;
     esac
 done
-case "$format" in kubuntu-deb|fedora-rpm|arch-pkg) ;; *) usage ;; esac
-[ -n "$version" ] && [ -n "$output" ] || usage
-
+[ -n "$format" ] && [ -n "$version" ] && [ -n "$output" ] || { usage >&2; exit 2; }
+label=$(format_field "$format" label) || { usage >&2; exit 2; }
 packaging_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 native_version() { "$packaging_dir/scripts/native-version.sh" "$1"; }
 next="$(native_version "$version")" || exit 2
-source "$packaging_dir/scripts/package-info.sh"
 
 fallback() {
     echo "previous package: $*; the upgrade check uses a build of this source as 0.0.0 instead" >&2
     exit 0
 }
-for tool in gh jq dpkg sha256sum; do
+for tool in gh jq sha256sum; do
     command -v "$tool" > /dev/null || fallback "$tool is not installed"
 done
-
-case "$format" in
-    kubuntu-deb) asset_path='dist/kde/branch-truce_*_amd64-ubuntu26.04.deb' ;;
-    fedora-rpm) asset_path='dist/kde/branch-truce-*-1.fc44.x86_64.rpm' ;;
-    arch-pkg) asset_path='dist/kde/branch-truce-*-1-x86_64.pkg.tar.zst' ;;
-esac
-label="$(jq -r --arg path "$asset_path" '
-    .plugins[] | select(type == "array" and .[0] == "@semantic-release/github")
-    | .[1].assets[] | select(.path == $path) | .label' "$packaging_dir/../.releaserc.json")"
-if [ -z "$label" ] || [ "$(wc -l <<<"$label")" != 1 ]; then
-    echo "error: .releaserc.json does not give one label for the $format asset" >&2
-    exit 1
-fi
 
 if ! tags="$(gh release list --exclude-drafts --exclude-pre-releases --limit 1000 \
     --json tagName --jq '.[].tagName' 2>&1)"; then
     fallback "cannot list the releases ($(head -n 1 <<<"$tags"))"
 fi
 
+# Releases strictly older than this version, newest first. The supported
+# versions sort the same with sort -V as with dpkg, RPM and vercmp.
 candidates=()
 while read -r tag; do
     [ -n "$tag" ] && [ "${tag#v}" != "$tag" ] || continue
     native="$(native_version "${tag#v}" 2> /dev/null)" || continue
-    dpkg --compare-versions "$native" lt "$next" || continue
+    [ "$native" != "$next" ] && [ "$(printf '%s\n' "$native" "$next" | sort -V | head -n 1)" = "$native" ] || continue
     candidates+=("$native $tag")
 done <<<"$tags"
+mapfile -t candidates < <(printf '%s\n' "${candidates[@]}" | sed '/^$/d' | sort -r -V -k1,1)
 
+# asset_of TAG: the release's single uploaded asset with this format's file
+# name and label and a SHA-256 digest, as JSON, or nothing.
 asset_of() {
-    local assets
-    if ! assets="$(gh release view "$2" --json assets 2>&1)"; then
+    local assets name
+    if ! assets="$(gh release view "$1" --json assets 2>&1)"; then
         head -n 1 <<<"$assets" >&2
         return 1
     fi
-    package_info "$format" "${2#v}"
-    jq -c --arg name "$package_filename" --arg label "$label" '
+    name=$(package_filename "$format" "${1#v}") || return 1
+    jq -c --arg name "$name" --arg label "$label" '
         [.assets[]
          | select(.label == $label and .state == "uploaded")
          | select((.digest // "") | test("^sha256:[0-9a-f]{64}$"))
@@ -85,18 +77,10 @@ asset_of() {
 }
 
 chosen=""
-while [ "${#candidates[@]}" -gt 0 ]; do
-    best=0
-    for i in "${!candidates[@]}"; do
-        if dpkg --compare-versions "${candidates[$i]%% *}" gt "${candidates[$best]%% *}"; then
-            best=$i
-        fi
-    done
-    native="${candidates[$best]%% *}"
-    tag="${candidates[$best]#* }"
-    unset 'candidates[best]'
-    candidates=("${candidates[@]}")
-    asset="$(asset_of "$native" "$tag")" || fallback "cannot read the assets of $tag"
+for candidate in "${candidates[@]}"; do
+    native="${candidate%% *}"
+    tag="${candidate#* }"
+    asset="$(asset_of "$tag")" || fallback "cannot read the assets of $tag"
     if [ -n "$asset" ]; then
         chosen="$tag"
         break

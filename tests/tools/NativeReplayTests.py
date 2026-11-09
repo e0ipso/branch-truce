@@ -17,9 +17,12 @@ import zlib
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/native-replay'))
 from NativeCalibrationTests import ContractTests
+from calibration import cleanup_confirmed
+import capture_profile
 from ledger import assemble
-from fixture import PATHS, git, make_fixture, png, reference_bytes, unmerged
-from replay import NativeClient, OwnedResources, await_compositor, private_environment, replay_lock, item
+from fixture import PATHS, GitError, git, make_fixture, png, reference_bytes, unmerged
+from replay import (NativeClient, OwnedResources, await_compositor, item, private_environment, replay_lock,
+                    write_kdeglobals)
 
 
 class FixtureTests(unittest.TestCase):
@@ -49,6 +52,15 @@ class FixtureTests(unittest.TestCase):
         for branch, key in [('main', 'main'), ('feature/backoff', 'incoming')]:
             self.assertEqual(git(repo, 'rev-parse', branch).stdout.decode().strip(), first[key])
             self.assertEqual(git(repo, 'rev-parse', branch + '^').stdout.decode().strip(), first['base'])
+
+    def test_unlisted_reference_names_the_provenance_file(self):
+        with self.assertRaisesRegex(KeyError, 'missing.cpp is not listed in .*/provenance.json'):
+            reference_bytes('missing.cpp')
+
+    def test_failed_git_command_reports_its_stderr(self):
+        with self.assertRaisesRegex(GitError, 'git rev-parse HEAD in .* exited 128: fatal: not a git repository'):
+            git(self.root, 'rev-parse', 'HEAD')
+        self.assertEqual(git(self.root, 'rev-parse', 'HEAD', check=False).returncode, 128)
 
     def test_png_chunks_crc_dimensions_and_decoded_pixels(self):
         for colour in [(100, 100, 100), (61, 174, 233), (39, 174, 96)]:
@@ -113,21 +125,50 @@ class FixtureTests(unittest.TestCase):
         self.assertFalse((self.root / 'unrelated.git').exists())
 
 
-class ResourceTests(unittest.TestCase):
+class PrivateBaseTestCase(unittest.TestCase):
+    """Keeps every owned private directory and receipt under a temporary base directory."""
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.base = Path(directory.name)
+
+    def owned(self, cleanup_receipt=None):
+        return OwnedResources(cleanup_receipt, base_dir=self.base)
+
+
+class ResourceTests(PrivateBaseTestCase):
+    def test_private_directory_lives_under_the_given_base(self):
+        with self.owned() as owned:
+            self.assertEqual(owned.root.parent, self.base)
+            self.assertTrue(owned.root.name.startswith('bt-r-'))
+        self.assertFalse(owned.root.exists())
+        self.assertEqual(list(self.base.iterdir()), [])
+
+    def test_kdeglobals_reads_the_scheme_from_the_given_directory(self):
+        schemes = self.base / 'schemes'
+        schemes.mkdir()
+        (schemes / 'BreezeDark.colors').write_text('[Colors:Window]\nBackgroundNormal=32,35,38\n')
+        fonts = capture_profile.run_shape(capture_profile.load()).kdeglobals_fonts
+        path = write_kdeglobals(self.base, 'BreezeDark', schemes, fonts)
+        self.assertEqual(path, self.base / 'kdeglobals')
+        self.assertEqual(path.read_text(), '[Colors:Window]\nBackgroundNormal=32,35,38\n\n[General]\n'
+                         'ColorScheme=BreezeDark\nfont=Noto Sans,10,-1,5,50,0,0,0,0,0\n'
+                         'fixed=Hack,9,-1,5,50,0,0,0,0,0\n')
+
+
     def test_reader_failure_is_reported_after_private_cleanup(self):
         def broken_reader():
             raise OSError('broken sink')
-        with tempfile.TemporaryDirectory() as directory:
-            receipt = Path(directory) / 'cleanup.json'
-            with self.assertRaisesRegex(RuntimeError, 'Owned log reader failed: OSError: broken sink'):
-                with OwnedResources(cleanup_receipt=receipt) as owned:
-                    owned.start_reader(broken_reader)
-            self.assertFalse(owned.root.exists())
-            self.assertTrue(json.loads(receipt.read_text())['private_root_removed'])
+        receipt = self.base / 'cleanup.json'
+        with self.assertRaisesRegex(RuntimeError, 'Owned log reader failed: OSError: broken sink'):
+            with self.owned(receipt) as owned:
+                owned.start_reader(broken_reader)
+        self.assertFalse(owned.root.exists())
+        self.assertTrue(json.loads(receipt.read_text())['private_root_removed'])
 
     def test_private_environment_does_not_modify_parent(self):
         before = dict(os.environ)
-        with OwnedResources() as owned:
+        with self.owned() as owned:
             env = private_environment(owned.root / 'home')
             self.assertEqual(Path(env['XDG_RUNTIME_DIR']).stat().st_mode & 0o777, 0o700)
             self.assertTrue(all(Path(env[key]).is_relative_to(owned.root)
@@ -142,7 +183,7 @@ class ResourceTests(unittest.TestCase):
         unrelated = subprocess.Popen([sys.executable, '-c', 'import signal; signal.pause()'])
         self.addCleanup(lambda: (unrelated.terminate(), unrelated.wait()))
         with self.assertRaisesRegex(RuntimeError, 'fixture failure'):
-            with OwnedResources() as owned:
+            with self.owned() as owned:
                 process, _ = owned.spawn([sys.executable, '-c', 'import signal; signal.pause()'],
                                          env=dict(os.environ), log=owned.root / 'process.log')
                 (owned.root / 'owned-output').write_bytes(b'private')
@@ -152,6 +193,7 @@ class ResourceTests(unittest.TestCase):
         self.assertFalse(owned.root.exists())
 
     def test_long_tmpdir_still_uses_short_owned_runtime(self):
+        # The default base, not TMPDIR, keeps runtime socket paths short.
         with patch.dict(os.environ, {'TMPDIR': '/does/not/exist/' + 'long' * 60}):
             with OwnedResources() as owned:
                 env = private_environment(owned.root / 'home')
@@ -173,9 +215,34 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(released.stdout, b'acquired\n')
 
 
-class ReadinessTests(unittest.TestCase):
+class CaptureProfileTests(unittest.TestCase):
+    def test_run_shape_comes_from_the_capture_profile(self):
+        shape = capture_profile.run_shape(capture_profile.load())
+        self.assertEqual(shape.schemes, {'light': 'BreezeLight', 'dark': 'BreezeDark'})
+        self.assertEqual(shape.sizes, ((1280, 720), (1280, 800)))
+        self.assertEqual(shape.heights, (720, 800))
+        self.assertEqual(shape.size(800), (1280, 800))
+        self.assertEqual(shape.repeat, 2)
+        self.assertEqual(list(shape.kdeglobals_fonts), ['font', 'fixed'])
+        with self.assertRaisesRegex(ValueError, '900 is not a logical height'):
+            shape.size(900)
+
+    def test_malformed_run_shape_is_rejected(self):
+        profile = capture_profile.load()
+        for change, message in [(lambda p: p.update(clean_replays=1), 'clean_replays'),
+                                (lambda p: p['environment'].update(colour_schemes={}), 'colour_schemes'),
+                                (lambda p: p['environment'].update(logical_sizes=[[1280, 0]]), 'logical_sizes'),
+                                (lambda p: p['environment'].update(logical_sizes=[[1280, 720], [1440, 720]]),
+                                 'repeat a height')]:
+            candidate = json.loads(json.dumps(profile))
+            change(candidate)
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                capture_profile.run_shape(candidate)
+
+
+class ReadinessTests(PrivateBaseTestCase):
     def test_waits_for_actual_compositor_publication(self):
-        with OwnedResources() as owned:
+        with self.owned() as owned:
             process, _ = owned.spawn([sys.executable, '-c',
                 'import sys; print("not ready"); print("Running compositor on wayland display \'private-wayland\'", flush=True)'],
                 env=dict(os.environ), log=owned.root / 'log', pipe=True)
@@ -184,14 +251,14 @@ class ReadinessTests(unittest.TestCase):
             self.assertIn(b'not ready', log.getvalue())
 
     def test_compositor_early_exit_is_failure(self):
-        with OwnedResources() as owned:
+        with self.owned() as owned:
             process, _ = owned.spawn([sys.executable, '-c', 'print("failed startup")'],
                                     env=dict(os.environ), log=owned.root / 'log', pipe=True)
             with self.assertRaisesRegex(RuntimeError, 'before publishing'):
                 await_compositor(process, io.BytesIO())
 
     def test_compositor_timeout_is_failure_and_still_cleans_up(self):
-        with OwnedResources() as owned:
+        with self.owned() as owned:
             process, _ = owned.spawn([sys.executable, '-c', 'import signal; signal.pause()'],
                                     env=dict(os.environ), log=owned.root / 'log', pipe=True)
             with self.assertRaises(TimeoutError):
@@ -224,7 +291,7 @@ class ReadinessTests(unittest.TestCase):
             self.assertFalse(worker.is_alive())
 
 
-class AcceptanceEvidenceTests(unittest.TestCase):
+class AcceptanceEvidenceTests(PrivateBaseTestCase):
     def test_control_lookup_rejects_hidden_measurement_duplicates(self):
         visible = dict(name='saveDraft', onScreen=True, enabled=True)
         hidden = dict(name='saveDraft', onScreen=False, enabled=True)
@@ -235,7 +302,7 @@ class AcceptanceEvidenceTests(unittest.TestCase):
             item(dict(items=[visible, visible]), 'saveDraft')
 
     def test_failed_native_action_retains_request_and_full_reply(self):
-        with tempfile.TemporaryDirectory(dir='/var/tmp') as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent, child = socket.socketpair()
             client = NativeClient(parent, root)
@@ -258,7 +325,7 @@ class AcceptanceEvidenceTests(unittest.TestCase):
             self.assertEqual((request['action'], request['target']), ('toolbar-click', 'undoCommand'))
 
     def test_ledger_keeps_missing_runs_and_measured_residuals_outstanding(self):
-        with tempfile.TemporaryDirectory(dir='/var/tmp') as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             comparison = root / '720/replay-1-light/light-text-comparison'
             comparison.mkdir(parents=True)
@@ -273,17 +340,57 @@ class AcceptanceEvidenceTests(unittest.TestCase):
             self.assertEqual(len(row['missing_evidence']), 2)
             self.assertIsNone(row['original_inspection'])
 
+    def write_verification(self, root, height, repeat, captures=None, **changes):
+        themes, kinds = ['light', 'dark'], ['text', 'binary']
+        shots = [dict(theme=t, kind=k) for t in themes for k in kinds]
+        report = dict(themes=themes, kinds=kinds, repeat=repeat, cleanup_confirmed=True,
+                      captures=shots * repeat if captures is None else shots[:1] * captures,
+                      comparisons=[dict(differing_pixels=0)] * (len(shots) * (repeat - 1)))
+        report.update(changes)
+        (root / str(height)).mkdir(parents=True, exist_ok=True)
+        (root / str(height) / 'verification.json').write_text(json.dumps(report))
+
+    def test_ledger_expects_every_theme_kind_and_repeat_the_report_records(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_verification(root, 720, 3)
+            self.write_verification(root, 800, 2)
+            self.assertTrue(all(row['missing_evidence'] == [] for row in assemble(root)['callouts']
+                                if row['calibrated_regions']))
+            # Three repeats need twelve shots and eight comparisons; eight and four are not enough.
+            self.write_verification(root, 720, 3, captures=8, comparisons=[dict(differing_pixels=0)] * 4)
+            self.write_verification(root, 800, 2, themes=['light'])
+            missing = next(row for row in assemble(root)['callouts'] if row['calibrated_regions'])['missing_evidence']
+            self.assertEqual(missing, ['720: successful complete replay receipt unavailable',
+                                       '800: successful complete replay receipt unavailable'])
+
     def test_error_cleanup_publishes_only_actual_owned_disposition(self):
-        with tempfile.TemporaryDirectory(dir='/var/tmp') as directory:
+        with tempfile.TemporaryDirectory() as directory:
             receipt = Path(directory) / 'cleanup.json'
             with self.assertRaisesRegex(RuntimeError, 'interrupted replay'):
-                with OwnedResources(receipt) as owned:
+                with self.owned(receipt) as owned:
                     private = owned.root
                     raise RuntimeError('interrupted replay')
             evidence = json.loads(receipt.read_text())
             self.assertFalse(private.exists())
-            self.assertTrue(evidence['private_root_removed'])
-            self.assertTrue(evidence['owned_processes_reaped'])
+            self.assertEqual(evidence, dict(private_root=str(private), private_root_removed=True,
+                                            owned_processes_reaped=True))
+
+    def test_cleanup_is_confirmed_only_by_complete_receipts(self):
+        receipts = []
+        for name in ('one', 'two'):
+            receipts.append(self.base / f'{name}.json')
+            with self.owned(receipts[-1]):
+                pass
+        self.assertTrue(cleanup_confirmed(receipts))
+        self.assertFalse(cleanup_confirmed([]))
+        self.assertFalse(cleanup_confirmed(receipts + [self.base / 'missing.json']))
+        for change in (dict(owned_processes_reaped=False), dict(private_root_removed=False),
+                       dict(private_root=str(self.base))):
+            with self.subTest(change=change):
+                broken = self.base / 'broken.json'
+                broken.write_text(json.dumps(dict(json.loads(receipts[0].read_text()), **change)))
+                self.assertFalse(cleanup_confirmed(receipts + [broken]))
 
 
 if __name__ == '__main__':

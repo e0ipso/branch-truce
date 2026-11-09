@@ -37,22 +37,26 @@
 # from the sources in the matching -build image, which must exist.
 #
 # With --output, the report is also written to DIR/<package>.inspection.
-# CONTAINER_ENGINE defaults to docker.
+# CONTAINER_ENGINE defaults to docker. Exit status: 0 every check passed, 1 a
+# check failed, 2 usage error.
 set -euo pipefail
 
 app_id=com.canpicasoft.branch-truce
 qml_root=/usr/lib/x86_64-linux-gnu/qt6/qml
 hicolor=/usr/share/icons/hicolor
-# The small drawing's PNG sizes; larger sizes use the scalable symbol.
-icon_sizes=(16 22 24 32)
+# The shared fixture, PNG and icon-theme helpers. host_main copies them, and
+# packaging/installed-files.txt, next to this script in the container.
+inspect_dir=$(dirname -- "${BASH_SOURCE[0]}")
+source "$inspect_dir/lib/fixture.sh"
 
-usage() { echo "Usage: $0 --target kubuntu|tuxedo --package DEB [--output DIR]" >&2; exit 2; }
+usage() { echo "Usage: $0 --target kubuntu|tuxedo --package DEB [--output DIR]"; }
+usage_error() { usage >&2; exit 2; }
 
 base_for() {
     case "$1" in
         kubuntu) echo kubuntu26.04 ;;
         tuxedo) echo tuxedo24.04 ;;
-        *) usage ;;
+        *) usage_error ;;
     esac
 }
 
@@ -60,13 +64,14 @@ host_main() {
     local target= package= output=
     while (($# > 0)); do
         case "$1" in
-            --target) [[ $# -ge 2 ]] || usage; target=$2; shift 2 ;;
-            --package) [[ $# -ge 2 ]] || usage; package=$2; shift 2 ;;
-            --output) [[ $# -ge 2 ]] || usage; output=$2; shift 2 ;;
-            *) usage ;;
+            -h|--help) usage; return 0 ;;
+            --target) [[ $# -ge 2 ]] || usage_error; target=$2; shift 2 ;;
+            --package) [[ $# -ge 2 ]] || usage_error; package=$2; shift 2 ;;
+            --output) [[ $# -ge 2 ]] || usage_error; output=$2; shift 2 ;;
+            *) usage_error ;;
         esac
     done
-    [[ -n "$target" && -f "$package" ]] || usage
+    [[ -n "$target" && -f "$package" ]] || usage_error
     local root engine base image name status
     root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
     engine=${CONTAINER_ENGINE:-docker}
@@ -81,13 +86,15 @@ host_main() {
     trap 'rm -rf -- "$fixture"' EXIT
     # The QML modules the application imports, from the sources it was built from.
     sed -n 's/^import \([A-Za-z][A-Za-z0-9.]*\).*/\1/p' "$root"/src/ui/*.qml | LC_ALL=C sort -u > "$fixture/imports.txt"
-    cp -- "$root/tools/inspect-artifact.sh" "$root/tools/artifact-baseline.sh" "$fixture/"
+    cp -- "$root/tools/inspect-artifact.sh" "$root/tools/artifact-baseline.sh" "$root/packaging/installed-files.txt" "$fixture/"
+    mkdir -p -- "$fixture/lib"
+    cp -- "$root/tools/lib/fixture.sh" "$fixture/lib/"
     # The branding pack's icons, which the installed ones must equal.
     local relative
     while IFS= read -r relative; do
         mkdir -p -- "$fixture/icons/${relative%/*}"
         cp -- "$root/assets/branding/platform/linux/hicolor/$relative" "$fixture/icons/$relative"
-    done < <(icon_paths)
+    done < <(icon_paths "$root/packaging/installed-files.txt")
     build_appearance_probe "$engine" "${image%-target}-build" "$root" "$fixture/probe" \
         || { echo "Could not build the appearance probe in ${image%-target}-build; run tools/build-artifact.sh --target $target first" >&2; exit 1; }
 
@@ -98,7 +105,9 @@ host_main() {
     cat -- "$fixture/report"
     if [[ -n "$output" ]]; then
         mkdir -p -- "$output"
-        cp -- "$fixture/report" "$output/$name.inspection"
+        # A temporary name first, so an interrupted copy leaves no truncated report.
+        cp -- "$fixture/report" "$output/.$name.inspection.partial"
+        mv -- "$output/.$name.inspection.partial" "$output/$name.inspection"
         echo "Report: $(cd -- "$output" && pwd -P)/$name.inspection"
     fi
     echo "Inspection exit status: $status"
@@ -141,22 +150,9 @@ check_icon_resolves() {
     fi
 }
 
-# The application icons the package installs, relative to the hicolor theme.
-icon_paths() {
-    local size
-    printf '%s\n' "scalable/apps/$app_id.svg"
-    for size in "${icon_sizes[@]}"; do printf '%s\n' "${size}x${size}/apps/$app_id.png"; done
-}
-
-# Prints WIDTHxHEIGHT from the IHDR chunk of a PNG file and fails for anything else.
-png_size() {
-    local -a bytes
-    [[ "$(od -An -tx1 -N16 -- "$1" | tr -d ' \n')" == 89504e470d0a1a0a0000000d49484452 ]] || return 1
-    read -r -a bytes <<<"$(od -An -tu1 -j16 -N8 -- "$1" | tr '\n' ' ')"
-    ((${#bytes[@]} == 8)) || return 1
-    printf '%dx%d\n' $(((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3])) \
-        $(((bytes[4] << 24) | (bytes[5] << 16) | (bytes[6] << 8) | bytes[7]))
-}
+# icon_paths INSTALLED-FILES: the application icons the package installs,
+# relative to the hicolor theme, from packaging/installed-files.txt.
+icon_paths() { sed -n 's|^share/icons/hicolor/||p' "$1"; }
 
 # The icon content decision: the installed THEME/RELATIVE must equal the branding
 # pack's EXPECTED/RELATIVE byte for byte, and a PNG must have its directory's size.
@@ -180,25 +176,10 @@ check_app_icon() {
 # lists, at the Size and Type their sections give. RELATIVE's directory must be
 # listed, as Scalable for an SVG and at its pixel size otherwise.
 check_icon_lookup() {
-    local index=$1 relative=$2 dir declared want
-    dir=${relative%/*}
-    declared=$(awk -v dir="$dir" '
-        /^\[.*\]$/ { section = substr($0, 2, length($0) - 2); next }
-        section == "Icon Theme" && /^Directories=/ {
-            n = split(substr($0, 13), names, ",")
-            for (i = 1; i <= n; i++) if (names[i] == dir) listed = 1
-        }
-        section == dir && /^Size=/ { size = substr($0, 6) }
-        section == dir && /^Type=/ { type = substr($0, 6) }
-        END { if (listed) print size " " (type == "" ? "Threshold" : type) }' "$index")
-    local found=false
-    if [[ "$relative" == scalable/* ]]; then
-        want=Scalable
-        [[ "$declared" == *" Scalable" ]] && found=true
-    else
-        want="${dir%%x*} Fixed or Threshold"
-        [[ "$declared" == "${dir%%x*} Fixed" || "$declared" == "${dir%%x*} Threshold" ]] && found=true
-    fi
+    local index=$1 relative=$2 dir=${2%/*} declared want found=false
+    declared=$(icon_lookup_ok "$index" "$relative") && found=true
+    want="${dir%%x*} Fixed or Threshold"
+    [[ "$relative" != scalable/* ]] || want=Scalable
     if $found; then
         pass "index.theme declares $dir ($declared)"
     else
@@ -253,14 +234,10 @@ container_main() {
     [[ "$arch" == amd64 ]] && pass "architecture amd64" || fail "architecture $arch"
 
     step "Package contents"
-    local files expected controls icons
+    local files expected controls
     files=$(dpkg-deb --fsys-tarfile "$deb" | tar -t | grep -v '/$' | LC_ALL=C sort)
-    mapfile -t icons < <(icon_paths | sed "s|^|.$hicolor/|")
-    expected=$(printf '%s\n' ./usr/bin/branch-truce \
-        "./usr/share/applications/$app_id.desktop" \
-        "${icons[@]}" \
-        "./usr/share/metainfo/$app_id.metainfo.xml" \
-        ./usr/share/doc/branch-truce/changelog.gz ./usr/share/doc/branch-truce/copyright | LC_ALL=C sort)
+    expected=$({ installed_files "$inspect_dir/installed-files.txt" ./usr
+        printf '%s\n' ./usr/share/doc/branch-truce/changelog.gz ./usr/share/doc/branch-truce/copyright; } | LC_ALL=C sort)
     printf '%s\n' "$files"
     [[ "$files" == "$expected" ]] && pass "exactly $(wc -l <<<"$expected") files" || fail "file list differs"
     controls=$(dpkg-deb --ctrl-tarfile "$deb" | tar -t | grep -v '/$' | LC_ALL=C sort | tr '\n' ' ')
@@ -341,37 +318,24 @@ container_main() {
     while IFS= read -r relative; do
         check_app_icon "$hicolor" /inspect/icons "$relative"
         check_icon_lookup "$hicolor/index.theme" "$relative"
-    done < <(icon_paths)
+    done < <(icon_paths "$inspect_dir/installed-files.txt")
 
     step "Installed application on a disposable merge conflict"
-    local home=/tmp/bt-home repo=/tmp/bt-repo smoke record
-    mkdir -p "$home/data" "$home/config" "$home/cache" "$home/tmp" "$home/runtime" "$repo"
-    chmod 700 "$home/runtime"
-    local environment=(
-        "PATH=/usr/bin:/bin" "HOME=$home" "TMPDIR=$home/tmp" "LC_ALL=C.UTF-8"
-        "XDG_DATA_HOME=$home/data" "XDG_CONFIG_HOME=$home/config" "XDG_CACHE_HOME=$home/cache"
-        "XDG_RUNTIME_DIR=$home/runtime" "GIT_CONFIG_NOSYSTEM=1" "GIT_CONFIG_GLOBAL=/dev/null"
-        "GIT_TERMINAL_PROMPT=0" "QT_QPA_PLATFORM=offscreen" "QT_QUICK_BACKEND=software"
-    )
+    local home=/tmp/bt-home repo=/tmp/bt-repo smoke
+    local -a environment
+    fixture_home "$home"
+    fixture_gitconfig "$home"
+    mapfile -d '' environment < <(fixture_env "$home")
+    environment+=("QT_QPA_PLATFORM=offscreen" "QT_QUICK_BACKEND=software")
+    # The application runs with a deadline, so a hang fails the check.
     isolated() { (cd "$repo" && env -i "${environment[@]}" "$@"); }
-    isolated git init --quiet --initial-branch=main
-    isolated git config user.name 'Branch Truce Artifact Check'
-    isolated git config user.email 'artifact@example.invalid'
-    printf 'base\n' > "$repo/tracked.txt"
-    isolated git add tracked.txt && isolated git commit --quiet -m base
-    isolated git checkout --quiet -b side
-    printf 'side\n' > "$repo/tracked.txt"
-    isolated git commit --quiet -am side && isolated git checkout --quiet main
-    printf 'main\n' > "$repo/tracked.txt"
-    isolated git commit --quiet -am main
-    if isolated git merge --no-edit side >/dev/null 2>&1; then fail "fixture merge did not conflict"; fi
+    app() { isolated timeout --kill-after=10 60 "$@"; }
+    fixture_merge_repo "$home" "$repo" tracked.txt || fail "fixture merge did not conflict"
     echo "git: $(isolated git --version)"
-    isolated branch-truce --version && pass "branch-truce --version" || fail "branch-truce --version"
-    smoke=$(isolated branch-truce --smoke-test "$repo" 2>&1) || fail "smoke test exited $?"
+    app branch-truce --version && pass "branch-truce --version" || fail "branch-truce --version"
+    smoke=$(app branch-truce --smoke-test "$repo" 2>&1) || fail "smoke test exited $?"
     printf '%s\n' "$smoke"
-    record=$(printf '%s\n' "$smoke" | sed -n 's/^BRANCH_TRUCE_SESSION=//p')
-    if [[ "$record" == *'"state":"ready"'* && "$record" == *'"operation":"Merge"'* \
-        && "$record" == *'"path":"tracked.txt"'* ]]; then
+    if smoke_record_ready "$smoke"; then
         pass "installed window loaded and opened the merge session"
     else
         fail "smoke test did not open the merge session"
@@ -382,7 +346,7 @@ container_main() {
     # The isolated environment names no desktop, as on a bare session. The
     # app has to name its own icon theme there, or Kirigami swaps in one that
     # does not resolve and the icon is null.
-    appearance=$(isolated env LD_PRELOAD=/inspect/probe/lib/libappearance_probe.so \
+    appearance=$(app env LD_PRELOAD=/inspect/probe/lib/libappearance_probe.so \
         branch-truce --smoke-test "$repo" 2>&1) || fail "smoke test with the probe exited $?"
     appearance=$(printf '%s\n' "$appearance" | sed -n 's/^BRANCH_TRUCE_APPEARANCE=//p')
     echo "Appearance: ${appearance:-none}"
@@ -406,7 +370,7 @@ container_main() {
 # runs neither half, so tests can call the functions on their own.
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 if [[ "${1:-}" == --in-container ]]; then
-    [[ $# -eq 3 ]] || usage
+    [[ $# -eq 3 ]] || usage_error
     container_main "$2" "$3"
 else
     host_main "$@"

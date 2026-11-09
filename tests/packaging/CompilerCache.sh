@@ -6,6 +6,7 @@ source "$root/packaging/scripts/compiler-cache.sh"
 command -v ccache >/dev/null || { echo 'ccache required' >&2; exit 77; }
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+ccache_dir_before=${CCACHE_DIR-unset}
 export BRANCH_TRUCE_COMPILER_CACHE_DIR="$work/cache"
 export BRANCH_TRUCE_COMPILER_CACHE_NAMESPACE=fixture-toolchain
 export BRANCH_TRUCE_COMPILER_CACHE_REPORT_DIR="$work/reports"
@@ -23,13 +24,15 @@ add_executable(fixture main.cpp)
 CMAKE
     printf '#include <cstdio>\nint main() { std::printf("%%d %%s\\n", %s, __FILE__); }\n' "$value" > "$work/$name/source/main.cpp"
     cache_begin "$config" "$work/$name"
-    cmake -G "$cache_generator" -S "$work/$name/source" -B "$work/$name/build" -DCMAKE_BUILD_TYPE="$config" "${cache_cmake_args[@]}" >/dev/null
+    mapfile -t cmake_args < <(cache_cmake_args)
+    report=$(cache_report_path)
+    cmake -G "$cache_generator" -S "$work/$name/source" -B "$work/$name/build" -DCMAKE_BUILD_TYPE="$config" "${cmake_args[@]}" >/dev/null
     cmake --build "$work/$name/build" --parallel 2 >/dev/null
     cache_end
     "$work/$name/build/fixture" > "$work/output"
     grep -q "^$value /bt/source/main.cpp$" "$work/output"
 }
-counter() { awk -v key="$1" '$1 == key { print $2 }' "$cache_report.stats"; }
+counter() { awk -v key="$1" '$1 == key { print $2 }' "$report.stats"; }
 build_fixture cold 17
 [ "$(counter cache_miss)" -gt 0 ]
 build_fixture relocated 17
@@ -46,14 +49,17 @@ build_fixture isolated 17
 # A failed cache probe falls back to an ordinary compiler, including bad paths.
 export BRANCH_TRUCE_COMPILER_CACHE_DIR=/proc/branch-truce-unwritable
 cache_begin Debug "$work/fallback"
-[ "${#cache_cmake_args[@]}" -eq 0 ]
+mapfile -t cmake_args < <(cache_cmake_args)
+[ "${#cmake_args[@]}" -eq 0 ] && [ -z "$(cache_report_path)" ]
 mkdir -p "$work/fallback/source"
 printf 'int main() { return 0; }\n' > "$work/fallback/source/main.cpp"
 cp "$work/cold/source/CMakeLists.txt" "$work/fallback/source/"
-cmake -S "$work/fallback/source" -B "$work/fallback/build" "${cache_cmake_args[@]}" >/dev/null
+cmake -S "$work/fallback/source" -B "$work/fallback/build" "${cmake_args[@]}" >/dev/null
 cmake --build "$work/fallback/build" >/dev/null
 "$work/fallback/build/fixture"
 cache_end
+# cache_end restores the environment cache_begin changed.
+[ "${CCACHE_DIR-unset}" = "$ccache_dir_before" ] && [ -z "${BRANCH_TRUCE_CACHE_CMAKE_INCLUDE+set}" ]
 if [ -f /etc/fedora-release ]; then
     bash "$root/tests/packaging/FedoraCompilerCache.sh"
 fi

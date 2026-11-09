@@ -4,13 +4,22 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
 
 const require = createRequire(import.meta.url);
-const workflow = require('js-yaml').load(readFileSync(resolve('.github/workflows/ci.yml'), 'utf8'));
-const selection = resolve('packaging/ci/next-release.js');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const workflow = require('js-yaml').load(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8'));
+const selection = join(ROOT, 'packaging/ci/next-release.js');
+type Selection = { version: string; revision: string; publish: boolean };
+type SelectInput = { event?: string; revision: string; analyzedRevision?: string; analyzedVersion?: string; packageVersion: string };
+const { packageable, select, UsageError }: {
+  packageable: (version: string) => boolean;
+  select: (input: SelectInput) => Selection;
+  UsageError: new (message: string) => Error;
+} = await import(pathToFileURL(selection).href);
 const expressionForJS = (expression: string) => expression.replace(/\bneeds\.([\w-]+)/g, 'needs["$1"]');
 const formats = ['kubuntu-deb', 'fedora-rpm', 'arch-pkg'];
 
@@ -43,7 +52,31 @@ test('PR and main selection bind candidate, publication intent and source revisi
     assert.notEqual(result.status, 0, 'failed or stale analysis became no-release');
     assert.equal(result.stdout, '');
   }
-  assert.notEqual(run('schedule').status, 0);
+  const schedule = run('schedule');
+  assert.equal(schedule.status, 2, 'an unsupported event is a configuration error');
+  assert.equal(schedule.stdout, '');
+  assert.match(schedule.stderr, /^error: Unsupported validation event schedule\n$/, 'one line, no stack trace');
+  const extra = spawnSync(process.execPath, [selection, '--analyze', 'extra'], { cwd: box.cwd, encoding: 'utf8' });
+  assert.equal(extra.status, 2, 'extra arguments are a usage error');
+  assert.match(extra.stderr, /^error: usage: /);
+});
+
+test('selection binds the analysed candidate and accepts only packageable versions', () => {
+  const revision = 'a'.repeat(40);
+  assert.deepEqual(select({ event: 'pull_request', revision, packageVersion: '1.2.3-rc.1' }),
+    { version: '1.2.3-rc.1', revision, publish: false });
+  assert.deepEqual(select({ event: 'push', revision, analyzedRevision: revision, analyzedVersion: '', packageVersion: '1.2.3' }),
+    { version: '1.2.3', revision, publish: false });
+  assert.deepEqual(select({ event: 'push', revision, analyzedRevision: revision, analyzedVersion: '1.3.0', packageVersion: '1.2.3' }),
+    { version: '1.3.0', revision, publish: true });
+  assert.throws(() => select({ event: 'push', revision, analyzedRevision: 'b'.repeat(40), analyzedVersion: '1.3.0', packageVersion: '1.2.3' }),
+    /belongs to another revision/);
+  assert.throws(() => select({ event: 'schedule', revision, packageVersion: '1.2.3' }), UsageError);
+  for (const version of ['1.2.3-rc-1', '1.2.3-rc.0', '1.2', 'v1.2.3']) {
+    assert.equal(packageable(version), false, version);
+    assert.throws(() => select({ event: 'pull_request', revision, packageVersion: version }), /Unsupported native package version/);
+  }
+  for (const version of ['0.0.0', '1.2.3', '1.2.3-rc', '1.2.3-rc.10']) assert.equal(packageable(version), true, version);
 });
 
 test('event dependency graphs retain all validation legs, fail closed on analysis errors and serialize publishing', () => {
@@ -99,12 +132,12 @@ test('matrix recording copies only the exact native candidate and binds manifest
   writeFileSync(join(output, 'unrelated.log'), 'must stay out');
   for (const format of formats) {
     const version = '1.3.0-rc.1';
-    const info = JSON.parse(execFileSync(resolve('packaging/scripts/package-info.sh'), ['--format', format, '--version', version], { encoding: 'utf8' }));
+    const info = JSON.parse(execFileSync(join(ROOT, 'packaging/scripts/package-info.sh'), ['--format', format, '--version', version], { encoding: 'utf8' }));
     writeFileSync(join(output, info.filename), `${format} validated bytes`);
     const dir = join(box.cwd, format);
-    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', step.run], { cwd: process.cwd(), encoding: 'utf8', env: {
+    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', step.run], { cwd: ROOT, encoding: 'utf8', env: {
       PATH: process.env.PATH, OUTPUT: output, DIR: dir, FORMAT: format, VERSION: version,
-      REVISION: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), RUN_ID: 'fixture-run',
+      REVISION: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(), RUN_ID: 'fixture-run',
     } });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(readdirSync(dir).sort(), [info.filename, `kde-${format}.json`].sort());

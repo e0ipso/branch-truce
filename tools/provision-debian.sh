@@ -2,7 +2,12 @@
 # Machine provisioning only. Never call from per-worktree setup.
 set -euo pipefail
 mode=${1:---check}
-case "$mode" in --check|--dry-run|--install) ;; *) echo "Usage: $0 [--check|--dry-run|--install]" >&2; exit 2 ;; esac
+case "$mode" in
+    --check|--dry-run|--install) ;;
+    -h|--help) echo "Usage: $0 [--check|--dry-run|--install]"; exit 0 ;;
+    *) echo "Usage: $0 [--check|--dry-run|--install]" >&2; exit 2 ;;
+esac
+(($# <= 1)) || { echo "Usage: $0 [--check|--dry-run|--install]" >&2; exit 2; }
 . /etc/os-release
 case "${ID:-}:${VERSION_ID:-}" in
     tuxedo:24.04|ubuntu:26.04) ;;

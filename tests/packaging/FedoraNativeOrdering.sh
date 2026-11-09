@@ -2,7 +2,9 @@
 # Exercise our upgrade boundary with Fedora RPM's actual version comparator.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-source "$root/packaging/scripts/check-fedora.sh"
+source "$root/packaging/scripts/pkg-rpm.sh"
+die() { echo "FAIL: $*" >&2; exit 1; }
+older() { pkg_older "$@"; }
 for pair in '1.2.3-rc.2 1.2.3-rc.10' '1.2.3-rc.10 1.2.3' '1.2.3 1.10.0'; do
     read -r old new <<<"$pair"
     old="$("$root/packaging/scripts/native-version.sh" "$old")-1.fc44"

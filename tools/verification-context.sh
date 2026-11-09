@@ -4,8 +4,10 @@
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 mode=${1:-source}
-case "$mode" in source|desktop|core|sanitize) ;; *)
-    echo "Usage: $0 [source|desktop|core|sanitize]" >&2; exit 2 ;;
+case "$mode" in
+    source|desktop|core|sanitize) ;;
+    -h|--help) echo "Usage: $0 [source|desktop|core|sanitize]"; exit 0 ;;
+    *) echo "Usage: $0 [source|desktop|core|sanitize]" >&2; exit 2 ;;
 esac
 if [[ "$mode" != source && ! -f "$root/build/$mode/CMakeCache.txt" ]]; then
     echo "Configure build/$mode before capturing its artifacts." >&2
@@ -13,7 +15,7 @@ if [[ "$mode" != source && ! -f "$root/build/$mode/CMakeCache.txt" ]]; then
 fi
 caller_umask=$(umask)
 umask 077
-context=$(mktemp -d /tmp/branch-truce-verification.XXXXXXXX)
+context=$(mktemp -d "${TMPDIR:-/tmp}/branch-truce-verification.XXXXXXXX")
 digest() { sha256sum | awk '{print $1}'; }
 file_identity() {
     local file=$1
@@ -32,8 +34,8 @@ file_identity() {
     getconf GNU_LIBC_VERSION
 } > "$context/platform.txt"
 {
-    for tool in bash cmake ctest c++ make git awk sort find sha256sum readlink stat dpkg-query; do
-        executable=$(command -v "$tool")
+    for tool in bash cmake ctest c++ make git awk sort find sha256sum readlink stat; do
+        executable=$(command -v "$tool") || { echo "Missing tool: $tool; retained context: $context" >&2; exit 1; }
         printf 'tool %q\n' "$tool"
         file_identity "$(readlink -f -- "$executable")"
     done
@@ -45,8 +47,16 @@ file_identity() {
     git --version
     bash --version
 } > "$context/toolchain.txt"
-dpkg-query -W -f='${binary:Package}\t${Version}\t${db:Status-Status}\n' \
-    | LC_ALL=C sort > "$context/packages.tsv"
+# The installed packages, from whichever package manager the host has.
+if command -v dpkg-query >/dev/null; then
+    dpkg-query -W -f='${binary:Package}\t${Version}\t${db:Status-Status}\n'
+elif command -v rpm >/dev/null; then
+    rpm -qa --qf '%{NAME}.%{ARCH}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\tinstalled\n'
+elif command -v pacman >/dev/null; then
+    pacman -Q | awk '{ print $1 "\t" $2 "\tinstalled" }'
+else
+    printf 'unavailable\tno dpkg-query, rpm or pacman\t\n'
+fi | LC_ALL=C sort > "$context/packages.tsv"
 # The normalized syntax check only executes env and Bash. Capture their linked
 # libraries by content as well as the binaries. Other checks have broader,
 # unresolved compiler/QML/plugin/configuration closures.

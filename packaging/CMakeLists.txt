@@ -3,12 +3,15 @@
 install(FILES "${BRANCH_TRUCE_APP_ID}.desktop" DESTINATION "${KDE_INSTALL_APPDIR}")
 install(FILES "${BRANCH_TRUCE_APP_ID}.metainfo.xml" DESTINATION "${KDE_INSTALL_METAINFODIR}")
 
-# The application icon comes from the branding pack: the detailed 3C symbol as
+# The application icons come from the branding pack: the detailed 3C symbol as
 # the scalable icon, and the simpler small drawing at the sizes it is made for.
+# installed-files.txt names them, so the package checkers expect the same set.
 set(_branch_truce_hicolor "${PROJECT_SOURCE_DIR}/assets/branding/platform/linux/hicolor")
-install(FILES "${_branch_truce_hicolor}/scalable/apps/${BRANCH_TRUCE_APP_ID}.svg"
-    DESTINATION "${KDE_INSTALL_ICONDIR}/hicolor/scalable/apps")
-foreach(_size 16 22 24 32)
-    install(FILES "${_branch_truce_hicolor}/${_size}x${_size}/apps/${BRANCH_TRUCE_APP_ID}.png"
-        DESTINATION "${KDE_INSTALL_ICONDIR}/hicolor/${_size}x${_size}/apps")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/installed-files.txt" _branch_truce_icons
+    REGEX "^share/icons/hicolor/")
+foreach(_icon IN LISTS _branch_truce_icons)
+    string(REGEX REPLACE "^share/icons/hicolor/" "" _icon "${_icon}")
+    cmake_path(GET _icon PARENT_PATH _icon_dir)
+    install(FILES "${_branch_truce_hicolor}/${_icon}"
+        DESTINATION "${KDE_INSTALL_ICONDIR}/hicolor/${_icon_dir}")
 endforeach()
