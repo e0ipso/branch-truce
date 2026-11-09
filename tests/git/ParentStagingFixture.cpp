@@ -57,8 +57,11 @@ int resolve(const QString &scenario, const QString &merged)
     installHazard(scenario);
     GitAdapter adapter(test_support::gitExecutable());
     test_support::AsyncCompletion completion(adapter, &GitAdapter::finished);
-    const auto preflight = completion.run(
-        Request{Operation::CheckParentStaging, QDir::currentPath(), QFile::encodeName(merged), {}, 71, 93});
+    const Request request{Operation::CheckParentStaging, QDir::currentPath(), QFile::encodeName(merged), {}, 71, 93};
+    const auto preflight = completion.run(request);
+    CHECK(preflight.request.operation == request.operation && preflight.request.directory == request.directory);
+    CHECK(preflight.request.path == request.path && preflight.request.objectId == request.objectId);
+    CHECK(preflight.request.sessionGeneration == 71 && preflight.request.inputRevision == 93);
     writeFile(".handoff-preflight", preflight.diagnostic.toUtf8());
     CHECK(preflight.mutation == Mutation::NotAttempted);
     if (preflight.outcome != Outcome::Success) {
