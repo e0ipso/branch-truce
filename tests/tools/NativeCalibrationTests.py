@@ -54,6 +54,12 @@ class ContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_contract(candidate)
 
+    def test_unknown_exception_kind_is_named(self):
+        candidate = copy.deepcopy(self.contract)
+        candidate['exceptions'][0]['kind'] = 'theme-excuse'
+        with self.assertRaisesRegex(ValueError, 'Unrecognized exception kind: theme-excuse'):
+            validate_contract(candidate)
+
     def test_geometry_outside_reference_is_rejected(self):
         for rect in ([0, 0, 1281, 720], [-1, 0, 30, 30], [0, 0, 0, 5], [0, 0, 1.5, 4]):
             candidate = copy.deepcopy(self.contract)

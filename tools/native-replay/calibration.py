@@ -13,6 +13,10 @@ from fixture import sha256
 HERE = Path(__file__).resolve().parent
 CONTRACT = HERE / 'reference-contract.json'
 PROFILE = HERE / 'capture-profile.json'
+# The narrow regions each kind of reference exception may name.
+EXCEPTION_REGIONS = {'truthful-identity': {'source_identity', 'incoming_identity'},
+                     'truthful-metadata': {'footer_facts'}, 'renderer': {'glyph'},
+                     'background-role-fill': {'accepted_fill'}}
 
 
 def load_contract(source):
@@ -44,13 +48,10 @@ def validate_contract(contract):
             raise ValueError('Exceptions must name a narrow region')
         if exception['reference_sha256'] != contract['references'].get(exception['reference']):
             raise ValueError('Exception reference hash mismatch')
-        allowed = {'truthful-identity': {'source_identity', 'incoming_identity'},
-                   'truthful-metadata': {'footer_facts'}, 'renderer': {'glyph'},
-                   'background-role-fill': {'accepted_fill'}}
-        if exception['region'] not in allowed.get(exception['kind'], set()):
+        if exception['kind'] not in EXCEPTION_REGIONS:
+            raise ValueError(f'Unrecognized exception kind: {exception["kind"]}')
+        if exception['region'] not in EXCEPTION_REGIONS[exception['kind']]:
             raise ValueError('Exception region is too broad or unrelated to its kind')
-        if exception['kind'] not in ('truthful-identity', 'truthful-metadata', 'renderer', 'background-role-fill'):
-            raise ValueError('Unrecognized exception kind')
         if 'mask' in exception or 'threshold' in exception:
             raise ValueError('Exceptions never mask pixels or set similarity thresholds')
     return contract
