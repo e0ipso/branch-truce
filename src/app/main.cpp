@@ -36,9 +36,10 @@ int main(int argc, char *argv[])
     // The one PATH lookup for Git. Every Git call in this process runs this
     // executable; it is empty when Git is not on PATH.
     const auto git = QStandardPaths::findExecutable(QStringLiteral("git"));
-    for (int index = 1; index < argc; ++index) {
-        if (qstrcmp(argv[index], "--mergetool") == 0) return branch_truce::runMergetoolLauncher(argc, argv, git);
-    }
+    // Git's mergetool command line names the launcher mode first. Only that
+    // position selects it, so a repository or option value spelled
+    // --mergetool still opens the window.
+    if (argc > 1 && qstrcmp(argv[1], "--mergetool") == 0) return branch_truce::runMergetoolLauncher(argc, argv, git);
     // QApplication rather than QGuiApplication: the org.kde.desktop style draws its
     // controls through QApplication::style(). See docs/platform-validation.md.
     QApplication application(argc, argv);
@@ -72,6 +73,10 @@ int main(int argc, char *argv[])
                                  QStringLiteral("[repository]"));
     parser.addOption(
         {QStringLiteral("smoke-test"), QStringLiteral("Load the window and session, report startup state, and exit.")});
+    // Listed for --help only: the launcher mode is selected before parsing,
+    // and only as the first argument.
+    parser.addOption({QStringLiteral("mergetool"),
+                      QStringLiteral("As the first argument: run as the blocking launcher for git mergetool.")});
     // A mergetool launcher that starts the GUI names the path Git launched,
     // hex-encoded like its attach frame, so the window opens on it.
     QCommandLineOption launchedPath(QStringLiteral("mergetool-path"),
@@ -86,6 +91,11 @@ int main(int argc, char *argv[])
         QStringLiteral("session"));
     parser.addOption(recoverySession);
     parser.process(application);
+    if (parser.isSet(QStringLiteral("mergetool"))) {
+        QTextStream(stderr) << QCoreApplication::translate("main", "--mergetool must be the first argument.")
+                            << Qt::endl;
+        return 2;
+    }
     const auto paths = parser.positionalArguments();
     if (paths.size() > 1) parser.showHelp(2);
 

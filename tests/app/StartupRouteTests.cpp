@@ -1741,6 +1741,21 @@ public:
                 CHECK(file(state, "excluded.txt").value("support") == "supported");
             }
         });
+        suite.run("only a first --mergetool argument selects the launcher", [&] {
+            Repository repo;
+            repo.conflict("merge");
+            CHECK(QDir(repo.root).mkdir("--mergetool"));
+            // A repository argument spelled --mergetool opens the window.
+            ready(repo, repo.launch(application, {"--", "--mergetool"}), "Merge");
+            // Elsewhere the option is refused instead of switching modes.
+            QProcess process;
+            process.setProcessEnvironment(repo.environment);
+            process.setWorkingDirectory(repo.root);
+            process.start(application, {"--smoke-test", "--mergetool"});
+            CHECK(process.waitForStarted(5000) && process.waitForFinished(20000));
+            CHECK(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 2);
+            CHECK(process.readAllStandardError().contains("--mergetool must be the first argument"));
+        });
         suite.run("both rebase startup routes preserve the result and truthful source identities", [&] {
             for (const auto operation : {"rebase-merge", "rebase-apply"}) {
                 Repository repo;
