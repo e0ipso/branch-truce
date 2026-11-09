@@ -31,9 +31,7 @@ QtObject {
         tooltip: qsTr("Undo the last edit or choice. Typing and choices share one history.")
         icon.name: "edit-undo"
         iconOnly: true
-        readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Undo)
-        shortcut: bindings.length ? bindings[0] : ""
-        alternateSequences: bindings.slice(1)
+        standardKey: StandardKey.Undo
         enabled: !!editActions.editor.editable && !!editActions.file.canUndo && !editActions.composing
         onTriggered: editActions.commands.undo(editActions.file.fileId, editActions.file.currentRevision)
     }
@@ -43,9 +41,7 @@ QtObject {
         tooltip: qsTr("Redo the last undone edit or choice. Typing and choices share one history.")
         icon.name: "edit-redo"
         iconOnly: true
-        readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Redo)
-        shortcut: bindings.length ? bindings[0] : ""
-        alternateSequences: bindings.slice(1)
+        standardKey: StandardKey.Redo
         enabled: !!editActions.editor.editable && !!editActions.file.canRedo && !editActions.composing
         onTriggered: editActions.commands.redo(editActions.file.fileId, editActions.file.currentRevision)
     }
@@ -55,9 +51,7 @@ QtObject {
         text: qsTr("Copy")
         icon.name: "edit-copy"
         iconOnly: true
-        readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Copy)
-        shortcut: bindings.length ? bindings[0] : ""
-        alternateSequences: bindings.slice(1)
+        standardKey: StandardKey.Copy
         enabled: !!editActions.editor.hasSelection
         onTriggered: editActions.editor.clipboard(ResultEditorAdapter.Copy)
     }
@@ -67,9 +61,7 @@ QtObject {
         text: qsTr("Paste")
         icon.name: "edit-paste"
         iconOnly: true
-        readonly property var bindings: StandardKeyBindings.sequences(StandardKey.Paste)
-        shortcut: bindings.length ? bindings[0] : ""
-        alternateSequences: bindings.slice(1)
+        standardKey: StandardKey.Paste
         enabled: !!editActions.editor.editable && !!editActions.editor.canPaste
             && !editActions.composing
         onTriggered: editActions.editor.clipboard(ResultEditorAdapter.Paste)

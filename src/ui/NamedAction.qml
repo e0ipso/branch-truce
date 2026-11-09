@@ -21,7 +21,11 @@ Kirigami.Action {
     property bool iconOnly: false
     property bool toggle: false
     property bool flat: true
-    property var alternateSequences: []
+    // A platform standard key, such as StandardKey.Undo, binds the shortcut to its first
+    // sequence and the alternate sequences to the rest. -1 binds none.
+    property int standardKey: -1
+    readonly property var standardSequences: standardKey >= 0 ? StandardKeyBindings.sequences(standardKey) : []
+    shortcut: standardSequences.length ? standardSequences[0] : ""
     function ownerMenu(start: Item): Menu {
         let item = start
         while (item) {
@@ -33,7 +37,7 @@ Kirigami.Action {
         return null
     }
     readonly property Shortcut alternateBindings: Shortcut {
-        sequences: namedAction.alternateSequences
+        sequences: namedAction.standardSequences.slice(1)
         enabled: namedAction.enabled
         onActivated: namedAction.trigger()
     }
