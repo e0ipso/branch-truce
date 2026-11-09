@@ -19,7 +19,8 @@ PreviewDialog {
         ? replacementDialog.controller.commandPreview.sourceScopes || "" : ""
     detail: replacementDialog.controller.commandPreview.detail || ""
     confirmText: qsTr("Apply choice")
-    onConfirmed: replacementDialog.controller.applyChoice(true)
+    onApplyRequested: replacementDialog.refused = !replacementDialog.controller.applyChoice(true)
+    refusalMessage: replacementDialog.controller.commandMessage
     onRejected: replacementDialog.controller.cancelChoice()
     PlainLabel {
         objectName: "manualReplacementNotice"

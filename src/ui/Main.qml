@@ -129,10 +129,12 @@ Kirigami.ApplicationWindow {
     WholeFileDialog {
         id: wholeFileDialog
         controller: window.controller
+        composing: comparison.inputMethodComposing
     }
     NonConflictingDialog {
         id: nonConflictingDialog
         controller: window.controller
+        composing: comparison.inputMethodComposing
     }
     EditActions {
         id: resultEdits
@@ -143,6 +145,7 @@ Kirigami.ApplicationWindow {
     ReplacementDialog {
         id: replacementDialog
         controller: window.controller
+        composing: comparison.inputMethodComposing
     }
     Kirigami.Action {
         id: selectedDetailsAction
@@ -367,9 +370,11 @@ Kirigami.ApplicationWindow {
                         rowDelegate: FileRow {
                             id: fileRow
                             controller: window.controller
+                            // A refused selection, as while an input method composes,
+                            // leaves the list on the selected row.
                             onClicked: {
-                                fileListPane.currentIndex = fileRow.index;
-                                window.controller.selectFile(fileRow.fileId);
+                                if (window.controller.selectFile(fileRow.fileId))
+                                    fileListPane.currentIndex = fileRow.index;
                             }
                         }
                     }

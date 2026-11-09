@@ -1663,6 +1663,30 @@ public:
             fixture.checkRecovered(keyboard.draft);
             QGuiApplication::clipboard()->clear();
         });
+        suite.run("a file click refused while composing leaves the list on the selected row", [] {
+            Fixture fixture;
+            auto captured = *test_support::batchFile().snapshots();
+            captured.path = "other.txt";
+            CHECK(fixture.controller.files()->appendFile(FileSession("other", captured.path,
+                                                                     {captured.launchResult.text.utf8, {}, 0},
+                                                                     Support::Supported, {}, captured, true)));
+            auto *list = fixture.item("fileList");
+            auto *other = test_support::visualButton(
+                list, [](QQuickItem *item) { return item->property("fileId").toString() == QStringLiteral("other"); });
+            CHECK(other);
+            auto *editor = fixture.item("resultText");
+            QInputMethodEvent preedit(QString::fromUtf8("\xe3\x81\x8b"), {});
+            QCoreApplication::sendEvent(editor, &preedit);
+            CHECK(editor->property("inputMethodComposing").toBool());
+            CHECK(QMetaObject::invokeMethod(other, "clicked"));
+            CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
+            CHECK(list->property("currentIndex").toInt() == fixture.controller.selectedRow());
+            QInputMethodEvent commit;
+            QCoreApplication::sendEvent(editor, &commit);
+            CHECK(QMetaObject::invokeMethod(other, "clicked"));
+            CHECK(fixture.controller.selectedFileId() == QStringLiteral("other"));
+            CHECK(list->property("currentIndex").toInt() == fixture.controller.selectedRow());
+        });
         suite.run("an input-method preedit stays pending and its commit is one recovered command", [] {
             Fixture fixture(test_support::choiceFile());
             const auto before = fixture.file().current();
@@ -1762,9 +1786,15 @@ public:
                     CHECK(fixture.controller.editResult("choices", QString::number(before.id), 0, 0,
                                                         "newer manual edit\n"));
                     const auto newer = fixture.file().current();
+                    // A refused confirmation keeps the dialog open and says why.
+                    CHECK(QMetaObject::invokeMethod(dialog, "confirm"));
+                    CHECK(dialog->property("visible").toBool() && dialog->property("refused").toBool());
+                    CHECK(dialog->property("refusalMessage").toString() == fixture.controller.commandMessage()
+                          && !fixture.controller.commandMessage().isEmpty());
                     CHECK(!apply() && fixture.file().current().id == newer.id
                           && fixture.file().current().draft == newer.draft);
                     fixture.checkRecovered(newer.draft);
+                    CHECK(QMetaObject::invokeMethod(dialog, "reject"));
                 });
         }
         suite.run("Save and discard controls keep the app baseline and retry a failed Save", [] {

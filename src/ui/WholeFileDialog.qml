@@ -17,7 +17,8 @@ PreviewDialog {
     detail: wholeFileDialog.controller.wholeFilePreview.detail || ""
     detailName: "wholeFileWarning"
     confirmText: qsTr("Replace whole file")
-    onConfirmed: wholeFileDialog.controller.applyWholeFile()
+    onApplyRequested: wholeFileDialog.refused = !wholeFileDialog.controller.applyWholeFile()
+    refusalMessage: wholeFileDialog.controller.commandMessage
     onRejected: wholeFileDialog.controller.cancelChoice()
     TabBar {
         id: wholeFileTabs

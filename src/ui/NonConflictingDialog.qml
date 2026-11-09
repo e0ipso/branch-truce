@@ -16,7 +16,8 @@ PreviewDialog {
     summary: nonConflictingDialog.controller.nonConflictingPreview.summary || ""
     detail: nonConflictingDialog.controller.nonConflictingPreview.detail || ""
     confirmText: qsTr("Apply changes")
-    onConfirmed: nonConflictingDialog.controller.applyNonConflicting()
+    onApplyRequested: nonConflictingDialog.refused = !nonConflictingDialog.controller.applyNonConflicting()
+    refusalMessage: nonConflictingDialog.controller.commandMessage
     onRejected: nonConflictingDialog.controller.cancelChoice()
     ListView {
         objectName: "nonConflictingChanges"
