@@ -103,8 +103,14 @@ QString textEnvelopeFailure(const QByteArray &bytes)
     const auto assessment =
         branch_truce::assessText(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
     if (assessment.limit == branch_truce::TextLimit::Within) return {};
-    return QString::fromStdString("Load error: " + branch_truce::textLimitDiagnostic(assessment)
-                                  + "; the captured file was not loaded");
+    const auto limit = assessment.limit == branch_truce::TextLimit::LineBytes
+        ? QStringLiteral("Line of %1 bytes exceeds the supported %2 byte line limit")
+              .arg(static_cast<qulonglong>(assessment.maxLineBytes))
+              .arg(static_cast<qulonglong>(branch_truce::kMaxLineBytes))
+        : QStringLiteral("Text of %1 bytes exceeds the supported %2 byte recovery payload limit")
+              .arg(static_cast<qulonglong>(assessment.bytes))
+              .arg(static_cast<qulonglong>(branch_truce::kMaxRecoveryPayloadBytes));
+    return QStringLiteral("Load error: %1; the captured file was not loaded").arg(limit);
 }
 
 void excludeUnreadResult(Conflict &conflict, ResultRead read)

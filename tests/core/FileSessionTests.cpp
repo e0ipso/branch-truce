@@ -109,6 +109,8 @@ void markersFollowTheCapturedMarkerSize()
     CHECK(withMarkerSize("unset", 32).current().draft.unresolvedMarkers == 0);
     const auto oversized = withMarkerSize(std::to_string(kMaxConflictMarkerSize + 1), 7);
     CHECK(oversized.support() == Support::OutsideApp && !oversized.correspondence());
+    CHECK(oversized.loadFailure() == LoadFailure{LoadFailureReason::MarkerSizeTooLarge}
+          && oversized.supportDetail().empty());
 }
 
 void copiesShareRevisionsAndDiscardedBranchesAreDropped()
@@ -179,6 +181,7 @@ void aFailedOpeningLeavesNothingHalfBuilt()
     // finding the non-conflicting changes.
     auto file = diff3Session(std::make_shared<CountingAlgorithm>(5));
     CHECK(file.support() == Support::Unreadable && !file.correspondence());
+    CHECK(file.loadFailure() == LoadFailure{LoadFailureReason::OutOfMemory});
     CHECK(file.choices().empty() && file.nonConflictingTargets().empty());
     CHECK(file.current().draft.decisions.empty() && file.markerSections().empty());
     CHECK(file.snapshots() && file.current().draft.text == file.snapshots()->launchResult.text.utf8);
@@ -188,7 +191,9 @@ void aFailedOpeningLeavesNothingHalfBuilt()
 void launchTextOutsideTheInvariantIsUnreadable()
 {
     for (const auto *text : {"bad \xff\n", "crlf\r\n"}) {
-        CHECK(FileSession("plain", "plain.txt", {text, {}, 0}).support() == Support::Unreadable);
+        const FileSession plain("plain", "plain.txt", {text, {}, 0});
+        CHECK(plain.support() == Support::Unreadable
+              && plain.loadFailure() == LoadFailure{LoadFailureReason::InvalidText});
         CHECK(captured(text).support() == Support::Unreadable && !captured(text).correspondence());
     }
     // An adapter's own diagnosis stays in place.

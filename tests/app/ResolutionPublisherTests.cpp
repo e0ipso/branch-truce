@@ -1,5 +1,6 @@
 #include "TestHarness.h"
 #include "app/ApplicationController.h"
+#include "app/EngineText.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryFaults.h"
 #include "mergetool/MergetoolProtocol.h"
@@ -868,7 +869,7 @@ int main(int argc, char **argv)
               == QStringLiteral("Mark resolved is blocked: 1 stray conflict-marker line remains; first at line 2. The "
                                 "repository file is unchanged."));
         // The handoff keeps its label for the same blocker.
-        CHECK(std::string(blockerText(Blocker::UnresolvedMarkers)) == "Known conflict markers remain");
+        CHECK(engine_text::blocker(Blocker::UnresolvedMarkers) == "Known conflict markers remain");
         const auto blockers = openedFile(session.controller).facts().blockers;
         CHECK(std::find(blockers.begin(), blockers.end(), Blocker::UnresolvedMarkers) != blockers.end());
         session.controller.attachResultEditor(nullptr);

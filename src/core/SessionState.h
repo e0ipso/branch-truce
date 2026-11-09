@@ -50,7 +50,10 @@ public:
     [[nodiscard]] const std::string &id() const noexcept { return id_; }
     [[nodiscard]] const std::string &path() const noexcept { return path_; }
     [[nodiscard]] Support support() const noexcept { return support_; }
+    // The adapter's explanation of its support decision, if it gave one.
     [[nodiscard]] const std::string &supportDetail() const noexcept { return supportDetail_; }
+    // Why the session itself held the file back, if it did.
+    [[nodiscard]] const std::optional<LoadFailure> &loadFailure() const noexcept { return loadFailure_; }
     // Shared immutable capture, retained independently of every result revision.
     // Null for sessions without an admitted source/result capture.
     [[nodiscard]] const FileSnapshots *snapshots() const noexcept { return snapshots_.get(); }
@@ -134,6 +137,7 @@ public:
     Transition recordWrite(RevisionId revision, Outcome outcome, std::string detail = {});
     Transition recordStage(RevisionId revision, Outcome outcome, std::string objectId = {}, std::string mode = {},
                            std::string detail = {});
+    // An adapter's own support decision, which replaces any load failure.
     Transition setSupport(Support support, std::string detail = {});
     // Opens a LargeFile session as it would have opened below the line
     // threshold. The loaded text gets a fresh revision and an empty history.
@@ -144,7 +148,7 @@ private:
     // changes so a failure leaves the session as it was.
     struct Launch {
         Support support = Support::Supported;
-        std::string supportDetail;
+        std::optional<LoadFailure> failure;
         std::shared_ptr<const ChoiceCatalogue> choices;
         std::shared_ptr<const std::vector<NonConflictingTarget>> nonConflictingTargets;
         std::shared_ptr<const LaunchFrames> launchFrames;
@@ -165,6 +169,7 @@ private:
     std::string path_;
     Support support_;
     std::string supportDetail_;
+    std::optional<LoadFailure> loadFailure_;
     std::shared_ptr<const FileSnapshots> snapshots_;
     std::shared_ptr<const CorrespondenceAlgorithm> algorithm_;
     // The conflict-marker-size Git used for this file.
@@ -176,8 +181,5 @@ private:
     RevisionHistory history_;
     PublicationState publication_;
 };
-
-[[nodiscard]] const char *statusText(FileStatus status) noexcept;
-[[nodiscard]] const char *blockerText(Blocker blocker) noexcept;
 
 }

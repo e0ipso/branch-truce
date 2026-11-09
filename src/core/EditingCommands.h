@@ -7,6 +7,45 @@ namespace branch_truce {
 
 enum class ChoiceAction { Accept, Ignore, ResolveUsingSide, CombineLeftFirst, CombineRightFirst };
 
+// What an applicable choice preview does, or why a preview was refused. The
+// app turns it into text.
+enum class ChoiceNote {
+    // Applicable: the preview's action, as its state says.
+    Ignore,
+    Accept,
+    ResolveUsingSide,
+    Combine,
+    // Refused.
+    StaleRevision,
+    FileNotEditable,
+    UnknownScope,
+    UnmappedScope,
+    NoRecordedChoices,
+    AlreadyDecided,
+    SeveralCompetitors,
+    NoCompetitor,
+    UnplacedSectionLines,
+    ReplacesUnselected,
+    UncertainDeletion,
+    AcceptedOverlap,
+    MissingCompetitor,
+    UncertainCompetingLine,
+    NoExactCompetingLine,
+    CompetingAccepted,
+    NoCompetingLine
+};
+
+// What an applicable choice does to the conflict-marker block around it.
+enum class MarkerEffect {
+    None,
+    // The choice decides the block's last open contribution, so its marker
+    // lines and ignored text go.
+    Removed,
+    // A combination in a block with other sections: the markers stay until
+    // every section is decided, then the block holds this order.
+    KeptUntilDecided
+};
+
 struct ChoicePreview {
     Transition state = Transition::InvalidAnchor;
     RevisionId revision = 0;
@@ -14,7 +53,8 @@ struct ChoicePreview {
     std::string target;
     std::string before;
     std::string replacement;
-    std::string detail;
+    ChoiceNote note = ChoiceNote::UnknownScope;
+    MarkerEffect markers = MarkerEffect::None;
     // The exact result scope being replaced, including any protected manual
     // work. Ordered sources are captured explicitly, never inferred from text.
     std::optional<ByteRange> affectedRange;
@@ -30,6 +70,9 @@ Transition applyChoice(FileSession &file, const ChoicePreview &preview, bool con
 
 enum class NonConflictingScope { Left, Right, Both };
 
+// What a non-conflicting batch preview offers, or why it offers nothing.
+enum class BatchNote { Batch, StaleRevision, FileNotEditable, NoEarlierVersion };
+
 struct NonConflictingChange {
     std::vector<SourceAnchor> sources;
     ByteRange result;
@@ -43,7 +86,7 @@ struct NonConflictingPreview {
     RevisionId revision = 0;
     NonConflictingScope scope = NonConflictingScope::Both;
     std::string path;
-    std::string detail;
+    BatchNote note = BatchNote::FileNotEditable;
     std::size_t skipped = 0;
     std::vector<NonConflictingChange> changes;
     EditingCommand command;
@@ -53,6 +96,9 @@ struct NonConflictingPreview {
 [[nodiscard]] NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId expected,
                                                           NonConflictingScope scope = NonConflictingScope::Both);
 Transition applyNonConflicting(FileSession &file, const NonConflictingPreview &preview, bool confirm = false);
+
+// What a whole-file preview replaces, or why it cannot.
+enum class WholeFileNote { Replace, StaleRevision, NoCapturedSource, InvalidSide, SourceUnavailable };
 
 struct WholeFileContribution {
     SourceAnchor source;
@@ -69,7 +115,7 @@ struct WholeFilePreview {
     SourceSide side = SourceSide::Stage2;
     std::string before;
     std::string replacement;
-    std::string detail;
+    WholeFileNote note = WholeFileNote::NoCapturedSource;
     std::vector<WholeFileContribution> contributions;
     // Source ranges address replacement; result ranges address before. These
     // show all differences, including manual work, without guessing provenance.

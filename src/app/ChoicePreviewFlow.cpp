@@ -1,6 +1,7 @@
 // Choice previews show how a source action would change the result before the user confirms it.
 #include "ChoicePreviewFlow.h"
 #include "CommandGuard.h"
+#include "EngineText.h"
 #include "ResultEditorAdapter.h"
 #include "SessionModel.h"
 #include "SourceIdentity.h"
@@ -95,7 +96,7 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
         const auto action = value ? choiceAction(*value) : std::nullopt;
         if (!action) return owners_.report(Transition::InvalidAnchor);
         auto preview = previewChoice(*file, expected, target.toStdString(), *action);
-        message = text(preview.detail);
+        message = engine_text::choice(preview);
         accepted = preview.state == Transition::Applied || preview.state == Transition::ConfirmationRequired;
         pending = std::move(preview);
         break;
@@ -106,7 +107,7 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
         if (!kind) return owners_.report(Transition::InvalidAnchor);
         auto preview = previewNonConflicting(*file, expected, *kind);
         message = (preview.state == Transition::NoChange ? tr("No eligible non-conflicting changes. ") : QString{})
-            + text(preview.detail);
+            + engine_text::batch(preview.note);
         accepted = preview.state == Transition::ConfirmationRequired;
         pending = std::move(preview);
         break;
@@ -116,7 +117,7 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
         const auto side = value ? wholeFileSide(*value) : std::nullopt;
         if (!side) return owners_.report(Transition::InvalidAnchor);
         auto preview = previewWholeFile(*file, expected, *side);
-        message = text(preview.detail);
+        message = engine_text::wholeFile(preview.note);
         accepted = preview.state == Transition::ConfirmationRequired;
         pending = std::move(preview);
         break;
@@ -203,7 +204,7 @@ QVariantMap ChoicePreviewFlow::choiceView(const ChoicePreview &preview, const Fi
     }
     return {{QStringLiteral("before"), text(preview.before)},
             {QStringLiteral("replacement"), text(preview.replacement)},
-            {QStringLiteral("detail"), text(preview.detail)},
+            {QStringLiteral("detail"), engine_text::choice(preview)},
             {QStringLiteral("orderedCombination"), !preview.sourceOrder.empty()},
             {QStringLiteral("order"),
              preview.action == ChoiceAction::CombineLeftFirst ? tr("Left then Right") : tr("Right then Left")},
@@ -242,7 +243,7 @@ QVariantMap ChoicePreviewFlow::nonConflictingView(const NonConflictingPreview &p
              preview.scope == NonConflictingScope::Left        ? tr("Left")
                  : preview.scope == NonConflictingScope::Right ? tr("Right")
                                                                : tr("Left and Right")},
-            {QStringLiteral("detail"), text(preview.detail)},
+            {QStringLiteral("detail"), engine_text::batch(preview.note)},
             {QStringLiteral("changes"), changes},
             {QStringLiteral("summary"),
              tr("%1 eligible changes · %2 other non-conflicting changes skipped")
@@ -302,7 +303,7 @@ QVariantMap ChoicePreviewFlow::wholeFileView(const WholeFilePreview &preview, co
                  text(selected->objectId))},
             {QStringLiteral("before"), text(preview.before)},
             {QStringLiteral("replacement"), text(preview.replacement)},
-            {QStringLiteral("detail"), text(preview.detail)},
+            {QStringLiteral("detail"), engine_text::wholeFile(preview.note)},
             {QStringLiteral("contributions"), contributions},
             {QStringLiteral("differences"), differences},
             {QStringLiteral("retainedDecisions"),

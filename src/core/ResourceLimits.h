@@ -2,7 +2,6 @@
 #pragma once
 
 #include <cstddef>
-#include <string>
 #include <string_view>
 
 namespace branch_truce {
@@ -31,6 +30,7 @@ struct TextAssessment {
     std::size_t lines = 0;
     std::size_t maxLineBytes = 0;
     std::size_t bytes = 0;
+    bool operator==(const TextAssessment &) const = default;
 };
 
 // Stops once a limit is exceeded so an oversized buffer is not scanned further.
@@ -72,20 +72,6 @@ inline std::size_t lineCount(std::string_view text) noexcept
     for (const char c : text)
         if (c == '\n') ++lines;
     return lines + (!text.empty() && text.back() != '\n' ? 1 : 0);
-}
-
-inline std::string textLimitDiagnostic(const TextAssessment &assessment)
-{
-    switch (assessment.limit) {
-    case TextLimit::LineBytes:
-        return "Line of " + std::to_string(assessment.maxLineBytes)
-            + " bytes exceeds the supported 262144 byte line limit";
-    case TextLimit::RecoveryPayload:
-        return "Text of " + std::to_string(assessment.bytes)
-            + " bytes exceeds the supported 8388608 byte recovery payload limit";
-    case TextLimit::Within: return {};
-    }
-    return {};
 }
 
 }

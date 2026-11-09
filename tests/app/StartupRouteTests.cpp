@@ -1,5 +1,6 @@
 #include "TestHarness.h"
 #include "app/ApplicationController.h"
+#include "app/EngineText.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryFaults.h"
@@ -29,6 +30,7 @@
 #include <array>
 #include <atomic>
 #include <mutex>
+#include <new>
 #include <sys/stat.h>
 #include <utility>
 #include <vector>
@@ -43,7 +45,7 @@ public:
     {
         if (result.starts_with("preserved large manual result\n")) {
             ++failures;
-            throw std::runtime_error("injected large-file correspondence resource failure");
+            throw std::bad_alloc();
         }
         return ExactLineCorrespondence{}.compare(source, result);
     }
@@ -1448,9 +1450,8 @@ public:
             CHECK(controller.files()->totalFiles() == 3 && controller.loadErrorFiles() == 1);
             const auto &failed = openedFile(controller, "large.txt");
             CHECK(failed.support() == Support::Unreadable && failed.snapshots() && !failed.correspondence());
-            CHECK(failed.supportDetail().find("large.txt") != std::string::npos);
-            CHECK(failed.supportDetail().find("injected large-file correspondence resource failure")
-                  != std::string::npos);
+            CHECK(failed.loadFailure() == LoadFailure{LoadFailureReason::OutOfMemory});
+            CHECK(engine_text::supportDetail(failed).contains("not enough memory"));
             CHECK(failed.current().draft.text == ("preserved large manual result\n" + large).toStdString());
             CHECK(failed.snapshots()->stage2->worktree.utf8 == ("main\n" + large).toStdString());
             CHECK(failed.snapshots()->stage3->worktree.utf8 == ("side\n" + large).toStdString());

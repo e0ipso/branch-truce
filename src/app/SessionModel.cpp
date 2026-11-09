@@ -1,5 +1,6 @@
 // The session model presents each file's draft, decisions and resolution state to the window.
 #include "SessionModel.h"
+#include "EngineText.h"
 #include "git/GitAdapter.h"
 #include "recovery/RecoveryRestore.h"
 #include <QMimeDatabase>
@@ -39,7 +40,7 @@ QVariantList decisionData(const Draft &draft)
 QStringList blockerData(const FileFacts &facts)
 {
     QStringList result;
-    for (const auto blocker : facts.blockers) result.push_back(QString::fromUtf8(blockerText(blocker)));
+    for (const auto blocker : facts.blockers) result.push_back(engine_text::blocker(blocker));
     return result;
 }
 
@@ -263,7 +264,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
         case Support::LargeFile: return QStringLiteral("large-file");
         }
         return {};
-    case SupportDetailRole: return text(file.supportDetail());
+    case SupportDetailRole: return engine_text::supportDetail(file);
     case UndecidedRole: return QVariant::fromValue(static_cast<qulonglong>(facts.undecided));
     case ConflictCountRole: return QVariant::fromValue(static_cast<qulonglong>(file.conflictCount()));
     case UnsavedRole: return pendingInput || facts.unsaved;
@@ -466,11 +467,10 @@ QString SessionModel::statusAt(std::size_t row) const
     const auto &id = files_[row].id();
     if (journal_.failure(id)) return tr("Recovery requires attention; work remains outstanding");
     if (const auto *pending = journal_.pending(id)) {
-        return pending->action == QLatin1String("manual-save")
-            ? QString::fromUtf8(statusText(FileStatus::CheckpointFailed))
-            : tr("Recovery failed; pending input retained");
+        return pending->action == QLatin1String("manual-save") ? engine_text::status(FileStatus::CheckpointFailed)
+                                                               : tr("Recovery failed; pending input retained");
     }
-    return QString::fromUtf8(statusText(facts_[row].status));
+    return engine_text::status(facts_[row].status);
 }
 
 // A file outside the app names its reason, an unresolved file its undecided
@@ -478,8 +478,10 @@ QString SessionModel::statusAt(std::size_t row) const
 QString SessionModel::statusLineAt(std::size_t row) const
 {
     const auto &file = files_[row];
-    if (file.support() != Support::Supported)
-        return file.supportDetail().empty() ? statusAt(row) : text(file.supportDetail());
+    if (file.support() != Support::Supported) {
+        const auto detail = engine_text::supportDetail(file);
+        return detail.isEmpty() ? statusAt(row) : detail;
+    }
     const auto progress = progressAt(row);
     if (progress.undecided > 0 && !progress.resolved)
         return tr("%1 undecided").arg(static_cast<qulonglong>(progress.undecided));

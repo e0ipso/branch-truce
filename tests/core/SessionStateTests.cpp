@@ -236,7 +236,7 @@ public:
                           const auto preview = previewNonConflicting(file, before.id, scope);
                           CHECK(preview.state == Transition::ConfirmationRequired && preview.scope == scope
                                 && preview.path == file.path());
-                          CHECK(preview.detail.find("in this file") != std::string::npos);
+                          CHECK(preview.note == BatchNote::Batch);
                           CHECK(preview.changes.size() == (scope == NonConflictingScope::Both ? 2 : 1));
                           CHECK(applyNonConflicting(file, preview) == Transition::ConfirmationRequired);
                           CHECK(file.current().id == before.id && file.current().draft == before.draft);
@@ -298,8 +298,7 @@ public:
         suite.run("absent earlier context stale and altered batches never apply", [] {
             auto missing = test_support::choiceFile();
             const auto blocked = previewNonConflicting(missing, 1);
-            CHECK(blocked.state == Transition::Blocked
-                  && blocked.detail.find("earlier version is unavailable") != std::string::npos);
+            CHECK(blocked.state == Transition::Blocked && blocked.note == BatchNote::NoEarlierVersion);
             CHECK(applyNonConflicting(missing, blocked, true) == Transition::Blocked && missing.current().id == 1);
             auto file = test_support::batchFile();
             const auto preview = previewNonConflicting(file, 1);
@@ -358,7 +357,7 @@ public:
                     CHECK(preview.replacement == source->worktree.utf8 && preview.fileId == file.id());
                     CHECK(preview.origin.sourceObjectId == source->objectId && !preview.contributions.empty()
                           && !preview.differences.empty());
-                    CHECK(preview.detail.find("manual edits") != std::string::npos && preview.retainedDecisions == 0);
+                    CHECK(preview.note == WholeFileNote::Replace && preview.retainedDecisions == 0);
                     CHECK(
                         std::any_of(preview.differences.begin(), preview.differences.end(), [](const auto &difference) {
                             return difference.result.begin == 0
@@ -595,8 +594,7 @@ public:
             const auto refused =
                 previewChoice(typed, typed.current().id, later.source.contributionId, ChoiceAction::Accept);
             CHECK(refused.state == Transition::Blocked);
-            CHECK(refused.detail
-                  == "Accepted text may overlap this choice. Preview an ordered combination or undo its acceptance.");
+            CHECK(refused.note == ChoiceNote::AcceptedOverlap);
         });
         suite.run("correspondence is deterministic and partitions repeated inserted deleted and changed text", [] {
             const std::array cases{
@@ -1140,16 +1138,14 @@ public:
             auto file = test_support::markedFile();
             const auto &left = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section);
             const auto accept = previewChoice(file, 1, left.source.contributionId, ChoiceAction::Accept);
-            CHECK(accept.detail == "Accept changes only this scope and leaves the other side undecided.");
+            CHECK(accept.note == ChoiceNote::Accept && accept.markers == MarkerEffect::None);
             CHECK(applyChoice(file, accept) == Transition::Applied);
             CHECK(file.current().draft.text == test_support::markedText());
             CHECK(file.current().draft.unresolvedMarkers == 2 && file.markerSections().size() == 2);
             const auto &right = test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Section);
             const auto ignore =
                 previewChoice(file, file.current().id, right.source.contributionId, ChoiceAction::Ignore);
-            CHECK(ignore.detail
-                  == "This decides the last open side of the conflict, so its marker lines and ignored text are "
-                     "removed.");
+            CHECK(ignore.note == ChoiceNote::Ignore && ignore.markers == MarkerEffect::Removed);
             auto ignored = test_support::markedFile();
             CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::Ignore) == Transition::Applied);
             CHECK(choose(ignored, SourceSide::Stage3, ChoiceAction::Ignore) == Transition::Applied);
@@ -1246,9 +1242,7 @@ public:
                                          test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Section, 1)
                                              .source.contributionId,
                                          ChoiceAction::Ignore);
-                    CHECK(last->detail
-                          == "This decides the last open side of the conflict, so its marker lines and ignored text "
-                             "are removed.");
+                    CHECK(last->note == ChoiceNote::Ignore && last->markers == MarkerEffect::Removed);
                     expected = "header\nleft one\nshared\nleft two\ntail\n";
                     break;
                 case Path::ResolveRight:
@@ -1297,7 +1291,7 @@ public:
                 crossed, crossed.current().id,
                 test_support::choiceTarget(crossed, SourceSide::Stage2, ChoiceScope::Section, 1).source.contributionId,
                 ChoiceAction::ResolveUsingSide);
-            CHECK(last.detail.find("removes the conflict's marker lines") != std::string::npos);
+            CHECK(last.note == ChoiceNote::ResolveUsingSide && last.markers == MarkerEffect::Removed);
             CHECK(applyChoice(crossed, last) == Transition::Applied);
             const auto chosen = crossed.current().draft;
             CHECK(chosen.text == "header\nright one\nshared\nleft two\ntail\n");
@@ -1409,8 +1403,7 @@ public:
                     test_support::choiceTarget(file, side, ChoiceScope::Section, at).source.contributionId, action);
                 kept[at] = leftFirst ? left[at] + right[at] : right[at] + left[at];
                 CHECK(preview.state == Transition::ConfirmationRequired && preview.replacement == kept[at]);
-                CHECK(preview.detail.find(combineFirst ? "keeps its marker lines until" : "marker lines are removed")
-                      != std::string::npos);
+                CHECK(preview.markers == (combineFirst ? MarkerEffect::KeptUntilDecided : MarkerEffect::Removed));
                 // Only this section's two scopes are edited, each with its own side's text,
                 // so the shared line and the other section's lines are outside every edit.
                 CHECK(preview.command.edits.size() == 2);
@@ -1480,7 +1473,7 @@ public:
                 test_support::choiceTarget(overlapping, SourceSide::Stage3, ChoiceScope::Line, 1).source.contributionId,
                 ChoiceAction::CombineLeftFirst);
             CHECK(refused.state == Transition::AmbiguousTarget && refused.command.edits.empty());
-            CHECK(refused.detail.find("would replace an unselected contribution") != std::string::npos);
+            CHECK(refused.note == ChoiceNote::ReplacesUnselected);
             CHECK(applyChoice(overlapping, refused, true) != Transition::Applied
                   && overlapping.current().draft == before.draft);
         });
@@ -1539,7 +1532,7 @@ public:
             for (const auto action : {ChoiceAction::Accept, ChoiceAction::ResolveUsingSide}) {
                 const auto refused = previewChoice(file, edited.id, left.source.contributionId, action);
                 CHECK(refused.state == Transition::AmbiguousTarget);
-                CHECK(refused.detail == "The deletion scope is uncertain. Edit the result directly.");
+                CHECK(refused.note == ChoiceNote::UncertainDeletion);
                 CHECK(applyChoice(file, refused, true) == Transition::AmbiguousTarget);
                 CHECK(file.current().id == edited.id && file.current().draft == edited.draft);
             }
@@ -1999,13 +1992,13 @@ public:
             auto large = admit(lines(4001));
             CHECK(large.support() == Support::LargeFile && !large.correspondence());
             CHECK(large.current().draft.text == lines(4001));
-            CHECK(large.supportDetail() == "File of 4001 lines is over 4000 lines and was not loaded");
+            CHECK(large.loadFailure() == LoadFailure{LoadFailureReason::LargeFile, {}, kLargeFileLines + 1});
             CHECK(large.facts().status == FileStatus::LargeFile && !large.facts().resolved);
             CHECK(large.facts().blockers == std::vector<Blocker>{Blocker::LargeFile});
             CHECK(large.editResult(1, {{0, 1}, "y"}) == Transition::Blocked);
             CHECK(large.beginMarkResolved(1) == Transition::Blocked);
             CHECK(large.loadLargeFile() == Transition::Applied);
-            CHECK(large.support() == Support::Supported && large.supportDetail().empty());
+            CHECK(large.support() == Support::Supported && !large.loadFailure());
             CHECK(large.correspondence() && large.correspondence()->revision() == 2);
             CHECK(large.current().id == 2 && large.current().draft.text == lines(4001));
             CHECK(!large.canUndo() && !large.canRedo());
@@ -2031,7 +2024,8 @@ public:
             const auto tooLong = admit(aboveLine);
             CHECK(tooLong.support() == Support::Unreadable && !tooLong.correspondence());
             CHECK(tooLong.current().draft.text.size() == 262145);
-            CHECK(tooLong.supportDetail().find("262144") != std::string::npos);
+            CHECK(tooLong.loadFailure()->reason == LoadFailureReason::TextTooLarge
+                  && tooLong.loadFailure()->text.limit == TextLimit::LineBytes);
             const auto line = std::string(262143, 'p') + "\n";
             std::string atPayload;
             for (int i = 0; i < 32; ++i) atPayload += line;
@@ -2043,7 +2037,8 @@ public:
             const auto tooHeavy = admit(abovePayload);
             CHECK(tooHeavy.support() == Support::Unreadable);
             CHECK(tooHeavy.current().draft.text.size() == abovePayload.size());
-            CHECK(tooHeavy.supportDetail().find("8388608") != std::string::npos);
+            CHECK(tooHeavy.loadFailure()->reason == LoadFailureReason::TextTooLarge
+                  && tooHeavy.loadFailure()->text.limit == TextLimit::RecoveryPayload);
             FileSession file("id", "file", {lines(4000), {}, 0});
             CHECK(file.support() == Support::Supported);
             CHECK(file.editResult(1, {{file.current().draft.text.size(), file.current().draft.text.size()}, "z\n"})

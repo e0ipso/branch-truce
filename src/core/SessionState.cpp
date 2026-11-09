@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <utility>
 
@@ -38,6 +39,20 @@ bool validDecisions(const std::map<std::string, Decision> &decisions)
     return std::none_of(decisions.begin(), decisions.end(), [](const auto &entry) {
         return entry.second.order && entry.second.value != DecisionValue::Accepted;
     });
+}
+
+// The first of the result and the captured sources that is over the text
+// envelope. The result is held back whatever an adapter decided about it.
+std::optional<LoadFailure> textOverEnvelope(std::string_view result, const FileSnapshots *snapshots)
+{
+    if (const auto assessment = assessText(result); assessment.limit != TextLimit::Within)
+        return LoadFailure{LoadFailureReason::TextTooLarge, assessment};
+    if (!snapshots) return std::nullopt;
+    for (const auto *source : {&snapshots->earlier, &snapshots->stage2, &snapshots->stage3})
+        if (const auto assessment = *source ? assessText((*source)->worktree.utf8) : TextAssessment{};
+            assessment.limit != TextLimit::Within)
+            return LoadFailure{LoadFailureReason::TextTooLarge, assessment};
+    return std::nullopt;
 }
 
 std::size_t sourceLines(const FileSnapshots &snapshots, std::string_view result)
@@ -91,9 +106,9 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, Suppor
             throw std::invalid_argument("Captured sources and launch result must belong to this file session");
         snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
     }
-    const auto hold = [&](Support held, std::string detail) {
+    const auto hold = [&](Support held, LoadFailure failure) {
         support_ = held;
-        supportDetail_ = std::move(detail);
+        loadFailure_ = failure;
         open(launch(1, std::move(initial), false, false));
     };
     if (snapshots_) {
@@ -102,28 +117,25 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, Suppor
         const auto size = attribute == attributes.end() ? std::optional{kDefaultConflictMarkerSize}
                                                         : conflictMarkerSize(attribute->second);
         if (!size && support_ == Support::Supported) {
-            hold(Support::OutsideApp,
-                 "Outside app: conflict-marker-size is over " + std::to_string(kMaxConflictMarkerSize));
+            hold(Support::OutsideApp, {LoadFailureReason::MarkerSizeTooLarge});
             return;
         }
         markerSize_ = size.value_or(kDefaultConflictMarkerSize);
     }
-    const auto resultBudget = assessText(initial.text);
-    if (resultBudget.limit != TextLimit::Within) {
-        hold(Support::Unreadable, "Load error: " + textLimitDiagnostic(resultBudget));
+    if (const auto failure =
+            textOverEnvelope(initial.text, support_ == Support::Supported ? snapshots_.get() : nullptr)) {
+        hold(Support::Unreadable, *failure);
         return;
     }
     if (support_ == Support::Supported
         && (!editableText(initial.text) || (snapshots_ && !editableSources(*snapshots_)))) {
-        hold(Support::Unreadable, "Load error: text is not UTF-8 with LF line endings");
+        hold(Support::Unreadable, {LoadFailureReason::InvalidText});
         return;
     }
     if (snapshots_) {
         const auto lines = sourceLines(*snapshots_, initial.text);
         if (lines > kLargeFileLines) {
-            hold(Support::LargeFile,
-                 "File of " + std::to_string(lines) + " lines is over " + std::to_string(kLargeFileLines)
-                     + " lines and was not loaded");
+            hold(Support::LargeFile, {LoadFailureReason::LargeFile, {}, lines});
             return;
         }
     }
@@ -133,7 +145,7 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, Suppor
 FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool correspond,
                                         bool initializeChoices) const
 {
-    Launch result{support_, supportDetail_, {}, {}, {}, {}};
+    Launch result{support_, loadFailure_, {}, {}, {}, {}};
     std::shared_ptr<const CorrespondenceMap> correspondence;
     if (correspond && snapshots_) {
         try {
@@ -149,9 +161,11 @@ FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool
             correspondence = std::move(bound);
             result.choices = std::move(choices);
             result.nonConflictingTargets = std::move(nonConflicting);
-        } catch (const std::exception &error) {
+        } catch (const std::bad_alloc &) {
+            // The algorithm contract allows no other failure, and the texts
+            // were checked before, so anything else is a programming error.
             result.support = Support::Unreadable;
-            result.supportDetail = "Load error: could not build correspondence for " + path_ + ": " + error.what();
+            result.failure = LoadFailure{LoadFailureReason::OutOfMemory};
         }
     }
     auto scan = resultMarkers(initial.text, markerSize_, correspondence.get());
@@ -168,7 +182,7 @@ FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool
 void FileSession::open(Launch opened) noexcept
 {
     support_ = opened.support;
-    supportDetail_ = std::move(opened.supportDetail);
+    loadFailure_ = opened.failure;
     choices_ = std::move(opened.choices);
     nonConflictingTargets_ = std::move(opened.nonConflictingTargets);
     launchFrames_ = std::move(opened.launchFrames);
@@ -498,9 +512,10 @@ Transition FileSession::discardToStaged(RevisionId expected)
 
 Transition FileSession::setSupport(Support support, std::string detail)
 {
-    if (support_ == support && supportDetail_ == detail) return Transition::NoChange;
+    if (support_ == support && supportDetail_ == detail && !loadFailure_) return Transition::NoChange;
     support_ = support;
     supportDetail_ = std::move(detail);
+    loadFailure_.reset();
     return Transition::Applied;
 }
 
@@ -516,8 +531,10 @@ Transition FileSession::loadLargeFile()
         throw std::overflow_error("Session revision space exhausted");
     Draft initial{current().draft.text, current().draft.decisions, 0};
     auto loaded = launch(revision, std::move(initial), true, true);
-    if (loaded.support == Support::LargeFile) loaded.support = Support::Supported;
-    if (loaded.support == Support::Supported) loaded.supportDetail.clear();
+    if (loaded.support == Support::LargeFile) {
+        loaded.support = Support::Supported;
+        loaded.failure.reset();
+    }
     open(std::move(loaded));
     return Transition::Applied;
 }
@@ -525,46 +542,5 @@ Transition FileSession::loadLargeFile()
 FileFacts FileSession::facts() const
 {
     return publication_.facts(current(), support_, undecidedCount(current().draft));
-}
-
-const char *statusText(FileStatus status) noexcept
-{
-    switch (status) {
-    case FileStatus::OutsideApp: return "Needs work outside Branch Truce";
-    case FileStatus::Unreadable: return "File could not be read";
-    case FileStatus::LargeFile: return "Large file not loaded";
-    case FileStatus::OutcomeUncertain: return "Outcome uncertain; verification required";
-    case FileStatus::CheckpointFailed: return "Draft save failed";
-    case FileStatus::WriteFailed: return "Repository write failed";
-    case FileStatus::StageFailed: return "Written, unresolved";
-    case FileStatus::EarlierStaged: return "Earlier result staged; current draft not applied";
-    case FileStatus::Resolved: return "Written and resolved";
-    case FileStatus::WrittenUnresolved: return "Written, unresolved";
-    case FileStatus::SavedDraft: return "Draft saved in Branch Truce; repository file unchanged";
-    case FileStatus::Undecided: return "Source choices remain undecided";
-    case FileStatus::ReviewNeeded: return "Current result needs review";
-    }
-    return "";
-}
-
-const char *blockerText(Blocker blocker) noexcept
-{
-    switch (blocker) {
-    case Blocker::OutsideApp: return "Handle this file outside Branch Truce";
-    case Blocker::Unreadable: return "File content unavailable";
-    case Blocker::LargeFile: return "Large file waits for confirmation to load";
-    case Blocker::UnresolvedMarkers: return "Known conflict markers remain";
-    case Blocker::Undecided: return "Undecided source choices need confirmation";
-    case Blocker::UnsavedDraft: return "Current draft has no manual Save checkpoint";
-    case Blocker::ReviewNeeded: return "Current result needs Mark resolved";
-    case Blocker::WriteRequired: return "Current result has not been verified written";
-    case Blocker::StageRequired: return "Current result has not been verified staged";
-    case Blocker::EarlierStagedResult: return "Earlier result staged; current draft not applied";
-    case Blocker::CheckpointFailed: return "Draft save failed; retry or discard explicitly";
-    case Blocker::WriteFailed: return "Repository write failed";
-    case Blocker::StageFailed: return "Git resolution failed";
-    case Blocker::UncertainOutcome: return "Inspect uncertain mutation before finishing";
-    }
-    return "";
 }
 }

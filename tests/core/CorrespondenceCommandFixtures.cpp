@@ -499,7 +499,7 @@ public:
                     const auto before = observe(file);
                     const auto rejected = previewChoice(file, before.id, target.source.contributionId, action);
                     CHECK(rejected.state == Transition::AmbiguousTarget);
-                    CHECK(rejected.detail == "This scope cannot be mapped safely. Edit the result directly.");
+                    CHECK(rejected.note == ChoiceNote::UnmappedScope);
                     CHECK(applyChoice(file, rejected, true) == Transition::AmbiguousTarget);
                     expectUnchanged(file, before);
                 }

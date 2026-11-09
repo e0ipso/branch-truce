@@ -32,10 +32,10 @@ std::string sourceText(const FileSnapshots &snapshots, const SourceAnchor &sourc
     return captured ? std::string(slice(captured->worktree.utf8, source.range)) : std::string{};
 }
 
-ChoicePreview failed(ChoicePreview preview, Transition state, std::string detail)
+ChoicePreview failed(ChoicePreview preview, Transition state, ChoiceNote note)
 {
     preview.state = state;
-    preview.detail = std::move(detail);
+    preview.note = note;
     return preview;
 }
 
@@ -59,7 +59,7 @@ struct Selection {
 };
 
 // A refusal that leaves the preview's command unusable, or nothing.
-using Refusal = std::optional<std::pair<Transition, std::string>>;
+using Refusal = std::optional<std::pair<Transition, ChoiceNote>>;
 
 // The competing scope of a combination: one mapped scope of the other side
 // in the same section, the same range winning over adjacent ones.
@@ -106,12 +106,10 @@ Refusal unselectedContribution(const Selection &selected, const EditingCommand &
             const auto *unselected = selected.mapping.anchor(id);
             if (!mapped(unselected)) {
                 if (target.section == selected.target.section)
-                    return {{Transition::AmbiguousTarget,
-                             "Other lines in this section cannot be located safely. Use a section or edit manually."}};
+                    return {{Transition::AmbiguousTarget, ChoiceNote::UnplacedSectionLines}};
             } else if (std::any_of(replaced.begin(), replaced.end(),
                                    [&](const auto &range) { return sharesPlace(range, *unselected->result); })) {
-                return {{Transition::AmbiguousTarget,
-                         "This combination would replace an unselected contribution. Use a section or edit manually."}};
+                return {{Transition::AmbiguousTarget, ChoiceNote::ReplacesUnselected}};
             }
         }
     }
@@ -154,11 +152,8 @@ ChoicePreview previewCombination(ChoicePreview preview, const Selection &selecte
     const bool split = marked && block->sections.size() > 1;
     const auto other = competitor(selected, marked);
     if (other.matches > 1)
-        return failed(std::move(preview), Transition::AmbiguousTarget,
-                      "Several competing scopes could match. Use a section or edit the result directly.");
-    if (!other.target)
-        return failed(std::move(preview), Transition::AmbiguousTarget,
-                      "The two source scopes cannot be combined safely. Use a section or edit the result directly.");
+        return failed(std::move(preview), Transition::AmbiguousTarget, ChoiceNote::SeveralCompetitors);
+    if (!other.target) return failed(std::move(preview), Transition::AmbiguousTarget, ChoiceNote::NoCompetitor);
     const bool leftFirst = preview.action == ChoiceAction::CombineLeftFirst;
     const auto firstSide = leftFirst ? SourceSide::Stage2 : SourceSide::Stage3;
     const auto *first = selected.target.source.side == firstSide ? &selected.target : other.target;
@@ -170,8 +165,7 @@ ChoicePreview previewCombination(ChoicePreview preview, const Selection &selecte
     for (const auto *target : {first, second}) {
         for (const auto &id : target->decisions) {
             if (!selected.draft.decisions.contains(id))
-                return failed(std::move(preview), Transition::Blocked,
-                              "This draft has no recorded scoped choices. Edit the result directly.");
+                return failed(std::move(preview), Transition::Blocked, ChoiceNote::NoRecordedChoices);
             preview.command.decisions[id] = {DecisionValue::Accepted, order};
         }
         preview.replacement += sourceText(*selected.file.snapshots(), target->source);
@@ -191,14 +185,11 @@ ChoicePreview previewCombination(ChoicePreview preview, const Selection &selecte
     // Every combination is inspectable and explicitly confirmed, including a
     // new ordering of a decided scope after subsequent manual editing.
     preview.state = Transition::ConfirmationRequired;
-    preview.detail = leftFirst ? "Take both: Left then Right. " : "Take both: Right then Left. ";
-    preview.detail += "Only the displayed source scopes are combined. Review the exact text for duplication and edit "
-                      "it afterwards if needed.";
+    preview.note = ChoiceNote::Combine;
     if (selected.file.completesMarkers(preview.command))
-        preview.detail += " The conflict's marker lines are removed.";
+        preview.markers = MarkerEffect::Removed;
     else if (split)
-        preview.detail += " The conflict keeps its marker lines until its other sections are decided, then holds this "
-                          "text in this order.";
+        preview.markers = MarkerEffect::KeptUntilDecided;
     return preview;
 }
 
@@ -235,7 +226,7 @@ const ResultAnchor *acceptedPlace(const Selection &selected, const ChoiceTarget 
 Refusal planReplacement(const Selection &selected, ChoicePreview &preview)
 {
     const auto *replaced = replacementAnchor(selected);
-    if (!replaced) return {{Transition::AmbiguousTarget, "The deletion scope is uncertain. Edit the result directly."}};
+    if (!replaced) return {{Transition::AmbiguousTarget, ChoiceNote::UncertainDeletion}};
     if (replaced != &selected.anchor) preview.command.targets.push_back(*replaced);
     const auto range = *replaced->result;
     preview.before = std::string(slice(selected.draft.text, range));
@@ -248,8 +239,7 @@ Refusal planReplacement(const Selection &selected, ChoicePreview &preview)
             continue;
         const auto *other = acceptedPlace(selected, target);
         if (!other || !other->result || sharesPlace(range, *other->result))
-            return {{Transition::Blocked,
-                     "Accepted text may overlap this choice. Preview an ordered combination or undo its acceptance."}};
+            return {{Transition::Blocked, ChoiceNote::AcceptedOverlap}};
     }
     return std::nullopt;
 }
@@ -259,28 +249,24 @@ Refusal planReplacement(const Selection &selected, ChoicePreview &preview)
 Refusal planCompetitors(const Selection &selected, ChoicePreview &preview)
 {
     const auto *opposite = selected.choices.opposite(selected.target);
-    if (!opposite) return {{Transition::InvalidAnchor, "Missing competing source scope."}};
+    if (!opposite) return {{Transition::InvalidAnchor, ChoiceNote::MissingCompetitor}};
     const bool line = selected.target.scope == ChoiceScope::Line;
     for (const auto &competing : opposite->decisions) {
         const auto *other = selected.mapping.anchor(competing);
         if (line) {
-            if (!mapped(other))
-                return {{Transition::AmbiguousTarget,
-                         "The competing line scope is uncertain. Use a section or edit manually."}};
+            if (!mapped(other)) return {{Transition::AmbiguousTarget, ChoiceNote::UncertainCompetingLine}};
             if (!sharesPlace(selected.range, *other->result)) continue;
             if (*other->result != selected.range)
-                return {{Transition::AmbiguousTarget,
-                         "This line has no exact competing scope. Use a section or edit manually."}};
+                return {{Transition::AmbiguousTarget, ChoiceNote::NoExactCompetingLine}};
         }
         if (decision(selected.draft, competing).value == DecisionValue::Accepted)
-            return {{Transition::Blocked, "Undo the competing acceptance before resolving this scope."}};
+            return {{Transition::Blocked, ChoiceNote::CompetingAccepted}};
         preview.command.decisions[competing] = {DecisionValue::Ignored, {}};
     }
     // A multi-line competing section cannot be silently rejected by a line
     // whose correspondence identifies no competing contribution.
     if (line && preview.command.decisions.size() == selected.target.decisions.size())
-        return {{Transition::AmbiguousTarget,
-                 "No competing line can be identified safely. Use a section or edit manually."}};
+        return {{Transition::AmbiguousTarget, ChoiceNote::NoCompetingLine}};
     return std::nullopt;
 }
 
@@ -297,32 +283,28 @@ Refusal planAction(const Selection &selected, ChoicePreview &preview)
     case ChoiceAction::CombineLeftFirst:
     case ChoiceAction::CombineRightFirst: break;
     }
-    return {{Transition::InvalidAnchor, "Unknown source scope."}};
+    return {{Transition::InvalidAnchor, ChoiceNote::UnknownScope}};
 }
 
-std::string choiceDetail(ChoiceAction action, bool completes)
+ChoiceNote actionNote(ChoiceAction action)
 {
-    if (completes)
-        return action == ChoiceAction::ResolveUsingSide
-            ? "Resolve using this side accepts this scope, ignores its competing contributions and removes the "
-              "conflict's marker lines and ignored text."
-            : "This decides the last open side of the conflict, so its marker lines and ignored text are removed.";
     switch (action) {
-    case ChoiceAction::Ignore: return "Ignore preserves result text and leaves the other side undecided.";
-    case ChoiceAction::Accept: return "Accept changes only this scope and leaves the other side undecided.";
-    default: return "Resolve using this side accepts this scope and ignores its competing contributions.";
+    case ChoiceAction::Ignore: return ChoiceNote::Ignore;
+    case ChoiceAction::Accept: return ChoiceNote::Accept;
+    case ChoiceAction::ResolveUsingSide: return ChoiceNote::ResolveUsingSide;
+    case ChoiceAction::CombineLeftFirst:
+    case ChoiceAction::CombineRightFirst: break;
     }
+    return ChoiceNote::Combine;
 }
 
 ChoicePreview previewSingleSide(ChoicePreview preview, const Selection &selected)
 {
     for (const auto &id : selected.target.decisions) {
         if (!selected.draft.decisions.contains(id))
-            return failed(std::move(preview), Transition::Blocked,
-                          "This draft has no recorded scoped choices. Edit the result directly.");
+            return failed(std::move(preview), Transition::Blocked, ChoiceNote::NoRecordedChoices);
         if (decision(selected.draft, id).value != DecisionValue::Undecided)
-            return failed(std::move(preview), Transition::Blocked,
-                          "This scope already has a decision. Undo intervening actions to change it.");
+            return failed(std::move(preview), Transition::Blocked, ChoiceNote::AlreadyDecided);
     }
     const bool ignore = preview.action == ChoiceAction::Ignore;
     preview.command.expected = preview.revision;
@@ -330,13 +312,14 @@ ChoicePreview previewSingleSide(ChoicePreview preview, const Selection &selected
     for (const auto &id : selected.target.decisions)
         preview.command.decisions[id] = {ignore ? DecisionValue::Ignored : DecisionValue::Accepted, {}};
     if (auto refusal = planAction(selected, preview))
-        return failed(std::move(preview), refusal->first, std::move(refusal->second));
+        return failed(std::move(preview), refusal->first, refusal->second);
     const bool confirmation = !ignore
         && std::any_of(preview.command.targets.begin(), preview.command.targets.end(),
                        [](const auto &value) { return value.manualOverlap; });
     preview.replacesManual = confirmation;
     preview.state = confirmation ? Transition::ConfirmationRequired : Transition::Applied;
-    preview.detail = choiceDetail(preview.action, selected.file.completesMarkers(preview.command));
+    preview.note = actionNote(preview.action);
+    if (selected.file.completesMarkers(preview.command)) preview.markers = MarkerEffect::Removed;
     return preview;
 }
 }
@@ -349,19 +332,19 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected, const 
     preview.action = action;
     preview.target = target;
     if (file.current().id != expected)
-        return failed(std::move(preview), Transition::StaleRevision, "The result changed. Select the scope again.");
+        return failed(std::move(preview), Transition::StaleRevision, ChoiceNote::StaleRevision);
     if (file.support() != Support::Supported)
-        return failed(std::move(preview), Transition::Blocked, "This file cannot be edited in Branch Truce.");
+        return failed(std::move(preview), Transition::Blocked, ChoiceNote::FileNotEditable);
     const auto *found = file.catalogue().find(target);
     const auto *mapping = file.correspondence();
     if (!found || !mapping || !file.snapshots())
-        return failed(std::move(preview), Transition::InvalidAnchor, "Unknown source scope.");
+        return failed(std::move(preview), Transition::InvalidAnchor, ChoiceNote::UnknownScope);
     const auto *anchor = mapping->anchor(target);
     if (!mapped(anchor))
         return failed(std::move(preview),
                       anchor && anchor->state == AnchorState::Ambiguous ? Transition::AmbiguousTarget
                                                                         : Transition::InvalidAnchor,
-                      "This scope cannot be mapped safely. Edit the result directly.");
+                      ChoiceNote::UnmappedScope);
     const Selection selected{file, *mapping, file.catalogue(), file.current().draft, *found, *anchor, *anchor->result};
     if (action == ChoiceAction::CombineLeftFirst || action == ChoiceAction::CombineRightFirst)
         return previewCombination(std::move(preview), selected);
@@ -503,16 +486,15 @@ NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId 
     preview.command.expected = expected;
     if (expected != file.current().id) {
         preview.state = Transition::StaleRevision;
-        preview.detail = "The result changed. Preview the batch again.";
+        preview.note = BatchNote::StaleRevision;
         return preview;
     }
     if (file.support() != Support::Supported || !file.correspondence() || !file.snapshots()) {
-        preview.detail = "This file cannot apply non-conflicting changes.";
+        preview.note = BatchNote::FileNotEditable;
         return preview;
     }
     if (!file.snapshots()->earlier) {
-        preview.detail =
-            "The common earlier version is unavailable. Non-conflicting changes cannot be identified safely.";
+        preview.note = BatchNote::NoEarlierVersion;
         return preview;
     }
     const BatchPlanner planner(file);
@@ -535,8 +517,7 @@ NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId 
             addCandidate(preview, std::move(candidate));
     }
     preview.state = preview.changes.empty() ? Transition::NoChange : Transition::ConfirmationRequired;
-    preview.detail = "Only the displayed non-conflicting changes in this file will be applied. "
-                     "Competing choices, existing decisions, manual edits and uncertain passages are left alone.";
+    preview.note = BatchNote::Batch;
     return preview;
 }
 
@@ -558,22 +539,22 @@ WholeFilePreview previewWholeFile(const FileSession &file, RevisionId expected, 
     preview.side = side;
     if (expected != file.current().id) {
         preview.state = Transition::StaleRevision;
-        preview.detail = "The result changed. Inspect a new whole-file preview.";
+        preview.note = WholeFileNote::StaleRevision;
         return preview;
     }
     if (file.support() != Support::Supported || !file.snapshots() || !file.correspondence()) {
-        preview.detail = "This file has no editable captured source.";
+        preview.note = WholeFileNote::NoCapturedSource;
         return preview;
     }
     if (side != SourceSide::Stage2 && side != SourceSide::Stage3) {
         preview.state = Transition::InvalidAnchor;
-        preview.detail = "Choose Left or Right for whole-file replacement.";
+        preview.note = WholeFileNote::InvalidSide;
         return preview;
     }
     const auto &captured = *file.snapshots();
     const auto &source = captured.source(side);
     if (!source) {
-        preview.detail = "The selected source is unavailable.";
+        preview.note = WholeFileNote::SourceUnavailable;
         return preview;
     }
     const auto &draft = file.current().draft;
@@ -601,11 +582,7 @@ WholeFilePreview previewWholeFile(const FileSession &file, RevisionId expected, 
         for (const auto &passage : *passages)
             if (passage.kind != PassageKind::Equal) preview.differences.push_back(passage);
     preview.state = Transition::ConfirmationRequired;
-    preview.detail = "Replace the entire result for this file with the selected source. "
-                     "This gives up the other source's contributions and replaces all differing current text, "
-                     "including edits made before opening and manual edits made in this session. "
-                     "Inspect the full result, contribution decisions and replaced passages before confirming. "
-                     "Undo restores the previous text and decisions. Review the result before saving.";
+    preview.note = WholeFileNote::Replace;
     return preview;
 }
 

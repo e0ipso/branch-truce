@@ -1,6 +1,6 @@
 add_library(branch_truce_controller STATIC ApplicationController.cpp ApplicationController.h
-    ChoicePreviewFlow.cpp ChoicePreviewFlow.h CommandGuard.cpp CommandGuard.h FileNavigator.cpp FileNavigator.h
-    NavigationTargets.cpp NavigationTargets.h TextPositions.h SelectedFile.cpp SelectedFile.h
+    ChoicePreviewFlow.cpp ChoicePreviewFlow.h CommandGuard.cpp CommandGuard.h EngineText.cpp EngineText.h
+    FileNavigator.cpp FileNavigator.h NavigationTargets.cpp NavigationTargets.h TextPositions.h SelectedFile.cpp SelectedFile.h
     SessionModel.cpp SessionModel.h ResultEditorAdapter.cpp ResultEditorAdapter.h TextChange.cpp TextChange.h
     SessionLoader.cpp SessionLoader.h WordDifferenceDecorations.cpp WordDifferenceDecorations.h)
 qt_add_qml_module(branch_truce_controller
