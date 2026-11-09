@@ -1,7 +1,7 @@
 // Word difference decorations highlight changed words without changing the result text.
 #include "WordDifferenceDecorations.h"
 #include "SessionModel.h"
-#include "core/WordDifferences.h"
+#include "core/FileWordDifferences.h"
 #include "highlighting/PaneHighlighter.h"
 #include <QColor>
 #include <QJSValue>

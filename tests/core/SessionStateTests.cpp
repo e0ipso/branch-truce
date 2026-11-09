@@ -526,8 +526,8 @@ public:
             for (const auto &[id, decision] : resolved.decisions) {
                 const bool own =
                     std::find(target.decisions.begin(), target.decisions.end(), id) != target.decisions.end();
-                const bool competitor =
-                    std::find(target.competitors.begin(), target.competitors.end(), id) != target.competitors.end();
+                const auto &competitors = file.catalogue().opposite(target)->decisions;
+                const bool competitor = std::find(competitors.begin(), competitors.end(), id) != competitors.end();
                 CHECK(decision.value
                       == (own ? DecisionValue::Accepted
                               : competitor ? DecisionValue::Ignored
@@ -1549,7 +1549,8 @@ public:
                 CHECK(chosen.text == "header\nbridge\ntail\n" && chosen.unresolvedMarkers == 0);
                 CHECK(file.markerSections().empty() && !has(file, Blocker::UnresolvedMarkers));
                 for (const auto &id : left.decisions) CHECK(chosen.decisions.at(id).value == DecisionValue::Accepted);
-                for (const auto &id : left.competitors) CHECK(chosen.decisions.at(id).value == DecisionValue::Ignored);
+                for (const auto &id : file.catalogue().opposite(left)->decisions)
+                    CHECK(chosen.decisions.at(id).value == DecisionValue::Ignored);
                 CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft.text == before);
                 CHECK(file.markerSections().size() == 1);
                 CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);

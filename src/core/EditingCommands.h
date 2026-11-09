@@ -6,21 +6,6 @@
 namespace branch_truce {
 
 enum class ChoiceAction { Accept, Ignore, ResolveUsingSide, CombineLeftFirst, CombineRightFirst };
-enum class ChoiceScope { Line, Section };
-
-struct ChoiceTarget {
-    SourceAnchor source;
-    ChoiceScope scope;
-    std::string section;
-    std::vector<std::string> decisions;
-    std::vector<std::string> competitors;
-    bool operator==(const ChoiceTarget &) const = default;
-};
-
-// Stable, immutable source scopes. A section groups the differing passages
-// between the two captured sides; its line decisions are shared with line picks.
-[[nodiscard]] std::vector<ChoiceTarget> choiceTargets(const FileSnapshots &snapshots);
-[[nodiscard]] std::map<std::string, Decision> initialChoiceDecisions(const FileSnapshots &snapshots);
 
 struct ChoicePreview {
     Transition state = Transition::InvalidAnchor;
@@ -44,17 +29,6 @@ struct ChoicePreview {
 Transition applyChoice(FileSession &file, const ChoicePreview &preview, bool confirmReplacement = false);
 
 enum class NonConflictingScope { Left, Right, Both };
-
-struct NonConflictingTarget {
-    SourceAnchor earlier;
-    SourceAnchor source;
-    std::vector<std::string> decisions;
-};
-
-// Only exact, non-competing changes relative to an available earlier capture.
-// Decision IDs belong to the existing scoped-choice vocabulary.
-[[nodiscard]] std::vector<NonConflictingTarget> nonConflictingTargets(const FileSnapshots &snapshots,
-                                                                      const std::vector<ChoiceTarget> &choices);
 
 struct NonConflictingChange {
     std::vector<SourceAnchor> sources;

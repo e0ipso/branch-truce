@@ -1,4 +1,5 @@
 #include "TestHarness.h"
+#include "core/FileWordDifferences.h"
 #include "core/WordDifferences.h"
 #include "fixtures/ChoiceFile.h"
 

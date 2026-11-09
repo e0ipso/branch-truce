@@ -14,7 +14,6 @@
 
 namespace branch_truce {
 
-enum class SourceSide { Earlier, Stage2, Stage3 };
 enum class InsertionAffinity { Before, After };
 enum class PassageKind { Equal, Changed, SourceOnly, ResultOnly, Ambiguous };
 
