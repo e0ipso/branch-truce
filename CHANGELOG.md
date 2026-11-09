@@ -1,3 +1,9 @@
+## [1.3.2](https://github.com/e0ipso/branch-truce/compare/v1.3.1...v1.3.2) (2026-11-09)
+
+### Bug Fixes
+
+* **ui:** pad source choice buttons ([efd5dbd](https://github.com/e0ipso/branch-truce/commit/efd5dbd4b2c02d4a06bef58dc442c3b99f378acb))
+
 ## [1.3.1](https://github.com/e0ipso/branch-truce/compare/v1.3.0...v1.3.1) (2026-11-06)
 
 ### Bug Fixes
