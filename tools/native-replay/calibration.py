@@ -56,15 +56,29 @@ def validate_contract(contract):
     return contract
 
 
-def build_provenance(source, build):
-    executable = build / 'src/app/branch-truce'
+# Cache entries recorded with each capture. Keep these names in step with CMakeLists.txt options.
+CMAKE_OBSERVATIONS = ('CMAKE_BUILD_TYPE', 'CMAKE_CXX_COMPILER', 'BRANCH_TRUCE_SYNTAX_HIGHLIGHTING')
+
+
+def cmake_cache(build):
+    """Read the build's CMake cache. A missing observed key means the build options changed."""
     cache = build / 'CMakeCache.txt'
     values = {}
-    if cache.exists():
-        for line in cache.read_text().splitlines():
-            if '=' in line and not line.startswith(('#', '//')):
-                k, v = line.split('=', 1)
-                values[k.split(':')[0]] = v
+    if not cache.exists():
+        return values
+    for line in cache.read_text().splitlines():
+        if '=' in line and not line.startswith(('#', '//')):
+            k, v = line.split('=', 1)
+            values[k.split(':')[0]] = v
+    missing = [key for key in ('CMAKE_HOME_DIRECTORY', *CMAKE_OBSERVATIONS) if key not in values]
+    if missing:
+        raise KeyError(f'{cache} lacks {", ".join(missing)}')
+    return values
+
+
+def build_provenance(source, build):
+    executable = build / 'src/app/branch-truce'
+    values = cmake_cache(build)
     build_source = Path(values.get('CMAKE_HOME_DIRECTORY', '/unavailable'))
     # Record observed source identity separately from the binary's embedded build identity.
     # A source checkout's HEAD alone cannot prove which bytes produced an executable.
@@ -81,8 +95,7 @@ def build_provenance(source, build):
                 embedded_build_identity='not observed; executable SHA identifies the exact artifact',
                 manifests={name: sha256(build / name) for name in ('CMakeCache.txt', 'build.ninja', 'compile_commands.json')
                            if (build / name).is_file()},
-                cmake_observations={k: v for k, v in values.items() if k in
-                    ('CMAKE_BUILD_TYPE', 'CMAKE_CXX_COMPILER', 'BRANCH_TRUCE_WITH_SYNTAX_HIGHLIGHTING')})
+                cmake_observations={k: v for k, v in values.items() if k in CMAKE_OBSERVATIONS})
 
 
 def observations(state):

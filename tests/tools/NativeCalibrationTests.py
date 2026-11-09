@@ -135,6 +135,30 @@ class ContractTests(unittest.TestCase):
             self.assertFalse(observed['current_src_matches_build_source'])
             self.assertIn('not observed', observed['embedded_build_identity'])
 
+    def write_cache(self, root, **entries):
+        (root / 'src/app').mkdir(parents=True)
+        (root / 'src/app/branch-truce').write_bytes(b'fixture executable identity')
+        lines = ['# This is the CMakeCache file.', '//Highlight syntax in the comparison panes',
+                 *(f'{key}:STRING={value}' for key, value in entries.items())]
+        (root / 'CMakeCache.txt').write_text('\n'.join(lines) + '\n')
+
+    def test_build_provenance_records_the_syntax_highlighting_option(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_cache(root, CMAKE_HOME_DIRECTORY=root, CMAKE_BUILD_TYPE='Debug',
+                             CMAKE_CXX_COMPILER='/usr/bin/c++', BRANCH_TRUCE_SYNTAX_HIGHLIGHTING='OFF')
+            observed = build_provenance(root, root)
+            self.assertEqual(observed['cmake_observations'], dict(
+                CMAKE_BUILD_TYPE='Debug', CMAKE_CXX_COMPILER='/usr/bin/c++', BRANCH_TRUCE_SYNTAX_HIGHLIGHTING='OFF'))
+
+    def test_build_provenance_rejects_a_cache_without_an_observed_option(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_cache(root, CMAKE_HOME_DIRECTORY=root, CMAKE_BUILD_TYPE='Debug',
+                             CMAKE_CXX_COMPILER='/usr/bin/c++', BRANCH_TRUCE_WITH_SYNTAX_HIGHLIGHTING='ON')
+            with self.assertRaisesRegex(KeyError, 'CMakeCache.txt lacks BRANCH_TRUCE_SYNTAX_HIGHLIGHTING'):
+                build_provenance(root, root)
+
     def test_changed_reference_scale_requires_review(self):
         changed = copy.deepcopy(self.contract)
         changed['reference_pixel_scale'] = 1
