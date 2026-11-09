@@ -1,6 +1,6 @@
 // Qt acceptance checks for the PRD's observable acceptance examples.
 // Each journey opens a real Git operation in a disposable repository through
-// ApplicationController::openRepository, loads the real BranchTruce Main scene
+// SessionLoader::openRepository, loads the real BranchTruce Main scene
 // offscreen and drives it with mouse clicks and key events. Coverage notes and
 // the entry point are in tests/acceptance/README.md.
 #include "TestHarness.h"

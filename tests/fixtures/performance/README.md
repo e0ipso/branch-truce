@@ -43,7 +43,7 @@ variants and a third result variant. It creates the real controller, binds a liv
 QML object to selected-file result text, source text, passages and revision,
 and inserts `x` at offset zero ten times. Every sample checks acceptance,
 controller and bound result bytes, unchanged source, nonempty passages, and a
-new revision. Timing starts before `ApplicationController::editResult` and
+new revision. Timing starts before `FileCommands::editResult` and
 ends after processing queued Qt events. This includes the old lazy selected-file
 map conversion and its QML consumers. Initial construction is excluded.
 
