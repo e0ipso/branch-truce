@@ -15,9 +15,23 @@ Rectangle {
     property string description: ""
     property string identityRole: ""
     property string identityHash: ""
+    // Controls at the header's far edge, after the title and identity. Set
+    // showTrailing for a header that has them, so others keep their layout.
+    property alias trailing: trailingControls.data
+    property bool showTrailing: false
     // Font-scaled native units keep the wider side inset and shared text baseline.
     readonly property real sideInset: Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing
     readonly property real titleIdentitySpacing: Kirigami.Units.largeSpacing
+    readonly property real titleMinimumWidth: Math.min(Kirigami.Units.gridUnit * 2, header.width / 3)
+    readonly property real titleNaturalWidth: Math.max(header.titleMinimumWidth,
+        Math.min(paneTitle.implicitWidth, header.width / 3))
+    readonly property real identityRowWidth: header.identity.length > 0
+        ? identityLabel.implicitWidth + header.titleIdentitySpacing : 0
+    // The width trailing controls can take while the title and identity keep
+    // their natural widths. It ignores the controls' own width, so they can
+    // pick a compact form from it without a binding loop.
+    readonly property real trailingRoom: header.width - 2 * header.sideInset - header.titleNaturalWidth
+        - header.identityRowWidth - header.titleIdentitySpacing
     implicitHeight: heading.implicitHeight + Kirigami.Units.mediumSpacing * 2 + separator.height
     color: Kirigami.Theme.alternateBackgroundColor
     RowLayout {
@@ -34,8 +48,14 @@ Rectangle {
             level: 5
             type: Kirigami.Heading.Type.Primary
             Layout.alignment: Qt.AlignBaseline
-            Layout.minimumWidth: Math.min(Kirigami.Units.gridUnit * 2, header.width / 3)
-            Layout.preferredWidth: paneTitle.implicitWidth
+            Layout.minimumWidth: header.titleMinimumWidth
+            // The complete identity outranks the title: with trailing controls in a
+            // narrow header, the title gives up width and elides first.
+            Layout.preferredWidth: header.showTrailing
+                ? Math.max(header.titleMinimumWidth, Math.min(paneTitle.implicitWidth,
+                    header.width - 2 * header.sideInset - header.identityRowWidth
+                    - trailingControls.implicitWidth - header.titleIdentitySpacing))
+                : paneTitle.implicitWidth
             Layout.maximumWidth: header.width / 3
             text: " "
             PlainLabel {
@@ -132,6 +152,18 @@ Rectangle {
                 Accessible.ignored: true
                 ToolTip.visible: false
             }
+        }
+        // Spare width goes here and the controls start at the far edge, so they
+        // never push the identity. They fill the text row's height, so the
+        // header keeps the height of the headers beside it.
+        RowLayout {
+            id: trailingControls
+            visible: header.showTrailing
+            spacing: Kirigami.Units.smallSpacing
+            layoutDirection: Qt.RightToLeft
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumWidth: implicitWidth
         }
     }
     Kirigami.Separator {
