@@ -187,11 +187,19 @@ CorrespondenceMap mapped(const std::string &source, const std::string &result)
     return {1, sources(source, result), result};
 }
 
+// The anchor bound to `id`. A missing one fails the case instead of crashing it.
+ResultAnchor anchorOf(const CorrespondenceMap &map, const std::string &id)
+{
+    const auto *anchor = map.anchor(id);
+    CHECK(anchor != nullptr);
+    return *anchor;
+}
+
 ResultAnchor bound(CorrespondenceMap &map, SourceAnchor source)
 {
     const auto id = source.contributionId;
     CHECK(map.bind(std::move(source)));
-    return *map.anchor(id);
+    return anchorOf(map, id);
 }
 
 // The text after a choice replaces the anchor's range.
@@ -250,7 +258,7 @@ void anchorsFollowManualInsertionsAndDeletions()
     map = map.edited(2, {{0, 0}, prefix});
     map = map.edited(3, {{prefix.size(), prefix.size() + 5}, {}});
     map = map.edited(4, {{map.text().size(), map.text().size()}, suffix});
-    const auto &current = *map.anchor("choice");
+    const auto &current = anchorOf(map, "choice");
     CHECK(current.revision == 4 && current.result == ByteRange{prefix.size(), prefix.size() + 5});
     CHECK(!current.manualOverlap && !current.handEdited);
     CHECK(chosen(map, "choice", "accepted\n").text() == prefix + "accepted\nright\nend\n" + suffix);
@@ -262,7 +270,7 @@ void launchTextThatDiffersFromItsSourceNeedsConfirmation()
     const auto anchor = bound(map, {"choice", SourceSide::Stage2, {5, 12}});
     CHECK(anchor.manualOverlap && !anchor.handEdited && anchor.result == ByteRange{5, 12});
     const auto typed = map.edited(2, {{6, 7}, "X"});
-    CHECK(typed.anchor("choice")->manualOverlap && typed.anchor("choice")->handEdited);
+    CHECK(anchorOf(typed, "choice").manualOverlap && anchorOf(typed, "choice").handEdited);
     CHECK(chosen(typed, "choice", "accepted\n").text() == "head\naccepted\nend\n");
 }
 
@@ -271,9 +279,9 @@ void deletedAnchorsNeverReattachToAnotherRepeat()
     auto map = mapped("head\nrepeat\nrepeat\nend\n", "head\nrepeat\nrepeat\nend\n");
     (void)bound(map, {"choice", SourceSide::Stage2, {12, 19}});
     const auto deleted = map.edited(2, {{12, 19}, {}});
-    CHECK(deleted.anchor("choice")->state == AnchorState::Invalidated && !deleted.anchor("choice")->result);
+    CHECK(anchorOf(deleted, "choice").state == AnchorState::Invalidated && !anchorOf(deleted, "choice").result);
     const auto whole = map.recomputed(3, "head\nrepeat\nend\n");
-    CHECK(whole.anchor("choice")->state == AnchorState::Ambiguous && !whole.anchor("choice")->result);
+    CHECK(anchorOf(whole, "choice").state == AnchorState::Ambiguous && !anchorOf(whole, "choice").result);
 }
 
 void insertionAnchorsRespectAffinity()
@@ -282,12 +290,13 @@ void insertionAnchorsRespectAffinity()
     (void)bound(map, {"choice", SourceSide::Stage2, {5, 5}, InsertionAffinity::Before});
     (void)bound(map, {"after", SourceSide::Stage2, {5, 5}, InsertionAffinity::After});
     const auto edited = map.edited(2, {{5, 5}, "manual\n"});
-    CHECK(edited.anchor("choice")->result == ByteRange{5, 5} && edited.anchor("after")->result == ByteRange{12, 12});
+    CHECK(anchorOf(edited, "choice").result == ByteRange{5, 5}
+          && anchorOf(edited, "after").result == ByteRange{12, 12});
     const auto choice = chosen(edited, "choice", "choice\n");
     CHECK(choice.text() == "head\nchoice\nmanual\ntail\n");
     // Undo and redo restore a map at a fresh revision with the same anchors.
     const auto restored = edited.atRevision(9);
-    CHECK(restored.anchor("choice")->revision == 9 && restored.anchor("choice")->result == ByteRange{5, 5});
+    CHECK(anchorOf(restored, "choice").revision == 9 && anchorOf(restored, "choice").result == ByteRange{5, 5});
 }
 
 void theMapChecksEveryTextBeforeTheAlgorithmSeesIt()
