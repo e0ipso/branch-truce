@@ -259,7 +259,10 @@ struct Session {
     Repository repo;
     ScopedEnvironment environment;
     std::shared_ptr<PublishFiles> files = std::make_shared<PublishFiles>();
-    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}, files}};
+    Application controller{Application::Config{.gitExecutable = gitOnPath(),
+                                               .recoveryDirectory = newRecoveryDirectory(),
+                                               .correspondence = {},
+                                               .files = files}};
     QString id;
     explicit Session(bool unsupportedResult = false) : environment(repo.environment)
     {
