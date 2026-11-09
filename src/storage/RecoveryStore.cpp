@@ -1,4 +1,4 @@
-// The recovery store persists app-owned journals and text payloads under an exclusive session lease.
+// The recovery store persists app-owned journals and text payloads; a lease is the only way to append.
 #include "RecoveryStore.h"
 #include "core/ResourceLimits.h"
 #include <QBuffer>
@@ -10,14 +10,22 @@
 #include <QJsonDocument>
 #include <QLockFile>
 #include <QSaveFile>
-#include <unistd.h>
 #include <utility>
 
 namespace branch_truce::storage {
 namespace {
-const QByteArray header("Branch Truce recovery journal v1\n");
+constexpr int journalVersion = 2;
+const QByteArray headerPrefix("Branch Truce recovery journal v");
+const QByteArray header = headerPrefix + QByteArray::number(journalVersion) + '\n';
 constexpr auto filePermissions = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
 constexpr auto directoryPermissions = filePermissions | QFileDevice::ExeOwner;
+
+QString payloadLimitError(qint64 size)
+{
+    return QStringLiteral("Recovery payload of %1 bytes exceeds the %2 byte limit; pending input is retained.")
+        .arg(size)
+        .arg(static_cast<qulonglong>(branch_truce::kMaxRecoveryPayloadBytes));
+}
 
 bool validDigest(const QByteArray &value)
 {
@@ -27,38 +35,64 @@ bool validDigest(const QByteArray &value)
     return true;
 }
 
-bool privateDirectory(const QString &path)
+// Creates path when missing and adds its parent to unsynced, so a power loss
+// cannot drop the new entry once a record that depends on it is durable.
+bool privateDirectory(const FileSystem &files, const QString &path, std::set<QString> &unsynced)
 {
     const QFileInfo before(path);
     if (before.isSymLink() || (before.exists() && !before.isDir())) return false;
-    if (!QDir().mkpath(path, directoryPermissions)) return false;
-    const QFileInfo created(path);
-    return created.ownerId() == ::geteuid() && QFile::setPermissions(path, directoryPermissions);
+    if (!before.exists()) {
+        if (!QDir().mkpath(path, directoryPermissions)) return false;
+        unsynced.insert(QFileInfo(path).absolutePath());
+    }
+    const QFileInfo existing(path);
+    return existing.ownerId() == files.effectiveUser() && QFile::setPermissions(path, directoryPermissions);
 }
 
-bool regularPrivateFile(const QString &path)
+bool regularPrivateFile(const FileSystem &files, const QString &path)
 {
     const QFileInfo info(path);
-    return !info.isSymLink() && info.isFile() && info.ownerId() == ::geteuid()
+    return !info.isSymLink() && info.isFile() && info.ownerId() == files.effectiveUser()
         && (info.permissions()
             & (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup | QFileDevice::ReadOther
                | QFileDevice::WriteOther | QFileDevice::ExeOther))
         == 0;
 }
 
-bool atomicFile(const QString &path, const QByteArray &bytes)
+// Writes a new file through a synced temporary and a rename. The caller syncs
+// the directory before anything refers to the file.
+bool atomicFile(const FileSystem &files, const QString &path, const QByteArray &bytes)
 {
     if (QFileInfo::exists(path) || QFileInfo(path).isSymLink()) return false;
     QSaveFile file(path);
     file.setDirectWriteFallback(false);
     return file.open(QIODevice::WriteOnly) && file.setPermissions(filePermissions) && file.write(bytes) == bytes.size()
-        && file.flush() && ::fsync(file.handle()) == 0 && file.commit();
+        && file.flush() && files.sync(file.handle()) == 0 && file.commit();
 }
 
-bool synchronize(QFile &file) { return file.flush() && ::fsync(file.handle()) == 0; }
+bool synchronize(const FileSystem &files, QFile &file) { return file.flush() && files.sync(file.handle()) == 0; }
+
+// The digest of a state as the journal stores it, so a state handed to commit
+// and the same state read back compare equal.
+QByteArray stateDigest(const QJsonObject &state)
+{
+    const auto stored = QJsonDocument(state).toJson(QJsonDocument::Compact);
+    return RecoveryStore::digest(QJsonDocument::fromJson(stored).toJson(QJsonDocument::Compact));
 }
 
-RecoveryStore::RecoveryStore(QString directory) : directory_(std::move(directory)) {}
+// The format version a header line names, or 0 when it names none.
+int headerVersion(const QByteArray &line)
+{
+    if (!line.startsWith(headerPrefix) || !line.endsWith('\n')) return 0;
+    bool ok = false;
+    const auto version = line.mid(headerPrefix.size()).chopped(1).toInt(&ok);
+    return ok ? version : 0;
+}
+}
+
+RecoveryStore::RecoveryStore(QString directory, std::shared_ptr<const FileSystem> files)
+    : directory_(std::move(directory)), files_(std::move(files))
+{}
 
 QByteArray RecoveryStore::digest(const QByteArray &bytes)
 {
@@ -69,15 +103,12 @@ QByteArray RecoveryStore::payload(const QByteArray &hash, QString *error) const
 {
     const auto path = directory_ + QStringLiteral("/payloads/") + QString::fromLatin1(hash);
     QFile file(path);
-    if (!validDigest(hash) || !regularPrivateFile(path) || !file.open(QIODevice::ReadOnly)) {
+    if (!validDigest(hash) || !regularPrivateFile(*files_, path) || !file.open(QIODevice::ReadOnly)) {
         if (error) *error = QStringLiteral("Recovery payload is missing or unsafe.");
         return {};
     }
     if (file.size() > static_cast<qint64>(branch_truce::kMaxRecoveryPayloadBytes)) {
-        if (error)
-            *error = QStringLiteral(
-                         "Recovery payload of %1 bytes exceeds the 8388608 byte limit; pending input is retained.")
-                         .arg(file.size());
+        if (error) *error = payloadLimitError(file.size());
         return {};
     }
     const auto bytes = file.readAll();
@@ -99,8 +130,8 @@ bool RecoveryStore::openJournal(QFile &file, RecoveryRead &result) const
     const QFileInfo root(directory_);
     const QFileInfo payloads(directory_ + QStringLiteral("/payloads"));
     file.setFileName(path);
-    if (root.isSymLink() || !root.isDir() || payloads.isSymLink() || !payloads.isDir() || !regularPrivateFile(path)
-        || !file.open(QIODevice::ReadOnly)) {
+    if (root.isSymLink() || !root.isDir() || payloads.isSymLink() || !payloads.isDir()
+        || !regularPrivateFile(*files_, path) || !file.open(QIODevice::ReadOnly)) {
         result.error = QStringLiteral("Recovery journal is unavailable or unsafe.");
         return false;
     }
@@ -120,15 +151,23 @@ RecoveryRead RecoveryStore::read() const
     return result;
 }
 
-RecoveryRead RecoveryStore::parse(QIODevice &file) const
+RecoveryRead RecoveryStore::parse(QIODevice &file, std::set<QByteArray> *payloads) const
 {
     RecoveryRead result;
-    if (file.readLine() != header) {
+    const auto newer = [&result] {
+        result.newerFormat = true;
+        result.error = QStringLiteral("Recovery journal was written by a newer Branch Truce.");
+        return result;
+    };
+    const auto version = headerVersion(file.readLine());
+    if (version > journalVersion) return newer();
+    if (version != journalVersion) {
         result.error = QStringLiteral("Unknown or corrupt recovery journal version.");
         return result;
     }
     result.validBytes = file.pos();
     quint64 sequence = 1;
+    std::set<QString> identities;
     while (!file.atEnd()) {
         const auto line = file.readLine();
         if (!line.endsWith('\n')) {
@@ -148,25 +187,33 @@ RecoveryRead RecoveryStore::parse(QIODevice &file) const
         }
         const auto recordDocument = QJsonDocument::fromJson(body, &parse);
         const auto record = recordDocument.object();
-        const auto state = record.value(QStringLiteral("state")).toObject();
+        if (record.value(QStringLiteral("version")).toInt() > journalVersion) return newer();
+        const auto id = record.value(QStringLiteral("transaction")).toString();
         if (parse.error != QJsonParseError::NoError || !recordDocument.isObject()
-            || record.value(QStringLiteral("version")).toInt() != 1
+            || record.value(QStringLiteral("version")).toInt() != journalVersion
             || record.value(QStringLiteral("sequence")).toString() != QString::number(sequence)
             || record.value(QStringLiteral("previous")).toString().toLatin1() != result.lastDigest
-            || !record.value(QStringLiteral("payloads")).isArray() || state.value(QStringLiteral("schema")).toInt() != 1
-            || state.value(QStringLiteral("transactionId")).toString().isEmpty()) {
+            || !record.value(QStringLiteral("payloads")).isArray() || !record.value(QStringLiteral("state")).isObject()
+            || id.isEmpty()) {
             result.error = QStringLiteral("Recovery record schema or ordering is invalid.");
             return result;
         }
+        if (!identities.insert(id).second) {
+            result.error = QStringLiteral("Recovery journal repeats a transaction.");
+            return result;
+        }
         for (const auto &reference : record.value(QStringLiteral("payloads")).toArray()) {
+            const auto name = reference.toString().toLatin1();
+            if (payloads && payloads->contains(name)) continue;
             QString error;
-            (void)payload(reference.toString().toLatin1(), &error);
+            (void)payload(name, &error);
             if (!error.isEmpty()) {
                 result.error = error;
                 return result;
             }
+            if (payloads) payloads->insert(name);
         }
-        result.transactions.push_back(state);
+        result.transactions.push_back({id, record.value(QStringLiteral("state")).toObject()});
         result.validBytes = file.pos();
         result.lastDigest = hash;
         ++sequence;
@@ -202,13 +249,16 @@ const RecoveryStore::JournalEnd *RecoveryStore::refreshEnd(QString *error)
         *error = QStringLiteral("Could not read the complete recovery journal.");
         return nullptr;
     }
-    const auto current = parse(buffer);
+    // Another writer or a changed byte: verify every payload again.
+    verified_.clear();
+    const auto current = parse(buffer, &verified_);
     if (!current.succeeded) {
+        verified_.clear();
         *error = current.error;
         return nullptr;
     }
-    end_ = JournalEnd{bytes.left(current.validBytes), current.transactions.size(), current.lastDigest,
-                      current.transactions.isEmpty() ? QJsonObject{} : current.transactions.back()};
+    end_ = JournalEnd{bytes.left(current.validBytes), current.transactions.size(), current.lastDigest, {}};
+    for (const auto &stored : current.transactions) end_->committed.emplace(stored.id, stateDigest(stored.state));
     return &*end_;
 }
 
@@ -216,55 +266,65 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
 {
     if (!QDir::isAbsolutePath(directory_))
         return {false, QStringLiteral("Recovery storage needs an absolute app-owned location.")};
-    if (transaction.state.value(QStringLiteral("schema")).toInt() != 1
-        || transaction.state.value(QStringLiteral("transactionId")).toString().isEmpty())
+    if (transaction.id.isEmpty() || transaction.state.isEmpty())
         return {false, QStringLiteral("Invalid recovery transaction.")};
-    if (!privateDirectory(directory_) || !privateDirectory(directory_ + QStringLiteral("/payloads")))
+    const auto payloadDirectory = directory_ + QStringLiteral("/payloads");
+    if (!privateDirectory(*files_, directory_, unsynced_) || !privateDirectory(*files_, payloadDirectory, unsynced_))
         return {false,
                 QStringLiteral("Could not create private recovery storage; retry after repairing its location.")};
-    QLockFile lock(directory_ + QStringLiteral("/journal.lock"));
-    if (!lock.tryLock(0)) return {false, QStringLiteral("Recovery storage is busy; retry the pending action.")};
     const auto journalPath = directory_ + QStringLiteral("/journal");
-    if (!QFileInfo::exists(journalPath) && !atomicFile(journalPath, header))
-        return {false, QStringLiteral("Could not initialize the recovery journal.")};
+    if (!QFileInfo::exists(journalPath)) {
+        if (!atomicFile(*files_, journalPath, header))
+            return {false, QStringLiteral("Could not initialize the recovery journal.")};
+        unsynced_.insert(directory_);
+    }
     QString readError;
     const auto *current = refreshEnd(&readError);
     if (!current) return {false, readError};
-    QJsonArray references;
-    for (auto entry = transaction.payloads.cbegin(); entry != transaction.payloads.cend(); ++entry) {
-        if (!validDigest(entry.key()) || digest(entry.value()) != entry.key())
-            return {false, QStringLiteral("Invalid recovery payload identity.")};
-        if (entry.value().size() > static_cast<qsizetype>(branch_truce::kMaxRecoveryPayloadBytes))
-            return {false,
-                    QStringLiteral(
-                        "Recovery payload of %1 bytes exceeds the 8388608 byte limit; pending input is retained.")
-                        .arg(entry.value().size())};
-        const auto path = directory_ + QStringLiteral("/payloads/") + QString::fromLatin1(entry.key());
-        if (!QFileInfo::exists(path) && !atomicFile(path, entry.value()))
-            return {false, QStringLiteral("Could not commit a recovery payload; pending input is retained.")};
-        QString error;
-        (void)payload(entry.key(), &error);
-        if (!error.isEmpty()) return {false, error};
-        references.push_back(QString::fromLatin1(entry.key()));
-    }
     QFile journal(journalPath);
     const auto validBytes = static_cast<qint64>(current->bytes.size());
     if (!journal.open(QIODevice::ReadWrite) || !journal.resize(validBytes) || !journal.seek(validBytes))
         return {false, QStringLiteral("Could not open the recovery commit boundary.")};
-    // A flush failure may leave a complete record. Retrying its stable request
-    // identity makes that record durable without appending the action twice.
-    if (current->records > 0
-        && current->lastState.value(QStringLiteral("transactionId"))
-            == transaction.state.value(QStringLiteral("transactionId"))) {
-        if (current->lastState != transaction.state)
+    // A sync failure may leave a complete record, and other records may follow
+    // it before the retry. Retrying its stable ID makes that record durable
+    // without appending the action twice.
+    if (const auto committed = current->committed.find(transaction.id); committed != current->committed.end()) {
+        if (committed->second != stateDigest(transaction.state))
             return {false, QStringLiteral("Recovery transaction identity was reused for different work.")};
-        return synchronize(journal)
+        return synchronize(*files_, journal)
             ? RecoveryCommit{true, {}}
             : RecoveryCommit{false, QStringLiteral("Could not flush the pending recovery transaction; retry.")};
     }
-    const QJsonObject record{{QStringLiteral("version"), 1},
+    QJsonArray references;
+    for (auto entry = transaction.payloads.cbegin(); entry != transaction.payloads.cend(); ++entry) {
+        references.push_back(QString::fromLatin1(entry.key()));
+        if (verified_.contains(entry.key())) continue;
+        if (!validDigest(entry.key()) || digest(entry.value()) != entry.key())
+            return {false, QStringLiteral("Invalid recovery payload identity.")};
+        if (entry.value().size() > static_cast<qsizetype>(branch_truce::kMaxRecoveryPayloadBytes))
+            return {false, payloadLimitError(entry.value().size())};
+        const auto path = payloadDirectory + QLatin1Char('/') + QString::fromLatin1(entry.key());
+        if (QFileInfo::exists(path) || QFileInfo(path).isSymLink()) {
+            QString error;
+            (void)payload(entry.key(), &error);
+            if (!error.isEmpty()) return {false, error};
+        } else {
+            if (!atomicFile(*files_, path, entry.value()))
+                return {false, QStringLiteral("Could not commit a recovery payload; pending input is retained.")};
+            unsynced_.insert(payloadDirectory);
+        }
+        verified_.insert(entry.key());
+    }
+    // The record must not outlive the directory entries it depends on: the
+    // store, the journal and its payloads.
+    for (auto pending = unsynced_.begin(); pending != unsynced_.end(); pending = unsynced_.erase(pending)) {
+        if (!syncDirectory(*files_, *pending))
+            return {false, QStringLiteral("Could not sync recovery storage; pending input is retained for retry.")};
+    }
+    const QJsonObject record{{QStringLiteral("version"), journalVersion},
                              {QStringLiteral("sequence"), QString::number(current->records + 1)},
                              {QStringLiteral("previous"), QString::fromLatin1(current->lastDigest)},
+                             {QStringLiteral("transaction"), transaction.id},
                              {QStringLiteral("payloads"), references},
                              {QStringLiteral("state"), transaction.state}};
     const auto body = QJsonDocument(record).toJson(QJsonDocument::Compact);
@@ -273,16 +333,54 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
                                                  {QStringLiteral("sha256"), QString::fromLatin1(bodyDigest)}})
                            .toJson(QJsonDocument::Compact)
         + '\n';
-    if (journal.write(frame) != frame.size() || !synchronize(journal))
+    if (journal.write(frame) != frame.size() || !synchronize(*files_, journal))
         return {false, QStringLiteral("Recovery commit failed; pending input is retained for retry.")};
     if (end_) {
-        // Remember the state as a reread would decode it, so the retry check
-        // compares the same values either way.
         end_->bytes += frame;
         ++end_->records;
         end_->lastDigest = bodyDigest;
-        end_->lastState = QJsonDocument::fromJson(body).object().value(QStringLiteral("state")).toObject();
+        end_->committed.emplace(transaction.id, stateDigest(transaction.state));
     }
     return {true, {}};
 }
+
+RecoveryLease::RecoveryLease(QString directory, std::shared_ptr<const FileSystem> files)
+    : lock_(std::make_unique<QLockFile>(directory + QStringLiteral("/session.lock"))),
+      store_(std::move(directory), std::move(files))
+{}
+
+RecoveryLease::~RecoveryLease() = default;
+
+std::shared_ptr<RecoveryLease> RecoveryLease::acquire(const QString &directory, std::shared_ptr<const FileSystem> files,
+                                                      Failure *failure)
+{
+    const auto fail = [failure](Failure reason) {
+        if (failure) *failure = reason;
+        return std::shared_ptr<RecoveryLease>{};
+    };
+    if (!files || !QDir::isAbsolutePath(directory)) return fail(Failure::Unsafe);
+    std::shared_ptr<RecoveryLease> lease(new RecoveryLease(directory, files));
+    if (!privateDirectory(*files, directory, lease->store_.unsynced_)) return fail(Failure::Unsafe);
+    if (!lease->lock_->tryLock(0)) return fail(Failure::Held);
+    if (failure) *failure = Failure::None;
+    return lease;
+}
+
+bool RecoveryLease::remove()
+{
+    if (removed_) return false;
+    removed_ = true;
+    QDir store(directory());
+    bool removed = true;
+    for (const auto &entry :
+         store.entryInfoList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot)) {
+        if (entry.fileName() == QLatin1String("session.lock")) continue;
+        removed = (entry.isDir() && !entry.isSymLink() ? QDir(entry.absoluteFilePath()).removeRecursively()
+                                                       : QFile::remove(entry.absoluteFilePath()))
+            && removed;
+    }
+    lock_->unlock();
+    return QDir().rmdir(directory()) && removed;
+}
+
 }

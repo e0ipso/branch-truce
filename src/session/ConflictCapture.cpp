@@ -11,17 +11,7 @@ Support supportFor(const git::Conflict &file)
 
 TextSnapshot textSnapshot(const storage::TextDocument &document)
 {
-    SnapshotFormat format;
-    switch (document.format.encoding) {
-    case storage::TextEncoding::Utf8: format.encoding = SnapshotFormat::Encoding::Utf8; break;
-    case storage::TextEncoding::Utf16LittleEndian: format.encoding = SnapshotFormat::Encoding::Utf16LittleEndian; break;
-    case storage::TextEncoding::Utf16BigEndian: format.encoding = SnapshotFormat::Encoding::Utf16BigEndian; break;
-    }
-    format.bom = document.format.bom;
-    format.newline =
-        document.format.newline == storage::Newline::CrLf ? SnapshotFormat::Newline::CrLf : SnapshotFormat::Newline::Lf;
-    format.finalNewline = document.format.finalNewline;
-    return {document.utf8.toStdString(), document.originalBytes.toStdString(), format};
+    return {document.utf8.toStdString(), document.originalBytes.toStdString(), document.format};
 }
 
 std::optional<FileSnapshots> captureFile(const git::Conflict &file, const git::RepositoryContext &repository,

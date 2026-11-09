@@ -44,6 +44,8 @@ public:
         git::GitEnvironment gitEnvironment = git::GitEnvironment::fromProcess();
         // Where the session listens for mergetool launchers and they leave their inputs.
         QString mergetoolDirectory = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
+        // The file system the recovery store and repository publication write through.
+        std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem();
     };
     explicit Application(Config config, QObject *parent = nullptr);
 

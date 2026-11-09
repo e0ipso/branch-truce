@@ -33,6 +33,9 @@ bool SessionCompletion::finish()
         return false;
     }
     outcome_ = summary.outcome;
+    // Every file is resolved and nothing waits for recovery, so the store
+    // holds nothing a later launch could restore.
+    (void)store_.discardRecoveryStore();
     Q_EMIT changed();
     Q_EMIT sessionEnded(outcome_, true);
     return true;

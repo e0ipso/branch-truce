@@ -149,9 +149,14 @@ int main(int argc, char **argv)
         const auto utf16 = resultFormat(utf8Bom, "UTF-16", {}, diagnostic);
         CHECK(utf16 && utf16->encoding == TextEncoding::Utf16LittleEndian && utf16->bom);
         CHECK(!resultFormat(launch, "UTF-32", {}, diagnostic) && !diagnostic.isEmpty());
+        CHECK_EQ(decodeText("a\rb").failure, TextFailure::BareCarriageReturn);
+        CHECK_EQ(decodeText("a\nb\r\n").failure, TextFailure::MixedNewlines);
+        CHECK_EQ(decodeText(QByteArray::fromHex("ff")).failure, TextFailure::InvalidUtf8);
+        CHECK_EQ(decodeText("A", "UTF-16").failure, TextFailure::MissingByteOrderMark);
+        CHECK_EQ(decodeText("A", "UTF-32").failure, TextFailure::UnsupportedEncoding);
+        CHECK_EQ(serializeText("a\rb", utf8Bom).failure, TextFailure::InvalidEditableText);
+        CHECK(decodeText("plain\n").failure == TextFailure::None);
         CHECK(!resultFormat(launch, {}, "native", diagnostic) && !diagnostic.isEmpty());
-        CHECK(!resultFormat({static_cast<TextEncoding>(99), false, Newline::Lf, false}, {}, {}, diagnostic));
-        CHECK(!resultFormat({TextEncoding::Utf8, false, static_cast<Newline>(99), false}, {}, {}, diagnostic));
     });
     return suite.report();
 }

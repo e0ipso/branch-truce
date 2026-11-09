@@ -25,32 +25,18 @@ struct RecoveryRestore;
 class SessionStore : public QObject {
     Q_OBJECT
 public:
-    // The journal record each command writes, one name per recovery action.
-    enum class Action {
-        Open,
-        ReplaceDraft,
-        Undo,
-        Redo,
-        ManualSave,
-        DiscardToCheckpoint,
-        DiscardToStaged,
-        MarkResolvedReview,
-        WriteOutcome,
-        StageOutcome,
-        Support,
-        LoadLarge
-    };
-    Q_ENUM(Action)
-    // The action's name in the recovery journal.
-    [[nodiscard]] static QString actionName(Action action);
-    [[nodiscard]] static std::optional<Action> actionNamed(const QString &name);
+    // The journal record each command writes. Replay dispatches on the same
+    // value, so a new command is one enum value and one replay case.
+    using Action = RecoveryAction;
     // Whether a file's presentation group (unresolved, resolved, outside the
     // app) follows this action. Edits keep a resolved row in place until an
     // explicit publication, discard or support change moves it.
     [[nodiscard]] static bool repositions(Action action);
 
-    // recoveryDirectory is this session's recovery store.
-    explicit SessionStore(QString recoveryDirectory, QObject *parent = nullptr);
+    // recoveryDirectory is this session's recovery store, written through files.
+    explicit SessionStore(QString recoveryDirectory,
+                          std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem(),
+                          QObject *parent = nullptr);
 
     [[nodiscard]] std::size_t size() const { return files_.size(); }
     // Files in discovery order; a storage row indexes this and facts().
@@ -81,9 +67,15 @@ public:
     [[nodiscard]] const QString &recoveryDirectory() const { return journal_.directory(); }
     // Takes the store's lease on first use; empty while it holds, otherwise why the store is unavailable.
     QString ensureRecoveryLease() { return journal_.ensureLease(); }
+    // The held lease, or null. A mutation keeps it to record its observation
+    // in this store even after the session moves to another one.
+    [[nodiscard]] std::shared_ptr<storage::RecoveryLease> recoveryLease() const { return journal_.lease(); }
     // Commits a transaction that is not a file command, such as a mutation
     // intent, under the store's lease. Nothing is retained on failure.
     [[nodiscard]] storage::RecoveryCommit commitRecord(const storage::RecoveryTransaction &transaction);
+    // Deletes the recovery store once nothing in it is needed: no input is
+    // pending and no file has a recovery error. A finished session calls it.
+    bool discardRecoveryStore() { return journal_.discardStore(); }
     // Whether the store holds a record other than a launch capture.
     [[nodiscard]] bool holdsUserWork() const { return journal_.holdsUserWork(); }
     // Moves recovery to a new store beside the current one and releases the
@@ -99,7 +91,8 @@ public:
     [[nodiscard]] bool canCompleteLoad(const std::vector<FileSession> &files) const;
     [[nodiscard]] bool canRestoreLoad() const { return canCompleteLoad(files_); }
     // Resets every file and drops pending input and recovery errors. With a
-    // restore, adopts its store and errors, and commits only its new files.
+    // restore that adopted a store, moves to that store, takes its errors and
+    // commits only its new files.
     // SessionCoordinator calls this after cancelling the old session's work.
     void replaceFiles(std::vector<FileSession> files, RecoveryRestore *restore = nullptr);
     bool appendFile(FileSession file);
@@ -136,6 +129,7 @@ Q_SIGNALS:
 private:
     template <typename Command> Transition update(const std::string &id, Action action, Command command);
     bool commitCandidate(std::size_t row, FileSession candidate, Action action);
+    void commitOpen(std::size_t row);
     void notify(std::size_t row, std::optional<Action> action);
 
     std::vector<FileSession> files_;

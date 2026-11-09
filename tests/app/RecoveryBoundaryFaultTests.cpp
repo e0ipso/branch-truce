@@ -5,8 +5,10 @@
 #include "app/EngineText.h"
 #include "app/SessionModel.h"
 #include "app/Translations.h"
+#include "fixtures/Files.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryJournal.h"
+#include "fixtures/SyncFaults.h"
 #include "mergetool/MergetoolProtocol.h"
 #include "recovery/RecoveryRestore.h"
 #include "storage/DestinationWriter.h"
@@ -25,6 +27,7 @@
 #include <QTemporaryDir>
 #include <QTimer>
 
+#include <atomic>
 #include <cerrno>
 #include <cstdlib>
 #include <iostream>
@@ -36,30 +39,35 @@
 
 using namespace branch_truce;
 
-extern "C" int __real_fsync(int descriptor);
-extern "C" int __wrap_fsync(int descriptor)
-{
-    const char *env = std::getenv("TRUCE_CRASH_FSYNC");
-    if (env == nullptr || env[0] == '\0') return __real_fsync(descriptor);
-    const std::string mode(env);
-    char path[4096];
-    const auto link = "/proc/self/fd/" + std::to_string(descriptor);
-    const auto size = ::readlink(link.c_str(), path, sizeof(path));
-    if (size >= 0) {
-        const std::string_view target(path, static_cast<std::size_t>(size));
-        const bool journal = mode == "journal" || mode == "eio-journal";
-        const bool matches = journal ? target.ends_with("/journal")
-                                     : mode == "payload" && target.find("/payloads/") != std::string_view::npos;
-        if (matches) {
-            unsetenv("TRUCE_CRASH_FSYNC");
-            if (mode == "eio-journal") {
-                errno = EIO;
-                return -1;
+namespace {
+// Ends the boundary child the moment a matching recovery sync starts, as a power cut or a kill
+// would, once the action under test arms it. "journal" matches the journal, "payload" a payload.
+class CrashingFiles final : public storage::FileSystem {
+public:
+    explicit CrashingFiles(QString mode) : mode_(std::move(mode)) {}
+    void arm() { armed_ = true; }
+    void disarm() { armed_ = false; }
+    int sync(int descriptor) const override
+    {
+        if (armed_ && !mode_.isEmpty()) {
+            char path[4096];
+            const auto link = "/proc/self/fd/" + std::to_string(descriptor);
+            const auto size = ::readlink(link.c_str(), path, sizeof(path));
+            if (size >= 0) {
+                const std::string_view target(path, static_cast<std::size_t>(size));
+                const bool matches = mode_ == QLatin1String("journal")
+                    ? target.ends_with("/journal")
+                    : mode_ == QLatin1String("payload") && target.find("/payloads/") != std::string_view::npos;
+                if (matches) std::_Exit(42);
             }
-            std::_Exit(42);
         }
+        return FileSystem::sync(descriptor);
     }
-    return __real_fsync(descriptor);
+
+private:
+    const QString mode_;
+    std::atomic_bool armed_ = false;
+};
 }
 
 namespace {
@@ -125,16 +133,16 @@ void emitObservation(const char *label, const FileSession &file)
 }
 
 template <typename ModelAction, typename FileAction>
-[[noreturn]] void commitBoundary(test_support::TestSession &model, const QString &crash, ModelAction modelAction,
+[[noreturn]] void commitBoundary(test_support::TestSession &model, CrashingFiles &files, ModelAction modelAction,
                                  FileAction fileAction)
 {
     auto predicted = *model.file("file");
     CHECK(fileAction(predicted) == Transition::Applied);
     emitObservation("BEFORE", *model.file("file"));
     emitObservation("EXPECTED", predicted);
-    if (!crash.isEmpty()) qputenv("TRUCE_CRASH_FSYNC", crash.toUtf8());
+    files.arm();
     CHECK(modelAction(model) == Transition::Applied);
-    qunsetenv("TRUCE_CRASH_FSYNC");
+    files.disarm();
     std::_Exit(0);
 }
 
@@ -162,11 +170,12 @@ void writeSaved(test_support::TestSession &model)
 [[noreturn]] void runBoundary(const QString &name, const QString &directory, const QString &crash)
 {
     CHECK(QDir::isAbsolutePath(directory));
-    test_support::TestSession model(directory);
+    const auto files = std::make_shared<CrashingFiles>(crash);
+    test_support::TestSession model(directory, files);
     if (name == QLatin1String("edit")) {
         openBase(model);
         commitBoundary(
-            model, crash,
+            model, *files,
             [](test_support::TestSession &session) { return session.replaceDraft("file", 1, savedDraft()); },
             [](FileSession &file) { return file.replaceDraft(file.current().id, savedDraft()); });
     }
@@ -175,7 +184,7 @@ void writeSaved(test_support::TestSession &model)
         CHECK(model.replaceDraft("file", 1, savedDraft()) == Transition::Applied);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
-            model, crash,
+            model, *files,
             [=](test_support::TestSession &session) {
                 return session.recordCheckpoint("file", revision, Outcome::Succeeded);
             },
@@ -186,7 +195,7 @@ void writeSaved(test_support::TestSession &model)
         CHECK(model.replaceDraft("file", model.file("file")->current().id, discardedDraft()) == Transition::Applied);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
-            model, crash,
+            model, *files,
             [=](test_support::TestSession &session) { return session.discardToCheckpoint("file", revision); },
             [=](FileSession &file) { return file.discardToCheckpoint(file.current().id); });
     }
@@ -194,7 +203,7 @@ void writeSaved(test_support::TestSession &model)
         reviewSaved(model);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
-            model, crash,
+            model, *files,
             [=](test_support::TestSession &session) {
                 return session.recordWrite("file", revision, Outcome::Succeeded);
             },
@@ -204,7 +213,7 @@ void writeSaved(test_support::TestSession &model)
         writeSaved(model);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
-            model, crash,
+            model, *files,
             [=](test_support::TestSession &session) {
                 return session.recordStage("file", revision, Outcome::Succeeded, "verified-object", "100644");
             },
@@ -217,7 +226,7 @@ void writeSaved(test_support::TestSession &model)
         CHECK(model.replaceDraft("file", 1, savedDraft()) == Transition::Applied);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
-            model, crash,
+            model, *files,
             [=](test_support::TestSession &session) {
                 return session.recordCheckpoint("file", revision, Outcome::Failed, "checkpoint sync failed");
             },
@@ -229,7 +238,7 @@ void writeSaved(test_support::TestSession &model)
         reviewSaved(model);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
-            model, crash,
+            model, *files,
             [=](test_support::TestSession &session) {
                 return session.recordWrite("file", revision, Outcome::Failed, "repository write failed");
             },
@@ -239,7 +248,7 @@ void writeSaved(test_support::TestSession &model)
         reviewSaved(model);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
-            model, crash,
+            model, *files,
             [=](test_support::TestSession &session) {
                 return session.recordWrite("file", revision, Outcome::Uncertain, "destination changed during write");
             },
@@ -251,7 +260,7 @@ void writeSaved(test_support::TestSession &model)
         writeSaved(model);
         const auto revision = model.file("file")->current().id;
         commitBoundary(
-            model, crash,
+            model, *files,
             [=](test_support::TestSession &session) {
                 return session.recordStage("file", revision, Outcome::Failed, {}, {}, "index update failed");
             },
@@ -311,7 +320,10 @@ QJsonObject replayed(const QString &directory, bool *incomplete)
     return observation(replay.files.front());
 }
 
-void truncateFinalFrame(const QString &directory)
+// How the last frame of a journal can end after a crash or power loss.
+enum class TornTail { Half, NoNewline, Zeroed };
+
+void tearFinalFrame(const QString &directory, TornTail tail)
 {
     const auto path = directory + QStringLiteral("/journal");
     QFile journal(path);
@@ -324,27 +336,18 @@ void truncateFinalFrame(const QString &directory)
     CHECK(prior > 0);
     const auto frame = bytes.size() - (prior + 1);
     CHECK(frame > 4);
-    bytes.truncate(prior + 1 + frame / 2);
+    switch (tail) {
+    case TornTail::Half: bytes.truncate(prior + 1 + frame / 2); break;
+    case TornTail::NoNewline: bytes.chop(1); break;
+    case TornTail::Zeroed: bytes = bytes.left(prior + 1) + QByteArray(frame, '\0'); break;
+    }
     CHECK(!bytes.endsWith('\n'));
     CHECK(journal.open(QIODevice::WriteOnly | QIODevice::Truncate));
     CHECK(journal.write(bytes) == bytes.size());
 }
 
-void writeFile(const QString &path, const QByteArray &bytes)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    CHECK(file.write(bytes) == bytes.size());
-}
-
-QByteArray readFile(const QString &path)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::ReadOnly));
-    const auto bytes = file.readAll();
-    CHECK(file.error() == QFileDevice::NoError);
-    return bytes;
-}
+using test_support::readFile;
+using test_support::writeFile;
 
 // Restores the process environment even when fixture construction throws.
 class ScopedEnvironment {
@@ -506,11 +509,11 @@ RecoveryReplay replayedJournal(const QString &directory)
     return replay;
 }
 
-const RecoveryMutation *journalMutation(const RecoveryReplay &replay, const char *kind)
+const RecoveryMutation *journalMutation(const RecoveryReplay &replay, MutationKind kind)
 {
     const RecoveryMutation *found = nullptr;
     for (const auto &mutation : replay.mutations) {
-        if (mutation.kind != QLatin1String(kind)) continue;
+        if (mutation.kind != kind) continue;
         CHECK(found == nullptr);
         found = &mutation;
     }
@@ -518,19 +521,23 @@ const RecoveryMutation *journalMutation(const RecoveryReplay &replay, const char
 }
 
 template <typename Prepare, typename ModelAction, typename FileAction>
-void retryBoundary(const char *name, Prepare prepare, ModelAction modelAction, FileAction fileAction)
+void retryBoundary(Prepare prepare, ModelAction modelAction, FileAction fileAction)
 {
     QTemporaryDir directory;
     CHECK(directory.isValid());
-    test_support::TestSession model(directory.path());
+    const auto files = std::make_shared<test_support::SyncFaults>();
+    test_support::TestSession model(directory.path(), files);
     prepare(model);
     auto predicted = *model.file("file");
     CHECK(fileAction(predicted) == Transition::Applied);
     const auto before = observation(*model.file("file"));
     const auto recordsBefore = storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size();
-    qputenv("TRUCE_CRASH_FSYNC", "eio-journal");
-    CHECK(modelAction(model) == Transition::Blocked);
-    qunsetenv("TRUCE_CRASH_FSYNC");
+    {
+        // Disarmed however the check below leaves the scope.
+        test_support::ArmedFault fault(*files, test_support::SyncFaults::Point::JournalSync);
+        CHECK(modelAction(model) == Transition::Blocked);
+        CHECK_EQ(files->failures.load(), 1);
+    }
     CHECK(model.hasPendingRecovery());
     CHECK(observation(*model.file("file")) == before);
     CHECK(model.pendingDraft("file") != nullptr);
@@ -539,23 +546,22 @@ void retryBoundary(const char *name, Prepare prepare, ModelAction modelAction, F
     const auto landed = storage::RecoveryStore(model.recoveryDirectory()).read();
     CHECK(landed.succeeded && !landed.incompleteTail);
     CHECK(landed.transactions.size() == recordsBefore + 1);
-    const auto request = landed.transactions.back().value(QStringLiteral("transactionId")).toString();
+    const auto request = landed.transactions.back().id;
     CHECK(model.retryPendingRecovery(QStringLiteral("file")));
     CHECK(!model.hasPendingRecovery());
     CHECK(observation(*model.file("file")) == observation(predicted));
     const auto durable = storage::RecoveryStore(model.recoveryDirectory()).read();
     CHECK(durable.succeeded && durable.transactions.size() == recordsBefore + 1);
-    CHECK(durable.transactions.back().value(QStringLiteral("transactionId")).toString() == request);
+    CHECK(durable.transactions.back().id == request);
     int copies = 0;
-    for (const auto &state : durable.transactions)
-        if (state.value(QStringLiteral("transactionId")).toString() == request) ++copies;
+    for (const auto &stored : durable.transactions)
+        if (stored.id == request) ++copies;
     CHECK(copies == 1);
     CHECK(!model.retryPendingRecovery(QStringLiteral("file")));
     CHECK(storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size() == recordsBefore + 1);
     bool incomplete = true;
     CHECK(replayed(model.recoveryDirectory(), &incomplete) == observation(predicted));
     CHECK(!incomplete);
-    static_cast<void>(name);
 }
 }
 
@@ -563,7 +569,6 @@ class RecoveryBoundaryFaultTests {
 public:
     int run()
     {
-        qunsetenv("TRUCE_CRASH_FSYNC");
         test_support::Suite suite("RecoveryBoundaryFaultTests");
         suite.run("controller fixtures contain and remove their session sockets and restore the runtime environment",
                   [] {
@@ -608,28 +613,34 @@ public:
                         CHECK(expected.value(QStringLiteral("checkpoint")) == expected.value(QStringLiteral("text")));
                     }
                 });
-            suite.run("termination during " + boundary.toStdString() + " leaves the prior text decisions and status",
-                      [=] {
-                          QTemporaryDir directory;
-                          CHECK(directory.isValid());
-                          const auto child = runChild(boundary, directory.path(), {});
-                          requireChild(child, 0);
-                          const auto before = labeled(child.output, "BEFORE");
-                          const auto expected = labeled(child.output, "EXPECTED");
-                          truncateFinalFrame(directory.path());
-                          bool incomplete = false;
-                          const auto restored = replayed(directory.path(), &incomplete);
-                          CHECK(incomplete);
-                          CHECK(restored == before);
-                          CHECK(restored.value(QStringLiteral("text")) != expected.value(QStringLiteral("text"))
-                                || restored.value(QStringLiteral("status")) != expected.value(QStringLiteral("status"))
-                                || restored.value(QStringLiteral("stageOutcome"))
-                                    != expected.value(QStringLiteral("stageOutcome"))
-                                || restored.value(QStringLiteral("writeOutcome"))
-                                    != expected.value(QStringLiteral("writeOutcome"))
-                                || restored.value(QStringLiteral("checkpointOutcome"))
-                                    != expected.value(QStringLiteral("checkpointOutcome")));
-                      });
+            for (const auto &[tail, shape] :
+                 {std::pair{TornTail::Half, "half"}, std::pair{TornTail::NoNewline, "unterminated"},
+                  std::pair{TornTail::Zeroed, "zero-filled"}}) {
+                suite.run("a " + std::string(shape) + " final frame during " + boundary.toStdString()
+                              + " leaves the prior text decisions and status",
+                          [=] {
+                              QTemporaryDir directory;
+                              CHECK(directory.isValid());
+                              const auto child = runChild(boundary, directory.path(), {});
+                              requireChild(child, 0);
+                              const auto before = labeled(child.output, "BEFORE");
+                              const auto expected = labeled(child.output, "EXPECTED");
+                              tearFinalFrame(directory.path(), tail);
+                              bool incomplete = false;
+                              const auto restored = replayed(directory.path(), &incomplete);
+                              CHECK(incomplete);
+                              CHECK(restored == before);
+                              CHECK(restored.value(QStringLiteral("text")) != expected.value(QStringLiteral("text"))
+                                    || restored.value(QStringLiteral("status"))
+                                        != expected.value(QStringLiteral("status"))
+                                    || restored.value(QStringLiteral("stageOutcome"))
+                                        != expected.value(QStringLiteral("stageOutcome"))
+                                    || restored.value(QStringLiteral("writeOutcome"))
+                                        != expected.value(QStringLiteral("writeOutcome"))
+                                    || restored.value(QStringLiteral("checkpointOutcome"))
+                                        != expected.value(QStringLiteral("checkpointOutcome")));
+                          });
+            }
         }
         for (const auto &boundary : durable) {
             suite.run("journal sync death during " + boundary.toStdString() + " keeps the completed record", [=] {
@@ -656,13 +667,12 @@ public:
         });
         suite.run("recovery-write retry keeps one edit and its decisions", [] {
             retryBoundary(
-                "edit", openBase,
+                openBase,
                 [](test_support::TestSession &session) { return session.replaceDraft("file", 1, savedDraft()); },
                 [](FileSession &file) { return file.replaceDraft(file.current().id, savedDraft()); });
         });
         suite.run("checkpoint sync failure retains the draft and retries one manual save", [] {
             retryBoundary(
-                "checkpoint",
                 [](test_support::TestSession &session) {
                     openBase(session);
                     CHECK(session.replaceDraft("file", 1, savedDraft()) == Transition::Applied);
@@ -674,7 +684,7 @@ public:
         });
         suite.run("publication sync failure retains the reviewed draft and retries one write", [] {
             retryBoundary(
-                "write", reviewSaved,
+                reviewSaved,
                 [](test_support::TestSession &session) {
                     return session.recordWrite("file", session.file("file")->current().id, Outcome::Succeeded);
                 },
@@ -683,7 +693,7 @@ public:
         // A recovery-journal fsync failure while recording a stage; the Git index is not involved.
         suite.run("stage outcome journal sync failure retains the written draft and retries one stage", [] {
             retryBoundary(
-                "stage", writeSaved,
+                writeSaved,
                 [](test_support::TestSession &session) {
                     return session.recordStage("file", session.file("file")->current().id, Outcome::Succeeded,
                                                "verified-object", "100644");
@@ -722,12 +732,12 @@ public:
             requireChild(runChild(QStringLiteral("edit"), directory.path(), {}), 0);
             const auto journalPath = directory.path() + QStringLiteral("/journal");
             auto bytes = readFile(journalPath);
-            CHECK(bytes.startsWith("Branch Truce recovery journal v1\n"));
-            bytes.replace(0, sizeof("Branch Truce recovery journal v1\n") - 1, "Branch Truce recovery journal v9\n");
+            CHECK(bytes.startsWith("Branch Truce recovery journal v2\n"));
+            bytes.replace(0, sizeof("Branch Truce recovery journal v2\n") - 1, "Branch Truce recovery journal v9\n");
             writeFile(journalPath, bytes);
             const auto replay = replayRecovery(storage::RecoveryStore(directory.path()));
             CHECK(!replay.succeeded && replay.files.empty());
-            CHECK(replay.error.contains(QStringLiteral("Unknown or corrupt")));
+            CHECK(replay.newerFormat && replay.error.contains(QStringLiteral("newer Branch Truce")));
         });
         suite.run("a mismatched file identity is not restored as success", [] {
             QTemporaryDir directory;
@@ -741,40 +751,29 @@ public:
             CHECK(replay.error.contains(QStringLiteral("matching open file")));
         });
         suite.run("a stale destination rejects publication and keeps the acknowledged draft", [] {
-            QTemporaryDir directory;
-            CHECK(directory.isValid());
-            const auto root = QFileInfo(directory.path()).canonicalFilePath();
-            const QByteArray original = "original manual result\n";
+            IndexConflict conflict;
             const QByteArray external = "external replacement\n";
-            const auto draft = savedDraft();
-            writeFile(root + QStringLiteral("/result.txt"), original);
-            CHECK(::chmod(QFile::encodeName(root + QStringLiteral("/result.txt")).constData(), 0644) == 0);
-            const auto captured = storage::captureDestination(root, "result.txt");
-            CHECK(captured.destination && captured.failure == storage::DestinationFailure::None);
-            writeFile(root + QStringLiteral("/result.txt"), external);
-            test_support::TestSession model(root + QStringLiteral("/recovery"));
-            CHECK(model.appendFile(FileSession("file", "result.txt", draft)));
-            int admissions = 0;
-            const auto published = storage::publishDestination(*captured.destination,
-                                                               QByteArray::fromStdString(draft.text), "100644", [&] {
-                                                                   ++admissions;
-                                                                   return true;
-                                                               });
-            CHECK(admissions == 0);
-            CHECK(published.state == storage::PublicationState::Unchanged);
-            CHECK(published.failure == storage::DestinationFailure::ContentChanged);
-            CHECK(readFile(root + QStringLiteral("/result.txt")) == external);
-            CHECK(model.file("file")->current().draft == draft);
-            CHECK(!model.file("file")->written() && !model.file("file")->staged());
-            bool incomplete = true;
-            const auto restored = replayed(model.recoveryDirectory(), &incomplete);
-            CHECK(!incomplete);
-            CHECK(restored.value(QStringLiteral("text")).toString().toStdString() == draft.text);
-            CHECK(restored.value(QStringLiteral("status")).toString() != QLatin1String("Written and resolved"));
-            CHECK(!restored.value(QStringLiteral("written")).toBool());
+            // Another program rewrites the file after the session captured it.
+            writeFile(conflict.path(QStringLiteral("result.txt")), external);
+            const auto conflicted = conflict.indexEntries();
+            const auto revision = conflict.file().current().id;
+            conflict.markResolved();
+            const auto &file = conflict.file();
+            CHECK(file.writeOutcome() && file.writeOutcome()->revision == revision
+                  && file.writeOutcome()->outcome == Outcome::Failed);
+            CHECK(QString::fromStdString(file.writeOutcome()->detail).contains(QLatin1String("content")));
+            CHECK(!file.written() && !file.staged() && !file.facts().resolved);
+            CHECK(file.current().draft.text == conflict.reviewed.toStdString());
+            CHECK(readFile(conflict.path(QStringLiteral("result.txt"))) == external);
+            CHECK(conflict.indexEntries() == conflicted);
+            const auto replay = replayedJournal(conflict.controller->store()->recoveryDirectory());
+            const auto *publication = journalMutation(replay, MutationKind::Publication);
+            CHECK(publication && publication->observation == MutationObservation::NotAttempted
+                  && !publication->completed);
+            CHECK(observation(replay.files.front()) == observation(file));
         });
-        // Git index faults run through the real publisher; TRUCE_CRASH_FSYNC stays unset,
-        // so the recovery journal syncs normally and records what the product observed.
+        // Git index faults run through the real publisher; the recovery journal syncs normally
+        // and records what the product observed.
         suite.run("a replaced Git index entry stops publication and replay shows the recorded write failure", [] {
             IndexConflict conflict;
             const auto staleFile = conflict.home.path() + QStringLiteral("/stale-index-bytes");
@@ -832,10 +831,11 @@ public:
             CHECK(!conflict.controller->files()->hasPendingRecovery());
             CHECK(QFile::remove(lock));
             const auto replay = replayedJournal(conflict.controller->store()->recoveryDirectory());
-            const auto *publication = journalMutation(replay, "publication");
-            const auto *staging = journalMutation(replay, "staging");
-            CHECK(publication && publication->observation == QLatin1String("changed") && publication->completed);
-            CHECK(staging && staging->observation == QLatin1String("unchanged") && !staging->completed);
+            const auto *publication = journalMutation(replay, MutationKind::Publication);
+            const auto *staging = journalMutation(replay, MutationKind::Staging);
+            CHECK(publication && publication->observation == MutationObservation::ObservedChanged
+                  && publication->completed);
+            CHECK(staging && staging->observation == MutationObservation::ObservedUnchanged && !staging->completed);
             const auto &restored = replay.files.front();
             CHECK(observation(restored) == observation(file));
             CHECK(observation(restored).value(QStringLiteral("stageOutcome")).toString() == QLatin1String("failed"));

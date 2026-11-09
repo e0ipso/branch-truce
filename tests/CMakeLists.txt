@@ -140,12 +140,11 @@ if(Python3_Interpreter_FOUND)
 endif()
 if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(storage.text-format storage/TextFormatTests.cpp LIBS branch_truce_storage)
-    branch_truce_add_unit_test(storage.recovery-store storage/RecoveryStoreTests.cpp LIBS branch_truce_storage
-        WRAP fsync)
-    # Faults and exchange races are intercepted only in this test executable. Its read-only cases
-    # skip when it runs as root, which can write anyway.
+    branch_truce_add_unit_test(storage.recovery-store storage/RecoveryStoreTests.cpp LIBS branch_truce_storage)
+    # Faults and exchange races go in through the snapshot's FileSystem. Its read-only cases skip
+    # when it runs as root, which can write anyway.
     branch_truce_add_unit_test(storage.destination-writer storage/DestinationWriterTests.cpp
-        LIBS branch_truce_storage WRAP write fsync renameat2 unlinkat geteuid TIMEOUT 30)
+        LIBS branch_truce_storage TIMEOUT 30)
 
     add_executable(branch_truce_model_tests app/SessionModelTests.cpp)
     target_include_directories(branch_truce_model_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -171,7 +170,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_recovery_boundary_tests app/RecoveryBoundaryFaultTests.cpp)
     target_include_directories(branch_truce_recovery_boundary_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_recovery_boundary_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    target_link_options(branch_truce_recovery_boundary_tests PRIVATE "LINKER:--wrap=fsync")
     add_test(NAME app.recovery-boundary-faults COMMAND branch_truce_recovery_boundary_tests)
     set_tests_properties(app.recovery-boundary-faults PROPERTIES TIMEOUT 60)
 
@@ -179,8 +177,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     target_include_directories(branch_truce_recovery_record_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_recovery_record_tests PRIVATE branch_truce_controller branch_truce_storage
         branch_truce_build_options)
-    target_compile_definitions(branch_truce_recovery_record_tests PRIVATE
-        BRANCH_TRUCE_RECOVERY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/recovery")
     add_test(NAME app.recovery-record COMMAND branch_truce_recovery_record_tests)
 
     find_package(Qt6 6.6 REQUIRED COMPONENTS Test QuickTest)
@@ -320,7 +316,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_resolution_tests app/ResolutionPublisherTests.cpp)
     target_include_directories(branch_truce_resolution_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_resolution_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    target_link_options(branch_truce_resolution_tests PRIVATE "LINKER:--wrap=fsync" "LINKER:--wrap=renameat2")
     add_test(NAME app.resolution COMMAND branch_truce_resolution_tests)
     set_tests_properties(app.resolution PROPERTIES TIMEOUT 90)
 

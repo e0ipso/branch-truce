@@ -7,42 +7,6 @@
 #include <utility>
 
 namespace branch_truce {
-namespace {
-struct ActionName {
-    SessionStore::Action action;
-    const char *name;
-};
-// The recovery journal's vocabulary. RecoveryRestore replays these names.
-constexpr std::array actionNames{
-    ActionName{SessionStore::Action::Open, "open"},
-    ActionName{SessionStore::Action::ReplaceDraft, "replace-draft"},
-    ActionName{SessionStore::Action::Undo, "undo"},
-    ActionName{SessionStore::Action::Redo, "redo"},
-    ActionName{SessionStore::Action::ManualSave, "manual-save"},
-    ActionName{SessionStore::Action::DiscardToCheckpoint, "discard-to-checkpoint"},
-    ActionName{SessionStore::Action::DiscardToStaged, "discard-to-staged"},
-    ActionName{SessionStore::Action::MarkResolvedReview, "mark-resolved-review"},
-    ActionName{SessionStore::Action::WriteOutcome, "write-outcome"},
-    ActionName{SessionStore::Action::StageOutcome, "stage-outcome"},
-    ActionName{SessionStore::Action::Support, "support"},
-    ActionName{SessionStore::Action::LoadLarge, "load-large"},
-};
-}
-
-QString SessionStore::actionName(Action action)
-{
-    for (const auto &entry : actionNames)
-        if (entry.action == action) return QString::fromLatin1(entry.name);
-    return {};
-}
-
-std::optional<SessionStore::Action> SessionStore::actionNamed(const QString &name)
-{
-    for (const auto &entry : actionNames)
-        if (name == QLatin1String(entry.name)) return entry.action;
-    return std::nullopt;
-}
-
 bool SessionStore::repositions(Action action)
 {
     switch (action) {
@@ -57,13 +21,15 @@ bool SessionStore::repositions(Action action)
     case Action::ManualSave:
     case Action::MarkResolvedReview:
     case Action::WriteOutcome:
-    case Action::LoadLarge: return false;
+    case Action::LoadLarge:
+    case Action::MutationIntent:
+    case Action::MutationObservation: return false;
     }
     return false;
 }
 
-SessionStore::SessionStore(QString recoveryDirectory, QObject *parent)
-    : QObject(parent), journal_(std::move(recoveryDirectory))
+SessionStore::SessionStore(QString recoveryDirectory, std::shared_ptr<const storage::FileSystem> files, QObject *parent)
+    : QObject(parent), journal_(std::move(recoveryDirectory), std::move(files))
 {}
 
 const FileSession *SessionStore::file(const std::string &id) const
@@ -87,7 +53,7 @@ int SessionStore::supportCount(Support support) const
 std::optional<SessionStore::Action> SessionStore::pendingAction(const std::string &id) const
 {
     const auto *pending = journal_.pending(id);
-    return pending ? actionNamed(pending->action) : std::nullopt;
+    return pending ? std::optional<Action>(pending->action) : std::nullopt;
 }
 
 QString SessionStore::pendingError(const std::string &id) const
@@ -138,7 +104,16 @@ Transition SessionStore::retryRecovery(const std::string &id)
 
 bool SessionStore::canCompleteLoad(const std::vector<FileSession> &files) const
 {
-    return journal_.canCompleteLoad(files_, files);
+    if (files.size() != files_.size()) return false;
+    for (std::size_t row = 0; row < files_.size(); ++row) {
+        const auto &file = files_[row];
+        if (file.id() != files[row].id() || file.path() != files[row].path() || file.support() != Support::Unreadable
+            || file.snapshots() || file.current().id != 1 || file.current().draft != Draft{} || file.checkpoint()
+            || file.reviewed() || file.written() || file.staged() || file.checkpointOutcome() || file.writeOutcome()
+            || file.stageOutcome())
+            return false;
+    }
+    return journal_.onlyOpenCapturesPending();
 }
 
 void SessionStore::replaceFiles(std::vector<FileSession> files, RecoveryRestore *restore)
@@ -146,7 +121,7 @@ void SessionStore::replaceFiles(std::vector<FileSession> files, RecoveryRestore 
     Q_EMIT aboutToReplace();
     // The coordinator permits pending entries only for the placeholders of
     // this load. Retry must commit the captured files, never old placeholders.
-    journal_.reset(restore);
+    journal_.reset(restore ? std::move(restore->adopted) : std::nullopt);
     restored_.clear();
     files_ = std::move(files);
     facts_.clear();
@@ -159,7 +134,7 @@ void SessionStore::replaceFiles(std::vector<FileSession> files, RecoveryRestore 
         if (restore && !restore->newFiles.contains(files_[row].id()))
             restored_.insert(files_[row].id());
         else
-            (void)journal_.commitCandidate(files_[row], actionName(Action::Open));
+            commitOpen(row);
     }
     Q_EMIT replaced();
 }
@@ -173,14 +148,20 @@ bool SessionStore::appendFile(FileSession file)
     facts_.push_back(file.facts());
     rows_.emplace(file.id(), files_.size());
     files_.push_back(std::move(file));
-    (void)journal_.commitCandidate(files_.back(), actionName(Action::Open));
+    commitOpen(files_.size() - 1);
     Q_EMIT appended(row);
     return true;
 }
 
+void SessionStore::commitOpen(std::size_t row)
+{
+    // A launch capture has no earlier text; a failure leaves it pending.
+    (void)journal_.commitCandidate(files_[row], Action::Open, {});
+}
+
 bool SessionStore::commitCandidate(std::size_t row, FileSession candidate, Action action)
 {
-    if (!journal_.commitCandidate(candidate, actionName(action))) return false;
+    if (!journal_.commitCandidate(candidate, action, files_[row].current().draft.text)) return false;
     files_[row] = std::move(candidate);
     facts_[row] = files_[row].facts();
     return true;

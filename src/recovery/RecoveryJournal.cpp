@@ -1,49 +1,51 @@
 // The recovery journal keeps acknowledged edits durable and retains failed input for retry.
 #include "recovery/RecoveryJournal.h"
 #include "recovery/RecoveryRecord.h"
-#include "recovery/RecoveryRestore.h"
-#include <QDir>
 #include <QFileInfo>
-#include <QLockFile>
 #include <QUuid>
 #include <algorithm>
-#include <unistd.h>
 
 namespace branch_truce {
-RecoveryJournal::RecoveryJournal(QString directory) : store_(std::move(directory)) {}
+RecoveryJournal::RecoveryJournal(QString directory, std::shared_ptr<const storage::FileSystem> files)
+    : directory_(std::move(directory)), files_(std::move(files))
+{}
 
 QString RecoveryJournal::ensureLease()
 {
     if (lease_) return {};
-    const auto &directory = store_.directory();
-    const QFileInfo before(directory);
-    const auto permissions = QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
-    if (!QDir::isAbsolutePath(directory) || before.isSymLink()
-        || (before.exists() && (!before.isDir() || before.ownerId() != ::geteuid()))
-        || !QDir().mkpath(directory, permissions))
-        return tr("Recovery storage is unavailable or unsafe.");
-    auto lease = std::make_shared<QLockFile>(directory + QStringLiteral("/session.lock"));
-    if (!lease->tryLock(0))
-        return tr("Recovery session is already open or unavailable; close its other window before retrying.");
-    lease_ = std::move(lease);
-    return {};
+    auto failure = storage::RecoveryLease::Failure::None;
+    lease_ = storage::RecoveryLease::acquire(directory_, files_, &failure);
+    if (lease_) return {};
+    return failure == storage::RecoveryLease::Failure::Held
+        ? tr("Recovery session is already open or unavailable; close its other window before retrying.")
+        : tr("Recovery storage is unavailable or unsafe.");
+}
+
+storage::RecoveryCommit RecoveryJournal::commitUnderLease(const storage::RecoveryTransaction &transaction)
+{
+    const auto leaseError = ensureLease();
+    if (!leaseError.isEmpty()) return storage::RecoveryCommit{false, leaseError};
+    return lease_->commit(transaction);
 }
 
 storage::RecoveryCommit RecoveryJournal::commit(const storage::RecoveryTransaction &transaction)
 {
-    const auto leaseError = ensureLease();
-    if (!leaseError.isEmpty()) return storage::RecoveryCommit{false, leaseError};
-    auto result = store_.commit(transaction);
-    if (result.succeeded && transaction.state.value("action").toString() != QLatin1String("open")) userWork_ = true;
+    auto result = commitUnderLease(transaction);
+    if (result.succeeded) userWork_ = true;
     return result;
 }
 
-bool RecoveryJournal::commitCandidate(const FileSession &candidate, const QString &action)
+bool RecoveryJournal::commitCandidate(const FileSession &candidate, RecoveryAction action,
+                                      std::string_view previousText)
 {
-    const auto transactionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const auto result = commit(recoveryTransaction(candidate, action, transactionId));
-    if (result.succeeded) return true;
-    pending_.insert_or_assign(candidate.id(), Pending{candidate, action, transactionId, result.error});
+    auto transaction =
+        recoveryTransaction(candidate, action, QUuid::createUuid().toString(QUuid::WithoutBraces), previousText);
+    const auto result = commitUnderLease(transaction);
+    if (result.succeeded) {
+        if (action != RecoveryAction::Open) userWork_ = true;
+        return true;
+    }
+    pending_.insert_or_assign(candidate.id(), Pending{candidate, action, std::move(transaction), result.error});
     return false;
 }
 
@@ -51,12 +53,12 @@ std::optional<FileSession> RecoveryJournal::retryPending(const std::string &id)
 {
     const auto pending = pending_.find(id);
     if (pending == pending_.end()) return {};
-    const auto result =
-        commit(recoveryTransaction(pending->second.candidate, pending->second.action, pending->second.transactionId));
+    const auto result = commitUnderLease(pending->second.transaction);
     if (!result.succeeded) {
         pending->second.error = result.error;
         return {};
     }
+    if (pending->second.action != RecoveryAction::Open) userWork_ = true;
     auto committed = std::move(pending->second.candidate);
     pending_.erase(pending);
     return committed;
@@ -65,28 +67,45 @@ std::optional<FileSession> RecoveryJournal::retryPending(const std::string &id)
 bool RecoveryJournal::startNewStore()
 {
     if (hasPending()) return false;
-    store_ = storage::RecoveryStore(QFileInfo(store_.directory()).absolutePath() + QLatin1Char('/')
-                                    + QUuid::createUuid().toString(QUuid::WithoutBraces));
+    directory_ =
+        QFileInfo(directory_).absolutePath() + QLatin1Char('/') + QUuid::createUuid().toString(QUuid::WithoutBraces);
     lease_.reset();
     userWork_ = false;
     return true;
 }
 
-void RecoveryJournal::reset(RecoveryRestore *restore)
+void RecoveryJournal::reset(std::optional<AdoptedStore> adopted)
 {
     pending_.clear();
     failures_.clear();
-    if (!restore) return;
-    lease_ = std::move(restore->lease);
-    store_ = storage::RecoveryStore(restore->directory);
-    failures_ = std::move(restore->failures);
-    userWork_ = restore->userWork;
+    if (!adopted || !adopted->lease) return;
+    lease_ = std::move(adopted->lease);
+    directory_ = lease_->directory();
+    failures_ = std::move(adopted->failures);
+    userWork_ = adopted->userWork;
+}
+
+bool RecoveryJournal::discardStore()
+{
+    if (hasPending() || hasFailures() || !ensureLease().isEmpty()) return false;
+    const bool removed = lease_->remove();
+    lease_.reset();
+    userWork_ = false;
+    // Nothing commits after this: a later command stays pending with an error.
+    directory_.clear();
+    return removed;
 }
 
 const RecoveryJournal::Pending *RecoveryJournal::pending(const std::string &id) const
 {
     const auto found = pending_.find(id);
     return found == pending_.end() ? nullptr : &found->second;
+}
+
+bool RecoveryJournal::onlyOpenCapturesPending() const
+{
+    return std::all_of(pending_.cbegin(), pending_.cend(),
+                       [](const auto &pending) { return pending.second.action == RecoveryAction::Open; });
 }
 
 const QString *RecoveryJournal::failure(const std::string &id) const
@@ -109,21 +128,5 @@ bool RecoveryJournal::settleFailure(const std::string &id, const QString &expect
     else
         failure->second = replacement;
     return true;
-}
-
-bool RecoveryJournal::canCompleteLoad(const std::vector<FileSession> &current,
-                                      const std::vector<FileSession> &loaded) const
-{
-    if (loaded.size() != current.size()) return false;
-    for (std::size_t row = 0; row < current.size(); ++row) {
-        const auto &file = current[row];
-        if (file.id() != loaded[row].id() || file.path() != loaded[row].path() || file.support() != Support::Unreadable
-            || file.snapshots() || file.current().id != 1 || file.current().draft != Draft{} || file.checkpoint()
-            || file.reviewed() || file.written() || file.staged() || file.checkpointOutcome() || file.writeOutcome()
-            || file.stageOutcome())
-            return false;
-    }
-    return std::all_of(pending_.cbegin(), pending_.cend(),
-                       [](const auto &pending) { return pending.second.action == QLatin1String("open"); });
 }
 }

@@ -14,7 +14,6 @@ namespace branch_truce {
 
 using TaskId = quint64;
 enum class TaskStatus { Succeeded, Failed, Cancelled };
-enum class MutationObservation { NotAttempted, ObservedUnchanged, ObservedChanged, Uncertain };
 enum class TaskDisposition { Current, Cancelled, StaleSession, StaleRevision };
 
 struct TaskStamp {

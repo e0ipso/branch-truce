@@ -55,8 +55,9 @@ public:
         bool running = false;
         std::optional<git::Request> gitRequest;
         git::GitAdapter *adapter = nullptr;
-        QString recoveryDirectory;
-        QString mutationId;
+        // The store the intent went to, held until the observation is recorded there too.
+        std::shared_ptr<storage::RecoveryLease> recoveryLease;
+        std::optional<MutationFact> fact;
         std::optional<FileSession> mutationTarget;
     };
 
@@ -163,17 +164,18 @@ public:
                     if (!alive) return;
                     continue;
                 }
-                const auto mutationId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-                const auto kind = job->gitRequest ? QStringLiteral("staging") : QStringLiteral("publication");
-                const auto committed = store.commitRecord(mutationRecoveryTransaction(*file, kind, mutationId));
+                const MutationFact intent{QUuid::createUuid().toString(QUuid::WithoutBraces),
+                                          job->gitRequest ? MutationKind::Staging : MutationKind::Publication,
+                                          {}};
+                const auto committed = store.commitRecord(mutationRecoveryTransaction(*file, intent));
                 if (!committed.succeeded) {
                     store.recordRecoveryFailure(file->id(), committed.error);
                     finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, committed.error, {}});
                     if (!alive) return;
                     continue;
                 }
-                job->recoveryDirectory = store.recoveryDirectory();
-                job->mutationId = mutationId;
+                job->recoveryLease = store.recoveryLease();
+                job->fact = intent;
                 job->mutationTarget = *file;
             }
             job->running = true;
@@ -269,25 +271,21 @@ public:
     void finish(const std::shared_ptr<Job> &job, TaskResult result)
     {
         if (job->control.cancellationRequested()) result.status = TaskStatus::Cancelled;
-        if (job->mutationTarget) {
-            QString observation;
-            switch (result.mutation) {
-            case MutationObservation::NotAttempted: observation = QStringLiteral("not-attempted"); break;
-            case MutationObservation::ObservedUnchanged: observation = QStringLiteral("unchanged"); break;
-            case MutationObservation::ObservedChanged: observation = QStringLiteral("changed"); break;
-            case MutationObservation::Uncertain: observation = QStringLiteral("uncertain"); break;
-            }
-            storage::RecoveryStore journal(job->recoveryDirectory);
-            const auto committed = journal.commit(mutationRecoveryTransaction(
-                *job->mutationTarget, job->gitRequest ? QStringLiteral("staging") : QStringLiteral("publication"),
-                job->mutationId, observation));
+        if (job->mutationTarget && job->fact && job->recoveryLease) {
+            auto observed = *job->fact;
+            observed.observation = result.mutation;
+            // The lease the intent was committed under, even when the session
+            // has since moved to another store.
+            const auto committed =
+                job->recoveryLease->commit(mutationRecoveryTransaction(*job->mutationTarget, observed));
+            const auto lease = std::exchange(job->recoveryLease, nullptr);
             if (!committed.succeeded) {
                 result.status = TaskStatus::Failed;
                 if (result.mutation != MutationObservation::NotAttempted)
                     result.mutation = MutationObservation::Uncertain;
                 result.diagnostic +=
                     QStringLiteral("; recovery could not retain the mutation outcome: ") + committed.error;
-                if (job->input.stamp.worktree == worktree && job->recoveryDirectory == store.recoveryDirectory())
+                if (job->input.stamp.worktree == worktree && lease == store.recoveryLease())
                     store.recordRecoveryFailure(job->input.stamp.fileId, result.diagnostic);
             }
         }

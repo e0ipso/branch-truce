@@ -7,9 +7,12 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QTemporaryDir>
 #include <QUuid>
 #include <algorithm>
+#include <atomic>
+#include <set>
 
 using namespace branch_truce;
 
@@ -37,280 +40,244 @@ FileSession capturedFile()
                        true);
 }
 
-void choose(FileSession &file, SourceSide side, ChoiceScope scope, std::size_t occurrence, ChoiceAction action)
-{
-    const auto target = test_support::choiceTarget(file, side, scope, occurrence).source.contributionId;
-    CHECK(applyChoice(file, previewChoice(file, file.current().id, target, action), true) == Transition::Applied);
-}
+// Appends records the way SessionStore does: each one encodes the file after its command, with
+// its current text as a change from the text before.
+class Recorder {
+public:
+    explicit Recorder(const QString &directory, FileSession launch)
+        : lease(storage::RecoveryLease::acquire(directory)), file(std::move(launch))
+    {
+        CHECK(lease != nullptr);
+        commit(RecoveryAction::Open, {});
+    }
+    template <typename Command> void step(RecoveryAction action, Command command)
+    {
+        const auto before = file.current().draft.text;
+        CHECK(command(file) == Transition::Applied);
+        commit(action, before);
+    }
+    storage::RecoveryTransaction commit(RecoveryAction action, const std::string &before)
+    {
+        auto transaction =
+            recoveryTransaction(file, action, QUuid::createUuid().toString(QUuid::WithoutBraces), before);
+        CHECK(lease->commit(transaction).succeeded);
+        return transaction;
+    }
+    std::shared_ptr<storage::RecoveryLease> lease;
+    FileSession file;
+};
 
-// Decisions with and without an order, typed text, a manual Save checkpoint
-// and a later draft, so the current revision differs from the checkpoint.
-FileSession editedFile()
+// The states of the journal's records.
+QList<QJsonObject> states(const storage::RecoveryStore &store)
 {
-    auto file = capturedFile();
-    choose(file, SourceSide::Stage2, ChoiceScope::Line, 0, ChoiceAction::Accept);
-    choose(file, SourceSide::Stage3, ChoiceScope::Line, 0, ChoiceAction::Ignore);
-    choose(file, SourceSide::Stage2, ChoiceScope::Section, 1, ChoiceAction::CombineLeftFirst);
-    const auto at = file.current().draft.text.find("left first") + 5;
-    CHECK(file.editResult(file.current().id, {{at, at}, "hand "}) == Transition::Applied);
-    CHECK(file.recordCheckpoint(file.current().id, Outcome::Succeeded, "saved") == Transition::Applied);
-    const auto end = file.current().draft.text.size();
-    CHECK(file.editResult(file.current().id, {{end, end}, "after save\n"}) == Transition::Applied);
-    return file;
-}
-
-QJsonObject committedState(storage::RecoveryStore &store, const storage::RecoveryTransaction &transaction)
-{
-    CHECK(store.commit(transaction).succeeded);
     const auto read = store.read();
-    CHECK(read.succeeded && !read.incompleteTail && read.transactions.size() == 1);
-    return read.transactions.front();
+    CHECK(read.succeeded && !read.incompleteTail);
+    QList<QJsonObject> result;
+    for (const auto &stored : read.transactions) result.push_back(stored.state);
+    return result;
 }
 
-// tests/fixtures/recovery/underlined-base-7447467 holds a journal that the
-// encoder and core of commit 7447467 wrote, read back and replayed. A writer
-// built against that commit opened a diff3 conflict whose base underlines a
-// heading with exactly seven '=' (the session of underlinedBaseFile), accepted
-// the left section, deleted the base copy of the underline by hand and undid
-// that edit, committing each step. That build took the underline for Git's
-// separator and recorded marker counts 2, 2, 1 and 2, where this one counts 1.
-QString copiedJournal(const QString &directory)
+// Counts the comparisons a file makes, so a case can tell which algorithm aligned it.
+class CountingAlgorithm final : public CorrespondenceAlgorithm {
+public:
+    mutable std::atomic<int> calls = 0;
+    std::vector<Passage> compare(std::string_view source, std::string_view result) const override
+    {
+        ++calls;
+        return ExactLineCorrespondence().compare(source, result);
+    }
+};
+
+// Rewrites the journal's last state and replays it; the replay must refuse it with error.
+template <typename Mutate> void rejected(const QString &directory, Mutate mutate, const QString &error)
 {
-    const QString fixture = QStringLiteral(BRANCH_TRUCE_RECOVERY_FIXTURES "/underlined-base-7447467");
-    const auto store = directory + QStringLiteral("/store");
-    CHECK(QDir().mkpath(store + QStringLiteral("/payloads")));
+    QTemporaryDir copy;
+    CHECK(copy.isValid());
+    const auto store = copy.path() + "/store";
+    CHECK(QDir().mkpath(store + "/payloads"));
     const auto owner = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
     for (const auto *folder : {"", "/payloads"}) {
         CHECK(QFile::setPermissions(store + QLatin1String(folder), owner | QFileDevice::ExeOwner));
-        for (const auto &name : QDir(fixture + QLatin1String(folder)).entryList(QDir::Files)) {
+        for (const auto &name : QDir(directory + QLatin1String(folder)).entryList(QDir::Files)) {
+            if (name == QLatin1String("session.lock")) continue;
             const auto target = store + QLatin1String(folder) + QLatin1Char('/') + name;
-            CHECK(QFile::copy(fixture + QLatin1String(folder) + QLatin1Char('/') + name, target));
+            CHECK(QFile::copy(directory + QLatin1String(folder) + QLatin1Char('/') + name, target));
             CHECK(QFile::setPermissions(target, owner));
         }
     }
-    return store;
-}
-
-QJsonObject recordedDraft(const QJsonObject &state)
-{
-    return state.value("current").toObject().value("draft").toObject();
+    test_support::rewriteLastRecoveryState(store, mutate);
+    const auto replay = replayRecovery(storage::RecoveryStore(store));
+    CHECK(!replay.succeeded && replay.files.empty());
+    if (!replay.error.contains(error)) throw test_support::Failure(replay.error.toStdString());
 }
 }
 
 int main()
 {
     test_support::Suite suite("RecoveryRecordTests");
-    suite.run("an edited file session decodes to the state it was encoded from", [] {
-        const auto file = editedFile();
-        const auto &current = file.current();
-        CHECK(file.checkpoint() && file.checkpoint()->id != current.id && file.checkpointOutcome());
-        CHECK(current.correspondence && !current.correspondence->handEditedAnchors().empty());
-        CHECK(std::any_of(current.draft.decisions.begin(), current.draft.decisions.end(),
-                          [](const auto &entry) { return entry.second.order.has_value(); }));
-        CHECK(std::any_of(current.draft.decisions.begin(), current.draft.decisions.end(),
-                          [](const auto &entry) { return entry.second.value == DecisionValue::Ignored; }));
-        // Draft::unresolvedMarkers is not decoded; this file has no markers.
-        CHECK(current.draft.unresolvedMarkers == 0 && file.checkpoint()->draft.unresolvedMarkers == 0);
-
+    suite.run("an edited file session replays to the state its records were encoded from", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        storage::RecoveryStore store(directory.path() + "/store");
-        const auto transactionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        const auto transaction = recoveryTransaction(file, "manual-save", transactionId);
-        const auto state = committedState(store, transaction);
-        CHECK(state == transaction.state);
-        CHECK(state.value("schema").toInt() == 1 && state.value("transactionId").toString() == transactionId
-              && state.value("action").toString() == "manual-save");
-
-        const RecoveryRecordDecoder decoder(store);
-        CHECK(decoder.bytes(state.value("fileId")) == file.id());
-        CHECK(decoder.bytes(state.value("path")) == file.path());
-        CHECK(decoder.enumeration<Support>(state.value("support"), 2) == file.support());
-        CHECK(decoder.bytes(state.value("supportDetail")) == file.supportDetail());
-        const auto snapshots = decoder.snapshots(state.value("snapshots"));
-        CHECK(snapshots && *snapshots == *file.snapshots());
-        CHECK(snapshots->earlier && !snapshots->earlier->commitId && snapshots->stage2->commitId);
-
-        const auto encodedCurrent = state.value("current").toObject();
-        CHECK(decoder.draft(encodedCurrent.value("draft")) == current.draft);
-        CHECK(decoder.handEdited(encodedCurrent.value("handEdited")) == current.correspondence->handEditedAnchors());
-        CHECK(!current.correspondence->handEditedRanges().empty());
-        CHECK(decoder.handEditedRanges(encodedCurrent.value("handEditedRanges"))
-              == current.correspondence->handEditedRanges());
-        CHECK(encodedCurrent.value("id").toString() == QString::number(current.id));
-
-        const auto encodedCheckpoint = state.value("checkpoint").toObject();
-        CHECK(decoder.draft(encodedCheckpoint.value("draft")) == file.checkpoint()->draft);
-        CHECK(decoder.handEdited(encodedCheckpoint.value("handEdited"))
-              == file.checkpoint()->correspondence->handEditedAnchors());
-        CHECK(decoder.handEditedRanges(encodedCheckpoint.value("handEditedRanges"))
-              == file.checkpoint()->correspondence->handEditedRanges());
-        CHECK(encodedCheckpoint.value("id").toString() == QString::number(file.checkpoint()->id));
-        const auto checkpointOutcome = decoder.outcome(state.value("checkpointOutcome"));
-        CHECK(checkpointOutcome.revision == file.checkpointOutcome()->revision
-              && checkpointOutcome.outcome == file.checkpointOutcome()->outcome
-              && checkpointOutcome.detail == file.checkpointOutcome()->detail);
-        for (const auto *absent : {"written", "reviewed", "staged", "writeOutcome", "stageOutcome"})
-            CHECK(state.value(absent).isNull());
-
-        // Encoding the same file again gives the same state and payloads.
-        const auto again = recoveryTransaction(file, "manual-save", transactionId);
-        CHECK(again.state == transaction.state && again.payloads == transaction.payloads);
-    });
-    suite.run("hand-edited ranges outside every region round-trip through a recovery record", [] {
-        // "header" is a line both sides share, so no choice region covers it.
-        auto file = test_support::choiceFile();
-        CHECK(file.editResult(1, {{0, 6}, "HEADER"}) == Transition::Applied);
-        const auto &current = file.current();
-        CHECK(current.correspondence->handEditedAnchors().empty());
-        CHECK((current.correspondence->handEditedRanges() == std::vector<ByteRange>{{0, 6}}));
-
-        QTemporaryDir directory;
-        CHECK(directory.isValid());
-        storage::RecoveryStore store(directory.path() + "/store");
-        const auto transactionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        const auto state = committedState(store, recoveryTransaction(file, "replace-draft", transactionId));
-        const auto encoded = state.value("current").toObject();
-        CHECK(!encoded.contains("handEdited"));
-        CHECK((encoded.value("handEditedRanges").toArray() == QJsonArray{QJsonObject{{"begin", "0"}, {"end", "6"}}}));
-        const RecoveryRecordDecoder decoder(store);
-        const auto ranges = decoder.handEditedRanges(encoded.value("handEditedRanges"));
-        CHECK(ranges == current.correspondence->handEditedRanges());
-
-        // Replay restores them, so the replayed revision encodes the same record.
-        auto replayed = test_support::choiceFile();
-        CHECK(replayed.replaceDraft(1, decoder.draft(encoded.value("draft")),
-                                    decoder.handEdited(encoded.value("handEdited")), ranges)
-              == Transition::Applied);
-        CHECK(replayed.correspondence()->handEditedRanges() == ranges);
-        CHECK(recoveryTransaction(replayed, "replace-draft", transactionId).state == state);
-
-        // A revision without the field, as written before it existed, has none,
-        // and a revision with none writes no field.
-        const auto absent = encoded.value("missing");
-        CHECK(absent.isUndefined() && decoder.handEditedRanges(absent).empty());
-        auto older = test_support::choiceFile();
-        CHECK(older.replaceDraft(1, decoder.draft(encoded.value("draft")), std::set<std::string>{},
-                                 decoder.handEditedRanges(absent))
-              == Transition::Applied);
-        CHECK(older.correspondence()->handEditedRanges().empty());
-        CHECK(!recoveryTransaction(older, "replace-draft", transactionId)
-                   .state.value("current")
-                   .toObject()
-                   .contains("handEditedRanges"));
-
-        // Malformed ranges are refused before replay.
-        const auto refused = [&](const QJsonValue &value) {
-            try {
-                (void)decoder.handEditedRanges(value);
-            } catch (const std::runtime_error &) {
-                return true;
-            }
-            return false;
+        const auto counting = std::make_shared<CountingAlgorithm>();
+        Recorder recorder(directory.path() + "/store", capturedFile());
+        const auto choose = [&](SourceSide side, ChoiceScope scope, std::size_t occurrence, ChoiceAction action) {
+            recorder.step(RecoveryAction::ReplaceDraft, [&](FileSession &file) {
+                const auto target = test_support::choiceTarget(file, side, scope, occurrence).source.contributionId;
+                return applyChoice(file, previewChoice(file, file.current().id, target, action), true);
+            });
         };
-        CHECK(refused(QJsonValue(QStringLiteral("0-6"))));
-        CHECK(refused(QJsonArray{QStringLiteral("0")}));
-        CHECK(refused(QJsonArray{QJsonObject{{"begin", "6"}, {"end", "0"}}}));
-        CHECK(refused(QJsonArray{QJsonObject{{"begin", "00"}, {"end", "6"}}}));
-        CHECK(refused(QJsonArray{QJsonObject{{"begin", 0}, {"end", 6}}}));
-        CHECK(refused(QJsonArray{QJsonObject{{"begin", "0"}}}));
+        choose(SourceSide::Stage2, ChoiceScope::Line, 0, ChoiceAction::Accept);
+        choose(SourceSide::Stage3, ChoiceScope::Line, 0, ChoiceAction::Ignore);
+        choose(SourceSide::Stage2, ChoiceScope::Section, 1, ChoiceAction::CombineLeftFirst);
+        recorder.step(RecoveryAction::ReplaceDraft, [](FileSession &file) {
+            const auto at = file.current().draft.text.find("left first") + 5;
+            return file.editResult(file.current().id, {{at, at}, "hand "});
+        });
+        recorder.step(RecoveryAction::ManualSave, [](FileSession &file) {
+            return file.recordCheckpoint(file.current().id, Outcome::Succeeded, "saved");
+        });
+        recorder.step(RecoveryAction::ReplaceDraft, [](FileSession &file) {
+            const auto end = file.current().draft.text.size();
+            return file.editResult(file.current().id, {{end, end}, "after save\n"});
+        });
+        recorder.step(RecoveryAction::Undo, [](FileSession &file) { return file.undo(file.current().id); });
+        recorder.step(RecoveryAction::Redo, [](FileSession &file) { return file.redo(file.current().id); });
+        const auto &expected = recorder.file;
+        CHECK(expected.checkpoint() && expected.checkpoint()->id != expected.current().id);
+        CHECK(!expected.correspondence()->handEditedAnchors().empty());
+
+        const auto replay = replayRecovery(recorder.lease->store(), counting);
+        CHECK(replay.succeeded && replay.error.isEmpty() && replay.userWork && replay.files.size() == 1);
+        const auto &file = replay.files.front();
+        CHECK(file.snapshots() && *file.snapshots() == *expected.snapshots());
+        CHECK(file.current().id == expected.current().id && file.current().draft == expected.current().draft);
+        CHECK(file.checkpoint()->id == expected.checkpoint()->id
+              && file.checkpoint()->draft == expected.checkpoint()->draft);
+        CHECK(file.correspondence()->handEditedAnchors() == expected.correspondence()->handEditedAnchors());
+        CHECK(file.correspondence()->handEditedRanges() == expected.correspondence()->handEditedRanges());
+        CHECK(file.checkpointOutcome() && file.checkpointOutcome()->detail == "saved");
+        // The restored file aligns its sources with the algorithm the window uses.
+        CHECK(counting->calls > 0);
+
+        // The typed reader gives back what the last record wrote.
+        const auto last = states(recorder.lease->store()).back();
+        const RecoveryRecordReader record(recorder.lease->store(), last);
+        CHECK_EQ(record.action(), RecoveryAction::Redo);
+        CHECK(record.fileId() == expected.id() && record.path() == expected.path());
+        CHECK_EQ(record.support(), Support::Supported);
+        CHECK(record.supportDetail() == "captured at launch");
+        CHECK(record.checkpointOutcome().detail == "saved");
+        CHECK(!record.mutation());
+        // Only the launch record carries the captures.
+        const auto all = states(recorder.lease->store());
+        CHECK(all.front().contains("snapshots"));
+        CHECK(std::none_of(all.begin() + 1, all.end(), [](const auto &state) { return state.contains("snapshots"); }));
     });
-    suite.run("a journal written before the marker count fixes replays its text and decisions", [] {
+    suite.run("a keystroke records the typed bytes, not the whole text", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        const storage::RecoveryStore store(copiedJournal(directory.path()));
-        const auto read = store.read();
-        CHECK(read.succeeded && !read.incompleteTail && read.transactions.size() == 4);
-        QStringList actions;
-        QStringList counts;
-        for (const auto &state : read.transactions) {
-            actions.push_back(state.value("action").toString());
-            counts.push_back(recordedDraft(state).value("unresolvedMarkers").toString());
+        std::string large;
+        for (int line = 0; large.size() < 512 * 1024; ++line) large += "unchanged line " + std::to_string(line) + '\n';
+        auto launch = test_support::choiceFile();
+        Recorder recorder(directory.path() + "/store", launch);
+        recorder.step(RecoveryAction::ReplaceDraft, [&](FileSession &file) {
+            auto draft = file.current().draft;
+            draft.text = large;
+            return file.replaceDraft(file.current().id, draft);
+        });
+        const auto before = recorder.file.current().draft.text;
+        const auto at = before.size() / 2;
+        CHECK(recorder.file.editResult(recorder.file.current().id, {{at, at}, "x"}) == Transition::Applied);
+        const auto keystroke = recorder.commit(RecoveryAction::ReplaceDraft, before);
+        qsizetype bytes = 0;
+        for (const auto &payload : keystroke.payloads) bytes += payload.size();
+        CHECK_LT(bytes, 1024);
+        const auto replay = replayRecovery(recorder.lease->store());
+        CHECK(replay.succeeded && replay.files.size() == 1);
+        CHECK(replay.files.front().current().draft.text == recorder.file.current().draft.text);
+    });
+    suite.run("every recovery action, mutation kind and observation has one name", [] {
+        std::set<QString> names;
+        for (const auto &[action, name] : recoveryActionNames) {
+            CHECK(valueNamed(recoveryActionNames, nameOf(recoveryActionNames, action)) == action);
+            CHECK(names.insert(nameOf(recoveryActionNames, action)).second);
         }
-        CHECK((actions == QStringList{"open", "replace-draft", "replace-draft", "undo"}));
-        CHECK((counts == QStringList{"2", "2", "1", "2"}));
-        const RecoveryRecordDecoder decoder(store);
-        const auto chosen = decoder.draft(recordedDraft(read.transactions[1]));
-        const auto edited = decoder.draft(recordedDraft(read.transactions[2]));
-
-        auto replay = replayRecovery(store);
-        CHECK(replay.succeeded && replay.error.isEmpty() && replay.files.size() == 1 && replay.userWork);
-        auto &file = replay.files.front();
-        const auto launch = test_support::underlinedBaseFile();
-        CHECK(file.snapshots() && *file.snapshots() == *launch.snapshots());
-        // The undo restored the accepted left section over the launch text.
-        CHECK(file.current().id == 4 && file.current().draft.text == launch.current().draft.text);
-        CHECK(file.current().draft.text == chosen.text && file.current().draft.decisions == chosen.decisions);
-        CHECK(std::any_of(chosen.decisions.begin(), chosen.decisions.end(),
-                          [](const auto &entry) { return entry.second.value == DecisionValue::Accepted; }));
-        // This build counts the one block, not the underline as another marker.
-        CHECK(file.current().draft.unresolvedMarkers == 1 && file.markers() == launch.markers());
-        CHECK(file.redo(file.current().id) == Transition::Applied);
-        CHECK(file.current().draft.text == edited.text && file.current().draft.decisions == edited.decisions);
-        CHECK(edited.text.find("Title\n=======\nbody\n") == std::string::npos);
-        CHECK(file.current().draft.unresolvedMarkers == 1);
-        // That build recorded no hand-edited ranges, so the hand edit replays with none.
-        for (const auto &state : read.transactions)
-            CHECK(!state.value("current").toObject().contains("handEditedRanges"));
-        CHECK(file.correspondence() && file.correspondence()->handEditedRanges().empty());
+        for (const auto &[kind, name] : mutationKindNames)
+            CHECK(valueNamed(mutationKindNames, nameOf(mutationKindNames, kind)) == kind);
+        for (const auto &[observation, name] : mutationObservationNames)
+            CHECK(valueNamed(mutationObservationNames, nameOf(mutationObservationNames, observation)) == observation);
+        CHECK(!valueNamed(recoveryActionNames, QStringLiteral("rename")));
     });
-    suite.run("replay still rejects recorded text, decisions or derived values that cannot be right", [] {
-        const auto rejected = [](const auto &mutate, const QString &error) {
-            QTemporaryDir directory;
-            CHECK(directory.isValid());
-            const auto store = copiedJournal(directory.path());
-            test_support::rewriteLastRecoveryState(store, mutate);
-            const auto replay = replayRecovery(storage::RecoveryStore(store));
-            CHECK(!replay.succeeded && replay.files.empty() && replay.error.contains(error));
-        };
-        const auto withDraft = [](QJsonObject &state, const auto &change) {
-            auto current = state.value("current").toObject();
-            auto draft = current.value("draft").toObject();
-            change(draft, current);
-            current.insert("draft", draft);
-            state.insert("current", current);
+    suite.run("a mutation observation repeats its intent's target", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        Recorder recorder(directory.path() + "/store", capturedFile());
+        const MutationFact intent{QUuid::createUuid().toString(QUuid::WithoutBraces), MutationKind::Staging, {}};
+        const auto target = recorder.file;
+        CHECK(recorder.lease->commit(mutationRecoveryTransaction(target, intent)).succeeded);
+        recorder.step(RecoveryAction::ReplaceDraft, [](FileSession &file) {
+            const auto end = file.current().draft.text.size();
+            return file.editResult(file.current().id, {{end, end}, "later\n"});
+        });
+        auto observed = intent;
+        observed.observation = MutationObservation::ObservedChanged;
+        CHECK(recorder.lease->commit(mutationRecoveryTransaction(target, observed)).succeeded);
+        const auto replay = replayRecovery(recorder.lease->store());
+        CHECK(replay.succeeded && replay.mutations.size() == 1);
+        const auto &mutation = replay.mutations.front();
+        CHECK(mutation.id == intent.id && mutation.kind == MutationKind::Staging);
+        CHECK(mutation.observation == MutationObservation::ObservedChanged);
+        // The observation never replaces the later draft.
+        CHECK(replay.files.front().current().draft == recorder.file.current().draft);
+    });
+    suite.run("replay rejects records whose values cannot be right", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto path = directory.path() + "/store";
+        {
+            Recorder recorder(path, capturedFile());
+            recorder.step(RecoveryAction::ReplaceDraft, [](FileSession &file) {
+                const auto end = file.current().draft.text.size();
+                return file.editResult(file.current().id, {{end, end}, "typed\n"});
+            });
+        }
+        const auto withCurrent = [](const auto &change) {
+            return [change](QJsonObject &state) {
+                auto current = state.value("current").toObject();
+                change(current);
+                state.insert("current", current);
+            };
         };
         const QString mismatch = "does not match the acknowledged record";
-        // Other text than the undo restores, here an existing payload.
+        rejected(path, withCurrent([](QJsonObject &current) { current.insert("id", "9"); }), mismatch);
+        rejected(path, withCurrent([](QJsonObject &current) {
+                     auto text = current.value("text").toObject();
+                     text.insert("suffix", "999999");
+                     current.insert("text", text);
+                 }),
+                 "Invalid recovered text change");
+        rejected(path, withCurrent([](QJsonObject &current) {
+                     auto text = current.value("text").toObject();
+                     text.insert("prefix", "01");
+                     current.insert("text", text);
+                 }),
+                 "Invalid recovery integer");
+        rejected(path, withCurrent([](QJsonObject &current) { current.remove("handEdited"); }),
+                 "Invalid recovered hand edits");
+        rejected(path, withCurrent([](QJsonObject &current) {
+                     current.insert("handEditedRanges", QJsonArray{QJsonObject{{"begin", "6"}, {"end", "0"}}});
+                 }),
+                 "Invalid recovered hand-edited range");
+        rejected(path, withCurrent([](QJsonObject &current) {
+                     current.insert("decisions", QJsonArray{QJsonObject{{"id", "x"}, {"value", "maybe"}}});
+                 }),
+                 "Unsupported recovery value");
+        rejected(path, [](QJsonObject &state) { state.insert("action", "rename"); }, "Unsupported recovery value");
+        rejected(path, [](QJsonObject &state) { state.insert("support", "outside-app"); }, mismatch);
+        rejected(path, [](QJsonObject &state) { state.insert("schema", 1); }, "Unsupported recovery state schema");
         rejected(
-            [&](QJsonObject &state) {
-                withDraft(state, [&](QJsonObject &draft, QJsonObject &) { draft.insert("text", state.value("path")); });
-            },
-            mismatch);
-        // Another value for one recorded decision.
-        rejected(
-            [&](QJsonObject &state) {
-                withDraft(state, [](QJsonObject &draft, QJsonObject &) {
-                    auto decisions = draft.value("decisions").toArray();
-                    auto entry = decisions.first().toObject();
-                    entry.insert("value", (entry.value("value").toInt() + 1) % 3);
-                    decisions.replace(0, entry);
-                    draft.insert("decisions", decisions);
-                });
-            },
-            mismatch);
-        // Another revision identity.
-        rejected(
-            [&](QJsonObject &state) {
-                withDraft(state, [](QJsonObject &, QJsonObject &current) { current.insert("id", "5"); });
-            },
-            mismatch);
-        // Derived values keep their recorded format.
-        rejected(
-            [&](QJsonObject &state) {
-                withDraft(state, [](QJsonObject &draft, QJsonObject &) { draft.insert("unresolvedMarkers", "02"); });
-            },
-            "Invalid recovery integer");
-        rejected(
-            [&](QJsonObject &state) {
-                withDraft(state, [](QJsonObject &draft, QJsonObject &) { draft.remove("unresolvedMarkers"); });
-            },
-            "Invalid recovery integer");
-        rejected(
-            [&](QJsonObject &state) {
-                withDraft(state, [](QJsonObject &, QJsonObject &current) { current.insert("decisions", "5"); });
-            },
-            "Invalid recovery decision revision");
+            path, [](QJsonObject &state) { state.insert("action", "open"); },
+            "Recovery attempted to replace an acknowledged session");
     });
     return suite.report();
 }
