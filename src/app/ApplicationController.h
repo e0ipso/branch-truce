@@ -209,8 +209,10 @@ private:
     QString selectedFileId_;
     QString commandMessage_;
     QVariantMap markerBlocker_;
-    bool discardPending_ = false;
-    bool stagedDiscardPending_ = false;
+    // The file whose discard waits on recovery retry, so the completion
+    // message describes that file even after the selection moved.
+    std::optional<std::string> discardPendingFileId_;
+    std::optional<std::string> stagedDiscardPendingFileId_;
     bool fileListVisible_ = true;
     QString sessionOutcome_;
 };

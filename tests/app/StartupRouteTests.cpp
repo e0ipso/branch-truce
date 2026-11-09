@@ -1905,6 +1905,39 @@ public:
             CHECK(!restored.facts().unsaved && !restored.written() && !restored.staged());
             CHECK(repo.snapshot() == before);
         });
+        suite.run("a retried discard describes the discarded file after another file is selected", [] {
+            Repository repo;
+            repo.conflict("merge");
+            ScopedEnvironment environment(repo.environment);
+            ApplicationController controller(gitOnPath());
+            openController(controller, repo);
+            const auto trackedId = QString::fromStdString(openedFile(controller, "tracked.txt").id());
+            const auto otherId = QString::fromStdString(openedFile(controller, "excluded.txt").id());
+            const auto revision = [&] { return QString::number(openedFile(controller, "tracked.txt").current().id); };
+            CHECK(controller.selectFile(trackedId));
+            auto saved = openedFile(controller, "tracked.txt").current().draft;
+            saved.text += "saved app draft\n";
+            CHECK(controller.files()->replaceDraft(trackedId.toStdString(), revision().toULongLong(), saved)
+                  == Transition::Applied);
+            CHECK(controller.saveDraft(trackedId, revision()));
+            auto edited = saved;
+            edited.text += "discard me\n";
+            CHECK(controller.files()->replaceDraft(trackedId.toStdString(), revision().toULongLong(), edited)
+                  == Transition::Applied);
+            {
+                recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+                CHECK(!controller.discardUnsaved(trackedId, revision()));
+                CHECK(recovery_faults::failures == 1);
+            }
+            // The other file has no Save, so a message built from it would say
+            // the initial result was restored.
+            CHECK(controller.selectFile(otherId));
+            CHECK(openedFile(controller, "excluded.txt").facts().unsaved);
+            CHECK(controller.files()->retryPendingRecovery(trackedId));
+            CHECK(controller.commandMessage()
+                  == "Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.");
+            CHECK(openedFile(controller, "tracked.txt").current().draft == saved);
+        });
         suite.run("a failed Save retries one transaction and restart keeps it off the repository", [] {
             Repository repo;
             repo.conflict("merge");

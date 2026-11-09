@@ -103,6 +103,12 @@ ApplicationController::ApplicationController(QString gitExecutable, QObject *par
     });
     // A new session drops the publisher's attempt, confirmation and offer.
     connect(&coordinator_, &SessionCoordinator::sessionChanged, this, &ApplicationController::resolutionChanged);
+    // Replacing the files drops their pending input, so a discard waiting on
+    // it never completes and must not report a completion.
+    connect(&files_, &QAbstractItemModel::modelAboutToBeReset, this, [this] {
+        discardPendingFileId_.reset();
+        stagedDiscardPendingFileId_.reset();
+    });
     connect(&mergetool_, &MergetoolSession::notice, this, &ApplicationController::showMessage);
     connect(&mergetool_, &MergetoolSession::changed, this, &ApplicationController::mergetoolChanged);
     connect(&files_, &SessionModel::summaryChanged, this, [this] {
@@ -119,13 +125,15 @@ ApplicationController::ApplicationController(QString gitExecutable, QObject *par
         }
         // Retry publishes the pending discard. The failure sentence must not
         // remain once that restored result is acknowledged.
-        if (discardPending_ && !files_.hasPendingRecovery()) {
-            discardPending_ = false;
-            showMessage(discardedMessage(files_.file(selectedFileId_.toStdString())));
+        if (discardPendingFileId_ && !files_.pendingDraft(*discardPendingFileId_)) {
+            const auto *discarded = files_.file(*discardPendingFileId_);
+            discardPendingFileId_.reset();
+            if (discarded) showMessage(discardedMessage(discarded));
         }
-        if (stagedDiscardPending_ && !files_.hasPendingRecovery()) {
-            stagedDiscardPending_ = false;
-            showMessage(stagedDiscardMessage());
+        if (stagedDiscardPendingFileId_ && !files_.pendingDraft(*stagedDiscardPendingFileId_)) {
+            const bool known = files_.file(*stagedDiscardPendingFileId_) != nullptr;
+            stagedDiscardPendingFileId_.reset();
+            if (known) showMessage(stagedDiscardMessage());
         }
         Q_EMIT inventoryChanged();
         Q_EMIT selectedFileChanged();
@@ -496,11 +504,11 @@ bool ApplicationController::discardUnsaved(const QString &fileId, const QString 
     if (result == Transition::Blocked && files_.hasPendingRecovery()) {
         // The editor shows the pending restored result. The acknowledged edit
         // stays in place until this same discard commits.
-        discardPending_ = true;
+        discardPendingFileId_ = fileId.toStdString();
         showMessage(tr("Discard was not completed. The restored result is shown until retry finishes it."));
         return false;
     }
-    discardPending_ = false;
+    discardPendingFileId_.reset();
     if (result != Transition::Applied) return commandResult(result);
     showMessage(discardedMessage(files_.file(fileId.toStdString())));
     return true;
@@ -520,11 +528,11 @@ bool ApplicationController::discardToStaged(const QString &fileId, const QString
     const auto result = files_.discardToStaged(fileId.toStdString(), expected);
     if (result == Transition::Blocked && files_.hasPendingRecovery()) {
         // The acknowledged draft stays current until retry commits this same discard.
-        stagedDiscardPending_ = true;
+        stagedDiscardPendingFileId_ = fileId.toStdString();
         showMessage(tr("Discard was not completed. The draft is kept until retry finishes the discard."));
         return false;
     }
-    stagedDiscardPending_ = false;
+    stagedDiscardPendingFileId_.reset();
     if (result == Transition::Blocked) {
         showMessage(
             tr("Discard was not completed. No verified result staged in Git to return to, so the draft is kept."));
