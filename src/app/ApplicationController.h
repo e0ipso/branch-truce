@@ -59,8 +59,10 @@ class ApplicationController : public QObject {
     Q_PROPERTY(bool resultCanPaste READ resultCanPaste NOTIFY resultEditorChanged)
 public:
     // gitExecutable is the Git every collaborator and worker task runs; main
-    // resolves it once. Empty when Git is not on PATH.
-    explicit ApplicationController(QString gitExecutable, QObject *parent = nullptr);
+    // resolves it once. Empty when Git is not on PATH. Loaded files align
+    // their sources with `correspondence`, or with the engine's default.
+    explicit ApplicationController(QString gitExecutable, QObject *parent = nullptr,
+                                   std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {});
     [[nodiscard]] QString version() const;
     [[nodiscard]] SessionModel *files() noexcept { return &files_; }
     [[nodiscard]] SessionCoordinator *coordinator() noexcept { return &coordinator_; }

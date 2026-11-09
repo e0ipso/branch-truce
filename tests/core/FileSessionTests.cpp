@@ -2,11 +2,30 @@
 #include "TestHarness.h"
 #include "core/ResourceLimits.h"
 #include "core/SessionState.h"
+#include "fixtures/ChoiceFile.h"
+#include <memory>
+#include <new>
 #include <string>
 
 using namespace branch_truce;
 
 namespace {
+// The engine's alignment, counting its calls and failing the one numbered
+// failAt with the only failure the algorithm contract allows.
+class CountingAlgorithm final : public CorrespondenceAlgorithm {
+public:
+    explicit CountingAlgorithm(int failAt = 0) : failAt_(failAt) {}
+    [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override
+    {
+        if (++calls == failAt_) throw std::bad_alloc();
+        return ExactLineCorrespondence{}.compare(source, result);
+    }
+    mutable int calls = 0;
+
+private:
+    int failAt_;
+};
+
 std::string lines(std::size_t count)
 {
     std::string text;
@@ -134,6 +153,38 @@ void undoReachesBackAsFarAsTheHistorySizeAllows()
     CHECK(file.discardToCheckpoint(file.current().id) == Transition::Applied && file.current().draft.text == text);
 }
 
+FileSession diff3Session(std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
+{
+    auto sources = *test_support::underlinedBaseFile().snapshots();
+    const auto text = sources.launchResult.text.utf8;
+    return FileSession("diff3", sources.path, {text, {}, 0}, Support::Supported, {}, sources, true,
+                       std::move(algorithm));
+}
+
+void theSessionAlignsWithTheAlgorithmItIsGiven()
+{
+    const auto algorithm = std::make_shared<CountingAlgorithm>();
+    auto file = diff3Session(algorithm);
+    CHECK(file.support() == Support::Supported && file.correspondence() && !file.choices().empty());
+    // Three sources against the result, the two sides, and each side against the earlier version.
+    CHECK(algorithm->calls >= 6);
+    const auto opened = algorithm->calls;
+    CHECK(file.editResult(1, {{0, 0}, "typed\n"}) == Transition::Applied);
+    CHECK(algorithm->calls > opened);
+}
+
+void aFailedOpeningLeavesNothingHalfBuilt()
+{
+    // Calls 1 to 3 align the sources, 4 builds the choices and 5 fails while
+    // finding the non-conflicting changes.
+    auto file = diff3Session(std::make_shared<CountingAlgorithm>(5));
+    CHECK(file.support() == Support::Unreadable && !file.correspondence());
+    CHECK(file.choices().empty() && file.nonConflictingTargets().empty());
+    CHECK(file.current().draft.decisions.empty() && file.markerSections().empty());
+    CHECK(file.snapshots() && file.current().draft.text == file.snapshots()->launchResult.text.utf8);
+    CHECK(file.editResult(1, {{0, 0}, "x"}) == Transition::Blocked);
+}
+
 void launchTextOutsideTheInvariantIsUnreadable()
 {
     for (const auto *text : {"bad \xff\n", "crlf\r\n"}) {
@@ -158,5 +209,7 @@ int main()
     suite.run("copies share revisions and discarded branches are dropped",
               copiesShareRevisionsAndDiscardedBranchesAreDropped);
     suite.run("undo reaches back as far as the history size allows", undoReachesBackAsFarAsTheHistorySizeAllows);
+    suite.run("the session aligns with the algorithm it is given", theSessionAlignsWithTheAlgorithmItIsGiven);
+    suite.run("a failed opening leaves nothing half built", aFailedOpeningLeavesNothingHalfBuilt);
     return suite.report();
 }

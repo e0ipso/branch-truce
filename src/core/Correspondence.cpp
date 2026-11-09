@@ -173,6 +173,13 @@ Projection project(const std::vector<Passage> &passages, ByteRange range, Insert
     return projection;
 }
 
+// The algorithm's input contract: valid UTF-8 inside the text envelope.
+void requireComparable(std::string_view text)
+{
+    if (!validUtf8(text)) throw std::invalid_argument("Correspondence requires valid UTF-8 text");
+    if (!withinTextEnvelope(text)) throw std::invalid_argument("Correspondence text is outside the supported envelope");
+}
+
 void invalidate(ResultAnchor &anchor, AnchorState state)
 {
     anchor.state = state;
@@ -337,12 +344,8 @@ bool validByteRange(std::string_view text, ByteRange range) noexcept
 
 std::vector<Passage> ExactLineCorrespondence::compare(std::string_view source, std::string_view result) const
 {
-    if (!validUtf8(source) || !validUtf8(result))
-        throw std::invalid_argument("Correspondence requires valid UTF-8 text");
-    const auto sourceBudget = assessText(source);
-    const auto resultBudget = assessText(result);
-    if (sourceBudget.limit != TextLimit::Within) throw std::invalid_argument(textLimitDiagnostic(sourceBudget));
-    if (resultBudget.limit != TextLimit::Within) throw std::invalid_argument(textLimitDiagnostic(resultBudget));
+    requireComparable(source);
+    requireComparable(result);
     if (source == result) return {{{0, source.size()}, {0, result.size()}, PassageKind::Equal}};
     std::map<std::string_view, std::size_t, std::less<>> tokens;
     const auto a = lines(source, tokens);
@@ -397,7 +400,7 @@ CorrespondenceMap::CorrespondenceMap(RevisionId revision, const FileSnapshots &s
       algorithm_(algorithm ? std::move(algorithm) : std::make_shared<ExactLineCorrespondence>()),
       text_(std::move(result))
 {
-    if (!validUtf8(text_)) throw std::invalid_argument("Correspondence requires valid UTF-8 text");
+    requireComparable(text_);
     std::map<SourceSide, std::string> texts;
     const auto capture = [&](SourceSide side, const std::optional<SourceSnapshot> &snapshot) {
         if (snapshot) {
@@ -409,7 +412,10 @@ CorrespondenceMap::CorrespondenceMap(RevisionId revision, const FileSnapshots &s
     capture(SourceSide::Stage2, sources.stage2);
     capture(SourceSide::Stage3, sources.stage3);
     std::map<SourceSide, std::vector<std::size_t>> starts;
-    for (const auto &[side, text] : texts) starts.emplace(side, lineStarts(text));
+    for (const auto &[side, text] : texts) {
+        requireComparable(text);
+        starts.emplace(side, lineStarts(text));
+    }
     sources_ = std::make_shared<const std::map<SourceSide, std::string>>(std::move(texts));
     sourceLines_ = std::make_shared<const std::map<SourceSide, std::vector<std::size_t>>>(std::move(starts));
     align();
@@ -417,6 +423,7 @@ CorrespondenceMap::CorrespondenceMap(RevisionId revision, const FileSnapshots &s
 
 void CorrespondenceMap::align()
 {
+    requireComparable(text_);
     resultLines_.reset();
     for (const auto &[side, source] : *sources_) passages_[side] = algorithm_->compare(source, text_);
 }
@@ -681,6 +688,7 @@ CorrespondenceMap CorrespondenceMap::recomputed(RevisionId revision, std::string
         result.handEditedRanges_.clear();
     }
     if (text_ == text) return result;
+    requireComparable(text);
     const auto changes = algorithm_->compare(text_, text);
     if (manual) result.handEditedRanges_ = recomputedRanges(handEditedRanges_, changes, text.size());
     for (auto &[id, anchor] : result.anchors_) {

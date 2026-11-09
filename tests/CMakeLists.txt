@@ -24,11 +24,10 @@ function(branch_truce_add_core_test name source)
 endfunction()
 branch_truce_add_core_test(file-session core/FileSessionTests.cpp)
 branch_truce_add_core_test(conflict-markers core/ConflictMarkersTests.cpp)
+branch_truce_add_core_test(correspondence core/CorrespondenceTests.cpp)
 add_executable(branch_truce_session_tests core/SessionStateTests.cpp)
 target_include_directories(branch_truce_session_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(branch_truce_session_tests PRIVATE branch_truce_core branch_truce_build_options)
-# Reject matrix-sized allocations only while the correspondence resource fixture runs.
-target_link_options(branch_truce_session_tests PRIVATE "LINKER:--wrap=_Znwm")
 add_test(NAME core.session-state COMMAND branch_truce_session_tests)
 add_executable(branch_truce_correspondence_fixtures core/CorrespondenceCommandFixtures.cpp)
 target_include_directories(branch_truce_correspondence_fixtures PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -269,9 +268,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp)
     target_include_directories(branch_truce_startup_route_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_startup_route_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    # Fail one initial map in the real load worker; other files use the real constructor.
-    set(correspondence_constructor "_ZN12branch_truce17CorrespondenceMapC1EmRKNS_13FileSnapshotsENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrIKNS_23CorrespondenceAlgorithmEE")
-    target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=${correspondence_constructor}")
     target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=fsync")
     # Record the thread of every recovery store read, which every replay starts with.
     target_link_options(branch_truce_startup_route_tests PRIVATE

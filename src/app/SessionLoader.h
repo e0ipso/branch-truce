@@ -1,5 +1,6 @@
 // Session loading discovers conflicted files and offers recoverable work without silently replacing it.
 #pragma once
+#include "core/Correspondence.h"
 #include "git/ConflictClassifier.h"
 #include "mergetool/MergetoolSession.h"
 #include "recovery/RecoveryRestore.h"
@@ -9,6 +10,7 @@
 #include <QtQml/qqmlregistration.h>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -62,8 +64,10 @@ public:
             startSession;
     };
     // gitExecutable is the Git that classifies the conflicts and restores recovery.
+    // Loaded files align their sources with `correspondence`, or with the
+    // engine's default when it is null.
     SessionLoader(SessionModel &files, SessionCoordinator &coordinator, QString gitExecutable, Owners owners,
-                  QObject *parent = nullptr);
+                  QObject *parent = nullptr, std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {});
 
     [[nodiscard]] QString startupState() const { return state_; }
     [[nodiscard]] bool opening() const { return state_ == QLatin1String("opening"); }
@@ -133,6 +137,7 @@ private:
     SessionCoordinator &coordinator_;
     Owners owners_;
     const QString gitExecutable_;
+    std::shared_ptr<const CorrespondenceAlgorithm> correspondence_;
     git::ConflictClassifier classifier_;
     git::RepositoryContext repository_;
     QHash<QString, qint64> launchSizes_;

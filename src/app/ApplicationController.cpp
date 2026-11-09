@@ -29,7 +29,8 @@ bool scalarBoundary(const QString &value, int offset)
 
 }
 
-ApplicationController::ApplicationController(QString gitExecutable, QObject *parent)
+ApplicationController::ApplicationController(QString gitExecutable, QObject *parent,
+                                             std::shared_ptr<const CorrespondenceAlgorithm> correspondence)
     : QObject(parent),
       files_(this),
       selectedFile_(files_, this),
@@ -57,7 +58,7 @@ ApplicationController::ApplicationController(QString gitExecutable, QObject *par
                                         mergetool_.acceptCopiedLaunches();
                                         return mergetool_.listen(repository, error);
                                     }},
-              this),
+              this, std::move(correspondence)),
       navigator_(
           files_, editor_,
           FileNavigator::Owners{[this] { return selectedFileId_; }, [this] { return selectedRow(); },

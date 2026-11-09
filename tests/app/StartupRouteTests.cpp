@@ -35,37 +35,20 @@
 
 using namespace branch_truce;
 
-namespace correspondence_faults {
-inline std::atomic_bool failLarge = false;
-inline std::atomic_int failures = 0;
-struct Failure {
-    Failure()
+// Fails the initial alignment of large.txt in the real load worker; other
+// files align with the engine's algorithm.
+class FailingLargeFile final : public CorrespondenceAlgorithm {
+public:
+    [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override
     {
-        failures = 0;
-        failLarge = true;
+        if (result.starts_with("preserved large manual result\n")) {
+            ++failures;
+            throw std::runtime_error("injected large-file correspondence resource failure");
+        }
+        return ExactLineCorrespondence{}.compare(source, result);
     }
-    ~Failure() { failLarge = false; }
+    mutable std::atomic_int failures = 0;
 };
-}
-
-// Itanium constructor ABI used by the project's Linux GCC/Clang toolchains.
-#define MAP_CONSTRUCTOR                                                                                                \
-    "_ZN12branch_truce17CorrespondenceMapC1EmRKNS_13FileSnapshotsENSt7__cxx1112basic_stringIcSt11char_"                \
-    "traitsIcESaIcEEESt10shared_ptrIKNS_23CorrespondenceAlgorithmEE"
-extern "C" void realMap(CorrespondenceMap *, RevisionId, const FileSnapshots &, std::string,
-                        std::shared_ptr<const CorrespondenceAlgorithm>) asm("__real_" MAP_CONSTRUCTOR);
-extern "C" void wrapMap(CorrespondenceMap *, RevisionId, const FileSnapshots &, std::string,
-                        std::shared_ptr<const CorrespondenceAlgorithm>) asm("__wrap_" MAP_CONSTRUCTOR);
-extern "C" void wrapMap(CorrespondenceMap *self, RevisionId revision, const FileSnapshots &sources, std::string result,
-                        std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
-{
-    if (correspondence_faults::failLarge && sources.path == "large.txt") {
-        ++correspondence_faults::failures;
-        throw std::runtime_error("injected large-file correspondence resource failure");
-    }
-    realMap(self, revision, sources, std::move(result), std::move(algorithm));
-}
-#undef MAP_CONSTRUCTOR
 
 // Every recovery replay starts with RecoveryStore::read, so recording the
 // thread of each read records the thread of each replay.
@@ -1458,10 +1441,10 @@ public:
             const auto before = repo.snapshot();
             const auto smallOther = readFile(repo.path("excluded.txt"));
             ScopedEnvironment environment(repo.environment);
-            correspondence_faults::Failure fault;
-            ApplicationController controller(gitOnPath());
+            const auto fault = std::make_shared<const FailingLargeFile>();
+            ApplicationController controller(gitOnPath(), nullptr, fault);
             openController(controller, repo);
-            CHECK(correspondence_faults::failures == 1);
+            CHECK(fault->failures == 1);
             CHECK(controller.files()->totalFiles() == 3 && controller.loadErrorFiles() == 1);
             const auto &failed = openedFile(controller, "large.txt");
             CHECK(failed.support() == Support::Unreadable && failed.snapshots() && !failed.correspondence());

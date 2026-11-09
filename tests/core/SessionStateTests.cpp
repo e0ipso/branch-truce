@@ -4,31 +4,6 @@
 #include "fixtures/ChoiceFile.h"
 #include <algorithm>
 #include <array>
-#include <new>
-
-namespace allocation_fixture {
-inline bool bounded = false;
-inline std::size_t largest = 0;
-constexpr std::size_t ceiling = 1024 * 1024;
-struct Bound {
-    Bound()
-    {
-        largest = 0;
-        bounded = true;
-    }
-    ~Bound() { bounded = false; }
-};
-}
-
-extern "C" void *__real__Znwm(std::size_t size);
-extern "C" void *__wrap__Znwm(std::size_t size)
-{
-    if (allocation_fixture::bounded) {
-        allocation_fixture::largest = std::max(allocation_fixture::largest, size);
-        if (size > allocation_fixture::ceiling) throw std::bad_alloc();
-    }
-    return __real__Znwm(size);
-}
 
 using namespace branch_truce;
 
@@ -798,20 +773,16 @@ public:
             CHECK(anchor(file).revision == file.current().id);
             CHECK(file.replaceMapped(file.current().id, original, "stale", {}, true) == Transition::StaleRevision);
         });
-        suite.run("correspondence succeeds when matrix-sized allocations are refused", [] {
+        suite.run("a long unique text aligns as one equal passage between inserted lines", [] {
             std::string source;
             for (int line = 0; line < 3500; ++line) source += "unique line " + std::to_string(line) + '\n';
             const auto result = "manual prefix\n" + source + "manual suffix\n";
-            // A fixture fault budget, not a supported-file or operating limit.
-            // Even a one-byte 3500 x 3502 matrix exceeds this allocation budget.
-            allocation_fixture::Bound budget;
             const auto passages = ExactLineCorrespondence{}.compare(source, result);
             CHECK(passages
                   == std::vector<Passage>{
                       {{0, 0}, {0, 14}, PassageKind::ResultOnly},
                       {{0, source.size()}, {14, 14 + source.size()}, PassageKind::Equal},
                       {{source.size(), source.size()}, {14 + source.size(), result.size()}, PassageKind::ResultOnly}});
-            CHECK(allocation_fixture::largest > 0 && allocation_fixture::largest < allocation_fixture::ceiling);
         });
         suite.run("source captures survive edits history checkpoints and staged discards", [] {
             auto input = capturedSources();

@@ -24,8 +24,20 @@ struct Passage {
     bool operator==(const Passage &) const = default;
 };
 
-// Implementations return an ordered, complete partition of both texts. Changed
-// gaps have verified boundaries; uncertain alignment is explicitly Ambiguous.
+// Aligns a source text with a result text. CorrespondenceMap, the choice
+// catalogue and FileSession call it through this interface, so a session can
+// be given another implementation.
+//
+// The contract every implementation keeps:
+// - compare is called only with valid UTF-8 inside the text envelope of
+//   ResourceLimits.h. CorrespondenceMap and FileSession check both first.
+// - The passages partition both texts completely and in order: each starts
+//   where the previous one ended, and the last ends at each text's end.
+// - An Equal passage covers identical bytes on both sides. Where alignments
+//   that are equally good disagree, the passage is Ambiguous, never a guess.
+// - compare is deterministic, keeps no state between calls and may run on
+//   several threads at once.
+// - It fails only by throwing std::bad_alloc.
 class CorrespondenceAlgorithm {
 public:
     virtual ~CorrespondenceAlgorithm() = default;
@@ -34,6 +46,8 @@ public:
 
 // Exact line LCS, retaining only matches shared by every optimal alignment.
 // See Correspondence.md for the cost, conservative range policy and evidence.
+// Called directly, it also rejects text outside the contract's inputs with
+// std::invalid_argument.
 class ExactLineCorrespondence final : public CorrespondenceAlgorithm {
 public:
     [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override;
@@ -91,6 +105,11 @@ struct KeptSpan {
 
 // A value snapshot, stored with its result transaction. Recomputing passage
 // navigation never reattaches an issued anchor by searching for similar text.
+//
+// Every text it aligns is checked against the algorithm's input contract
+// first; a text outside it throws std::invalid_argument before the algorithm
+// runs. A map is immutable once built, bound and settled: copies share its
+// source texts, and const members may run on several threads at once.
 class CorrespondenceMap {
 public:
     CorrespondenceMap(RevisionId revision, const FileSnapshots &sources, std::string result,

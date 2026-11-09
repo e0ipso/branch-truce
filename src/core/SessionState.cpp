@@ -77,8 +77,13 @@ const ResultAnchor *targetOf(const EditingCommand &command, ByteRange range)
 }
 
 FileSession::FileSession(std::string id, std::string path, Draft initial, Support support, std::string supportDetail,
-                         std::optional<FileSnapshots> snapshots, bool initializeChoices)
-    : id_(std::move(id)), path_(std::move(path)), support_(support), supportDetail_(std::move(supportDetail))
+                         std::optional<FileSnapshots> snapshots, bool initializeChoices,
+                         std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
+    : id_(std::move(id)),
+      path_(std::move(path)),
+      support_(support),
+      supportDetail_(std::move(supportDetail)),
+      algorithm_(algorithm ? std::move(algorithm) : std::make_shared<const ExactLineCorrespondence>())
 {
     if (id_.empty() || path_.empty()) throw std::invalid_argument("A file session needs an identity and path");
     if (snapshots) {
@@ -132,11 +137,10 @@ FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool
     std::shared_ptr<const CorrespondenceMap> correspondence;
     if (correspond && snapshots_) {
         try {
-            auto bound = std::make_shared<CorrespondenceMap>(revision, *snapshots_, initial.text);
-            const ExactLineCorrespondence compare;
-            auto choices = std::make_shared<const ChoiceCatalogue>(choiceTargets(*snapshots_, compare));
+            auto bound = std::make_shared<CorrespondenceMap>(revision, *snapshots_, initial.text, algorithm_);
+            auto choices = std::make_shared<const ChoiceCatalogue>(choiceTargets(*snapshots_, *algorithm_));
             auto nonConflicting = std::make_shared<const std::vector<NonConflictingTarget>>(
-                branch_truce::nonConflictingTargets(*snapshots_, choices->targets(), compare));
+                branch_truce::nonConflictingTargets(*snapshots_, choices->targets(), *algorithm_));
             bindTargets(*bound, *choices, *nonConflicting);
             settleLaunchAnchors(*bound, initial.text, markerSize_);
             if (initializeChoices)

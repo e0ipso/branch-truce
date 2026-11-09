@@ -41,9 +41,11 @@ struct EditingCommand {
 // worker thread may be handed to another thread once.
 class FileSession {
 public:
+    // `algorithm` aligns the captured sources with the result and the two
+    // sides with each other; without one, ExactLineCorrespondence does.
     FileSession(std::string id, std::string path, Draft initial, Support support = Support::Supported,
                 std::string supportDetail = {}, std::optional<FileSnapshots> snapshots = std::nullopt,
-                bool initializeChoices = false);
+                bool initializeChoices = false, std::shared_ptr<const CorrespondenceAlgorithm> algorithm = {});
 
     [[nodiscard]] const std::string &id() const noexcept { return id_; }
     [[nodiscard]] const std::string &path() const noexcept { return path_; }
@@ -164,6 +166,7 @@ private:
     Support support_;
     std::string supportDetail_;
     std::shared_ptr<const FileSnapshots> snapshots_;
+    std::shared_ptr<const CorrespondenceAlgorithm> algorithm_;
     // The conflict-marker-size Git used for this file.
     std::size_t markerSize_ = kDefaultConflictMarkerSize;
     std::shared_ptr<const ChoiceCatalogue> choices_;
