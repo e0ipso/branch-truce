@@ -128,6 +128,9 @@ jobs:
     needs: select
     if: "!cancelled() && needs.select.result == 'success'"
     runs-on: ubuntu-latest
+    # A hung container or app fails the leg instead of holding it for GitHub's
+    # six-hour default.
+    timeout-minutes: 240
     permissions:
       contents: read
     strategy:
