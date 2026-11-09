@@ -15,7 +15,8 @@ Result retry(const Request &request)
 {
     for (int attempt = 1; attempt <= maxAttempts; ++attempt) {
         auto result = send(request);
-        if (result.ok()) return result;
+        if (result.ok())
+            return result;
         std::this_thread::sleep_for(baseDelay * attempt);
     }
     return Result::exhausted(request);
