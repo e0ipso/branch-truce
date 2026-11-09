@@ -1,4 +1,4 @@
-# Recovery journal version 1
+# Recovery journal version 2
 
 The `RecoveryJournal` that each `SessionStore` owns keeps automatic recovery under
 `<GenericDataLocation>/Branch Truce/recovery/v1/<session-uuid>/`, normally
@@ -14,55 +14,74 @@ The store is independent of the repository, Git index and mergetool files.
 The session directory and `payloads/` have owner-only directory permissions.
 Journal and payload files have owner read/write permissions. Symlink entries,
 nonregular files, foreign owners and publicly accessible payloads are refused.
-`journal.lock` serializes writers without waiting on the interface thread.
+Only the holder of the store's lease can append: `storage::RecoveryLease` owns
+`session.lock` in the store and is the only type with a commit method. A window
+takes its store's lease on first use, a restore takes the lease of every store
+it inspects, and a running mutation keeps the lease its intent was committed
+under until it has recorded its observation there.
 
 `payloads/<sha256-hex>` contains exact immutable bytes. This includes result
 text, raw source blobs, converted source bytes and normalized text, launch
 bytes, and byte-valued identities and paths. Empty payloads have a real digest;
 absent sources are JSON null. Payloads are written through `QSaveFile` without
 direct-write fallback, flushed and synchronized before atomic publication.
-Existing payloads must still match their digest.
+Existing payloads must still match their digest; a store does not read again a
+payload it wrote or verified. Before a record is appended, every directory the
+store added an entry to since the last append is synchronized: the inventory
+after a new store, the store after its journal, and `payloads/` after new
+payloads. A durable record therefore never refers to an entry a power loss can
+drop.
 
-`journal` starts with `Branch Truce recovery journal v1` and a newline. Every
+`journal` starts with `Branch Truce recovery journal v2` and a newline. Every
 following newline-terminated JSON frame has `record` containing canonical
 base64 and `sha256` containing the decoded record's SHA-256 hex digest. The
-decoded JSON record has version 1, a decimal-string sequence starting at 1,
-the preceding record digest, a payload digest array, and `state`.
+decoded JSON record has version 2, a decimal-string sequence starting at 1,
+the preceding record digest, the `transaction` ID, a payload digest array, and
+`state`. Storage checks only this frame. A transaction ID appears once per
+journal; a header or record with a later version is reported as written by a
+newer Branch Truce rather than as damage.
 
-State schema 1 contains a stable transaction UUID, action name, file identity
-and exact path references, support status, immutable snapshots and the complete
-current revision. A revision contains transaction, text and decision revision
-IDs, its text payload, every decision and optional combination order, and its
-unresolved-marker count. Replay scans the restored text again instead of
-trusting that count. The decision revision ID advances when either the
-decisions or that count change, so it is derived from the text too. A record
-written by a build that counted markers differently still replays, and replay
-keeps its own values for both. Each must still be a decimal string, and the
-decision revision ID must not be later than the revision's own. A revision with hand-edited anchors lists their
-contribution IDs in `handEdited`. A revision without the field has none, which
-covers records written before the field existed. The result text that editor
-changes wrote, inside choice regions or not, is listed in `handEditedRanges` as
-objects with decimal-string `begin` and `end` byte offsets into the revision's
-text. The ranges are in text order and neither overlap nor touch; an empty one
-is where text was deleted. The field is written only when non-empty, so a
-revision without it has no hand-edited ranges, and records written before it
-existed replay as before. It also records the separate
-manual Save checkpoint, review declaration, written/staged revisions and
-operation outcomes. All 64-bit integers are decimal strings. Decision values,
-outcomes and source format enums use the values declared by the version 1
-domain types.
+State schema 2 belongs to recovery/. It names the action (`open`,
+`replace-draft`, `undo`, `redo`, `manual-save`, `discard-to-checkpoint`,
+`discard-to-staged`, `mark-resolved-review`, `write-outcome`, `stage-outcome`,
+`support`, `load-large`, `mutation-intent`, `mutation-observation`), the file
+identity and exact path references, the support status and detail, and the
+complete current revision. Every enum is stored by name from one table per enum
+in recovery/, and a name this build does not know is refused.
 
-Snapshots retain all `FileSnapshots` fields, including provenance, conversion
-attributes/configuration, per-source raw and converted bytes, source labels
-and commits, launch encoding/BOM/newlines, destination mode and observed file
-identity. Each record lists all of its referenced payloads. Historical records
-retain the launch state and earlier checkpoints even as later records evolve.
+The current revision records its ID, the ID of the revision whose text it
+repeats, its decisions with their optional combination order, its hand-edited
+anchors in `handEdited` and its hand-edited result ranges in
+`handEditedRanges`, both always present. Ranges are objects with decimal-string
+`begin` and `end` byte offsets, in text order, neither overlapping nor
+touching; an empty one is where text was deleted. The text is stored as its
+change from the current text before the action: `prefix` and `suffix` are the
+byte counts kept from that text and `insert` is the payload between them. Both
+counts are the longest possible, so the same two texts always give the same
+record. A keystroke therefore stores the typed bytes, not the whole file. The
+launch record's earlier text is empty, so it stores its whole text.
 
-The reader validates the version, sequence, hash chain, complete frames and
-every payload before returning success. A final line without a terminating
-newline is interrupted pending work and is ignored. A complete corrupt record,
-missing payload or unknown version returns an explicit error. Prefix records
-returned alongside an error are diagnostics, not a successful restore.
+The checkpoint, written, reviewed and staged revisions are named by their IDs;
+replay rebuilds them from the transitions. The review records whether undecided
+choices were confirmed, and the staged result its object ID and mode. The three
+outcomes record their revision, outcome name and detail. Mutation records add
+`mutation` with the mutation's UUID, kind (`publication` or `staging`) and, for
+an observation, what inspection saw (`not-attempted`, `unchanged`, `changed` or
+`uncertain`). All 64-bit integers are decimal strings. Marker counts are not
+recorded: replay scans the restored text.
+
+Only the `open` record stores the captures. They retain all `FileSnapshots`
+fields, including provenance, conversion attributes/configuration, per-source
+raw and converted bytes, source labels and commits, launch encoding/BOM/newlines,
+destination mode and observed file identity. Each record lists all of its
+referenced payloads.
+
+The reader validates the version, sequence, hash chain, transaction IDs,
+complete frames and every payload before returning success. A final line
+without a terminating newline is interrupted pending work and is ignored. A
+complete corrupt record, missing payload, repeated transaction or unknown
+version returns an explicit error. Prefix records returned alongside an error
+are diagnostics, not a successful restore.
 
 ## Commit and acknowledgment
 
@@ -78,8 +97,9 @@ For every applied model command:
 
 1. Apply the domain command to a private candidate, retaining the acknowledged
    model state. Text and decisions are one candidate, including undo and redo.
-2. Commit and validate all referenced payloads.
-3. Append one complete journal frame under the writer lock. Flush and
+2. Commit and validate all referenced payloads, then synchronize the
+   directories that gained an entry.
+3. Append one complete journal frame under the store's lease. Flush and
    synchronize the journal file.
 4. Publish the candidate to the model, emit change notifications and return
    `Transition::Applied`. This is the acknowledgment boundary.
@@ -102,9 +122,12 @@ retained candidate and failure separately. `resultText` and revision roles
 continue to describe the acknowledged state. Further commands across the model
 are blocked until `retryRecovery` or QML's `retryPendingRecovery` commits every
 pending candidate.
-A stable request UUID prevents duplicate appends when a failed flush left a
-complete record. Incomplete trailing bytes are truncated under the lock before
-retry. Session replacement and normal window close cannot drop pending input;
+A stable transaction UUID prevents duplicate appends when a failed flush left
+a complete record, even when other records followed it before the retry: the
+store remembers every transaction in its journal, syncs the journal again for
+the same state and refuses different state under a used ID. The pending input
+keeps its encoded record, so the retry appends exactly those bytes. Incomplete
+trailing bytes are truncated under the lease before retry. Session replacement and normal window close cannot drop pending input;
 the close guard offers Retry or keeps the window open.
 
 Automatic recovery never moves the manual Save checkpoint or implies review,
@@ -120,7 +143,7 @@ returns verified bytes. It does not automatically apply them. A restore caller
 must validate the complete state schema and the live worktree, operation, disk
 and index identities before using recovered work or allowing publication.
 Startup inventories inactive stores under the versioned recovery root. A
-session lock prevents another window from adopting an active store. Corrupt,
+store's lease prevents another window from adopting an active store. Corrupt,
 unsupported or ambiguous records produce diagnostics, never a prefix restore.
 Operation identity includes the canonical worktree and Git directory, source
 commits, base and rebase context. All captured files must share one session
@@ -133,16 +156,18 @@ An aborted or older operation's store is retained for inspection. To retire
 one, close all Branch Truce windows and move its complete `<session-uuid>`
 directory outside `<GenericDataLocation>/Branch Truce/recovery/v1/`.
 Keep its journal and payloads together; moving the directory back makes it
-available for inspection again.
+available for inspection again. A session that finishes cleanly, with every
+file resolved and nothing pending or failed, deletes its own store, because it
+holds nothing a later launch could restore.
 
 Two windows open on the same operation each keep their own store, because a
-store's session lock keeps the second window from adopting the first window's
+store's lease keeps the second window from adopting the first window's
 store. A store whose journal holds only launch captures (`open` records) has no
-app edit, decision, Save, review or repository outcome. When several stores
-match, startup sets these aside and they never make the inventory ambiguous.
+app edit, decision, Save, review or repository outcome. Such a store never
+makes the inventory ambiguous, and one that is not adopted is deleted.
 Setting a store aside writes an owner-only `set-aside` marker inside it; the
-journal and payloads stay in place and are never deleted. Startup skips a
-set-aside store unless the user names it.
+journal and payloads stay in place. Startup skips a set-aside store unless the
+user names it, and deletes it once its marker is more than 30 days old.
 
 When two or more matching stores hold app edits, restoration stays blocked
 rather than guessing. The current files still open in a new store, and the
@@ -197,9 +222,10 @@ staged path or a new `core.autocrlf`. Leaving such a path returns it to Git
 unresolved.
 
 The restore adapter replays the existing domain transitions and compares every
-complete state with its canonical encoding, apart from the derived marker
-counts and decision revision IDs described above. This validates the state schema,
-enums, payload references, revisions and outcome relationships. Records are
+complete state with its canonical encoding. This validates the state schema,
+enum names, payload references, text changes, revisions and outcome
+relationships. Restored files align their sources with the window's
+correspondence algorithm, as loaded files do. Records are
 applied in journal order, including durable discard transactions. It preserves
 the launch capture and the manual Save baseline independently of the current
 draft. Restoration does not create a Save checkpoint or a review declaration.
@@ -231,18 +257,27 @@ review all match. That recovered observation is committed before the model
 exposes resolution. Previously recorded successful outcomes must still match live
 disk and index evidence. Reopened undo stacks are not a product guarantee.
 
-The guarantee covers application termination after acknowledgment, including
-unsaved edits and decisions. Termination before acknowledgment may recover a
-complete candidate whose notification had not yet occurred. An interrupted
-trailing record is pending, never an acknowledged command. This protocol does
-not promise recovery from machine power loss. Orphan payloads left before a
-record commit are harmless and are retained; garbage collection is separate.
+The guarantee covers application termination and machine power loss after
+acknowledgment, including unsaved edits and decisions, on a file system that
+honours fsync on files and directories. Termination before acknowledgment may
+recover a complete candidate whose notification had not yet occurred. An
+interrupted trailing record is pending, never an acknowledged command. Orphan
+payloads left before a record commit are harmless and stay until their store
+is deleted.
 
 Before each append the store reads the journal and compares it with the bytes it
-last verified or wrote. Any difference, such as a record from another writer, a
-changed byte, a cut or interrupted tail or a different journal, makes it verify
-the whole journal as the reader does, payloads included, before it appends.
-Payloads of records it already verified are not read again.
-A recovery payload larger than 8388608 bytes is refused before it is written.
-The prior acknowledged record stays in the journal, and the failure says that
-pending input is retained. Compaction and checkpoint replacement remain separate.
+last verified or wrote. Any difference, such as a changed byte, a cut or
+interrupted tail or a different journal, makes it verify the whole journal as
+the reader does, payloads included, before it appends. Payloads of records it
+already verified are not read again.
+A recovery payload larger than `kMaxRecoveryPayloadBytes` (8388608 bytes) is
+refused before it is written. The prior acknowledged record stays in the
+journal, and the failure says that pending input is retained.
+
+Commits run on the interface thread and are acknowledged only once durable.
+A record costs one journal sync, plus a payload sync and a directory sync when
+the action added text. Records are not coalesced or written behind: replay
+repeats one domain transition per record, and the engine has no way to rebuild
+a file's history from a saved state, so a record that stood for several edits
+could not replay to the revision IDs later records refer to. Journals grow by
+about one small frame per acknowledged command.

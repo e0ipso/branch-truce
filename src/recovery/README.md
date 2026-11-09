@@ -1,5 +1,5 @@
 # Recovery acknowledgment and replay
 
-RecoveryJournal retains failed input and commits acknowledgment boundaries. RecoveryRecord serializes and reads complete session state. RecoveryRestore replays records and reconciles interrupted mutations without silently losing user work.
+RecoveryJournal commits acknowledgment boundaries under the store's lease and retains failed input for retry. RecoveryRecord encodes a file's state as a typed record and reads each field back; RecoveryNames holds the actions, mutation facts and their names on disk. RecoveryReplay rebuilds file sessions by repeating each recorded transition, without I/O. RecoveryReconciler checks recovered files against disk and index through a RepositoryProbe, and RecoveryInventory chooses, sets aside and deletes stores. SessionIdentity holds the same-operation and captured-conflict checks that restore and publication share.
 
-Add recovery transaction policy, replay and reconciliation here. Keep journal byte storage and leases in storage/ and ordinary session opening in app/SessionLoader.
+Add recovery transaction policy, replay and reconciliation here. Journal bytes, payloads and the lease are in storage/; ordinary session opening is in app/SessionLoader.
