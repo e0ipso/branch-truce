@@ -29,7 +29,7 @@ class ContractTests(unittest.TestCase):
             for k in ('text', 'binary') for ext in ('png', 'html')})
 
     def test_reference_tampering_is_rejected_without_rewriting_it(self):
-        with tempfile.TemporaryDirectory(dir='/var/tmp') as directory:
+        with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
             shutil.copytree(ROOT / 'docs/ui-mockup', source / 'docs/ui-mockup')
             victim = source / 'docs/ui-mockup/light-text.png'
@@ -131,7 +131,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(regions['file_header'], [253, 48, 1027, 34])
 
     def test_build_provenance_does_not_invent_a_compiled_revision(self):
-        with tempfile.TemporaryDirectory(dir='/var/tmp') as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'src/app').mkdir(parents=True)
             executable = root / 'src/app/branch-truce'
@@ -175,7 +175,7 @@ class ContractTests(unittest.TestCase):
 
 class PixelTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(dir='/var/tmp')
+        self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.a, self.b = self.root / 'a.png', self.root / 'b.png'

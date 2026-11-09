@@ -25,6 +25,7 @@ from calibration import ImageTool, build_provenance, capture_inputs, colour_sche
 from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged
 
 HERE = Path(__file__).resolve().parent
+COLOUR_SCHEMES = Path('/usr/share/color-schemes')
 
 
 def require(condition, message):
@@ -51,10 +52,14 @@ def replay_lock(path=None):
 
 
 class OwnedResources:
-    """Own only this invocation's private directory and process groups."""
-    def __init__(self, cleanup_receipt=None):
+    """Own only this invocation's private directory and process groups.
+
+    The directory goes under base_dir, which defaults to /var/tmp: a short path keeps the private
+    Wayland and sway sockets under the AF_UNIX length limit, whatever TMPDIR says.
+    """
+    def __init__(self, cleanup_receipt=None, base_dir=Path('/var/tmp')):
         self.cleanup_receipt = cleanup_receipt
-        self.directory = tempfile.TemporaryDirectory(prefix='bt-r-', dir='/var/tmp')
+        self.directory = tempfile.TemporaryDirectory(prefix='bt-r-', dir=base_dir)
         self.root = Path(self.directory.name)
         self.processes = []
         self.logs = []
@@ -319,9 +324,9 @@ KINDS = ('text', 'binary')
 SHOT_PATHS = {'text': 'src/net/retry.cpp', 'binary': 'assets/logo.png'}
 
 
-def write_kdeglobals(config_home, scheme):
+def write_kdeglobals(config_home, scheme, scheme_dir):
     """Configure the private session's colour scheme and fonts. Returns the kdeglobals path."""
-    colours = Path('/usr/share/color-schemes') / f'{scheme}.colors'
+    colours = Path(scheme_dir) / f'{scheme}.colors'
     path = Path(config_home) / 'kdeglobals'
     path.write_text(colours.read_text() +
         f'\n[General]\nColorScheme={scheme}\nfont=Noto Sans,10,-1,5,50,0,0,0,0,0\nfixed=Hack,9,-1,5,50,0,0,0,0,0\n')
@@ -500,7 +505,7 @@ def drive_app(owned, compositor, replay, *, app, driver, tool, repo, source, out
     return captures
 
 
-def replay_once(*, app, driver, tool, source, out, theme, repeat, size):
+def replay_once(*, app, driver, tool, source, out, theme, repeat, size, scheme_dir):
     """One clean replay: a new fixture, private home and compositor, the app and its shots."""
     with OwnedResources(out / 'cleanup.json') as owned:
         env = private_environment(owned.root / 'home')
@@ -509,7 +514,7 @@ def replay_once(*, app, driver, tool, source, out, theme, repeat, size):
         repo = fixture_root / 'retry-service'
         write_json(out / 'fixture.json', fixture)
         scheme = THEMES[theme]
-        kdeglobals = write_kdeglobals(env['XDG_CONFIG_HOME'], scheme)
+        kdeglobals = write_kdeglobals(env['XDG_CONFIG_HOME'], scheme, scheme_dir)
         compositor = boot_compositor(owned, env, size, out / 'compositor.log')
         replay = Replay(theme=theme, repeat=repeat, size=size, fixture=fixture,
                         fixture_sha256=sha256(out / 'fixture.json'), executable_sha256=sha256(app),
@@ -562,7 +567,7 @@ def compare_repeats(records, tool):
     return comparisons
 
 
-def capture(*, source, build, output, size, repeat, documentation):
+def capture(*, source, build, output, size, repeat, documentation, scheme_dir):
     require((source / 'tools/native-replay/replay.py').resolve() == Path(__file__).resolve(),
             '--source must name the checkout containing this replay tool')
     app = build / 'src/app/branch-truce'
@@ -579,7 +584,7 @@ def capture(*, source, build, output, size, repeat, documentation):
                 out = output / f'replay-{index}-{theme}'
                 out.mkdir()
                 records += replay_once(app=app, driver=driver, tool=tool, source=source, out=out,
-                                       theme=theme, repeat=index, size=size)
+                                       theme=theme, repeat=index, size=size, scheme_dir=scheme_dir)
         if documentation:
             docs = output / 'documentation-readme'
             docs.mkdir()
@@ -615,7 +620,8 @@ def main():
         print(json.dumps(make_fixture(args.output.resolve()), indent=2))
     else:
         capture(source=args.source.resolve(), build=args.build.resolve(), output=args.output.resolve(),
-                size=(1280, args.height), repeat=args.repeat, documentation=args.documentation)
+                size=(1280, args.height), repeat=args.repeat, documentation=args.documentation,
+                scheme_dir=COLOUR_SCHEMES)
 
 
 if __name__ == '__main__':
