@@ -224,14 +224,34 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
         }
         snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
     }
-    std::shared_ptr<const CorrespondenceMap> correspondence;
     const auto resultBudget = assessText(initial.text);
     if (resultBudget.limit != TextLimit::Within) {
         support_ = Support::Unreadable;
         supportDetail_ = "Load error: " + textLimitDiagnostic(resultBudget);
-    } else if (snapshots_) {
+        open(1, std::move(initial), false, false);
+        return;
+    }
+    if (snapshots_) {
+        std::size_t lines = lineCount(initial.text);
+        for (const auto *source : {&snapshots_->earlier, &snapshots_->stage2, &snapshots_->stage3})
+            if (*source) lines = std::max(lines, lineCount((*source)->worktree.utf8));
+        if (lines > kLargeFileLines) {
+            support_ = Support::LargeFile;
+            supportDetail_ = "File of " + std::to_string(lines) + " lines is over "
+                + std::to_string(kLargeFileLines) + " lines and was not loaded";
+            open(1, std::move(initial), false, false);
+            return;
+        }
+    }
+    open(1, std::move(initial), true, initializeChoices);
+}
+
+void FileSession::open(RevisionId revision, Draft initial, bool correspond, bool initializeChoices)
+{
+    std::shared_ptr<const CorrespondenceMap> correspondence;
+    if (correspond && snapshots_) {
         try {
-            correspondence = std::make_shared<const CorrespondenceMap>(1, *snapshots_, initial.text);
+            correspondence = std::make_shared<const CorrespondenceMap>(revision, *snapshots_, initial.text);
             choices_ = std::make_shared<const std::vector<ChoiceTarget>>(choiceTargets(*snapshots_));
             auto bound = std::make_shared<CorrespondenceMap>(*correspondence);
             for (const auto &target : *choices_) {
@@ -267,7 +287,7 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
         launchBlocks_ = std::make_shared<const std::set<std::vector<std::string>>>(std::move(launch));
     }
     auto draft = withMarkers(std::move(initial), correspondence.get(), launchBlocks_.get());
-    revisions_.emplace(1, Revision{1, 1, 1, std::move(draft), std::move(correspondence)});
+    revisions_.emplace(revision, Revision{revision, revision, revision, std::move(draft), std::move(correspondence)});
 }
 
 const std::vector<ChoiceTarget> &FileSession::choices() const noexcept
@@ -766,6 +786,30 @@ Transition FileSession::setSupport(Support support, std::string detail)
     return Transition::Applied;
 }
 
+Transition FileSession::loadLargeFile()
+{
+    if (support_ != Support::LargeFile) return Transition::NoChange;
+    // Every edit and outcome is blocked until the file loads, so the launch
+    // revision is the only one. It never had choices or a correspondence.
+    if (!snapshots_ || current_ != 1 || history_.size() != 1 || checkpoint_ || reviewed_ || written_
+        || staged_ || checkpointOutcome_ || writeOutcome_ || stageOutcome_) return Transition::Blocked;
+    if (next_ == std::numeric_limits<RevisionId>::max())
+        throw std::overflow_error("Session revision space exhausted");
+    Draft initial;
+    initial.text = current().draft.text;
+    initial.decisions = current().draft.decisions;
+    const auto revision = next_++;
+    support_ = Support::Supported;
+    supportDetail_.clear();
+    revisions_.clear();
+    open(revision, std::move(initial), true, true);
+    current_ = revision;
+    outcomeFloor_ = revision;
+    history_ = {revision};
+    cursor_ = 0;
+    return Transition::Applied;
+}
+
 FileFacts FileSession::facts() const
 {
     const auto undecided = undecidedCount(current().draft);
@@ -782,6 +826,7 @@ FileFacts FileSession::facts() const
     auto &blockers = facts.blockers;
     if (support_ == Support::OutsideApp) blockers.push_back(Blocker::OutsideApp);
     if (support_ == Support::Unreadable) blockers.push_back(Blocker::Unreadable);
+    if (support_ == Support::LargeFile) blockers.push_back(Blocker::LargeFile);
     // A file the app cannot edit has no draft to Save, mark resolved, write or
     // stage, so only its support blocker and recorded failures apply. It stays
     // unresolved because resolution requires Support::Supported.
@@ -812,6 +857,7 @@ FileFacts FileSession::facts() const
     };
     if (support_ == Support::OutsideApp) facts.status = FileStatus::OutsideApp;
     else if (support_ == Support::Unreadable) facts.status = FileStatus::Unreadable;
+    else if (support_ == Support::LargeFile) facts.status = FileStatus::LargeFile;
     else if (has(Blocker::UncertainOutcome)) facts.status = FileStatus::OutcomeUncertain;
     else if (has(Blocker::CheckpointFailed)) facts.status = FileStatus::CheckpointFailed;
     else if (has(Blocker::WriteFailed)) facts.status = FileStatus::WriteFailed;
@@ -830,6 +876,7 @@ const char *statusText(FileStatus status) noexcept
     switch (status) {
     case FileStatus::OutsideApp: return "Needs work outside Branch Truce";
     case FileStatus::Unreadable: return "File could not be read";
+    case FileStatus::LargeFile: return "Large file not loaded";
     case FileStatus::OutcomeUncertain: return "Outcome uncertain; verification required";
     case FileStatus::CheckpointFailed: return "Draft save failed";
     case FileStatus::WriteFailed: return "Repository write failed";
@@ -849,6 +896,7 @@ const char *blockerText(Blocker blocker) noexcept
     switch (blocker) {
     case Blocker::OutsideApp: return "Handle this file outside Branch Truce";
     case Blocker::Unreadable: return "File content unavailable";
+    case Blocker::LargeFile: return "Large file waits for confirmation to load";
     case Blocker::UnresolvedMarkers: return "Known conflict markers remain";
     case Blocker::Undecided: return "Undecided source choices need confirmation";
     case Blocker::UnsavedDraft: return "Current draft has no manual Save checkpoint";

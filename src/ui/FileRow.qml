@@ -46,6 +46,7 @@ KirigamiDelegates.SubtitleDelegate {
     subtitle: row.recoveryState === "failed" || row.recoveryState === "save-failed" || row.recoveryState === "blocked"
         ? row.status
         : row.support === "unreadable" ? qsTr("Load error")
+        : row.support === "large-file" ? qsTr("Large file not loaded")
         : row.support !== "supported" ? qsTr("Handle outside the app")
         : row.resolved ? qsTr("Resolved")
         : row.status === "Repository write failed" || row.status === "Written, unresolved"

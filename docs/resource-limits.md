@@ -6,9 +6,17 @@ A size is inside the envelope only when the measured repeats completed inside
 their latency budget. The next size is an explicit failure. Nothing in that
 failure is reported as a successful or truncated result.
 
+The file line count is the exception. A captured file whose result or any
+source has more than 4000 lines is listed as "Large file not loaded". Selecting
+it asks "The file is over 4000 lines. Are you sure you want to load it?" with a
+Load button. Load builds the correspondence on the user's request, so it can be
+slow, and the file is edited like any other from then on. Edits that take a
+loaded file past 4000 lines are accepted. The recovery journal records the
+load, so replay restores a loaded file without asking again, but a load alone
+is not recovered work.
+
 | Boundary | Limit | Just above it |
 | --- | ---: | --- |
-| File | 4000 lines | correspondence is not built; the captured text stays in the session |
 | Longest line | 262144 bytes | the edit is refused and the previous buffer stays in place |
 | Git process output | 4194304 bytes | `OutputLimit`, with an incomplete captured prefix |
 | Recovery payload | 8388608 bytes | the commit fails, the prior journal record stays acknowledged, and the new payload is not published |
@@ -16,10 +24,10 @@ failure is reported as a successful or truncated result.
 Each Git phase, including the canonical blob read and the checkout read, gets
 its own 4194304-byte budget. Stdout and stderr share the budget of that phase.
 Preflight output does not reduce a later read. A worktree file read stops at the 8388608-byte
-recovery ceiling, and a complete read still has to fit the file and line limits
-before it becomes editable.
+recovery ceiling, and a complete read still has to fit the line and text-size
+limits before it becomes editable.
 
-An edit that would cross a file, line, or text-size limit is not acknowledged.
+An edit that would cross a line or text-size limit is not acknowledged.
 The editor does not load that text. Mark resolved of a result that is already
 inside the envelope is unchanged. A recovery commit that exceeds the payload
 limit leaves the acknowledged journal record in place and says that pending

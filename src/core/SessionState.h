@@ -86,18 +86,20 @@ struct StagedResult {
     bool confirmedUndecided;
 };
 
-enum class Support { Supported, OutsideApp, Unreadable };
+// LargeFile keeps a captured file with more than kLargeFileLines lines unloaded
+// until the user confirms it with loadLargeFile().
+enum class Support { Supported, OutsideApp, Unreadable, LargeFile };
 enum class Transition {
     Applied, NoChange, StaleRevision, ConfirmationRequired, Blocked, InvalidOutcome,
     InvalidAnchor, AmbiguousTarget
 };
 enum class Blocker {
-    OutsideApp, Unreadable, UnresolvedMarkers, Undecided, UnsavedDraft,
+    OutsideApp, Unreadable, LargeFile, UnresolvedMarkers, Undecided, UnsavedDraft,
     ReviewNeeded, WriteRequired, StageRequired, EarlierStagedResult,
     CheckpointFailed, WriteFailed, StageFailed, UncertainOutcome
 };
 enum class FileStatus {
-    OutsideApp, Unreadable, OutcomeUncertain, CheckpointFailed, WriteFailed,
+    OutsideApp, Unreadable, LargeFile, OutcomeUncertain, CheckpointFailed, WriteFailed,
     StageFailed, EarlierStaged, Resolved, WrittenUnresolved, SavedDraft,
     Undecided, ReviewNeeded
 };
@@ -197,8 +199,12 @@ public:
                            std::string objectId = {}, std::string mode = {},
                            std::string detail = {});
     Transition setSupport(Support support, std::string detail = {});
+    // Opens a LargeFile session as it would have opened below the line
+    // threshold. The loaded text gets a fresh revision and an empty history.
+    Transition loadLargeFile();
 
 private:
+    void open(RevisionId id, Draft initial, bool correspond, bool initializeChoices);
     RevisionId advance(const Draft &draft,
                        std::shared_ptr<const CorrespondenceMap> correspondence = {});
     RevisionId restore(const Revision &revision);

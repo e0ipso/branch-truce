@@ -3,6 +3,7 @@
 #include <QtQml/qqmlregistration.h>
 #include "ChoicePreviewFlow.h"
 #include "CommandGuard.h"
+#include "core/ResourceLimits.h"
 #include "FileNavigator.h"
 #include "mergetool/MergetoolSession.h"
 #include "recovery/RecoveryRestore.h"
@@ -31,6 +32,8 @@ class ApplicationController : public QObject {
     Q_PROPERTY(branch_truce::SessionLoader *loader READ loader CONSTANT)
     Q_PROPERTY(QString selectedFileId READ selectedFileId NOTIFY selectedFileChanged)
     Q_PROPERTY(branch_truce::SelectedFile *selectedFile READ selectedFile CONSTANT)
+    // A file with more lines than this opens only after the user confirms it.
+    Q_PROPERTY(int largeFileLines READ largeFileLines CONSTANT)
     Q_PROPERTY(int outsideAppFiles READ outsideAppFiles NOTIFY inventoryChanged)
     Q_PROPERTY(int loadErrorFiles READ loadErrorFiles NOTIFY inventoryChanged)
     Q_PROPERTY(QVariantMap commandPreview READ commandPreview NOTIFY commandPreviewChanged)
@@ -67,6 +70,7 @@ public:
     [[nodiscard]] MergetoolSession *mergetool() noexcept { return &mergetool_; }
     [[nodiscard]] QString selectedFileId() const { return selectedFileId_; }
     [[nodiscard]] SelectedFile *selectedFile() noexcept { return &selectedFile_; }
+    [[nodiscard]] static int largeFileLines() { return static_cast<int>(kLargeFileLines); }
     [[nodiscard]] int outsideAppFiles() const;
     [[nodiscard]] int loadErrorFiles() const;
     [[nodiscard]] QVariantMap commandPreview() const;
@@ -125,6 +129,8 @@ public:
     Q_INVOKABLE bool discardUnsaved(const QString &fileId, const QString &revision);
     // Drops a draft newer than the result staged in Git and makes that staged result current again.
     Q_INVOKABLE bool discardToStaged(const QString &fileId, const QString &revision);
+    // Opens a file held back for its line count, after the user confirmed it.
+    Q_INVOKABLE bool loadLargeFile(const QString &fileId);
     Q_INVOKABLE void attachResultEditor(QObject *editor);
     // Highlights a read-only source pane with the selected file's syntax.
     Q_INVOKABLE void attachSourceEditor(QObject *editor);

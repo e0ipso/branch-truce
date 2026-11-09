@@ -3425,54 +3425,74 @@ public:
             QGuiApplication::setQuitOnLastWindowClosed(quitOnClose);
             CHECK(!opened() && ended == 1);
         });
-        suite.run("a rejected insertion at the file limit leaves the editor usable", [] {
-            const auto atLimit = [] {
+        suite.run("an insertion past 4000 lines is acknowledged", [] {
+            const auto atThreshold = [] {
                 std::string text;
                 text.reserve(4000 * 2);
                 for (int i = 0; i < 4000; ++i) text += "x\n";
                 return text;
             }();
-            Fixture fixture(test_support::choiceFile("x\n", "x\n", atLimit));
+            Fixture fixture(test_support::choiceFile("x\n", "x\n", atThreshold));
             auto *editor = fixture.item("resultText");
             const auto before = fixture.file().current();
-            const auto rejection = QStringLiteral(
-                "File of 4001 lines exceeds the supported 4000 line limit. "
-                "The existing edit was kept and this change was not acknowledged.");
             CHECK(!editor->property("readOnly").toBool() && editor->isEnabled());
-            CHECK(fixture.text().toStdString() == atLimit);
-            CHECK(fixture.controller.commandMessage().isEmpty());
+            CHECK(fixture.text().toStdString() == atThreshold);
             fixture.select(0, 0);
-            CHECK(editor->property("selectionStart").toInt() == 0
-                && editor->property("selectionEnd").toInt() == 0);
             QGuiApplication::clipboard()->setText(QStringLiteral("\n"));
-            CHECK(!fixture.controller.resultClipboard(ResultEditorAdapter::ClipboardAction::Paste));
-            CHECK(fixture.file().current().id == before.id && fixture.text().toStdString() == atLimit);
-            CHECK(!editor->property("readOnly").toBool());
-            CHECK(fixture.controller.commandMessage() == rejection);
-            settle([&] {
-                return fixture.item("commandMessage")->isVisible()
-                    && fixture.item("commandMessage")->property("text").toString() == rejection;
-            });
-            fixture.checkRecovered(before.draft);
-            bool timerFired = false;
-            QTimer::singleShot(0, editor, [&] { timerFired = true; });
-            fixture.key(Qt::Key_Return);
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-            CHECK(timerFired);
-            CHECK(fixture.file().current().id == before.id && fixture.text().toStdString() == atLimit);
-            CHECK(!editor->property("readOnly").toBool() && editor->isEnabled());
-            CHECK(fixture.controller.commandMessage() == rejection);
-            fixture.select(0, 1);
-            fixture.key(Qt::Key_Y, Qt::NoModifier, QStringLiteral("y"));
+            CHECK(fixture.controller.resultClipboard(ResultEditorAdapter::ClipboardAction::Paste));
             const auto edited = fixture.file().current();
-            CHECK(edited.id == before.id + 1);
-            CHECK(edited.draft.text.size() == atLimit.size() && edited.draft.text.starts_with('y'));
+            CHECK(edited.id == before.id + 1 && edited.draft.text == "\n" + atThreshold);
             CHECK(fixture.text().toStdString() == edited.draft.text);
             CHECK(!editor->property("readOnly").toBool() && editor->isEnabled());
             CHECK(fixture.controller.commandMessage().isEmpty());
-            settle([&] { return !fixture.item("commandMessage")->isVisible(); });
             fixture.checkRecovered(edited.draft);
             QGuiApplication::clipboard()->clear();
+        });
+        suite.run("a file over 4000 lines loads only after the user confirms it", [] {
+            Fixture fixture;
+            const auto large = [] {
+                std::string text;
+                text.reserve(4001 * 2);
+                for (int i = 0; i < 4001; ++i) text += "x\n";
+                return text;
+            }();
+            auto sources = *test_support::choiceFile("x\n", "x\n", large).snapshots();
+            sources.path = "large.txt";
+            CHECK(fixture.controller.files()->appendFile(
+                FileSession("large", "large.txt", {large, {}, 0}, Support::Supported, {}, std::move(sources), true)));
+            const auto *held = fixture.controller.files()->file("large");
+            CHECK(held && held->support() == Support::LargeFile && !held->correspondence());
+            CHECK(fixture.controller.selectFile(QStringLiteral("large")));
+            auto *message = fixture.item("selectedProblem");
+            settleFor("large file placeholder", [&] { return message->isVisible() && !fixture.item("resultText")->isVisible(); });
+            CHECK(message->property("text").toString() == QStringLiteral("The file is over 4000 lines"));
+            CHECK(message->property("explanation").toString() == QStringLiteral("Are you sure you want to load it?"));
+            auto *load = fixture.object("loadLargeFileAction");
+            CHECK(message->property("helpfulAction").value<QObject *>() == load);
+            // The placeholder lays out again when it switches files, so click once it holds still.
+            auto *button = test_support::waitForStable(fixture.window, "Load button", [&] {
+                return test_support::visualButton(message, [&](QQuickItem *item) {
+                    return item->property("action").value<QObject *>() == load;
+                });
+            }, 60);
+            CHECK(button->isEnabled());
+            CHECK(fixture.text().isEmpty() && fixture.controller.selectedFile()->property("resultText").toString().isEmpty());
+            CHECK(button->property("text").toString() == QStringLiteral("Load"));
+            clickItem(fixture, button);
+            settleFor("large file loaded", [&] {
+                return fixture.item("resultText")->isVisible() && fixture.text().toStdString() == large;
+            });
+            const auto *loaded = fixture.controller.files()->file("large");
+            CHECK(loaded->support() == Support::Supported && loaded->correspondence());
+            CHECK(loaded->current().id == 2 && !loaded->canUndo());
+            CHECK(!fixture.item("resultText")->property("readOnly").toBool());
+            // The journal replays the load, but a load alone is not work to recover.
+            const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()));
+            CHECK(replay.succeeded && !replay.userWork && !replay.editedFiles.contains("large"));
+            const auto recovered = std::find_if(replay.files.begin(), replay.files.end(),
+                [](const FileSession &candidate) { return candidate.id() == "large"; });
+            CHECK(recovered != replay.files.end() && recovered->support() == Support::Supported);
+            CHECK(recovered->current().id == 2 && recovered->current().draft == loaded->current().draft);
         });
         suite.run("notices and tooltips show a path as typed and load nothing it names", [] {
             Fixture fixture;

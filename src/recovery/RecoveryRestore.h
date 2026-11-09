@@ -20,10 +20,11 @@ struct RecoveryReplay {
     bool succeeded = false;
     QString error;
     bool incompleteTail = false;
-    // False when every record is a launch capture: the store holds no app edit,
-    // decision, Save, review or repository outcome.
+    // False when every record is a launch capture or a large-file load: the
+    // store holds no app edit, decision, Save, review or repository outcome.
     bool userWork = false;
-    // File IDs with at least one record after their launch capture.
+    // File IDs with at least one record after their launch capture, other than
+    // a large-file load.
     std::set<std::string> editedFiles;
     std::vector<FileSession> files;
     std::vector<RecoveryMutation> mutations;

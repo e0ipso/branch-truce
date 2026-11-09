@@ -129,6 +129,7 @@ public:
     Transition recordStage(const std::string &id, RevisionId revision, Outcome outcome,
                            std::string objectId = {}, std::string mode = {}, std::string detail = {});
     Transition setSupport(const std::string &id, Support support, std::string detail = {});
+    Transition loadLargeFile(const std::string &id);
 
 Q_SIGNALS:
     void summaryChanged();

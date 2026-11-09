@@ -1766,7 +1766,7 @@ public:
             CHECK(file.recordStage(1, Outcome::Succeeded, "earlier", "100644") == Transition::StaleRevision);
             CHECK(!file.written() && !file.staged() && file.reviewed()->revision.id == newer);
         });
-        suite.run("text envelope rejects the next file, line and payload without dropping the buffer", [] {
+        suite.run("text envelope rejects the next line and payload and holds a large file for confirmation", [] {
             const auto lines = [](std::size_t count) {
                 std::string text;
                 text.reserve(count * 2);
@@ -1787,17 +1787,43 @@ public:
             const auto aboveLine = std::string(262145, 'a');
             CHECK(assessText(lines(3999)).limit == TextLimit::Within);
             CHECK(assessText(lines(4000)).limit == TextLimit::Within);
-            CHECK(assessText(lines(4001)).limit == TextLimit::FileLines);
+            CHECK(assessText(lines(4001)).limit == TextLimit::Within);
+            CHECK(lineCount(lines(4001)) == 4001 && lineCount("a\nb") == 2 && lineCount("") == 0);
             CHECK(assessText(belowLine).limit == TextLimit::Within);
             CHECK(assessText(atLine).limit == TextLimit::Within);
             CHECK(assessText(aboveLine).limit == TextLimit::LineBytes);
             CHECK(admit(lines(3999)).support() == Support::Supported);
             CHECK(admit(lines(4000)).support() == Support::Supported);
             CHECK(admit(lines(4000)).correspondence());
-            const auto tooMany = admit(lines(4001));
-            CHECK(tooMany.support() == Support::Unreadable && !tooMany.correspondence());
-            CHECK(tooMany.current().draft.text == lines(4001));
-            CHECK(tooMany.supportDetail().find("4000") != std::string::npos);
+            auto large = admit(lines(4001));
+            CHECK(large.support() == Support::LargeFile && !large.correspondence());
+            CHECK(large.current().draft.text == lines(4001));
+            CHECK(large.supportDetail() == "File of 4001 lines is over 4000 lines and was not loaded");
+            CHECK(large.facts().status == FileStatus::LargeFile && !large.facts().resolved);
+            CHECK(large.facts().blockers == std::vector<Blocker>{Blocker::LargeFile});
+            CHECK(large.editResult(1, {{0, 1}, "y"}) == Transition::Blocked);
+            CHECK(large.beginMarkResolved(1) == Transition::Blocked);
+            CHECK(large.loadLargeFile() == Transition::Applied);
+            CHECK(large.support() == Support::Supported && large.supportDetail().empty());
+            CHECK(large.correspondence() && large.correspondence()->revision() == 2);
+            CHECK(large.current().id == 2 && large.current().draft.text == lines(4001));
+            CHECK(!large.canUndo() && !large.canRedo());
+            CHECK(large.loadLargeFile() == Transition::NoChange);
+            CHECK(large.editResult(2, {{0, 1}, "y"}) == Transition::Applied);
+            CHECK(large.current().draft.text.starts_with("y") && large.canUndo());
+            CHECK(large.undo(large.current().id) == Transition::Applied && large.current().draft.text == lines(4001));
+            CHECK(!large.canUndo());
+            // A source over the threshold holds the file back even when the result is not.
+            FileSnapshots largeSource;
+            largeSource.path = "limit.txt";
+            largeSource.provenance.sessionId = "limits";
+            largeSource.stage2 = SourceSnapshot{"source-object", "100644", lines(4001),
+                {lines(4001), lines(4001), {}}, "source-commit", "Source"};
+            largeSource.launchResult.text = {lines(10), lines(10), {}};
+            CHECK(FileSession("limit", "limit.txt", {lines(10), {}, 0}, Support::Supported, {}, largeSource).support()
+                == Support::LargeFile);
+            // Without captures there is no correspondence to build, so nothing waits.
+            CHECK(FileSession("plain", "plain.txt", {lines(4001), {}, 0}).support() == Support::Supported);
             CHECK(admit(belowLine).support() == Support::Supported);
             CHECK(admit(atLine).support() == Support::Supported);
             CHECK(admit(atLine).current().draft.text.size() == 262144);
@@ -1820,9 +1846,9 @@ public:
             FileSession file("id", "file", {lines(4000), {}, 0});
             CHECK(file.support() == Support::Supported);
             CHECK(file.editResult(1, {{file.current().draft.text.size(), file.current().draft.text.size()}, "z\n"})
-                == Transition::Blocked);
-            CHECK(file.current().draft.text == lines(4000));
-            CHECK(file.editResult(1, {{0, 1}, "y"}) == Transition::Applied);
+                == Transition::Applied);
+            CHECK(file.current().draft.text == lines(4000) + "z\n");
+            CHECK(file.editResult(file.current().id, {{0, 1}, "y"}) == Transition::Applied);
             CHECK(file.current().draft.text.starts_with("y"));
             CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
             FileSession narrow("id", "file", {atLine, {}, 0});

@@ -314,16 +314,21 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
                 const auto draft = decoder.draft(state.value("current").toObject().value("draft"));
                 auto snapshots = decoder.snapshots(state.value("snapshots"));
                 files.insert_or_assign(id, FileSession(id, path, draft,
-                    decoder.enumeration<Support>(state.value("support"), 2),
+                    decoder.enumeration<Support>(state.value("support"), 3),
                     decoder.bytes(state.value("supportDetail")), std::move(snapshots)));
                 found = files.find(id);
             } else {
                 require(found != files.end() && found->second.path() == path, "Recovery command has no matching open file.");
-                result.userWork = true;
-                result.editedFiles.insert(id);
+                // Loading a large file is not an edit; reopening it asks again.
+                const bool loadLarge = action == QLatin1String("load-large");
+                if (!loadLarge) {
+                    result.userWork = true;
+                    result.editedFiles.insert(id);
+                }
                 auto &file = found->second;
                 Transition transition = Transition::InvalidOutcome;
-                if (action == QLatin1String("replace-draft")) {
+                if (loadLarge) transition = file.loadLargeFile();
+                else if (action == QLatin1String("replace-draft")) {
                     const auto current = state.value("current").toObject();
                     transition = file.replaceDraft(file.current().id, decoder.draft(current.value("draft")),
                         decoder.handEdited(current.value("handEdited")),
@@ -348,7 +353,7 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
                         outcome.outcome == Outcome::Succeeded ? decoder.bytes(staged.value("objectId")) : std::string{},
                         outcome.outcome == Outcome::Succeeded ? decoder.bytes(staged.value("mode")) : std::string{}, outcome.detail);
                 } else if (action == QLatin1String("support"))
-                    transition = file.setSupport(decoder.enumeration<Support>(state.value("support"), 2),
+                    transition = file.setSupport(decoder.enumeration<Support>(state.value("support"), 3),
                         decoder.bytes(state.value("supportDetail")));
                 else if (action == QLatin1String("mutation-intent") || action == QLatin1String("mutation-observation")) {
                     const auto mutationId = state.take("mutationId").toString();

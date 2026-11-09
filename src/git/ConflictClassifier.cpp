@@ -48,8 +48,9 @@ bool sameSnapshot(const Result &before, const Result &after)
     return true;
 }
 // Walk exact byte components without following symlinks or opening a FIFO/device.
-// The read ceiling is the recovery payload budget. Line and file limits are
-// applied to a complete read before that result becomes editable.
+// The read ceiling is the recovery payload budget. The line limit is applied
+// to a complete read before that result becomes editable. A large line count is
+// not a failure here; the session holds such a file until the user loads it.
 SnapshotFileIdentity fileIdentity(const struct stat &info)
 {
     return {static_cast<std::uint64_t>(info.st_dev), static_cast<std::uint64_t>(info.st_ino),
