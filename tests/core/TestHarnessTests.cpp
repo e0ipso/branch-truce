@@ -128,6 +128,15 @@ void expectFromAnotherThreadReachesTheCase()
     CHECK(contains(failureOf([] { test_support::throwPending(); }), "actual: 1"));
 }
 
+void containRecordsWhatACallbackThrows()
+{
+    bool returned = false;
+    test_support::contain([] { CHECK(2 + 2 == 5); });
+    returned = true;
+    CHECK(returned);
+    CHECK(contains(failureOf([] { test_support::throwPending(); }), "2 + 2 == 5"));
+}
+
 void aCaseWithADeferredFailureFails()
 {
     const auto result = captured({}, [](Suite &inner) { inner.run("deferred", [] { EXPECT(false); }); });
@@ -216,6 +225,7 @@ int main(int argc, char **argv)
     suite.run("scopes label the failure and end with their block", scopesLabelTheFailureAndEndWithTheirBlock);
     suite.run("EXPECT records without throwing until the wait asks", expectRecordsWithoutThrowingUntilTheWaitAsks);
     suite.run("EXPECT from another thread reaches the case", expectFromAnotherThreadReachesTheCase);
+    suite.run("contain records what a callback throws", containRecordsWhatACallbackThrows);
     suite.run("a case with a deferred failure fails", aCaseWithADeferredFailureFails);
     suite.run("a suite of skipped cases reports skipped", aSuiteOfSkippedCasesReportsSkipped);
     suite.run("a skip after a failed expectation is a failure", aSkipAfterAFailedExpectationIsAFailure);

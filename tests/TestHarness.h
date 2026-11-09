@@ -9,6 +9,7 @@
 //                               slots, timer callbacks, other threads and syscall wrappers, where
 //                               an exception must not unwind. The case fails when it returns, and
 //                               a wait can stop early on failurePending().
+//   contain(callable)           runs a callback and records what it throws the way EXPECT does.
 //   SCOPE(label)                names the row or step a failure belongs to.
 //   test_support::skip(reason)  ends the case as skipped. A suite whose every case skipped
 //                               reports 77, which CTest's SKIP_RETURN_CODE turns into "skipped".
@@ -306,6 +307,28 @@ bool expectRelation(detail::Relation relation, const A &a, const B &b, const cha
     const std::lock_guard lock(shared.mutex);
     shared.messages.push_back(detail::located(file, line, *message));
     return false;
+}
+
+// Records `message` as a failure of the current case without throwing.
+inline void recordFailure(const std::string &message)
+{
+    auto &shared = detail::pending();
+    const std::lock_guard lock(shared.mutex);
+    shared.messages.push_back(message + detail::context());
+}
+
+// Runs `callable` and records anything it throws as a failure of the current case instead of
+// letting it unwind, for callbacks that production code, a syscall wrapper or the event loop
+// invokes. CHECK can then be used inside them.
+template <typename Callable> void contain(Callable &&callable) noexcept
+{
+    try {
+        std::forward<Callable>(callable)();
+    } catch (const std::exception &error) {
+        recordFailure(error.what());
+    } catch (...) {
+        recordFailure("unknown exception");
+    }
 }
 
 // True once an EXPECT has failed in the current case. Waits use it to stop early.
