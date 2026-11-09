@@ -981,6 +981,32 @@ public:
             CHECK(adopted.succeeded && kept != adopted.files.end()
                   && kept->current().draft.text.starts_with("kept\nfirst window\n"));
         });
+        suite.run("a recovery choice after the operation ended shows no earlier operation", [] {
+            Repository repo;
+            repo.conflict("merge");
+            ScopedEnvironment environment(repo.environment);
+            QString first;
+            {
+                ApplicationController one(gitOnPath());
+                openController(one, repo);
+                ApplicationController two(gitOnPath());
+                openController(two, repo);
+                for (auto *controller : {&one, &two}) {
+                    const auto &selected = openedFile(*controller);
+                    CHECK(controller->files()->editResult(selected.id(), selected.current().id, {{0, 0}, "edit\n"})
+                          == Transition::Applied);
+                }
+                first = one.files()->recoveryDirectory();
+            }
+            ApplicationController controller(gitOnPath());
+            openController(controller, repo);
+            CHECK(controller.loader()->operation() == "Merge");
+            repo.git({"merge", "--abort"});
+            CHECK(controller.loader()->chooseRecoverySession(QFileInfo(first).fileName()));
+            waitOpened(controller, "the reload after the merge ended");
+            CHECK(controller.loader()->operation().isEmpty());
+            CHECK(controller.loader()->operationDescription().isEmpty());
+        });
         suite.run("a recovery choice replays every store on a worker and refuses an unreadable own store later", [] {
             Repository repo;
             repo.conflict("merge");

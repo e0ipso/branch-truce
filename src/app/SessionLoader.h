@@ -72,7 +72,8 @@ public:
     [[nodiscard]] QString startupState() const { return state_; }
     [[nodiscard]] bool opening() const { return state_ == QLatin1String("opening"); }
     [[nodiscard]] QString repositoryRoot() const { return repository_.worktreeRoot; }
-    [[nodiscard]] QString operation() const { return operation_; }
+    // The classified operation's name, empty before or without a successful classification.
+    [[nodiscard]] QString operation() const;
     [[nodiscard]] QString operationDescription() const;
     [[nodiscard]] QString stage2Name() const { return repository_.stage2.name; }
     [[nodiscard]] QString stage3Name() const { return repository_.stage3.name; }
@@ -142,7 +143,8 @@ private:
     git::RepositoryContext repository_;
     QHash<QString, qint64> launchSizes_;
     QString state_ = QStringLiteral("idle");
-    QString operation_;
+    // Whether repository_ comes from a successful classification of the current open.
+    bool classified_ = false;
     QString detail_;
     QString preferredFileId_;
     QString recoverySession_;

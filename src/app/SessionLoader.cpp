@@ -40,9 +40,21 @@ QString SessionLoader::stage2() const
     return sourceRole(repository_.stage2.label, QString::fromLatin1(repository_.stage2.commitId));
 }
 
+QString SessionLoader::operation() const
+{
+    if (!classified_) return {};
+    switch (repository_.operation) {
+    case git::RepositoryOperation::Merge: return tr("Merge");
+    case git::RepositoryOperation::Rebase: return tr("Rebase");
+    case git::RepositoryOperation::Unsupported: return tr("Unsupported operation");
+    case git::RepositoryOperation::None: break;
+    }
+    return {};
+}
+
 QString SessionLoader::operationDescription() const
 {
-    if (!repository_.supported) return operation_;
+    if (!repository_.supported) return operation();
     const auto left = stage2Name().isEmpty() ? sourceIdentity(stage2(), stage2CommitId()) : stage2Name();
     const auto right = stage3Name().isEmpty() ? sourceIdentity(stage3(), stage3CommitId()) : stage3Name();
     if (repository_.operation == git::RepositoryOperation::Merge) return tr("Merging %1 into %2").arg(right, left);
@@ -53,7 +65,7 @@ QString SessionLoader::operationDescription() const
             repository_.ontoName.isEmpty() ? shortId(QString::fromLatin1(repository_.onto)) : repository_.ontoName;
         return tr("Rebasing %1 onto %2").arg(branch, onto);
     }
-    return operation_;
+    return operation();
 }
 
 QString SessionLoader::stage3() const
@@ -213,12 +225,18 @@ bool SessionLoader::openRepository(const QString &directory, const QString &pref
                                    const QString &recoverySession)
 {
     if (state_ != QLatin1String("idle")) return false;
+    // A reload passes repository_.worktreeRoot, which the reset below clears.
+    const auto launchDirectory = directory;
     preferredFileId_ = preferredFileId;
     recoverySession_ = recoverySession;
     recoveryChoices_.clear();
+    // A reload must not show or key the session by what an earlier open classified.
+    repository_ = {};
+    classified_ = false;
+    launchSizes_.clear();
     setState(QStringLiteral("opening"), tr("Inspecting the selected local repository…"));
     git::ConflictClassificationRequest request;
-    request.directory = directory;
+    request.directory = launchDirectory;
     if (!classifier_.start(request)) {
         setState(QStringLiteral("error"), tr("Could not start repository inspection."));
         return false;
@@ -229,13 +247,7 @@ bool SessionLoader::openRepository(const QString &directory, const QString &pref
 void SessionLoader::classified(const git::ConflictClassificationResult &result)
 {
     repository_ = result.repository;
-    switch (repository_.operation) {
-    case git::RepositoryOperation::Merge: operation_ = tr("Merge"); break;
-    case git::RepositoryOperation::Rebase: operation_ = tr("Rebase"); break;
-    case git::RepositoryOperation::Unsupported: operation_ = tr("Unsupported operation"); break;
-    case git::RepositoryOperation::None: break;
-    }
-    if (result.outcome != git::Outcome::Success) operation_.clear();
+    classified_ = result.outcome == git::Outcome::Success;
 
     // Even an ended/unsupported operation can have expected recovery work.
     // Inspect its inventory so identity rejection is explicit, without applying it.
@@ -276,8 +288,10 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
     if (pending.empty())
         pending.emplace_back("recovery-inventory", "recovery-inventory", Draft{}, Support::Unreadable,
                              "Inspecting app-owned recovery records");
-    const auto identity = operation_ + QLatin1Char(':') + QString::fromLatin1(repository_.stage2.commitId)
-        + QLatin1Char(':') + QString::fromLatin1(repository_.stage3.commitId);
+    // The fence key names the operation by its enum, never by display text.
+    const auto identity = QString::number(static_cast<int>(repository_.operation)) + QLatin1Char(':')
+        + QString::fromLatin1(repository_.stage2.commitId) + QLatin1Char(':')
+        + QString::fromLatin1(repository_.stage3.commitId);
     const auto root = repository_.worktreeRoot;
     if (!coordinator_.replaceSession(root, identity, std::move(pending))) {
         setState(QStringLiteral("error"), tr("Could not bind the session to the discovered worktree."));
