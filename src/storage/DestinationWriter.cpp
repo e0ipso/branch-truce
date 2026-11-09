@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <fcntl.h>
 #include <limits>
+#include <optional>
 #include <sys/stat.h>
 #include <sys/xattr.h>
 #include <unistd.h>
@@ -187,16 +188,68 @@ Failure checkFile(const DestinationSnapshot::State &state, int parent, const QBy
         return {DestinationFailure::ContentChanged, QStringLiteral("Destination content or permissions changed")};
     return {};
 }
+// The only extended attribute publication preserves: the SELinux label, which
+// every file carries on a system with SELinux enabled.
+constexpr char selinuxLabel[] = "security.selinux";
+
 Failure checkMetadata(const FileSystem &files, int fd, const struct stat &identity)
 {
     if (identity.st_uid != files.effectiveUser() || identity.st_nlink != 1 || (identity.st_mode & 07000) != 0)
         return {DestinationFailure::UnsupportedMetadata,
                 QStringLiteral("Publication requires an owned file with one link and no special permission bits")};
-    const auto attributes = files.listAttributes(fd, nullptr, 0);
-    if (attributes < 0) return systemFailure("Cannot inspect destination extended attributes");
-    if (attributes != 0)
+    QByteArray names;
+    for (;;) {
+        const auto size = files.listAttributes(fd, nullptr, 0);
+        if (size < 0) return systemFailure("Cannot inspect destination extended attributes");
+        names.resize(static_cast<qsizetype>(size));
+        const auto listed = files.listAttributes(fd, names.data(), static_cast<std::size_t>(names.size()));
+        if (listed >= 0) {
+            names.truncate(static_cast<qsizetype>(listed));
+            break;
+        }
+        // The list grew between the two calls.
+        if (errno != ERANGE) return systemFailure("Cannot inspect destination extended attributes");
+    }
+    for (const auto &name : names.split('\0')) {
+        if (!name.isEmpty() && name != selinuxLabel)
+            return {DestinationFailure::UnsupportedMetadata,
+                    QStringLiteral("Publication cannot preserve extended attributes or ACLs for this destination")};
+    }
+    return {};
+}
+
+// The SELinux label of fd: empty when it has none, nullopt when it cannot be read.
+std::optional<QByteArray> label(const FileSystem &files, int fd)
+{
+    for (;;) {
+        const auto size = files.attribute(fd, selinuxLabel, nullptr, 0);
+        if (size < 0) {
+            if (errno == ENODATA || errno == ENOTSUP) return QByteArray{};
+            return std::nullopt;
+        }
+        QByteArray value(static_cast<qsizetype>(size), Qt::Uninitialized);
+        const auto read = files.attribute(fd, selinuxLabel, value.data(), static_cast<std::size_t>(value.size()));
+        if (read >= 0) {
+            value.truncate(static_cast<qsizetype>(read));
+            return value;
+        }
+        if (errno != ERANGE) return std::nullopt;
+    }
+}
+
+// Gives the replacement the destination's SELinux label, which the new file
+// does not inherit when policy labels the publication directory differently.
+Failure preserveLabel(const FileSystem &files, int destination, int replacement)
+{
+    const auto wanted = label(files, destination);
+    const auto current = label(files, replacement);
+    if (!wanted || !current) return systemFailure("Cannot read the destination SELinux label");
+    if (wanted->isEmpty() || *wanted == *current) return {};
+    if (files.setAttribute(replacement, selinuxLabel, wanted->constData(), static_cast<std::size_t>(wanted->size()))
+            != 0
+        || label(files, replacement) != wanted)
         return {DestinationFailure::UnsupportedMetadata,
-                QStringLiteral("Publication cannot preserve extended attributes or ACLs for this destination")};
+                QStringLiteral("Publication cannot give the replacement the destination's SELinux label")};
     return {};
 }
 } // namespace
@@ -358,6 +411,7 @@ PublicationResult publishDestination(const DestinationSnapshot &expected, const 
     if (::fchown(output.get(), state.identity.st_uid, state.identity.st_gid) != 0
         || ::fchmod(output.get(), state.identity.st_mode & 0777) != 0)
         return failBeforeExchange(systemFailure("Cannot preserve destination permissions"));
+    if (auto failure = preserveLabel(files, original.get(), output.get())) return failBeforeExchange(failure);
     QByteArray prepared;
     struct stat preparedIdentity{};
     if (auto failure = readStable(output.get(), prepared, preparedIdentity)) return failBeforeExchange(failure);

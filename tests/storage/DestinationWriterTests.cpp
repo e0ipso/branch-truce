@@ -10,8 +10,12 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cstring>
 #include <fcntl.h>
 #include <functional>
+#include <map>
+#include <mutex>
+#include <string_view>
 #include <sys/stat.h>
 #include <sys/xattr.h>
 #include <unistd.h>
@@ -91,6 +95,66 @@ public:
         return FileSystem::unlink(fd, name, flags);
     }
     uid_t effectiveUser() const override { return FileSystem::effectiveUser() + (foreignIdentity ? 1 : 0); }
+};
+
+// SELinux labels kept per inode, as a system with SELinux enabled reports them. Other attributes
+// come from the real file system.
+class Labels final : public FileSystem {
+public:
+    mutable std::mutex mutex;
+    mutable std::map<ino_t, QByteArray> values;
+    mutable std::atomic<int> sets = 0;
+    bool refuseSet = false;
+
+    static ino_t inode(int fd)
+    {
+        struct stat identity{};
+        return ::fstat(fd, &identity) == 0 ? identity.st_ino : 0;
+    }
+    ssize_t listAttributes(int fd, char *names, size_t size) const override
+    {
+        static constexpr char listed[] = "security.selinux";
+        {
+            const std::lock_guard lock(mutex);
+            if (!values.contains(inode(fd))) return FileSystem::listAttributes(fd, names, size);
+        }
+        if (!names) return sizeof(listed);
+        if (size < sizeof(listed)) {
+            errno = ERANGE;
+            return -1;
+        }
+        std::memcpy(names, listed, sizeof(listed));
+        return sizeof(listed);
+    }
+    ssize_t attribute(int fd, const char *name, void *value, size_t size) const override
+    {
+        if (std::string_view(name) != "security.selinux") return FileSystem::attribute(fd, name, value, size);
+        const std::lock_guard lock(mutex);
+        const auto found = values.find(inode(fd));
+        if (found == values.end()) {
+            errno = ENODATA;
+            return -1;
+        }
+        const auto length = static_cast<size_t>(found->second.size());
+        if (!value) return static_cast<ssize_t>(length);
+        if (size < length) {
+            errno = ERANGE;
+            return -1;
+        }
+        std::memcpy(value, found->second.constData(), length);
+        return static_cast<ssize_t>(length);
+    }
+    int setAttribute(int fd, const char *name, const void *value, size_t size) const override
+    {
+        ++sets;
+        if (refuseSet || std::string_view(name) != "security.selinux") {
+            errno = EPERM;
+            return -1;
+        }
+        const std::lock_guard lock(mutex);
+        values[inode(fd)] = QByteArray(static_cast<const char *>(value), static_cast<qsizetype>(size));
+        return 0;
+    }
 };
 
 int openDescriptors()
@@ -310,6 +374,36 @@ int main(int argc, char **argv)
                       DestinationFailure::UnsupportedMetadata);
             CHECK(interception->writes == 0 && interception->exchanges == 0);
         }
+    });
+    suite.run("an SELinux label is allowed and the replacement keeps it", [] {
+        Fixture fixture;
+        const auto labels = std::make_shared<Labels>();
+        const QByteArray label = "unconfined_u:object_r:user_home_t:s0";
+        struct stat before{};
+        CHECK(::stat(fixture.native().constData(), &before) == 0);
+        labels->values.emplace(before.st_ino, label);
+        const auto baseline = fixture.capture(labels);
+        const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
+        CHECK_EQ(result.failure, DestinationFailure::None);
+        CHECK(result.state == PublicationState::Published && result.destination);
+        struct stat after{};
+        CHECK(::stat(fixture.native().constData(), &after) == 0 && after.st_ino != before.st_ino);
+        CHECK_EQ(labels->sets.load(), 1);
+        CHECK(labels->values.at(after.st_ino) == label);
+        CHECK(readFile(fixture.path()) == fixture.edited);
+        fixture.clean();
+    });
+    suite.run("a label the replacement cannot take leaves the destination unchanged", [] {
+        Fixture fixture;
+        const auto labels = std::make_shared<Labels>();
+        labels->refuseSet = true;
+        struct stat before{};
+        CHECK(::stat(fixture.native().constData(), &before) == 0);
+        labels->values.emplace(before.st_ino, "system_u:object_r:etc_t:s0");
+        const auto baseline = fixture.capture(labels);
+        unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return true; }),
+                  DestinationFailure::UnsupportedMetadata);
+        CHECK_EQ(labels->sets.load(), 1);
     });
     suite.run("read-only destinations and directories reject replacement", [] {
         if (::geteuid() == 0) test_support::skip("root writes to read-only files and directories anyway");
