@@ -1248,5 +1248,40 @@ int main(int argc, char **argv)
         CHECK(result.diagnostic.contains(QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))));
         CHECK_EQ(result.mutation, Mutation::ObservedChanged);
     });
+    // The failure-path cases run against the scripted Git, so it must answer the success paths
+    // the way real Git does. Each row runs the same requests and expectations.
+    for (const bool scripted : {false, true}) {
+        suite.run(std::string("staging, status and inspection succeed alike through ")
+                      + (scripted ? "the scripted Git" : "real Git"),
+                  [scripted] {
+                      Repository repo;
+                      const auto executable =
+                          scripted ? repo.fakeGit(": > .after-add\n") : test_support::gitExecutable();
+                      writeFile(repo.path("tracked.txt"), "after\n");
+                      GitAdapter adapter(executable);
+                      const auto staged = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
+                      CHECK_EQ(staged.outcome, Outcome::Success);
+                      CHECK_EQ(staged.exitCode, 0);
+                      CHECK_EQ(staged.mutation, Mutation::ObservedChanged);
+                      CHECK(!staged.outputIncomplete && staged.diagnostic.isEmpty());
+                      for (const auto &index : {staged.indexBefore, staged.indexAfter}) {
+                          CHECK_EQ(index.count('\0'), 1);
+                          CHECK(index.startsWith("100644 ") && index.endsWith(QByteArray(" 0\ttracked.txt\0", 15)));
+                      }
+                      CHECK_NE(staged.indexBefore, staged.indexAfter);
+                      const auto status = run(adapter, repo.request(Operation::Status));
+                      CHECK_EQ(status.outcome, Outcome::Success);
+                      CHECK_EQ(status.exitCode, 0);
+                      CHECK_EQ(status.mutation, Mutation::NotAttempted);
+                      CHECK(!status.outputIncomplete);
+                      const auto inspected = run(adapter, repo.request(Operation::InspectIndex, "tracked.txt"));
+                      CHECK_EQ(inspected.outcome, Outcome::Success);
+                      CHECK_EQ(inspected.indexEntries.size(), 1);
+                      CHECK_EQ(inspected.indexEntries.front().path, QByteArray("tracked.txt"));
+                      CHECK_EQ(inspected.indexEntries.front().stage, 0u);
+                      CHECK_EQ(inspected.indexEntries.front().mode, QByteArray("100644"));
+                      CHECK_EQ(inspected.standardOutput, staged.indexAfter);
+                  });
+    }
     return suite.report();
 }
