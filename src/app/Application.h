@@ -38,6 +38,10 @@ public:
         QString recoveryDirectory;
         // Loaded files align their sources with this, or with the engine's default.
         std::shared_ptr<const CorrespondenceAlgorithm> correspondence;
+        // The configuration files Git reads. A waiting launcher must have
+        // started its Git with the same ones. The process environment selects
+        // them by default, as it does for the Git the session's tasks run.
+        git::GitEnvironment gitEnvironment = git::GitEnvironment::fromProcess();
     };
     explicit Application(Config config, QObject *parent = nullptr);
 

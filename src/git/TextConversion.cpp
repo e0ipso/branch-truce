@@ -63,7 +63,7 @@ public:
         FinalPolicy,
         FinalIndex
     };
-    State(TextConversion *owner, const QString &executable) : q(owner), adapter(executable, owner)
+    State(TextConversion *owner, GitProgram program) : q(owner), adapter(std::move(program), owner)
     {
         QObject::connect(&adapter, &GitAdapter::finished, q, [this](const Result &result) { consume(result); });
     }
@@ -265,11 +265,14 @@ public:
     bool cancelled = false;
 };
 
-TextConversion::TextConversion(const QString &executable, QObject *parent)
-    : QObject(parent), d(std::make_unique<State>(this, executable))
+TextConversion::TextConversion(GitProgram program, QObject *parent)
+    : QObject(parent), d(std::make_unique<State>(this, std::move(program)))
 {
     qRegisterMetaType<TextConversionResult>();
 }
+TextConversion::TextConversion(const QString &executable, QObject *parent)
+    : TextConversion(GitProgram{executable, GitEnvironment::fromProcess()}, parent)
+{}
 TextConversion::~TextConversion() = default;
 bool TextConversion::start(const TextConversionRequest &request)
 {

@@ -514,7 +514,8 @@ int main(int argc, char **argv)
         peer_credentials::foreign = true;
         char mergetool[] = "--mergetool";
         char *launcherArguments[] = {argv[0], mergetool, nullptr};
-        return runMergetoolLauncher(2, launcherArguments, gitOnPath());
+        return runMergetoolLauncher(2, launcherArguments,
+                                    git::GitProgram{gitOnPath(), git::GitEnvironment::fromProcess()});
     }
     QCoreApplication application(argc, argv);
     // The English catalog supplies the plural forms these checks read.

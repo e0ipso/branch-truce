@@ -36,8 +36,10 @@ void selectControlsStyle(const QQmlEngine &engine)
 int main(int argc, char *argv[])
 {
     // The one PATH lookup for Git. Every Git call in this process runs this
-    // executable; it is empty when Git is not on PATH.
-    const auto git = QStandardPaths::findExecutable(QStringLiteral("git"));
+    // executable; it is empty when Git is not on PATH. It reads the
+    // configuration this process's environment selects, as the user's Git does.
+    const branch_truce::git::GitProgram git{QStandardPaths::findExecutable(QStringLiteral("git")),
+                                            branch_truce::git::GitEnvironment::fromProcess()};
     // Git's mergetool command line names the launcher mode first. Only that
     // position selects it, so a repository or option value spelled
     // --mergetool still opens the window.
@@ -109,7 +111,7 @@ int main(int argc, char *argv[])
     if (paths.size() > 1) parser.showHelp(2);
 
     // The composition root: the data roots and services this session uses.
-    branch_truce::Application session({git, branch_truce::newRecoveryDirectory(), {}});
+    branch_truce::Application session({git.executable, branch_truce::newRecoveryDirectory(), {}, git.environment});
     QQmlApplicationEngine engine;
     selectControlsStyle(engine);
     engine.setInitialProperties(session.windowProperties());

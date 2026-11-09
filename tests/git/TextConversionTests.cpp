@@ -35,12 +35,12 @@ int main(int argc, char **argv)
                 repo.git({"update-index", "-z", "--index-info"},
                          "0 " + QByteArray(40, '0') + "\ttracked.txt" + nul + format.mode + ' ' + object
                              + " 2\ttracked.txt" + nul + format.mode + ' ' + object + " 3\ttracked.txt" + nul);
-                GitAdapter adapter(test_support::gitExecutable());
+                GitAdapter adapter(repo.program());
                 const auto captured = run(adapter, repo.request(Operation::InspectIndex, "tracked.txt"));
                 CHECK(captured.outcome == Outcome::Success && captured.indexEntries.size() == 2);
                 auto sourceRequest = textRequest(repo, TextOperation::ReadSource, object);
                 sourceRequest.stages = captured.indexEntries;
-                TextConversion conversion(test_support::gitExecutable());
+                TextConversion conversion(repo.program());
                 const auto source = run(conversion, sourceRequest);
                 CHECK(source.outcome == Outcome::Success && source.text);
                 CHECK(source.text->canonicalBytes == format.canonicalSource
@@ -103,7 +103,7 @@ int main(int argc, char **argv)
                           writeFile(repo.path(".gitattributes"), "tracked.txt " + invalid.attributes + '\n');
                       const auto object = repo.git({"hash-object", "-w", "--stdin"}, invalid.canonical).trimmed();
                       const auto before = repo.git({"ls-files", "--stage", "-z"});
-                      TextConversion conversion(test_support::gitExecutable());
+                      TextConversion conversion(repo.program());
                       const auto rejected = run(conversion, textRequest(repo, TextOperation::ReadSource, object));
                       CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
                       CHECK(rejected.failure == invalid.failure);
@@ -119,7 +119,7 @@ int main(int argc, char **argv)
                 writeFile(repo.path(".gitattributes"), QByteArray("tracked.txt ") + attributes + '\n');
                 const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
                 const auto before = repo.git({"ls-files", "--stage", "-z"});
-                TextConversion conversion(test_support::gitExecutable());
+                TextConversion conversion(repo.program());
                 for (const auto operation : {TextOperation::ReadSource, TextOperation::PrepareResult}) {
                     auto request = textRequest(repo, operation, object);
                     request.editedUtf8 = "reviewed\n";
@@ -136,7 +136,7 @@ int main(int argc, char **argv)
                       Repository repo;
                       const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
                       const auto before = repo.git({"ls-files", "--stage", "-z"});
-                      TextConversion conversion(test_support::gitExecutable());
+                      TextConversion conversion(repo.program());
                       auto request = textRequest(repo, TextOperation::PrepareResult, object);
                       request.editedUtf8 = invalid.bytes;
                       const auto rejected = run(conversion, request);
@@ -160,7 +160,7 @@ int main(int argc, char **argv)
             }
             const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
             const auto before = repo.git({"ls-files", "--stage", "-z"});
-            TextConversion conversion(test_support::gitExecutable());
+            TextConversion conversion(repo.program());
             auto request = textRequest(repo, TextOperation::PrepareResult, object);
             if (bigEndian) request.launchResultFormat = conversion_fixtures::beBomCrLf;
             request.editedUtf8 = "reviewed\n";
@@ -176,7 +176,7 @@ int main(int argc, char **argv)
         Repository repo;
         writeFile(repo.path(".gitattributes"), "tracked.txt text ident eol=lf\n");
         const auto object = repo.git({"hash-object", "-w", "--stdin"}, "$Id$\n").trimmed();
-        TextConversion conversion(test_support::gitExecutable());
+        TextConversion conversion(repo.program());
         const auto source = run(conversion, textRequest(repo, TextOperation::ReadSource, object));
         CHECK(source.outcome == Outcome::Success && source.text);
         CHECK(source.text->document.utf8 == "$Id: " + object + " $\n");
@@ -189,7 +189,7 @@ int main(int argc, char **argv)
         CHECK(unchanged.text->canonicalObjectId == object && unchanged.text->canonicalBytes == "$Id$\n");
         CHECK(unchanged.text->document.originalBytes == "$Id: " + object + " $\n");
         writeFile(repo.path("tracked.txt"), unchanged.text->document.originalBytes);
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         const auto staged = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
         CHECK(staged.outcome == Outcome::Success);
         CHECK(staged.indexAfter == "100644 " + object + " 0\ttracked.txt" + QByteArray(1, '\0'));
@@ -213,7 +213,7 @@ int main(int argc, char **argv)
             const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
             auto request = textRequest(repo, TextOperation::ReadSource, object);
             for (auto &entry : request.stages) entry.mode = mode;
-            TextConversion conversion(test_support::gitExecutable());
+            TextConversion conversion(repo.program());
             const auto source = run(conversion, request);
             CHECK(source.outcome == Outcome::Success && source.text);
             CHECK(source.text->mode == mode && source.text->sourceMode == mode);
@@ -222,7 +222,7 @@ int main(int argc, char **argv)
             const auto prepared = run(conversion, request);
             CHECK(prepared.outcome == Outcome::Success && prepared.text && prepared.text->mode == mode);
             writeFile(repo.path("tracked.txt"), prepared.text->document.originalBytes, mode == "100755");
-            GitAdapter adapter(test_support::gitExecutable());
+            GitAdapter adapter(repo.program());
             CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
             auto verify = textRequest(repo, TextOperation::VerifyPublished, {});
             verify.expected = prepared.text;
@@ -231,7 +231,7 @@ int main(int argc, char **argv)
         }
         Repository repo;
         const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
-        TextConversion conversion(test_support::gitExecutable());
+        TextConversion conversion(repo.program());
         using Stages = QList<IndexEntry>;
         const std::pair<const char *, void (*)(Stages &)> damaged[] = {
             {"no stage 2", [](Stages &stages) { stages.removeFirst(); }},
@@ -265,13 +265,13 @@ int main(int argc, char **argv)
     suite.run("publication verification rejects changed canonical identity, policy and prepared text", [] {
         Repository repo;
         const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
-        TextConversion conversion(test_support::gitExecutable());
+        TextConversion conversion(repo.program());
         auto request = textRequest(repo, TextOperation::PrepareResult, object);
         request.editedUtf8 = "reviewed\n";
         const auto prepared = run(conversion, request);
         CHECK(prepared.outcome == Outcome::Success && prepared.text);
         writeFile(repo.path("tracked.txt"), prepared.text->document.originalBytes);
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
         auto verify = textRequest(repo, TextOperation::VerifyPublished, {});
         verify.expected = prepared.text;
@@ -301,7 +301,7 @@ int main(int argc, char **argv)
     suite.run("a cancel before the queued start completes once as cancelled", [] {
         Repository repo;
         const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
-        TextConversion conversion(test_support::gitExecutable());
+        TextConversion conversion(repo.program());
         test_support::AsyncCompletion completion(conversion, &TextConversion::finished);
         CHECK(conversion.start(textRequest(repo, TextOperation::ReadSource, object)));
         conversion.cancel();
@@ -317,7 +317,7 @@ int main(int argc, char **argv)
         const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
         mergetool_fixture::GitGate gate("tracked.txt");
         gate.close(QStringLiteral("check-attr"));
-        TextConversion conversion(gate.executable());
+        TextConversion conversion(repo.program(gate.executable()));
         test_support::AsyncCompletion completion(conversion, &TextConversion::finished);
         CHECK(conversion.start(textRequest(repo, TextOperation::ReadSource, object)));
         test_support::waitUntil([&] { return !gate.held().isEmpty(); }, "the source read never reached Git");
@@ -346,7 +346,7 @@ int main(int argc, char **argv)
         gate.open();
         gate.releaseAll();
         // A later conversion's result is queued behind anything the destroyed one posted.
-        TextConversion later(test_support::gitExecutable());
+        TextConversion later(repo.program());
         CHECK_EQ(run(later, textRequest(repo, TextOperation::ReadSource, object)).outcome, Outcome::Success);
         CHECK_EQ(completions, 0);
     });

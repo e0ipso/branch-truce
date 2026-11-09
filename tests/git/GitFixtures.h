@@ -60,6 +60,13 @@ public:
     {
         return {operation, root(), file, {}, 71, 93};
     }
+    // Git as the code under test runs it: the fixture's configuration only, never the account's
+    // or the system's.
+    GitProgram program(const QString &executable = test_support::gitExecutable(),
+                       int deadlineMs = kGitRequestDeadlineMs) const
+    {
+        return {executable, GitEnvironment::from(environment()), deadlineMs};
+    }
     QString executables() const { return executables_.path(); }
     // Installs `script` as the private executable git-fixture and returns its path.
     QString executable(const QByteArray &script) const
@@ -258,7 +265,7 @@ inline void checkUnsupportedDiscovery(Repository &repo, const QString &reason,
                                       Outcome outcome = Outcome::InspectionFailure)
 {
     const auto before = repo.git({"ls-files", "--unmerged", "-z"});
-    GitAdapter adapter(test_support::gitExecutable());
+    GitAdapter adapter(repo.program());
     const auto result = run(adapter, repo.request(Operation::DiscoverRepository));
     CHECK(result.outcome == outcome && !result.repository.supported);
     CHECK(result.repository.operation == RepositoryOperation::Unsupported);

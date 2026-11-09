@@ -22,7 +22,6 @@ namespace detail {
 // preflight cannot consume the operation or a later representation.
 inline constexpr qsizetype outputLimit = static_cast<qsizetype>(branch_truce::kMaxGitReadBytes);
 inline constexpr qsizetype inspectionLimit = 1024 * 1024;
-inline constexpr int deadlineMs = 30000;
 inline constexpr int inspectionMs = 5000;
 inline constexpr int killGraceMs = 200;
 
@@ -50,7 +49,7 @@ public:
         CanonicalCheckout
     };
     // Process control (GitAdapterProcess.cpp).
-    explicit State(GitAdapter *owner, const QString &selected);
+    State(GitAdapter *owner, GitProgram selected);
     ~State();
     void signalGroup(int signal);
     void closeLaunchPipe();
@@ -109,6 +108,8 @@ public:
     QTimer deadline;
     QTimer escalation;
     QString executable;
+    GitEnvironment environment;
+    int deadlineMs = kGitRequestDeadlineMs;
     QString directory;
     QString mutationKey;
     QString originalObjectDirectory;

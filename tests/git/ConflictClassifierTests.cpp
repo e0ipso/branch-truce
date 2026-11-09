@@ -75,7 +75,7 @@ int main(int argc, char **argv)
             const QByteArray manual = "preserved manual UTF-8 \xc3\xa9\n";
             writeFile(repo.path("tracked.txt"), manual);
 
-            GitAdapter adapter(test_support::gitExecutable());
+            GitAdapter adapter(repo.program());
             auto entries = run(adapter, repo.request(Operation::ListUnmerged)).indexEntries;
             for (auto &entry : entries) {
                 if (entry.stage == 3 && scenario == "mode-disagreement") entry.mode = "100755";
@@ -126,7 +126,7 @@ int main(int argc, char **argv)
             }
             const auto before = repo.git({"ls-files", "--stage", "-z"});
             const auto objects = repo.git({"count-objects", "-v"});
-            ConflictClassifier classifier(test_support::gitExecutable());
+            ConflictClassifier classifier(repo.program());
             const auto result = run(classifier, {repo.root(), 71, 93});
             CHECK(result.outcome == Outcome::Success && result.repository.supported && result.conflicts.size() == 1);
             const auto &conflict = result.conflicts.front();
@@ -168,7 +168,7 @@ int main(int argc, char **argv)
         commitFixture(repo, "main addition");
         repo.git({"merge", "--no-edit", "side"}, {}, 1);
         const auto before = repo.git({"ls-files", "--stage", "-z"});
-        ConflictClassifier classifier(test_support::gitExecutable());
+        ConflictClassifier classifier(repo.program());
         const auto result = run(classifier, {repo.root(), 71, 93});
         CHECK(result.outcome == Outcome::Success && result.conflicts.size() == 1);
         const auto &conflict = result.conflicts.front();
@@ -196,7 +196,7 @@ int main(int argc, char **argv)
         repo.git({"merge", "--no-edit", "side"}, {}, 1);
         for (const auto &name : names) repo.writePath(name, "manual UTF-8 \xc3\xa9\n");
         const auto before = repo.git({"ls-files", "--stage", "-z"});
-        ConflictClassifier classifier(test_support::gitExecutable());
+        ConflictClassifier classifier(repo.program());
         const auto result = run(classifier, {repo.root(), 71, 93});
         CHECK(result.outcome == Outcome::Success && result.conflicts.size() == names.size());
         QSet<QByteArray> seen;
@@ -247,7 +247,7 @@ int main(int argc, char **argv)
                 CHECK(QDir().mkpath(directory + "/nested"));
                 auto request = repo.request(Operation::DiscoverRepository);
                 request.directory = directory + "/nested";
-                GitAdapter adapter(test_support::gitExecutable());
+                GitAdapter adapter(repo.program());
                 const auto before = repo.git({"-C", directory, "ls-files", "--stage", "-z"});
                 const auto result = run(adapter, request);
                 checkOperationIdentity(result, history, RepositoryOperation::Rebase, currentHead, earlier);
@@ -263,7 +263,7 @@ int main(int argc, char **argv)
                     CHECK(entry.objectId
                           == repo.git({"rev-parse", QString::fromLatin1(sourceCommit) + ":tracked.txt"}).trimmed());
                 }
-                ConflictClassifier classifier(test_support::gitExecutable());
+                ConflictClassifier classifier(repo.program());
                 const auto classified = run(classifier, {request.directory, 71, 93});
                 CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == 1);
                 CHECK(classified.conflicts.front().editable() && classified.conflicts.front().sources.size() == 3);
@@ -294,7 +294,7 @@ int main(int argc, char **argv)
             checkUnsupportedDiscovery(repo, mailbox ? "apply-mailbox" : "cherry-pick, revert and sequencer",
                                       Outcome::Success);
             const auto before = repo.git({"ls-files", "--stage", "-z"});
-            ConflictClassifier classifier(test_support::gitExecutable());
+            ConflictClassifier classifier(repo.program());
             const auto result = run(classifier, {repo.root(), 71, 93});
             CHECK(result.outcome == Outcome::Success && result.conflicts.size() == 1);
             const auto &conflict = result.conflicts.front();
@@ -308,7 +308,7 @@ int main(int argc, char **argv)
     suite.run("a cancel before the queued start completes once as cancelled", [] {
         Repository repo;
         mergeStopped(repo);
-        ConflictClassifier classifier(test_support::gitExecutable());
+        ConflictClassifier classifier(repo.program());
         test_support::AsyncCompletion completion(classifier, &ConflictClassifier::finished);
         CHECK(classifier.start({repo.root(), 71, 93}));
         classifier.cancel();
@@ -326,7 +326,7 @@ int main(int argc, char **argv)
         const auto before = repo.index();
         mergetool_fixture::GitGate gate("tracked.txt");
         gate.close(QStringLiteral("check-attr"));
-        ConflictClassifier classifier(gate.executable());
+        ConflictClassifier classifier(repo.program(gate.executable()));
         test_support::AsyncCompletion completion(classifier, &ConflictClassifier::finished);
         CHECK(classifier.start({repo.root(), 71, 93}));
         waitForHeldSourceRead(gate);
@@ -343,7 +343,7 @@ int main(int argc, char **argv)
         mergeStopped(repo);
         mergetool_fixture::GitGate gate("tracked.txt");
         gate.close(QStringLiteral("check-attr"));
-        ConflictClassifier classifier(gate.executable());
+        ConflictClassifier classifier(repo.program(gate.executable()));
         test_support::AsyncCompletion completion(classifier, &ConflictClassifier::finished);
         CHECK(classifier.start({repo.root(), 71, 93}));
         waitForHeldSourceRead(gate);
@@ -361,7 +361,7 @@ int main(int argc, char **argv)
         mergeStopped(repo);
         mergetool_fixture::GitGate gate("tracked.txt");
         gate.close(QStringLiteral("check-attr"));
-        ConflictClassifier classifier(gate.executable());
+        ConflictClassifier classifier(repo.program(gate.executable()));
         test_support::AsyncCompletion completion(classifier, &ConflictClassifier::finished);
         CHECK(classifier.start({repo.root(), 71, 93}));
         waitForHeldSourceRead(gate);
@@ -393,7 +393,7 @@ int main(int argc, char **argv)
         gate.open();
         gate.releaseAll();
         // A later classification's result is queued behind anything the destroyed one posted.
-        ConflictClassifier later(test_support::gitExecutable());
+        ConflictClassifier later(repo.program());
         CHECK_EQ(run(later, {repo.root(), 71, 93}).outcome, Outcome::Success);
         CHECK_EQ(completions, 0);
         CHECK_EQ(repo.index(), before);

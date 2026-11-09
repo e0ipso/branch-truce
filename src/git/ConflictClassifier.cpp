@@ -128,8 +128,8 @@ void excludeUnreadResult(Conflict &conflict, ResultRead read)
 
 class ConflictClassifier::State {
 public:
-    State(ConflictClassifier *owner, const QString &executable)
-        : q(owner), adapter(executable, owner), conversion(executable, owner)
+    State(ConflictClassifier *owner, const GitProgram &program)
+        : q(owner), adapter(program, owner), conversion(program, owner)
     {
         QObject::connect(&adapter, &GitAdapter::finished, q, [this](const Result &observed) { discovered(observed); });
         QObject::connect(&conversion, &TextConversion::finished, q,
@@ -357,11 +357,14 @@ public:
     bool rechecking = false;
 };
 
-ConflictClassifier::ConflictClassifier(const QString &executable, QObject *parent)
-    : QObject(parent), d(std::make_unique<State>(this, executable))
+ConflictClassifier::ConflictClassifier(GitProgram program, QObject *parent)
+    : QObject(parent), d(std::make_unique<State>(this, program))
 {
     qRegisterMetaType<ConflictClassificationResult>();
 }
+ConflictClassifier::ConflictClassifier(const QString &executable, QObject *parent)
+    : ConflictClassifier(GitProgram{executable, GitEnvironment::fromProcess()}, parent)
+{}
 ConflictClassifier::~ConflictClassifier() = default;
 bool ConflictClassifier::start(const ConflictClassificationRequest &request)
 {

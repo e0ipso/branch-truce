@@ -44,6 +44,8 @@ struct TextConversionResult {
 class TextConversion final : public QObject {
     Q_OBJECT
 public:
+    explicit TextConversion(GitProgram program, QObject *parent = nullptr);
+    // Reads the configuration this process's environment selects.
     explicit TextConversion(const QString &executable, QObject *parent = nullptr);
     ~TextConversion() override;
     bool start(const TextConversionRequest &request);

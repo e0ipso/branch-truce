@@ -8,6 +8,8 @@
 #include <QString>
 #include <memory>
 
+class QProcessEnvironment;
+
 namespace branch_truce::git {
 
 enum class Operation {
@@ -114,11 +116,43 @@ struct Result {
     QByteArray canonicalObjectId;
 };
 
-// Use on the owning event-loop thread. The application selects the executable;
-// requests cannot override it, its environment, or its command arguments.
+// The variables that choose which configuration files Git reads. The Git the
+// adapter starts reads the same files as the user's own Git and a `git
+// mergetool` parent started from the same environment. Every other variable of
+// the Git child is fixed by the adapter.
+struct GitEnvironment {
+    QString home; // HOME
+    QString configHome; // XDG_CONFIG_HOME; empty lets Git use $HOME/.config
+    QString globalConfig; // GIT_CONFIG_GLOBAL; empty when unset
+    QString systemConfig; // GIT_CONFIG_SYSTEM; empty when unset
+    QString noSystem; // GIT_CONFIG_NOSYSTEM as given; empty when unset
+    bool operator==(const GitEnvironment &) const = default;
+    // Takes each path only when it is absolute. HOME falls back to the
+    // account's home directory, as before a desktop session sets it.
+    [[nodiscard]] static GitEnvironment from(const QProcessEnvironment &environment);
+    [[nodiscard]] static GitEnvironment fromProcess();
+};
+
+// How long one request may run, from its first Git process to its result.
+// Index reinspection after a mutation has its own shorter bound.
+inline constexpr int kGitRequestDeadlineMs = 30000;
+
+// Which Git runs, the configuration it reads and how long a request may take.
+// The composition root builds it once; requests cannot override any of it.
+struct GitProgram {
+    QString executable;
+    GitEnvironment environment;
+    int deadlineMs = kGitRequestDeadlineMs;
+};
+
+// Use on the owning event-loop thread. Requests cannot override the program,
+// its environment, or its command arguments.
 class GitAdapter final : public QObject {
     Q_OBJECT
 public:
+    explicit GitAdapter(GitProgram program, QObject *parent = nullptr);
+    // Reads the configuration this process's environment selects. For callers
+    // that hold only the executable.
     explicit GitAdapter(const QString &executable, QObject *parent = nullptr);
     ~GitAdapter() override;
     // Busy returns false without a result. Every accepted request completes once,
@@ -133,5 +167,10 @@ private:
     class State;
     std::unique_ptr<State> d;
 };
+
+// Runs one request to completion in a nested event loop and returns its
+// result. The adapter's own deadline bounds the wait. For headless callers
+// with no event loop of their own, such as the mergetool launcher.
+[[nodiscard]] Result runBlocking(const GitProgram &program, const Request &request);
 } // namespace branch_truce::git
 Q_DECLARE_METATYPE(branch_truce::git::Result)

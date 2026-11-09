@@ -4,15 +4,16 @@
 #include "GitParsing.h"
 
 #include <QDir>
+#include <QEventLoop>
 #include <QFileInfo>
 #include <QMutex>
 #include <QMutexLocker>
 #include <QSet>
 #include <QThread>
+#include <optional>
 
 namespace branch_truce::git {
 namespace {
-using detail::deadlineMs;
 using detail::exactPath;
 using detail::objectId;
 using detail::outputLimit;
@@ -123,11 +124,14 @@ void GitAdapter::State::releaseMutation()
     }
 }
 
-GitAdapter::GitAdapter(const QString &executable, QObject *parent)
-    : QObject(parent), d(std::make_unique<State>(this, executable))
+GitAdapter::GitAdapter(GitProgram program, QObject *parent)
+    : QObject(parent), d(std::make_unique<State>(this, std::move(program)))
 {
     qRegisterMetaType<Result>();
 }
+GitAdapter::GitAdapter(const QString &executable, QObject *parent)
+    : GitAdapter(GitProgram{executable, GitEnvironment::fromProcess()}, parent)
+{}
 GitAdapter::~GitAdapter() = default;
 bool GitAdapter::start(const Request &request)
 {
@@ -166,4 +170,24 @@ void GitAdapter::cancel()
     d->stop(Outcome::Cancelled, QStringLiteral("Git request cancelled"));
 }
 bool GitAdapter::busy() const { return d->active; }
+
+Result runBlocking(const GitProgram &program, const Request &request)
+{
+    GitAdapter adapter(program);
+    QEventLoop loop;
+    std::optional<Result> result;
+    QObject::connect(&adapter, &GitAdapter::finished, &loop, [&](const Result &value) {
+        result = value;
+        loop.quit();
+    });
+    if (!adapter.start(request)) {
+        Result refused;
+        refused.request = request;
+        refused.diagnostic = QStringLiteral("The Git request could not start");
+        return refused;
+    }
+    // Every accepted request completes within the adapter's deadline.
+    loop.exec();
+    return result.value_or(Result{});
+}
 } // namespace branch_truce::git

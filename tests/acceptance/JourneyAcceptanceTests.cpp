@@ -2832,7 +2832,8 @@ Item {
 int main(int argc, char **argv)
 {
     // Child mode: git mergetool starts this binary as the real launcher.
-    if (argc == 2 && std::strcmp(argv[1], "--mergetool") == 0) return runMergetoolLauncher(argc, argv, gitOnPath());
+    if (argc == 2 && std::strcmp(argv[1], "--mergetool") == 0)
+        return runMergetoolLauncher(argc, argv, git::GitProgram{gitOnPath(), git::GitEnvironment::fromProcess()});
     Sandbox shared;
     if (!shared.root.isValid() || !shared.runtime.isValid()) return 2;
     sandbox = &shared;

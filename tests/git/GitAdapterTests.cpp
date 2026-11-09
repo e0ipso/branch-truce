@@ -7,7 +7,6 @@
 
 #include <QCoreApplication>
 #include <QDir>
-#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
@@ -191,7 +190,7 @@ int main(int argc, char **argv)
             auto request = repo.request(Operation::DiscoverRepository);
             request.directory = directory + "/nested";
             const auto before = repo.git({"-C", directory, "ls-files", "--unmerged", "-z"});
-            GitAdapter adapter(test_support::gitExecutable());
+            GitAdapter adapter(repo.program());
             const auto result = run(adapter, request);
             checkOperationIdentity(result, history, RepositoryOperation::Merge);
             CHECK(result.repository.worktreeRoot == directory && result.indexEntries.size() == 3);
@@ -199,7 +198,7 @@ int main(int argc, char **argv)
                 QString::fromUtf8(repo.git({"-C", directory, "rev-parse", "--absolute-git-dir"}).trimmed());
             CHECK(result.repository.gitDirectory == QFileInfo(gitDirectory).canonicalFilePath());
             writeFile(directory + "/tracked.txt", "launch-time manual result\n");
-            ConflictClassifier classifier(test_support::gitExecutable());
+            ConflictClassifier classifier(repo.program());
             const auto classified = run(classifier, {request.directory, 71, 93});
             CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == 1);
             const auto &conflict = classified.conflicts.front();
@@ -221,7 +220,7 @@ int main(int argc, char **argv)
         const auto history = conflictHistory(repo);
         repo.git({"merge", "--no-edit", "side"}, {}, 1);
         repo.git({"branch", "same-commit", "main"});
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         const auto result = run(adapter, repo.request(Operation::DiscoverRepository));
         CHECK(result.outcome == Outcome::Success && result.repository.supported);
         CHECK(result.repository.stage2.commitId == history.main);
@@ -283,11 +282,11 @@ int main(int argc, char **argv)
         const auto history = conflictHistory(repo, true);
         repo.git({"merge", "--no-edit", "side"}, {}, 1);
         const auto before = repo.git({"ls-files", "--unmerged", "-z"});
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         const auto discovered = run(adapter, repo.request(Operation::DiscoverRepository));
         checkOperationIdentity(discovered, history, RepositoryOperation::Merge);
         CHECK(discovered.indexEntries.size() == 6);
-        ConflictClassifier classifier(test_support::gitExecutable());
+        ConflictClassifier classifier(repo.program());
         const auto classified = run(classifier, {repo.root(), 71, 93});
         CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == 2);
         for (const auto &conflict : classified.conflicts) CHECK(conflict.editable() && conflict.sources.size() == 3);
@@ -339,7 +338,7 @@ int main(int argc, char **argv)
     });
     suite.run("named reads use real Git and preserve request identity", [] {
         Repository repo;
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         for (const auto operation :
              {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::Status, Operation::ReadConfiguration,
               Operation::InspectIndex, Operation::ReadAttributes}) {
@@ -366,7 +365,7 @@ int main(int argc, char **argv)
             CHECK(result.outcome == Outcome::Success && result.standardOutput == "before\n");
             CHECK(result.mutation == Mutation::NotAttempted);
         }
-        TextConversion conversion(test_support::gitExecutable());
+        TextConversion conversion(repo.program());
         const auto source = run(conversion, textRequest(repo, TextOperation::ReadSource, object));
         CHECK(source.outcome == Outcome::Success && source.text);
         CHECK(source.text->canonicalBytes == "before\n" && source.text->document.utf8 == "before\n");
@@ -412,7 +411,7 @@ int main(int argc, char **argv)
         const auto unrelatedIndex = repo.git({"ls-files", "--stage", "-z", "--", QString::fromUtf8(unrelated)});
         CHECK(unrelatedIndex.startsWith("100755 "));
         repo.writePath(unrelated, "unstaged content must remain unstaged\n");
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         const auto result = run(adapter, repo.request(Operation::ListUnmerged));
         CHECK(result.outcome == Outcome::Success);
         CHECK(result.standardOutput == repo.git({"ls-files", "--unmerged", "-z"}));
@@ -426,7 +425,7 @@ int main(int argc, char **argv)
         CHECK(discovery.indexEntries.size() == result.indexEntries.size());
         CHECK(discovery.repository.stage2.commitId.isEmpty() && discovery.repository.stage3.commitId.isEmpty());
         CHECK(discovery.repository.diagnostic.contains("no verified merge or rebase"));
-        ConflictClassifier classifier(test_support::gitExecutable());
+        ConflictClassifier classifier(repo.program());
         const auto classified = run(classifier, {repo.root(), 71, 93});
         CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == names.size());
         for (const auto &conflict : classified.conflicts) {
@@ -474,7 +473,7 @@ int main(int argc, char **argv)
     suite.run("enumerated and staged paths retain special and non-UTF-8 bytes", [] {
         Repository repo;
         CHECK(QDir(repo.root()).mkdir("nested"));
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         const auto names = oddPaths();
         writeFile(repo.path("a.txt"), "must remain untracked\n");
         writeFile(repo.path("b.txt"), "must remain untracked\n");
@@ -525,7 +524,7 @@ int main(int argc, char **argv)
     });
     suite.run("invalid operands cannot reach Git or mutate the fixture", [] {
         Repository repo;
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         const auto before = repo.git({"ls-files", "--stage", "-z"});
         const QList<QByteArray> paths{"",          "/absolute", "../escape",          "dir/../file", "./tracked.txt",
                                       "dir//file", "dir/",      QByteArray("a\0b", 3)};
@@ -557,7 +556,7 @@ int main(int argc, char **argv)
         writeFile(repo.path("dir/file"), "data\n");
         CHECK(QFile::link(repo.path("tracked.txt"), repo.path("link")));
         CHECK(QFile::link(repo.path("dir"), repo.path("linked-dir")));
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         for (const auto &path : {"link", "linked-dir/file", "dir", "missing"}) {
             const auto result = run(adapter, repo.request(Operation::StageFile, path));
             CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
@@ -575,19 +574,19 @@ int main(int argc, char **argv)
     suite.run("executable trust is checked before launch and again after selection", [] {
         Repository repo;
         const auto selected = repo.executable("#!/bin/sh\nprintf 'must not run' > .unsafe-executable\n");
-        GitAdapter changed(selected);
+        GitAdapter changed(repo.program(selected));
         writeFile(selected, "#!/bin/sh\nprintf 'changed executable must not run' > .unsafe-executable\n", true);
         CHECK(run(changed, repo.request(Operation::Status)).outcome == Outcome::Rejected);
-        GitAdapter relative("git");
+        GitAdapter relative(repo.program(QStringLiteral("git")));
         CHECK(run(relative, repo.request(Operation::Status)).outcome == Outcome::Rejected);
         const auto inside = repo.path("git");
         writeFile(inside, "#!/bin/sh\nprintf unsafe > .unsafe-executable\n", true);
-        GitAdapter inRepository(inside);
+        GitAdapter inRepository(repo.program(inside));
         CHECK(run(inRepository, repo.request(Operation::Status)).outcome == Outcome::Rejected);
         CHECK(QFile::setPermissions(selected,
                                     QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
                                         | QFileDevice::WriteGroup));
-        GitAdapter writable(selected);
+        GitAdapter writable(repo.program(selected));
         CHECK(run(writable, repo.request(Operation::Status)).outcome == Outcome::Rejected);
         CHECK(!QFile::exists(repo.path(".unsafe-executable")));
     });
@@ -602,7 +601,7 @@ int main(int argc, char **argv)
         EnvironmentValue configKey("GIT_CONFIG_KEY_0", "core.fsmonitor");
         EnvironmentValue configValue("GIT_CONFIG_VALUE_0", "must-not-run");
         EnvironmentValue path("PATH", repo.root().toUtf8());
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         writeFile(repo.path("tracked.txt"), "new\n");
         const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
         CHECK(result.outcome == Outcome::Success && result.mutation == Mutation::ObservedChanged);
@@ -622,7 +621,7 @@ int main(int argc, char **argv)
                           const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
                           repo.git({"config", QString::fromLatin1(key),
                                     QByteArray(kind) == "required" ? "true" : "touch .helper-ran; cat"});
-                          GitAdapter adapter(test_support::gitExecutable());
+                          GitAdapter adapter(repo.program());
                           // Policy inspection and raw identity reads never invoke filters.
                           CHECK(run(adapter, repo.request(Operation::ReadAttributes, "tracked.txt")).outcome
                                 == Outcome::Success);
@@ -640,7 +639,7 @@ int main(int argc, char **argv)
                               CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
                               CHECK(result.diagnostic.contains("Outside app") && result.diagnostic.contains("filter"));
                           }
-                          TextConversion conversion(test_support::gitExecutable());
+                          TextConversion conversion(repo.program());
                           for (const auto operation : {TextOperation::ReadSource, TextOperation::PrepareResult}) {
                               auto request = textRequest(repo, operation, blob);
                               request.editedUtf8 = "reviewed\n";
@@ -656,7 +655,7 @@ int main(int argc, char **argv)
     }
     suite.run("unused filters leave reads and staging allowed, and every request rechecks the policy", [] {
         Repository repo;
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
         repo.git({"config", "filter.unused.clean", "touch .helper-ran; cat"});
         repo.git({"config", "filter.unused.smudge", "touch .helper-ran; cat"});
@@ -665,7 +664,7 @@ int main(int argc, char **argv)
         auto source = repo.request(Operation::MaterializeSource, "tracked.txt");
         source.objectId = blob;
         CHECK(run(adapter, source).standardOutput == "before\r\n");
-        TextConversion conversion(test_support::gitExecutable());
+        TextConversion conversion(repo.program());
         const auto decoded = run(conversion, textRequest(repo, TextOperation::ReadSource, blob));
         CHECK(decoded.outcome == Outcome::Success && decoded.text);
         CHECK(decoded.text->document.utf8 == "before\n" && decoded.text->document.originalBytes == "before\r\n");
@@ -714,7 +713,7 @@ int main(int argc, char **argv)
             repo.git({"config", "core.hooksPath", hooksPath});
             const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
             const auto before = repo.git({"ls-files", "--stage", "-z"});
-            GitAdapter adapter(test_support::gitExecutable());
+            GitAdapter adapter(repo.program());
             writeFile(repo.path(QString(hooksPath) + "/pre-commit"), "#!/bin/sh\ntouch .hook-ran\n", true);
             CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
             const auto hook = repo.path(QString(hooksPath) + "/post-index-change");
@@ -738,7 +737,7 @@ int main(int argc, char **argv)
     }
     suite.run("core.fsmonitor blocks parent staging and staging but no read", [] {
         Repository repo;
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
         const auto before = repo.git({"ls-files", "--stage", "-z"});
         repo.git({"config", "core.fsmonitor", "touch .monitor-ran"});
@@ -775,7 +774,7 @@ int main(int argc, char **argv)
         const auto alternatePath = QFile::encodeName(repo.path(".git/objects")) + '\n';
         auto request = repo.request(Operation::InspectIndex, "tracked.txt");
         request.directory = clone;
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         CHECK(run(adapter, request).outcome == Outcome::Success);
         writeFile(alternates, "# shared with base\n" + alternatePath);
         CHECK(repo.git({"-C", clone, "cat-file", "-t", "HEAD"}) == "commit\n");
@@ -830,7 +829,7 @@ int main(int argc, char **argv)
                       }
                       repo.git({"config", "remote.origin.url", repo.root()});
                       repo.git({"config", "remote.origin.uploadpack", "touch .fetch-ran"});
-                      GitAdapter adapter(test_support::gitExecutable());
+                      GitAdapter adapter(repo.program());
                       for (const auto operation :
                            {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::InspectIndex,
                             Operation::ReadObject, Operation::ReadAttributes, Operation::Status,
@@ -881,7 +880,7 @@ int main(int argc, char **argv)
             CHECK(QFile::exists(repo.path(".handoff-released")) && !QFile::exists(repo.path(".handoff-rejected")));
             CHECK(repo.git({"ls-files", "--unmerged", "-z"}).isEmpty());
             CHECK(repo.git({"show", ":tracked.txt"}) == "resolved\n");
-            GitAdapter adapter(test_support::gitExecutable());
+            GitAdapter adapter(repo.program());
             const auto acknowledged = run(adapter, repo.request(Operation::InspectIndex, "tracked.txt"));
             CHECK(acknowledged.outcome == Outcome::Success && acknowledged.indexEntries.size() == 1);
             CHECK(acknowledged.indexEntries.first().stage == 0);
@@ -912,13 +911,13 @@ int main(int argc, char **argv)
         Repository repo;
         const auto preflight =
             repo.executable("#!/bin/sh\nprintf 'preflight stdout'\nprintf 'preflight stderr' >&2\nexit 17\n");
-        GitAdapter failing(preflight);
+        GitAdapter failing(repo.program(preflight));
         const auto result = run(failing, repo.request(Operation::Status));
         CHECK(result.outcome == Outcome::ExitFailure && result.exitCode == -1);
         CHECK(result.standardOutput == "preflight stdout" && result.standardError == "preflight stderr");
         CHECK(result.diagnostic.contains("17") && result.mutation == Mutation::NotAttempted);
         const auto missing = repo.executable("#!/definitely/missing/interpreter\n");
-        GitAdapter launch(missing);
+        GitAdapter launch(repo.program(missing));
         const auto absent = run(launch, repo.request(Operation::Status));
         CHECK(absent.outcome == Outcome::LaunchFailure && absent.exitCode == -1);
         CHECK(!absent.diagnostic.isEmpty() && absent.mutation == Mutation::NotAttempted);
@@ -926,7 +925,7 @@ int main(int argc, char **argv)
     suite.run("a crashed operation retains its output without a normal exit code", [] {
         Repository repo;
         const auto fake = repo.fakeGit("printf 'crash stdout'\nprintf 'crash stderr' >&2\nkill -KILL $$\n");
-        GitAdapter adapter(fake);
+        GitAdapter adapter(repo.program(fake));
         const auto result = run(adapter, repo.request(Operation::Status));
         CHECK(result.outcome == Outcome::ProcessFailure && result.exitCode == -1);
         CHECK(result.standardOutput == "crash stdout" && result.standardError == "crash stderr");
@@ -938,7 +937,7 @@ int main(int argc, char **argv)
         QObject receiver;
         int completions = 0;
         {
-            GitAdapter adapter(test_support::gitExecutable());
+            GitAdapter adapter(repo.program());
             QObject::connect(&adapter, &GitAdapter::finished, &receiver, [&](const Result &) { ++completions; });
             CHECK(adapter.start(repo.request(Operation::StageFile, "tracked.txt")));
         }
@@ -946,7 +945,7 @@ int main(int argc, char **argv)
         CHECK(completions == 0);
         // A later request's result is queued behind anything the destroyed adapter posted, so its
         // arrival shows that no completion of the destroyed adapter is still on its way.
-        GitAdapter later(test_support::gitExecutable());
+        GitAdapter later(repo.program());
         CHECK(run(later, repo.request(Operation::InspectIndex, "tracked.txt")).outcome == Outcome::Success);
         CHECK(completions == 0);
         CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
@@ -955,7 +954,7 @@ int main(int argc, char **argv)
         Repository repo;
         const auto fake =
             repo.fakeGit(": > .after-add\nprintf 'operation stdout'\nprintf 'operation stderr' >&2\nexit 23\n");
-        GitAdapter adapter(fake);
+        GitAdapter adapter(repo.program(fake));
         const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
         CHECK(result.outcome == Outcome::ExitFailure && result.exitCode == 23);
         CHECK(result.standardOutput == "operation stdout" && result.standardError == "operation stderr");
@@ -967,7 +966,7 @@ int main(int argc, char **argv)
         const auto fake =
             repo.fakeGit(": > .after-add\nprintf 'original stdout'\nprintf 'original stderr' >&2\nexit 23\n",
                          "printf 'inspection stdout'\nprintf 'inspection stderr' >&2\nexit 29\n");
-        GitAdapter adapter(fake);
+        GitAdapter adapter(repo.program(fake));
         const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
         CHECK(result.outcome == Outcome::ExitFailure && result.exitCode == 23);
         CHECK(result.mutation == Mutation::Uncertain && result.standardOutput == "original stdout");
@@ -979,7 +978,7 @@ int main(int argc, char **argv)
         Repository repo;
         const auto fake =
             repo.fakeGit(": > .after-add\nprintf 'successful add stdout'\n", "printf 'bad index'\nexit 29\n");
-        GitAdapter adapter(fake);
+        GitAdapter adapter(repo.program(fake));
         const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
         CHECK(result.outcome == Outcome::InspectionFailure && result.exitCode == 0);
         CHECK(result.mutation == Mutation::Uncertain && result.standardOutput == "successful add stdout");
@@ -993,7 +992,7 @@ int main(int argc, char **argv)
             // All supplied bytes are fixed test data with no shell operands.
             const auto inspection = entry.isEmpty() ? QByteArray(":\n") : "printf '" + entry + "\\0'\n";
             const auto fake = repo.fakeGit(": > .after-add\n", inspection);
-            GitAdapter adapter(fake);
+            GitAdapter adapter(repo.program(fake));
             const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
             CHECK(result.outcome == Outcome::InspectionFailure && result.exitCode == 0);
             CHECK(result.mutation
@@ -1002,7 +1001,7 @@ int main(int argc, char **argv)
     });
     suite.run("cancellation before queued launch completes once without mutation", [] {
         Repository repo;
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         Completion completion(adapter);
         CHECK(adapter.start(repo.request(Operation::StageFile, "tracked.txt")));
         CHECK(completion.results.empty() && adapter.busy());
@@ -1036,7 +1035,7 @@ int main(int argc, char **argv)
             }
             inspection += "printf '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\\ttracked.txt\\0'\n";
             const auto fake = repo.fakeGit(operation, inspection);
-            GitAdapter adapter(fake);
+            GitAdapter adapter(repo.program(fake));
             Completion completion(adapter);
             const WhenCreated cancelThere(repo.path(finished ? ".inspection-started" : ".operation-started"), [&] {
                 adapter.cancel();
@@ -1064,8 +1063,8 @@ int main(int argc, char **argv)
         Repository repo;
         const auto fake = repo.fakeGit(": > .after-add\n: > .operation-started\nread -r line < .release\n");
         ScriptGate release(repo.path(".release"));
-        GitAdapter first(fake);
-        GitAdapter second(fake);
+        GitAdapter first(repo.program(fake));
+        GitAdapter second(repo.program(fake));
         Completion firstDone(first);
         Completion secondDone(second);
         const WhenCreated startSecond(repo.path(".operation-started"),
@@ -1082,7 +1081,7 @@ int main(int argc, char **argv)
         Repository repo;
         const auto fake =
             repo.fakeGit(": > .after-add\nprintf 'operation prefix'\n/usr/bin/head -c 9000000 /dev/zero\n");
-        GitAdapter adapter(fake);
+        GitAdapter adapter(repo.program(fake));
         const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
         CHECK(result.outcome == Outcome::OutputLimit && result.outputIncomplete);
         CHECK(result.standardOutput.startsWith("operation prefix"));
@@ -1097,7 +1096,7 @@ int main(int argc, char **argv)
             Repository repo;
             const auto fake = repo.fakeGit(QByteArray(": > .after-add\n/usr/bin/head -c ") + QByteArray::number(bytes)
                                            + " /dev/zero\n");
-            GitAdapter adapter(fake);
+            GitAdapter adapter(repo.program(fake));
             const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
             if (bytes <= static_cast<qsizetype>(branch_truce::kMaxGitReadBytes)) {
                 CHECK(result.outcome == Outcome::Success && !result.outputIncomplete);
@@ -1116,7 +1115,7 @@ int main(int argc, char **argv)
             Repository repo;
             const auto fake = repo.fakeGit(": > .status-ran\n", ":\n", {},
                                            ": > .attributes-ran\n/usr/bin/head -c 9000000 /dev/zero\n");
-            GitAdapter adapter(fake);
+            GitAdapter adapter(repo.program(fake));
             const auto result = run(adapter, repo.request(Operation::Status));
             CHECK(result.outcome == Outcome::Success && result.standardOutput.isEmpty());
             CHECK(!result.outputIncomplete && result.mutation == Mutation::NotAttempted);
@@ -1136,7 +1135,7 @@ int main(int argc, char **argv)
             if (scenario == 2) attributes += "printf 'tracked.txt\\0filter\\0unused'\n";
             const auto fake =
                 repo.fakeGit(": > .status-ran\n", ":\n", "printf 'filter.unused.clean\\ncat\\0'\n", attributes);
-            GitAdapter adapter(fake);
+            GitAdapter adapter(repo.program(fake));
             const auto result = run(adapter, repo.request(Operation::Status));
             CHECK(result.outcome == (scenario == 0 ? Outcome::Success : Outcome::Rejected));
             CHECK(!result.outputIncomplete && result.mutation == Mutation::NotAttempted);
@@ -1150,14 +1149,13 @@ int main(int argc, char **argv)
     suite.run("the operation deadline cancels the process without reporting success", [] {
         Repository repo;
         const auto fake = repo.fakeGit("printf 'deadline prefix'\nsleep 60\n");
-        GitAdapter adapter(fake);
+        // A short deadline, so the case does not wait the production 30 seconds.
+        GitAdapter adapter(repo.program(fake, 300));
         Completion completion(adapter);
-        QElapsedTimer clock;
-        clock.start();
-        const auto result = completion.run(repo.request(Operation::Status), 35000);
+        const auto result = completion.run(repo.request(Operation::Status));
         CHECK(result.outcome == Outcome::TimedOut && result.mutation == Mutation::NotAttempted);
-        CHECK(result.standardOutput == "deadline prefix" && result.diagnostic.contains("deadline"));
-        CHECK(clock.elapsed() >= 25000 && clock.elapsed() < 35000);
+        CHECK(result.standardOutput == "deadline prefix");
+        CHECK_EQ(result.diagnostic, QStringLiteral("Git exceeded the 0.3 second deadline"));
     });
     suite.run("expanding canonical text is size-validated before reading", [] {
         const auto gitLimit = QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes));
@@ -1167,7 +1165,7 @@ int main(int argc, char **argv)
         const auto index = repo.git({"ls-files", "--stage", "-z"});
         const auto inputBlock = QByteArray::fromHex("2d4e").repeated(39) + QByteArray::fromHex("0a00");
         const auto canonicalBlock = QByteArray::fromHex("e4b8ad").repeated(39) + '\n';
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         for (const auto inputSize : {2000000, 3000000, 6000000}) {
             auto request = repo.request(Operation::CanonicalizeText, "tracked.txt");
             request.input = inputBlock.repeated(inputSize / inputBlock.size());
@@ -1202,7 +1200,7 @@ int main(int argc, char **argv)
         request.input = QByteArray(static_cast<qsizetype>(branch_truce::kMaxGitReadBytes), 'a');
         for (qsizetype i = 79; i < request.input.size(); i += 80) request.input[i] = '\n';
         const auto expected = repo.git({"hash-object", "--no-filters", "--stdin"}, request.input).trimmed();
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         const auto result = run(adapter, request);
         CHECK(result.outcome == Outcome::Success && !result.outputIncomplete);
         CHECK(result.standardOutput == request.input && result.canonicalBytes == request.input);
@@ -1216,13 +1214,13 @@ int main(int argc, char **argv)
         const auto history = conflictHistory(repo);
         CHECK_EQ(history.main.size(), 64);
         repo.git({"merge", "--no-edit", "side"}, {}, 1);
-        GitAdapter adapter(test_support::gitExecutable());
+        GitAdapter adapter(repo.program());
         const auto discovered = run(adapter, repo.request(Operation::DiscoverRepository));
         checkOperationIdentity(discovered, history, RepositoryOperation::Merge);
         CHECK_EQ(discovered.indexEntries.size(), 3);
         for (const auto &entry : discovered.indexEntries) CHECK_EQ(entry.objectId.size(), 64);
         writeFile(repo.path("tracked.txt"), "manual result\n");
-        ConflictClassifier classifier(test_support::gitExecutable());
+        ConflictClassifier classifier(repo.program());
         const auto classified = run(classifier, {repo.root(), 71, 93});
         CHECK_EQ(classified.outcome, Outcome::Success);
         CHECK_EQ(classified.conflicts.size(), 1);
@@ -1240,7 +1238,7 @@ int main(int argc, char **argv)
         Repository repo;
         const auto fake =
             repo.fakeGit(": > .after-add\nprintf 'error prefix' >&2\n/usr/bin/head -c 9000000 /dev/zero >&2\n");
-        GitAdapter adapter(fake);
+        GitAdapter adapter(repo.program(fake));
         const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
         CHECK_EQ(result.outcome, Outcome::OutputLimit);
         CHECK(result.outputIncomplete);
@@ -1259,7 +1257,7 @@ int main(int argc, char **argv)
                       const auto executable =
                           scripted ? repo.fakeGit(": > .after-add\n") : test_support::gitExecutable();
                       writeFile(repo.path("tracked.txt"), "after\n");
-                      GitAdapter adapter(executable);
+                      GitAdapter adapter(repo.program(executable));
                       const auto staged = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
                       CHECK_EQ(staged.outcome, Outcome::Success);
                       CHECK_EQ(staged.exitCode, 0);

@@ -5,14 +5,12 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
-#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QLocalSocket>
 #include <QProcess>
 #include <QTextStream>
 #include <QThread>
-#include <QTimer>
 #include <QUuid>
 #include <climits>
 #include <optional>
@@ -128,7 +126,7 @@ bool connectUntilDeadline(QLocalSocket *socket, const QString &name, qint64 dead
 }
 }
 
-int runMergetoolLauncher(int argc, char **argv, const QString &gitExecutable)
+int runMergetoolLauncher(int argc, char **argv, const git::GitProgram &git)
 {
     QCoreApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
@@ -137,26 +135,15 @@ int runMergetoolLauncher(int argc, char **argv, const QString &gitExecutable)
     const auto repositoryPath = mergetoolRepositoryPath(mergedPath);
     if (!repositoryPath) return fail(QStringLiteral("MERGED is missing or is not a repository path."));
 
-    git::GitAdapter adapter(gitExecutable);
-    std::optional<git::Result> discovered;
-    QEventLoop discovery;
-    QTimer discoveryTimeout;
-    discoveryTimeout.setSingleShot(true);
-    QObject::connect(&adapter, &git::GitAdapter::finished, &discovery, [&](const git::Result &result) {
-        discovered = result;
-        discovery.quit();
-    });
-    QObject::connect(&discoveryTimeout, &QTimer::timeout, &discovery, &QEventLoop::quit);
     git::Request request;
     request.operation = git::Operation::DiscoverRepository;
     request.directory = QDir::currentPath();
-    if (!adapter.start(request)) return fail(QStringLiteral("Repository discovery could not start."));
-    discoveryTimeout.start(20000);
-    discovery.exec();
-    if (!discovered || discovered->outcome != git::Outcome::Success || !discovered->repository.supported) {
-        return fail(discovered && !discovered->diagnostic.isEmpty()
-                        ? discovered->diagnostic
-                        : QStringLiteral("This repository operation cannot join a mergetool session."));
+    // The adapter's deadline bounds discovery, and a timeout reports itself.
+    const auto discovered = git::runBlocking(git, request);
+    if (discovered.outcome != git::Outcome::Success || !discovered.repository.supported) {
+        const auto reason = !discovered.diagnostic.isEmpty() ? discovered.diagnostic : discovered.repository.diagnostic;
+        return fail(!reason.isEmpty() ? reason
+                                      : QStringLiteral("This repository operation cannot join a mergetool session."));
     }
 
     MergetoolSources sources;
@@ -174,21 +161,21 @@ int runMergetoolLauncher(int argc, char **argv, const QString &gitExecutable)
         || !readSide("REMOTE", &sources.remote, &sources.remotePresent))
         return fail(error);
 
-    const auto key = mergetoolSessionKey(discovered->repository);
+    const auto key = mergetoolSessionKey(discovered.repository);
     const auto invocation = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const auto intake =
         mergetoolIntakeRoot() + QLatin1Char('/') + QString::fromLatin1(key) + QLatin1Char('/') + invocation;
     if (key.isEmpty() || !writeMergetoolIntake(intake, invocation, sources, &error))
         return fail(error.isEmpty() ? QStringLiteral("The mergetool inputs could not be kept.") : error);
 
-    const auto server = mergetoolServerName(discovered->repository);
+    const auto server = mergetoolServerName(discovered.repository);
     const bool noSpawn = qEnvironmentVariableIsSet("BRANCH_TRUCE_MERGETOOL_NO_SPAWN");
     QLocalSocket socket;
     bool connected = connectSession(&socket, server, 5);
     if (!connected && !noSpawn) {
         const auto program = guiProgram(&error);
         if (!program) return fail(error);
-        if (!startSession(*program, discovered->repository.worktreeRoot, sources.path))
+        if (!startSession(*program, discovered.repository.worktreeRoot, sources.path))
             return fail(QStringLiteral("%1 could not be started.").arg(*program));
         connected = connectUntilDeadline(&socket, server, kPostSpawnListenDeadlineMs);
     }
