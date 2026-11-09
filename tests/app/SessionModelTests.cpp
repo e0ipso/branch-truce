@@ -4,6 +4,7 @@
 #include "app/Selection.h"
 #include "app/SessionModel.h"
 #include "app/Translations.h"
+#include "fixtures/ApplicationIdentity.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/RecoveryFaults.h"
 #include "fixtures/RecoveryJournal.h"
@@ -713,10 +714,7 @@ public:
             CHECK(!model.data(other.index(0), SessionModel::PathRole).isValid());
         });
         suite.run("recovery root ignores the organization name and finds earlier stores", [] {
-            const auto application = QCoreApplication::applicationName();
-            const auto organization = QCoreApplication::organizationName();
-            QCoreApplication::setApplicationName("Branch Truce");
-            QCoreApplication::setOrganizationName({});
+            test_support::ScopedApplicationIdentity identity("Branch Truce", {});
             const auto root =
                 QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/Branch Truce/recovery/v1";
             // The earlier build's root: AppLocalDataLocation with no organization name.
@@ -737,8 +735,6 @@ public:
             const auto replay = replayRecovery(storage::RecoveryStore(stored));
             CHECK(replay.succeeded && replay.userWork && replay.files.size() == 1
                   && replay.files.front().current().draft == unsavedDraft());
-            QCoreApplication::setApplicationName(application);
-            QCoreApplication::setOrganizationName(organization);
         });
         suite.run("named roles preserve byte paths, Unicode and 64-bit decision order", [] {
             TestSession model;

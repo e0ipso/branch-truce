@@ -5,6 +5,7 @@
 #include "core/ResourceLimits.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
+#include "fixtures/GuiState.h"
 #include "fixtures/QuickScene.h"
 #include "fixtures/RecoveryFaults.h"
 #include "recovery/RecoveryRestore.h"
@@ -1582,6 +1583,7 @@ public:
                 CHECK(fixture.object(entry)->property("action").value<QObject *>() == shared);
                 CHECK(fixture.object(entry)->property("enabled").toBool() == enabled);
             };
+            const test_support::ScopedClipboard clipboard;
             QGuiApplication::clipboard()->setText("clipboard");
             CHECK(fixture.controller.editor()->editable());
             CHECK(!fixture.item("resultText")->property("readOnly").toBool());
@@ -1611,7 +1613,6 @@ public:
             CHECK(fixture.controller.selection()->select("choices"));
             QGuiApplication::clipboard()->setText("clipboard");
             checkEnabled("paste", "pasteResult", "resultMenuPaste", true);
-            QGuiApplication::clipboard()->clear();
         });
         suite.run("the result menu opens from a right click, the Menu key and Shift+F10", [] {
             Fixture fixture;
@@ -1649,6 +1650,7 @@ public:
         suite.run("lossless editing gates toolbar menu and native paste together", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "line\xe2\x80\xa8separator\n"));
             const auto before = fixture.file().current();
+            const test_support::ScopedClipboard clipboard;
             QGuiApplication::clipboard()->setText("replacement");
             CHECK(!fixture.controller.editor()->editable());
             CHECK(fixture.item("resultText")->property("readOnly").toBool());
@@ -1662,11 +1664,11 @@ public:
             CHECK(!fixture.controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Paste));
             fixture.key(Qt::Key_V, Qt::ControlModifier);
             CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
-            QGuiApplication::clipboard()->clear();
         });
         suite.run("clipboard menus and shortcuts preserve atomic history and recovery", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
             const auto initial = fixture.file().current();
+            const test_support::ScopedClipboard clipboard;
             CHECK(fixture.controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::SelectAll));
             CHECK(fixture.controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Copy));
             CHECK(QGuiApplication::clipboard()->text() == "original\n" && fixture.file().current().id == initial.id);
@@ -1695,7 +1697,6 @@ public:
             fixture.key(Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
             CHECK(fixture.file().current().draft == keyboard.draft);
             fixture.checkRecovered(keyboard.draft);
-            QGuiApplication::clipboard()->clear();
         });
         suite.run("a file click refused while composing leaves the list on the selected row", [] {
             Fixture fixture;
@@ -3799,11 +3800,9 @@ public:
             CHECK(QMetaObject::invokeMethod(dialog, "close"));
             settleFor("handoff closed after leave", [&] { return !opened(); });
             // After the deliberate leave the close handler accepts the close.
-            const bool quitOnClose = QGuiApplication::quitOnLastWindowClosed();
-            QGuiApplication::setQuitOnLastWindowClosed(false);
+            const test_support::ScopedQuitOnClose keepRunning(false);
             fixture.window->close();
             settleFor("window closed after leave", [&] { return !fixture.window->isVisible(); });
-            QGuiApplication::setQuitOnLastWindowClosed(quitOnClose);
             CHECK(!opened() && ended == 1);
         });
         suite.run("an insertion past 4000 lines is acknowledged", [] {
@@ -3819,6 +3818,7 @@ public:
             CHECK(!editor->property("readOnly").toBool() && editor->isEnabled());
             CHECK(fixture.text().toStdString() == atThreshold);
             fixture.select(0, 0);
+            const test_support::ScopedClipboard clipboard;
             QGuiApplication::clipboard()->setText(QStringLiteral("\n"));
             CHECK(fixture.controller.editor()->clipboard(ResultEditorAdapter::ClipboardAction::Paste));
             const auto edited = fixture.file().current();
@@ -3827,7 +3827,6 @@ public:
             CHECK(!editor->property("readOnly").toBool() && editor->isEnabled());
             CHECK(fixture.controller.feedback()->message().isEmpty());
             fixture.checkRecovered(edited.draft);
-            QGuiApplication::clipboard()->clear();
         });
         suite.run("a file over 4000 lines loads only after the user confirms it", [] {
             Fixture fixture;
@@ -4010,7 +4009,6 @@ int main(int argc, char **argv)
                   << QGuiApplication::platformName().toStdString() << '\n';
         return 2;
     }
-    const auto result = ComparisonViewTests{}.run(selection);
-    QGuiApplication::clipboard()->clear();
-    return result;
+    const test_support::ScopedClipboard clipboard;
+    return ComparisonViewTests{}.run(selection);
 }
