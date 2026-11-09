@@ -1,0 +1,35 @@
+# C++ formatting. Run tools/check-format.sh to check, or tools/check-format.sh --fix to rewrite.
+---
+Language: Cpp
+BasedOnStyle: WebKit
+ColumnLimit: 120
+IndentWidth: 4
+PointerAlignment: Right
+ReferenceAlignment: Right
+BreakBeforeBraces: Custom
+BraceWrapping: {AfterFunction: true, AfterClass: false, AfterStruct: false, AfterNamespace: false, AfterEnum: false, AfterControlStatement: Never, BeforeElse: false, BeforeCatch: false, BeforeLambdaBody: false, SplitEmptyFunction: false, SplitEmptyRecord: false}
+NamespaceIndentation: None
+FixNamespaceComments: false
+AllowShortFunctionsOnASingleLine: All
+AllowShortLambdasOnASingleLine: All
+AllowShortEnumsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: true
+Cpp11BracedListStyle: true
+SpaceBeforeCpp11BracedList: false
+SpaceInEmptyBraces: Never
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive
+BreakConstructorInitializers: BeforeColon
+PackConstructorInitializers: NextLine
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 4
+AlignAfterOpenBracket: Align
+AlignOperands: DontAlign
+BreakBeforeBinaryOperators: NonAssignment
+AlignTrailingComments: false
+AllowAllArgumentsOnNextLine: true
+BinPackArguments: true
+BinPackParameters: true

@@ -47,6 +47,13 @@ jobs:
       - run: npm test
       - run: /usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C /bin/bash tools/check-shell-syntax.sh
 
+      - name: Install the pinned clang tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/clang-tools"
+          "$RUNNER_TEMP/clang-tools/bin/pip" install --require-hashes -r tools/clang-tools.txt
+          echo "$RUNNER_TEMP/clang-tools/bin" >> "$GITHUB_PATH"
+      - run: tools/check-format.sh
+
       - name: Core and sanitizer CTest
         run: |
           ./tools/prepare-worktree.sh core
