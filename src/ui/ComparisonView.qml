@@ -264,6 +264,85 @@ ColumnLayout {
         return {decisions: decisions, combinations: combinations}
     }
     readonly property var resultSections: kept("sections:result", resultSectionsFor(file, markerFold))
+    // The conflict the source headers resolve: its section and each side's section choice,
+    // or an empty object when no undecided conflict is left. Folded marker blocks move
+    // the cursor past them, so the stepper's stop and the next conflict also count.
+    readonly property var activeConflict: kept("conflict:active", activeConflictFor(file,
+        resultPane.blocks.lineAt(resultPane.editor.cursorPosition), controller.navigationTarget))
+    // The undecided conflict at the cursor's line, its marker lines included; else the
+    // stepper's undecided stop in this file; else the next undecided conflict after the
+    // cursor, wrapping to the first.
+    function activeConflictFor(file: SelectedFile, line: int, navigation: var): var {
+        const choices = file.choices || []
+        const regions = file.regions || []
+        const sections = {}
+        const owners = {}
+        for (let i = 0; i < choices.length && i < regions.length; ++i) {
+            const region = regions[i]
+            if (region.id !== choices[i].id)
+                continue
+            owners[region.id] = region.section
+            if (region.scope !== "section")
+                continue
+            if (!sections[region.section])
+                sections[region.section] = {begin: -1, end: -1, marked: false}
+            const section = sections[region.section]
+            section[region.side] = Object.assign({undecided: region.state === "undecided"}, choices[i])
+            if (region.mapped && region.resultLineBegin > 0) {
+                const end = Math.max(region.resultLineBegin + 1, region.resultLineEnd)
+                section.begin = section.begin < 0 ? region.resultLineBegin : Math.min(section.begin, region.resultLineBegin)
+                section.end = Math.max(section.end, end)
+            }
+        }
+        // A marker block spans its conflict's marker lines too.
+        const blocks = file.markerBlocks || []
+        for (let i = 0; i < blocks.length; ++i) {
+            const ids = blocks[i].sections || []
+            for (let j = 0; j < ids.length; ++j) {
+                const section = sections[ids[j]]
+                if (!section)
+                    continue
+                section.marked = true
+                section.begin = blocks[i].resultLineBegin
+                section.end = blocks[i].resultLineEnd
+            }
+        }
+        // A conflict is a marked section or one with a contribution from each side.
+        const conflicts = Object.keys(sections).map(id => Object.assign({section: id}, sections[id]))
+            .filter(entry => entry.marked || !!entry.stage2 && !!entry.stage3)
+            .filter(entry => [entry.stage2, entry.stage3].some(choice => !!choice && choice.undecided))
+            .sort((a, b) => a.begin - b.begin)
+        const view = entry => entry ? {section: entry.section, stage2: entry.stage2 || null,
+            stage3: entry.stage3 || null} : {}
+        const here = conflicts.find(entry => entry.begin > 0 && line >= entry.begin && line < entry.end)
+        if (here)
+            return view(here)
+        if (navigation && navigation.fileId === controller.selectedFileId && navigation.contributionId) {
+            const stop = conflicts.find(entry => entry.section === owners[navigation.contributionId])
+            if (stop)
+                return view(stop)
+        }
+        return view(conflicts.find(entry => entry.begin >= line) || conflicts[0])
+    }
+    function resolvable(side: string): bool {
+        const choice = activeConflict[side]
+        return !!choice && !!choice.available
+    }
+    function resolveText(side: string): string {
+        return side === "stage2" ? qsTr("Resolve the current conflict using Left")
+            : qsTr("Resolve the current conflict using Right")
+    }
+    // The conflict the header would resolve, or why it cannot.
+    function resolveHint(side: string): string {
+        if (!activeConflict.section)
+            return qsTr("No undecided conflict is left in this file.")
+        const choice = activeConflict[side]
+        if (!choice)
+            return qsTr("This side has no contribution to the conflict.")
+        if (!choice.available)
+            return choice.detail || qsTr("This side of the conflict is already decided.")
+        return choice.label
+    }
     function followEarlier(): void {
         panesByRole.paneShown(earlierPane.paneName)
     }
@@ -408,6 +487,16 @@ ColumnLayout {
                 paneName: "stage2"
                 paneRole: qsTr("Left source")
                 choiceEdge: "right"
+                resolveText: comparison.resolveText("stage2")
+                resolveHint: comparison.resolveHint("stage2")
+                resolveEnabled: comparison.choosing && comparison.resolvable("stage2")
+                onResolveChosen: {
+                    const id = comparison.activeConflict.stage2.id
+                    comparison.setHover("stage2Resolve", null)
+                    comparison.choiceChosen(id, ChoicePreviewFlow.ResolveUsingSide)
+                }
+                onResolveHovered: hovered => comparison.setHover("stage2Resolve", hovered && comparison.resolvable("stage2")
+                    ? comparison.choiceTarget(comparison.activeConflict.stage2.id) : null)
                 source: comparison.file.stage2 || ({})
                 versionName: source.commitId === comparison.controller.loader.stage2CommitId
                     ? comparison.controller.loader.stage2Name : ""
@@ -454,6 +543,16 @@ ColumnLayout {
                 paneName: "stage3"
                 paneRole: qsTr("Right source")
                 choiceEdge: "left"
+                resolveText: comparison.resolveText("stage3")
+                resolveHint: comparison.resolveHint("stage3")
+                resolveEnabled: comparison.choosing && comparison.resolvable("stage3")
+                onResolveChosen: {
+                    const id = comparison.activeConflict.stage3.id
+                    comparison.setHover("stage3Resolve", null)
+                    comparison.choiceChosen(id, ChoicePreviewFlow.ResolveUsingSide)
+                }
+                onResolveHovered: hovered => comparison.setHover("stage3Resolve", hovered && comparison.resolvable("stage3")
+                    ? comparison.choiceTarget(comparison.activeConflict.stage3.id) : null)
                 source: comparison.file.stage3 || ({})
                 versionName: source.commitId === comparison.controller.loader.stage3CommitId
                     ? comparison.controller.loader.stage3Name : ""

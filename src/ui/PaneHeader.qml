@@ -15,9 +15,20 @@ Rectangle {
     property string description: ""
     property string identityRole: ""
     property string identityHash: ""
+    // Controls at the header's far edge, after the title and identity. Set
+    // showTrailing for a header that has them, so others keep their layout.
+    property alias trailing: trailingControls.data
+    property bool showTrailing: false
     // Font-scaled native units keep the wider side inset and shared text baseline.
     readonly property real sideInset: Kirigami.Units.largeSpacing + Kirigami.Units.smallSpacing
     readonly property real titleIdentitySpacing: Kirigami.Units.largeSpacing
+    // The width trailing controls can take while the title and identity keep
+    // their natural widths. It ignores the controls' own width, so they can
+    // pick a compact form from it without a binding loop.
+    readonly property real trailingRoom: header.width - 2 * header.sideInset
+        - Math.max(heading.Layout.minimumWidth, Math.min(heading.Layout.preferredWidth, heading.Layout.maximumWidth))
+        - (header.identity.length > 0 ? identityLabel.implicitWidth + header.titleIdentitySpacing : 0)
+        - 2 * header.titleIdentitySpacing
     implicitHeight: heading.implicitHeight + Kirigami.Units.mediumSpacing * 2 + separator.height
     color: Kirigami.Theme.alternateBackgroundColor
     RowLayout {
@@ -132,6 +143,21 @@ Rectangle {
                 Accessible.ignored: true
                 ToolTip.visible: false
             }
+        }
+        // The identity keeps its natural width; spare width goes here, so trailing
+        // controls stay at the far edge and the identity elides before they shrink.
+        Item {
+            visible: header.showTrailing
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+        }
+        // Its controls fill the text row's height, so the header keeps the
+        // height of the headers beside it.
+        RowLayout {
+            id: trailingControls
+            visible: header.showTrailing
+            spacing: Kirigami.Units.smallSpacing
+            Layout.fillHeight: true
         }
     }
     Kirigami.Separator {

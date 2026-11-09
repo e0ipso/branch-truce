@@ -1100,6 +1100,94 @@ public:
             QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
             CHECK(!recursiveHeaderWarning.load());
         });
+        suite.run("source headers resolve the current conflict from their side", [] {
+            Fixture fixture(test_support::markedFile());
+            settlePanes(fixture);
+            const auto header = [&](const char *label) {
+                auto *item = fixture.item(label);
+                while (item && !item->property("trailingRoom").isValid()) item = item->parentItem();
+                CHECK(item);
+                return item;
+            };
+            const auto button = [&](const char *side) {
+                return fixture.item((std::string(side) + "ResolveConflict").c_str());
+            };
+            const auto resultHeight = header("resultLabel")->height();
+            const auto checkLayout = [&](const char *side) {
+                const auto prefix = std::string(side);
+                auto *paneHeader = header((prefix + "Label").c_str());
+                CHECK(std::abs(paneHeader->height() - resultHeight) < 0.5);
+                const auto bounds = paneHeader->mapRectToScene(paneHeader->boundingRect());
+                const auto own = button(side)->mapRectToScene(button(side)->boundingRect());
+                CHECK(test_support::reachable(fixture.window, button(side)) && bounds.contains(own));
+                // The label shows only where the title and the full identity still fit.
+                const auto labelled = button(side)->property("display").toInt() == 2; // AbstractButton.TextBesideIcon
+                if (labelled) CHECK(!fixture.item((prefix + "Identity").c_str())->property("truncated").toBool());
+                return labelled;
+            };
+            const auto shown = [&](bool labelled) {
+                for (const auto *side : {"stage2", "stage3"})
+                    if ((button(side)->property("display").toInt() == 2) != labelled) return false;
+                return true;
+            };
+            CHECK(checkLayout("stage2") && checkLayout("stage3"));
+            fixture.window->resize(960, 540);
+            settleFor("icon-only header choices", [&] { return shown(false); });
+            CHECK(!checkLayout("stage2") && !checkLayout("stage3"));
+            fixture.window->resize(1500, 1100);
+            settleFor("labelled header choices", [&] { return shown(true); });
+            CHECK(checkLayout("stage2") && checkLayout("stage3"));
+
+            const auto enabled = [&](bool left, bool right) {
+                return button("stage2")->isEnabled() == left && button("stage3")->isEnabled() == right;
+            };
+            const auto cursorAt = [&](const char *text) {
+                const auto at = static_cast<int>(fixture.text().indexOf(QString::fromLatin1(text)));
+                CHECK(at >= 0);
+                fixture.select(at, at);
+            };
+            // The two sections in result order, and each side's decision on one.
+            QStringList sections;
+            for (const auto &entry : fixture.controller.selectedFile()->regions()) {
+                const auto region = entry.toMap();
+                const auto id = region.value("section").toString();
+                if (region.value("scope").toString() == "section" && !sections.contains(id)) sections.push_back(id);
+            }
+            CHECK(sections.size() == 2);
+            const auto state = [&](const QString &section, const char *side) {
+                for (const auto &entry : fixture.controller.selectedFile()->regions()) {
+                    const auto region = entry.toMap();
+                    if (region.value("section").toString() == section && region.value("scope").toString() == "section"
+                        && region.value("side").toString() == QLatin1String(side))
+                        return region.value("state").toString();
+                }
+                return QString();
+            };
+            const auto decided = [&](const QString &section, const char *accepted, const char *ignored) {
+                return state(section, accepted) == "accepted" && state(section, ignored) == "ignored";
+            };
+            const auto launch = fixture.file().current();
+            // The conflict at the cursor comes first, even with an earlier one undecided.
+            cursorAt("left later");
+            settleFor("both sides can resolve", [&] { return enabled(true, true); });
+            clickItem(fixture, button("stage2"));
+            settleFor("the second conflict resolved using Left", [&] { return decided(sections[1], "stage2", "stage3"); });
+            CHECK(state(sections[0], "stage2") == "undecided" && state(sections[0], "stage3") == "undecided");
+            CHECK(!fixture.object("replacementDialog")->property("visible").toBool());
+            // Outside every conflict the headers take the next undecided one, wrapping to the first.
+            cursorAt("tail");
+            settleFor("the first conflict is next", [&] { return enabled(true, true); });
+            CHECK(test_support::accessibleName(button("stage3")) == QStringLiteral("Resolve the current conflict using Right"));
+            clickItem(fixture, button("stage3"));
+            settleFor("the first conflict resolved using Right", [&] { return decided(sections[0], "stage3", "stage2"); });
+            CHECK(fixture.controller.selectedFile()->markerBlocks().isEmpty());
+            CHECK(fixture.text() == QStringLiteral("header\nright first\nright second\nbridge\nleft later\ntail\n"));
+            // With no undecided conflict left, neither header can resolve one.
+            settleFor("nothing left to resolve", [&] { return enabled(false, false); });
+            for (int i = 0; i < 2; ++i)
+                CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
+            CHECK(fixture.file().current().draft == launch.draft);
+        });
         suite.run("pane budget uses the laid-out editor row", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "result\n"));
             auto *editor = fixture.item("resultText");

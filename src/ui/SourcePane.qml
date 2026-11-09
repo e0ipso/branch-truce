@@ -35,6 +35,13 @@ ColumnLayout {
     }
     // The edge that faces the result, "left" or "right", for hover overlays.
     property string choiceEdge: ""
+    // The header resolves the conflict at the result cursor using this side while
+    // resolveText names that command. resolveHint says why it is unavailable.
+    property string resolveText: ""
+    property string resolveHint: ""
+    property bool resolveEnabled: false
+    signal resolveChosen()
+    signal resolveHovered(bool hovered)
     // Full identities remain available in the tooltips and accessibility descriptions.
     readonly property string commitId: sourcePane.source.commitId || ""
     readonly property string fullIdentity: qsTr("Verified commit: %1\nCaptured blob: %2")
@@ -50,6 +57,7 @@ ColumnLayout {
     signal scrolled(bool byUser)
     signal editorCompleted()
     PaneHeader {
+        id: paneHeader
         Layout.fillWidth: true
         titleName: sourcePane.paneName + "Label"
         title: sourcePane.versionName || sourcePane.source.label || sourcePane.paneRole
@@ -62,6 +70,39 @@ ColumnLayout {
             ? sourcePane.source.label || sourcePane.paneRole : ""
         identityHash: sourcePane.source.shortCommitId || ""
         description: sourcePane.fullIdentity
+        showTrailing: sourcePane.resolveText.length > 0
+        trailing: ToolButton {
+            id: resolveButton
+            objectName: sourcePane.paneName + "ResolveConflict"
+            enabled: sourcePane.resolveEnabled
+            text: qsTr("Use this side")
+            icon.name: sourcePane.choiceEdge === "right" ? "arrow-right" : "arrow-left"
+            icon.color: Kirigami.Theme.activeTextColor
+            // The label shows only beside a complete title and identity; otherwise the icon stands alone.
+            display: paneHeader.trailingRoom >= labelled.implicitWidth ? AbstractButton.TextBesideIcon
+                : AbstractButton.IconOnly
+            topPadding: 0
+            bottomPadding: 0
+            Layout.fillHeight: true
+            Layout.minimumWidth: implicitWidth
+            Accessible.name: sourcePane.resolveText
+            Accessible.description: sourcePane.resolveHint
+            ToolTip.text: sourcePane.resolveText + (sourcePane.resolveHint.length > 0 ? "\n" + sourcePane.resolveHint : "")
+            ToolTip.visible: hovered
+            ToolTip.delay: Kirigami.Units.toolTipDelay
+            onClicked: sourcePane.resolveChosen()
+            onHoveredChanged: sourcePane.resolveHovered(hovered)
+            // Measures the labelled form, which the button takes when it fits.
+            ToolButton {
+                id: labelled
+                visible: false
+                text: resolveButton.text
+                icon.name: resolveButton.icon.name
+                display: AbstractButton.TextBesideIcon
+                topPadding: 0
+                bottomPadding: 0
+            }
+        }
     }
     SourceContextMenuHost {
         id: sourceSurface
