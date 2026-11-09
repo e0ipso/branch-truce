@@ -16,6 +16,8 @@ add_test(NAME core.native-version
     COMMAND "${CMAKE_COMMAND}"
         "-DBRANCH_TRUCE_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/core/NativeVersionTests.cmake")
+# Skipped, not passed, on a host with none of dpkg, rpm and vercmp to check the order.
+set_tests_properties(core.native-version PROPERTIES TIMEOUT 60 LABELS unit SKIP_REGULAR_EXPRESSION "SKIPPED: ")
 # Engine unit tests: one executable per source file, Qt-free and without a display.
 function(branch_truce_add_core_test name source)
     string(REPLACE "." "_" target "branch_truce_${name}_tests")
@@ -43,6 +45,9 @@ set_tests_properties(tooling.icon-name-collection PROPERTIES TIMEOUT 30)
 add_test(NAME lifecycle.cli-guards
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/SetupGuards.sh")
 set_tests_properties(lifecycle.cli-guards PROPERTIES TIMEOUT 30)
+add_test(NAME lifecycle.hook-installer
+    COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/HookInstaller.sh")
+set_tests_properties(lifecycle.hook-installer PROPERTIES TIMEOUT 30)
 # Entries that start the real binary or Qt Quick run through this wrapper. It gives them a private
 # HOME and XDG directories, removes those afterwards and fails the run when it created anything
 # under the recovery root of the invoking user's real data directory.
