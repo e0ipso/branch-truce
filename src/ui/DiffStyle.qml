@@ -25,10 +25,6 @@ QtObject {
     function description(kind: string): string { return entry(kind).description }
     function tint(kind: string): real { return entry(kind).tint }
     function hasFill(kind: string): bool { return entry(kind).fill }
-    function pillTone(kind: string): string {
-        const role = entry(kind).role
-        return role === "neutral" ? "warning" : role === "disabled" ? "neutral" : role
-    }
     function textColor(kind: string, item: Item): color {
         switch (entry(kind).role) {
         case "positive": return item.Kirigami.Theme.positiveTextColor

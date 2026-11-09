@@ -42,7 +42,6 @@ qt_add_qml_module(branch_truce_ui STATIC
         MenuAction.qml
         MenuEntry.qml
         EditActions.qml
-        StatusChip.qml
         SnapshotPane.qml
         DialogBody.qml
         PreviewBody.qml

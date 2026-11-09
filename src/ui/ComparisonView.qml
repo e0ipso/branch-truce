@@ -430,6 +430,7 @@ ColumnLayout {
         id: passageSearch
         panes: panesByRole
         earlierShown: comparison.showEarlier && !!comparison.file.earlier && !!comparison.file.earlier.available
+        matchColor: Qt.alpha(Kirigami.Theme.neutralBackgroundColor, 0.75)
         onScopeIndexChanged: comparison.updateSearch()
     }
 

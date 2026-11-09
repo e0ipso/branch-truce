@@ -181,7 +181,7 @@ void PassageSearch::update(const QString &query, bool caseSensitive, bool active
                 ++count;
                 if (at == selected && editor->property("selectionEnd").toInt() == at + query.size()) index = count;
                 QTextCharFormat format;
-                format.setBackground(QColor(255, 210, 60, 120));
+                format.setBackground(matchColor_);
                 ranges.append(QTextLayout::FormatRange{static_cast<int>(at), static_cast<int>(query.size()), format});
             }
         }
