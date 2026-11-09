@@ -221,6 +221,7 @@ bool FileNavigator::navigateAcrossFiles(Mode mode, int direction)
         QString support = QStringLiteral("supported");
         if (file->support() == Support::OutsideApp) support = QStringLiteral("outside-app");
         else if (file->support() == Support::Unreadable) support = QStringLiteral("unreadable");
+        else if (file->support() == Support::LargeFile) support = QStringLiteral("large-file");
         stops.push_back({row, id, owners_.displayPath(id), support, progress.saved, progress.reviewed, progress.resolved,
             progress.earlierStaged, outside});
     }

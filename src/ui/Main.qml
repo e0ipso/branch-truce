@@ -19,6 +19,8 @@ Kirigami.ApplicationWindow {
         const path = selectedFile.path;
         const name = path.slice(path.lastIndexOf("/") + 1);
         const identity = name === path ? name : name + " (" + path + ")";
+        if (selectedFile.support === "large-file")
+            return qsTr("Are you sure you want to load it?");
         if (selectedFile.support === "unreadable")
             return qsTr("Branch Truce could not read %1. Check that the file is available and readable before resolving it outside Branch Truce. It remains outstanding until Git reports it resolved.").arg(identity);
         const guidance = binarySelection
@@ -141,6 +143,22 @@ Kirigami.ApplicationWindow {
     ReplacementDialog {
         id: replacementDialog
         controller: window.controller
+    }
+    Kirigami.Action {
+        id: selectedDetailsAction
+        objectName: "selectedProblemDetailsAction"
+        text: qsTr("Technical details")
+        icon.name: "documentinfo"
+        enabled: window.selectedFile.supportDetail.length > 0
+        onTriggered: selectedDetailsDialog.open()
+    }
+    // Loading may be slow, so a file over the line threshold waits for this.
+    Kirigami.Action {
+        id: loadLargeFileAction
+        objectName: "loadLargeFileAction"
+        text: qsTr("Load")
+        icon.name: "document-open"
+        onTriggered: window.controller.loadLargeFile(window.controller.selectedFileId)
     }
     Kirigami.Dialog {
         id: selectedDetailsDialog
@@ -383,17 +401,14 @@ Kirigami.ApplicationWindow {
                             onPlainTextRequested: item => window.showPlainText(item)
                             iconName: window.selectedFile.support === "outside-app"
                                 ? window.selectedFile.mimeIcon : window.selectedFile.statusIcon
-                            text: window.selectedFile.support === "unreadable" ? qsTr("Could not load this file")
+                            text: window.selectedFile.support === "large-file"
+                                ? qsTr("The file is over %1 lines").arg(window.controller.largeFileLines)
+                                : window.selectedFile.support === "unreadable" ? qsTr("Could not load this file")
                                 : window.binarySelection ? qsTr("Binary files are resolved outside Branch Truce")
                                 : qsTr("This file must be resolved outside Branch Truce")
                             explanation: window.selectedProblemExplanation()
-                            helpfulAction: Kirigami.Action {
-                                objectName: "selectedProblemDetailsAction"
-                                text: qsTr("Technical details")
-                                icon.name: "documentinfo"
-                                enabled: window.selectedFile.supportDetail.length > 0
-                                onTriggered: selectedDetailsDialog.open()
-                            }
+                            helpfulAction: window.selectedFile.support === "large-file"
+                                ? loadLargeFileAction : selectedDetailsAction
                         }
                         Repeater {
                             model: FileNotices {

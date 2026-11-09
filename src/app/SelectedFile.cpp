@@ -119,7 +119,9 @@ void SelectedFile::sync(const QString &fileId)
         fileName_ = file ? baseName(file->path()) : QString{};
         Q_EMIT identityChanged();
     }
-    const auto *snapshots = file ? file->snapshots() : nullptr;
+    // A large file shows no text until the user loads it.
+    const bool held = file && file->support() == Support::LargeFile;
+    const auto *snapshots = file && !held ? file->snapshots() : nullptr;
     const bool changedSources = selectionChanged || snapshots != sourceIdentity_;
     if (changedSources) {
         sourceIdentity_ = snapshots;
@@ -141,7 +143,7 @@ void SelectedFile::sync(const QString &fileId)
         Q_EMIT sourcesChanged();
     }
     reset_ = false;
-    update(resultText_, file ? text(file->current().draft.text) : QString{}, &SelectedFile::resultTextChanged);
+    update(resultText_, file && !held ? text(file->current().draft.text) : QString{}, &SelectedFile::resultTextChanged);
     update(decisions_, role(SessionModel::DecisionsRole).toList(), &SelectedFile::decisionsChanged);
     const auto revision = currentRevision();
     const auto support = file ? file->support() : Support::Unreadable;

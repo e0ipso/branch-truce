@@ -269,6 +269,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
         case Support::Supported: return QStringLiteral("supported");
         case Support::OutsideApp: return QStringLiteral("outside-app");
         case Support::Unreadable: return QStringLiteral("unreadable");
+        case Support::LargeFile: return QStringLiteral("large-file");
         }
         return {};
     case SupportDetailRole: return text(file.supportDetail());
@@ -553,6 +554,11 @@ SessionModel::Route SessionModel::routeAt(std::size_t row) const
             action = QStringLiteral("inspect");
             actionLabel = tr("See why it could not be read");
             break;
+        case FileStatus::LargeFile:
+            category = QStringLiteral("undecided");
+            action = QStringLiteral("load");
+            actionLabel = tr("Load the large file");
+            break;
         case FileStatus::OutcomeUncertain:
             category = QStringLiteral("failed");
             action = QStringLiteral("inspect");
@@ -731,5 +737,9 @@ Transition SessionModel::recordStage(const std::string &id, RevisionId revision,
 Transition SessionModel::setSupport(const std::string &id, Support support, std::string detail)
 {
     return update(id, QStringLiteral("support"), [&](auto &file) { return file.setSupport(support, std::move(detail)); });
+}
+Transition SessionModel::loadLargeFile(const std::string &id)
+{
+    return update(id, QStringLiteral("load-large"), [](auto &file) { return file.loadLargeFile(); });
 }
 }

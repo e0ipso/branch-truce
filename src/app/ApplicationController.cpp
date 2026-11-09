@@ -488,6 +488,12 @@ QString ApplicationController::discardedMessage(const FileSession *current) cons
         : tr("Discarded unsaved changes and restored the initial result. It is still unsaved, and the repository file is unchanged.");
 }
 
+bool ApplicationController::loadLargeFile(const QString &fileId)
+{
+    if (fileId != selectedFileId_) return commandResult(Transition::StaleRevision);
+    return commandResult(files_.loadLargeFile(fileId.toStdString()));
+}
+
 bool ApplicationController::discardUnsaved(const QString &fileId, const QString &revision)
 {
     const auto target = admitCommand(fileId, revision);

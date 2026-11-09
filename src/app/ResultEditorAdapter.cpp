@@ -300,7 +300,8 @@ void ResultEditorAdapter::sync()
         if (placedFileId_ != selectedFileId_()) place(nullptr, {});
         return;
     }
-    const auto desired = file ? text(stored) : QString{};
+    // A large file is not put in the editor until the user loads it.
+    const auto desired = file && file->support() != Support::LargeFile ? text(stored) : QString{};
     const auto shown = documentText(*document_);
     // Undo, redo or a choice replaces the text of the file already shown.
     const auto kept = file && shown != desired && placedFileId_ == selectedFileId_() ? location() : Location{};
