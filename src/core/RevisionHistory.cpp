@@ -45,14 +45,6 @@ void RevisionHistory::publish(Revision revision, Step step)
     prune();
 }
 
-void RevisionHistory::replaceCurrent(Revision revision)
-{
-    if (revision.id != current_->id) throw std::logic_error("A replaced revision must keep its id");
-    auto stored = std::make_shared<const Revision>(std::move(revision));
-    revisions_[stored->id] = stored;
-    current_ = std::move(stored);
-}
-
 void RevisionHistory::reopen(const Revision &revision)
 {
     auto found = revisions_.find(revision.id);

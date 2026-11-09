@@ -110,16 +110,9 @@ public:
     Transition replaceDraft(RevisionId expected, const Draft &draft,
                             const std::optional<std::set<std::string>> &handEdited = std::nullopt,
                             std::vector<ByteRange> handEditedRanges = {});
-    // Binding records a stable source contribution without changing decisions.
-    // Inspect the returned current anchor's state before offering a choice.
-    Transition bindSourceAnchor(RevisionId expected, SourceAnchor source);
     Transition editResult(RevisionId expected, const ResultEdit &edit);
     // Decision keys of a command must name a registered anchor.
     Transition applyCommand(const EditingCommand &command, bool confirmReplacement = false);
-    // A preview uses this exact anchor and revision. Passing confirmation after
-    // either changes cannot authorize a different replacement.
-    Transition replaceMapped(RevisionId expected, const ResultAnchor &anchor, std::string replacement,
-                             std::optional<Decision> decision = {}, bool confirmManual = false);
     Transition undo(RevisionId expected);
     Transition redo(RevisionId expected);
     Transition discardToCheckpoint(RevisionId expected);

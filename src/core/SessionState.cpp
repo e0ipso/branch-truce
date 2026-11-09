@@ -303,22 +303,6 @@ Transition FileSession::replaceDraft(RevisionId expected, const Draft &draft,
     return Transition::Applied;
 }
 
-Transition FileSession::bindSourceAnchor(RevisionId expected, SourceAnchor source)
-{
-    if (expected != current().id) return Transition::StaleRevision;
-    if (support_ != Support::Supported) return Transition::Blocked;
-    const auto *mapping = correspondence();
-    if (!mapping) return Transition::InvalidAnchor;
-    if (const auto *existing = mapping->anchor(source.contributionId))
-        return existing->source == source ? Transition::NoChange : Transition::InvalidAnchor;
-    auto updated = std::make_shared<CorrespondenceMap>(*mapping);
-    if (!updated->bind(std::move(source))) return Transition::InvalidAnchor;
-    auto revision = current();
-    revision.correspondence = std::move(updated);
-    history_.replaceCurrent(std::move(revision));
-    return Transition::Applied;
-}
-
 Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit)
 {
     if (expected != current().id) return Transition::StaleRevision;
@@ -411,31 +395,6 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
         return Transition::NoChange;
     history_.publish(successor(std::move(draft), std::make_shared<const CorrespondenceMap>(updated->atRevision(next))),
                      RevisionHistory::Step::Edit);
-    return Transition::Applied;
-}
-
-Transition FileSession::replaceMapped(RevisionId expected, const ResultAnchor &anchor, std::string replacement,
-                                      std::optional<Decision> decision, bool confirmManual)
-{
-    if (expected != current().id || anchor.revision != current().id) return Transition::StaleRevision;
-    if (support_ != Support::Supported) return Transition::Blocked;
-    const auto *mapping = correspondence();
-    const auto *bound = mapping ? mapping->anchor(anchor.source.contributionId) : nullptr;
-    if (!bound || *bound != anchor) return Transition::InvalidAnchor;
-    if (anchor.state == AnchorState::Ambiguous) return Transition::AmbiguousTarget;
-    if (anchor.state != AnchorState::Mapped || !anchor.result || !validByteRange(current().draft.text, *anchor.result)
-        || !editableText(replacement))
-        return Transition::InvalidAnchor;
-    if (anchor.manualOverlap && !confirmManual) return Transition::ConfirmationRequired;
-    auto draft = current().draft;
-    draft.text.replace(anchor.result->begin, anchor.result->end - anchor.result->begin, replacement);
-    if (exceedsEnvelope(draft.text)) return Transition::Blocked;
-    if (decision) draft.decisions[anchor.source.contributionId] = *decision;
-    if (draft == current().draft) return Transition::NoChange;
-    const ResultEdit edit{*anchor.result, std::move(replacement)};
-    auto updated = std::make_shared<const CorrespondenceMap>(
-        mapping->edited(history_.nextId(), edit, false, anchor.source.contributionId));
-    history_.publish(successor(std::move(draft), std::move(updated)), RevisionHistory::Step::Edit);
     return Transition::Applied;
 }
 

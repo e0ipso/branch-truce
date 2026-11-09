@@ -54,8 +54,6 @@ public:
     enum class Step { Edit, Undo, Redo };
     // Makes `revision`, whose id must be nextId(), current.
     void publish(Revision revision, Step step);
-    // Gives the current revision a new value under the same id.
-    void replaceCurrent(Revision revision);
     // Makes an earlier revision current again as a new entry, storing it
     // again if it was dropped.
     void reopen(const Revision &revision);

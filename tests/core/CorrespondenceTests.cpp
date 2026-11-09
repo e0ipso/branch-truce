@@ -83,6 +83,114 @@ bool rejected(const std::function<void()> &build)
     return false;
 }
 
+CorrespondenceMap mapped(const std::string &source, const std::string &result)
+{
+    auto captured = sources(source);
+    captured.launchResult.text = {result, result, {}};
+    return {1, captured, result};
+}
+
+ResultAnchor bound(CorrespondenceMap &map, SourceAnchor source)
+{
+    const auto id = source.contributionId;
+    CHECK(map.bind(std::move(source)));
+    return *map.anchor(id);
+}
+
+// The text after a choice replaces the anchor's range.
+CorrespondenceMap chosen(const CorrespondenceMap &map, const std::string &id, const std::string &replacement)
+{
+    return map.edited(map.revision() + 1, {*map.anchor(id)->result, replacement}, false, id);
+}
+
+void repeatedAndReorderedPassagesLeaveAnchorsAmbiguous()
+{
+    for (const auto &[source, result] : {std::pair{"head\nrepeat\nrepeat\nend\n", "head\nrepeat\nend\n"},
+                                         std::pair{"head\none\ntwo\nend\n", "head\ntwo\none\nend\n"}}) {
+        auto map = mapped(source, result);
+        const auto anchor = bound(map, {"choice", SourceSide::Stage2, {5, 12}});
+        CHECK(anchor.state == AnchorState::Ambiguous && !anchor.result);
+    }
+}
+
+void equalRepeatedPassagesKeepTheSelectedOccurrence()
+{
+    auto map = mapped("repeat\nmiddle\nrepeat\n", "manual prefix\nrepeat\nmiddle\nrepeat\n");
+    const auto anchor = bound(map, {"choice", SourceSide::Stage2, {14, 21}});
+    CHECK(anchor.state == AnchorState::Mapped && anchor.result == ByteRange{28, 35});
+    CHECK(chosen(map, "choice", "selected\n").text() == "manual prefix\nrepeat\nmiddle\nselected\n");
+}
+
+void anchorsBindOnlyOnCharacterBoundaries()
+{
+    const std::string text = "start\n\xc3\xa9\xf0\x9f\x98\x80\nend\n";
+    auto map = mapped(text, text);
+    CHECK(!map.bind({"inside-codepoint", SourceSide::Stage2, {7, 13}}));
+    CHECK(!map.bind({"", SourceSide::Stage2, {6, 13}}) && !map.bind({"other", SourceSide::Earlier, {0, 0}}));
+    CHECK(bound(map, {"choice", SourceSide::Stage2, {6, 13}}).result == ByteRange{6, 13});
+    CHECK(!map.bind({"choice", SourceSide::Stage2, {0, 6}}));
+    CHECK(rejected([&] { (void)map.edited(2, {{7, 8}, "x"}); }));
+    CHECK(rejected([&] { (void)map.edited(2, {{6, 13}, "\x80"}); }));
+    CHECK(chosen(map, "choice", "valid\n").text() == "start\nvalid\nend\n");
+}
+
+void sourceOnlyAnchorsUseTheDeletionSite()
+{
+    auto map = mapped("head\nremoved\ntail\n", "manual prefix\nhead\ntail\nmanual suffix\n");
+    const auto deleted = bound(map, {"choice", SourceSide::Stage2, {5, 13}});
+    CHECK(deleted.state == AnchorState::Mapped && deleted.result == ByteRange{19, 19} && !deleted.manualOverlap);
+    CHECK(chosen(map, "choice", "restored\n").text() == "manual prefix\nhead\nrestored\ntail\nmanual suffix\n");
+}
+
+void anchorsFollowManualInsertionsAndDeletions()
+{
+    auto map = mapped("head\nleft\nright\nend\n", "head\nleft\nright\nend\n");
+    (void)bound(map, {"choice", SourceSide::Stage2, {5, 10}});
+    const std::string prefix = "manual \xc3\xa9\n";
+    const std::string suffix = "unrelated manual tail\n";
+    map = map.edited(2, {{0, 0}, prefix});
+    map = map.edited(3, {{prefix.size(), prefix.size() + 5}, {}});
+    map = map.edited(4, {{map.text().size(), map.text().size()}, suffix});
+    const auto &current = *map.anchor("choice");
+    CHECK(current.revision == 4 && current.result == ByteRange{prefix.size(), prefix.size() + 5});
+    CHECK(!current.manualOverlap && !current.handEdited);
+    CHECK(chosen(map, "choice", "accepted\n").text() == prefix + "accepted\nright\nend\n" + suffix);
+}
+
+void launchTextThatDiffersFromItsSourceNeedsConfirmation()
+{
+    auto map = mapped("head\nsource\nend\n", "head\nmanual\nend\n");
+    const auto anchor = bound(map, {"choice", SourceSide::Stage2, {5, 12}});
+    CHECK(anchor.manualOverlap && !anchor.handEdited && anchor.result == ByteRange{5, 12});
+    const auto typed = map.edited(2, {{6, 7}, "X"});
+    CHECK(typed.anchor("choice")->manualOverlap && typed.anchor("choice")->handEdited);
+    CHECK(chosen(typed, "choice", "accepted\n").text() == "head\naccepted\nend\n");
+}
+
+void deletedAnchorsNeverReattachToAnotherRepeat()
+{
+    auto map = mapped("head\nrepeat\nrepeat\nend\n", "head\nrepeat\nrepeat\nend\n");
+    (void)bound(map, {"choice", SourceSide::Stage2, {12, 19}});
+    const auto deleted = map.edited(2, {{12, 19}, {}});
+    CHECK(deleted.anchor("choice")->state == AnchorState::Invalidated && !deleted.anchor("choice")->result);
+    const auto whole = map.recomputed(3, "head\nrepeat\nend\n");
+    CHECK(whole.anchor("choice")->state == AnchorState::Ambiguous && !whole.anchor("choice")->result);
+}
+
+void insertionAnchorsRespectAffinity()
+{
+    auto map = mapped("head\ntail\n", "head\ntail\n");
+    (void)bound(map, {"choice", SourceSide::Stage2, {5, 5}, InsertionAffinity::Before});
+    (void)bound(map, {"after", SourceSide::Stage2, {5, 5}, InsertionAffinity::After});
+    const auto edited = map.edited(2, {{5, 5}, "manual\n"});
+    CHECK(edited.anchor("choice")->result == ByteRange{5, 5} && edited.anchor("after")->result == ByteRange{12, 12});
+    const auto choice = chosen(edited, "choice", "choice\n");
+    CHECK(choice.text() == "head\nchoice\nmanual\ntail\n");
+    // Undo and redo restore a map at a fresh revision with the same anchors.
+    const auto restored = edited.atRevision(9);
+    CHECK(restored.anchor("choice")->revision == 9 && restored.anchor("choice")->result == ByteRange{5, 5});
+}
+
 void theMapChecksEveryTextBeforeTheAlgorithmSeesIt()
 {
     const auto algorithm = std::make_shared<WholeTextCorrespondence>();
@@ -106,5 +214,15 @@ int main()
     test_support::Suite suite("CorrespondenceTests");
     suite.run("implementations keep the algorithm contract", implementationsKeepTheAlgorithmContract);
     suite.run("the map checks every text before the algorithm sees it", theMapChecksEveryTextBeforeTheAlgorithmSeesIt);
+    suite.run("repeated and reordered passages leave anchors ambiguous",
+              repeatedAndReorderedPassagesLeaveAnchorsAmbiguous);
+    suite.run("equal repeated passages keep the selected occurrence", equalRepeatedPassagesKeepTheSelectedOccurrence);
+    suite.run("anchors bind only on character boundaries", anchorsBindOnlyOnCharacterBoundaries);
+    suite.run("source-only anchors use the deletion site", sourceOnlyAnchorsUseTheDeletionSite);
+    suite.run("anchors follow manual insertions and deletions", anchorsFollowManualInsertionsAndDeletions);
+    suite.run("launch text that differs from its source needs confirmation",
+              launchTextThatDiffersFromItsSourceNeedsConfirmation);
+    suite.run("deleted anchors never reattach to another repeat", deletedAnchorsNeverReattachToAnotherRepeat);
+    suite.run("insertion anchors respect affinity", insertionAnchorsRespectAffinity);
     return suite.report();
 }

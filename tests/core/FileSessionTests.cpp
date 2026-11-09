@@ -188,6 +188,43 @@ void aFailedOpeningLeavesNothingHalfBuilt()
     CHECK(file.editResult(1, {{0, 0}, "x"}) == Transition::Blocked);
 }
 
+void commandsCheckTheirAnchorsAgainstTheCurrentRevision()
+{
+    auto file = test_support::choiceFile("start\n\xc3\xa9\xf0\x9f\x98\x80\nend\n", "start\nother\nend\n");
+    const auto id = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Line).source.contributionId;
+    const auto issued = *file.correspondence()->anchor(id);
+    CHECK(issued.state == AnchorState::Mapped && issued.result == ByteRange{6, 13});
+    const auto command = [&](const ResultAnchor &anchor, std::string replacement, RevisionId expected) {
+        return EditingCommand{
+            expected, {anchor}, {{*anchor.result, std::move(replacement)}}, {{id, {DecisionValue::Accepted, {}}}}};
+    };
+    CHECK(file.applyCommand(command(issued, "stale\n", 0)) == Transition::StaleRevision);
+    CHECK(file.applyCommand(command(issued, "\x80", 1)) == Transition::InvalidAnchor);
+    for (int field = 0; field < 5; ++field) {
+        auto forged = issued;
+        if (field == 0) forged.origin.sessionId = "other session";
+        if (field == 1) forged.origin.path = "another.txt";
+        if (field == 2) forged.origin.sourceObjectId = "other object";
+        if (field == 3) forged.source.range.begin = 0;
+        if (field == 4) forged.result = ByteRange{0, 5};
+        CHECK(file.applyCommand(command(forged, "wrong\n", 1)) == Transition::InvalidAnchor);
+    }
+    CHECK(file.current().id == 1 && !file.canUndo());
+    // A manual edit moves the anchor, so the copy issued before it is stale.
+    CHECK(file.editResult(1, {{0, 0}, "typed\n"}) == Transition::Applied);
+    const auto moved = *file.correspondence()->anchor(id);
+    CHECK(moved.result == ByteRange{12, 19} && moved.revision == file.current().id);
+    CHECK(file.applyCommand(command(issued, "stale\n", file.current().id)) == Transition::StaleRevision);
+    CHECK(file.applyCommand(command(moved, "valid\n", file.current().id)) == Transition::Applied);
+    const auto chosen = file.current();
+    CHECK(chosen.draft.text == "typed\nstart\nvalid\nend\n");
+    CHECK(chosen.draft.decisions.at(id) == Decision{DecisionValue::Accepted, {}});
+    CHECK(file.undo(chosen.id) == Transition::Applied);
+    CHECK(file.correspondence()->anchor(id)->result == ByteRange{12, 19});
+    CHECK(file.correspondence()->anchor(id)->revision == file.current().id);
+    CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen.draft);
+}
+
 void launchTextOutsideTheInvariantIsUnreadable()
 {
     for (const auto *text : {"bad \xff\n", "crlf\r\n"}) {
@@ -216,5 +253,7 @@ int main()
     suite.run("undo reaches back as far as the history size allows", undoReachesBackAsFarAsTheHistorySizeAllows);
     suite.run("the session aligns with the algorithm it is given", theSessionAlignsWithTheAlgorithmItIsGiven);
     suite.run("a failed opening leaves nothing half built", aFailedOpeningLeavesNothingHalfBuilt);
+    suite.run("commands check their anchors against the current revision",
+              commandsCheckTheirAnchorsAgainstTheCurrentRevision);
     return suite.report();
 }

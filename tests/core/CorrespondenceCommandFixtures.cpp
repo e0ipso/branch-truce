@@ -84,18 +84,6 @@ void expectPassages(std::string_view source, std::string_view result, const std:
     CHECK(sourceEnd == source.size() && resultEnd == result.size());
 }
 
-FileSession mappedFile(std::string source, std::string result)
-{
-    FileSnapshots captured;
-    captured.path = "mapped.txt";
-    captured.provenance.sessionId = "anchor-session";
-    captured.stage2 =
-        SourceSnapshot{"source-object", "100644", source, {source, source, {}}, "source-commit", "Source"};
-    captured.launchResult.text = {result, result, {}};
-    const auto path = captured.path;
-    return FileSession("mapped", path, {result, {{"choice", {}}}, 0}, Support::Supported, {}, std::move(captured));
-}
-
 ResultAnchor anchor(const FileSession &file, const std::string &id = "choice")
 {
     const auto *found = file.correspondence() ? file.correspondence()->anchor(id) : nullptr;
@@ -154,58 +142,6 @@ public:
                                       {{5, 13}, {5, 13}, PassageKind::Ambiguous},
                                       {{13, 17}, {13, 17}, PassageKind::Equal}});
                   });
-        suite.run("repeated text keeps a selected occurrence and manual edits transform that anchor", [] {
-            const std::string source = "repeat\nmiddle\nrepeat\n";
-            const std::string result = "manual prefix\n" + source;
-            auto file = mappedFile(source, result);
-            const auto sources = *file.snapshots();
-            const auto passages = ExactLineCorrespondence{}.compare(source, result);
-            CHECK(file.correspondence()->passages(SourceSide::Stage2) != nullptr);
-            CHECK(*file.correspondence()->passages(SourceSide::Stage2) == passages);
-            CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {14, 21}}) == Transition::Applied);
-            CHECK(anchor(file).state == AnchorState::Mapped);
-            CHECK(anchor(file).result == ByteRange{28, 35});
-            CHECK(file.replaceMapped(1, anchor(file), "selected\n", Decision{DecisionValue::Accepted, 1})
-                  == Transition::Applied);
-            CHECK(file.current().draft.text == "manual prefix\nrepeat\nmiddle\nselected\n");
-            CHECK(file.current().draft.decisions.at("choice") == Decision{DecisionValue::Accepted, 1});
-
-            const std::string same = "head\nleft\nright\nend\n";
-            auto edited = mappedFile(same, same);
-            CHECK(edited.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 10}}) == Transition::Applied);
-            const auto issued = anchor(edited);
-            CHECK(issued.state == AnchorState::Mapped && issued.result == ByteRange{5, 10} && !issued.manualOverlap);
-            const std::string prefix = "manual \xc3\xa9\n";
-            const std::string suffix = "unrelated manual tail\n";
-            CHECK(edited.editResult(1, {{0, 0}, prefix}) == Transition::Applied);
-            CHECK(edited.editResult(edited.current().id, {{prefix.size(), prefix.size() + 5}, {}})
-                  == Transition::Applied);
-            const auto end = edited.current().draft.text.size();
-            CHECK(edited.editResult(edited.current().id, {{end, end}, suffix}) == Transition::Applied);
-            const auto current = anchor(edited);
-            CHECK(current.result == ByteRange{prefix.size(), prefix.size() + 5} && !current.manualOverlap);
-            const auto before = observe(edited);
-            CHECK(edited.replaceMapped(edited.current().id, issued, "stale", Decision{DecisionValue::Accepted, 1}, true)
-                  == Transition::StaleRevision);
-            expectUnchanged(edited, before);
-            CHECK(edited.replaceMapped(edited.current().id, current, "accepted\n", Decision{DecisionValue::Accepted, 1})
-                  == Transition::Applied);
-            const auto chosen = edited.current().draft;
-            CHECK(chosen.text == prefix + "accepted\nright\nend\n" + suffix);
-            CHECK(chosen.decisions.at("choice") == Decision{DecisionValue::Accepted, 1});
-            const auto chosenRange = anchor(edited).result;
-            CHECK(edited.undo(edited.current().id) == Transition::Applied);
-            CHECK(edited.current().draft == before.draft);
-            CHECK(anchor(edited).result == ByteRange{prefix.size(), prefix.size() + 5});
-            CHECK(anchor(edited).revision == edited.current().id);
-            CHECK(edited.redo(edited.current().id) == Transition::Applied);
-            CHECK(edited.current().draft == chosen && anchor(edited).result == chosenRange);
-            CHECK(anchor(edited).revision == edited.current().id);
-            CHECK(edited.replaceMapped(edited.current().id, issued, "stale", {}, true) == Transition::StaleRevision);
-            CHECK(edited.current().draft == chosen);
-            CHECK(*file.snapshots() == sources);
-            CHECK(*edited.snapshots() == *mappedFile(same, same).snapshots());
-        });
         suite.run("stale ambiguous and cancelled commands leave text and decisions untouched", [] {
             auto ambiguous = test_support::choiceFile("head\nrepeat\nrepeat\ntail\n", "head\nchanged\nrepeat\ntail\n",
                                                       "head\nrepeat\ntail\n");
