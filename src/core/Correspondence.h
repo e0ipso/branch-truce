@@ -112,7 +112,9 @@ struct KeptSpan {
 // source texts, and const members may run on several threads at once.
 class CorrespondenceMap {
 public:
-    CorrespondenceMap(RevisionId revision, const FileSnapshots &sources, std::string result,
+    // Aligns each captured source with `result`. The map shares `sources`
+    // instead of copying their text.
+    CorrespondenceMap(RevisionId revision, std::shared_ptr<const FileSnapshots> sources, std::string result,
                       std::shared_ptr<const CorrespondenceAlgorithm> algorithm = {});
 
     [[nodiscard]] RevisionId revision() const noexcept { return revision_; }
@@ -142,7 +144,7 @@ public:
     // Whole-buffer editor updates lack an edit location. Transform only where
     // every optimal old-to-new alignment agrees, otherwise retain ambiguity.
     // A whole-file command passes manual false and clears every hand edit.
-    [[nodiscard]] CorrespondenceMap recomputed(RevisionId revision, std::string result, bool manual = true) const;
+    [[nodiscard]] CorrespondenceMap recomputed(RevisionId revision, std::string text, bool manual = true) const;
     [[nodiscard]] std::set<std::string> handEditedAnchors() const;
     // Recovery replays whole drafts, which cannot tell typing from a choice,
     // so it restores the recorded flags. False if an anchor is unknown.
@@ -159,10 +161,7 @@ public:
 private:
     void align();
     RevisionId revision_;
-    std::string sessionId_;
-    std::string path_;
-    std::map<SourceSide, std::string> sourceObjectIds_;
-    std::shared_ptr<const std::map<SourceSide, std::string>> sources_;
+    std::shared_ptr<const FileSnapshots> sources_;
     std::shared_ptr<const CorrespondenceAlgorithm> algorithm_;
     std::string text_;
     std::map<SourceSide, std::vector<Passage>> passages_;

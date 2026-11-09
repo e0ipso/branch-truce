@@ -149,7 +149,7 @@ FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool
     std::shared_ptr<const CorrespondenceMap> correspondence;
     if (correspond && snapshots_) {
         try {
-            auto bound = std::make_shared<CorrespondenceMap>(revision, *snapshots_, initial.text, algorithm_);
+            auto bound = std::make_shared<CorrespondenceMap>(revision, snapshots_, initial.text, algorithm_);
             auto choices = std::make_shared<const ChoiceCatalogue>(choiceTargets(*snapshots_, *algorithm_));
             auto nonConflicting = std::make_shared<const std::vector<NonConflictingTarget>>(
                 branch_truce::nonConflictingTargets(*snapshots_, choices->targets(), *algorithm_));

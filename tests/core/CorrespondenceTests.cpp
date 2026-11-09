@@ -63,15 +63,17 @@ void implementationsKeepTheAlgorithmContract()
     keepsTheContract(WholeTextCorrespondence{});
 }
 
-FileSnapshots sources(const std::string &text)
+std::shared_ptr<const FileSnapshots> sources(const std::string &text, const std::string &result)
 {
     FileSnapshots captured;
     captured.path = "contract.txt";
     captured.provenance.sessionId = "contract";
     captured.stage2 = SourceSnapshot{"object", "100644", text, {text, text, {}}, "commit", "Source"};
-    captured.launchResult.text = {text, text, {}};
-    return captured;
+    captured.launchResult.text = {result, result, {}};
+    return std::make_shared<const FileSnapshots>(std::move(captured));
 }
+
+std::shared_ptr<const FileSnapshots> sources(const std::string &text) { return sources(text, text); }
 
 bool rejected(const std::function<void()> &build)
 {
@@ -85,9 +87,7 @@ bool rejected(const std::function<void()> &build)
 
 CorrespondenceMap mapped(const std::string &source, const std::string &result)
 {
-    auto captured = sources(source);
-    captured.launchResult.text = {result, result, {}};
-    return {1, captured, result};
+    return {1, sources(source, result), result};
 }
 
 ResultAnchor bound(CorrespondenceMap &map, SourceAnchor source)

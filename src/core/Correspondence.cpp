@@ -3,12 +3,15 @@
 #include "ResourceLimits.h"
 
 #include <algorithm>
+#include <array>
 #include <span>
 #include <stdexcept>
 #include <utility>
 
 namespace branch_truce {
 namespace {
+constexpr std::array kSides{SourceSide::Earlier, SourceSide::Stage2, SourceSide::Stage3};
+
 bool boundary(std::string_view text, std::size_t position)
 {
     return position <= text.size()
@@ -225,6 +228,7 @@ std::vector<ByteRange> recomputedRanges(const std::vector<ByteRange> &ranges, co
         return size;
     };
     std::vector<ByteRange> result;
+    result.reserve(ranges.size() + changes.size());
     for (const auto &range : ranges) result.push_back({moved(range.begin, false), moved(range.end, true)});
     for (const auto &passage : changes)
         if (passage.kind != PassageKind::Equal) result.push_back(passage.result);
@@ -392,31 +396,22 @@ std::vector<Passage> ExactLineCorrespondence::compare(std::string_view source, s
     return passages;
 }
 
-CorrespondenceMap::CorrespondenceMap(RevisionId revision, const FileSnapshots &sources, std::string result,
-                                     std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
+CorrespondenceMap::CorrespondenceMap(RevisionId revision, std::shared_ptr<const FileSnapshots> sources,
+                                     std::string result, std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
     : revision_(revision),
-      sessionId_(sources.provenance.sessionId),
-      path_(sources.path),
+      sources_(std::move(sources)),
       algorithm_(algorithm ? std::move(algorithm) : std::make_shared<ExactLineCorrespondence>()),
       text_(std::move(result))
 {
+    if (!sources_) throw std::invalid_argument("Correspondence needs captured sources");
     requireComparable(text_);
-    std::map<SourceSide, std::string> texts;
-    const auto capture = [&](SourceSide side, const std::optional<SourceSnapshot> &snapshot) {
-        if (snapshot) {
-            texts.emplace(side, snapshot->worktree.utf8);
-            sourceObjectIds_.emplace(side, snapshot->objectId);
-        }
-    };
-    capture(SourceSide::Earlier, sources.earlier);
-    capture(SourceSide::Stage2, sources.stage2);
-    capture(SourceSide::Stage3, sources.stage3);
     std::map<SourceSide, std::vector<std::size_t>> starts;
-    for (const auto &[side, text] : texts) {
-        requireComparable(text);
-        starts.emplace(side, lineStarts(text));
+    for (const auto side : kSides) {
+        if (const auto *text = source(side)) {
+            requireComparable(*text);
+            starts.emplace(side, lineStarts(*text));
+        }
     }
-    sources_ = std::make_shared<const std::map<SourceSide, std::string>>(std::move(texts));
     sourceLines_ = std::make_shared<const std::map<SourceSide, std::vector<std::size_t>>>(std::move(starts));
     align();
 }
@@ -425,7 +420,8 @@ void CorrespondenceMap::align()
 {
     requireComparable(text_);
     resultLines_.reset();
-    for (const auto &[side, source] : *sources_) passages_[side] = algorithm_->compare(source, text_);
+    for (const auto side : kSides)
+        if (const auto *text = source(side)) passages_[side] = algorithm_->compare(*text, text_);
 }
 
 const std::vector<Passage> *CorrespondenceMap::passages(SourceSide side) const noexcept
@@ -436,8 +432,8 @@ const std::vector<Passage> *CorrespondenceMap::passages(SourceSide side) const n
 
 const std::string *CorrespondenceMap::source(SourceSide side) const noexcept
 {
-    const auto found = sources_->find(side);
-    return found == sources_->end() ? nullptr : &found->second;
+    const auto &captured = sources_->source(side);
+    return captured ? &captured->worktree.utf8 : nullptr;
 }
 
 const ResultAnchor *CorrespondenceMap::anchor(const std::string &id) const noexcept
@@ -448,15 +444,15 @@ const ResultAnchor *CorrespondenceMap::anchor(const std::string &id) const noexc
 
 bool CorrespondenceMap::bind(SourceAnchor source)
 {
-    const auto text = sources_->find(source.side);
-    if (source.contributionId.empty() || text == sources_->end() || !validByteRange(text->second, source.range)
+    const auto *text = this->source(source.side);
+    if (source.contributionId.empty() || !text || !validByteRange(*text, source.range)
         || anchors_.contains(source.contributionId))
         return false;
     if (!resultLines_) resultLines_ = std::make_shared<const std::vector<std::size_t>>(lineStarts(text_));
     const LinePairing pairing{sourceLines_->at(source.side), *resultLines_};
     const auto projected = project(passages_.at(source.side), source.range, source.affinity, &pairing);
     const auto id = source.contributionId;
-    const AnchorOrigin origin{sessionId_, path_, sourceObjectIds_.at(source.side)};
+    const AnchorOrigin origin{sources_->provenance.sessionId, sources_->path, sources_->source(source.side)->objectId};
     // Launch text that differs from its source needs confirmation to replace,
     // but nobody has edited it by hand yet.
     anchors_.emplace(
@@ -468,8 +464,8 @@ bool CorrespondenceMap::bind(SourceAnchor source)
 
 void CorrespondenceMap::settle(SourceSide side, const std::vector<ByteRange> &dropped)
 {
-    const auto source = sources_->find(side);
-    if (source == sources_->end() || std::none_of(anchors_.begin(), anchors_.end(), [&](const auto &entry) {
+    const auto *source = this->source(side);
+    if (!source || std::none_of(anchors_.begin(), anchors_.end(), [&](const auto &entry) {
             return entry.second.source.side == side && entry.second.state == AnchorState::Ambiguous;
         }))
         return;
@@ -508,7 +504,7 @@ void CorrespondenceMap::settle(SourceSide side, const std::vector<ByteRange> &dr
         if (found.size() != 1) return std::nullopt;
         return ByteRange{found.front(), found.front() + range.end - range.begin};
     };
-    const auto passages = algorithm_->compare(source->second, view);
+    const auto passages = algorithm_->compare(*source, view);
     const auto viewLines = lineStarts(view);
     const LinePairing pairing{sourceLines_->at(side), viewLines};
     for (auto &entry : anchors_) {
