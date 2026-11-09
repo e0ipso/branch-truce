@@ -30,7 +30,6 @@
 #include <QSet>
 #include <QSignalSpy>
 #include <QTcpServer>
-#include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -3982,11 +3981,6 @@ public:
 
 int main(int argc, char **argv)
 {
-    QTemporaryDir data;
-    if (!data.isValid()) return 2;
-    qputenv("XDG_DATA_HOME", data.path().toUtf8());
-    qputenv("XDG_CONFIG_HOME", (data.path() + "/config").toUtf8());
-    qputenv("XDG_CACHE_HOME", (data.path() + "/cache").toUtf8());
     QApplication application(argc, argv);
     // The English catalog supplies the plural forms these checks read.
     branch_truce::installTranslations(application);
@@ -4002,14 +3996,20 @@ int main(int argc, char **argv)
         selection = SceneSet::Boundary;
     else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("display"))
         selection = SceneSet::Display;
-    else if (arguments.size() != 1)
+    else if (arguments.size() != 1) {
+        std::cerr << "usage: branch_truce_comparison_tests [scenes | boundary | display]\n";
         return 2;
+    }
     // Synthetic offscreen integration owns its own clipboard. Physical desktop
     // input and window-manager behavior remain a separate verification layer.
     // The display cases use neither the clipboard nor real input, and leave the
     // session's clipboard alone.
     if (selection == SceneSet::Display) return ComparisonViewTests{}.run(selection);
-    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
+    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) {
+        std::cerr << "scenes and boundary run with QT_QPA_PLATFORM=offscreen, not "
+                  << QGuiApplication::platformName().toStdString() << '\n';
+        return 2;
+    }
     const auto result = ComparisonViewTests{}.run(selection);
     QGuiApplication::clipboard()->clear();
     return result;

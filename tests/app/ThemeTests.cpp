@@ -737,20 +737,31 @@ int main(int argc, char **argv)
 {
     // Unbuffered, so a run that times out still shows how far it got.
     std::cout << std::unitbuf;
-    QTemporaryDir data;
-    if (!data.isValid()) return 2;
     const QString mode = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QString();
     const QString argument = argc > 2 ? QString::fromLocal8Bit(argv[2]) : QString();
-    const auto configHome = data.path() + QStringLiteral("/config");
-    qputenv("XDG_DATA_HOME", data.path().toUtf8());
+    // The colour scheme under test is a kdeglobals file in a configuration home of its own, which
+    // KColorScheme reads at startup. The CTest wrapper keeps every other XDG directory private.
+    QTemporaryDir scheme;
+    if (!scheme.isValid()) {
+        std::cerr << "cannot create a configuration home for the colour scheme\n";
+        return 2;
+    }
+    const auto configHome = scheme.path() + QStringLiteral("/config");
     qputenv("XDG_CONFIG_HOME", configHome.toUtf8());
-    qputenv("XDG_CACHE_HOME", (data.path() + "/cache").toUtf8());
-    if (mode == QStringLiteral("roles") && !writeColourScheme(configHome, argument)) return 2;
+    if (mode == QStringLiteral("roles") && !writeColourScheme(configHome, argument)) {
+        std::cerr << "cannot write the " << argument.toStdString() << " colour scheme to " << configHome.toStdString()
+                  << '\n';
+        return 2;
+    }
     QApplication application(argc, argv);
     // The English catalog supplies the plural forms these checks read.
     branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName("BranchTruceThemeTests");
-    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
+    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) {
+        std::cerr << "run with QT_QPA_PLATFORM=offscreen, not " << QGuiApplication::platformName().toStdString()
+                  << '\n';
+        return 2;
+    }
     if (mode == QStringLiteral("icons") && argc == 3) return checkIcons(argument);
     if (mode == QStringLiteral("roles") && argc == 3) {
         const auto other =

@@ -19,7 +19,6 @@
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
-#include <QTemporaryDir>
 #include <QTextBlock>
 #include <QTextCharFormat>
 #include <QTextCursor>
@@ -592,15 +591,14 @@ public:
 
 int main(int argc, char **argv)
 {
-    QTemporaryDir data;
-    if (!data.isValid()) return 2;
-    qputenv("XDG_DATA_HOME", data.path().toUtf8());
-    qputenv("XDG_CONFIG_HOME", (data.path() + "/config").toUtf8());
-    qputenv("XDG_CACHE_HOME", (data.path() + "/cache").toUtf8());
     QApplication application(argc, argv);
     // The English catalog supplies the plural forms these checks read.
     branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName("BranchTruceSyntaxHighlightingTests");
-    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
+    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) {
+        std::cerr << "run with QT_QPA_PLATFORM=offscreen, not " << QGuiApplication::platformName().toStdString()
+                  << '\n';
+        return 2;
+    }
     return SyntaxHighlightingTests{}.run();
 }

@@ -2163,6 +2163,9 @@ int main(int argc, char **argv)
     QCoreApplication application(argc, argv);
     // The English catalog supplies the plural forms these checks read.
     branch_truce::installTranslations(application);
-    if (application.arguments().size() != 2) return 2;
+    if (application.arguments().size() != 2) {
+        std::cerr << "usage: branch_truce_startup_route_tests <branch-truce>\n";
+        return 2;
+    }
     return StartupRouteTests{}.run(application.arguments()[1]);
 }

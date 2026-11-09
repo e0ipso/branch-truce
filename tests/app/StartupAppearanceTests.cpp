@@ -154,7 +154,10 @@ public:
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
-    if (application.arguments().size() != 3) return 2;
+    if (application.arguments().size() != 3) {
+        std::cerr << "usage: branch_truce_startup_appearance_tests <branch-truce> <appearance probe>\n";
+        return 2;
+    }
     const auto binary = application.arguments()[1];
     const auto probe = application.arguments()[2];
     test_support::Suite suite("startup-appearance");

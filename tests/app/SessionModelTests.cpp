@@ -1529,8 +1529,5 @@ int main(int argc, char **argv)
     branch_truce::installTranslations(app);
     if (app.arguments().size() == 3 && app.arguments()[1] == "--acknowledge-and-crash")
         return acknowledgeAndCrash(app.arguments()[2]);
-    QTemporaryDir data;
-    if (!data.isValid()) return 2;
-    qputenv("XDG_DATA_HOME", data.path().toUtf8());
     return SessionModelTests{}.run();
 }
