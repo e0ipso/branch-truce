@@ -26,6 +26,28 @@ std::size_t undecidedCount(const Draft &draft)
 
 bool exceedsEnvelope(const std::string &text) { return !withinTextEnvelope(text); }
 
+// The engine's text invariant, as TextSnapshot::utf8 documents it: UTF-8 with
+// LF line endings. Adapters decode and convert line endings before this.
+bool editableText(std::string_view text) noexcept
+{
+    return text.find('\r') == std::string_view::npos && validUtf8(text);
+}
+
+bool editableSources(const FileSnapshots &snapshots) noexcept
+{
+    for (const auto *source : {&snapshots.earlier, &snapshots.stage2, &snapshots.stage3})
+        if (*source && !editableText((*source)->worktree.utf8)) return false;
+    return true;
+}
+
+// Only an accepted contribution has a place in a combination order.
+bool validDecisions(const std::map<std::string, Decision> &decisions)
+{
+    return std::none_of(decisions.begin(), decisions.end(), [](const auto &entry) {
+        return entry.second.order && entry.second.value != DecisionValue::Accepted;
+    });
+}
+
 // Result passages equal to a captured side. Git copies both sides' text into
 // the result and adds only the marker lines, so marker-like lines here are
 // content. The earlier version reaches the result only in diff3 base regions,
@@ -223,6 +245,13 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, Suppor
     if (resultBudget.limit != TextLimit::Within) {
         support_ = Support::Unreadable;
         supportDetail_ = "Load error: " + textLimitDiagnostic(resultBudget);
+        open(launch(1, std::move(initial), false, false));
+        return;
+    }
+    if (support_ == Support::Supported
+        && (!editableText(initial.text) || (snapshots_ && !editableSources(*snapshots_)))) {
+        support_ = Support::Unreadable;
+        supportDetail_ = "Load error: text is not UTF-8 with LF line endings";
         open(launch(1, std::move(initial), false, false));
         return;
     }
@@ -541,6 +570,7 @@ Transition FileSession::replaceDraft(RevisionId expected, Draft draft,
     if (expected != current_) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
     if (exceedsEnvelope(draft.text)) return Transition::Blocked;
+    if (!editableText(draft.text) || !validDecisions(draft.decisions)) return Transition::InvalidAnchor;
     if (!handEdited && !handEditedRanges.empty()) return Transition::InvalidAnchor;
     // The marker count follows from the text, so a supplied count changes nothing.
     const bool unchanged = draft.text == current().draft.text && draft.decisions == current().draft.decisions;
@@ -580,8 +610,8 @@ Transition FileSession::editResult(RevisionId expected, ResultEdit edit)
 {
     if (expected != current_) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
-    if (!validUtf8(current().draft.text) || !validByteRange(current().draft.text, edit.range)
-        || !validUtf8(edit.replacement))
+    // The stored text already holds the invariant, so only the edit is checked.
+    if (!validByteRange(current().draft.text, edit.range) || !editableText(edit.replacement))
         return Transition::InvalidAnchor;
     auto draft = current().draft;
     draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
@@ -618,7 +648,7 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
     std::sort(edits.begin(), edits.end(), [](const auto &a, const auto &b) { return a.range.begin > b.range.begin; });
     for (std::size_t i = 0; i < edits.size(); ++i) {
         const auto &edit = edits[i];
-        if (!validByteRange(current().draft.text, edit.range) || !validUtf8(edit.replacement))
+        if (!validByteRange(current().draft.text, edit.range) || !editableText(edit.replacement))
             return Transition::InvalidAnchor;
         if (i && (edit.range.end > edits[i - 1].range.begin || edit.range.begin == edits[i - 1].range.begin))
             return Transition::AmbiguousTarget;
@@ -631,6 +661,7 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
             }))
             return Transition::ConfirmationRequired;
     }
+    if (!validDecisions(command.decisions)) return Transition::InvalidAnchor;
     auto draft = current().draft;
     for (const auto &[id, value] : command.decisions) {
         if (!mapping->anchor(id)) return Transition::InvalidAnchor;
@@ -675,7 +706,7 @@ Transition FileSession::replaceMapped(RevisionId expected, const ResultAnchor &a
     if (!bound || *bound != anchor) return Transition::InvalidAnchor;
     if (anchor.state == AnchorState::Ambiguous) return Transition::AmbiguousTarget;
     if (anchor.state != AnchorState::Mapped || !anchor.result || !validByteRange(current().draft.text, *anchor.result)
-        || !validUtf8(replacement))
+        || !editableText(replacement))
         return Transition::InvalidAnchor;
     if (anchor.manualOverlap && !confirmManual) return Transition::ConfirmationRequired;
     auto draft = current().draft;

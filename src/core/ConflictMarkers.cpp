@@ -15,7 +15,7 @@ std::optional<MarkerKind> markerKind(std::string_view line)
     if (line.find_first_not_of(first) < markerSize) return std::nullopt;
     if (line.size() > markerSize) {
         const char next = line[markerSize];
-        if (next != ' ' && next != '\t' && next != '\r' && next != '\n') return std::nullopt;
+        if (next != ' ' && next != '\t' && next != '\n') return std::nullopt;
     }
     switch (first) {
     case '<': return MarkerKind::Begin;

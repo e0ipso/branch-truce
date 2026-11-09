@@ -1049,14 +1049,13 @@ public:
             CHECK(file.current().draft.unresolvedMarkers == 0);
             CHECK(file.beginMarkResolved(1) == Transition::Applied);
         });
-        suite.run("CRLF line endings keep the carriage return inside the marker line", [] {
+        suite.run("a separator followed by a carriage return is not a marker line", [] {
+            // Adapters convert line endings, so the engine never stores a carriage return.
             const std::string text = "<<<<<<< ours\r\nleft\r\n=======\r\nright\r\n>>>>>>> theirs\r\n";
             const auto scan = scanMarkers(text);
-            CHECK(scan.orphans.empty() && scan.blocks.size() == 1);
-            const auto &block = scan.blocks.front();
-            CHECK(block.begin.bytes == (ByteRange{0, 14}));
-            CHECK(block.separator == (MarkerLine{MarkerKind::Separator, 2, {20, 29}}));
-            CHECK(block.end == (MarkerLine{MarkerKind::End, 4, {36, text.size()}}));
+            CHECK(scan.blocks.empty() && scan.orphans.size() == 2);
+            CHECK(scan.orphans.front().line == 0 && scan.orphans.back().line == 4);
+            CHECK(FileSession("id", "file", {text, {}, 0}).support() == Support::Unreadable);
         });
         suite.run("broken and nested blocks leave every marker line counted", [] {
             const std::string text = "<<<<<<< a\n<<<<<<< b\nleft\n=======\nright\n>>>>>>> b\n"
