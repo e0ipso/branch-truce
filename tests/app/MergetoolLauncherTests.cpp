@@ -10,6 +10,7 @@
 #include "fixtures/ScriptGate.h"
 #include "fixtures/mergetool/GitGate.h"
 #include "mergetool/MergetoolLauncher.h"
+#include "mergetool/MergetoolMessages.h"
 #include "mergetool/MergetoolProtocol.h"
 #include "recovery/RecoveryRestore.h"
 
@@ -18,6 +19,8 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QMetaMethod>
 #include <QMetaProperty>
 #include <QProcess>
@@ -1020,6 +1023,43 @@ int main(int argc, char **argv)
         waitFinished(launcher, 1, controller);
         CHECK(!controller.mergetoolSession()->hasWaiter("tracked.txt"));
         CHECK(!controller.mergetool()->parentSessionActive());
+        CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+        CHECK(unmerged(repo, "tracked.txt"));
+    });
+    suite.run("a launcher answered by a session of another protocol version asks for a restart", [] {
+        Repository repo("other version\n", "excluded stays conflicted\n");
+        ScopedEnvironment environment(repo.environment);
+        git::Request discover;
+        discover.operation = git::Operation::DiscoverRepository;
+        discover.directory = repo.root;
+        const auto discovered = git::runBlocking({gitOnPath(), git::GitEnvironment::fromProcess()}, discover);
+        CHECK(discovered.repository.supported);
+        const auto directory = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
+        QString error;
+        CHECK(prepareMergetoolSocketDirectory(directory, &error));
+        // The window of another installation reads the attach and answers in its own version.
+        QLocalServer older;
+        CHECK(older.listen(mergetoolServerName(directory, discovered.repository)));
+        QObject::connect(&older, &QLocalServer::newConnection, &older, [&older] {
+            auto *socket = older.nextPendingConnection();
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [socket] {
+                socket->readAll();
+                socket->write(mergetoolFrame(R"({"kind":"unsupported","v":1})"));
+                socket->disconnectFromServer();
+            });
+        });
+        QTemporaryDir sides;
+        QProcess launcher;
+        launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
+        launcher.setWorkingDirectory(repo.root);
+        launcher.start(launcherBinary, {"--mergetool"});
+        CHECK(launcher.waitForStarted(5000));
+        pump([&] { return launcher.state() == QProcess::NotRunning; }, QStringLiteral("launcher still running"));
+        CHECK(launcher.exitStatus() == QProcess::NormalExit && launcher.exitCode() == 1);
+        const auto errors = launcher.readAllStandardError();
+        CHECK(errors.contains("speaks mergetool protocol 1 and this launcher speaks "
+                              + QByteArray::number(kMergetoolProtocolVersion)));
+        CHECK(errors.contains("Restart Branch Truce"));
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
         CHECK(unmerged(repo, "tracked.txt"));
     });
