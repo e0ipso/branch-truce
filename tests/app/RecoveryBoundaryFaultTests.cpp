@@ -5,6 +5,7 @@
 #include "app/EngineText.h"
 #include "app/SessionModel.h"
 #include "app/Translations.h"
+#include "fixtures/Files.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryJournal.h"
 #include "fixtures/SyncFaults.h"
@@ -345,21 +346,8 @@ void tearFinalFrame(const QString &directory, TornTail tail)
     CHECK(journal.write(bytes) == bytes.size());
 }
 
-void writeFile(const QString &path, const QByteArray &bytes)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    CHECK(file.write(bytes) == bytes.size());
-}
-
-QByteArray readFile(const QString &path)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::ReadOnly));
-    const auto bytes = file.readAll();
-    CHECK(file.error() == QFileDevice::NoError);
-    return bytes;
-}
+using test_support::readFile;
+using test_support::writeFile;
 
 // Restores the process environment even when fixture construction throws.
 class ScopedEnvironment {

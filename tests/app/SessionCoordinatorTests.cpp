@@ -6,6 +6,7 @@
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/Files.h"
 #include "fixtures/GitOnPath.h"
+#include "fixtures/GitRepository.h"
 #include "fixtures/RecoveryJournal.h"
 #include "recovery/RecoveryRestore.h"
 #include "session/SessionCoordinator.h"
@@ -282,7 +283,7 @@ public:
         git({"init", "--quiet", "--initial-branch=main"});
         write("tracked.txt", "before\n");
         git({"add", "--", "tracked.txt"});
-        coordinator = std::make_unique<SessionCoordinator>(model, "/usr/bin/git");
+        coordinator = std::make_unique<SessionCoordinator>(model, test_support::gitExecutable());
         QObject::connect(coordinator.get(), &SessionCoordinator::taskFinished, &model,
                          [this](const TaskCompletion &value) { finished.push_back(value); });
         replace();
@@ -308,25 +309,7 @@ public:
     }
     QByteArray git(const QStringList &arguments, const QByteArray &input = {}) const
     {
-        QProcess process;
-        QProcessEnvironment environment;
-        environment.insert("PATH", "/usr/bin:/bin");
-        environment.insert("LC_ALL", "C");
-        environment.insert("GIT_CONFIG_NOSYSTEM", "1");
-        environment.insert("GIT_CONFIG_GLOBAL", "/dev/null");
-        environment.insert("GIT_TERMINAL_PROMPT", "0");
-        process.setProcessEnvironment(environment);
-        process.setWorkingDirectory(root.path());
-        auto argv = QStringList{"--no-pager", "--literal-pathspecs"};
-        argv.append(arguments);
-        process.start("/usr/bin/git", argv);
-        CHECK(process.waitForStarted(5000));
-        CHECK(process.write(input) == input.size());
-        process.closeWriteChannel();
-        CHECK(process.waitForFinished(5000));
-        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
-            throw std::runtime_error("fixture git: " + process.readAllStandardError().toStdString());
-        return process.readAllStandardOutput();
+        return test_support::runGit(home.environment(), root.path(), arguments, input);
     }
     void wait(std::size_t count)
     {
@@ -335,6 +318,7 @@ public:
         CHECK(finished.size() == count);
     }
     QTemporaryDir root{QStringLiteral("/tmp/truce-coordinator-XXXXXX")};
+    test_support::GitHome home;
     test_support::TestSession model;
     std::unique_ptr<SessionCoordinator> coordinator;
     std::vector<TaskCompletion> finished;
