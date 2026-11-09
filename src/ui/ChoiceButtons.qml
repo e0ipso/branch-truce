@@ -138,9 +138,12 @@ Row {
         id: choiceButton
         required property real size
         required property real glyphSize
-        width: glyphSize
+        // The frame keeps clear space around the glyph so it never sits flush with the
+        // source text it overlays. The row height still bounds the vertical inset.
+        horizontalPadding: Kirigami.Units.smallSpacing
+        verticalPadding: Math.max(0, (size - glyphSize) / 2)
+        width: glyphSize + leftPadding + rightPadding
         height: size
-        padding: 0
         flat: false
         activeFocusOnTab: true
         // Opacity preserves keyboard traversal, while the mask lets idle touch
