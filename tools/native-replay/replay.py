@@ -20,7 +20,7 @@ import time
 # Keep the source checkout read only, including when it has no bytecode cache.
 sys.dont_write_bytecode = True
 
-from calibration import build_provenance, capture_inputs, colour_scheme, compare, load_contract, validate_profile
+from calibration import ImageTool, build_provenance, capture_inputs, colour_scheme, compare, load_contract, validate_profile
 from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged
 
 HERE = Path(__file__).resolve().parent
@@ -305,7 +305,7 @@ def callout_closeups(state, shot, image_tool, output):
             continue
         rect = [x, y, right-x, bottom-y]
         destination = output / f'{name}.png'
-        subprocess.run([str(image_tool), '--crop', str(shot), str(destination), *map(str, rect)], check=True)
+        ImageTool(image_tool).crop(shot, destination, rect)
         regions[name] = dict(observed_scene_rect=[row[key] for key in ('x', 'y', 'width', 'height')],
                              native_pixel_crop=rect, file=destination.name,
                              acceptance='pending original-image inspection; native diagnostic only')
@@ -406,7 +406,7 @@ def capture_one(args, driver, out, theme, repeat):
                 name = f'{theme}-{kind}'
                 shot = out / f'{name}.png'
                 subprocess.run(['grim', '-o', outputs[0]['name'], str(shot)], env=env, check=True)
-                image = json.loads(subprocess.check_output([str(driver.parent / 'native-replay-image'), str(shot)]))
+                image = ImageTool(driver.parent / 'native-replay-image').decode(shot)
                 require((image['width'], image['height']) == (1280, args.height), 'Capture geometry differs')
                 decoded = image['decoded_sha256']
                 metadata = dict(theme=theme, kind=kind, repeat=repeat, height=args.height,
@@ -488,8 +488,7 @@ def capture(args):
             for kind in ('text', 'binary'):
                 selected = [r for r in records if r['theme'] == theme and r['kind'] == kind]
                 for row in selected[1:]:
-                    comparison = json.loads(subprocess.check_output([str(driver_build / 'native-replay-image'),
-                                                                      selected[0]['file'], row['file']]))
+                    comparison = ImageTool(driver_build / 'native-replay-image').compare(selected[0]['file'], row['file'])
                     comparisons.append(dict(theme=theme, kind=kind, repeat=row['repeat'],
                                             differing_pixels=comparison['differing_pixels']))
         write_json(args.output / 'verification.json', dict(captures=records, comparisons=comparisons,

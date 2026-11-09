@@ -15,7 +15,8 @@ import zlib
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/native-replay'))
-from calibration import load_contract, validate_contract, validate_profile, native_regions, build_provenance, compare
+from calibration import (build_provenance, compare, load_contract, native_regions, rect_argument, validate_contract,
+                         validate_profile)
 from fixture import png, sha256
 
 
@@ -181,25 +182,82 @@ class PixelTests(unittest.TestCase):
         self.a.write_bytes(png((100, 80, 60)))
         self.b.write_bytes(png((90, 60, 30)))
 
-    def artifacts(self, name, a, b, left=(0, 0, 4, 3), right=(0, 0, 4, 3)):
-        result = subprocess.run([str(IMAGE_TOOL), '--artifacts', str(a), str(b), str(self.root / name),
-                                 *map(str, left), *map(str, right)], capture_output=True)
-        return result
+    def run_tool(self, *args):
+        return subprocess.run([str(IMAGE_TOOL), *map(str, args)], capture_output=True, text=True)
+
+    def tool_json(self, *args):
+        result = self.run_tool(*args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def artifacts(self, name, a, b, left=(0, 0, 4, 3), right=(0, 0, 4, 3), replication=(1, 1), grid=None):
+        # Without a declared grid, keep the whole replicated reference region.
+        grid = grid or (0, 0, left[2] * replication[0], left[3] * replication[0])
+        return self.run_tool('artifacts', '--reference-rect=' + rect_argument(left),
+                             '--native-rect=' + rect_argument(right),
+                             f'--reference-replication={replication[0]}', f'--native-replication={replication[1]}',
+                             '--reference-grid=' + rect_argument(grid), a, b, self.root / name)
+
+    def assertUsageError(self, result, detail):
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(result.stdout, '')
+        self.assertIn(detail, result.stderr)
+        self.assertIn('native-replay-image', result.stderr)
+
+    def test_help_and_usage_errors(self):
+        for args in (('--help',), ('-h',)):
+            result = self.run_tool(*args)
+            self.assertEqual((result.returncode, result.stderr), (0, ''))
+            self.assertIn('artifacts REFERENCE NATIVE PREFIX', result.stdout)
+        for command in ('decode', 'compare', 'crop', 'artifacts'):
+            result = self.run_tool(command, '--help')
+            self.assertEqual((result.returncode, result.stderr), (0, ''), command)
+            self.assertIn(command, result.stdout)
+        self.assertUsageError(self.run_tool(), 'a command is required')
+        self.assertUsageError(self.run_tool('--crop', self.a), "unknown command '--crop'")
+        self.assertUsageError(self.run_tool('decode'), 'decode takes 1 arguments')
+        self.assertUsageError(self.run_tool('compare', self.a), 'compare takes 2 arguments')
+        self.assertUsageError(self.run_tool('crop', self.a, self.root / 'x.png'), '--rect is required')
+        self.assertUsageError(self.run_tool('crop', '--rect=1,2,x,3', self.a, self.root / 'x.png'),
+                              "--rect must be X,Y,WIDTH,HEIGHT integers, not '1,2,x,3'")
+        self.assertUsageError(self.run_tool('crop', '--size=4', self.a, self.root / 'x.png'), 'size')
+        self.assertUsageError(self.artifacts('replication', self.a, self.b, replication=(4, 1)),
+                              "--reference-replication must be 1, 2 or 3, not '4'")
+        self.assertFalse(list(self.root.glob('x.png')) + list(self.root.glob('replication-*')))
+
+    def test_artifacts_require_the_full_argument_set(self):
+        # Replication and the reference grid have no defaults; the comparison grid is always explicit.
+        result = self.run_tool('artifacts', '--reference-rect=0,0,4,3', '--native-rect=0,0,4,3',
+                               self.a, self.b, self.root / 'partial')
+        self.assertUsageError(result, '--reference-replication is required')
+        result = self.run_tool('artifacts', '--reference-rect=0,0,4,3', '--native-rect=0,0,4,3',
+                               '--reference-replication=1', '--native-replication=1', self.a, self.b,
+                               self.root / 'partial')
+        self.assertUsageError(result, '--reference-grid is required')
+        self.assertFalse(list(self.root.glob('partial-*')))
+
+    def test_unreadable_inputs_fail_with_a_message(self):
+        missing = self.root / 'missing.png'
+        for args in (('decode', missing), ('compare', self.a, missing), ('crop', '--rect=0,0,1,1', missing, self.root / 'x.png')):
+            result = self.run_tool(*args)
+            self.assertEqual((result.returncode, result.stdout), (1, ''), args)
+            self.assertIn(f'cannot decode {missing}', result.stderr)
 
     def test_native_closeups_preserve_original_pixels_and_reject_outside_bounds(self):
         original = self.a.read_bytes()
         crop = self.root / 'native-closeup.png'
-        subprocess.run([str(IMAGE_TOOL), '--crop', str(self.a), str(crop), '1', '2', '4', '3'], check=True)
-        decoded = json.loads(subprocess.check_output([str(IMAGE_TOOL), str(crop)]))
+        subprocess.run([str(IMAGE_TOOL), 'crop', '--rect=1,2,4,3', str(self.a), str(crop)], check=True)
+        decoded = self.tool_json('decode', crop)
         self.assertEqual((decoded['width'], decoded['height']), (4, 3))
         expected = self.artifacts('expected-closeup', self.a, self.a, (1, 2, 4, 3), (1, 2, 4, 3))
         self.assertEqual(expected.returncode, 0, expected.stderr)
         reference = str(self.root / 'expected-closeup-native.png')
-        compared = json.loads(subprocess.check_output([str(IMAGE_TOOL), str(crop), reference]))
+        compared = self.tool_json('compare', crop, reference)
         self.assertEqual(compared['differing_pixels'], 0)
         bad = self.root / 'invalid-closeup.png'
-        result = subprocess.run([str(IMAGE_TOOL), '--crop', str(self.a), str(bad), '-1', '0', '4', '3'])
-        self.assertEqual(result.returncode, 2)
+        result = self.run_tool('crop', '--rect=-1,0,4,3', self.a, bad)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('--rect -1,0,4,3 is empty or outside the image', result.stderr)
         self.assertFalse(bad.exists())
         self.assertEqual(self.a.read_bytes(), original)
 
@@ -217,7 +275,7 @@ class PixelTests(unittest.TestCase):
             self.assertEqual((self.root / f'one-{suffix}.png').read_bytes(),
                              (self.root / f'two-{suffix}.png').read_bytes())
         # Decode through Qt too, so a stable hash alone cannot hide wrong dimensions.
-        dimensions = json.loads(subprocess.check_output([str(IMAGE_TOOL), different['overlay']]))
+        dimensions = self.tool_json('decode', different['overlay'])
         self.assertEqual((dimensions['width'], dimensions['height']), (4, 3))
         self.assertEqual([sha256(p) for p in (self.a, self.b)], originals)
         self.assertEqual(again['differing_pixels'], 12)
@@ -230,19 +288,21 @@ class PixelTests(unittest.TestCase):
     def test_reference_and_native_scale_are_explicit_without_interpolation(self):
         # A uniform 2x2 reference cell block versus 3x3 native cells represents
         # the same logical extent after reference x3 / native x2 replication.
-        command = [str(IMAGE_TOOL), '--artifacts', str(self.a), str(self.a), str(self.root / 'scale'),
-                   '0', '0', '2', '2', '0', '0', '3', '3', '3', '2']
-        result = json.loads(subprocess.check_output(command))
+        scaled = self.artifacts('scale', self.a, self.a, (0, 0, 2, 2), (0, 0, 3, 3), replication=(3, 2))
+        self.assertEqual(scaled.returncode, 0, scaled.stderr)
+        result = json.loads(scaled.stdout)
         self.assertEqual(result['differing_pixels'], 0)
         self.assertEqual(result['unmatched_extent_pixels'], 0)
-        original = json.loads(subprocess.check_output([str(IMAGE_TOOL), str(self.root / 'scale-reference.png')]))
-        overlay = json.loads(subprocess.check_output([str(IMAGE_TOOL), result['overlay']]))
+        self.assertEqual(result['reference_common_grid_rect'], [0, 0, 6, 6])
+        original = self.tool_json('decode', self.root / 'scale-reference.png')
+        overlay = self.tool_json('decode', result['overlay'])
         self.assertEqual(original['width'], 2)
         self.assertEqual(overlay['width'], 6)
 
     def test_out_of_bounds_crops_fail_without_artifacts(self):
         result = self.artifacts('invalid', self.a, self.b, left=(60, 0, 5, 3))
-        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('--reference-rect 60,0,5,3 is empty or outside the image', result.stderr)
         self.assertFalse(list(self.root.glob('invalid-*')))
 
     def compare_bar_region(self, name, rect, changed=False, logical_size=None, bar=(2, 2, 4, 4)):
@@ -293,7 +353,7 @@ class PixelTests(unittest.TestCase):
                 self.assertEqual(region['differing_pixels'], 0)
                 self.assertEqual(region['unmatched_extent_pixels'], 0)
                 self.assertEqual(region['status'], 'identical')
-                overlay = json.loads(subprocess.check_output([str(IMAGE_TOOL), region['overlay']]))
+                overlay = self.tool_json('decode', region['overlay'])
                 self.assertEqual((overlay['width'], overlay['height']), (3*rect[2], 3*rect[3]))
 
     def test_aligned_odd_region_still_detects_a_real_changed_pixel(self):
@@ -311,10 +371,9 @@ class PixelTests(unittest.TestCase):
     def test_invalid_common_grid_crop_fails_without_artifacts(self):
         for index, rect in enumerate(((-1, 0, 6, 6), (0, 0, 9, 6), (0, 0, 6, 0), (0, 0, 6, 7))):
             with self.subTest(rect=rect):
-                prefix = self.root / f'invalid-grid-{index}'
-                result = subprocess.run([str(IMAGE_TOOL), '--artifacts', str(self.a), str(self.b), str(prefix),
-                    '0', '0', '4', '3', '0', '0', '4', '3', '2', '3', *map(str, rect)], capture_output=True)
-                self.assertEqual(result.returncode, 2)
+                result = self.artifacts(f'invalid-grid-{index}', self.a, self.b, replication=(2, 3), grid=rect)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn('--reference-grid', result.stderr)
                 self.assertFalse(list(self.root.glob(f'invalid-grid-{index}-*')))
 
 

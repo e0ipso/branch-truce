@@ -19,6 +19,37 @@ EXCEPTION_REGIONS = {'truthful-identity': {'source_identity', 'incoming_identity
                      'background-role-fill': {'accepted_fill'}}
 
 
+def rect_argument(rect):
+    return ','.join(map(str, rect))
+
+
+class ImageTool:
+    """The native-replay-image command built from ImageCheck.cpp. Failures raise CalledProcessError."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+    def _json(self, *args):
+        return json.loads(subprocess.check_output([str(self.path), *map(str, args)]))
+
+    def decode(self, image):
+        return self._json('decode', image)
+
+    def compare(self, image, other):
+        return self._json('compare', image, other)
+
+    def crop(self, image, output, rect):
+        subprocess.run([str(self.path), 'crop', '--rect=' + rect_argument(rect), str(image), str(output)], check=True)
+
+    def artifacts(self, reference, native, prefix, *, reference_rect, native_rect,
+                  reference_replication, native_replication, reference_grid):
+        return self._json('artifacts', '--reference-rect=' + rect_argument(reference_rect),
+                          '--native-rect=' + rect_argument(native_rect),
+                          f'--reference-replication={reference_replication}',
+                          f'--native-replication={native_replication}',
+                          '--reference-grid=' + rect_argument(reference_grid), reference, native, prefix)
+
+
 def load_contract(source):
     contract = json.loads(CONTRACT.read_text())
     validate_contract(contract)
@@ -157,10 +188,11 @@ def native_regions(state):
 
 def compare(source, shot, state, image_tool, output):
     contract = load_contract(source)
+    tool = ImageTool(image_tool)
     output.mkdir(exist_ok=False)
     name = shot.name
     reference = source / 'docs/ui-mockup' / name
-    decoded = json.loads(subprocess.check_output([str(image_tool), str(reference)]))
+    decoded = tool.decode(reference)
     if [decoded['width'], decoded['height']] != contract['reference_decoded_size']:
         raise ValueError('Reference decoded size differs from contract')
     # The originals are preserved alongside artifacts, without re-encoding.
@@ -179,9 +211,8 @@ def compare(source, shot, state, image_tool, output):
                     math.ceil((x+w)*scale)-math.floor(x*scale),
                     math.ceil((y+h)*scale)-math.floor(y*scale)]
         reference_grid = [3*x-2*physical[0], 3*y-2*physical[1], 3*w, 3*h]
-        command = [str(image_tool), '--artifacts', str(reference), str(shot), str(prefix),
-                   *map(str, physical), *map(str, rect), '2', '3', *map(str, reference_grid)]
-        result = json.loads(subprocess.check_output(command))
+        result = tool.artifacts(reference, shot, prefix, reference_rect=physical, native_rect=rect,
+                                reference_replication=2, native_replication=3, reference_grid=reference_grid)
         regions[region] = dict(reference_logical_rect=logical, reference_pixel_rect=physical, native_rect=rect,
                                count_unit='common-grid cells at 3 cells per logical pixel',
                                **result, status='outstanding' if result['differing_pixels'] else 'identical',
