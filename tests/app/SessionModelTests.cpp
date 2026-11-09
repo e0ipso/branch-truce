@@ -3,6 +3,7 @@
 #include "app/SelectedFile.h"
 #include "app/Selection.h"
 #include "app/SessionModel.h"
+#include "app/Translations.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/RecoveryFaults.h"
 #include "fixtures/RecoveryJournal.h"
@@ -890,6 +891,14 @@ public:
             CHECK(model.file("second")->checkpointOutcome()->detail == "disk full");
             CHECK(role(model, SessionModel::StatusRole, 1).toString() == "Draft save failed");
         });
+        suite.run("the English catalog supplies the plural forms of numerus messages", [] {
+            const auto left = [](int count) {
+                return QCoreApplication::translate("FilePresentation", "%n conflict(s) left", nullptr, count);
+            };
+            CHECK(left(1) == "1 conflict left" && left(2) == "2 conflicts left");
+            CHECK(QCoreApplication::translate("SessionFooter", "%1 of %n file(s) resolved", nullptr, 1).arg(0)
+                  == "0 of 1 file resolved");
+        });
         suite.run("handoff counts use singular and plural file wording", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());
@@ -1554,6 +1563,8 @@ public:
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(app);
     if (app.arguments().size() == 3 && app.arguments()[1] == "--acknowledge-and-crash")
         return acknowledgeAndCrash(app.arguments()[2]);
     QTemporaryDir data;

@@ -2,6 +2,7 @@
 #include "TestSession.h"
 #include "app/AppPaths.h"
 #include "app/Application.h"
+#include "app/Translations.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryJournal.h"
@@ -1318,6 +1319,8 @@ public:
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(app);
     QTemporaryDir data;
     if (!data.isValid()) return 2;
     qputenv("XDG_DATA_HOME", data.path().toUtf8());

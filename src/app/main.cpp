@@ -2,6 +2,7 @@
 #include "AppPaths.h"
 #include "Application.h"
 #include "StartupReport.h"
+#include "Translations.h"
 #include "core/BuildInfo.h"
 #include "mergetool/MergetoolLauncher.h"
 #include <QApplication>
@@ -44,6 +45,7 @@ int main(int argc, char *argv[])
     // QApplication rather than QGuiApplication: the org.kde.desktop style draws its
     // controls through QApplication::style(). See docs/platform-validation.md.
     QApplication application(argc, argv);
+    branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("Branch Truce"));
     // No organization name: KDE apps set the domain only. See docs/platform-validation.md.
@@ -66,28 +68,34 @@ int main(int argc, char *argv[])
     const auto version = branch_truce::version();
     QCoreApplication::setApplicationVersion(QString::fromUtf8(version.data(), static_cast<qsizetype>(version.size())));
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Open local merge or rebase conflicts offline."));
+    parser.setApplicationDescription(
+        QCoreApplication::translate("main", "Open local merge or rebase conflicts offline."));
     parser.addHelpOption();
     parser.addVersionOption();
-    parser.addPositionalArgument(QStringLiteral("repository"),
-                                 QStringLiteral("Repository directory, defaults to the current directory."),
-                                 QStringLiteral("[repository]"));
+    parser.addPositionalArgument(
+        QStringLiteral("repository"),
+        QCoreApplication::translate("main", "Repository directory, defaults to the current directory."),
+        QStringLiteral("[repository]"));
     parser.addOption(
-        {QStringLiteral("smoke-test"), QStringLiteral("Load the window and session, report startup state, and exit.")});
+        {QStringLiteral("smoke-test"),
+         QCoreApplication::translate("main", "Load the window and session, report startup state, and exit.")});
     // Listed for --help only: the launcher mode is selected before parsing,
     // and only as the first argument.
     parser.addOption({QStringLiteral("mergetool"),
-                      QStringLiteral("As the first argument: run as the blocking launcher for git mergetool.")});
+                      QCoreApplication::translate(
+                          "main", "As the first argument: run as the blocking launcher for git mergetool.")});
     // A mergetool launcher that starts the GUI names the path Git launched,
     // hex-encoded like its attach frame, so the window opens on it.
-    QCommandLineOption launchedPath(QStringLiteral("mergetool-path"),
-                                    QStringLiteral("Select this hex-encoded repository path first."),
-                                    QStringLiteral("hex-path"));
+    QCommandLineOption launchedPath(
+        QStringLiteral("mergetool-path"),
+        QCoreApplication::translate("main", "Select this hex-encoded repository path first."),
+        QStringLiteral("hex-path"));
     launchedPath.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(launchedPath);
     QCommandLineOption recoverySession(
         QStringLiteral("recovery-session"),
-        QStringLiteral(
+        QCoreApplication::translate(
+            "main",
             "Restore this recovery session when several match the operation; the others are set aside, not deleted."),
         QStringLiteral("session"));
     parser.addOption(recoverySession);

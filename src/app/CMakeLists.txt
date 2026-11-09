@@ -5,7 +5,7 @@ add_library(branch_truce_controller STATIC Application.cpp Application.h AppPath
     NavigationTargets.cpp NavigationTargets.h TextPositions.h SelectedFile.cpp SelectedFile.h Selection.cpp Selection.h
     SessionCompletion.cpp SessionCompletion.h SessionHandoff.cpp SessionHandoff.h SessionModel.cpp SessionModel.h
     ResultEditorAdapter.cpp ResultEditorAdapter.h TextChange.cpp TextChange.h
-    SessionLoader.cpp SessionLoader.h StartupReport.cpp StartupReport.h
+    SessionLoader.cpp SessionLoader.h StartupReport.cpp StartupReport.h Translations.cpp Translations.h
     WordDifferenceDecorations.cpp WordDifferenceDecorations.h)
 qt_add_qml_module(branch_truce_controller
     URI BranchTruce.App VERSION 1.0
@@ -19,6 +19,15 @@ target_link_libraries(branch_truce_controller PUBLIC Qt6::Core Qt6::Network Qt6:
     branch_truce_core branch_truce_git branch_truce_recovery branch_truce_session
     branch_truce_publication branch_truce_mergetool branch_truce_highlighting
     PRIVATE branch_truce_storage branch_truce_build_info branch_truce_build_options)
+# Message catalogs, compiled and embedded under :/branch-truce/i18n. The English
+# catalog holds only the plural forms of numerus messages; installTranslations
+# loads it first and the user's language over it. After adding or changing a
+# numerus message, refresh it from the repository root with
+#   lupdate -pluralonly -no-obsolete -locations none -target-language en src -ts src/app/translations/branch-truce_en.ts
+# and give each new message its English singular and plural forms.
+qt_add_translations(branch_truce_controller
+    TS_FILES "${CMAKE_CURRENT_SOURCE_DIR}/translations/branch-truce_en.ts"
+    RESOURCE_PREFIX "/branch-truce/i18n")
 # The UI module imports the controller module, and the executable owns both plugins.
 add_subdirectory("${PROJECT_SOURCE_DIR}/src/ui" "${PROJECT_BINARY_DIR}/src/ui")
 qt_add_executable(branch-truce main.cpp)

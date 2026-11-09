@@ -125,18 +125,19 @@ QVariantMap FilePresentation::progressData(std::size_t row) const
 {
     const auto &file = store_.files()[row];
     const auto facts = progress(row);
-    return {{QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(facts.undecided))},
-            {QStringLiteral("conflicts"), QVariant::fromValue(static_cast<qulonglong>(facts.conflicts))},
-            {QStringLiteral("saved"), facts.saved},
-            {QStringLiteral("reviewed"), facts.reviewed},
-            {QStringLiteral("resolved"), facts.resolved},
-            {QStringLiteral("earlierResolved"), facts.earlierStaged},
-            {QStringLiteral("settled"), facts.settled},
-            {QStringLiteral("currentRevision"), revisionText(file.current().id)},
-            {QStringLiteral("savedRevision"),
-             facts.saved && file.checkpoint() ? revisionText(file.checkpoint()->id) : QString{}},
-            {QStringLiteral("reviewedRevision"), facts.reviewed ? revisionText(file.reviewed()->revision.id) : QString{}},
-            {QStringLiteral("stagedRevision"), file.staged() ? revisionText(file.staged()->revision.id) : QString{}}};
+    return {
+        {QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(facts.undecided))},
+        {QStringLiteral("conflicts"), QVariant::fromValue(static_cast<qulonglong>(facts.conflicts))},
+        {QStringLiteral("saved"), facts.saved},
+        {QStringLiteral("reviewed"), facts.reviewed},
+        {QStringLiteral("resolved"), facts.resolved},
+        {QStringLiteral("earlierResolved"), facts.earlierStaged},
+        {QStringLiteral("settled"), facts.settled},
+        {QStringLiteral("currentRevision"), revisionText(file.current().id)},
+        {QStringLiteral("savedRevision"),
+         facts.saved && file.checkpoint() ? revisionText(file.checkpoint()->id) : QString{}},
+        {QStringLiteral("reviewedRevision"), facts.reviewed ? revisionText(file.reviewed()->revision.id) : QString{}},
+        {QStringLiteral("stagedRevision"), file.staged() ? revisionText(file.staged()->revision.id) : QString{}}};
 }
 
 StatusKind FilePresentation::statusKind(std::size_t row) const
@@ -204,8 +205,9 @@ QVariantList FilePresentation::chips(std::size_t row) const
     // Outside-app and unreadable files have no app draft to describe.
     if (store_.files()[row].support() == Support::Supported) {
         result.push_back(chipData(
-            unsaved(row) ? Chip{.icon = "document-edit", .text = tr("Unsaved draft"), .tone = "warning"}
-                         : Chip{.icon = "document-save", .text = tr("Manual Save checkpoint retained"), .tone = "neutral"}));
+            unsaved(row)
+                ? Chip{.icon = "document-edit", .text = tr("Unsaved draft"), .tone = "warning"}
+                : Chip{.icon = "document-save", .text = tr("Manual Save checkpoint retained"), .tone = "neutral"}));
     }
     const bool undecided = facts.undecided > 0;
     result.push_back(chipData({.icon = undecided ? "dialog-question" : "checkmark",
@@ -265,14 +267,15 @@ FilePresentation::Route FilePresentation::route(std::size_t row) const
     case FileStatus::OutsideApp:
         return {HandoffCategory::OutsideApp, NextAction::ExplainOutsideApp,
                 tr("See why it needs work outside Branch Truce")};
-    case FileStatus::Unreadable: return {HandoffCategory::Failed, NextAction::Inspect, tr("See why it could not be read")};
-    case FileStatus::LargeFile: return {HandoffCategory::Undecided, NextAction::LoadLargeFile, tr("Load the large file")};
+    case FileStatus::Unreadable:
+        return {HandoffCategory::Failed, NextAction::Inspect, tr("See why it could not be read")};
+    case FileStatus::LargeFile:
+        return {HandoffCategory::Undecided, NextAction::LoadLargeFile, tr("Load the large file")};
     case FileStatus::OutcomeUncertain:
         return {HandoffCategory::Failed, NextAction::Inspect, tr("Inspect the uncertain outcome")};
     case FileStatus::CheckpointFailed: return {HandoffCategory::Failed, NextAction::RetrySave, tr("Retry Save")};
     case FileStatus::WriteFailed:
-    case FileStatus::StageFailed:
-        return {HandoffCategory::Failed, NextAction::MarkResolved, tr("Retry Mark resolved")};
+    case FileStatus::StageFailed: return {HandoffCategory::Failed, NextAction::MarkResolved, tr("Retry Mark resolved")};
     case FileStatus::EarlierStaged:
         return {HandoffCategory::NewerDraft, NextAction::ApplyOrDiscard,
                 tr("Mark resolved or discard back to the staged result")};

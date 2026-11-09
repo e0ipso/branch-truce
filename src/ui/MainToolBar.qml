@@ -41,7 +41,7 @@ RowLayout {
             Kirigami.Separator { Layout.fillHeight: true }
             ToolButton {
                 objectName: "undecidedCounter"
-                text: mainToolBar.conflicts > 0 ? (mainToolBar.conflicts === 1 ? qsTr("%n conflict left", "", mainToolBar.conflicts) : qsTr("%n conflicts left", "", mainToolBar.conflicts))
+                text: mainToolBar.conflicts > 0 ? qsTr("%n conflict(s) left", "", mainToolBar.conflicts)
                                                 : qsTr("No conflicts to step through")
                 icon.name: "vcs-conflicting"
                 enabled: mainToolBar.conflicts > 0

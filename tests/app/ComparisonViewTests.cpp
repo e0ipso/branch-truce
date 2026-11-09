@@ -1,6 +1,7 @@
 #include "TestHarness.h"
 #include "app/AppPaths.h"
 #include "app/Application.h"
+#include "app/Translations.h"
 #include "core/ResourceLimits.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
@@ -3987,6 +3988,8 @@ int main(int argc, char **argv)
     qputenv("XDG_CONFIG_HOME", (data.path() + "/config").toUtf8());
     qputenv("XDG_CACHE_HOME", (data.path() + "/cache").toUtf8());
     QApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName("BranchTruceComparisonTests");
     // No argument runs every case; "scenes" and "boundary" select one ctest entry's share.
     // "display" runs the viewport cases on whatever platform Qt was given, such as a real

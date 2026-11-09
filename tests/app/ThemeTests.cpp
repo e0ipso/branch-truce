@@ -20,6 +20,7 @@
 #include "TestHarness.h"
 #include "app/AppPaths.h"
 #include "app/Application.h"
+#include "app/Translations.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/QuickScene.h"
@@ -746,6 +747,8 @@ int main(int argc, char **argv)
     qputenv("XDG_CACHE_HOME", (data.path() + "/cache").toUtf8());
     if (mode == QStringLiteral("roles") && !writeColourScheme(configHome, argument)) return 2;
     QApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName("BranchTruceThemeTests");
     if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;
     if (mode == QStringLiteral("icons") && argc == 3) return checkIcons(argument);

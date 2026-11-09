@@ -6,6 +6,7 @@
 #include "TestHarness.h"
 #include "app/AppPaths.h"
 #include "app/Application.h"
+#include "app/Translations.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/QuickScene.h"
 #include "mergetool/MergetoolLauncher.h"
@@ -2876,6 +2877,8 @@ int main(int argc, char **argv)
          {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "no_proxy", "NO_PROXY"})
         qunsetenv(name);
     QApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName("BranchTruceJourneyAcceptance");
     // The suite owns its clipboard and window system; physical desktop input is out of scope.
     if (QGuiApplication::platformName() != QStringLiteral("offscreen")) return 2;

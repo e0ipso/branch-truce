@@ -257,9 +257,9 @@ QVariantMap ChoicePreviewFlow::nonConflictingView(const NonConflictingPreview &p
             {QStringLiteral("detail"), engine_text::batch(preview.note)},
             {QStringLiteral("changes"), changes},
             {QStringLiteral("summary"),
-             tr("%1 eligible changes · %2 other non-conflicting changes skipped")
-                 .arg(preview.changes.size())
-                 .arg(preview.skipped)}};
+             tr("%1 · %2").arg(
+                 tr("%n eligible change(s)", nullptr, static_cast<int>(preview.changes.size())),
+                 tr("%n other non-conflicting change(s) skipped", nullptr, static_cast<int>(preview.skipped)))}};
 }
 
 QVariantMap ChoicePreviewFlow::wholeFileView(const WholeFilePreview &preview, const FileSession &file) const
@@ -318,8 +318,8 @@ QVariantMap ChoicePreviewFlow::wholeFileView(const WholeFilePreview &preview, co
             {QStringLiteral("contributions"), contributions},
             {QStringLiteral("differences"), differences},
             {QStringLiteral("retainedDecisions"),
-             preview.retainedDecisions
-                 ? tr("%1 earlier decisions without a source scope are retained.").arg(preview.retainedDecisions)
-                 : QString{}}};
+             preview.retainedDecisions ? tr("%n earlier decision(s) without a source scope are retained.", nullptr,
+                                            static_cast<int>(preview.retainedDecisions))
+                                       : QString{}}};
 }
 }

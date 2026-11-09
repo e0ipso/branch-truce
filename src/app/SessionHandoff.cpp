@@ -10,10 +10,10 @@ using FileStates::HandoffCategory;
 
 QString text(const std::string &value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
 
-constexpr HandoffCategory order[] = {HandoffCategory::Undecided,    HandoffCategory::SavedDraft,
-                                     HandoffCategory::ReviewNeeded, HandoffCategory::NewerDraft,
+constexpr HandoffCategory order[] = {HandoffCategory::Undecided,         HandoffCategory::SavedDraft,
+                                     HandoffCategory::ReviewNeeded,      HandoffCategory::NewerDraft,
                                      HandoffCategory::WrittenUnresolved, HandoffCategory::Failed,
-                                     HandoffCategory::OutsideApp,   HandoffCategory::Published};
+                                     HandoffCategory::OutsideApp,        HandoffCategory::Published};
 
 QVariantMap entryData(const HandoffEntry &entry)
 {
@@ -97,10 +97,9 @@ Handoff SessionHandoff::build(const SessionStore &store, const SessionActivity &
     else if (filesResolved)
         result.outcome = tr("Every file is resolved, but this session is not finished.");
     else
-        result.outcome =
-            tr("%1 of %n file(s) in this session remain outstanding. This session is not finished.", nullptr,
-               result.totalFiles)
-                .arg(result.outstandingFiles);
+        result.outcome = tr("%1 of %n file(s) in this session remain outstanding. This session is not finished.",
+                            nullptr, result.totalFiles)
+                             .arg(result.outstandingFiles);
     // Leaving must not lose input that never reached the recovery store, or
     // a publication whose outcome is still unknown.
     if (store.hasPendingRecovery())

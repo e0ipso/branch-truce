@@ -230,9 +230,13 @@ ColumnLayout {
                     && (section.first < 0 || region.resultLineBegin < section.first))
                 section.first = region.resultLineBegin
         }
-        const sideNames = {stage2: qsTr("Left"), stage3: qsTr("Right")}
-        const stateNames = {accepted: qsTr("accepted"), ignored: qsTr("ignored"),
-            manual: qsTr("edited by hand"), undecided: qsTr("undecided")}
+        // One whole phrase per side and state, so translators can order each.
+        const sideStates = {
+            stage2: {accepted: qsTr("Left accepted"), ignored: qsTr("Left ignored"),
+                manual: qsTr("Left edited by hand"), undecided: qsTr("Left undecided")},
+            stage3: {accepted: qsTr("Right accepted"), ignored: qsTr("Right ignored"),
+                manual: qsTr("Right edited by hand"), undecided: qsTr("Right undecided")}}
+        const sideState = side => sideStates[side][section.sides[side].region.state] || ""
         const decisions = {}
         const combinations = {}
         for (let i = 0; i < order.length; ++i) {
@@ -249,18 +253,15 @@ ColumnLayout {
                 decisions[line] = {
                     state: states.indexOf("manual") >= 0 ? "manual" : states.indexOf("accepted") >= 0 ? "accepted" : "ignored",
                     label: sides.length === 2
-                        ? qsTr("%1 %2, %3 %4").arg(sideNames[sides[0]])
-                            .arg(stateNames[section.sides[sides[0]].region.state] || "")
-                            .arg(sideNames[sides[1]]).arg(stateNames[section.sides[sides[1]].region.state] || "")
-                        : qsTr("%1 %2").arg(sideNames[sides[0]])
-                            .arg(stateNames[section.sides[sides[0]].region.state] || "")
+                        ? qsTr("%1, %2").arg(sideState(sides[0])).arg(sideState(sides[1]))
+                        : sideState(sides[0])
                 }
             } else if (row > 0 && sides.length === 2 && section.sides.stage2.choice.combinationAvailable
                        && (fold.rows[row].sections || []).indexOf(order[i]) >= 0) {
                 if (!combinations[row])
                     combinations[row] = []
                 combinations[row].push({id: section.sides.stage2.choice.id,
-                    label: sides.map(side => section.sides[side].choice.label).join(qsTr(" and "))})
+                    label: qsTr("%1 and %2").arg(section.sides.stage2.choice.label).arg(section.sides.stage3.choice.label)})
             }
         }
         return {decisions: decisions, combinations: combinations}

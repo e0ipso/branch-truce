@@ -1,6 +1,7 @@
 #include "TestHarness.h"
 #include "app/AppPaths.h"
 #include "app/Application.h"
+#include "app/Translations.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/mergetool/GitGate.h"
 #include "mergetool/MergetoolLauncher.h"
@@ -516,6 +517,8 @@ int main(int argc, char **argv)
         return runMergetoolLauncher(2, launcherArguments, gitOnPath());
     }
     QCoreApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
     if (argc != 2) {
         QTextStream(stderr) << "usage: mergetool-launcher-tests <branch-truce>\n";
         return 2;

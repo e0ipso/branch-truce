@@ -4,6 +4,7 @@
 #include "app/Application.h"
 #include "app/EngineText.h"
 #include "app/SessionModel.h"
+#include "app/Translations.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryJournal.h"
 #include "mergetool/MergetoolProtocol.h"
@@ -846,6 +847,8 @@ public:
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
     const auto arguments = application.arguments();
     if (arguments.size() >= 5 && arguments.at(1) == QLatin1String("--boundary")) {
         QString boundary, directory, crash;

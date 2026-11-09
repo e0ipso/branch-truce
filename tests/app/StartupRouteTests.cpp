@@ -2,6 +2,7 @@
 #include "app/AppPaths.h"
 #include "app/Application.h"
 #include "app/EngineText.h"
+#include "app/Translations.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryFaults.h"
@@ -2163,6 +2164,8 @@ public:
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
     if (application.arguments().size() != 2) return 2;
     return StartupRouteTests{}.run(application.arguments()[1]);
 }

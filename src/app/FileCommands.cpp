@@ -32,7 +32,8 @@ FileCommands::FileCommands(SessionStore &store, const Selection &selection, Resu
       feedback_(feedback)
 {
     connect(&editor_, &ResultEditorAdapter::edited, this, &FileCommands::editResult);
-    connect(&editor_, &ResultEditorAdapter::editRejected, this, [this] { feedback_.report(Transition::InvalidAnchor); });
+    connect(&editor_, &ResultEditorAdapter::editRejected, this,
+            [this] { feedback_.report(Transition::InvalidAnchor); });
     // A publication step can end the resolution or ask for confirmation.
     connect(&publisher_, &ResolutionPublisher::changed, this, &FileCommands::resolutionChanged);
     // Replacing the files drops their pending input, so a discard waiting on
@@ -42,9 +43,8 @@ FileCommands::FileCommands(SessionStore &store, const Selection &selection, Resu
         stagedDiscardPendingFileId_.reset();
     });
     connect(&store_, &SessionStore::replaced, this, &FileCommands::resolutionChanged);
-    connect(&store_, &SessionStore::fileChanged, this, [this](int row) {
-        pendingDiscardSettled(store_.files()[static_cast<std::size_t>(row)].id());
-    });
+    connect(&store_, &SessionStore::fileChanged, this,
+            [this](int row) { pendingDiscardSettled(store_.files()[static_cast<std::size_t>(row)].id()); });
 }
 
 bool FileCommands::resolutionConfirmation() const { return publisher_.confirmationPending(); }

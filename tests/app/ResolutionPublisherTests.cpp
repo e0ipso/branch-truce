@@ -2,6 +2,7 @@
 #include "app/AppPaths.h"
 #include "app/Application.h"
 #include "app/EngineText.h"
+#include "app/Translations.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryFaults.h"
 #include "mergetool/MergetoolProtocol.h"
@@ -418,6 +419,8 @@ QVariantMap handoffEntry(const QVariantMap &summary, const QString &fileId)
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
+    // The English catalog supplies the plural forms these checks read.
+    branch_truce::installTranslations(application);
     QCoreApplication::setOrganizationName(QStringLiteral("branch-truce"));
     QCoreApplication::setApplicationName(QStringLiteral("branch-truce-resolution-tests"));
     test_support::Suite suite("resolution");

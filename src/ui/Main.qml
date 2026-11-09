@@ -26,10 +26,15 @@ Kirigami.ApplicationWindow {
     readonly property bool binarySelection: OutsideAppText.binaryExcluded(
         selectedFile.support === FileStates.SupportKind.OutsideApp, selectedFile.supportDetail, selectedFile.pathBytes)
     readonly property string selectedAddCommand: OutsideAppText.gitAddCommand(selectedFile.pathBytes)
+    // Fills %1, %2 and so on in one pass, so repository text in a value is never
+    // read as another placeholder.
+    function fill(template: string, values: list<string>): string {
+        return template.replace(/%(\d)/g, (match, index) => index > 0 && index <= values.length ? values[index - 1] : match);
+    }
     function selectedProblemExplanation(): string {
         const path = selectedFile.path;
         const name = path.slice(path.lastIndexOf("/") + 1);
-        const identity = name === path ? name : name + " (" + path + ")";
+        const identity = name === path ? name : fill(qsTr("%1 (%2)"), [name, path]);
         if (selectedFile.support === FileStates.SupportKind.LargeFile)
             return qsTr("Are you sure you want to load it?");
         if (selectedFile.support === FileStates.SupportKind.Unreadable)
@@ -39,10 +44,8 @@ Kirigami.ApplicationWindow {
             : qsTr("Branch Truce cannot edit %1. Inspect the file and resolve it with another tool.").arg(identity);
         if (selectedAddCommand.length === 0)
             return qsTr("%1\n\nThis path cannot be represented safely in a copyable shell command. Stage the exact path with another tool after resolving it. It stays in this list and remains outstanding until Git reports it resolved.").arg(guidance);
-        // Substitute repository text only once per string, so a path containing %1 or
-        // %2 is never interpreted as another translation placeholder.
-        return guidance + qsTr(" Then run this command from the repository root:\n%1\n\nIt stays in this list and remains outstanding until Git reports it resolved.")
-            .arg(selectedAddCommand);
+        return fill(qsTr("%1 Then run this command from the repository root:\n%2\n\nIt stays in this list and remains outstanding until Git reports it resolved."),
+            [guidance, selectedAddCommand]);
     }
     function choose(target: string, action: int): void {
         if (!choices.previewChoice(selectedFile.fileId, selectedFile.currentRevision, target, action))

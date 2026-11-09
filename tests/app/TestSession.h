@@ -46,6 +46,9 @@ public:
                                                  {"blockers", entry.blockers}});
         return result;
     }
-    bool retryPendingRecovery(const QString &id) { return retryRecovery(id.toStdString()) == branch_truce::Transition::Applied; }
+    bool retryPendingRecovery(const QString &id)
+    {
+        return retryRecovery(id.toStdString()) == branch_truce::Transition::Applied;
+    }
 };
 }
