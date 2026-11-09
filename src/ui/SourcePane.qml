@@ -79,8 +79,12 @@ ColumnLayout {
             icon.name: sourcePane.choiceEdge === "right" ? "arrow-right" : "arrow-left"
             icon.color: Kirigami.Theme.activeTextColor
             // The label shows only beside a complete title and identity; otherwise the icon stands alone.
-            display: paneHeader.trailingRoom >= labelled.implicitWidth ? AbstractButton.TextBesideIcon
-                : AbstractButton.IconOnly
+            display: compact ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon
+            readonly property bool compact: paneHeader.trailingRoom < labelled.implicitWidth
+            // The icon alone keeps only a small inset, so a narrow header loses little title.
+            implicitWidth: compact ? icon.width + 2 * Kirigami.Units.smallSpacing : labelled.implicitWidth
+            leftPadding: compact ? Kirigami.Units.smallSpacing : labelled.leftPadding
+            rightPadding: compact ? Kirigami.Units.smallSpacing : labelled.rightPadding
             topPadding: 0
             bottomPadding: 0
             Layout.fillHeight: true

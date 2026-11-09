@@ -1187,6 +1187,22 @@ public:
             for (int i = 0; i < 2; ++i)
                 CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
             CHECK(fixture.file().current().draft == launch.draft);
+            // In a narrow header the complete identity outranks the title: the title elides
+            // and the button stays inside the header.
+            fixture.window->resize(1280, 720);
+            // The native replay's identity, with a title far wider than the header.
+            auto *narrow = header("stage3Label");
+            CHECK(narrow->setProperty("title", QString(80, QLatin1Char('t')))
+                && narrow->setProperty("identityRole", QStringLiteral("Merged commit"))
+                && narrow->setProperty("identityHash", QStringLiteral("017b782636"))
+                && narrow->setProperty("identity", QString::fromUtf8("Merged commit \u00b7 017b782636")));
+            settleFor("a long title in a narrow header", [&] {
+                const auto bounds = narrow->mapRectToScene(narrow->boundingRect());
+                return bounds.right() <= fixture.window->width() + 0.5
+                    && fixture.item("stage3Label")->property("truncated").toBool();
+            });
+            CHECK(!fixture.item("stage3Identity")->property("truncated").toBool());
+            checkLayout("stage3");
         });
         suite.run("pane budget uses the laid-out editor row", [] {
             Fixture fixture(test_support::choiceFile("left\n", "right\n", "result\n"));
