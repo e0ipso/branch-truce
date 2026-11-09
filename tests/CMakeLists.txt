@@ -47,6 +47,40 @@ set_tests_properties(lifecycle.cli-guards PROPERTIES TIMEOUT 30)
 # HOME and XDG directories, removes those afterwards and fails the run when it created anything
 # under the recovery root of the invoking user's real data directory.
 set(private_xdg "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/with-private-xdg.sh")
+# One test executable from one source file, registered as one CTest entry with the shared defaults:
+# a 60 s TIMEOUT, the LABELS "unit", and exit status 77 reported as skipped. LIBS are the libraries
+# under test, WRAP the symbols the executable replaces at link time, DEPENDS targets it runs and ARGS
+# the arguments after the executable. PRIVATE_XDG runs it through with-private-xdg.sh. WILL_FAIL
+# marks a case that documents a known defect, so CTest reports it once it starts to pass.
+function(branch_truce_add_unit_test name source)
+    cmake_parse_arguments(PARSE_ARGV 2 unit "PRIVATE_XDG;WILL_FAIL" "TIMEOUT" "LIBS;WRAP;DEPENDS;ARGS;LABELS")
+    string(REGEX REPLACE "[.-]" "_" target "branch_truce_${name}_tests")
+    add_executable(${target} ${source})
+    target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(${target} PRIVATE ${unit_LIBS} branch_truce_build_options)
+    if(unit_WRAP)
+        list(JOIN unit_WRAP ",--wrap=" wrapped)
+        target_link_options(${target} PRIVATE "LINKER:--wrap=${wrapped}")
+    endif()
+    if(unit_DEPENDS)
+        add_dependencies(${target} ${unit_DEPENDS})
+    endif()
+    set(command $<TARGET_FILE:${target}> ${unit_ARGS})
+    if(unit_PRIVATE_XDG)
+        set(command ${private_xdg} ${command})
+    endif()
+    if(NOT unit_TIMEOUT)
+        set(unit_TIMEOUT 60)
+    endif()
+    if(NOT unit_LABELS)
+        set(unit_LABELS unit)
+    endif()
+    add_test(NAME ${name} COMMAND ${command})
+    set_tests_properties(${name} PROPERTIES TIMEOUT ${unit_TIMEOUT} LABELS "${unit_LABELS}" SKIP_RETURN_CODE 77)
+    if(unit_WILL_FAIL)
+        set_tests_properties(${name} PROPERTIES WILL_FAIL TRUE)
+    endif()
+endfunction()
 add_test(NAME lifecycle.private-xdg-isolation
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/PrivateXdgIsolation.sh")
 set_tests_properties(lifecycle.private-xdg-isolation PROPERTIES TIMEOUT 30)
@@ -96,25 +130,13 @@ if(Python3_Interpreter_FOUND)
     endif()
 endif()
 if(BRANCH_TRUCE_BUILD_DESKTOP)
-    add_executable(branch_truce_text_format_tests storage/TextFormatTests.cpp)
-    target_include_directories(branch_truce_text_format_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_text_format_tests PRIVATE branch_truce_storage branch_truce_build_options)
-    add_test(NAME storage.text-format COMMAND branch_truce_text_format_tests)
-
-    add_executable(branch_truce_recovery_tests storage/RecoveryStoreTests.cpp)
-    target_include_directories(branch_truce_recovery_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_recovery_tests PRIVATE branch_truce_storage branch_truce_build_options)
-    target_link_options(branch_truce_recovery_tests PRIVATE "LINKER:--wrap=fsync")
-    add_test(NAME storage.recovery-store COMMAND branch_truce_recovery_tests)
-
-    add_executable(branch_truce_destination_tests storage/DestinationWriterTests.cpp)
-    target_include_directories(branch_truce_destination_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_destination_tests PRIVATE branch_truce_storage branch_truce_build_options)
-    # Faults and exchange races are intercepted only in this test executable.
-    target_link_options(branch_truce_destination_tests PRIVATE
-        "LINKER:--wrap=write,--wrap=fsync,--wrap=renameat2,--wrap=unlinkat,--wrap=geteuid")
-    add_test(NAME storage.destination-writer COMMAND branch_truce_destination_tests)
-    set_tests_properties(storage.destination-writer PROPERTIES TIMEOUT 30)
+    branch_truce_add_unit_test(storage.text-format storage/TextFormatTests.cpp LIBS branch_truce_storage)
+    branch_truce_add_unit_test(storage.recovery-store storage/RecoveryStoreTests.cpp LIBS branch_truce_storage
+        WRAP fsync)
+    # Faults and exchange races are intercepted only in this test executable. Its read-only cases
+    # skip when it runs as root, which can write anyway.
+    branch_truce_add_unit_test(storage.destination-writer storage/DestinationWriterTests.cpp
+        LIBS branch_truce_storage WRAP write fsync renameat2 unlinkat geteuid TIMEOUT 30)
 
     add_executable(branch_truce_model_tests app/SessionModelTests.cpp)
     target_include_directories(branch_truce_model_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -303,14 +325,10 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # The timeout must be at least twice the slowest measured run.
     set_tests_properties(app.mergetool-launcher PROPERTIES TIMEOUT 360)
 
-    # Installed /usr/bin/git runs `git mergetool` against the launcher and an in-process session.
-    add_executable(branch_truce_mergetool_parent_tests git/MergetoolParentTests.cpp)
-    target_include_directories(branch_truce_mergetool_parent_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_mergetool_parent_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    add_dependencies(branch_truce_mergetool_parent_tests branch-truce)
-    add_test(NAME git.mergetool-parent COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_parent_tests> $<TARGET_FILE:branch-truce>)
+    # The fixture Git runs `git mergetool` against the launcher and an in-process session.
     # The timeout must be at least twice the slowest measured run.
-    set_tests_properties(git.mergetool-parent PROPERTIES TIMEOUT 450)
+    branch_truce_add_unit_test(git.mergetool-parent git/MergetoolParentTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG TIMEOUT 450 LABELS git DEPENDS branch-truce ARGS $<TARGET_FILE:branch-truce>)
 
     add_executable(branch_truce_coordinator_tests app/SessionCoordinatorTests.cpp)
     target_include_directories(branch_truce_coordinator_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

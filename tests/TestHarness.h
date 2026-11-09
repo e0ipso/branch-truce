@@ -153,7 +153,7 @@ template <typename T> struct Describe {
         if constexpr (std::is_same_v<T, bool>) {
             return value ? "true" : "false";
         } else if constexpr (std::is_same_v<T, char>) {
-            return quoted(std::string_view(&value, 1));
+            return test_support::quoted(std::string_view(&value, 1));
         } else if constexpr (std::is_enum_v<T>) {
             return "enum " + std::to_string(static_cast<long long>(static_cast<std::underlying_type_t<T>>(value)));
         } else if constexpr (std::is_arithmetic_v<T>) {
@@ -161,9 +161,9 @@ template <typename T> struct Describe {
             out << +value;
             return out.str();
         } else if constexpr (std::is_pointer_v<T> && std::is_same_v<std::remove_cv_t<std::remove_pointer_t<T>>, char>) {
-            return value == nullptr ? std::string("nullptr") : quoted(std::string_view(value));
+            return value == nullptr ? std::string("nullptr") : test_support::quoted(std::string_view(value));
         } else if constexpr (std::is_convertible_v<const T &, std::string_view>) {
-            return quoted(std::string_view(value));
+            return test_support::quoted(std::string_view(value));
         } else if constexpr (std::is_pointer_v<T> || std::is_null_pointer_v<T>) {
             if (value == nullptr) return "nullptr";
             std::ostringstream out;
@@ -171,12 +171,12 @@ template <typename T> struct Describe {
             return out.str();
         } else if constexpr (requires { value.toStdString(); }) {
             // QByteArray and QString, without including Qt here.
-            return quoted(value.toStdString());
+            return test_support::quoted(value.toStdString());
         } else if constexpr (requires {
                                  value.has_value();
                                  *value;
                              }) {
-            return value.has_value() ? describe(*value) : std::string("empty");
+            return value.has_value() ? test_support::describe(*value) : std::string("empty");
         } else if constexpr (requires(std::ostream &out) { out << value; }) {
             std::ostringstream out;
             out << value;
@@ -193,7 +193,7 @@ template <typename T> struct Describe {
                     out += ", ...";
                     break;
                 }
-                out += (count++ == 0 ? "" : ", ") + describe(element);
+                out += (count++ == 0 ? "" : ", ") + test_support::describe(element);
             }
             return out + ']';
         } else {
@@ -206,9 +206,9 @@ template <typename T, std::size_t N> struct Describe<T[N]> {
     static std::string of(const T (&value)[N])
     {
         if constexpr (std::is_same_v<std::remove_cv_t<T>, char>) {
-            return quoted(std::string_view(value));
+            return test_support::quoted(std::string_view(value));
         } else {
-            return describe(std::vector<T>(std::begin(value), std::end(value)));
+            return test_support::describe(std::vector<T>(std::begin(value), std::end(value)));
         }
     }
 };
@@ -266,8 +266,8 @@ std::optional<std::string> compare(Relation relation, const A &a, const B &b, co
 {
     ++assertions;
     if (holds(relation, a, b)) return std::nullopt;
-    return std::string(left) + ' ' + symbol(relation) + ' ' + right + "\n      actual: " + describe(a)
-        + "\n    expected: " + symbol(relation) + ' ' + describe(b);
+    return std::string(left) + ' ' + symbol(relation) + ' ' + right + "\n      actual: " + test_support::describe(a)
+        + "\n    expected: " + symbol(relation) + ' ' + test_support::describe(b);
 }
 } // namespace detail
 

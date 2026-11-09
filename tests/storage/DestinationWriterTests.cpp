@@ -1,4 +1,5 @@
 #include "TestHarness.h"
+#include "fixtures/Files.h"
 #include "storage/DestinationWriter.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -15,6 +16,8 @@
 #include <unistd.h>
 
 using namespace branch_truce::storage;
+using test_support::readFile;
+using test_support::writeFile;
 
 namespace {
 struct Interception;
@@ -44,22 +47,6 @@ struct Interception {
     std::function<void()> beforeExchange;
     std::function<void()> afterExchange;
 };
-
-void writeFile(const QString &path, const QByteArray &bytes)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::WriteOnly));
-    CHECK(file.write(bytes) == bytes.size());
-}
-
-QByteArray readFile(const QString &path)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::ReadOnly));
-    const auto bytes = file.readAll();
-    CHECK(file.error() == QFileDevice::NoError);
-    return bytes;
-}
 
 class Fixture {
 public:

@@ -1,11 +1,14 @@
 #pragma once
 
-// Disposable repository driven by the installed `git mergetool` parent.
-// Nothing here reads the user's Git configuration or repositories: HOME, the
-// XDG directories and the global Git configuration live in a temporary
-// directory, the system configuration is disabled, and PATH is /usr/bin:/bin.
+// Disposable repository driven by the real `git mergetool` parent, built on the shared Git
+// fixture. Nothing here reads the user's Git configuration or repositories: HOME, the XDG
+// directories and the global Git configuration live in a temporary directory, the system
+// configuration is disabled, and PATH is /usr/bin:/bin.
 
 #include "TestHarness.h"
+#include "fixtures/EventLoop.h"
+#include "fixtures/Files.h"
+#include "fixtures/GitRepository.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -31,43 +34,15 @@
 
 namespace mergetool_fixture {
 
-inline void writeFile(const QString &path, const QByteArray &bytes)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(bytes) == bytes.size());
-}
+using test_support::readFile;
+using test_support::shellQuote;
+using test_support::writeFile;
 
-inline QByteArray readFile(const QString &path)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::ReadOnly));
-    const auto bytes = file.readAll();
-    CHECK(file.error() == QFileDevice::NoError);
-    return bytes;
-}
-
-inline QString shellQuote(const QString &value)
-{
-    return QLatin1Char('\'') + QString(value).replace(QLatin1Char('\''), QStringLiteral("'\\''")) + QLatin1Char('\'');
-}
-
-// Runs the event loop until ready() holds or 25 s pass.
+// Runs the event loop until ready() holds or 25 s pass. A ready() that fails a CHECK stops the
+// wait, and the failure is raised here rather than inside the event loop.
 inline void pump(const std::function<bool()> &ready, const QString &detail)
 {
-    if (ready()) return;
-    QEventLoop loop;
-    QTimer timeout;
-    timeout.setSingleShot(true);
-    QTimer pulse;
-    pulse.setInterval(30);
-    QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(&pulse, &QTimer::timeout, &loop, [&] {
-        if (ready()) loop.quit();
-    });
-    timeout.start(25000);
-    pulse.start();
-    loop.exec();
-    if (!ready()) throw std::runtime_error(detail.toStdString());
+    test_support::waitUntil(ready, detail.toStdString(), test_support::kWaitDeadlineMs, 30);
 }
 
 // Keeps the event loop running for a fixed time and checks that `holds` stays true throughout.
@@ -77,7 +52,8 @@ inline void holdFor(int milliseconds, const std::function<bool()> &holds, const 
     clock.start();
     while (clock.elapsed() < milliseconds) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
-        if (!holds()) throw std::runtime_error(detail.toStdString());
+        test_support::throwPending();
+        if (!holds()) throw test_support::Failure(detail.toStdString());
     }
 }
 
@@ -103,24 +79,18 @@ public:
 
     ParentRepository(const QString &launcher, const QList<ConflictPath> &conflicts) : conflicts_(conflicts)
     {
-        CHECK(directory_.isValid() && home_.isValid() && probe_.isValid() && runtime_.isValid());
-        root = QFileInfo(directory_.path()).canonicalFilePath();
+        CHECK(probe_.isValid() && runtime_.isValid());
+        root = repository_.root();
         probe = QFileInfo(probe_.path()).canonicalFilePath();
-        globalConfig = home_.path() + QStringLiteral("/gitconfig");
-        writeFile(globalConfig, {});
-        environment.insert("PATH", "/usr/bin:/bin");
-        environment.insert("HOME", home_.path());
-        environment.insert("XDG_CONFIG_HOME", home_.path() + "/config");
-        environment.insert("XDG_CACHE_HOME", home_.path() + "/cache");
-        environment.insert("XDG_DATA_HOME", home_.path() + "/data");
+        globalConfig = repository_.home().globalConfig();
+        // The shared Git sandbox sets PATH, LC_ALL, HOME, XDG_CONFIG_HOME and the Git configuration.
+        environment = repository_.environment();
+        environment.insert("XDG_CACHE_HOME", repository_.home().path() + "/cache");
+        environment.insert("XDG_DATA_HOME", repository_.home().path() + "/data");
         // The session socket lives here, so the in-process session and every launcher meet.
         CHECK(QFile::setPermissions(runtime_.path(),
                                     QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
         environment.insert("XDG_RUNTIME_DIR", runtime_.path());
-        environment.insert("LC_ALL", "C");
-        environment.insert("GIT_CONFIG_NOSYSTEM", "1");
-        environment.insert("GIT_CONFIG_GLOBAL", globalConfig);
-        environment.insert("GIT_TERMINAL_PROMPT", "0");
         environment.insert("BRANCH_TRUCE_MERGETOOL_NO_SPAWN", "1");
         configureGlobal(launcher);
         createConflict();
@@ -130,18 +100,7 @@ public:
 
     QByteArray git(const QStringList &arguments, int expected = 0, const QByteArray &input = {}) const
     {
-        QProcess process;
-        process.setProcessEnvironment(environment);
-        process.setWorkingDirectory(root);
-        process.start("/usr/bin/git", QStringList{"--no-pager", "--literal-pathspecs"} + arguments);
-        CHECK(process.waitForStarted(5000));
-        if (!input.isEmpty()) process.write(input);
-        process.closeWriteChannel();
-        CHECK(process.waitForFinished(15000));
-        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != expected)
-            throw std::runtime_error("fixture git " + arguments.join(' ').toStdString() + ": "
-                                     + process.readAllStandardError().toStdString());
-        return process.readAllStandardOutput();
+        return test_support::runGit(environment, root, arguments, input, expected);
     }
 
     // The full index listing, mode, object id and stage for every entry. It does not refresh or write the index.
@@ -207,18 +166,10 @@ private:
         }
     }
 
-    void global(const QStringList &pair) const
-    {
-        QProcess process;
-        process.setProcessEnvironment(environment);
-        process.start("/usr/bin/git", QStringList{"config", "--global"} + pair);
-        CHECK(process.waitForStarted(5000) && process.waitForFinished(15000));
-        CHECK(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0);
-    }
+    void global(const QStringList &pair) const { git(QStringList{"config", "--global"} + pair); }
 
     void createConflict()
     {
-        git({"init", "--quiet"});
         writeFile(path("notes.txt"), "notes stay staged\n");
         QStringList paths{"notes.txt"};
         for (const auto &conflict : conflicts_) {
@@ -248,8 +199,8 @@ private:
     }
 
     QList<ConflictPath> conflicts_;
-    QTemporaryDir directory_;
-    QTemporaryDir home_;
+    // The worktree, the private home and the global configuration fixture Git and the parent read.
+    test_support::GitRepository repository_;
     QTemporaryDir probe_;
     // Under a long TMPDIR a QTemporaryDir would push the socket path past its
     // length limit, and the session would fall back to the shared
@@ -317,8 +268,8 @@ inline std::unique_ptr<ParentProcess> startParent(const ParentRepository &repo, 
     process->setWorkingDirectory(repo.root);
     // setsid replaces itself with Git when, as here, its caller is not a group leader.
     process->start("/usr/bin/setsid",
-                   QStringList{"--wait", "/usr/bin/git", "--no-pager", "--literal-pathspecs", "mergetool",
-                               "--no-prompt", QStringLiteral("--tool=%1").arg(QLatin1String(tool)), "--"}
+                   QStringList{"--wait", test_support::gitExecutable(), "--no-pager", "--literal-pathspecs",
+                               "mergetool", "--no-prompt", QStringLiteral("--tool=%1").arg(QLatin1String(tool)), "--"}
                        + paths);
     CHECK(process->waitForStarted(5000));
     return process;

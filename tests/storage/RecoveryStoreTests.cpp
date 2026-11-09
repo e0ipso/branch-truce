@@ -1,4 +1,5 @@
 #include "TestHarness.h"
+#include "fixtures/Files.h"
 #include "fixtures/RecoveryFaults.h"
 #include "storage/RecoveryStore.h"
 #include <QCoreApplication>
@@ -9,6 +10,8 @@
 #include <array>
 
 using namespace branch_truce::storage;
+using test_support::readFile;
+using test_support::writeFile;
 
 namespace {
 RecoveryTransaction transaction(const QString &id, const QByteArray &bytes)
@@ -16,23 +19,9 @@ RecoveryTransaction transaction(const QString &id, const QByteArray &bytes)
     const auto hash = RecoveryStore::digest(bytes);
     return {{{"schema", 1}, {"transactionId", id}, {"text", QString::fromLatin1(hash)}}, {{hash, bytes}}};
 }
-QByteArray readFile(const QString &path)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::ReadOnly));
-    const auto bytes = file.readAll();
-    CHECK(file.error() == QFileDevice::NoError);
-    return bytes;
-}
-void overwrite(const QString &path, const QByteArray &bytes)
-{
-    QFile file(path);
-    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
-    CHECK(file.write(bytes) == bytes.size());
-}
 void overwritePrivate(const QString &path, const QByteArray &bytes)
 {
-    overwrite(path, bytes);
+    writeFile(path, bytes);
     CHECK(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner));
 }
 }
@@ -58,7 +47,7 @@ public:
             // Payloads have landed but the record may stop anywhere before its newline.
             for (const qsizetype cut : std::array<qsizetype, 6>{0, 1, frame.size() / 3, frame.size() / 2,
                                                                 frame.size() - 2, frame.size() - 1}) {
-                overwrite(journalPath, acknowledged + frame.left(cut));
+                writeFile(journalPath, acknowledged + frame.left(cut));
                 const auto recovered = RecoveryStore(store.directory()).read();
                 CHECK(recovered.succeeded && recovered.incompleteTail == (cut != 0));
                 CHECK(recovered.transactions == QList<QJsonObject>{first.state});
@@ -182,7 +171,7 @@ public:
             CHECK(firstFrame > 0 && changed.size() > firstFrame + 12);
             // Rewritten at once, with the same size, so no timestamp or size can tell.
             changed[firstFrame + 11] = changed.at(firstFrame + 11) == 'A' ? 'B' : 'A';
-            overwrite(journalPath, changed);
+            writeFile(journalPath, changed);
             const auto failed = store.commit(transaction("third", "three"));
             CHECK(!failed.succeeded && failed.error.contains("integrity"));
             CHECK(readFile(journalPath) == changed);
@@ -206,7 +195,7 @@ public:
                 const auto name = "/payloads/" + QString::fromLatin1(hash);
                 overwritePrivate(store.directory() + name, readFile(other.directory() + name));
             }
-            overwrite(journalPath, readFile(other.directory() + "/journal"));
+            writeFile(journalPath, readFile(other.directory() + "/journal"));
             const auto after = transaction("after-foreign", "three");
             CHECK(store.commit(after).succeeded);
             auto reloaded = RecoveryStore(store.directory()).read();
@@ -214,7 +203,7 @@ public:
                   && reloaded.transactions == (QList<QJsonObject>{foreignA.state, foreignB.state, after.state}));
 
             // A journal whose payloads are missing is refused.
-            overwrite(journalPath, acknowledged);
+            writeFile(journalPath, acknowledged);
             CHECK(QFile::remove(store.directory() + "/payloads/" + QString::fromLatin1(RecoveryStore::digest("one"))));
             auto failed = store.commit(transaction("missing", "four"));
             CHECK(!failed.succeeded && failed.error.contains("missing or unsafe"));
@@ -225,12 +214,12 @@ public:
             // An unknown header is refused.
             auto unknown = acknowledged;
             unknown.replace(0, 33, "Branch Truce recovery journal v9\n");
-            overwrite(journalPath, unknown);
+            writeFile(journalPath, unknown);
             failed = store.commit(transaction("unknown", "five"));
             CHECK(!failed.succeeded && failed.error.contains("Unknown or corrupt"));
 
             // A journal cut back to its first record continues from that record.
-            overwrite(journalPath, acknowledged.left(acknowledged.indexOf('\n', 33) + 1));
+            writeFile(journalPath, acknowledged.left(acknowledged.indexOf('\n', 33) + 1));
             const auto resumed = transaction("resumed", "six");
             CHECK(store.commit(resumed).succeeded);
             reloaded = RecoveryStore(store.directory()).read();

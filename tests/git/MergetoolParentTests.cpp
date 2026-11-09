@@ -1,4 +1,4 @@
-// Real-parent mergetool fixtures: installed /usr/bin/git runs `git mergetool`,
+// Real-parent mergetool fixtures: the fixture Git runs `git mergetool`,
 // which runs the Branch Truce launcher, which waits on an in-process session.
 // docs/mergetool-launcher.md records the tested Git version and configuration.
 
@@ -185,16 +185,20 @@ QString twoEditedStores(const ParentRepository &repo)
 int main(int argc, char **argv)
 {
     QCoreApplication application(argc, argv);
-    if (argc != 2) {
-        QTextStream(stderr) << "usage: mergetool-parent-tests <branch-truce>\n";
+    const auto arguments = test_support::configure(argc, argv);
+    if (arguments.size() != 2) {
+        QTextStream(stderr) << "usage: mergetool-parent-tests [--filter TEXT] <branch-truce>\n";
         return 2;
     }
-    launcherBinary = QString::fromLocal8Bit(argv[1]);
+    launcherBinary = QFile::decodeName(QByteArray::fromStdString(arguments[1]));
     {
         QProcess version;
-        version.start("/usr/bin/git", {"--version"});
-        CHECK(version.waitForFinished(5000) && version.exitCode() == 0);
-        QTextStream(stdout) << "parent: /usr/bin/" << version.readAllStandardOutput();
+        version.start(test_support::gitExecutable(), {"--version"});
+        if (!version.waitForFinished(5000) || version.exitCode() != 0) {
+            QTextStream(stderr) << "cannot run " << test_support::gitExecutable() << " --version\n";
+            return 2;
+        }
+        QTextStream(stdout) << "parent: " << test_support::gitExecutable() << ": " << version.readAllStandardOutput();
     }
     test_support::Suite suite("MergetoolParentTests");
 
