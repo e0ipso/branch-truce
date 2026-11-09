@@ -6,12 +6,16 @@
 # Usage: tools/verify-install-prefix.sh [--mergetool-tests PATH]
 # PATH is a built branch_truce_mergetool_tests binary. When given, it runs
 # against the installed executable to cover the resolved (exit 0) handoff.
+# Exit status: 0 passed, 1 a check failed, 2 usage error.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$root/tools/lib/fixture.sh"
+source "$root/packaging/scripts/compiler-cache.sh"
 app_id=com.canpicasoft.branch-truce
 mergetool_tests=
 case "${1:-}" in
     '') ;;
+    -h|--help) echo "Usage: $0 [--mergetool-tests PATH]"; exit 0 ;;
     --mergetool-tests)
         [[ $# -eq 2 && -x "$2" ]] || { echo "Usage: $0 [--mergetool-tests PATH]" >&2; exit 2; }
         mergetool_tests=$(cd -- "$(dirname -- "$2")" && pwd -P)/$(basename -- "$2") ;;
@@ -80,7 +84,6 @@ mkdir -p -- "$source_dir"
     tar -C "$root" --null -T - -cf - | tar -C "$source_dir" -xf -
 echo "Copied source: $source_dir (from $root at $(git -C "$root" rev-parse --short HEAD))"
 
-source "$root/packaging/scripts/compiler-cache.sh"
 cache_begin install-prefix-Release "$fixture"
 mapfile -t cache_args < <(cache_cmake_args)
 step "Configure, build and install"
@@ -97,16 +100,7 @@ run rm -rf -- "$source_dir" "$build"
 pass "copied source and build tree deleted before launch"
 
 step "Inspect deployed files"
-expected=(
-    "bin/branch-truce"
-    "share/applications/$app_id.desktop"
-    "share/icons/hicolor/scalable/apps/$app_id.svg"
-    "share/icons/hicolor/16x16/apps/$app_id.png"
-    "share/icons/hicolor/22x22/apps/$app_id.png"
-    "share/icons/hicolor/24x24/apps/$app_id.png"
-    "share/icons/hicolor/32x32/apps/$app_id.png"
-    "share/metainfo/$app_id.metainfo.xml"
-)
+mapfile -t expected < <(installed_files "$root/packaging/installed-files.txt" '' | sed 's|^/||')
 deployed=$(cd -- "$prefix" && find . \( -type f -o -type l \) -printf '%P\n' | LC_ALL=C sort)
 printf '%s\n' "$deployed"
 [[ "$deployed" == "$(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)" ]] || fail "deployed file list differs"
@@ -123,31 +117,13 @@ step "Create a disposable merge conflict"
 # The session socket is $XDG_RUNTIME_DIR/branch-truce/bt-mt-<32 hex>. A longer
 # path than Qt accepts (106 bytes) moves it to /tmp/branch-truce-<uid>.
 ((${#home} + 8 + 13 + 39 <= 106)) || fail "fixture path too long for the session socket: $home/runtime"
-mkdir -p -- "$home/data" "$home/config" "$home/cache" "$home/tmp" "$home/runtime" "$repo"
-chmod 700 -- "$home/runtime"
-environment=(
-    "PATH=$prefix/bin:/usr/bin:/bin" "HOME=$home" "TMPDIR=$home/tmp" "LC_ALL=C.UTF-8"
-    "XDG_DATA_HOME=$home/data" "XDG_CONFIG_HOME=$home/config" "XDG_CACHE_HOME=$home/cache"
-    "XDG_RUNTIME_DIR=$home/runtime" "XDG_DATA_DIRS=$prefix/share:/usr/share"
-    "GIT_CONFIG_NOSYSTEM=1" "GIT_CONFIG_GLOBAL=/dev/null" "GIT_TERMINAL_PROMPT=0"
-    "QT_QPA_PLATFORM=offscreen" "QT_QUICK_BACKEND=software"
-)
+fixture_home "$home"
+fixture_gitconfig "$home"
+mapfile -d '' environment < <(fixture_env "$home")
+environment+=("PATH=$prefix/bin:/usr/bin:/bin" "XDG_DATA_DIRS=$prefix/share:/usr/share"
+    "QT_QPA_PLATFORM=offscreen" "QT_QUICK_BACKEND=software")
 isolated() { (cd -- "$repo" && env -i "${environment[@]}" "$@"); }
-fixture_git() { isolated git --no-pager "$@" >/dev/null; }
-fixture_git init --quiet --initial-branch=main
-fixture_git config user.name 'Branch Truce Install Check'
-fixture_git config user.email 'install@example.invalid'
-fixture_git config core.autocrlf false
-printf 'base\n' > "$repo/tracked.txt"
-fixture_git add -- tracked.txt
-fixture_git commit --quiet -m base
-fixture_git checkout --quiet -b side
-printf 'side\n' > "$repo/tracked.txt"
-fixture_git commit --quiet -am side
-fixture_git checkout --quiet main
-printf 'main\n' > "$repo/tracked.txt"
-fixture_git commit --quiet -am main
-isolated git merge --no-edit side >/dev/null 2>&1 && fail "fixture merge did not conflict"
+fixture_merge_repo "$home" "$repo" tracked.txt || fail "fixture merge did not conflict on tracked.txt"
 launch_bytes=$(sha256sum < "$repo/tracked.txt")
 resolved_name=$(isolated sh -c 'command -v branch-truce')
 [[ "$resolved_name" == "$installed" ]] || fail "branch-truce resolves to $resolved_name"
@@ -171,14 +147,13 @@ expect_blocked() {
 }
 
 step "CLI launch from the installed prefix"
+# The application runs with a deadline, so a hang fails the check.
 show env -i "${environment[@]}" branch-truce --version
-isolated branch-truce --version
+isolated timeout --kill-after=10 60 branch-truce --version || fail "installed --version exited $?"
 show env -i "${environment[@]}" branch-truce --smoke-test "$repo"
-smoke=$(isolated branch-truce --smoke-test "$repo")
+smoke=$(isolated timeout --kill-after=10 60 branch-truce --smoke-test "$repo") || fail "installed --smoke-test exited $?"
 printf '%s\n' "$smoke"
-record=$(printf '%s\n' "$smoke" | sed -n 's/^BRANCH_TRUCE_SESSION=//p')
-[[ "$record" == *'"state":"ready"'* && "$record" == *'"operation":"Merge"'* \
-    && "$record" == *'"path":"tracked.txt"'* ]] || fail "smoke test did not open the merge session"
+smoke_record_ready "$smoke" || fail "smoke test did not open the merge session"
 pass "installed CLI loaded the embedded QML and opened the merge session"
 
 step "Desktop-entry launch and direct launcher handoff"
@@ -208,10 +183,11 @@ pass "closing the GUI released the launcher with exit $status and left tracked.t
 
 step "Git mergetool parent spawns the installed GUI"
 rm -f -- "$home"/runtime/branch-truce/bt-mt-*
-fixture_git config mergetool.truce.cmd \
+git_config() { isolated git config "$@"; }
+git_config mergetool.truce.cmd \
     'MERGED="$MERGED" BASE="$BASE" LOCAL="$LOCAL" REMOTE="$REMOTE" branch-truce --mergetool'
-fixture_git config mergetool.truce.trustExitCode true
-fixture_git config mergetool.keepBackup false
+git_config mergetool.truce.trustExitCode true
+git_config mergetool.keepBackup false
 show env -i "${environment[@]}" git mergetool --no-prompt --tool=truce -- tracked.txt
 isolated git --no-pager mergetool --no-prompt --tool=truce -- tracked.txt < /dev/null &
 parent=$!

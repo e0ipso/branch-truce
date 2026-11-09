@@ -254,8 +254,8 @@ pass
 [[ "$(tail -n 1 "$work/state/engine.log")" == "rm --force $container" ]] || fail "container not removed last"
 pass
 # The container gets this checkout's validation scripts and nothing else.
-expect_files "$work/state/fixture-copy" 'artifact-baseline.sh atspi-probe.py merge-fixture.sh validate-installed-artifact.sh '
-for file in artifact-baseline.sh atspi-probe.py merge-fixture.sh validate-installed-artifact.sh; do
+expect_files "$work/state/fixture-copy" 'artifact-baseline.sh atspi-probe.py lib validate-installed-artifact.sh '
+for file in artifact-baseline.sh atspi-probe.py lib/fixture.sh validate-installed-artifact.sh; do
     cmp -s -- "$root/tools/$file" "$work/state/fixture-copy/$file" || fail "fixture $file differs from tools/$file"
     pass
 done
@@ -539,11 +539,24 @@ pass
 [[ "$(cat "$work/state/wtype.log")" == 'WAYLAND_DISPLAY=/run/bt-wayland/wayland-0 -s 400 -M ctrl a -m ctrl -s 100 merged é ü -k Return' ]] \
     || fail "wtype arguments: $(cat "$work/state/wtype.log")"
 pass
-sourced 'probe() { case $1 in text) echo "text '"'merged é ü'"'" ;; *) echo "grab_focus False" ;; esac; }
+sourced 'probe() { case $1 in text) echo "text '"'merged é ü'"'" ;; *) echo "grab_focus True" ;; esac; }
     export STUB_WTYPE_STATUS=1; c_editor_input'
 expect_status 0
 expect_output 'FAIL wtype'
 expect_output 'FAIL the result does not hold the typed text'
+# A refused focus fails the step with the probe's reason, before any typing.
+sourced 'probe() { echo "'"'Editable result'"' refused keyboard focus" >&2; return 1; }; c_editor_input'
+expect_status 0
+expect_output "FAIL AT-SPI focus on the editable result: 'Editable result' refused keyboard focus"
+[[ ! -e "$work/state/wtype.log" ]] || fail "typed after a refused focus"
+pass
+# A press the probe reports as failed fails the resolve step with its reason.
+sourced 'c_wait_ready() { :; }; c_editor_input() { :; }
+    probe() { case $1 in press) echo "'"'Mark resolved'"' has no action interface" >&2; return 1 ;; *) echo "probe $*" ;; esac; }
+    c_mergetool_resolve'
+expect_status 0
+expect_output "FAIL press Mark resolved: 'Mark resolved' has no action interface"
+expect_no_output 'Confirm resolution'
 expect_no_fixture
 
 if ((${#missing[@]} > 0)); then

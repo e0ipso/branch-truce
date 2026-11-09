@@ -295,9 +295,9 @@ keeps its size. The PNG names end in the size, such as
 Agents sharing the headless session run the script under
 `flock /tmp/branch-truce-preview.lock`, so two runs never add outputs at once.
 
-`tools/merge-fixture.sh` builds the fixture. The installed-artifact validator
-uses the same function inside its container for its single `tracked.txt`
-conflict.
+`tools/lib/fixture.sh` builds the fixture. The installed-artifact validator,
+the package checkers and the install-prefix check use the same functions for
+their single `tracked.txt` conflict.
 
 The README uses the inspected 2026-11-06 CI captures below. Their [provenance](images/readme-media-provenance.json) records the producing source and original image hashes. The comparison, preview, earlier-context, GIF and video files now show the current app. The animation is an encoded gallery of actual CI states, not a continuous interaction recording.
 

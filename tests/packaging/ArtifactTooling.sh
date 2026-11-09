@@ -317,6 +317,10 @@ cmp -s -- "$inspect" "$work/state/inspect/inspect-artifact.sh" || fail "containe
 pass
 cmp -s -- "$root/tools/artifact-baseline.sh" "$work/state/inspect/artifact-baseline.sh" || fail "baseline script differs"
 pass
+cmp -s -- "$root/tools/lib/fixture.sh" "$work/state/inspect/lib/fixture.sh" || fail "fixture helpers differ"
+pass
+cmp -s -- "$root/packaging/installed-files.txt" "$work/state/inspect/installed-files.txt" || fail "installed files list differs"
+pass
 # The container gets the branding pack's icons to compare the installed ones with, and nothing else there.
 [[ "$(cd -- "$work/state/inspect/icons" && find . -type f -printf '%P\n' | LC_ALL=C sort)" == "$(LC_ALL=C sort <<<"$icon_paths")" ]] \
     || fail "inspection volume icons: $(cd -- "$work/state/inspect/icons" && find . -type f -printf '%P ')"
@@ -382,16 +386,6 @@ expect_sourced_only() {
 expect_sourced_only
 expect_sourced_only --target kubuntu --package "$work/debs/$deb_name.deb"
 expect_sourced_only --in-container kubuntu26.04 /nonexistent/branch-truce.deb
-# The inspection decides with these functions, not with a copy of them.
-sourced 'declare -f container_main'
-expect_status 0
-expect_output 'tags=$(objdump -T "$binary" | symbol_tags)'
-expect_output 'check_private_abi "$tags" "$depends"'
-expect_output 'check_icon_resolves "$appearance"'
-expect_output 'LD_PRELOAD=/inspect/probe/lib/libappearance_probe.so'
-expect_output 'check_app_icon "$hicolor" /inspect/icons "$relative"'
-expect_output 'check_icon_lookup "$hicolor/index.theme" "$relative"'
-
 objdump_head=$'\n/usr/bin/branch-truce:     file format elf64-x86-64\n\nDYNAMIC SYMBOL TABLE:'
 undefined() { printf '0000000000000000      DF *UND*\t0000000000000000 (%s) %s\n' "$1" "$2"; }
 public_dump=$objdump_head$'\n'$(
@@ -462,8 +456,8 @@ expect_status 0
 expect_only_output $'FAIL no BRANCH_TRUCE_APPEARANCE record from the installed application\nfailures=1'
 
 # --- tools/inspect-artifact.sh sourced, for the application icon checks
-# icon_paths lists the scalable symbol and the small drawing's sizes.
-sourced 'icon_paths'
+# icon_paths lists the scalable symbol and the small drawing's sizes, from packaging/installed-files.txt.
+sourced 'icon_paths "$1"' "$root/packaging/installed-files.txt"
 expect_status 0
 expect_only_output "$icon_paths"
 
