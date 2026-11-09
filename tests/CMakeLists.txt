@@ -12,6 +12,17 @@ add_test(NAME core.native-version
     COMMAND "${CMAKE_COMMAND}"
         "-DBRANCH_TRUCE_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/core/NativeVersionTests.cmake")
+# Engine unit tests: one executable per source file, Qt-free and without a display.
+function(branch_truce_add_core_test name source)
+    string(REPLACE "." "_" target "branch_truce_${name}_tests")
+    string(REPLACE "-" "_" target "${target}")
+    add_executable(${target} ${source})
+    target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(${target} PRIVATE branch_truce_core branch_truce_build_options)
+    add_test(NAME core.${name} COMMAND ${target})
+    set_tests_properties(core.${name} PROPERTIES TIMEOUT 60 LABELS unit)
+endfunction()
+branch_truce_add_core_test(file-session core/FileSessionTests.cpp)
 add_executable(branch_truce_session_tests core/SessionStateTests.cpp)
 target_include_directories(branch_truce_session_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(branch_truce_session_tests PRIVATE branch_truce_core branch_truce_build_options)

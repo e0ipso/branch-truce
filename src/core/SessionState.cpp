@@ -223,7 +223,7 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, Suppor
     if (resultBudget.limit != TextLimit::Within) {
         support_ = Support::Unreadable;
         supportDetail_ = "Load error: " + textLimitDiagnostic(resultBudget);
-        open(1, std::move(initial), false, false);
+        open(launch(1, std::move(initial), false, false));
         return;
     }
     if (snapshots_) {
@@ -234,22 +234,24 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, Suppor
             support_ = Support::LargeFile;
             supportDetail_ = "File of " + std::to_string(lines) + " lines is over " + std::to_string(kLargeFileLines)
                 + " lines and was not loaded";
-            open(1, std::move(initial), false, false);
+            open(launch(1, std::move(initial), false, false));
             return;
         }
     }
-    open(1, std::move(initial), true, initializeChoices);
+    open(launch(1, std::move(initial), true, initializeChoices));
 }
 
-void FileSession::open(RevisionId revision, Draft initial, bool correspond, bool initializeChoices)
+FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool correspond,
+                                        bool initializeChoices) const
 {
+    Launch result{support_, supportDetail_, {}, {}, {}, revision, {}, {revision}};
     std::shared_ptr<const CorrespondenceMap> correspondence;
     if (correspond && snapshots_) {
         try {
-            correspondence = std::make_shared<const CorrespondenceMap>(revision, *snapshots_, initial.text);
-            choices_ = std::make_shared<const std::vector<ChoiceTarget>>(choiceTargets(*snapshots_));
-            auto bound = std::make_shared<CorrespondenceMap>(*correspondence);
-            for (const auto &target : *choices_) {
+            auto bound = std::make_shared<CorrespondenceMap>(revision, *snapshots_, initial.text);
+            auto choices = std::make_shared<const std::vector<ChoiceTarget>>(choiceTargets(*snapshots_));
+            auto decisions = initial.decisions;
+            for (const auto &target : *choices) {
                 if (!bound->bind(target.source)) throw std::invalid_argument("Invalid choice scope");
                 // Empty deletions have a section control and one decision,
                 // without pretending that deleting several lines is a line pick.
@@ -260,29 +262,49 @@ void FileSession::open(RevisionId revision, Draft initial, bool correspond, bool
                         if (!bound->bind(std::move(source))) throw std::invalid_argument("Invalid deletion scope");
                     }
                 if (initializeChoices)
-                    for (const auto &id : target.decisions) initial.decisions.try_emplace(id);
+                    for (const auto &id : target.decisions) decisions.try_emplace(id);
             }
-            nonConflictingTargets_ = std::make_shared<const std::vector<NonConflictingTarget>>(
-                branch_truce::nonConflictingTargets(*snapshots_, *choices_));
-            for (const auto &target : *nonConflictingTargets_) {
+            auto nonConflicting = std::make_shared<const std::vector<NonConflictingTarget>>(
+                branch_truce::nonConflictingTargets(*snapshots_, *choices));
+            for (const auto &target : *nonConflicting) {
                 if (!bound->bind(target.earlier) || !bound->bind(target.source))
                     throw std::invalid_argument("Invalid non-conflicting scope");
             }
             settle(*bound, initial.text);
             correspondence = std::move(bound);
+            result.choices = std::move(choices);
+            result.nonConflictingTargets = std::move(nonConflicting);
+            initial.decisions = std::move(decisions);
         } catch (const std::exception &error) {
-            support_ = Support::Unreadable;
-            supportDetail_ = "Load error: could not build correspondence for " + path_ + ": " + error.what();
+            result.support = Support::Unreadable;
+            result.supportDetail = "Load error: could not build correspondence for " + path_ + ": " + error.what();
         }
     }
     if (snapshots_) {
-        std::set<std::vector<std::string>> launch;
+        std::set<std::vector<std::string>> blocks;
         for (const auto &block : resultMarkers(initial.text, correspondence.get()).blocks)
-            launch.insert(frame(block, initial.text));
-        launchBlocks_ = std::make_shared<const std::set<std::vector<std::string>>>(std::move(launch));
+            blocks.insert(frame(block, initial.text));
+        result.launchBlocks = std::make_shared<const std::set<std::vector<std::string>>>(std::move(blocks));
     }
-    auto draft = withMarkers(std::move(initial), correspondence.get(), launchBlocks_.get());
-    revisions_.emplace(revision, Revision{revision, revision, revision, std::move(draft), std::move(correspondence)});
+    auto draft = withMarkers(std::move(initial), correspondence.get(), result.launchBlocks.get());
+    result.revisions.emplace(revision,
+                             Revision{revision, revision, revision, std::move(draft), std::move(correspondence)});
+    return result;
+}
+
+void FileSession::open(Launch opened) noexcept
+{
+    support_ = opened.support;
+    supportDetail_ = std::move(opened.supportDetail);
+    choices_ = std::move(opened.choices);
+    nonConflictingTargets_ = std::move(opened.nonConflictingTargets);
+    launchBlocks_ = std::move(opened.launchBlocks);
+    revisions_ = std::move(opened.revisions);
+    history_ = std::move(opened.history);
+    launch_ = opened.revision;
+    current_ = launch_;
+    outcomeFloor_ = launch_;
+    cursor_ = 0;
 }
 
 const std::vector<ChoiceTarget> &FileSession::choices() const noexcept
@@ -692,7 +714,7 @@ Transition FileSession::discardToCheckpoint(RevisionId expected)
 {
     if (expected != current_) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
-    const auto &target = checkpoint_ ? *checkpoint_ : revisions_.at(1);
+    const auto &target = checkpoint_ ? *checkpoint_ : revisions_.at(launch_);
     // Matching text after undo can still have pending Save callbacks from a
     // discarded revision. Only the checkpoint's own successful transaction is
     // a no-op; otherwise restore its identity and fence those callbacks below.
@@ -784,22 +806,18 @@ Transition FileSession::loadLargeFile()
     if (support_ != Support::LargeFile) return Transition::NoChange;
     // Every edit and outcome is blocked until the file loads, so the launch
     // revision is the only one. It never had choices or a correspondence.
-    if (!snapshots_ || current_ != 1 || history_.size() != 1 || checkpoint_ || reviewed_ || written_ || staged_
+    if (!snapshots_ || current_ != launch_ || history_.size() != 1 || checkpoint_ || reviewed_ || written_ || staged_
         || checkpointOutcome_ || writeOutcome_ || stageOutcome_)
         return Transition::Blocked;
     if (next_ == std::numeric_limits<RevisionId>::max()) throw std::overflow_error("Session revision space exhausted");
     Draft initial;
     initial.text = current().draft.text;
     initial.decisions = current().draft.decisions;
-    const auto revision = next_++;
-    support_ = Support::Supported;
-    supportDetail_.clear();
-    revisions_.clear();
-    open(revision, std::move(initial), true, true);
-    current_ = revision;
-    outcomeFloor_ = revision;
-    history_ = {revision};
-    cursor_ = 0;
+    auto loaded = launch(next_, std::move(initial), true, true);
+    if (loaded.support == Support::LargeFile) loaded.support = Support::Supported;
+    if (loaded.support == Support::Supported) loaded.supportDetail.clear();
+    ++next_;
+    open(std::move(loaded));
     return Transition::Applied;
 }
 

@@ -235,7 +235,20 @@ public:
     Transition loadLargeFile();
 
 private:
-    void open(RevisionId id, Draft initial, bool correspond, bool initializeChoices);
+    // Everything opening a launch text derives, built before any member
+    // changes so a failure leaves the session as it was.
+    struct Launch {
+        Support support = Support::Supported;
+        std::string supportDetail;
+        std::shared_ptr<const std::vector<ChoiceTarget>> choices;
+        std::shared_ptr<const std::vector<NonConflictingTarget>> nonConflictingTargets;
+        std::shared_ptr<const std::set<std::vector<std::string>>> launchBlocks;
+        RevisionId revision = 0;
+        std::map<RevisionId, Revision> revisions;
+        std::vector<RevisionId> history;
+    };
+    [[nodiscard]] Launch launch(RevisionId revision, Draft initial, bool correspond, bool initializeChoices) const;
+    void open(Launch opened) noexcept;
     RevisionId advance(const Draft &draft, std::shared_ptr<const CorrespondenceMap> correspondence = {});
     RevisionId restore(const Revision &revision);
     void appendHistory(RevisionId revision);
@@ -260,6 +273,9 @@ private:
     // Marker lines and base text of each complete block in the launch result.
     std::shared_ptr<const std::set<std::vector<std::string>>> launchBlocks_;
     std::map<RevisionId, Revision> revisions_;
+    // The revision the launch text opened at, which discarding without a
+    // checkpoint restores.
+    RevisionId launch_ = 1;
     RevisionId current_ = 1;
     RevisionId next_ = 2;
     RevisionId outcomeFloor_ = 1;
