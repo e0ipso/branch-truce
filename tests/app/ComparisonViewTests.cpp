@@ -2531,6 +2531,35 @@ public:
             CHECK(remaining(fixture) == atLaunch);
             expectLook(fixture, "after undoing the choice", markedFolded());
         });
+        suite.run("settling every choice shows the ready notice and row until undo reopens one", [] {
+            Fixture fixture(test_support::markedFile());
+            settlePanes(fixture);
+            auto *notice = fixture.item("settledNotice");
+            const auto rowLine = [&] {
+                const auto row = fixture.controller.files()->rowOf("choices");
+                return fixture.controller.files()->data(fixture.controller.files()->index(row), SessionModel::StatusLineRole).toString();
+            };
+            CHECK(!notice->isVisible() && rowLine() != QStringLiteral("Ready to mark resolved"));
+            const auto resolve = [&](SourceSide side, std::size_t section) {
+                const auto &target = test_support::choiceTarget(fixture.file(), side, ChoiceScope::Section, section);
+                CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
+                    QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::ResolveUsingSide));
+                CHECK(fixture.controller.applyChoice(true));
+            };
+            resolve(SourceSide::Stage2, 0);
+            CHECK(!notice->isVisible());
+            resolve(SourceSide::Stage3, 1);
+            settle([&] { return notice->isVisible(); });
+            CHECK(notice->isVisible() && rowLine() == QStringLiteral("Ready to mark resolved"));
+            // Nothing was written or resolved.
+            CHECK(!fixture.file().facts().resolved && !fixture.file().written());
+            CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
+            settle([&] { return !notice->isVisible(); });
+            CHECK(!notice->isVisible() && rowLine() != QStringLiteral("Ready to mark resolved"));
+            CHECK(fixture.controller.redo("choices", QString::number(fixture.file().current().id)));
+            settle([&] { return notice->isVisible(); });
+            CHECK(notice->isVisible());
+        });
         suite.run("a block around two sections split by a shared line folds until both are decided", [] {
             // splitFile writes one block, lines 2-10, around two sections split by "shared";
             // its marker lines are 2, 6 and 10, and it folds into its row on line 2.

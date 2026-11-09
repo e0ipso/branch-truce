@@ -77,6 +77,8 @@ public:
         bool earlierStaged;
         // Current conflict regions used by the file row and conflict stepper.
         std::size_t conflicts = 0;
+        // Every choice is decided and no marker remains; Mark resolved is next.
+        bool settled = false;
     };
     // The progress rule the status, chips and progress role use, for a row
     // inside 0 to totalFiles().

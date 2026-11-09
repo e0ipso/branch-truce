@@ -110,6 +110,11 @@ struct FileFacts {
     bool resolved;
     FileStatus status;
     std::vector<Blocker> blockers;
+    // Every contribution is decided and no conflict marker remains, while the
+    // current result still waits for Mark resolved. Derived from the current
+    // revision, so an undo that reopens a choice clears it. It is not review
+    // and changes nothing in the repository or Git.
+    bool settled = false;
 };
 
 // Value-only session bookkeeping. This class performs no I/O. Success callbacks
