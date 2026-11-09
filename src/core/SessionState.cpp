@@ -324,39 +324,54 @@ Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit)
 Transition FileSession::validateCommand(const EditingCommand &command, const std::vector<ResultEdit> &edits,
                                         bool confirmReplacement) const
 {
-    const auto &text = current().draft.text;
     const bool wholeFile = command.scope == EditingScope::WholeFile;
     if (wholeFile) {
-        if (!command.targets.empty() || edits.size() != 1 || edits.front().range != ByteRange{0, text.size()})
+        if (!command.targets.empty() || edits.size() != 1
+            || edits.front().range != ByteRange{0, current().draft.text.size()})
             return Transition::InvalidAnchor;
         if (!confirmReplacement) return Transition::ConfirmationRequired;
     } else if (command.targets.empty()) {
         return Transition::InvalidAnchor;
     }
-    for (const auto &target : command.targets) {
-        if (target.revision != current().id) return Transition::StaleRevision;
-        const auto *bound = correspondence()->anchor(target.source.contributionId);
-        if (!bound || *bound != target) return Transition::InvalidAnchor;
-        if (target.state == AnchorState::Ambiguous) return Transition::AmbiguousTarget;
-        if (target.state != AnchorState::Mapped || !target.result) return Transition::InvalidAnchor;
-    }
+    for (const auto &target : command.targets)
+        if (const auto refused = validateTarget(target); refused != Transition::Applied) return refused;
     for (std::size_t i = 0; i < edits.size(); ++i) {
-        const auto &edit = edits[i];
-        if (!validByteRange(text, edit.range) || !editableText(edit.replacement)) return Transition::InvalidAnchor;
-        if (i && (edit.range.end > edits[i - 1].range.begin || edit.range.begin == edits[i - 1].range.begin))
-            return Transition::AmbiguousTarget;
-        if (wholeFile) continue;
-        const auto *target = targetOf(command, edit.range);
-        if (!target) return Transition::InvalidAnchor;
-        if (!confirmReplacement && std::any_of(command.targets.begin(), command.targets.end(), [&](const auto &anchor) {
-                return anchor.result == edit.range && anchor.manualOverlap;
-            }))
-            return Transition::ConfirmationRequired;
+        const auto *previous = i ? &edits[i - 1] : nullptr;
+        if (const auto refused = validateEdit(command, edits[i], previous, confirmReplacement);
+            refused != Transition::Applied)
+            return refused;
     }
     if (!validDecisions(command.decisions)) return Transition::InvalidAnchor;
     for (const auto &[id, value] : command.decisions)
         if (!correspondence()->anchor(id)) return Transition::InvalidAnchor;
     return Transition::Applied;
+}
+
+Transition FileSession::validateTarget(const ResultAnchor &target) const
+{
+    if (target.revision != current().id) return Transition::StaleRevision;
+    const auto *bound = correspondence()->anchor(target.source.contributionId);
+    if (!bound || *bound != target) return Transition::InvalidAnchor;
+    if (target.state == AnchorState::Ambiguous) return Transition::AmbiguousTarget;
+    if (target.state != AnchorState::Mapped || !target.result) return Transition::InvalidAnchor;
+    return Transition::Applied;
+}
+
+// Edits come last range first. A mapped command replaces only its targets'
+// exact ranges, and one with manual work needs confirmation.
+Transition FileSession::validateEdit(const EditingCommand &command, const ResultEdit &edit, const ResultEdit *previous,
+                                     bool confirmReplacement) const
+{
+    if (!validByteRange(current().draft.text, edit.range) || !editableText(edit.replacement))
+        return Transition::InvalidAnchor;
+    if (previous && (edit.range.end > previous->range.begin || edit.range.begin == previous->range.begin))
+        return Transition::AmbiguousTarget;
+    if (command.scope == EditingScope::WholeFile) return Transition::Applied;
+    if (!targetOf(command, edit.range)) return Transition::InvalidAnchor;
+    const bool manual = std::any_of(command.targets.begin(), command.targets.end(), [&](const auto &anchor) {
+        return anchor.result == edit.range && anchor.manualOverlap;
+    });
+    return manual && !confirmReplacement ? Transition::ConfirmationRequired : Transition::Applied;
 }
 
 Transition FileSession::applyCommand(const EditingCommand &command, bool confirmReplacement)

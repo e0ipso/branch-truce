@@ -157,6 +157,9 @@ private:
     [[nodiscard]] MarkerPlanner planner() const noexcept;
     [[nodiscard]] Transition validateCommand(const EditingCommand &command, const std::vector<ResultEdit> &edits,
                                              bool confirmReplacement) const;
+    [[nodiscard]] Transition validateTarget(const ResultAnchor &target) const;
+    [[nodiscard]] Transition validateEdit(const EditingCommand &command, const ResultEdit &edit,
+                                          const ResultEdit *previous, bool confirmReplacement) const;
 
     std::string id_;
     std::string path_;
