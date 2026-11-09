@@ -12,8 +12,8 @@
 #
 # Only new paths count, so another process reading or updating an existing journal does not
 # fail the run. The private HOME reaches only code that reads the environment: a process that
-# asks the password database for its home, as GitAdapter does for its Git, still sees the real
-# one, which the Git configuration check catches when it writes there.
+# asks the password database for its home still sees the real one, which the Git configuration
+# check catches when it writes there.
 set -uo pipefail
 
 (($# > 0)) || { echo 'Usage: with-private-xdg.sh COMMAND [ARGUMENT...]' >&2; exit 2; }

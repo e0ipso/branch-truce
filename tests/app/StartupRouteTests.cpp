@@ -251,15 +251,7 @@ public:
     // The socket directory the GUI and the controller use for this fixture's environment.
     QString socketDirectory() const
     {
-        const auto previous = qEnvironmentVariableIsSet("XDG_RUNTIME_DIR")
-            ? std::optional<QByteArray>(qgetenv("XDG_RUNTIME_DIR"))
-            : std::nullopt;
-        qputenv("XDG_RUNTIME_DIR", environment.value(QStringLiteral("XDG_RUNTIME_DIR")).toUtf8());
-        const auto socket = mergetoolSocketDirectory();
-        if (previous)
-            qputenv("XDG_RUNTIME_DIR", *previous);
-        else
-            qunsetenv("XDG_RUNTIME_DIR");
+        const auto socket = mergetoolSocketDirectory(environment.value(QStringLiteral("XDG_RUNTIME_DIR")).toUtf8());
         return socket;
     }
     void checkSocketDirectory() const
@@ -328,7 +320,7 @@ void openController(Application &controller, const Repository &repo, const QStri
 {
     const auto before = repo.snapshot();
     repo.checkSocketDirectory();
-    CHECK(mergetoolSocketDirectory() == repo.socketDirectory());
+    CHECK(mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR")) == repo.socketDirectory());
     CHECK(controller.loader()->openRepository(repo.root, {}, recoverySession));
     waitOpened(controller, "the repository");
     CHECK(!controller.loader()->opening());

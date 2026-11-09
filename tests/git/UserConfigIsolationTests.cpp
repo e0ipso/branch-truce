@@ -1,18 +1,15 @@
-// Whether the Git that GitAdapter starts can read the invoking account's or the system's Git
-// configuration. GitAdapter builds its child environment itself, from the account's passwd home,
-// and leaves the system configuration on, so its Git reads ~/.gitconfig, ~/.config/git/config and
-// /etc/gitconfig, which no test fixture controls. Every Git suite's result then depends on the
-// developer's own settings, such as core.autocrlf, core.hooksPath or filter.lfs.*.
-//
-// This case fails until GitAdapter takes that environment from its caller. CMake registers it
-// with WILL_FAIL; remove that when the adapter's Git stops reading the account's configuration,
-// and construct the adapter below with the fixture's environment if the new seam needs one.
+// Whether the Git that GitAdapter starts reads only the configuration its caller selected. The
+// adapter takes HOME, XDG_CONFIG_HOME and the GIT_CONFIG_* selection from the GitProgram it is
+// given, so a Git suite built on the fixture's environment never reads the invoking account's
+// ~/.gitconfig, ~/.config/git/config or the system's /etc/gitconfig, whatever this process's own
+// environment holds.
 #include "TestHarness.h"
 #include "git/GitFixtures.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QHash>
+#include <QProcessEnvironment>
 
 #include <pwd.h>
 #include <unistd.h>
@@ -37,8 +34,6 @@ void theAdaptersGitReadsNoAccountOrSystemConfiguration()
     const auto *account = ::getpwuid(::geteuid());
     if (account == nullptr) test_support::skip("this account has no passwd entry");
     const auto accountHome = QDir::cleanPath(QFile::decodeName(account->pw_dir));
-    if (QDir::cleanPath(QDir::homePath()) == accountHome)
-        test_support::skip("HOME is the account's home; run this under tests/with-private-xdg.sh");
     const QStringList accountFiles{accountHome + QStringLiteral("/.gitconfig"),
                                    accountHome + QStringLiteral("/.config/git/config")};
 
@@ -58,8 +53,8 @@ void theAdaptersGitReadsNoAccountOrSystemConfiguration()
          + test_support::shellQuote(test_support::gitExecutable()) + QStringLiteral(" \"$@\"\n"))
             .toUtf8());
 
-    GitAdapter adapter(recorder);
-    CHECK_EQ(run(adapter, repo.request(Operation::Status)).outcome, Outcome::Success);
+    GitAdapter adapter(repo.program(recorder));
+    CHECK_EQ(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome, Outcome::Success);
 
     int calls = 0;
     QHash<QByteArray, QString> variables;
@@ -79,6 +74,32 @@ void theAdaptersGitReadsNoAccountOrSystemConfiguration()
     }
     CHECK_GT(calls, 0);
 }
+void theEnvironmentSelectionKeepsAbsoluteConfigurationPathsOnly()
+{
+    QProcessEnvironment environment;
+    environment.insert(QStringLiteral("HOME"), QStringLiteral("/home/chosen"));
+    environment.insert(QStringLiteral("XDG_CONFIG_HOME"), QStringLiteral("/home/chosen/xdg"));
+    environment.insert(QStringLiteral("GIT_CONFIG_GLOBAL"), QStringLiteral("/home/chosen/global"));
+    environment.insert(QStringLiteral("GIT_CONFIG_SYSTEM"), QStringLiteral("/etc/chosen"));
+    environment.insert(QStringLiteral("GIT_CONFIG_NOSYSTEM"), QStringLiteral("1"));
+    const auto chosen = GitEnvironment::from(environment);
+    CHECK_EQ(chosen.home, QStringLiteral("/home/chosen"));
+    CHECK_EQ(chosen.configHome, QStringLiteral("/home/chosen/xdg"));
+    CHECK_EQ(chosen.globalConfig, QStringLiteral("/home/chosen/global"));
+    CHECK_EQ(chosen.systemConfig, QStringLiteral("/etc/chosen"));
+    CHECK_EQ(chosen.noSystem, QStringLiteral("1"));
+
+    QProcessEnvironment relative;
+    relative.insert(QStringLiteral("HOME"), QStringLiteral("relative/home"));
+    relative.insert(QStringLiteral("XDG_CONFIG_HOME"), QStringLiteral("relative"));
+    relative.insert(QStringLiteral("GIT_CONFIG_GLOBAL"), QStringLiteral(":/resource"));
+    const auto dropped = GitEnvironment::from(relative);
+    CHECK(dropped.configHome.isEmpty() && dropped.globalConfig.isEmpty() && dropped.systemConfig.isEmpty());
+    CHECK(dropped.noSystem.isEmpty());
+    // HOME falls back to the account's home directory.
+    if (const auto *account = ::getpwuid(::geteuid()); account != nullptr)
+        CHECK_EQ(dropped.home, QFile::decodeName(account->pw_dir));
+}
 } // namespace
 
 int main(int argc, char **argv)
@@ -88,5 +109,7 @@ int main(int argc, char **argv)
     test_support::Suite suite("UserConfigIsolationTests");
     suite.run("the adapter's Git reads no configuration from the account's home or the system",
               theAdaptersGitReadsNoAccountOrSystemConfiguration);
+    suite.run("the environment selection keeps absolute configuration paths only",
+              theEnvironmentSelectionKeepsAbsoluteConfigurationPathsOnly);
     return suite.report();
 }

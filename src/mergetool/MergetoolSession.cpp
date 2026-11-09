@@ -1,31 +1,40 @@
 // The mergetool session connects waiting Git launchers to the window and tracks their published results.
 #include "mergetool/MergetoolSession.h"
-#include "mergetool/MergetoolProtocol.h"
 #include "recovery/RecoveryRestore.h"
 
 #include <QCryptographicHash>
-#include <QFileInfo>
-#include <QHash>
-#include <QJsonObject>
-#include <QLocalServer>
-#include <QLocalSocket>
+#include <QFutureWatcher>
+#include <QPromise>
+#include <QThreadPool>
 #include <QTimer>
 #include <algorithm>
+#include <memory>
+#include <utility>
 
 namespace branch_truce {
+namespace {
+// Acknowledgment polls back off from the first interval to the last and go
+// on while the offer is held.
+constexpr int kFirstAcknowledgmentPollMs = 200;
+constexpr int kLastAcknowledgmentPollMs = 5000;
+}
+
 MergetoolSession::MergetoolSession(ResolutionPublisher &publisher, SessionStore &files, SessionCoordinator &coordinator,
-                                   std::function<git::RepositoryContext()> loadedRepository, QString gitExecutable,
+                                   std::function<git::RepositoryContext()> loadedRepository, Config config,
                                    QObject *parent)
     : QObject(parent),
       publisher_(publisher),
       files_(files),
       coordinator_(coordinator),
       loadedRepository_(std::move(loadedRepository)),
-      gitExecutable_(std::move(gitExecutable))
+      config_(std::move(config)),
+      server_(this)
 {
     acknowledgment_ = new QTimer(this);
-    acknowledgment_->setInterval(200);
+    acknowledgment_->setSingleShot(true);
     connect(acknowledgment_, &QTimer::timeout, this, &MergetoolSession::pollAcknowledgment);
+    connect(&server_, &MergetoolServer::attachReceived, this, &MergetoolSession::attachReceived);
+    connect(&server_, &MergetoolServer::closed, this, &MergetoolSession::closed);
     // A fenced revalidation never completes; the next attach may check again.
     connect(&coordinator_, &SessionCoordinator::taskFinished, this, [this](const TaskCompletion &completion) {
         if (completion.disposition == TaskDisposition::Current) return;
@@ -39,131 +48,91 @@ MergetoolSession::Listen MergetoolSession::listen(const git::RepositoryContext &
         if (error) *error = reason;
         return Listen::Unavailable;
     };
-    if (listening_) return Listen::Listening;
-    const auto name = mergetoolServerName(repository);
-    sessionKey_ = mergetoolSessionKey(repository);
+    if (server_.listening()) return Listen::Listening;
+    const auto name = mergetoolServerName(config_.socketDirectory, repository);
     if (name.isEmpty()) return unavailable(tr("This operation has no mergetool session identity."));
+    sessionKey_ = mergetoolSessionKey(repository);
     repository_ = repository;
     QString reason;
-    if (!prepareMergetoolSocketDirectory(QFileInfo(name).path(), &reason)) return unavailable(reason);
-    QLocalSocket probe;
-    probe.connectToServer(name);
-    if (probe.waitForConnected(50)) {
-        probe.disconnectFromServer();
-        return Listen::Elsewhere;
-    }
-    QLocalServer::removeServer(name);
-    server_ = new QLocalServer(this);
-    server_->setSocketOptions(QLocalServer::UserAccessOption);
-    if (!server_->listen(name)) {
-        reason = tr("The session socket %1 could not listen: %2").arg(name, server_->errorString());
-        delete server_;
-        server_ = nullptr;
-        return unavailable(reason);
-    }
-    connect(server_, &QLocalServer::newConnection, this, &MergetoolSession::acceptConnection);
-    listening_ = true;
-    return Listen::Listening;
+    if (!prepareMergetoolSocketDirectory(config_.socketDirectory, &reason)) return unavailable(reason);
+    const auto listening = server_.listen(name, &reason);
+    if (listening == Listen::Unavailable) return unavailable(reason);
+    // Copies left by launchers that were killed while they waited.
+    if (listening == Listen::Listening)
+        pruneMergetoolIntakes(mergetoolIntakeRoot(config_.socketDirectory), sessionKey_);
+    return listening;
 }
 
 bool MergetoolSession::blocks(const QByteArray &path) const
 {
     if (!parentSession_) return false;
-    const auto index = indexOfPath(path, true);
+    const auto index = indexOfPath(path);
     return index < 0 || !waiters_.at(index).assigned;
 }
 
 bool MergetoolSession::waitingOn(const QByteArray &path) const
 {
-    const auto index = indexOfPath(path, true);
+    const auto index = indexOfPath(path);
     return index >= 0 && waiters_.at(index).assigned && !offerHeld_;
 }
 
 QByteArray MergetoolSession::waitingPath() const
 {
     for (const auto &waiter : waiters_)
-        if (!waiter.released && waiter.assigned) return waiter.path;
+        if (waiter.assigned) return waiter.path;
     return {};
 }
 
-bool MergetoolSession::hasWaiter(const QByteArray &path) const { return indexOfPath(path, true) >= 0; }
+bool MergetoolSession::hasWaiter(const QByteArray &path) const { return indexOfPath(path) >= 0; }
 
 QByteArray MergetoolSession::waitingMergedSha256(const QByteArray &path) const
 {
-    const auto index = indexOfPath(path, true);
+    const auto index = indexOfPath(path);
     return index < 0 ? QByteArray{} : waiters_.at(index).mergedSha256;
+}
+
+QString MergetoolSession::intake(const QByteArray &path) const
+{
+    const auto index = indexOfPath(path);
+    return index < 0 ? QString{} : waiters_.at(index).intake;
 }
 
 bool MergetoolSession::leave(const QByteArray &path)
 {
     if (publisher_.busy() || offerHeld_) return false;
-    const auto index = indexOfPath(path, true);
+    const auto index = indexOfPath(path);
     if (index < 0) return false;
-    auto &waiter = waiters_[index];
-    const QJsonObject message{{QStringLiteral("v"), 1},
-                              {QStringLiteral("kind"), QStringLiteral("leave")},
-                              {QStringLiteral("invocation"), waiter.invocation}};
-    if (!send(waiter.socket, message)) return false;
-    waiter.released = true;
-    if (waiter.assigned && !offerHeld_) {
-        assigning_ = true;
-        publisher_.assignParentStaging({});
-        assigning_ = false;
-        waiter.assigned = false;
-        tryAssign();
-    }
+    const auto &waiter = waiters_.at(index);
+    if (!server_.send(waiter.connection, LeaveMessage{waiter.invocation})) return false;
+    release(index);
     Q_EMIT changed();
     return true;
-}
-
-int MergetoolSession::unreleasedLaunches() const
-{
-    return static_cast<int>(
-        std::count_if(waiters_.begin(), waiters_.end(), [](const Waiter &waiter) { return !waiter.released; }));
 }
 
 int MergetoolSession::leaveAll()
 {
     int told = 0;
-    bool clearAssignment = false;
-    for (auto &waiter : waiters_) {
-        if (waiter.released) continue;
-        const QJsonObject message{{QStringLiteral("v"), 1},
-                                  {QStringLiteral("kind"), QStringLiteral("leave")},
-                                  {QStringLiteral("invocation"), waiter.invocation}};
-        // A launcher that cannot be reached restores its file when its socket
-        // closes, so the outcome is unresolved either way.
-        if (send(waiter.socket, message)) ++told;
-        waiter.released = true;
-        if (waiter.assigned && !offerHeld_) {
-            waiter.assigned = false;
-            clearAssignment = true;
-        }
+    bool assigned = false;
+    // A launcher that cannot be reached restores its file when its socket
+    // closes, so the outcome is unresolved either way.
+    const auto leaving = std::exchange(waiters_, {});
+    for (const auto &waiter : leaving) {
+        if (server_.send(waiter.connection, LeaveMessage{waiter.invocation})) ++told;
+        assigned = assigned || waiter.assigned;
+        server_.close(waiter.connection);
     }
-    if (clearAssignment) {
-        assigning_ = true;
-        publisher_.assignParentStaging({});
-        assigning_ = false;
-    }
+    if (assigned && !offerHeld_) clearAssignment();
     Q_EMIT changed();
     return told;
 }
 
-bool MergetoolSession::canEndParentSession() const
-{
-    if (!parentSession_ || offerHeld_) return false;
-    for (const auto &waiter : waiters_)
-        if (!waiter.released) return false;
-    return true;
-}
+bool MergetoolSession::canEndParentSession() const { return parentSession_ && !offerHeld_ && waiters_.isEmpty(); }
 
 bool MergetoolSession::endParentSession()
 {
     if (!canEndParentSession()) return false;
     parentSession_ = false;
-    assigning_ = true;
-    publisher_.assignParentStaging({});
-    assigning_ = false;
+    clearAssignment();
     Q_EMIT notice(tr("Parent Git is finished. Remaining files can be resolved here."));
     Q_EMIT changed();
     return true;
@@ -176,9 +145,8 @@ void MergetoolSession::reassign()
     if (offerHeld_) return;
     bool dropped = false;
     for (auto &waiter : waiters_) {
-        if (waiter.released || !waiter.assigned) continue;
+        dropped = dropped || waiter.assigned;
         waiter.assigned = false;
-        dropped = true;
     }
     // A path the reloaded files cannot stage stays unassigned, so Mark
     // resolved waits instead of staging it in the app.
@@ -205,129 +173,116 @@ void MergetoolSession::onPublisherChanged()
     }
     const auto offer = publisher_.parentStagingOffer(path.toHex().toStdString());
     if (!offer || offer->path != path) return;
-    const auto index = indexOfPath(path, true);
+    const auto index = indexOfPath(path);
     if (index < 0) return;
-    auto &waiter = waiters_[index];
-    const QJsonObject message{{QStringLiteral("v"), 1},
-                              {QStringLiteral("kind"), QStringLiteral("resolved")},
-                              {QStringLiteral("invocation"), waiter.invocation},
-                              {QStringLiteral("revision"), QString::number(offer->revision)},
-                              {QStringLiteral("object"), QString::fromLatin1(offer->canonicalObjectId)}};
-    if (!send(waiter.socket, message)) return;
-    waiter.released = true;
+    const auto &waiter = waiters_.at(index);
+    // False means the launcher is already gone and Git restores the path.
+    // Once the frame is queued its delivery is unknown: Git may stage the
+    // path or not, so the offer is held until the index shows which.
+    if (!server_.send(waiter.connection, ResolvedMessage{waiter.invocation, offer->revision, offer->canonicalObjectId}))
+        return;
     offerHeld_ = true;
     acknowledgmentFile_ = path.toHex().toStdString();
     acknowledgmentRevision_ = offer->revision;
-    acknowledgmentAttempts_ = 0;
-    acknowledgment_->start();
+    acknowledgmentInterval_ = kFirstAcknowledgmentPollMs;
+    acknowledgment_->start(acknowledgmentInterval_);
+    release(index);
     Q_EMIT changed();
 }
 
-void MergetoolSession::acceptConnection()
+void MergetoolSession::attachReceived(quint64 connection, const AttachMessage &message)
 {
-    while (auto *socket = server_->nextPendingConnection()) {
-        socket->setParent(this);
-        buffers_.insert(socket, {});
-        connect(socket, &QLocalSocket::readyRead, this, [this, socket] { readSocket(socket); });
-        connect(socket, &QLocalSocket::disconnected, this, [this, socket] { dropped(socket); });
+    // The parent stages with the configuration its Git reads; the release
+    // preflight here must inspect the same files.
+    if (message.configuration != config_.gitEnvironment) {
+        reject(connection, message.invocation,
+               tr("The Git that launched this path reads other configuration files than this window's Git "
+                  "(HOME, XDG_CONFIG_HOME or GIT_CONFIG_*). Start git mergetool and Branch Truce from the same "
+                  "environment."));
+        return;
     }
+    // Reading and hashing up to four copies is file I/O, so it runs off the GUI thread.
+    auto promise = std::make_shared<QPromise<IntakeCheck>>();
+    auto *watcher = new QFutureWatcher<IntakeCheck>(this);
+    connect(watcher, &QFutureWatcher<IntakeCheck>::finished, this, [this, watcher, connection, message] {
+        const auto check = watcher->result();
+        watcher->deleteLater();
+        intakeChecked(connection, message, check);
+    });
+    watcher->setFuture(promise->future());
+    promise->start();
+    QThreadPool::globalInstance()->start(
+        [promise, directory = message.intake, root = mergetoolIntakeRoot(config_.socketDirectory), key = sessionKey_] {
+            IntakeCheck check;
+            check.intake = readMergetoolIntake(directory, root, key, &check.error);
+            promise->addResult(check);
+            promise->finish();
+        });
 }
 
-void MergetoolSession::readSocket(QLocalSocket *socket)
+void MergetoolSession::intakeChecked(quint64 connection, const AttachMessage &message, const IntakeCheck &check)
 {
-    auto buffer = buffers_.find(socket);
-    if (buffer == buffers_.end()) return;
-    buffer->append(socket->readAll());
-    QString error;
-    QJsonObject message;
-    const auto frame = takeMergetoolFrame(&(*buffer), &message, &error);
-    if (frame == MergetoolFrame::NeedMore) return;
-    if (frame == MergetoolFrame::Invalid || message.value(QStringLiteral("v")).toInt() != 1
-        || message.value(QStringLiteral("kind")).toString() != QLatin1String("attach")) {
-        reject(socket, message.value(QStringLiteral("invocation")).toString(),
-               error.isEmpty() ? tr("The mergetool attach message is invalid.") : error);
+    if (!check.intake || check.intake->invocation != message.invocation) {
+        reject(connection, message.invocation,
+               check.error.isEmpty() ? tr("The mergetool inputs could not be kept.") : check.error);
         return;
     }
-    const auto invocation = message.value(QStringLiteral("invocation")).toString();
-    const auto attached = readMergetoolIntake(message.value(QStringLiteral("intake")).toString(), sessionKey_, &error);
-    if (!attached || attached->invocation != invocation) {
-        reject(socket, invocation, error.isEmpty() ? tr("The mergetool inputs could not be kept.") : error);
+    if (indexOfPath(check.intake->path) >= 0) {
+        reject(connection, message.invocation, tr("Git is already waiting on this path."));
         return;
     }
-    if (indexOfPath(attached->path, true) >= 0) {
-        reject(socket, invocation, tr("Git is already waiting on this path."));
-        return;
-    }
-    const auto *file = files_.file(attached->path.toHex().toStdString());
+    const auto *file = files_.file(check.intake->path.toHex().toStdString());
     if (!file || file->support() != Support::Supported) {
-        reject(socket, invocation, tr("This path is not an editable conflict in the open session."));
+        reject(connection, message.invocation, tr("This path is not an editable conflict in the open session."));
         return;
     }
-    buffers_.remove(socket);
-    Waiter waiter;
-    waiter.invocation = invocation;
-    waiter.path = attached->path;
-    waiter.intake = QFileInfo(message.value(QStringLiteral("intake")).toString()).canonicalFilePath();
-    waiter.mergedSha256 = attached->mergedSha256;
-    waiter.socket = socket;
-    waiters_.append(waiter);
-    intakes_.append(waiter.intake);
+    // Reply before taking the waiter: a launcher that left meanwhile changes nothing.
+    if (!server_.send(connection, AttachedMessage{message.invocation})) return;
+    waiters_.append(
+        Waiter{message.invocation, check.intake->path, message.intake, check.intake->mergedSha256, connection});
     parentSession_ = true;
-    const QJsonObject accepted{{QStringLiteral("v"), 1},
-                               {QStringLiteral("kind"), QStringLiteral("attached")},
-                               {QStringLiteral("invocation"), invocation}};
-    if (!send(socket, accepted)) {
-        waiters_.last().released = true;
-        return;
-    }
     acceptCopiedLaunches();
     tryAssign();
     Q_EMIT notice(tr("Git is waiting. Mark resolved hands this path back, or leave it unresolved."));
     Q_EMIT changed();
 }
 
-void MergetoolSession::dropped(QLocalSocket *socket)
+void MergetoolSession::closed(quint64 connection)
 {
-    buffers_.remove(socket);
-    const auto index = indexOfSocket(socket);
-    if (index < 0 || waiters_.at(index).released) return;
-    auto &waiter = waiters_[index];
-    waiter.released = true;
-    if (waiter.assigned && !offerHeld_) {
-        assigning_ = true;
-        publisher_.assignParentStaging({});
-        assigning_ = false;
-        waiter.assigned = false;
+    const auto index = indexOfConnection(connection);
+    if (index < 0) return;
+    const bool assigned = waiters_.at(index).assigned;
+    waiters_.removeAt(index);
+    if (assigned && !offerHeld_) {
+        clearAssignment();
         tryAssign();
     }
     Q_EMIT notice(tr("Git's launcher closed before resolution. The draft is still in Branch Truce."));
     Q_EMIT changed();
 }
 
-void MergetoolSession::reject(QLocalSocket *socket, const QString &invocation, const QString &reason)
+void MergetoolSession::reject(quint64 connection, const QString &invocation, const QString &reason)
 {
-    const QJsonObject message{{QStringLiteral("v"), 1},
-                              {QStringLiteral("kind"), QStringLiteral("rejected")},
-                              {QStringLiteral("invocation"), invocation},
-                              {QStringLiteral("reason"), reason}};
-    send(socket, message);
-    buffers_.remove(socket);
-    socket->disconnectFromServer();
+    server_.send(connection, RejectedMessage{invocation, reason});
+    server_.close(connection);
 }
 
-bool MergetoolSession::send(QLocalSocket *socket, const QJsonObject &object)
+void MergetoolSession::release(qsizetype index)
 {
-    if (!socket || socket->state() != QLocalSocket::ConnectedState) return false;
-    QString error;
-    return writeMergetoolFrame(socket, object, &error);
+    // Out of the list before the close, so the close is not taken for a drop.
+    const auto waiter = waiters_.takeAt(index);
+    server_.close(waiter.connection);
+    if (waiter.assigned && !offerHeld_) {
+        clearAssignment();
+        tryAssign();
+    }
 }
 
 void MergetoolSession::tryAssign()
 {
     if (assigning_ || offerHeld_ || publisher_.busy() || !waitingPath().isEmpty()) return;
-    for (int index = 0; index < waiters_.size(); ++index) {
-        auto &waiter = waiters_[index];
-        if (waiter.released || waiter.assigned) continue;
+    for (auto &waiter : waiters_) {
+        if (waiter.assigned) continue;
         assigning_ = true;
         const bool assigned = publisher_.assignParentStaging(waiter.path);
         assigning_ = false;
@@ -338,39 +293,38 @@ void MergetoolSession::tryAssign()
     }
 }
 
+void MergetoolSession::clearAssignment()
+{
+    assigning_ = true;
+    publisher_.assignParentStaging({});
+    assigning_ = false;
+}
+
 void MergetoolSession::pollAcknowledgment()
 {
-    if (!offerHeld_ || publisher_.busy()) return;
+    if (!offerHeld_) return;
     if (!publisher_.parentStagingOffer(acknowledgmentFile_)) {
         offerHeld_ = false;
-        acknowledgment_->stop();
         tryAssign();
         Q_EMIT changed();
         return;
     }
-    if (++acknowledgmentAttempts_ > 100) {
-        acknowledgment_->stop();
-        Q_EMIT notice(tr("Written, unresolved. Git has not staged the reviewed result yet."));
-        Q_EMIT changed();
-        return;
-    }
-    publisher_.verifyParentAcknowledgment(acknowledgmentFile_, acknowledgmentRevision_);
+    if (!publisher_.busy()) publisher_.verifyParentAcknowledgment(acknowledgmentFile_, acknowledgmentRevision_);
+    acknowledgmentInterval_ = std::min(acknowledgmentInterval_ * 2, kLastAcknowledgmentPollMs);
+    acknowledgment_->start(acknowledgmentInterval_);
 }
 
-int MergetoolSession::indexOfSocket(const QLocalSocket *socket) const
+qsizetype MergetoolSession::indexOfConnection(quint64 connection) const
 {
-    for (int index = 0; index < waiters_.size(); ++index)
-        if (waiters_.at(index).socket == socket) return index;
+    for (qsizetype index = 0; index < waiters_.size(); ++index)
+        if (waiters_.at(index).connection == connection) return index;
     return -1;
 }
 
-int MergetoolSession::indexOfPath(const QByteArray &path, bool unreleasedOnly) const
+qsizetype MergetoolSession::indexOfPath(const QByteArray &path) const
 {
-    for (int index = 0; index < waiters_.size(); ++index) {
-        const auto &waiter = waiters_.at(index);
-        if (unreleasedOnly && waiter.released) continue;
-        if (waiter.path == path) return index;
-    }
+    for (qsizetype index = 0; index < waiters_.size(); ++index)
+        if (waiters_.at(index).path == path) return index;
     return -1;
 }
 
@@ -414,7 +368,7 @@ void MergetoolSession::acceptCopiedLaunches()
         const auto task = coordinator_.submit(
             fileId, file->current().id,
             [snapshots = *file->snapshots(), identity, repository = loadedRepository_(),
-             executable = gitExecutable_](const TaskInput &, const TaskControl &) {
+             executable = config_.gitExecutable](const TaskInput &, const TaskControl &) {
                 TaskResult result;
                 result.diagnostic = revalidateCopiedLaunch(snapshots, identity, repository, executable);
                 return result;

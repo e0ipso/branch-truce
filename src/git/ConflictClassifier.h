@@ -51,6 +51,10 @@ struct ConflictClassificationResult {
 class ConflictClassifier final : public QObject {
     Q_OBJECT
 public:
+    // Takes its discovery runner and its conversion's runner from runners.
+    explicit ConflictClassifier(const GitRunners &runners, QObject *parent = nullptr);
+    explicit ConflictClassifier(GitProgram program, QObject *parent = nullptr);
+    // Reads the configuration this process's environment selects.
     explicit ConflictClassifier(const QString &executable, QObject *parent = nullptr);
     ~ConflictClassifier() override;
     bool start(const ConflictClassificationRequest &request);

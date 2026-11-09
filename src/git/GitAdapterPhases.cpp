@@ -14,8 +14,10 @@
 
 namespace branch_truce::git {
 namespace {
+using detail::Flow;
 using detail::inspectionLimit;
 using detail::objectId;
+using detail::Output;
 using detail::outputLimit;
 using detail::parseIndex;
 
@@ -118,9 +120,13 @@ void GitAdapter::State::afterProcess(bool normal, int code)
         handleInspection(normal, code);
         return;
     }
-    // Keep failed preflight output as well as the requested operation's
-    // output. Reinspection has its own fields and must not overwrite it.
-    result.standardOutput = phaseOutput;
+    // Only the requested operation's own output reaches the result. Policy
+    // checks keep theirs out: a configuration listing can hold credentials.
+    // Reinspection has its own fields and must not overwrite it either.
+    const bool policy = phase == Phase::Version || phase == Phase::Configuration || phase == Phase::PolicyRoot
+        || phase == Phase::ObjectDirectory || phase == Phase::Attributes || phase == Phase::Hooks
+        || phase == Phase::Baseline;
+    if (!policy) result.standardOutput = phaseOutput;
     if (phase == Phase::Operation) {
         result.exitCode = normal ? code : -1;
     }
@@ -149,9 +155,7 @@ void GitAdapter::State::afterProcess(bool normal, int code)
     case Phase::Configuration: handleConfiguration(); break;
     case Phase::PolicyRoot: handlePolicyRoot(); break;
     case Phase::ObjectDirectory: handleObjectDirectory(); break;
-    case Phase::TrackedPaths: handleTrackedPaths(); break;
     case Phase::Attributes: handleAttributes(); break;
-    case Phase::GitDirectory: handleGitDirectory(); break;
     case Phase::Hooks: handleHooks(); break;
     case Phase::Baseline: handleBaseline(); break;
     case Phase::Operation: handleOperation(); break;
@@ -166,22 +170,23 @@ void GitAdapter::State::afterProcess(bool normal, int code)
 }
 void GitAdapter::State::afterPolicy()
 {
-    if (result.request.operation == Operation::DiscoverRepository) {
+    switch (spec->flow) {
+    case Flow::Discovery:
         discovery = std::make_unique<detail::RepositoryDiscovery>(result, directory);
         launch(Phase::Discovery, discovery->arguments());
-    } else if (isMutation()) {
-        launch(Phase::GitDirectory, {"rev-parse", "--absolute-git-dir"});
-    } else if (stagingPolicy()) {
-        launch(Phase::Hooks, {"rev-parse", "--path-format=absolute", "--git-path", "hooks"});
-    } else if (result.request.operation == Operation::CanonicalizeText) {
-        temporaryObjects = std::make_unique<QTemporaryDir>(QStringLiteral("/tmp/branch-truce-conversion-XXXXXX"));
+        break;
+    case Flow::Stage:
+    case Flow::Preflight: launch(Phase::Hooks, {"rev-parse", "--path-format=absolute", "--git-path", "hooks"}); break;
+    case Flow::Canonicalize:
+        temporaryObjects =
+            std::make_unique<QTemporaryDir>(QDir::tempPath() + QStringLiteral("/branch-truce-conversion-XXXXXX"));
         if (!temporaryObjects->isValid()) {
             reject(QStringLiteral("Could not create private conversion object storage"));
             return;
         }
-        launch(Phase::Operation, operationArguments(), false, result.request.input);
-    } else {
-        launch(Phase::Operation, operationArguments());
+        launch(Phase::Operation, spec->arguments(result.request), false, result.request.input);
+        break;
+    case Flow::Read: launch(Phase::Operation, spec->arguments(result.request)); break;
     }
 }
 void GitAdapter::State::handleVersion()
@@ -194,18 +199,10 @@ void GitAdapter::State::handleVersion()
 }
 void GitAdapter::State::handleConfiguration()
 {
-    if (!checkConfiguration()) {
+    if (!checkConfiguration())
         reject(result.diagnostic);
-    } else if (result.request.operation == Operation::ReadConfiguration) {
-        result.standardOutput = phaseOutput;
-        result.exitCode = 0;
-        result.outcome = Outcome::Success;
-        complete();
-    } else if (objectPolicy()) {
+    else
         launch(Phase::PolicyRoot, {"rev-parse", "--path-format=absolute", "--show-toplevel"});
-    } else {
-        afterPolicy();
-    }
 }
 void GitAdapter::State::handlePolicyRoot()
 {
@@ -219,11 +216,10 @@ void GitAdapter::State::handlePolicyRoot()
         reject(QStringLiteral("The trusted Git executable must be outside the repository"));
         return;
     }
-    // Request paths are repository-relative. Status also examines the
-    // whole worktree even when Git is launched from a subdirectory.
+    // Request paths are repository-relative, even when Git is launched from a subdirectory.
     directory = *root;
     result.worktreeRoot = *root;
-    if (isMutation() && !regularFile(directory, result.request.path)) {
+    if (spec->flow == Flow::Stage && !regularFile(directory, result.request.path)) {
         reject(QStringLiteral("Staging requires one regular file without symlink traversal"));
     } else {
         launch(Phase::ObjectDirectory, {"rev-parse", "--path-format=absolute", "--git-path", "objects"});
@@ -238,28 +234,10 @@ void GitAdapter::State::handleObjectDirectory()
         reject(result.diagnostic);
     } else {
         originalObjectDirectory = *objects;
-        if (result.request.operation == Operation::Status) {
-            if (hasFilterConfiguration())
-                launch(Phase::TrackedPaths, {"ls-files", "--cached", "-z"});
-            else
-                afterPolicy();
-        } else if (filterPolicy()) {
+        if (spec->filters)
             launch(Phase::Attributes, {"check-attr", "-z", "--all", "--", result.request.path});
-        } else {
+        else
             afterPolicy();
-        }
-    }
-}
-void GitAdapter::State::handleTrackedPaths()
-{
-    if (!phaseOutput.isEmpty() && !phaseOutput.endsWith('\0')) {
-        reject(QStringLiteral("Outside app: invalid tracked path inspection"));
-    } else if (phaseOutput.isEmpty()) {
-        afterPolicy();
-    } else {
-        const auto paths = phaseOutput;
-        // --all distinguishes an absent filter from filter=unspecified.
-        launch(Phase::Attributes, {"check-attr", "-z", "--all", "--stdin"}, false, paths);
     }
 }
 void GitAdapter::State::handleAttributes()
@@ -268,31 +246,6 @@ void GitAdapter::State::handleAttributes()
         reject(result.diagnostic);
     else
         afterPolicy();
-}
-void GitAdapter::State::handleGitDirectory()
-{
-    // Remove Git's delimiter, preserving newlines in the directory name.
-    if (!phaseOutput.endsWith('\n')) {
-        reject(QStringLiteral("Invalid Git directory response"));
-        return;
-    }
-    phaseOutput.chop(1);
-    const auto decoded = QFile::decodeName(phaseOutput);
-    if (QFile::encodeName(decoded) != phaseOutput) {
-        reject(QStringLiteral("Git directory cannot round-trip through Qt's directory API"));
-        return;
-    }
-    const auto key = QFileInfo(decoded).canonicalFilePath();
-    if (key.isEmpty()) {
-        reject(QStringLiteral("Git directory is unavailable"));
-        return;
-    }
-    reserveMutation(key);
-    if (mutationKey.isEmpty()) {
-        reject(result.diagnostic);
-    } else {
-        launch(Phase::Hooks, {"rev-parse", "--path-format=absolute", "--git-path", "hooks"});
-    }
 }
 void GitAdapter::State::handleHooks()
 {
@@ -324,10 +277,9 @@ void GitAdapter::State::handleHooks()
         reject(QStringLiteral("Outside app: hooks path is not an inspectable directory"));
         return;
     }
-    if (isMutation()) {
-        launch(Phase::Baseline, indexArguments());
+    if (spec->flow == Flow::Stage) {
+        launch(Phase::Baseline, detail::indexArguments(result.request.path));
     } else {
-        result.standardOutput.clear();
         result.outcome = Outcome::Success;
         result.exitCode = 0;
         complete();
@@ -339,17 +291,29 @@ void GitAdapter::State::handleBaseline()
         reject(QStringLiteral("Unsupported or oversized index baseline"));
     } else {
         result.indexBefore = phaseOutput;
-        launch(Phase::Operation, operationArguments());
+        launch(Phase::Operation, spec->arguments(result.request));
     }
 }
 void GitAdapter::State::handleOperation()
 {
     result.outcome = Outcome::Success;
-    if (result.request.operation == Operation::ReadAttributes && !captureAttributes()) {
-        reject(QStringLiteral("Outside app: invalid conversion attribute inspection"));
-        return;
-    }
-    if (result.request.operation == Operation::CanonicalizeText) {
+    switch (spec->output) {
+    case Output::Raw: break;
+    case Output::Attributes:
+        if (!captureAttributes()) {
+            reject(QStringLiteral("Outside app: invalid conversion attribute inspection"));
+            return;
+        }
+        break;
+    case Output::IndexEntries:
+        if (const auto entries = parseIndex(phaseOutput)) {
+            result.indexEntries = *entries;
+        } else {
+            result.outcome = Outcome::InspectionFailure;
+            result.diagnostic = QStringLiteral("Invalid NUL-delimited index records");
+        }
+        break;
+    case Output::CanonicalObject:
         if (!phaseOutput.endsWith('\n') || !objectId(phaseOutput.first(phaseOutput.size() - 1))) {
             reject(QStringLiteral("Invalid canonical object response"));
         } else {
@@ -357,15 +321,6 @@ void GitAdapter::State::handleOperation()
             launch(Phase::CanonicalSize, {"cat-file", "-s", result.canonicalObjectId});
         }
         return;
-    }
-    if (result.request.operation == Operation::ListUnmerged || result.request.operation == Operation::InspectIndex) {
-        const auto entries = parseIndex(phaseOutput);
-        if (!entries) {
-            result.outcome = Outcome::InspectionFailure;
-            result.diagnostic = QStringLiteral("Invalid NUL-delimited index records");
-        } else {
-            result.indexEntries = *entries;
-        }
     }
     if (mutationStarted) {
         inspectMutation();

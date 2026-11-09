@@ -9,15 +9,13 @@
 #include "fixtures/EventLoop.h"
 #include "fixtures/Files.h"
 #include "fixtures/GitRepository.h"
+#include "fixtures/ScopedEnvironment.h"
 #include "fixtures/ScriptGate.h"
 
 #include <QCoreApplication>
 #include <QDir>
-#include <QElapsedTimer>
-#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
-#include <QMap>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
@@ -44,18 +42,6 @@ using test_support::writeFile;
 inline void pump(const std::function<bool()> &ready, const QString &detail)
 {
     test_support::waitUntil(ready, detail.toStdString(), test_support::kWaitDeadlineMs, 30);
-}
-
-// Keeps the event loop running for a fixed time and checks that `holds` stays true throughout.
-inline void holdFor(int milliseconds, const std::function<bool()> &holds, const QString &detail)
-{
-    QElapsedTimer clock;
-    clock.start();
-    while (clock.elapsed() < milliseconds) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 30);
-        test_support::throwPending();
-        if (!holds()) throw test_support::Failure(detail.toStdString());
-    }
 }
 
 // One conflicted text path: base, ours (main) and theirs (side) bytes.
@@ -216,32 +202,7 @@ public:
 };
 
 // Applies the fixture environment to this process, which hosts the application session.
-class ScopedEnvironment {
-public:
-    explicit ScopedEnvironment(const QProcessEnvironment &environment)
-    {
-        for (const auto name : {"HOME", "PATH", "LC_ALL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
-                                "XDG_RUNTIME_DIR", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_TERMINAL_PROMPT"}) {
-            previous_.insert(name,
-                             qEnvironmentVariableIsSet(name) ? std::optional<QByteArray>(qgetenv(name)) : std::nullopt);
-            qputenv(name, environment.value(QString::fromLatin1(name)).toUtf8());
-        }
-    }
-    ~ScopedEnvironment()
-    {
-        for (auto entry = previous_.cbegin(); entry != previous_.cend(); ++entry) {
-            if (entry.value())
-                qputenv(entry.key().constData(), *entry.value());
-            else
-                qunsetenv(entry.key().constData());
-        }
-    }
-    ScopedEnvironment(const ScopedEnvironment &) = delete;
-    ScopedEnvironment &operator=(const ScopedEnvironment &) = delete;
-
-private:
-    QMap<QByteArray, std::optional<QByteArray>> previous_;
-};
+using test_support::ScopedEnvironment;
 
 // `git mergetool` runs as the leader of its own session and process group, as
 // under a terminal. Destroying it kills the whole group, so a failed case cannot

@@ -54,14 +54,14 @@ a user's repository.
 
 Fixture Git reads only a private global configuration (`GitHome` in
 `tests/fixtures/GitRepository.h`), with the system configuration off, and the
-suites run under `tests/with-private-xdg.sh`. The Git that `GitAdapter` starts
-does not: the adapter builds its environment from the account's passwd home and
-leaves the system configuration on, so it still reads `~/.gitconfig` and
-`/etc/gitconfig`. `git.user-config-isolation` shows this and is registered with
-`WILL_FAIL` until the adapter takes that environment from its caller.
+suites run under `tests/with-private-xdg.sh`. The code under test runs Git with
+the same configuration: `Repository::program()` in `GitFixtures.h` builds the
+`GitProgram` it gets from the fixture's environment, so no suite reads the
+account's `~/.gitconfig` or `/etc/gitconfig`. `git.user-config-isolation`
+records the environment of every Git call to check this.
 
-The adapter suite includes a real 30-second operation deadline. CTest reports
-case and assertion totals separately for the adapter and classification suites.
+The deadline case gives its adapter a 300 ms deadline instead of the
+production 30 seconds.
 
 ## Real mergetool parent
 

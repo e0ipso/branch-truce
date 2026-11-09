@@ -38,17 +38,20 @@ bool sameExecutable(const struct stat &a, const struct stat &b)
         && a.st_mtim.tv_nsec == b.st_mtim.tv_nsec && a.st_ctim.tv_sec == b.st_ctim.tv_sec
         && a.st_ctim.tv_nsec == b.st_ctim.tv_nsec;
 }
-QProcessEnvironment environment()
+QProcessEnvironment childEnvironment(const GitEnvironment &selected)
 {
     QProcessEnvironment env;
     env.insert(QStringLiteral("PATH"), QStringLiteral("/usr/bin:/bin"));
     env.insert(QStringLiteral("LC_ALL"), QStringLiteral("C"));
     env.insert(QStringLiteral("LANG"), QStringLiteral("C"));
-    if (const auto *user = ::getpwuid(::geteuid()); user != nullptr) {
-        const auto home = QFile::decodeName(user->pw_dir);
-        env.insert(QStringLiteral("HOME"), home);
-        env.insert(QStringLiteral("XDG_CONFIG_HOME"), home + QStringLiteral("/.config"));
-    }
+    const auto set = [&env](const QString &name, const QString &value) {
+        if (!value.isEmpty()) env.insert(name, value);
+    };
+    set(QStringLiteral("HOME"), selected.home);
+    set(QStringLiteral("XDG_CONFIG_HOME"), selected.configHome);
+    set(QStringLiteral("GIT_CONFIG_GLOBAL"), selected.globalConfig);
+    set(QStringLiteral("GIT_CONFIG_SYSTEM"), selected.systemConfig);
+    set(QStringLiteral("GIT_CONFIG_NOSYSTEM"), selected.noSystem);
     env.insert(QStringLiteral("GIT_TERMINAL_PROMPT"), QStringLiteral("0"));
     env.insert(QStringLiteral("GCM_INTERACTIVE"), QStringLiteral("never"));
     env.insert(QStringLiteral("GIT_OPTIONAL_LOCKS"), QStringLiteral("0"));
@@ -74,6 +77,26 @@ QString quotedAlternate(const QString &path)
     return QString::fromLatin1(quoted + '"');
 }
 } // namespace
+
+GitEnvironment GitEnvironment::from(const QProcessEnvironment &environment)
+{
+    const auto path = [&environment](const QString &name) {
+        const auto value = environment.value(name);
+        return value.startsWith(QLatin1Char('/')) && exactPath(value) ? value : QString{};
+    };
+    GitEnvironment selected;
+    selected.home = path(QStringLiteral("HOME"));
+    if (selected.home.isEmpty()) {
+        if (const auto *user = ::getpwuid(::geteuid()); user != nullptr)
+            selected.home = QFile::decodeName(user->pw_dir);
+    }
+    selected.configHome = path(QStringLiteral("XDG_CONFIG_HOME"));
+    selected.globalConfig = path(QStringLiteral("GIT_CONFIG_GLOBAL"));
+    selected.systemConfig = path(QStringLiteral("GIT_CONFIG_SYSTEM"));
+    selected.noSystem = environment.value(QStringLiteral("GIT_CONFIG_NOSYSTEM"));
+    return selected;
+}
+GitEnvironment GitEnvironment::fromProcess() { return from(QProcessEnvironment::systemEnvironment()); }
 
 bool detail::exactPath(const QString &path)
 {
@@ -102,10 +125,11 @@ bool detail::secureExecutable(const QString &path, struct stat &identity)
     }
 }
 
-GitAdapter::State::State(GitAdapter *owner, const QString &selected) : q(owner)
+GitAdapter::State::State(GitAdapter *owner, GitProgram selected)
+    : q(owner), environment(std::move(selected.environment)), deadlineMs(selected.deadlineMs)
 {
-    if (QDir::isAbsolutePath(selected) && exactPath(selected)) {
-        executable = QFileInfo(selected).canonicalFilePath();
+    if (QDir::isAbsolutePath(selected.executable) && exactPath(selected.executable)) {
+        executable = QFileInfo(selected.executable).canonicalFilePath();
         executableValid = !executable.isEmpty() && secureExecutable(executable, identity);
     }
     process.setParent(q);
@@ -121,7 +145,7 @@ GitAdapter::State::State(GitAdapter *owner, const QString &selected) : q(owner)
             stop(Outcome::ProcessFailure, QStringLiteral("Could not send Git operation input"));
         }
         process.closeWriteChannel();
-        if (!nativeLaunchFailed && phase == Phase::Operation && isMutation()) {
+        if (!nativeLaunchFailed && phase == Phase::Operation && spec->flow == detail::Flow::Stage) {
             mutationStarted = true;
             result.mutation = Mutation::Uncertain;
         }
@@ -156,7 +180,7 @@ GitAdapter::State::State(GitAdapter *owner, const QString &selected) : q(owner)
         if (phase == Phase::Inspection) {
             inspectionFailed(QStringLiteral("Index reinspection timed out"));
         } else {
-            stop(Outcome::TimedOut, QStringLiteral("Git exceeded the 30 second deadline"));
+            stop(Outcome::TimedOut, QStringLiteral("Git exceeded the %1 second deadline").arg(deadlineMs / 1000.0));
         }
     });
     QObject::connect(&escalation, &QTimer::timeout, q, [this] {
@@ -167,10 +191,20 @@ GitAdapter::State::State(GitAdapter *owner, const QString &selected) : q(owner)
 GitAdapter::State::~State()
 {
     QObject::disconnect(&process, nullptr, q, nullptr);
-    signalGroup(SIGKILL);
-    process.kill();
+    // Git removes its lock files, such as the index.lock of an interrupted
+    // `git add`, when SIGTERM stops it. SIGKILL follows only when it has not
+    // exited after the grace period, which bounds this wait.
+    if (process.state() != QProcess::NotRunning) {
+        signalGroup(SIGTERM);
+        process.terminate();
+        if (!process.waitForFinished(killGraceMs)) {
+            signalGroup(SIGKILL);
+            process.kill();
+            process.waitForFinished(killGraceMs);
+        }
+    }
+    signalGroup(SIGKILL); // Descendants left in the private session.
     closeLaunchPipe();
-    releaseMutation();
 }
 void GitAdapter::State::signalGroup(int signal)
 {
@@ -228,7 +262,7 @@ void GitAdapter::State::launch(Phase next, const QList<QByteArray> &arguments, b
     nativeArguments = {QFile::encodeName(executable)};
     nativeArguments.append(configuration ? QList<QByteArray>{"--no-pager"} : prefix());
     nativeArguments.append(arguments);
-    auto env = environment();
+    auto env = childEnvironment(environment);
     if (temporaryObjects
         && (next == Phase::Operation || next == Phase::CanonicalSize || next == Phase::CanonicalObject
             || next == Phase::CanonicalCheckout)) {
@@ -268,10 +302,9 @@ void GitAdapter::State::launch(Phase next, const QList<QByteArray> &arguments, b
         ::execve(program, argv, envp);
         failNativeLaunch(errorFd, errno);
     });
+    // The modifier is the only exec path: it never returns into Qt's own
+    // execve, so Qt's argument, directory and environment settings stay unused.
     process.setProgram(executable);
-    process.setArguments({});
-    process.setWorkingDirectory(directory);
-    process.setProcessEnvironment(env);
     process.start();
 }
 void GitAdapter::State::stop(Outcome outcome, const QString &message)
@@ -310,12 +343,6 @@ void GitAdapter::State::drain(bool error)
         if (chunk.isEmpty()) {
             break;
         }
-        if (!error && phase == Phase::Attributes && result.request.operation == Operation::Status) {
-            // Status policy can cover the entire index. Consume records as
-            // they arrive without charging them to the operation's output.
-            if (!stopping && !consumeStatusAttributes(chunk)) stop(Outcome::Rejected, result.diagnostic);
-            continue;
-        }
         const auto limit = phase == Phase::Inspection ? inspectionLimit : outputLimit;
         const auto keep = std::min(chunk.size(), std::max(qsizetype{0}, limit - bytesRead));
         if (error) {
@@ -327,10 +354,10 @@ void GitAdapter::State::drain(bool error)
         if (keep != chunk.size()) {
             result.outputIncomplete = true;
             if (phase == Phase::Inspection) {
-                inspectionFailed(QStringLiteral("Index reinspection exceeded 1 MiB"));
+                inspectionFailed(QStringLiteral("Index reinspection exceeded %1 bytes").arg(inspectionLimit));
             } else {
                 stop(Outcome::OutputLimit,
-                     QStringLiteral("Git output exceeded %1 bytes; captured prefix is incomplete").arg(outputLimit));
+                     QStringLiteral("Git output exceeded %1 bytes; captured prefix is incomplete").arg(limit));
             }
         }
     }
@@ -340,6 +367,6 @@ void GitAdapter::State::inspectMutation()
     deadline.start(inspectionMs);
     stopping = false;
     bytesRead = 0; // A separate budget makes reinspection possible after overflow.
-    launch(Phase::Inspection, indexArguments());
+    launch(Phase::Inspection, detail::indexArguments(result.request.path));
 }
 } // namespace branch_truce::git

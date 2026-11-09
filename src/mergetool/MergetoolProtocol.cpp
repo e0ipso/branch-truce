@@ -1,15 +1,18 @@
-// The mergetool protocol identifies local sessions and carries verified handoff messages to waiting launchers.
+// The mergetool protocol names a session's socket and intake, and reads and restores the files Git launched with.
 #include "mergetool/MergetoolProtocol.h"
 #include "core/ResourceLimits.h"
 
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
-#include <QStandardPaths>
+#include <QJsonObject>
 #include <QUuid>
 
 #include <cerrno>
+#include <csignal>
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -18,7 +21,6 @@
 
 namespace branch_truce {
 namespace {
-constexpr qsizetype kFrameLimit = 65536;
 // sun_path keeps a byte for the terminating NUL. On Linux, Qt 6 also reserves
 // one for the abstract-namespace prefix, even for a filesystem path, so its
 // QLocalServer rejects a 107-byte path with "Name error".
@@ -28,6 +30,10 @@ constexpr char kSocketPrefix[] = "bt-mt-";
 // against the full key.
 constexpr qsizetype kSocketKeyLength = 32;
 constexpr qsizetype kSocketNameLength = sizeof(kSocketPrefix) - 1 + kSocketKeyLength;
+// The file naming the launcher that owns an intake, written before its copies.
+constexpr char kOwnerFile[] = "launcher";
+// An intake with no owner file yet is still being written, unless it is older than this.
+constexpr qint64 kUnownedIntakeSeconds = 60;
 
 bool socketPathFits(const QByteArray &directory)
 {
@@ -51,7 +57,7 @@ QByteArray sha256(const QByteArray &bytes)
     return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex();
 }
 
-int openWalk(const QByteArray &path, bool directory, QString *error, bool writable = false)
+int openWalk(const QByteArray &path, bool directory, QString *error)
 {
     if (path.isEmpty() || path.contains('\0')) {
         fail(error, QStringLiteral("The mergetool path is empty."));
@@ -82,10 +88,8 @@ int openWalk(const QByteArray &path, bool directory, QString *error, bool writab
         }
         ++seen;
         const bool last = seen == meaningful;
-        const int access =
-            last && writable ? O_WRONLY : (last && !directory ? (O_RDONLY | O_NONBLOCK) : (O_RDONLY | O_DIRECTORY));
-        const int flags = O_CLOEXEC | O_NOFOLLOW | access;
-        const int next = ::openat(fd, part.constData(), flags);
+        const int access = last && !directory ? (O_RDONLY | O_NONBLOCK) : (O_RDONLY | O_DIRECTORY);
+        const int next = ::openat(fd, part.constData(), O_CLOEXEC | O_NOFOLLOW | access);
         ::close(fd);
         if (next < 0) {
             fail(error, QStringLiteral("The mergetool path could not be opened."));
@@ -100,6 +104,37 @@ int openWalk(const QByteArray &path, bool directory, QString *error, bool writab
         return -1;
     }
     return fd;
+}
+
+// Creates one directory level with mode 0700, or accepts an existing one that
+// is a real directory private to this user.
+bool privateDirectory(const QString &path)
+{
+    const auto native = QFile::encodeName(path);
+    if (::mkdir(native.constData(), 0700) != 0 && errno != EEXIST) return false;
+    struct stat info{};
+    return ::lstat(native.constData(), &info) == 0 && S_ISDIR(info.st_mode) && info.st_uid == ::geteuid()
+        && (info.st_mode & 077) == 0;
+}
+
+bool writeAll(int fd, const QByteArray &bytes)
+{
+    qsizetype written = 0;
+    while (written < bytes.size()) {
+        const auto count = ::write(fd, bytes.constData() + written, static_cast<std::size_t>(bytes.size() - written));
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return false;
+        written += count;
+    }
+    return true;
+}
+
+bool launcherAlive(const QByteArray &owner)
+{
+    bool number = false;
+    const auto pid = owner.trimmed().toLongLong(&number);
+    if (!number || pid <= 0) return false;
+    return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno != ESRCH;
 }
 }
 
@@ -120,9 +155,9 @@ QByteArray mergetoolSessionKey(const git::RepositoryContext &repository)
     return sha256(material);
 }
 
-QString mergetoolSocketDirectory()
+QString mergetoolSocketDirectory(const QByteArray &runtimeDirectory)
 {
-    auto runtime = qgetenv("XDG_RUNTIME_DIR");
+    auto runtime = runtimeDirectory;
     if (runtime.startsWith('/')) {
         while (runtime.endsWith('/')) runtime.chop(1);
         const auto directory = runtime + "/branch-truce";
@@ -131,11 +166,11 @@ QString mergetoolSocketDirectory()
     return QStringLiteral("/tmp/branch-truce-") + QString::number(::geteuid());
 }
 
-QString mergetoolServerName(const git::RepositoryContext &repository)
+QString mergetoolServerName(const QString &directory, const git::RepositoryContext &repository)
 {
     const auto key = mergetoolSessionKey(repository);
-    if (key.isEmpty()) return {};
-    return mergetoolSocketDirectory() + QLatin1Char('/') + QString::fromLatin1(kSocketPrefix)
+    if (key.isEmpty() || directory.isEmpty()) return {};
+    return directory + QLatin1Char('/') + QString::fromLatin1(kSocketPrefix)
         + QString::fromLatin1(key.left(kSocketKeyLength));
 }
 
@@ -164,11 +199,9 @@ bool mergetoolPeerIsCurrentUser(qintptr descriptor)
     return peer.uid == ::geteuid();
 }
 
-QString mergetoolIntakeRoot()
+QString mergetoolIntakeRoot(const QString &socketDirectory)
 {
-    const auto base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    if (base.isEmpty()) return {};
-    return base + QStringLiteral("/branch-truce/mergetool");
+    return socketDirectory.isEmpty() ? QString{} : socketDirectory + QStringLiteral("/intake");
 }
 
 std::optional<QByteArray> mergetoolRepositoryPath(const QByteArray &merged)
@@ -196,88 +229,103 @@ bool readMergetoolFile(const QByteArray &path, QByteArray *bytes, QString *error
     *bytes = file.read(limit + 1);
     if (file.error() != QFileDevice::NoError || bytes->size() > limit) {
         bytes->clear();
-        return failBool(error, QStringLiteral("The mergetool file exceeds the 8388608 byte recovery payload limit."));
+        return failBool(error,
+                        QStringLiteral("The mergetool file exceeds the %1 byte recovery payload limit.")
+                            .arg(static_cast<qulonglong>(limit)));
     }
     return true;
 }
 
 bool restoreMergetoolFile(const QByteArray &path, const QByteArray &bytes, QString *error)
 {
+    const auto restoreFailed = [error] {
+        return failBool(error, QStringLiteral("The original file could not be restored."));
+    };
     QByteArray current;
     if (!readMergetoolFile(path, &current, error)) return false;
     if (current == bytes) return true;
-    const int fd = openWalk(path, false, error, true);
-    if (fd < 0) return failBool(error, QStringLiteral("The original file could not be restored."));
-    QFile file;
-    // Truncate is ignored for an already-open descriptor. Shrink after the
-    // new bytes are flushed so a shorter restore does not keep the old tail.
-    if (!file.open(fd, QIODevice::WriteOnly, QFileDevice::AutoCloseHandle)) {
-        ::close(fd);
-        return failBool(error, QStringLiteral("The original file could not be restored."));
+    const auto slash = path.lastIndexOf('/');
+    const auto name = path.mid(slash + 1);
+    const int directory = slash < 0 ? ::open(".", O_RDONLY | O_CLOEXEC | O_DIRECTORY)
+                                    : openWalk(slash == 0 ? QByteArray("/") : path.first(slash), true, error);
+    if (directory < 0) return restoreFailed();
+    struct stat original{};
+    if (::fstatat(directory, name.constData(), &original, AT_SYMLINK_NOFOLLOW) != 0 || !S_ISREG(original.st_mode)) {
+        ::close(directory);
+        return restoreFailed();
     }
-    const auto wrote = file.write(bytes);
-    if (wrote != static_cast<qint64>(bytes.size()) || !file.flush() || !file.resize(static_cast<qint64>(bytes.size()))
-        || ::fsync(file.handle()) != 0)
-        return failBool(error, QStringLiteral("The original file could not be restored."));
-    return true;
+    // A sibling, so the rename stays on one file system. Git's own temporaries
+    // use other names, and the random part keeps two restores apart.
+    const auto temporary =
+        "." + name + ".branch-truce-" + QUuid::createUuid().toString(QUuid::Id128).left(12).toLatin1();
+    const int fd =
+        ::openat(directory, temporary.constData(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (fd < 0) {
+        ::close(directory);
+        return restoreFailed();
+    }
+    const bool written = writeAll(fd, bytes) && ::fchmod(fd, original.st_mode & 07777) == 0 && ::fsync(fd) == 0;
+    const bool closed = ::close(fd) == 0;
+    const bool renamed =
+        written && closed && ::renameat(directory, temporary.constData(), directory, name.constData()) == 0;
+    if (!renamed) ::unlinkat(directory, temporary.constData(), 0);
+    const bool synced = renamed && ::fsync(directory) == 0;
+    ::close(directory);
+    return synced ? true : restoreFailed();
 }
 
-bool writeMergetoolIntake(const QString &directory, const QString &invocation, const MergetoolSources &sources,
-                          QString *error)
+QString writeMergetoolIntake(const QString &root, const QByteArray &sessionKey, const QString &invocation,
+                             const MergetoolSources &sources, QString *error)
 {
-    if (QUuid::fromString(invocation).isNull() || !mergetoolRepositoryPath(sources.path))
-        return failBool(error, QStringLiteral("The mergetool invocation is invalid."));
-    QDir root;
-    if (!root.mkpath(directory)) return failBool(error, QStringLiteral("The mergetool intake could not be created."));
-    const auto encoded = QFile::encodeName(directory);
-    if (::chmod(encoded.constData(), 0700) != 0)
-        return failBool(error, QStringLiteral("The mergetool intake could not be created."));
-    const int dirfd = openWalk(encoded, true, error);
-    if (dirfd < 0) return false;
+    if (QUuid::fromString(invocation).isNull() || !mergetoolRepositoryPath(sources.path) || sessionKey.size() != 64
+        || root.isEmpty())
+        return fail(error, QStringLiteral("The mergetool invocation is invalid."));
+    const auto keyDirectory = root + QLatin1Char('/') + QString::fromLatin1(sessionKey);
+    const auto directory = keyDirectory + QLatin1Char('/') + invocation;
+    if (!privateDirectory(root) || !privateDirectory(keyDirectory) || !privateDirectory(directory))
+        return fail(error, QStringLiteral("The mergetool intake could not be created."));
+    const int dirfd = openWalk(QFile::encodeName(directory), true, error);
+    if (dirfd < 0) return {};
     const auto store = [&](const char *name, const QByteArray &bytes) {
         const int fd = ::openat(dirfd, name, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
         if (fd < 0) return failBool(error, QStringLiteral("The mergetool intake could not be written."));
-        QFile file;
-        if (!file.open(fd, QIODevice::WriteOnly, QFileDevice::AutoCloseHandle)) {
-            ::close(fd);
-            return failBool(error, QStringLiteral("The mergetool intake could not be written."));
-        }
-        const auto wrote = file.write(bytes);
-        return wrote == static_cast<qint64>(bytes.size()) && file.flush() && ::fsync(file.handle()) == 0
+        const bool written = writeAll(fd, bytes) && ::fsync(fd) == 0;
+        return ::close(fd) == 0 && written
             ? true
             : failBool(error, QStringLiteral("The mergetool intake could not be written."));
     };
-    bool stored = store("merged", sources.merged);
+    bool stored = store(kOwnerFile, QByteArray::number(static_cast<qint64>(::getpid())) + '\n');
+    if (stored) stored = store("merged", sources.merged);
     if (stored && sources.basePresent) stored = store("base", sources.base);
     if (stored && sources.localPresent) stored = store("local", sources.local);
     if (stored && sources.remotePresent) stored = store("remote", sources.remote);
-    if (!stored) {
-        ::close(dirfd);
-        return false;
+    if (stored) {
+        const QJsonObject manifest{
+            {QStringLiteral("invocation"), invocation},
+            {QStringLiteral("path"), QString::fromLatin1(sources.path.toHex())},
+            {QStringLiteral("merged"), QString::fromLatin1(sha256(sources.merged))},
+            {QStringLiteral("basePresent"), sources.basePresent},
+            {QStringLiteral("localPresent"), sources.localPresent},
+            {QStringLiteral("remotePresent"), sources.remotePresent},
+            {QStringLiteral("base"), sources.basePresent ? QString::fromLatin1(sha256(sources.base)) : QString{}},
+            {QStringLiteral("local"), sources.localPresent ? QString::fromLatin1(sha256(sources.local)) : QString{}},
+            {QStringLiteral("remote"),
+             sources.remotePresent ? QString::fromLatin1(sha256(sources.remote)) : QString{}}};
+        stored = store("manifest.json", QJsonDocument(manifest).toJson(QJsonDocument::Compact));
     }
-    const QJsonObject manifest{
-        {QStringLiteral("v"), 1},
-        {QStringLiteral("invocation"), invocation},
-        {QStringLiteral("path"), QString::fromLatin1(sources.path.toHex())},
-        {QStringLiteral("merged"), QString::fromLatin1(sha256(sources.merged))},
-        {QStringLiteral("basePresent"), sources.basePresent},
-        {QStringLiteral("localPresent"), sources.localPresent},
-        {QStringLiteral("remotePresent"), sources.remotePresent},
-        {QStringLiteral("base"), sources.basePresent ? QString::fromLatin1(sha256(sources.base)) : QString{}},
-        {QStringLiteral("local"), sources.localPresent ? QString::fromLatin1(sha256(sources.local)) : QString{}},
-        {QStringLiteral("remote"), sources.remotePresent ? QString::fromLatin1(sha256(sources.remote)) : QString{}}};
-    const auto payload = QJsonDocument(manifest).toJson(QJsonDocument::Compact);
-    stored = store("manifest.json", payload);
     if (stored && ::fsync(dirfd) != 0)
         stored = failBool(error, QStringLiteral("The mergetool intake could not be written."));
     ::close(dirfd);
-    return stored;
+    if (!stored) {
+        removeMergetoolIntake(directory);
+        return {};
+    }
+    return directory;
 }
 
-std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, const QByteArray &sessionKey,
-                                                   QString *error)
+std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, const QString &root,
+                                                   const QByteArray &sessionKey, QString *error)
 {
-    const auto root = mergetoolIntakeRoot();
     const auto canonicalRoot = QFileInfo(root).canonicalFilePath();
     const auto canonical = QFileInfo(directory).canonicalFilePath();
     const auto prefix = canonicalRoot + QLatin1Char('/');
@@ -296,8 +344,7 @@ std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, con
     if (!readMergetoolFile(QFile::encodeName(canonical + QStringLiteral("/manifest.json")), &manifestBytes, error))
         return std::nullopt;
     const auto manifest = QJsonDocument::fromJson(manifestBytes).object();
-    if (manifest.value(QStringLiteral("v")).toInt() != 1
-        || manifest.value(QStringLiteral("invocation")).toString() != invocation) {
+    if (manifest.value(QStringLiteral("invocation")).toString() != invocation) {
         fail(error, QStringLiteral("The mergetool intake manifest is invalid."));
         return std::nullopt;
     }
@@ -337,49 +384,30 @@ std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, con
     return intake;
 }
 
-MergetoolFrame takeMergetoolFrame(QByteArray *buffer, QJsonObject *object, QString *error)
+void removeMergetoolIntake(const QString &directory)
 {
-    if (!buffer || !object) {
-        fail(error, QStringLiteral("The mergetool message is invalid."));
-        return MergetoolFrame::Invalid;
-    }
-    if (buffer->size() < 4) return MergetoolFrame::NeedMore;
-    const auto length = (static_cast<quint32>(static_cast<unsigned char>(buffer->at(0))) << 24)
-        | (static_cast<quint32>(static_cast<unsigned char>(buffer->at(1))) << 16)
-        | (static_cast<quint32>(static_cast<unsigned char>(buffer->at(2))) << 8)
-        | static_cast<quint32>(static_cast<unsigned char>(buffer->at(3)));
-    if (length == 0 || length > static_cast<quint32>(kFrameLimit)) {
-        fail(error, QStringLiteral("The mergetool message is invalid."));
-        return MergetoolFrame::Invalid;
-    }
-    if (buffer->size() < 4 + static_cast<qsizetype>(length)) return MergetoolFrame::NeedMore;
-    const auto payload = buffer->mid(4, static_cast<qsizetype>(length));
-    buffer->remove(0, 4 + static_cast<qsizetype>(length));
-    const auto document = QJsonDocument::fromJson(payload);
-    if (!document.isObject()) {
-        fail(error, QStringLiteral("The mergetool message is invalid."));
-        return MergetoolFrame::Invalid;
-    }
-    *object = document.object();
-    return MergetoolFrame::Ready;
+    if (directory.isEmpty()) return;
+    QDir(directory).removeRecursively();
+    // The session key's directory goes with its last intake.
+    const auto parent = QFileInfo(directory).absolutePath();
+    ::rmdir(QFile::encodeName(parent).constData());
 }
 
-bool writeMergetoolFrame(QIODevice *device, const QJsonObject &object, QString *error)
+int pruneMergetoolIntakes(const QString &root, const QByteArray &sessionKey)
 {
-    if (!device) return failBool(error, QStringLiteral("The mergetool message could not be written."));
-    const auto payload = QJsonDocument(object).toJson(QJsonDocument::Compact);
-    if (payload.size() <= 0 || payload.size() > kFrameLimit)
-        return failBool(error, QStringLiteral("The mergetool message is invalid."));
-    const auto length = static_cast<quint32>(payload.size());
-    QByteArray frame(4 + payload.size(), '\0');
-    frame[0] = static_cast<char>((length >> 24) & 0xffU);
-    frame[1] = static_cast<char>((length >> 16) & 0xffU);
-    frame[2] = static_cast<char>((length >> 8) & 0xffU);
-    frame[3] = static_cast<char>(length & 0xffU);
-    frame.replace(4, payload.size(), payload);
-    const auto wrote = device->write(frame);
-    return wrote == static_cast<qint64>(frame.size()) && device->waitForBytesWritten(1000)
-        ? true
-        : failBool(error, QStringLiteral("The mergetool message could not be written."));
+    if (root.isEmpty() || sessionKey.size() != 64) return 0;
+    const QDir key(root + QLatin1Char('/') + QString::fromLatin1(sessionKey));
+    int removed = 0;
+    const auto now = QDateTime::currentDateTime();
+    for (const auto &entry : key.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden | QDir::NoSymLinks)) {
+        QFile owner(entry.filePath() + QLatin1Char('/') + QLatin1String(kOwnerFile));
+        if (owner.open(QIODevice::ReadOnly)) {
+            if (launcherAlive(owner.read(32))) continue;
+        } else if (entry.lastModified().secsTo(now) < kUnownedIntakeSeconds) {
+            continue;
+        }
+        if (QDir(entry.filePath()).removeRecursively()) ++removed;
+    }
+    return removed;
 }
 }

@@ -13,10 +13,14 @@
 #include <QJsonDocument>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
+#include <QSocketNotifier>
 #include <QStandardPaths>
 #include <QTextStream>
 #include <QTimer>
 #include <algorithm>
+#include <csignal>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace {
 // The KDE style takes its colours from the user's KDE colour scheme. Fusion
@@ -31,13 +35,38 @@ void selectControlsStyle(const QQmlEngine &engine)
     QQuickStyle::setStyle(kdeStyle ? QStringLiteral("org.kde.desktop") : QStringLiteral("Fusion"));
     if (kdeStyle) QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
 }
+
+// SIGTERM, SIGINT and SIGHUP end the event loop instead of the process, so the
+// session closes its launcher socket and stops its Git processes in order. The
+// handler only writes to a pipe; the event loop reads it.
+int signalPipe[2]{-1, -1};
+void quitOnSignals(QCoreApplication &application)
+{
+    if (::pipe2(signalPipe, O_CLOEXEC | O_NONBLOCK) != 0) return;
+    struct sigaction action{};
+    action.sa_handler = [](int) {
+        const char byte = 1;
+        [[maybe_unused]] const auto written = ::write(signalPipe[1], &byte, 1);
+    };
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_RESTART;
+    for (const int signal : {SIGTERM, SIGINT, SIGHUP}) ::sigaction(signal, &action, nullptr);
+    auto *notifier = new QSocketNotifier(signalPipe[0], QSocketNotifier::Read, &application);
+    QObject::connect(notifier, &QSocketNotifier::activated, &application, [] {
+        char byte = 0;
+        while (::read(signalPipe[0], &byte, 1) > 0) {}
+        QCoreApplication::quit();
+    });
+}
 }
 
 int main(int argc, char *argv[])
 {
     // The one PATH lookup for Git. Every Git call in this process runs this
-    // executable; it is empty when Git is not on PATH.
-    const auto git = QStandardPaths::findExecutable(QStringLiteral("git"));
+    // executable; it is empty when Git is not on PATH. It reads the
+    // configuration this process's environment selects, as the user's Git does.
+    const branch_truce::git::GitProgram git{QStandardPaths::findExecutable(QStringLiteral("git")),
+                                            branch_truce::git::GitEnvironment::fromProcess()};
     // Git's mergetool command line names the launcher mode first. Only that
     // position selects it, so a repository or option value spelled
     // --mergetool still opens the window.
@@ -45,6 +74,7 @@ int main(int argc, char *argv[])
     // QApplication rather than QGuiApplication: the org.kde.desktop style draws its
     // controls through QApplication::style(). See docs/platform-validation.md.
     QApplication application(argc, argv);
+    quitOnSignals(application);
     branch_truce::installTranslations(application);
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("Branch Truce"));
@@ -109,7 +139,11 @@ int main(int argc, char *argv[])
     if (paths.size() > 1) parser.showHelp(2);
 
     // The composition root: the data roots and services this session uses.
-    branch_truce::Application session({git, branch_truce::newRecoveryDirectory(), {}});
+    branch_truce::Application session({git.executable,
+                                       branch_truce::newRecoveryDirectory(),
+                                       {},
+                                       git.environment,
+                                       branch_truce::mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"))});
     QQmlApplicationEngine engine;
     selectControlsStyle(engine);
     engine.setInitialProperties(session.windowProperties());

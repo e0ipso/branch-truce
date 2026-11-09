@@ -18,6 +18,11 @@
 #include <QList>
 #include <QString>
 #include <QTemporaryDir>
+#include <QTimer>
+
+#include <functional>
+#include <memory>
+#include <optional>
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -60,6 +65,21 @@ public:
     {
         return {operation, root(), file, {}, 71, 93};
     }
+    // A plain read any Git answers: the staged blob of tracked.txt. The scripted Git runs its
+    // operation script for it.
+    Request readRequest() const
+    {
+        auto read = request(Operation::ReadObject);
+        read.objectId = git({"rev-parse", ":tracked.txt"}).trimmed();
+        return read;
+    }
+    // Git as the code under test runs it: the fixture's configuration only, never the account's
+    // or the system's.
+    GitProgram program(const QString &executable = test_support::gitExecutable(),
+                       int deadlineMs = kGitRequestDeadlineMs) const
+    {
+        return {executable, GitEnvironment::from(environment()), deadlineMs};
+    }
     QString executables() const { return executables_.path(); }
     // Installs `script` as the private executable git-fixture and returns its path.
     QString executable(const QByteArray &script) const
@@ -69,8 +89,8 @@ public:
         return selected;
     }
     // A scripted Git for the adapter's failure paths. It answers preflight and inspection the way
-    // a one-file repository would, runs `operation` for add, status and cat-file, and exits 97
-    // for anything else. Literal path and index handling is covered against real Git instead.
+    // a one-file repository would, runs `operation` for add and cat-file, and exits 97 for
+    // anything else. Literal path and index handling is covered against real Git instead.
     QString fakeGit(
         const QByteArray &operation,
         const QByteArray &inspection = "printf '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\\ttracked.txt\\0'\n",
@@ -106,7 +126,6 @@ case "$1" in
         script += R"SH(
         ;;
     ls-files)
-        case "$*" in *--cached*) printf 'tracked.txt\0'; exit 0 ;; esac
         if [ -e .after-add ]; then
 )SH";
         script += inspection;
@@ -114,7 +133,7 @@ case "$1" in
         else
             printf '100644 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\ttracked.txt\0'
         fi ;;
-    add|status|cat-file)
+    add|cat-file)
 )SH";
         script += operation;
         script += "\n;;\n*) exit 97 ;;\nesac\n";
@@ -130,6 +149,49 @@ case "$1" in
 private:
     QTemporaryDir executables_;
 };
+
+// A Git runner for the code under test: real Git, except that `intercept` sees each request
+// first. It may change the repository and return nothing, so real Git runs the request, or
+// return a result that is delivered from the event loop instead, as Git failing would.
+class InterceptedGit final : public GitRunner {
+public:
+    using Intercept = std::function<std::optional<Result>(const Request &)>;
+    InterceptedGit(const GitProgram &program, Intercept intercept, QObject *parent)
+        : GitRunner(parent), adapter_(program, this), intercept_(std::move(intercept))
+    {
+        QObject::connect(&adapter_, &GitRunner::finished, this,
+                         [this](const Result &result) { Q_EMIT finished(result); });
+    }
+    bool start(const Request &request) override
+    {
+        if (busy()) return false;
+        auto scripted = intercept_(request);
+        if (!scripted) return adapter_.start(request);
+        scripted->request = request;
+        scripted_ = true;
+        QTimer::singleShot(0, this, [this, result = *scripted] {
+            scripted_ = false;
+            Q_EMIT finished(result);
+        });
+        return true;
+    }
+    // A scripted answer is already known, so a cancel leaves it as it is.
+    void cancel() override { adapter_.cancel(); }
+    bool busy() const override { return scripted_ || adapter_.busy(); }
+
+private:
+    GitAdapter adapter_;
+    Intercept intercept_;
+    bool scripted_ = false;
+};
+
+// Runners for a classifier or conversion that all share one intercept.
+inline GitRunners intercepted(const GitProgram &program, InterceptedGit::Intercept intercept)
+{
+    return [program, intercept](QObject *parent) -> std::unique_ptr<GitRunner> {
+        return std::make_unique<InterceptedGit>(program, intercept, parent);
+    };
+}
 
 // The adapter's results, with run() also checking that the result carries the request identity.
 class Completion : public test_support::AsyncCompletion<GitAdapter, Result> {
@@ -258,7 +320,7 @@ inline void checkUnsupportedDiscovery(Repository &repo, const QString &reason,
                                       Outcome outcome = Outcome::InspectionFailure)
 {
     const auto before = repo.git({"ls-files", "--unmerged", "-z"});
-    GitAdapter adapter(test_support::gitExecutable());
+    GitAdapter adapter(repo.program());
     const auto result = run(adapter, repo.request(Operation::DiscoverRepository));
     CHECK(result.outcome == outcome && !result.repository.supported);
     CHECK(result.repository.operation == RepositoryOperation::Unsupported);

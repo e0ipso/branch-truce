@@ -5,6 +5,7 @@
 // adapter state through this header; nothing outside src/git includes it.
 
 #include "GitAdapter.h"
+#include "GitOperations.h"
 #include "RepositoryDiscovery.h"
 #include "core/ResourceLimits.h"
 
@@ -22,9 +23,9 @@ namespace detail {
 // preflight cannot consume the operation or a later representation.
 inline constexpr qsizetype outputLimit = static_cast<qsizetype>(branch_truce::kMaxGitReadBytes);
 inline constexpr qsizetype inspectionLimit = 1024 * 1024;
-inline constexpr int deadlineMs = 30000;
 inline constexpr int inspectionMs = 5000;
-inline constexpr int killGraceMs = 200;
+// How long Git may take to exit after SIGTERM, which lets it remove its lock files, before SIGKILL.
+inline constexpr int killGraceMs = 500;
 
 bool exactPath(const QString &path);
 bool secureExecutable(const QString &path, struct stat &identity);
@@ -37,9 +38,7 @@ public:
         Configuration,
         PolicyRoot,
         ObjectDirectory,
-        TrackedPaths,
         Attributes,
-        GitDirectory,
         Hooks,
         Baseline,
         Operation,
@@ -50,7 +49,7 @@ public:
         CanonicalCheckout
     };
     // Process control (GitAdapterProcess.cpp).
-    explicit State(GitAdapter *owner, const QString &selected);
+    State(GitAdapter *owner, GitProgram selected);
     ~State();
     void signalGroup(int signal);
     void closeLaunchPipe();
@@ -66,21 +65,11 @@ public:
     void begin();
     void complete();
     void reject(const QString &message);
-    void reserveMutation(const QString &key);
-    void releaseMutation();
 
-    // Operation and conversion policy (GitAdapterPolicy.cpp).
-    bool isMutation() const;
-    bool stagingPolicy() const;
-    bool objectPolicy() const;
-    bool filterPolicy() const;
-    QList<QByteArray> indexArguments() const;
-    QList<QByteArray> operationArguments() const;
+    // Configuration and attribute policy (GitAdapterPolicy.cpp).
     bool validIndex(const QByteArray &bytes, bool resolved) const;
     bool checkConfiguration();
-    bool hasFilterConfiguration() const;
     bool checkFilter(const QByteArray &path, const QByteArray &driver);
-    bool consumeStatusAttributes(const QByteArray &chunk);
     bool captureAttributes();
     bool checkFilters();
 
@@ -92,9 +81,7 @@ public:
     void handleConfiguration();
     void handlePolicyRoot();
     void handleObjectDirectory();
-    void handleTrackedPaths();
     void handleAttributes();
-    void handleGitDirectory();
     void handleHooks();
     void handleBaseline();
     void handleOperation();
@@ -109,11 +96,13 @@ public:
     QTimer deadline;
     QTimer escalation;
     QString executable;
+    GitEnvironment environment;
+    int deadlineMs = kGitRequestDeadlineMs;
     QString directory;
-    QString mutationKey;
     QString originalObjectDirectory;
     struct stat identity{};
     Result result;
+    const detail::OperationSpec *spec = nullptr; // The request's operation, set by begin().
     std::unique_ptr<detail::RepositoryDiscovery> discovery;
     std::unique_ptr<QTemporaryDir> temporaryObjects;
     QByteArray phaseOutput;

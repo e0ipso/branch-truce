@@ -17,12 +17,15 @@ Git's backup back onto `MERGED` and deletes the temporary inputs.
 `branch-truce --mergetool` is a headless process. The open GUI session listens
 on a same-user local socket. The session key is the SHA-256 of the canonical
 worktree root, the operation (`merge` or `rebase`) and the two stage commit
-ids. The socket is `bt-mt-` plus the first 32 hex characters of that key. A
-second GUI does not steal a live socket; it says that another window receives
-the launches.
+ids. The socket is `bt-mt-` plus the first 32 hex characters of that key.
+The window that listens holds `<socket>.lock` for as long as it listens. A
+second GUI that finds the lock held does not touch the socket; it says that
+another window receives the launches. A lock and socket left by a window that
+crashed are taken over.
 
 The socket does not depend on `TMPDIR`. The GUI and the launcher use the same
-lookup, `mergetoolSocketDirectory()`:
+lookup, `mergetoolSocketDirectory()` of their `XDG_RUNTIME_DIR`; main passes
+the GUI's result to the session:
 
 1. `$XDG_RUNTIME_DIR/branch-truce`, when `XDG_RUNTIME_DIR` is absolute and the
    whole socket path stays within 106 bytes. A Unix socket address holds 107,
@@ -32,26 +35,43 @@ lookup, `mergetoolSocketDirectory()`:
 The GUI creates that directory with mode 0700 and refuses one that is not a
 real directory, is owned by another user or grants group or other access. The
 Linux abstract socket namespace is not used, because it has no filesystem
-permissions. Before sending its attach frame, the launcher checks with
-`SO_PEERCRED` that the listening process runs as the same user.
+permissions. Both ends check the other with `SO_PEERCRED`: the launcher before
+it sends its attach frame, and the session before it reads a connection. The
+session closes a connection that has not sent a complete attach frame within
+5 seconds, and any connection beyond 32 open at once.
 
 When the session cannot listen, the startup state is `ready-without-mergetool`
 instead of `ready`, and the detail starts with "Mergetool attach is
 unavailable:" and the reason. The files stay open in the app. A launcher for
-that worktree exits 1 with "No Branch Truce session is listening for this
-repository." and Git restores `MERGED`.
+that worktree exits 1 and Git restores `MERGED`. It reports the unusable
+directory when it cannot keep its inputs there, and otherwise "No Branch Truce
+session is listening for this repository."
 
 The launcher discovers that same identity, copies the temporary inputs and the
-initial `MERGED` bytes into `$XDG_DATA_HOME/branch-truce/mergetool/<session>/<invocation>/`,
-then sends one attach frame. The session checks those bytes against the
-manifest before accepting the waiter. Copies stay after the launcher exits.
-Each path has at most one live waiter. A repeated attach for that path is
-rejected and does not release the first waiter. Another path can wait, but it
-is not assigned until the previous path's offer has been acknowledged.
+initial `MERGED` bytes into `<socket directory>/intake/<session>/<invocation>/`,
+each directory with mode 0700, then sends one attach frame. The session checks
+those bytes against the manifest off the GUI thread before accepting the
+waiter. The launcher removes its copies when it exits, and a session that
+starts listening removes those of launchers that were killed. Each path has at
+most one live waiter. A repeated attach for that path is rejected and does not
+release the first waiter. Another path can wait, but it is not assigned until
+the previous path's offer has been acknowledged.
 
 Frames are a 4-byte big-endian length plus one compact JSON object, at most
-65536 bytes. The session replies `attached`, `rejected`, `resolved` or `leave`.
-`resolved` carries the published revision and canonical object id.
+65536 bytes. `src/mergetool/MergetoolMessages.h` defines every message and
+checks every field. Each frame names protocol version 2. The launcher sends
+`attach` with its invocation, its intake and the configuration its Git reads
+(`HOME`, `XDG_CONFIG_HOME` and `GIT_CONFIG_GLOBAL`, `_SYSTEM` and `_NOSYSTEM`).
+The session refuses an attach whose configuration differs from its own,
+because the parent stages with that configuration and the release preflight
+must inspect the same one. The session replies `attached` or `rejected`, and
+later sends `resolved` or `leave`. `resolved` carries the published revision
+and canonical object id. Either side answers a frame of another version or an
+unknown kind with `unsupported` and its own version; the launcher then exits 1
+and asks to restart Branch Truce so both come from one installation. The
+session queues its frames and never waits for a write on the GUI thread. Once
+a `resolved` frame is queued its delivery is unknown, so the session holds the
+offer until the index shows whether Git staged it.
 
 ## Lifecycle
 
@@ -60,9 +80,10 @@ never writes `MERGED` or the index. Before the tool runs, installed Git moves
 `MERGED` aside and copies those bytes back. Mark resolved writes that copy when
 the bytes are still the launch snapshot, refuses a different file, and leaves
 the path unresolved; the `resolved` reply lets the parent stage it. The GUI
-then polls `verifyParentAcknowledgment` and claims resolution only when the
-index holds that exact object. A still-unmerged index stays written and
-unresolved.
+then polls `verifyParentAcknowledgment`, 200 ms after the reply and backing
+off to every 5 seconds for as long as the offer is held, and claims resolution
+only when the index holds that exact object. A still-unmerged index stays
+written and unresolved.
 
 Leave, a rejected second attach, and a dropped launcher return non-zero. Only
 the waiter that was accepted restores `MERGED` when its bytes differ from the
@@ -79,8 +100,15 @@ If nothing is listening, the launcher can start the GUI on the discovered
 worktree and wait for the socket. It passes the launched path, hex-encoded as
 in the attach frame, with the hidden `--mergetool-path` option, so the window
 opens on that file. The started GUI's standard input, output and error go to
-`/dev/null`, so it writes nothing into the `git mergetool` terminal.
-`BRANCH_TRUCE_MERGETOOL_NO_SPAWN` disables that start.
+`/dev/null`, so it writes nothing into the `git mergetool` terminal. It waits
+15 seconds for that window to listen; `--session-wait <seconds>` after
+`--mergetool` changes the wait. `BRANCH_TRUCE_MERGETOOL_NO_SPAWN` disables
+that start.
+
+On leave the launcher writes the captured bytes to a temporary file next to
+`MERGED` with the same permission bits, then renames it over `MERGED`, so a
+crash leaves either version whole. Git's own restore after a failed tool moves
+its backup over `MERGED` in the same way.
 
 ## Tested with a real parent
 
@@ -162,7 +190,7 @@ These behaviours pass and are the compatibility declaration:
   Editing and Mark resolved are refused, Git stays blocked, and Leave makes the
   launcher exit 1 with `MERGED` holding the launch bytes.
 - Each invocation gets its own intake. Its copies match Git's LOCAL, REMOTE
-  and BASE files while the tool runs, and stay after Git deletes those files.
+  and BASE files while the tool runs, and are gone once its launcher exits.
 - Running `git mergetool` with no paths visits unmerged paths in name order.
   Mark resolved on the second path waits. That path is not offered while Git
   is held before staging the first, and it stays blocked and unacknowledged
