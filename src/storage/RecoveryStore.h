@@ -6,6 +6,7 @@
 #include <QList>
 #include <QMap>
 #include <QString>
+#include <map>
 #include <optional>
 
 class QFile;
@@ -40,7 +41,9 @@ public:
     [[nodiscard]] const QString &directory() const { return directory_; }
     [[nodiscard]] RecoveryRead read() const;
     // Verifies the journal as read() does unless its bytes are exactly those
-    // this store last verified or wrote, then appends one record.
+    // this store last verified or wrote, then appends one record. A transaction
+    // ID already in the journal appends nothing: the same state is synced again
+    // and succeeds, different state is refused.
     [[nodiscard]] RecoveryCommit commit(const RecoveryTransaction &transaction);
     [[nodiscard]] QByteArray payload(const QByteArray &digest, QString *error = nullptr) const;
     [[nodiscard]] static QByteArray digest(const QByteArray &bytes);
@@ -52,7 +55,8 @@ private:
         QByteArray bytes;
         qsizetype records = 0;
         QByteArray lastDigest;
-        QJsonObject lastState;
+        // Every committed transaction ID and the digest of its state.
+        std::map<QString, QByteArray> committed;
     };
     [[nodiscard]] bool openJournal(QFile &file, RecoveryRead &result) const;
     [[nodiscard]] RecoveryRead parse(QIODevice &journal) const;

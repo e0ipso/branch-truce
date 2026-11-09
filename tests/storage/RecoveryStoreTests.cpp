@@ -196,13 +196,48 @@ int main(int argc, char **argv)
         const auto theirs = transaction("theirs", "appended by another store");
         CHECK(store.commit(mine).succeeded);
         CHECK(RecoveryStore(store.directory()).commit(theirs).succeeded);
-        // The last record is no longer this store's, so its retry appends again as before.
+        // The retried transaction is no longer the last record; it is still in the journal, so the
+        // retry appends nothing.
         CHECK(store.commit(mine).succeeded);
         const auto next = transaction("next", "second");
         CHECK(store.commit(next).succeeded);
         const auto reloaded = RecoveryStore(store.directory()).read();
         CHECK(reloaded.succeeded && !reloaded.incompleteTail);
-        CHECK(reloaded.transactions == (QList<QJsonObject>{mine.state, theirs.state, mine.state, next.state}));
+        CHECK(reloaded.transactions == (QList<QJsonObject>{mine.state, theirs.state, next.state}));
+    });
+    suite.run("a retry after a failed journal sync appends nothing even when other records followed", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        RecoveryStore store(directory.path() + "/recovery");
+        const auto first = transaction("first", "open of a");
+        const auto other = transaction("other", "open of b");
+        {
+            recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
+            CHECK(!store.commit(first).succeeded);
+            CHECK_EQ(recovery_faults::failures.load(), 1);
+        }
+        CHECK(store.commit(other).succeeded);
+        CHECK(store.commit(first).succeeded);
+        const auto reloaded = RecoveryStore(store.directory()).read();
+        CHECK(reloaded.succeeded);
+        CHECK(reloaded.transactions == (QList<QJsonObject>{first.state, other.state}));
+        auto reused = transaction("first", "different work");
+        CHECK(store.commit(reused).error.contains("reused for different work"));
+    });
+    suite.run("a journal that repeats a transaction identity is refused", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        RecoveryStore store(directory.path() + "/recovery");
+        CHECK(store.commit(transaction("first", "one")).succeeded);
+        CHECK(store.commit(transaction("second", "two")).succeeded);
+        rewriteLastRecord(store.directory(), [](QJsonObject &record) {
+            auto state = record.value("state").toObject();
+            state.insert("transactionId", "first");
+            record.insert("state", state);
+        });
+        const auto reread = RecoveryStore(store.directory()).read();
+        CHECK(!reread.succeeded);
+        CHECK(reread.error.contains("repeats a transaction"));
     });
     suite.run("a same-size change to an earlier record fails the next commit", [] {
         QTemporaryDir directory;

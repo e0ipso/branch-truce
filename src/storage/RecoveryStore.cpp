@@ -10,6 +10,7 @@
 #include <QJsonDocument>
 #include <QLockFile>
 #include <QSaveFile>
+#include <set>
 #include <unistd.h>
 #include <utility>
 
@@ -56,6 +57,14 @@ bool atomicFile(const QString &path, const QByteArray &bytes)
 }
 
 bool synchronize(QFile &file) { return file.flush() && ::fsync(file.handle()) == 0; }
+
+// The digest of a state as the journal stores it, so a state handed to commit
+// and the same state read back compare equal.
+QByteArray stateDigest(const QJsonObject &state)
+{
+    const auto stored = QJsonDocument(state).toJson(QJsonDocument::Compact);
+    return RecoveryStore::digest(QJsonDocument::fromJson(stored).toJson(QJsonDocument::Compact));
+}
 }
 
 RecoveryStore::RecoveryStore(QString directory) : directory_(std::move(directory)) {}
@@ -129,6 +138,7 @@ RecoveryRead RecoveryStore::parse(QIODevice &file) const
     }
     result.validBytes = file.pos();
     quint64 sequence = 1;
+    std::set<QString> identities;
     while (!file.atEnd()) {
         const auto line = file.readLine();
         if (!line.endsWith('\n')) {
@@ -156,6 +166,10 @@ RecoveryRead RecoveryStore::parse(QIODevice &file) const
             || !record.value(QStringLiteral("payloads")).isArray() || state.value(QStringLiteral("schema")).toInt() != 1
             || state.value(QStringLiteral("transactionId")).toString().isEmpty()) {
             result.error = QStringLiteral("Recovery record schema or ordering is invalid.");
+            return result;
+        }
+        if (!identities.insert(state.value(QStringLiteral("transactionId")).toString()).second) {
+            result.error = QStringLiteral("Recovery journal repeats a transaction.");
             return result;
         }
         for (const auto &reference : record.value(QStringLiteral("payloads")).toArray()) {
@@ -207,8 +221,9 @@ const RecoveryStore::JournalEnd *RecoveryStore::refreshEnd(QString *error)
         *error = current.error;
         return nullptr;
     }
-    end_ = JournalEnd{bytes.left(current.validBytes), current.transactions.size(), current.lastDigest,
-                      current.transactions.isEmpty() ? QJsonObject{} : current.transactions.back()};
+    end_ = JournalEnd{bytes.left(current.validBytes), current.transactions.size(), current.lastDigest, {}};
+    for (const auto &state : current.transactions)
+        end_->committed.emplace(state.value(QStringLiteral("transactionId")).toString(), stateDigest(state));
     return &*end_;
 }
 
@@ -251,12 +266,12 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
     const auto validBytes = static_cast<qint64>(current->bytes.size());
     if (!journal.open(QIODevice::ReadWrite) || !journal.resize(validBytes) || !journal.seek(validBytes))
         return {false, QStringLiteral("Could not open the recovery commit boundary.")};
-    // A flush failure may leave a complete record. Retrying its stable request
-    // identity makes that record durable without appending the action twice.
-    if (current->records > 0
-        && current->lastState.value(QStringLiteral("transactionId"))
-            == transaction.state.value(QStringLiteral("transactionId"))) {
-        if (current->lastState != transaction.state)
+    // A flush failure may leave a complete record, and other records may follow
+    // it before the retry. Retrying its stable request identity makes that
+    // record durable without appending the action twice.
+    const auto transactionId = transaction.state.value(QStringLiteral("transactionId")).toString();
+    if (const auto committed = current->committed.find(transactionId); committed != current->committed.end()) {
+        if (committed->second != stateDigest(transaction.state))
             return {false, QStringLiteral("Recovery transaction identity was reused for different work.")};
         return synchronize(journal)
             ? RecoveryCommit{true, {}}
@@ -276,12 +291,10 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
     if (journal.write(frame) != frame.size() || !synchronize(journal))
         return {false, QStringLiteral("Recovery commit failed; pending input is retained for retry.")};
     if (end_) {
-        // Remember the state as a reread would decode it, so the retry check
-        // compares the same values either way.
         end_->bytes += frame;
         ++end_->records;
         end_->lastDigest = bodyDigest;
-        end_->lastState = QJsonDocument::fromJson(body).object().value(QStringLiteral("state")).toObject();
+        end_->committed.emplace(transactionId, stateDigest(transaction.state));
     }
     return {true, {}};
 }
