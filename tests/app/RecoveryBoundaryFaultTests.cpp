@@ -319,7 +319,10 @@ QJsonObject replayed(const QString &directory, bool *incomplete)
     return observation(replay.files.front());
 }
 
-void truncateFinalFrame(const QString &directory)
+// How the last frame of a journal can end after a crash or power loss.
+enum class TornTail { Half, NoNewline, Zeroed };
+
+void tearFinalFrame(const QString &directory, TornTail tail)
 {
     const auto path = directory + QStringLiteral("/journal");
     QFile journal(path);
@@ -332,7 +335,11 @@ void truncateFinalFrame(const QString &directory)
     CHECK(prior > 0);
     const auto frame = bytes.size() - (prior + 1);
     CHECK(frame > 4);
-    bytes.truncate(prior + 1 + frame / 2);
+    switch (tail) {
+    case TornTail::Half: bytes.truncate(prior + 1 + frame / 2); break;
+    case TornTail::NoNewline: bytes.chop(1); break;
+    case TornTail::Zeroed: bytes = bytes.left(prior + 1) + QByteArray(frame, '\0'); break;
+    }
     CHECK(!bytes.endsWith('\n'));
     CHECK(journal.open(QIODevice::WriteOnly | QIODevice::Truncate));
     CHECK(journal.write(bytes) == bytes.size());
@@ -617,28 +624,34 @@ public:
                         CHECK(expected.value(QStringLiteral("checkpoint")) == expected.value(QStringLiteral("text")));
                     }
                 });
-            suite.run("termination during " + boundary.toStdString() + " leaves the prior text decisions and status",
-                      [=] {
-                          QTemporaryDir directory;
-                          CHECK(directory.isValid());
-                          const auto child = runChild(boundary, directory.path(), {});
-                          requireChild(child, 0);
-                          const auto before = labeled(child.output, "BEFORE");
-                          const auto expected = labeled(child.output, "EXPECTED");
-                          truncateFinalFrame(directory.path());
-                          bool incomplete = false;
-                          const auto restored = replayed(directory.path(), &incomplete);
-                          CHECK(incomplete);
-                          CHECK(restored == before);
-                          CHECK(restored.value(QStringLiteral("text")) != expected.value(QStringLiteral("text"))
-                                || restored.value(QStringLiteral("status")) != expected.value(QStringLiteral("status"))
-                                || restored.value(QStringLiteral("stageOutcome"))
-                                    != expected.value(QStringLiteral("stageOutcome"))
-                                || restored.value(QStringLiteral("writeOutcome"))
-                                    != expected.value(QStringLiteral("writeOutcome"))
-                                || restored.value(QStringLiteral("checkpointOutcome"))
-                                    != expected.value(QStringLiteral("checkpointOutcome")));
-                      });
+            for (const auto &[tail, shape] :
+                 {std::pair{TornTail::Half, "half"}, std::pair{TornTail::NoNewline, "unterminated"},
+                  std::pair{TornTail::Zeroed, "zero-filled"}}) {
+                suite.run("a " + std::string(shape) + " final frame during " + boundary.toStdString()
+                              + " leaves the prior text decisions and status",
+                          [=] {
+                              QTemporaryDir directory;
+                              CHECK(directory.isValid());
+                              const auto child = runChild(boundary, directory.path(), {});
+                              requireChild(child, 0);
+                              const auto before = labeled(child.output, "BEFORE");
+                              const auto expected = labeled(child.output, "EXPECTED");
+                              tearFinalFrame(directory.path(), tail);
+                              bool incomplete = false;
+                              const auto restored = replayed(directory.path(), &incomplete);
+                              CHECK(incomplete);
+                              CHECK(restored == before);
+                              CHECK(restored.value(QStringLiteral("text")) != expected.value(QStringLiteral("text"))
+                                    || restored.value(QStringLiteral("status"))
+                                        != expected.value(QStringLiteral("status"))
+                                    || restored.value(QStringLiteral("stageOutcome"))
+                                        != expected.value(QStringLiteral("stageOutcome"))
+                                    || restored.value(QStringLiteral("writeOutcome"))
+                                        != expected.value(QStringLiteral("writeOutcome"))
+                                    || restored.value(QStringLiteral("checkpointOutcome"))
+                                        != expected.value(QStringLiteral("checkpointOutcome")));
+                          });
+            }
         }
         for (const auto &boundary : durable) {
             suite.run("journal sync death during " + boundary.toStdString() + " keeps the completed record", [=] {

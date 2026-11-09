@@ -40,6 +40,9 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// Throws RecoveryRecordError with detail unless condition holds.
+void requireRecord(bool condition, const char *detail);
+
 // Reads the fields of one state that recoveryTransaction wrote, resolving
 // payload references through the store. Every method throws
 // RecoveryRecordError with the reason when its field is missing, malformed,

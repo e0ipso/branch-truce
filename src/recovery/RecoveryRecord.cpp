@@ -62,15 +62,10 @@ constexpr NameTable<SnapshotProvenance::Operation, 2> operationNames{{
     {SnapshotProvenance::Operation::Rebase, "rebase"},
 }};
 
-void require(bool condition, const char *detail)
-{
-    if (!condition) throw RecoveryRecordError(detail);
-}
-
 template <typename Enum, std::size_t Size> Enum named(const NameTable<Enum, Size> &table, const QJsonValue &value)
 {
     const auto found = valueNamed(table, value.toString());
-    require(value.isString() && found.has_value(), "Unsupported recovery value.");
+    requireRecord(value.isString() && found.has_value(), "Unsupported recovery value.");
     return *found;
 }
 
@@ -256,10 +251,15 @@ storage::RecoveryTransaction recoveryTransaction(const FileSession &file, Recove
     return std::move(encoder.transaction);
 }
 
+void requireRecord(bool condition, const char *detail)
+{
+    if (!condition) throw RecoveryRecordError(detail);
+}
+
 RecoveryRecordReader::RecoveryRecordReader(const storage::RecoveryStore &store, const QJsonObject &state)
     : store_(store), state_(state)
 {
-    require(state_.value(field::schema).toInt() == schema, "Unsupported recovery state schema.");
+    requireRecord(state_.value(field::schema).toInt() == schema, "Unsupported recovery state schema.");
 }
 
 RecoveryAction RecoveryRecordReader::action() const { return named(recoveryActionNames, state_.value(field::action)); }
@@ -271,10 +271,10 @@ std::string RecoveryRecordReader::supportDetail() const { return bytes(state_.va
 
 std::string RecoveryRecordReader::bytes(const QJsonValue &value) const
 {
-    require(value.isString(), "Missing recovery payload reference.");
+    requireRecord(value.isString(), "Missing recovery payload reference.");
     QString error;
     const auto result = store_.payload(value.toString().toLatin1(), &error);
-    require(error.isEmpty(), "Recovery payload is missing, unsafe or corrupt.");
+    requireRecord(error.isEmpty(), "Recovery payload is missing, unsafe or corrupt.");
     return result.toStdString();
 }
 
@@ -282,7 +282,7 @@ quint64 RecoveryRecordReader::number(const QJsonValue &value) const
 {
     bool ok = false;
     const auto result = value.toString().toULongLong(&ok);
-    require(ok && QString::number(result) == value.toString(), "Invalid recovery integer.");
+    requireRecord(ok && QString::number(result) == value.toString(), "Invalid recovery integer.");
     return result;
 }
 
@@ -290,13 +290,13 @@ qint64 RecoveryRecordReader::signedNumber(const QJsonValue &value) const
 {
     bool ok = false;
     const auto result = value.toString().toLongLong(&ok);
-    require(ok && QString::number(result) == value.toString(), "Invalid recovery signed integer.");
+    requireRecord(ok && QString::number(result) == value.toString(), "Invalid recovery signed integer.");
     return result;
 }
 
 bool RecoveryRecordReader::boolean(const QJsonValue &value) const
 {
-    require(value.isBool(), "Invalid recovery boolean.");
+    requireRecord(value.isBool(), "Invalid recovery boolean.");
     return value.toBool();
 }
 
@@ -306,17 +306,18 @@ Draft RecoveryRecordReader::draft(std::string_view previousText) const
     const auto change = current.value(field::text).toObject();
     const auto prefix = number(change.value(field::prefix));
     const auto suffix = number(change.value(field::suffix));
-    require(prefix <= previousText.size() && suffix <= previousText.size() - prefix, "Invalid recovered text change.");
+    requireRecord(prefix <= previousText.size() && suffix <= previousText.size() - prefix,
+                  "Invalid recovered text change.");
     Draft result;
     result.text = std::string(previousText.substr(0, prefix)) + bytes(change.value(field::insert))
         + std::string(previousText.substr(previousText.size() - suffix));
-    require(validUtf8(result.text) && current.value(field::decisions).isArray(), "Invalid recovered draft.");
+    requireRecord(validUtf8(result.text) && current.value(field::decisions).isArray(), "Invalid recovered draft.");
     for (const auto &entry : current.value(field::decisions).toArray()) {
         const auto decision = entry.toObject();
         Decision value{named(decisionNames, decision.value(field::value)), {}};
         if (decision.contains(field::order)) value.order = number(decision.value(field::order));
-        require(result.decisions.emplace(bytes(decision.value(field::id)), value).second,
-                "Duplicate recovered decision.");
+        requireRecord(result.decisions.emplace(bytes(decision.value(field::id)), value).second,
+                      "Duplicate recovered decision.");
     }
     return result;
 }
@@ -324,24 +325,24 @@ Draft RecoveryRecordReader::draft(std::string_view previousText) const
 std::set<std::string> RecoveryRecordReader::handEdited() const
 {
     const auto value = state_.value(field::current).toObject().value(field::handEdited);
-    require(value.isArray(), "Invalid recovered hand edits.");
+    requireRecord(value.isArray(), "Invalid recovered hand edits.");
     std::set<std::string> result;
     for (const auto &entry : value.toArray())
-        require(result.insert(bytes(entry)).second, "Duplicate recovered hand edit.");
+        requireRecord(result.insert(bytes(entry)).second, "Duplicate recovered hand edit.");
     return result;
 }
 
 std::vector<ByteRange> RecoveryRecordReader::handEditedRanges() const
 {
     const auto value = state_.value(field::current).toObject().value(field::handEditedRanges);
-    require(value.isArray(), "Invalid recovered hand-edited ranges.");
+    requireRecord(value.isArray(), "Invalid recovered hand-edited ranges.");
     std::vector<ByteRange> result;
     for (const auto &entry : value.toArray()) {
-        require(entry.isObject(), "Invalid recovered hand-edited range.");
+        requireRecord(entry.isObject(), "Invalid recovered hand-edited range.");
         const auto range = entry.toObject();
         const ByteRange decoded{static_cast<std::size_t>(number(range.value(field::begin))),
                                 static_cast<std::size_t>(number(range.value(field::end)))};
-        require(decoded.begin <= decoded.end, "Invalid recovered hand-edited range.");
+        requireRecord(decoded.begin <= decoded.end, "Invalid recovered hand-edited range.");
         result.push_back(decoded);
     }
     return result;
@@ -354,7 +355,7 @@ bool RecoveryRecordReader::reviewConfirmedUndecided() const
 
 OperationOutcome RecoveryRecordReader::outcome(const QJsonValue &value) const
 {
-    require(value.isObject(), "Missing recovery outcome.");
+    requireRecord(value.isObject(), "Missing recovery outcome.");
     const auto object = value.toObject();
     return {number(object.value(field::revision)), named(outcomeNames, object.value(field::outcome)),
             bytes(object.value(field::detail))};
@@ -377,7 +378,7 @@ std::optional<MutationFact> RecoveryRecordReader::mutation() const
     if (!state_.contains(field::mutation)) return std::nullopt;
     const auto object = state_.value(field::mutation).toObject();
     MutationFact fact{object.value(field::id).toString(), named(mutationKindNames, object.value(field::kind)), {}};
-    require(!QUuid(fact.id).isNull(), "Invalid recovery mutation identity.");
+    requireRecord(!QUuid(fact.id).isNull(), "Invalid recovery mutation identity.");
     if (object.contains(field::observation))
         fact.observation = named(mutationObservationNames, object.value(field::observation));
     return fact;
@@ -392,12 +393,12 @@ TextSnapshot RecoveryRecordReader::text(const QJsonValue &value) const
                         {named(encodingNames, format.value(field::encoding)), boolean(format.value(field::bom)),
                          named(newlineNames, format.value(field::newline)),
                          boolean(format.value(field::finalNewline))}};
-    require(validUtf8(result.utf8), "Invalid recovered text encoding.");
+    requireRecord(validUtf8(result.utf8), "Invalid recovered text encoding.");
     const auto decoded =
         storage::decodeText(QByteArray::fromStdString(result.bytes), storage::encodingName(result.format.encoding));
-    require(decoded.document && decoded.document->utf8.toStdString() == result.utf8,
-            "Recovered text bytes and editable representation disagree.");
-    require(decoded.document->format == result.format, "Recovered text format does not describe its bytes.");
+    requireRecord(decoded.document && decoded.document->utf8.toStdString() == result.utf8,
+                  "Recovered text bytes and editable representation disagree.");
+    requireRecord(decoded.document->format == result.format, "Recovered text format does not describe its bytes.");
     return result;
 }
 
@@ -412,19 +413,19 @@ std::optional<SourceSnapshot> RecoveryRecordReader::source(const QJsonValue &val
                           {},
                           bytes(object.value(field::label))};
     if (!object.value(field::commitId).isNull()) result.commitId = bytes(object.value(field::commitId));
-    require(!result.objectId.empty() && (result.mode == "100644" || result.mode == "100755"),
-            "Invalid recovered source identity.");
+    requireRecord(!result.objectId.empty() && (result.mode == "100644" || result.mode == "100755"),
+                  "Invalid recovered source identity.");
     return result;
 }
 
 std::map<std::string, std::string> RecoveryRecordReader::mapping(const QJsonValue &value) const
 {
-    require(value.isArray(), "Invalid recovery conversion policy.");
+    requireRecord(value.isArray(), "Invalid recovery conversion policy.");
     std::map<std::string, std::string> result;
     for (const auto &entry : value.toArray()) {
         const auto object = entry.toObject();
-        require(result.emplace(bytes(object.value(field::key)), bytes(object.value(field::value))).second,
-                "Duplicate recovery conversion policy entry.");
+        requireRecord(result.emplace(bytes(object.value(field::key)), bytes(object.value(field::value))).second,
+                      "Duplicate recovery conversion policy entry.");
     }
     return result;
 }
@@ -432,7 +433,7 @@ std::map<std::string, std::string> RecoveryRecordReader::mapping(const QJsonValu
 std::optional<FileSnapshots> RecoveryRecordReader::snapshots() const
 {
     const auto value = state_.value(field::snapshots);
-    require(value.isNull() || value.isObject(), "Invalid recovery capture.");
+    requireRecord(value.isNull() || value.isObject(), "Invalid recovery capture.");
     if (value.isNull()) return {};
     const auto object = value.toObject();
     const auto p = object.value(field::provenance).toObject();
@@ -457,12 +458,12 @@ std::optional<FileSnapshots> RecoveryRecordReader::snapshots() const
     provenance.headName = bytes(p.value(field::headName));
     provenance.originalHead = bytes(p.value(field::originalHead));
     provenance.onto = bytes(p.value(field::onto));
-    require(!QUuid(QString::fromStdString(provenance.sessionId)).isNull(), "Invalid recovery session identity.");
-    require(result.stage2 && result.stage3 && result.stage2->mode == result.resultMode
-                && result.stage3->mode == result.resultMode,
-            "Incomplete recovered source captures.");
+    requireRecord(!QUuid(QString::fromStdString(provenance.sessionId)).isNull(), "Invalid recovery session identity.");
+    requireRecord(result.stage2 && result.stage3 && result.stage2->mode == result.resultMode
+                      && result.stage3->mode == result.resultMode,
+                  "Incomplete recovered source captures.");
     const auto mode = number(identity.value(field::mode));
-    require(mode <= std::numeric_limits<std::uint32_t>::max(), "Invalid recovery file mode.");
+    requireRecord(mode <= std::numeric_limits<std::uint32_t>::max(), "Invalid recovery file mode.");
     result.launchResult = {
         text(launch.value(field::text)),
         {number(identity.value(field::device)), number(identity.value(field::inode)), static_cast<std::uint32_t>(mode),

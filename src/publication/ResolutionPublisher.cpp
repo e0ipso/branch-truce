@@ -170,7 +170,7 @@ bool ResolutionPublisher::preserveWrite() const
     return session && previouslyWritten(*session, attempt_->revision);
 }
 
-ResolutionPublisher::StartResult ResolutionPublisher::refuse(Transition transition, const QString &detail)
+ResolutionPublisher::StartResult ResolutionPublisher::result(Transition transition, const QString &detail)
 {
     return {transition, detail, {}};
 }
@@ -179,11 +179,10 @@ ResolutionPublisher::StartResult ResolutionPublisher::recordWrite(const std::str
                                                                   Outcome outcome, const QString &detail)
 {
     const auto recorded = files_.recordWrite(fileId, revision, outcome, detail.toStdString());
-    publication_.reset();
     clearAttempt();
     if (recorded != Transition::Applied)
-        return refuse(recorded, tr("The repository write could not be recorded. The draft is still available."));
-    return refuse(Transition::Blocked, detail);
+        return result(recorded, tr("The repository write could not be recorded. The draft is still available."));
+    return result(Transition::Blocked, detail);
 }
 
 void ResolutionPublisher::fail(Outcome outcome, const QString &detail, bool stage)
@@ -194,7 +193,6 @@ void ResolutionPublisher::fail(Outcome outcome, const QString &detail, bool stag
     const auto recorded = stage ? files_.recordStage(id, revision, outcome, {}, {}, detail.toStdString())
                                 : files_.recordWrite(id, revision, outcome, detail.toStdString());
     offer_.reset();
-    publication_.reset();
     clearAttempt();
     Q_EMIT changed(recorded == Transition::Applied
                        ? detail
@@ -251,29 +249,29 @@ bool ResolutionPublisher::accept(const TaskCompletion &completion) const
 ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &fileId, RevisionId expected,
                                                             bool confirmUndecided)
 {
-    if (attempt_) return refuse(Transition::Blocked, tr("Mark resolved is already working on a file."));
+    if (attempt_) return result(Transition::Blocked, tr("Mark resolved is already working on a file."));
     const auto *session = file(fileId);
     if (!session || session->current().id != expected)
-        return refuse(Transition::StaleRevision, tr("The result changed. Mark resolved was not applied."));
+        return result(Transition::StaleRevision, tr("The result changed. Mark resolved was not applied."));
     const auto uncertain = [&](const std::optional<OperationOutcome> &outcome) {
         return outcome && outcome->revision == expected && outcome->outcome == Outcome::Uncertain;
     };
     if (uncertain(session->checkpointOutcome()) || uncertain(session->writeOutcome())
         || uncertain(session->stageOutcome()))
-        return refuse(Transition::Blocked,
+        return result(Transition::Blocked,
                       tr("Outcome uncertain. Inspect the repository file and index before retrying."));
-    if (session->facts().resolved) return refuse(Transition::NoChange, tr("Written and resolved."));
+    if (session->facts().resolved) return result(Transition::NoChange, tr("Written and resolved."));
     confirmation_.reset();
     const auto review = files_.beginMarkResolved(fileId, expected, confirmUndecided);
     if (review == Transition::ConfirmationRequired) {
         confirmation_ = std::make_pair(fileId, expected);
-        return refuse(Transition::ConfirmationRequired,
+        return result(Transition::ConfirmationRequired,
                       tr("Confirm that this result is intentional. Some source choices are still undecided."));
     }
     session = file(fileId);
     if (review == Transition::Blocked && session && session->current().draft.unresolvedMarkers != 0) {
         auto markers = session->markers();
-        auto refused = refuse(review,
+        auto refused = result(review,
                               tr("Mark resolved is blocked: %1; first at line %2. The repository file is unchanged.")
                                   .arg(remainingMarkers(markers))
                                   .arg(static_cast<qulonglong>(markers.first()->line + 1)));
@@ -281,9 +279,9 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
         return refused;
     }
     if (review != Transition::Applied)
-        return refuse(review, tr("Mark resolved is blocked. The repository file is unchanged."));
+        return result(review, tr("Mark resolved is blocked. The repository file is unchanged."));
     session = file(fileId);
-    if (!session) return refuse(Transition::StaleRevision, tr("The result changed. Mark resolved was not applied."));
+    if (!session) return result(Transition::StaleRevision, tr("The result changed. Mark resolved was not applied."));
     const bool checkpointed = session->checkpoint() && session->checkpoint()->id == expected
         && session->checkpoint()->result == session->current().result
         && session->checkpoint()->decisions == session->current().decisions
@@ -291,7 +289,7 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
     if (!checkpointed) {
         const auto saved = files_.recordCheckpoint(fileId, expected, Outcome::Succeeded);
         if (saved != Transition::Applied)
-            return refuse(
+            return result(
                 saved,
                 tr("Draft save failed. The edited result is still available, and the repository file is unchanged."));
     }
@@ -347,8 +345,8 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
     attempt_->serialized = serialized.document->originalBytes;
     attempt_->parentOwned = parentOwns(attempt_->path);
     if (!startPrepare())
-        return refuse(Transition::Blocked, tr("Publication could not start. The draft is still available."));
-    return refuse(Transition::Applied, tr("Publishing the reviewed result."));
+        return result(Transition::Blocked, tr("Publication could not start. The draft is still available."));
+    return result(Transition::Applied, tr("Publishing the reviewed result."));
 }
 
 void ResolutionPublisher::cancelConfirmation()
@@ -580,8 +578,7 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
             if (evidence->state == storage::PublicationState::Published
                 && evidence->failure == storage::DestinationFailure::None && evidence->destination)
                 self->baselines_[self->attempt_->fileId].destination = evidence->destination;
-            self->publication_ = evidence;
-            self->published(completion);
+            self->published(completion, *evidence);
         });
     if (!attempt_) return;
     attempt_->task = id;
@@ -589,17 +586,15 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
         fail(Outcome::Failed, tr("Publication could not start. The draft is still available."), preserveWrite());
 }
 
-void ResolutionPublisher::published(const TaskCompletion &completion)
+void ResolutionPublisher::published(const TaskCompletion &completion, const storage::PublicationResult &published)
 {
     if (!attempt_) return;
-    const auto published = publication_;
-    const bool writerUncertain = published
-        && (published->state == storage::PublicationState::Uncertain
-            || (published->state == storage::PublicationState::Published
-                && published->failure != storage::DestinationFailure::None));
+    const bool writerUncertain = published.state == storage::PublicationState::Uncertain
+        || (published.state == storage::PublicationState::Published
+            && published.failure != storage::DestinationFailure::None);
     const auto uncertain = writerUncertain || completion.result.mutation == MutationObservation::Uncertain;
-    if (completion.result.status != TaskStatus::Succeeded || uncertain || !published
-        || published->state != storage::PublicationState::Published || !published->destination
+    if (completion.result.status != TaskStatus::Succeeded || uncertain
+        || published.state != storage::PublicationState::Published || !published.destination
         || (completion.result.mutation != MutationObservation::ObservedChanged
             && completion.result.mutation != MutationObservation::ObservedUnchanged)) {
         fail(uncertain ? Outcome::Uncertain : Outcome::Failed,

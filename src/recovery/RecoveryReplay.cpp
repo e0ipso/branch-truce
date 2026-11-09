@@ -6,10 +6,6 @@
 
 namespace branch_truce {
 namespace {
-void require(bool condition, const char *detail)
-{
-    if (!condition) throw RecoveryRecordError(detail);
-}
 
 void completeMutations(std::vector<RecoveryMutation> &mutations, const std::string &fileId, MutationKind kind,
                        RevisionId revision)
@@ -88,17 +84,18 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
             const auto action = record.action();
             const auto id = record.fileId();
             const auto path = record.path();
-            require(!id.empty() && !path.empty() && path.find('\0') == std::string::npos,
-                    "Invalid recovery file identity.");
+            requireRecord(!id.empty() && !path.empty() && path.find('\0') == std::string::npos,
+                          "Invalid recovery file identity.");
             const auto mutation = record.mutation();
-            require(mutation.has_value()
-                        == (action == RecoveryAction::MutationIntent || action == RecoveryAction::MutationObservation),
-                    "Invalid recovery mutation record.");
+            requireRecord(
+                mutation.has_value()
+                    == (action == RecoveryAction::MutationIntent || action == RecoveryAction::MutationObservation),
+                "Invalid recovery mutation record.");
             auto found = files.find(id);
             std::string previousText;
             if (action == RecoveryAction::Open) {
-                require(found == files.end() || placeholder(found->second),
-                        "Recovery attempted to replace an acknowledged session.");
+                requireRecord(found == files.end() || placeholder(found->second),
+                              "Recovery attempted to replace an acknowledged session.");
                 found = files
                             .insert_or_assign(id,
                                               FileSession(id, path, record.draft({}), record.support(),
@@ -106,8 +103,8 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
                                                           correspondence))
                             .first;
             } else {
-                require(found != files.end() && found->second.path() == path,
-                        "Recovery command has no matching open file.");
+                requireRecord(found != files.end() && found->second.path() == path,
+                              "Recovery command has no matching open file.");
                 // Loading a large file is not an edit; reopening it asks again.
                 if (action != RecoveryAction::LoadLarge) {
                     result.userWork = true;
@@ -120,28 +117,29 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
                     const auto entry =
                         std::find_if(result.mutations.begin(), result.mutations.end(),
                                      [&](const auto &candidate) { return candidate.id == mutation->id; });
-                    require(entry != result.mutations.end() && entry->kind == mutation->kind && !entry->observation,
-                            "Recovery mutation observation has no intent or repeats one.");
-                    require(recoveryTransaction(entry->target, action, stored.id, entry->target.current().draft.text,
-                                                mutation)
-                                    .state
-                                == stored.state,
-                            "Recovery mutation observation changed its original target.");
+                    requireRecord(entry != result.mutations.end() && entry->kind == mutation->kind
+                                      && !entry->observation,
+                                  "Recovery mutation observation has no intent or repeats one.");
+                    requireRecord(recoveryTransaction(entry->target, action, stored.id,
+                                                      entry->target.current().draft.text, mutation)
+                                          .state
+                                      == stored.state,
+                                  "Recovery mutation observation changed its original target.");
                     entry->observation = mutation->observation;
                     continue; // An old completion never replaces a newer draft or discard.
                 }
-                require(apply(action, found->second, record, previousText) == Transition::Applied,
-                        "Unsupported or inconsistent recovery transition.");
+                requireRecord(apply(action, found->second, record, previousText) == Transition::Applied,
+                              "Unsupported or inconsistent recovery transition.");
                 if (action == RecoveryAction::MutationIntent) {
-                    require(std::none_of(result.mutations.begin(), result.mutations.end(),
-                                         [&](const auto &entry) { return entry.id == mutation->id; }),
-                            "Duplicate recovery mutation intent.");
+                    requireRecord(std::none_of(result.mutations.begin(), result.mutations.end(),
+                                               [&](const auto &entry) { return entry.id == mutation->id; }),
+                                  "Duplicate recovery mutation intent.");
                     result.mutations.push_back({mutation->id, mutation->kind, {}, found->second});
                 }
             }
             const auto encoded = recoveryTransaction(found->second, action, stored.id, previousText, mutation).state;
-            require(encoded == stored.state,
-                    "Recovery state schema or transition does not match the acknowledged record.");
+            requireRecord(encoded == stored.state,
+                          "Recovery state schema or transition does not match the acknowledged record.");
             if (action == RecoveryAction::WriteOutcome || action == RecoveryAction::StageOutcome) {
                 const auto kind =
                     action == RecoveryAction::WriteOutcome ? MutationKind::Publication : MutationKind::Staging;
@@ -157,7 +155,8 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
         for (auto &[id, file] : files) {
             (void)id;
             if (const auto *snapshots = file.snapshots()) {
-                require(!provenance || *provenance == snapshots->provenance, "Recovery session identities disagree.");
+                requireRecord(!provenance || *provenance == snapshots->provenance,
+                              "Recovery session identities disagree.");
                 provenance = snapshots->provenance;
             }
             result.files.push_back(std::move(file));

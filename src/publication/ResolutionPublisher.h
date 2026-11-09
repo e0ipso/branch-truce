@@ -94,7 +94,7 @@ private:
     [[nodiscard]] bool parentOwns(const QByteArray &path) const;
     [[nodiscard]] bool previouslyWritten(const FileSession &session, RevisionId revision) const;
     [[nodiscard]] bool preserveWrite() const;
-    StartResult refuse(Transition transition, const QString &detail);
+    [[nodiscard]] static StartResult result(Transition transition, const QString &detail);
     StartResult recordWrite(const std::string &fileId, RevisionId revision, Outcome outcome, const QString &detail);
     void fail(Outcome outcome, const QString &detail, bool stage);
     void finishResolved();
@@ -106,7 +106,7 @@ private:
     void verified(const git::TextConversionResult &result);
     void discovered(const TaskCompletion &completion);
     void indexed(const TaskCompletion &completion);
-    void published(const TaskCompletion &completion);
+    void published(const TaskCompletion &completion, const storage::PublicationResult &evidence);
     void staged(const TaskCompletion &completion);
     void parentPreflight(const TaskCompletion &completion);
     void noteStale(const TaskCompletion &completion);
@@ -123,6 +123,5 @@ private:
     std::optional<Offer> offer_;
     QByteArray parentPath_;
     std::optional<std::pair<std::string, RevisionId>> confirmation_;
-    std::shared_ptr<storage::PublicationResult> publication_;
 };
 }
