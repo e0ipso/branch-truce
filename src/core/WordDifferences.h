@@ -30,13 +30,16 @@ struct WordDifferences {
 
 // The tokens of left and right outside their longest common token sequence,
 // as ordered, disjoint byte ranges into each text. A token is a run of word
-// bytes (ASCII letters, digits, underscore and every non-ASCII byte, so UTF-8
-// sequences stay whole), a run of spaces and tabs, one newline, or one other
-// byte. Adjacent differing tokens form one range, trimmed of spaces and tabs
-// at either edge unless it holds nothing else. Newlines are never part of a
-// range. When the pair needs more comparisons than budget or
-// kMaxWordDifferencePairCells allow, both lists are empty and budget is
-// unchanged; otherwise the comparisons used are taken from budget.
+// characters (ASCII letters, digits, underscore and the letters of other
+// scripts), a run of blanks (Unicode white space other than line breaks), one
+// newline, or one other character: ASCII punctuation, Unicode punctuation and
+// symbols, and each character of scripts written without spaces, such as CJK
+// ideographs and kana. Bytes that are not UTF-8 count one at a time. Adjacent
+// differing tokens form one range, without blanks at either edge unless it
+// holds nothing else. Newlines are never part of a range. When the pair needs
+// more comparisons than budget or kMaxWordDifferencePairCells allow, both
+// lists are empty and budget is unchanged; otherwise the comparisons used are
+// taken from budget.
 [[nodiscard]] WordDifferences wordDifferences(std::string_view left, std::string_view right, std::size_t &budget);
 
 }

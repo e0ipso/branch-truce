@@ -1,23 +1,82 @@
 // Word comparisons locate changed tokens within corresponding source and result passages.
 #include "WordDifferences.h"
+#include "Correspondence.h"
 #include <algorithm>
 #include <cstdint>
 #include <unordered_map>
 
 namespace branch_truce {
 namespace {
+enum class TokenKind { Word, Blank, Single, Unreported };
+
 struct Token {
     ByteRange range;
-    // Newlines and over-long lines are compared but never reported.
-    bool reported = true;
+    TokenKind kind = TokenKind::Word;
 };
 
-bool wordByte(unsigned char c)
+// One decoded character. Bytes that are not valid UTF-8 decode one at a
+// time and are not characters.
+struct Character {
+    char32_t value = 0;
+    std::size_t size = 1;
+    bool valid = true;
+};
+
+Character decode(std::string_view text, std::size_t at)
 {
-    return c >= 0x80 || c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    const auto first = static_cast<unsigned char>(text[at]);
+    if (first < 0x80) return {first, 1, true};
+    const std::size_t size = first >= 0xf0 ? 4 : first >= 0xe0 ? 3 : first >= 0xc0 ? 2 : 1;
+    if (size == 1 || at + size > text.size() || !validUtf8(text.substr(at, size))) return {first, 1, false};
+    char32_t value = first & (0xffU >> (size + 1));
+    for (std::size_t i = 1; i < size; ++i) value = (value << 6U) | (static_cast<unsigned char>(text[at + i]) & 0x3fU);
+    return {value, size, true};
 }
 
-bool blank(unsigned char c) { return c == ' ' || c == '\t'; }
+bool within(char32_t c, char32_t first, char32_t last) noexcept { return first <= c && c <= last; }
+
+// Unicode White_Space other than line breaks.
+bool blankCharacter(char32_t c) noexcept
+{
+    return c == ' ' || c == '\t' || c == 0xa0 || c == 0x1680 || within(c, 0x2000, 0x200a) || c == 0x2028 || c == 0x2029
+        || c == 0x202f || c == 0x205f || c == 0x3000;
+}
+
+// Punctuation and symbols outside ASCII, and characters of scripts written
+// without spaces between words. Each is a token on its own.
+bool singleCharacter(char32_t c) noexcept
+{
+    return within(c, 0xa1, 0xbf) || c == 0xd7 || c == 0xf7 || within(c, 0x2010, 0x2027) || within(c, 0x2030, 0x205e)
+        || within(c, 0x3001, 0x303f) || within(c, 0x3040, 0x30ff) || within(c, 0x3400, 0x4dbf)
+        || within(c, 0x4e00, 0x9fff) || within(c, 0xf900, 0xfaff) || within(c, 0xff01, 0xff0f)
+        || within(c, 0xff1a, 0xff20) || within(c, 0xff3b, 0xff40) || within(c, 0xff5b, 0xff65)
+        || within(c, 0x20000, 0x3ffff);
+}
+
+TokenKind kindOf(char32_t c) noexcept
+{
+    if (blankCharacter(c)) return TokenKind::Blank;
+    if (c == '_' || within(c, '0', '9') || within(c, 'a', 'z') || within(c, 'A', 'Z')) return TokenKind::Word;
+    if (c < 0x80 || singleCharacter(c)) return TokenKind::Single;
+    return TokenKind::Word;
+}
+
+// The tokens of one line up to `lineEnd`, appended to `result`.
+void lineTokens(std::string_view text, std::size_t at, std::size_t lineEnd, std::vector<Token> &result)
+{
+    while (at < lineEnd) {
+        const auto first = decode(text, at);
+        const auto kind = first.valid ? kindOf(first.value) : TokenKind::Single;
+        auto end = at + first.size;
+        while ((kind == TokenKind::Word || kind == TokenKind::Blank) && end < lineEnd) {
+            const auto next = decode(text, end);
+            if (!next.valid || kindOf(next.value) != kind) break;
+            end += next.size;
+        }
+        result.push_back({{at, end}, kind});
+        at = end;
+    }
+}
 
 std::vector<Token> tokens(std::string_view text)
 {
@@ -25,45 +84,40 @@ std::vector<Token> tokens(std::string_view text)
     std::size_t at = 0;
     while (at < text.size()) {
         const auto lineEnd = std::min(text.find('\n', at), text.size());
-        if (lineEnd - at > kMaxWordDifferenceLineBytes) {
-            result.push_back({{at, lineEnd}, false});
-            at = lineEnd;
-        }
-        while (at < lineEnd) {
-            const auto c = static_cast<unsigned char>(text[at]);
-            auto end = at + 1;
-            if (wordByte(c))
-                while (end < lineEnd && wordByte(static_cast<unsigned char>(text[end]))) ++end;
-            else if (blank(c))
-                while (end < lineEnd && blank(static_cast<unsigned char>(text[end]))) ++end;
-            result.push_back({{at, end}, true});
-            at = end;
-        }
+        if (lineEnd - at > kMaxWordDifferenceLineBytes)
+            result.push_back({{at, lineEnd}, TokenKind::Unreported});
+        else
+            lineTokens(text, at, lineEnd, result);
+        at = lineEnd;
         if (at < text.size()) {
-            result.push_back({{at, at + 1}, false});
+            result.push_back({{at, at + 1}, TokenKind::Unreported});
             ++at;
         }
     }
     return result;
 }
 
-// Adjacent unmatched, reported tokens as ranges, trimmed of blanks at the edges.
-std::vector<ByteRange> ranges(std::string_view text, const std::vector<Token> &all, const std::vector<bool> &matched)
+// Adjacent unmatched, reported tokens as ranges, without blank tokens at
+// either edge unless the range holds nothing else.
+std::vector<ByteRange> ranges(const std::vector<Token> &all, const std::vector<bool> &matched)
 {
     std::vector<ByteRange> merged;
-    for (std::size_t i = 0; i < all.size(); ++i) {
-        if (matched[i] || !all[i].reported) continue;
-        if (!merged.empty() && merged.back().end == all[i].range.begin)
-            merged.back().end = all[i].range.end;
-        else
-            merged.push_back(all[i].range);
-    }
-    for (auto &range : merged) {
-        auto begin = range.begin;
-        auto end = range.end;
-        while (begin < end && blank(static_cast<unsigned char>(text[begin]))) ++begin;
-        while (end > begin && blank(static_cast<unsigned char>(text[end - 1]))) --end;
-        if (begin < end) range = {begin, end};
+    for (std::size_t i = 0; i < all.size();) {
+        if (matched[i] || all[i].kind == TokenKind::Unreported) {
+            ++i;
+            continue;
+        }
+        auto last = i;
+        while (last + 1 < all.size() && !matched[last + 1] && all[last + 1].kind != TokenKind::Unreported
+               && all[last + 1].range.begin == all[last].range.end)
+            ++last;
+        auto first = i;
+        while (first < last && all[first].kind == TokenKind::Blank) ++first;
+        auto end = last;
+        while (end > first && all[end].kind == TokenKind::Blank) --end;
+        merged.push_back(all[first].kind == TokenKind::Blank ? ByteRange{all[i].range.begin, all[last].range.end}
+                                                             : ByteRange{all[first].range.begin, all[end].range.end});
+        i = last + 1;
     }
     return merged;
 }
@@ -119,7 +173,7 @@ WordDifferences wordDifferences(std::string_view left, std::string_view right, s
             }
         }
     }
-    return {ranges(left, a, leftMatched), ranges(right, b, rightMatched)};
+    return {ranges(a, leftMatched), ranges(b, rightMatched)};
 }
 
 }
