@@ -9,10 +9,13 @@ import subprocess
 import shutil
 import sys
 
-sys.dont_write_bytecode = True
-import capture_profile
-from ledger import assemble
-from fixture import sha256
+if __name__ == '__main__':
+    # Keep the source checkout read only when run as a script, including without -B.
+    sys.dont_write_bytecode = True
+
+import capture_profile  # noqa: E402
+from fixture import sha256  # noqa: E402
+from ledger import assemble  # noqa: E402
 
 
 def main():

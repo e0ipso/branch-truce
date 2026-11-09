@@ -18,13 +18,14 @@ import sys
 import tempfile
 import time
 
-# Keep the source checkout read only, including when it has no bytecode cache.
-sys.dont_write_bytecode = True
+if __name__ == '__main__':
+    # Keep the source checkout read only when run as a script, including without -B.
+    sys.dont_write_bytecode = True
 
-from calibration import (ImageTool, build_provenance, capture_inputs, cleanup_confirmed, colour_scheme, compare,
-                         load_contract, validate_profile)
-import capture_profile
-from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged
+from calibration import (ImageTool, build_provenance, capture_inputs, cleanup_confirmed,  # noqa: E402
+                         colour_scheme, compare, load_contract, validate_profile)
+import capture_profile  # noqa: E402
+from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 COLOUR_SCHEMES = Path('/usr/share/color-schemes')
@@ -567,6 +568,7 @@ def compare_repeats(records, tool, themes):
 
 
 def capture(*, source, build, output, size, repeat, documentation, schemes, fonts, scheme_dir):
+    """Replay and capture every theme repeat times at one size. Returns the verification.json report."""
     require((source / 'tools/native-replay/replay.py').resolve() == Path(__file__).resolve(),
             '--source must name the checkout containing this replay tool')
     app = build / 'src/app/branch-truce'
@@ -592,16 +594,17 @@ def capture(*, source, build, output, size, repeat, documentation, schemes, font
             documentation_preview(app=app, source=source, docs=docs, size=size)
         comparisons = compare_repeats(records, tool, schemes)
         cleaned = cleanup_confirmed(receipts)
-        write_json(output / 'verification.json', dict(captures=records, comparisons=comparisons,
+        report = dict(captures=records, comparisons=comparisons,
             source=str(source), build=str(build), height=size[1],
             themes=list(schemes), kinds=list(KINDS), repeat=repeat,
             environment=dict(platform='wayland', renderer='pixman', quick_backend='software'),
             cleanup_confirmed=cleaned, source_inputs=capture_inputs(source),
             artifact_hashes={str(p.relative_to(output)): sha256(p) for p in output.rglob('*')
-                             if p.is_file() and 'driver-build' not in p.relative_to(output).parts}))
+                             if p.is_file() and 'driver-build' not in p.relative_to(output).parts})
+        write_json(output / 'verification.json', report)
         require(all(row['differing_pixels'] == 0 for row in comparisons), 'Clean replays differ in decoded pixels')
         require(cleaned, 'A cleanup receipt does not confirm its private root removed and processes reaped')
-        print(f'{len(records)} native captures; {len(comparisons)} comparisons, zero differing decoded pixels; cleanup confirmed')
+    return report
 
 
 def main():
@@ -626,9 +629,11 @@ def main():
     if args.mode == 'fixture':
         print(json.dumps(make_fixture(args.output.resolve()), indent=2))
     else:
-        capture(source=args.source.resolve(), build=args.build.resolve(), output=args.output.resolve(),
-                size=shape.size(args.height), repeat=args.repeat, documentation=args.documentation,
-                schemes=shape.schemes, fonts=shape.kdeglobals_fonts, scheme_dir=COLOUR_SCHEMES)
+        report = capture(source=args.source.resolve(), build=args.build.resolve(), output=args.output.resolve(),
+                         size=shape.size(args.height), repeat=args.repeat, documentation=args.documentation,
+                         schemes=shape.schemes, fonts=shape.kdeglobals_fonts, scheme_dir=COLOUR_SCHEMES)
+        print(f"{len(report['captures'])} native captures; {len(report['comparisons'])} comparisons, "
+              'zero differing decoded pixels; cleanup confirmed')
 
 
 if __name__ == '__main__':

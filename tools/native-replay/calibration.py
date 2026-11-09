@@ -1,15 +1,19 @@
 """Read-only provenance and explicit, unmasked native/reference diagnostics."""
-import json
-import sys
-sys.dont_write_bytecode = True
+import argparse
 import configparser
+import json
 import math
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
-import capture_profile
-from fixture import sha256
+if __name__ == '__main__':
+    # Keep the source checkout read only when run as a script, including without -B.
+    sys.dont_write_bytecode = True
+
+import capture_profile  # noqa: E402
+from fixture import sha256  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 CONTRACT = HERE / 'reference-contract.json'
@@ -280,6 +284,10 @@ def cleanup_confirmed(receipts):
 
 
 def verify_capture(output, source):
+    """Check a capture directory against the current inputs. Returns its capture and comparison counts.
+
+    Raises ValueError naming the first input, artifact or receipt that no longer holds.
+    """
     report = json.loads((output / 'verification.json').read_text())
     if report['source_inputs'] != capture_inputs(source):
         raise ValueError('Capture inputs changed; new captures required')
@@ -297,13 +305,18 @@ def verify_capture(output, source):
         raise ValueError('Replay cleanup incomplete')
     if any(r['differing_pixels'] for r in report['comparisons']):
         raise ValueError('Native repeat pixels differ')
-    print(f"{len(report['captures'])} captures, {len(report['comparisons'])} repeat comparisons: "
+    return dict(captures=len(report['captures']), comparisons=len(report['comparisons']))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--verify', type=Path, required=True, metavar='CAPTURE_OUTPUT',
+                        help='output directory of replay.py capture to check against this checkout')
+    args = parser.parse_args()
+    summary = verify_capture(args.verify.resolve(), HERE.parents[1])
+    print(f"{summary['captures']} captures, {summary['comparisons']} repeat comparisons: "
           'zero differing native pixels; current inputs/artifacts verified; cleanup confirmed')
 
 
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--verify', type=Path, required=True)
-    args = parser.parse_args()
-    verify_capture(args.verify.resolve(), HERE.parents[1])
+    main()

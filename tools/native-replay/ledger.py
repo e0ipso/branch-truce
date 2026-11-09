@@ -6,8 +6,11 @@ import json
 from pathlib import Path
 import sys
 
-sys.dont_write_bytecode = True
-import capture_profile
+if __name__ == '__main__':
+    # Keep the source checkout read only when run as a script, including without -B.
+    sys.dont_write_bytecode = True
+
+import capture_profile  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 TEMPLATE = HERE.parents[1] / 'tests/acceptance/fidelity-ledger.json'
