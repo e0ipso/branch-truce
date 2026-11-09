@@ -25,26 +25,29 @@
 #   branch-truce-artifact:<base>-target   the clean OS base
 # Set BRANCH_TRUCE_REFRESH to a new value to fetch the archive again instead
 # of reusing cached layers. CONTAINER_ENGINE defaults to docker.
+# Exit status: 0 built, 1 failed, 2 usage error.
 set -euo pipefail
 
-usage() { echo "Usage: $0 --target kubuntu|tuxedo --output DIR" >&2; exit 2; }
+usage() { echo "Usage: $0 --target kubuntu|tuxedo --output DIR"; }
+usage_error() { usage >&2; exit 2; }
 target=
 output=
 while (($# > 0)); do
     case "$1" in
-        --target) [[ $# -ge 2 ]] || usage; target=$2; shift 2 ;;
-        --output) [[ $# -ge 2 ]] || usage; output=$2; shift 2 ;;
-        *) usage ;;
+        -h|--help) usage; exit 0 ;;
+        --target) [[ $# -ge 2 ]] || usage_error; target=$2; shift 2 ;;
+        --output) [[ $# -ge 2 ]] || usage_error; output=$2; shift 2 ;;
+        *) usage_error ;;
     esac
 done
-[[ -n "$target" && -n "$output" ]] || usage
+[[ -n "$target" && -n "$output" ]] || usage_error
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 engine=${CONTAINER_ENGINE:-docker}
 case "$target" in
     kubuntu) base=kubuntu26.04 suite=resolute ;;
     tuxedo) base=tuxedo24.04 suite=noble ;;
-    *) usage ;;
+    *) usage_error ;;
 esac
 image=branch-truce-artifact:${target}-${base#"$target"}
 for tool in "$engine" git tar sha256sum; do
@@ -81,21 +84,13 @@ for stage in target build; do
 done
 
 echo "== Source snapshot"
-# The build inputs. The branding exports hold the installed application icons
-# and the vector artwork the executable can embed.
-inputs=(CMakeLists.txt cmake src packaging assets/branding/platform/linux assets/branding/svg)
+# The build inputs of every native package, which stage-source.sh lists, and
+# all of packaging/ for this base's Dockerfile and recipe.
+inputs=(CMakeLists.txt cmake src LICENSE packaging assets/branding/platform/linux assets/branding/svg)
 tree=$fixture/work/branch-truce-$version
-mkdir -p -- "$tree"
-(cd -- "$root" && git ls-files -z --cached --others --exclude-standard -- "${inputs[@]}") |
-    while IFS= read -r -d '' file; do
-        if [[ -e "$root/$file" ]]; then printf '%s\0' "$file"; fi
-    done |
-    (cd -- "$root" && tar --null --files-from=- --create --file=-) |
-    tar --extract --file=- --directory="$tree"
+mkdir -p -- "$fixture/work"
+"$root/packaging/scripts/stage-source.sh" --tracked --from "$root" --to "$tree" packaging
 cp -a -- "$tree/packaging/debian" "$tree/debian"
-# control declares debhelper-compat, which debhelper rejects alongside a
-# debian/compat file; package-release.sh drops it the same way.
-rm -f -- "$tree/debian/compat"
 # The changelog date fixes SOURCE_DATE_EPOCH for dpkg-buildpackage. It is the
 # author time of the last commit that changed the copied paths, so commits
 # elsewhere, or amending one, leave the artifact unchanged.
@@ -122,7 +117,11 @@ run "$engine" run --rm --network none \
 
 deb=$fixture/work/$name.deb
 [[ -f "$deb" ]] || { echo "dpkg-buildpackage produced no $name.deb" >&2; exit 1; }
-cp -- "$deb" "$fixture/work/$name.buildinfo" "$output/"
+# Temporary names first, so an interrupted copy leaves no truncated artifact.
+for file in "$deb" "$fixture/work/$name.buildinfo"; do
+    cp -- "$file" "$output/.${file##*/}.partial"
+    mv -- "$output/.${file##*/}.partial" "$output/${file##*/}"
+done
 {
     printf 'artifact\t%s.deb\n' "$name"
     printf 'sha256\t%s\n' "$(sha256sum < "$deb" | cut -d' ' -f1)"

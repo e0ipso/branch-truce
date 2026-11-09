@@ -1,359 +1,252 @@
 #!/usr/bin/env bash
-# Inspects a branch-truce DEB package, then installs, exercises, upgrades and
-# removes it.
+# Inspects a branch-truce native package, then installs, exercises, upgrades
+# and removes it with the target's own package manager.
 #
-#   check-package.sh --version <version> --package <file> [--previous <file>]
+#   check-package.sh --format <id> --version <semver> --package <file> [--previous <file>]
 #
-# Run as root on a disposable target container with the distribution's
-# repositories configured (Kubuntu 26.04). Never run on a
-# real desktop.
+# Run as root in a disposable target container of the format's OS, with its
+# repositories configured and no source or build tree. Never run it on a
+# desktop. The directory two levels up must hold packaging/ (formats.tsv,
+# installed-files.txt, runtime-modules.txt, the recipe of the format and these
+# scripts), tools/lib/fixture.sh and the branding pack's hicolor icons;
+# packaging/scripts/container-check.sh assembles that tree.
+#
+# Every format runs the same checks. The package manager calls live in
+# pkg-<family>.sh, which defines:
+#   pkg_identity FILE           name|native version|architecture
+#   pkg_check_metadata FILE     format-specific metadata, such as licenses
+#   pkg_files FILE              payload files, absolute and sorted
+#   pkg_extra_files             payload files beyond installed-files.txt
+#   pkg_has_scripts FILE        true when the package has scripts, triggers
+#                               or configuration files
+#   pkg_depends FILE            declared dependency names
+#   pkg_recipe_depends ROOT     dependency names the recipe declares
+#   pkg_older OLD NEW           native version order
+#   pkg_target_ready            the container is the format's target
+#   pkg_refresh                 refresh the package lists
+#   pkg_install FILE            install or upgrade from a local file
+#   pkg_remove                  remove completely
+#   pkg_installed_version       the installed native version, or nothing
+#   pkg_verify_installed        the package manager's file integrity check
+#   pkg_runtime_versions        print the target's Qt, KDE and Git packages
+#   pkg_qt_root                 the Qt 6 directory holding qml/ and plugins/
+#   pkg_leftover_suffixes       suffixes of saved configuration files
+#
+# The first failed check stops the run. Exit status: 0 every check passed,
+# 1 a check failed, 2 usage error or unsupported version. Sourcing the file
+# defines its functions and runs nothing, so tests can call them.
 
-set -euo pipefail
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd -- "$here/../.." && pwd)
+source "$here/package-info.sh"
+source "$root/tools/lib/fixture.sh"
+app_binary=/usr/bin/branch-truce
 
 usage() {
-    echo "usage: $0 --version <version> --package <file> [--previous <file>]" >&2
-    exit 2
+    echo "usage: $0 --format $(format_ids | paste -sd '|' -) --version <semver> --package <file> [--previous <file>]"
+}
+die() { echo "error: $*" >&2; exit 1; }
+ok() { echo "ok: $*"; }
+step() { printf '\n== %s\n' "$*"; }
+
+# seed_user_home HOME: a private home with files the user already has. The
+# installed binary runs with it, so the removal checks also cover what the
+# application itself wrote there.
+seed_user_home() {
+    fixture_home "$1" && fixture_gitconfig "$1" || return 1
+    mkdir -p "$1/data/Branch Truce/recovery/unrelated"
+    printf '[General]\nwrapLines=true\n' > "$1/config/branch-trucerc"
+    head -c 256 /dev/urandom > "$1/data/Branch Truce/recovery/unrelated/journal"
 }
 
-version=""
-package=""
-previous=""
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --version) version="${2-}"; shift 2 || usage ;;
-        --package) package="${2-}"; shift 2 || usage ;;
-        --previous) previous="${2-}"; shift 2 || usage ;;
-        *) usage ;;
-    esac
-done
-[ -n "$version" ] && [ -n "$package" ] || usage
-
-native_version="$("$(dirname "${BASH_SOURCE[0]}")/native-version.sh" "$version")" || exit 2
-
-package="$(realpath "$package")"
-[ -z "$previous" ] || previous="$(realpath "$previous")"
-
-case "$package" in
-    *.deb) ;;
-    *) echo "error: $package is not a .deb" >&2; exit 2 ;;
-esac
-
-app_id="com.canpicasoft.branch-truce"
-binary_file="/usr/bin/branch-truce"
-desktop_file="/usr/share/applications/$app_id.desktop"
-metainfo_file="/usr/share/metainfo/$app_id.metainfo.xml"
-icon_theme="/usr/share/icons/hicolor"
-# The application icons, relative to the theme: the scalable symbol and the
-# small drawing's PNG sizes. They must equal the branding pack's exports.
-icon_files="scalable/apps/$app_id.svg
-16x16/apps/$app_id.png
-22x22/apps/$app_id.png
-24x24/apps/$app_id.png
-32x32/apps/$app_id.png"
-branding_icons="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/assets/branding/platform/linux/hicolor"
-license_file="/usr/share/doc/branch-truce/copyright"
-expected_arch="amd64"
-
-expected_deps="git hicolor-icon-theme kde-style-breeze kf6-breeze-icon-theme
-    libkf6syntaxhighlighting6 libqt6core6t64 libqt6gui6 libqt6network6
-    libqt6qml6 libqt6quick6 libqt6quickcontrols2-6 libqt6widgets6
-    qml6-module-org-kde-desktop qml6-module-org-kde-kirigami
-    qml6-module-qtqml-models qml6-module-qtqml-workerscript qml6-module-qtquick
-    qml6-module-qtquick-controls qml6-module-qtquick-layouts
-    qml6-module-qtquick-shapes qml6-module-qtquick-templates
-    qml6-module-qtquick-window qt6-svg-plugins qt6-wayland"
-expected_recommends="plasma-integration"
-
-expected_files="$binary_file
-$desktop_file
-$metainfo_file
-$(sed "s|^|$icon_theme/|" <<<"$icon_files")
-$license_file"
-
-failures=0
-pass() { echo "ok: $*"; }
-fail() { echo "FAIL: $*" >&2; failures=$((failures + 1)); }
-expect() {
-    local ok="$1" bad="$2"
+# run_app HOME DIRECTORY ARGUMENT...: the installed binary in DIRECTORY with
+# only HOME's private environment, offscreen, with a deadline so a hang fails.
+run_app() {
+    local home=$1 directory=$2
     shift 2
-    if "$@"; then pass "$ok"; else fail "$bad"; fi
-}
-step() { echo; echo "== $*"; }
-
-pkg_field() { dpkg-deb -f "$1" "$2"; }
-pkg_files() {
-    dpkg-deb --fsys-tarfile "$1" | tar -t | sed -n 's|^\./|/|p' | grep -v '/$' | sort
-}
-pkg_deps() {
-    dpkg-deb -f "$1" "${2:-Depends}" | tr ',' '\n' | sed 's/^ *//; s/ .*//'
-}
-pkg_has_scripts() {
-    dpkg-deb --ctrl-tarfile "$1" | tar -t \
-        | grep -qE '(^|/)(preinst|postinst|prerm|postrm|config|triggers)$'
-}
-installed_version() {
-    dpkg-query -W -f '${Status} ${Version}\n' branch-truce 2>/dev/null \
-        | awk '$3 == "installed" {print $4}'
-}
-install_file() {
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$1"
-}
-upgrade_file() {
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$1"
-}
-remove_package() {
-    DEBIAN_FRONTEND=noninteractive apt-get "${1:-remove}" -y -q branch-truce
-}
-target_versions() {
-    dpkg-query -W libqt6core6t64 libkirigami6 libkf6syntaxhighlighting6 git | sed 's/^/target: /'
-}
-verify_installed() {
-    dpkg --verify branch-truce
-}
-# Prints WIDTHxHEIGHT from the IHDR chunk of a PNG file and fails for anything else.
-png_size() {
-    local -a bytes
-    [ "$(od -An -tx1 -N16 -- "$1" | tr -d ' \n')" = 89504e470d0a1a0a0000000d49484452 ] || return 1
-    read -r -a bytes <<<"$(od -An -tu1 -j16 -N8 -- "$1" | tr '\n' ' ')"
-    [ "${#bytes[@]}" -eq 8 ] || return 1
-    printf '%dx%d\n' $(((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3])) \
-        $(((bytes[4] << 24) | (bytes[5] << 16) | (bytes[6] << 8) | bytes[7]))
-}
-# Prints "<Size> <Type>" for DIR when the theme's index.theme lists it, else nothing.
-theme_dir() {
-    awk -v dir="$1" '
-        /^\[.*\]$/ { section = substr($0, 2, length($0) - 2); next }
-        section == "Icon Theme" && /^Directories=/ {
-            n = split(substr($0, 13), names, ",")
-            for (i = 1; i <= n; i++) if (names[i] == dir) listed = 1
-        }
-        section == dir && /^Size=/ { size = substr($0, 6) }
-        section == dir && /^Type=/ { type = substr($0, 6) }
-        END { if (listed) print size " " (type == "" ? "Threshold" : type) }' "$icon_theme/index.theme"
+    local -a environment
+    mapfile -d '' environment < <(fixture_env "$home")
+    (cd -- "$directory" && env -i "${environment[@]}" QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+        timeout --kill-after=10 60 "$app_binary" "$@")
 }
 
-inspect() {
-    local file="$1" want="$2" got dep
-    step "inspect $(basename "$file")"
-    got="$(pkg_field "$file" Package)"
-    expect "name branch-truce" "name is $got" [ "$got" = branch-truce ]
-    got="$(pkg_field "$file" Version)"
-    expect "version $want" "version is $got, expected $want" [ "$got" = "$want" ]
-    got="$(pkg_field "$file" Architecture)"
-    expect "architecture $expected_arch" "architecture is $got" [ "$got" = "$expected_arch" ]
+# user_files HOME: the checksum of every file in HOME but its runtime directory.
+user_files() { (cd -- "$1" && find . -path ./runtime -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum); }
 
-    local files deps
-    files="$(pkg_files "$file")"
-    while IFS= read -r path; do
-        expect "contains $path" "missing $path" grep -qxF "$path" <<<"$files"
-    done <<<"$expected_files"
-    if grep -v '^/usr/' <<<"$files" | grep -q .; then
-        fail "files outside /usr: $(grep -v '^/usr/' <<<"$files" | tr '\n' ' ')"
-    else
-        pass "every file is under /usr"
-    fi
-
-    deps="$(pkg_deps "$file")"
-    for dep in $expected_deps; do
-        expect "depends on $dep" "does not depend on $dep" grep -qxF "$dep" <<<"$deps"
-    done
-    deps="$(pkg_deps "$file" Recommends)"
-    for dep in $expected_recommends; do
-        expect "recommends $dep" "does not recommend $dep" grep -qxF "$dep" <<<"$deps"
-    done
-
-    if pkg_has_scripts "$file"; then
-        fail "has maintainer scripts; check what they do to user data"
-    else
-        pass "no maintainer scripts"
-    fi
+# check_metadata FILE NATIVE ARCHITECTURE PAYLOAD: everything the package says
+# about itself, before anything on the target changes. PAYLOAD lists the
+# expected files, sorted.
+check_metadata() {
+    local file=$1 native=$2 architecture=$3 expected=$4 got reason declared dependency
+    got=$(pkg_identity "$file") || die "cannot read the identity of $file"
+    [ "$got" = "branch-truce|$native|$architecture" ] \
+        || die "candidate identity $got differs from branch-truce|$native|$architecture"
+    reason=$(pkg_check_metadata "$file" 2>&1) || die "candidate metadata: $reason"
+    ok "candidate is branch-truce $native for $architecture"
+    got=$(pkg_files "$file")
+    [ "$got" = "$expected" ] || die "payload differs from the expected files:
+$(diff <(printf '%s\n' "$expected") <(printf '%s\n' "$got") || true)"
+    ok "payload is exactly the $(wc -l <<<"$expected") expected files"
+    ! pkg_has_scripts "$file" || die 'the package has scripts, triggers or configuration files'
+    ok 'no package scripts, triggers or configuration files'
+    declared=$(pkg_depends "$file")
+    while IFS= read -r dependency; do
+        grep -qxF -- "$dependency" <<<"$declared" || die "the package does not declare the recipe dependency $dependency"
+    done < <(pkg_recipe_depends "$root")
+    ok 'the package declares every dependency of its recipe'
 }
 
-check_installed() {
-    local want="$1" semver_want="$2" got ldd_out ldd_status=0 out
-    got="$(installed_version)"
-    expect "installed version $want" "installed version is '$got', expected $want" \
-        [ "$got" = "$want" ]
-
-    for path in $expected_files; do
-        expect "installed $path" "missing installed $path" [ -f "$path" ]
-    done
-    check_icons
-    expect "desktop metadata validates" "invalid desktop metadata" desktop-file-validate "$desktop_file"
-    expect "AppStream metadata validates" "invalid AppStream metadata" appstreamcli validate --no-net "$metainfo_file"
-
-    ldd_out="$(ldd "$binary_file" 2>&1)" || ldd_status=$?
-    if [ "$ldd_status" -ne 0 ]; then
-        fail "ldd failed on $binary_file (exit $ldd_status): $(tr '\n' ' ' <<<"$ldd_out")"
-    elif grep -q 'not found' <<<"$ldd_out"; then
-        fail "binary libraries missing: $(grep 'not found' <<<"$ldd_out" | tr '\n' ' ')"
-    else
-        pass "binary libraries resolve"
-    fi
-
-    if out="$(verify_installed 2>&1)" && [ -z "$out" ]; then
-        pass "package verify is clean"
-    else
-        fail "package verify: $out"
-    fi
-
-    local cli_ver
-    cli_ver="$(env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 QT_QPA_PLATFORM=offscreen \
-        "$binary_file" --version | awk '{print $NF}')"
-    expect "binary --version reports $semver_want" \
-        "binary --version reported '$cli_ver', expected '$semver_want'" \
-        [ "$cli_ver" = "$semver_want" ]
-}
-
-check_loads() {
-    local work repo runtime_home smoke record
-    work="$(mktemp -d /tmp/bt-pkg-smoke.XXXXXX)"
-    repo="$work/repo"
-    runtime_home="$work/home"
-    mkdir -p "$runtime_home/data" "$runtime_home/config" "$runtime_home/cache" "$runtime_home/runtime" "$repo"
-    chmod 700 "$runtime_home/runtime"
-    (
-        cd "$repo"
-        git init --quiet --initial-branch=main
-        git config user.name 'Package Smoke'
-        git config user.email 'smoke@example.invalid'
-        git config core.autocrlf false
-        printf 'base\n' > tracked.txt
-        git add tracked.txt && git commit --quiet -m base
-        git checkout --quiet -b side
-        printf 'side\n' > tracked.txt && git commit --quiet -am side
-        git checkout --quiet main
-        printf 'main\n' > tracked.txt && git commit --quiet -am main
-        git merge --no-edit side >/dev/null 2>&1 || true
-    )
-    smoke="$(env -i PATH=/usr/bin:/bin HOME="$runtime_home" LC_ALL=C.UTF-8 \
-        XDG_DATA_HOME="$runtime_home/data" XDG_CONFIG_HOME="$runtime_home/config" \
-        XDG_CACHE_HOME="$runtime_home/cache" XDG_RUNTIME_DIR="$runtime_home/runtime" \
-        GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
-        QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
-        "$binary_file" --smoke-test "$repo")" || {
-        rm -rf "$work"
-        fail "installed branch-truce --smoke-test failed"
-        return
-    }
-    rm -rf "$work"
-    record="$(printf '%s\n' "$smoke" | sed -n 's/^BRANCH_TRUCE_SESSION=//p')"
-    if [[ "$record" == *'"state":"ready"'* && "$record" == *'"operation":"Merge"'* \
-        && "$record" == *'"path":"tracked.txt"'* ]]; then
-        pass "installed branch-truce --smoke-test loaded QML/Kirigami and opened the merge session"
-    else
-        fail "smoke-test record unexpected: $smoke"
-    fi
-}
-
-# Each installed icon is the branding pack's export, each PNG has its
-# directory's size, and hicolor's index.theme declares each icon directory at
-# that size, so a theme lookup finds the icon in the installed files alone.
-check_icons() {
-    local rel dir size got declared
-    for rel in $icon_files; do
-        expect "icon $rel matches the branding pack" "icon $rel differs from $branding_icons/$rel" \
-            cmp -s "$branding_icons/$rel" "$icon_theme/$rel"
-        dir="${rel%/*}"
-        got="$(theme_dir "$dir")"
-        case "$rel" in
-            scalable/*)
-                expect "index.theme declares $dir as Scalable" "index.theme declares $dir as '$got'" \
-                    [ "${got#* }" = Scalable ] ;;
-            *)
-                size="${dir%%/*}"
-                case "$got" in
-                    "${size%%x*} Threshold"|"${size%%x*} Fixed") declared=true ;;
-                    *) declared=false ;;
-                esac
-                expect "index.theme declares $dir at ${size%%x*} px" "index.theme declares $dir as '$got'" \
-                    "$declared"
-                got="$(png_size "$icon_theme/$rel")" || got="not a PNG"
-                expect "icon $rel is $size" "icon $rel is $got, expected $size" [ "$got" = "$size" ] ;;
-        esac
-    done
-}
-
-check_removed() {
-    expect "branch-truce is not installed" "branch-truce is still installed" [ -z "$(installed_version)" ]
-    for path in $expected_files; do
-        expect "$path is gone" "$path is left behind" [ ! -e "$path" ]
-    done
-    if (cd "$fixture_home" && sha256sum --quiet -c "$fixture_sums"); then
-        pass "user settings and recovery files are unchanged"
-    else
-        fail "user settings or recovery files changed"
-    fi
-}
-
-[ -z "$(installed_version)" ] || { echo "error: branch-truce is already installed; use a clean system" >&2; exit 1; }
-
-inspect "$package" "$native_version"
-
+# check_previous FILE NATIVE ARCHITECTURE: prints the previous package's native
+# version after checking that it is an older branch-truce for ARCHITECTURE.
 check_previous() {
-    local field got
-    step "check the previous package $(basename "$previous")"
-    case "$previous" in
-        *.deb) ;;
-        *) echo "error: the previous package $previous is not a .deb" >&2; exit 1 ;;
-    esac
-    for field in Package Architecture Version; do
-        got="$(pkg_field "$previous" "$field" 2>&1)" && [ -n "$got" ] \
-            || { echo "error: cannot read the $field of $previous: $got" >&2; exit 1; }
-        case "$field" in
-            Package) [ "$got" = branch-truce ] \
-                || { echo "error: $previous is the package $got, not branch-truce" >&2; exit 1; } ;;
-            Architecture) [ "$got" = "$expected_arch" ] \
-                || { echo "error: $previous is for $got, not $expected_arch" >&2; exit 1; } ;;
-            Version) previous_version="$got" ;;
+    local name version previous_architecture got
+    got=$(pkg_identity "$1") || die "cannot read the identity of $1"
+    IFS='|' read -r name version previous_architecture <<<"$got"
+    [ "$name" = branch-truce ] && [ "$previous_architecture" = "$3" ] \
+        || die "previous package is $name for $previous_architecture, not branch-truce for $3"
+    pkg_older "$version" "$2" || die "previous version $version is not older than $2"
+    printf '%s\n' "$version"
+}
+
+# check_installed WANT VERSION HOME WORK: the installed package and the
+# application it installs, run on a fresh conflict in WORK/repo.
+check_installed() {
+    local want=$1 version=$2 home=$3 work=$4 path relative size got module kind qt_root
+    local branding=$root/assets/branding/platform/linux/hicolor
+    [ "$(pkg_installed_version)" = "$want" ] || die "installed version is '$(pkg_installed_version)', expected $want"
+    while IFS= read -r path; do [ -f "$path" ] || die "missing installed file $path"; done < "$work/payload"
+    pkg_verify_installed || die 'the package manager reports changed installed files'
+    while IFS= read -r relative; do
+        path=/usr/share/icons/hicolor/$relative
+        cmp -s -- "$branding/$relative" "$path" || die "icon $relative differs from the branding pack"
+        got=$(icon_lookup_ok /usr/share/icons/hicolor/index.theme "$relative") \
+            || die "index.theme does not declare ${relative%/*} at the icon's size (${got:-not listed})"
+        if [[ "$relative" != scalable/* ]]; then
+            size=${relative%%/*}
+            got=$(png_size "$path") || got='not a PNG'
+            [ "$got" = "$size" ] || die "icon $relative is $got, expected $size"
+        fi
+    done < <(installed_files "$root/packaging/installed-files.txt" '' | sed -n 's|^/share/icons/hicolor/||p')
+    desktop-file-validate /usr/share/applications/com.canpicasoft.branch-truce.desktop
+    appstreamcli validate --no-net /usr/share/metainfo/com.canpicasoft.branch-truce.metainfo.xml
+    ldd "$app_binary" > "$work/ldd" 2>&1 || die "ldd failed on $app_binary: $(cat "$work/ldd")"
+    ! grep -q 'not found' "$work/ldd" || die "unresolved libraries: $(grep 'not found' "$work/ldd" | tr '\n' ' ')"
+    # Write the tool output to files first, so a failing objdump or readelf fails the check.
+    objdump -T "$app_binary" > "$work/symbols"
+    readelf -hW "$app_binary" > "$work/header"
+    readelf -lW "$app_binary" > "$work/segments"
+    readelf -dW "$app_binary" > "$work/dynamic"
+    ! grep -q Qt_6_PRIVATE_API "$work/symbols" || die 'the binary uses the private Qt ABI'
+    grep -q 'Type:.*DYN' "$work/header" || die 'the binary is not PIE'
+    grep -q GNU_RELRO "$work/segments" || die 'the binary lacks RELRO'
+    grep -q BIND_NOW "$work/dynamic" || die 'the binary lacks immediate binding'
+    grep GNU_STACK "$work/segments" | grep -q 'RW ' || die 'the binary has an executable or no stack policy'
+    qt_root=$(pkg_qt_root)
+    while IFS=$'\t' read -r kind module; do
+        case "$kind" in
+            qml) path=$qt_root/qml/${module//.//}/qmldir ;;
+            plugin) path=$qt_root/plugins/$module ;;
+            *) continue ;;
+        esac
+        [ -f "$path" ] || die "runtime $kind $module is not installed: no $path"
+    done < "$root/packaging/runtime-modules.txt"
+    got=$(run_app "$home" / --version) || die "installed --version exited $?"
+    [ "$got" = "Branch Truce $version" ] || die "installed --version reports '$got'"
+    fixture_merge_repo "$home" "$work/repo" tracked.txt
+    got=$(run_app "$home" "$work/repo" --smoke-test "$work/repo") || die "installed --smoke-test exited $?: $got"
+    smoke_record_ready "$got" || die "installed --smoke-test did not open the merge session: $got"
+    ok "installed $want: files, integrity, icons, metadata, libraries, hardening, runtime modules, --version and --smoke-test"
+}
+
+# remove_and_check HOME PAYLOAD-FILE: removes the package completely; nothing
+# it installed and nothing in HOME may remain changed.
+remove_and_check() {
+    local home=$1 payload=$2 before path suffix
+    before=$(user_files "$home")
+    step "remove $(pkg_installed_version)"
+    pkg_remove
+    [ -z "$(pkg_installed_version)" ] || die 'branch-truce is still installed'
+    while IFS= read -r path; do
+        [ ! -e "$path" ] && [ ! -L "$path" ] || die "removal left $path"
+        for suffix in $(pkg_leftover_suffixes); do
+            [ ! -e "$path$suffix" ] || die "removal left $path$suffix"
+        done
+    done < "$payload"
+    while IFS= read -r path; do
+        [ ! -e "${path%/*}" ] || die "removal left ${path%/*}"
+    done < <(pkg_extra_files)
+    [ "$(user_files "$home")" = "$before" ] || die 'removal changed files in the user home'
+    ok 'complete removal; the user home is unchanged'
+}
+
+check_main() {
+    local format='' version='' package='' previous='' family extension architecture native file work previous_native=''
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help) usage; return 0 ;;
+            --format|--version|--package|--previous)
+                [ $# -ge 2 ] || { usage >&2; return 2; }
+                case "$1" in
+                    --format) format=$2 ;; --version) version=$2 ;;
+                    --package) package=$2 ;; --previous) previous=$2 ;;
+                esac
+                shift 2 ;;
+            *) usage >&2; return 2 ;;
         esac
     done
-    dpkg --compare-versions "$previous_version" lt "$native_version" \
-        || { echo "error: previous version $previous_version is not older than $native_version" >&2; exit 1; }
-    pass "previous package is branch-truce $previous_version for $expected_arch, older than $native_version"
+    [ -n "$format" ] && [ -n "$version" ] && [ -n "$package" ] || { usage >&2; return 2; }
+    family=$(format_field "$format" family) || return 2
+    extension=$(format_field "$format" extension)
+    architecture=$(format_field "$format" architecture)
+    native=$(package_native_version "$format" "$version") || return 2
+    source "$here/pkg-$family.sh"
+    for file in "$package" ${previous:+"$previous"}; do
+        [ -f "$file" ] || { echo "error: $file is not a file" >&2; return 2; }
+        [[ "$file" == *".$extension" ]] || { echo "error: $file is not a .$extension package" >&2; return 2; }
+    done
+    package=$(realpath -e -- "$package")
+    [ -z "$previous" ] || previous=$(realpath -e -- "$previous")
+
+    step "inspect $(basename "$package")"
+    local expected
+    expected=$({ installed_files "$root/packaging/installed-files.txt" /usr; pkg_extra_files; } | LC_ALL=C sort)
+    check_metadata "$package" "$native" "$architecture" "$expected"
+    if [ -n "$previous" ]; then
+        previous_native=$(check_previous "$previous" "$native" "$architecture")
+        ok "previous package branch-truce $previous_native is older than $native"
+    fi
+
+    [ "$(id -u)" -eq 0 ] || die 'run as root in a disposable target container'
+    pkg_target_ready
+    [ -z "$(pkg_installed_version)" ] || die 'branch-truce is already installed; use a clean target'
+    work=$(mktemp -d /tmp/bt-package-check.XXXXXX)
+    local cleanup
+    printf -v cleanup 'rm -rf -- %q' "$work"
+    # shellcheck disable=SC2064
+    trap "$cleanup" EXIT
+    printf '%s\n' "$expected" > "$work/payload"
+    seed_user_home "$work/home"
+    step 'refresh the package lists'
+    pkg_refresh
+
+    step "clean install of $native"
+    pkg_install "$package"
+    pkg_runtime_versions
+    check_installed "$native" "$version" "$work/home" "$work"
+    remove_and_check "$work/home" "$work/payload"
+    if [ -n "$previous" ]; then
+        step "install $previous_native, then upgrade to $native"
+        pkg_install "$previous"
+        [ "$(pkg_installed_version)" = "$previous_native" ] || die "the previous package installed '$(pkg_installed_version)'"
+        pkg_install "$package"
+        check_installed "$native" "$version" "$work/home" "$work"
+        remove_and_check "$work/home" "$work/payload"
+    fi
+    echo
+    echo "all checks passed for $(basename "$package")"
 }
-previous_version=""
-[ -z "$previous" ] || check_previous
 
-[ "$failures" -eq 0 ] || { echo 'error: invalid candidate metadata; target unchanged' >&2; exit 1; }
-
-fixture_home="$(mktemp -d /home/branch-truce-check.XXXXXX)"
-fixture_sums="$(mktemp)"
-trap 'rm -rf "$fixture_home" "$fixture_sums"' EXIT
-mkdir -p "$fixture_home/.config" "$fixture_home/.local/share/branch-truce/recovery"
-printf '[General]\nwrapLines=true\n' > "$fixture_home/.config/branch-trucerc"
-head -c 256 /dev/urandom > "$fixture_home/.local/share/branch-truce/recovery/session.journal"
-(cd "$fixture_home" && find . -type f -exec sha256sum {} +) > "$fixture_sums"
-
-step "clean install of $native_version"
-install_file "$package"
-target_versions
-check_installed "$native_version" "$version"
-check_loads
-
-step "remove $native_version"
-remove_package
-check_removed
-
-if [ -n "$previous" ]; then
-    step "install $previous_version, then upgrade to $native_version"
-    install_file "$previous"
-    got="$(installed_version)"
-    expect "installed version $previous_version" \
-        "installed version is '$got', expected $previous_version" \
-        [ "$got" = "$previous_version" ]
-    upgrade_file "$package"
-    check_installed "$native_version" "$version"
-    check_loads
-
-    step "remove $native_version after the upgrade (purge)"
-    remove_package purge
-    check_removed
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    set -euo pipefail
+    check_main "$@"
 fi
-
-echo
-if [ "$failures" -gt 0 ]; then
-    echo "$failures check(s) failed for $(basename "$package")" >&2
-    exit 1
-fi
-echo "all checks passed for $(basename "$package")"

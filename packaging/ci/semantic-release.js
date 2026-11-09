@@ -1,16 +1,24 @@
 /**
- * Publishes only the three native packages validated by this workflow run.
- * verifyRelease checks candidates before any prepare hook can edit release
- * metadata. prepare repeats the gate before @semantic-release/git pushes.
- * A dry analysis validates packageable versions without requiring artifacts.
+ * Publishes only the native packages validated by this workflow run, one per
+ * row of packaging/formats.tsv. verifyRelease checks candidates before any
+ * prepare hook can edit release metadata. prepare repeats the gate before
+ * @semantic-release/git pushes. A dry analysis validates packageable versions
+ * without requiring artifacts. Every package identity comes from
+ * packaging/scripts/package-info.sh, and every package's own metadata is read
+ * by packaging/scripts/package-identity.sh, as the builders do.
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const FORMATS = ['kubuntu-deb', 'fedora-rpm', 'arch-pkg'];
 const OUTPUT_DIR = 'dist/kde';
+
+/** The format ids of packaging/formats.tsv under the checkout at cwd. */
+export function formatIds(cwd) {
+  return readFileSync(join(cwd, 'packaging', 'formats.tsv'), 'utf8')
+    .split('\n').filter(line => line && !line.startsWith('#')).map(line => line.split('\t')[0]);
+}
 
 function run(command, args, { cwd, env }) {
   return new Promise((resolve, reject) => {
@@ -27,7 +35,7 @@ function run(command, args, { cwd, env }) {
 
 async function identities(version, context) {
   const info = [];
-  for (const format of FORMATS) {
+  for (const format of formatIds(context.cwd)) {
     info.push(JSON.parse(await run('packaging/scripts/package-info.sh', ['--format', format, '--version', version], context)));
   }
   return info;
@@ -41,23 +49,11 @@ function checkCandidateVersion({ env, nextRelease }) {
 }
 
 async function checkMetadata(file, info, context) {
-  let got;
-  let expected;
-  if (info.format === 'kubuntu-deb') {
-    got = await run('dpkg-deb', ['--show', '--showformat', '${Package}|${Version}|${Architecture}', file], context);
-    expected = `branch-truce|${info.nativeVersion}|${info.architecture}`;
-  } else if (info.format === 'fedora-rpm') {
-    got = await run('rpm', ['-qp', '--qf', '%{NAME}|%{EPOCHNUM}|%{VERSION}-%{RELEASE}|%{ARCH}', file], context);
-    expected = `branch-truce|0|${info.nativeVersion}|${info.architecture}`;
-  } else {
-    const text = await run('bsdtar', ['-xOf', file, '.PKGINFO'], context);
-    // Require exactly one value of each identity field. Duplicate native
-    // metadata must not be hidden by a last-value-wins parser.
-    const value = key => text.split('\n').filter(line => line.startsWith(`${key} = `)).map(line => line.slice(key.length + 3));
-    got = JSON.stringify([value('pkgname'), value('pkgver'), value('arch')]);
-    expected = JSON.stringify([['branch-truce'], [info.nativeVersion], [info.architecture]]);
+  try {
+    await run('packaging/scripts/package-identity.sh', ['--format', info.format, '--version', info.version, file], context);
+  } catch (error) {
+    throw new Error(`${info.filename} native metadata does not match ${info.format} ${info.version}: ${error.message}`);
   }
-  if (got !== expected) throw new Error(`${info.filename} native metadata ${JSON.stringify(got)}, expected ${JSON.stringify(expected)}`);
 }
 
 async function validateArtifacts(context, info) {

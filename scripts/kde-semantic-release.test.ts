@@ -38,7 +38,9 @@ function repository(t: { after: (fn: () => void) => void }) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const cwd = join(root, 'repo');
   mkdirSync(join(cwd, 'packaging', 'scripts'), { recursive: true });
-  for (const name of ['native-version.sh', 'package-info.sh']) {
+  writeFileSync(join(cwd, 'packaging', 'formats.tsv'), readFileSync(join(PACKAGING, 'formats.tsv')));
+  for (const name of ['native-version.sh', 'package-info.sh', 'formats.sh', 'package-identity.sh',
+    'pkg-deb.sh', 'pkg-rpm.sh', 'pkg-arch.sh']) {
     const file = join(cwd, 'packaging', 'scripts', name);
     writeFileSync(file, readFileSync(join(PACKAGING, 'scripts', name)));
     chmodSync(file, 0o755);
@@ -56,7 +58,8 @@ const formats = ['kubuntu-deb', 'fedora-rpm', 'arch-pkg'] as const;
 type Format = typeof formats[number];
 type Identity = { filename: string; nativeVersion: string; architecture: string };
 
-// Metadata adapters stand in for native tools, not for the gate. The separate
+// Metadata adapters stand in for native tools, not for the gate. They answer the
+// queries packaging/scripts/pkg-*.sh make, from a JSON package file. The separate
 // real-artifact check runs the gate against genuine native package bytes.
 function gate(t: { after: (fn: () => void) => void }, version = '1.2.3') {
   const repo = repository(t);
@@ -68,10 +71,25 @@ function gate(t: { after: (fn: () => void) => void }, version = '1.2.3') {
   const adapter = `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
-if (process.argv[1].endsWith('dpkg-deb') && args[0] !== '--show') process.exit(64);
-const info = JSON.parse(fs.readFileSync(args.find(a => fs.existsSync(a)), 'utf8'));
-if (process.argv[1].endsWith('bsdtar')) console.log('pkgname = ' + info.name + '\\npkgver = ' + info.version + '\\narch = ' + info.architecture);
-else console.log(info.name + '|' + (process.argv[1].endsWith('rpm') ? '0|' : '') + info.version + '|' + info.architecture);
+const tool = require('node:path').basename(process.argv[1]);
+const file = args.find(a => fs.existsSync(a) && fs.statSync(a).isFile());
+if (!file) process.exit(64);
+const info = JSON.parse(fs.readFileSync(file, 'utf8'));
+const license = 'GPL-3.0-or-later AND CC0-1.0';
+if (tool === 'dpkg-deb') {
+  const field = args[0] === '-f' && { Package: info.name, Version: info.version, Architecture: info.architecture }[args[2]];
+  if (field === undefined || field === false) process.exit(64);
+  console.log(field);
+} else if (tool === 'rpm') {
+  if (args[0] !== '-qp' || args[1] !== '--qf') process.exit(64);
+  const cut = info.version.lastIndexOf('-');
+  const [upstream, release] = cut < 0 ? [info.version, ''] : [info.version.slice(0, cut), info.version.slice(cut + 1)];
+  console.log([info.name, '0', upstream, release, info.architecture, license].join('|'));
+} else {
+  if (args[0] !== '-xOf' || args[2] !== '.PKGINFO') process.exit(64);
+  console.log(['pkgname = ' + info.name, 'pkgver = ' + info.version, 'arch = ' + info.architecture,
+    ...license.split(' AND ').map(name => 'license = ' + name)].join('\\n'));
+}
 `;
   for (const name of ['dpkg-deb', 'rpm', 'bsdtar']) {
     writeFileSync(join(bin, name), adapter);

@@ -27,6 +27,6 @@ build() {
 
 package() {
     DESTDIR="$pkgdir" cmake --install "$srcdir/build"
-    install -Dm644 "$srcdir/branch-truce/packaging/copyright" \
-        "$pkgdir/usr/share/licenses/branch-truce/copyright"
+    # The GPL text, as the RPM ships it; the metainfo file states its own CC0 license.
+    install -Dm644 "$srcdir/branch-truce/LICENSE" "$pkgdir/usr/share/licenses/branch-truce/LICENSE"
 }

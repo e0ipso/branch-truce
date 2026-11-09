@@ -194,7 +194,7 @@ highlight syntax through the KF6 SyntaxHighlighting C++ library, which
 `plasma-integration` is the only `Recommends`. The package starts on Wayland
 without it, and Plasma desktops have it through `plasma-workspace`. This list
 is the one the CI release packages use; `packaging/scripts/check-package.sh`
-checks it.
+checks that the built package declares it.
 
 ## Packaging choice
 
@@ -202,12 +202,12 @@ A native `.deb` built by debhelper's CMake build system, as the technical
 spec's initial candidate. Flatpak would need its own design for Git access.
 
 - [packaging/debian/](../packaging/debian/) holds `control`, `rules`,
-  `copyright`, `compat` and `source/format`, shared by both bases and by the CI
+  `copyright` and `source/format`, shared by both bases and by the CI
   release packages of `packaging/scripts/package-release.sh`. `rules` stops
   unless `BRANCH_TRUCE_VERSION` is set, and configures with that version,
   `BUILD_TESTING=OFF` and `BRANCH_TRUCE_WARNINGS_AS_ERRORS=ON`; tests run
   from development builds and in CI. `control` declares `debhelper-compat`,
-  so both build scripts drop `compat` from the copied `debian/` directory.
+  so there is no `compat` file.
 - [tools/build-artifact.sh](../tools/build-artifact.sh) takes the release
   version from `package.json`, converts it with
   `packaging/scripts/native-version.sh`, and passes it to `rules` as

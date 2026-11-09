@@ -17,6 +17,7 @@ RUN pacman -S --noconfirm --needed base-devel cmake ninja ccache extra-cmake-mod
     && useradd --create-home --uid 1000 --groups root builder \
     && pacman -Q > /opt/branch-truce-build-baseline.txt \
     && cat /opt/branch-truce-build-baseline.txt
+COPY minimum-versions.tsv /opt/branch-truce/
 COPY ci/baseline.sh /opt/branch-truce/ci/
 RUN /opt/branch-truce/ci/baseline.sh --format arch-pkg > /opt/branch-truce/baseline.txt \
     && cat /opt/branch-truce/baseline.txt

@@ -1,0 +1,20 @@
+# The QML modules and Qt plugins the application loads at run time, which no
+# linker dependency pulls in. Each recipe declares the packages that ship them
+# (debian/control Depends, the spec's qt6qml() Requires, the PKGBUILD's
+# depends); packaging/scripts/check-package.sh checks that every row is
+# installed after the package alone is installed.
+# kind	path below the Qt QML or plugin directory
+qml	QtQml
+qml	QtQml.Models
+qml	QtQml.WorkerScript
+qml	QtQuick
+qml	QtQuick.Controls
+qml	QtQuick.Layouts
+qml	QtQuick.Shapes
+qml	QtQuick.Templates
+qml	QtQuick.Window
+qml	org.kde.desktop
+qml	org.kde.kirigami
+qml	org.kde.kirigami.delegates
+plugin	iconengines/libqsvgicon.so
+plugin	wayland-shell-integration/libxdg-shell.so
