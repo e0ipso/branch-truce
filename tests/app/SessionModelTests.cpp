@@ -1140,6 +1140,37 @@ public:
             CHECK(reopened.undo(reopened.current().id) == Transition::Applied);
             CHECK(reopened.current().draft.text == test_support::markedText(true) && reopened.current().draft.unresolvedMarkers == 2);
         });
+        suite.run("a settled file reads ready to mark resolved until undo reopens a choice", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            SessionModel model(directory.path() + "/recovery");
+            CHECK(model.appendFile(test_support::markedFile()));
+            const auto row = [&] { return model.rowOf("choices"); };
+            const auto choose = [&](SourceSide side, std::size_t section) {
+                const auto &file = *model.file("choices");
+                const auto &target = test_support::choiceTarget(file, side, ChoiceScope::Section, section);
+                return model.applyChoice("choices",
+                    previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::ResolveUsingSide), true);
+            };
+            const auto settled = [&] {
+                return role(model, SessionModel::ProgressRole, row()).toMap().value("settled").toBool();
+            };
+            const auto line = [&] { return role(model, SessionModel::StatusLineRole, row()).toString(); };
+            CHECK(!settled() && line() != "Ready to mark resolved");
+            CHECK(choose(SourceSide::Stage2, 0) == Transition::Applied);
+            CHECK(!settled());
+            CHECK(choose(SourceSide::Stage3, 1) == Transition::Applied);
+            CHECK(settled() && line() == "Ready to mark resolved");
+            // Ready is not reviewed or resolved, and the handoff keeps its existing category.
+            CHECK(role(model, SessionModel::StatusRole, row()).toString() == "Current result needs review");
+            CHECK(!role(model, SessionModel::ResolvedRole, row()).toBool());
+            CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+            CHECK(!settled() && line() != "Ready to mark resolved");
+            CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
+            CHECK(settled());
+            model.recordRecoveryFailure("choices", "store unavailable");
+            CHECK(!settled() && line() != "Ready to mark resolved");
+        });
         suite.run("replay derives the marker count against the captured sources", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());

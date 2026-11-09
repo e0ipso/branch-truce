@@ -822,6 +822,8 @@ FileFacts FileSession::facts() const
         facts.status = FileStatus::WrittenUnresolved;
     else if (checkpoint) facts.status = FileStatus::SavedDraft;
     else if (undecided != 0) facts.status = FileStatus::Undecided;
+    facts.settled = support_ == Support::Supported && undecided == 0 && current().draft.unresolvedMarkers == 0
+        && (facts.status == FileStatus::ReviewNeeded || facts.status == FileStatus::SavedDraft);
     return facts;
 }
 

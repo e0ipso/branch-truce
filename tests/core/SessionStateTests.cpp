@@ -1064,6 +1064,36 @@ public:
             CHECK(ignored.current().draft.text == test_support::markedText());
             CHECK(ignored.current().draft.unresolvedMarkers == 2 && has(ignored, Blocker::UnresolvedMarkers));
         });
+        suite.run("a file is settled once every choice is decided and no marker remains, and undo clears it", [] {
+            auto file = test_support::markedFile();
+            CHECK(!file.facts().settled);
+            CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
+            // The second block is still open.
+            CHECK(!file.facts().settled && file.facts().status == FileStatus::Undecided);
+            CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
+            CHECK(file.facts().undecided == 0 && file.current().draft.unresolvedMarkers == 0);
+            CHECK(file.facts().settled && file.facts().status == FileStatus::ReviewNeeded && !file.facts().resolved);
+            // Settling is not review: Mark resolved is still required.
+            CHECK(has(file, Blocker::ReviewNeeded) && has(file, Blocker::WriteRequired) && has(file, Blocker::StageRequired));
+            CHECK(file.undo(file.current().id) == Transition::Applied);
+            CHECK(!file.facts().settled && file.facts().undecided != 0);
+            CHECK(file.redo(file.current().id) == Transition::Applied);
+            CHECK(file.facts().settled);
+            const auto revision = file.current().id;
+            CHECK(file.recordCheckpoint(revision, Outcome::Succeeded) == Transition::Applied);
+            CHECK(file.facts().status == FileStatus::SavedDraft && file.facts().settled);
+            resolve(file);
+            CHECK(file.facts().resolved && !file.facts().settled);
+
+            // Every contribution decided while marker lines stay is not settled.
+            auto ignored = test_support::markedFile();
+            for (const std::size_t section : {0U, 1U}) {
+                CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::Ignore, ChoiceScope::Section, section) == Transition::Applied);
+                CHECK(choose(ignored, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Section, section) == Transition::Applied);
+            }
+            CHECK(ignored.facts().undecided == 0 && ignored.current().draft.unresolvedMarkers != 0);
+            CHECK(!ignored.facts().settled);
+        });
         suite.run("a hand-edited marker line orphans its block, which is never removed", [] {
             for (const std::string line : {"<<<<<<< ours\n", "=======\n", ">>>>>>> theirs\n"}) {
                 auto file = test_support::markedFile();

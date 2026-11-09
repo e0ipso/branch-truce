@@ -115,6 +115,19 @@ ObjectModel {
         text: qsTr("The parent Git session can be finished.")
         actions: [NamedAction { controlName: "endParentSession"; text: qsTr("Parent Git is finished"); onTriggered: fileNotices.controller.endParentSession() }]
     }
+    // Derived from the current revision: an undo that reopens a choice hides it again. It is
+    // not review, and Git still sees the conflict until Mark resolved.
+    PlainInlineMessage {
+        objectName: "settledNotice"
+        onPlainTextRequested: item => fileNotices.plainTextRequested(item)
+        Layout.fillWidth: true
+        type: Kirigami.MessageType.Positive
+        icon.name: "checkmark"
+        visible: fileNotices.supportedSelection
+            && !!fileNotices.selectedFile.progress && !!fileNotices.selectedFile.progress.settled
+            && !fileNotices.controller.resolutionConfirmation
+        text: qsTr("Every choice is decided and no conflict markers remain. Review the result, then Mark resolved to write it and resolve the file in Git.")
+    }
     PlainInlineMessage {
         objectName: "resolutionNotice"
         onPlainTextRequested: item => fileNotices.plainTextRequested(item)

@@ -98,7 +98,7 @@ A `SplitView` pane to the left of the work area, `Kirigami.Units.gridUnit * 14 +
 
 - **List header.** "Conflicted files" as a `Kirigami.Heading` and a neutral `Pill` with the number of files. It is as tall as the file toolbar, so their hairlines line up. Leading padding is `largeSpacing + mediumSpacing`, trailing padding is `largeSpacing + smallSpacing / 2`.
 - **List.** `Kirigami.Units.smallSpacing * 1.5` padding above the first row and below the last, with `smallSpacing` between rows.
-- **Rows.** Each row sits on a row plate (section 4). The leading icon is the file's status icon from section 5. The first line is the file name, then its directory in muted `smallFont`. The second line is one short status phrase in `smallFont`: "1 conflict left", "Resolved" in `positiveTextColor`, "Handle outside the app" in `neutralTextColor`. Recovery and write failures take priority over the conflict count, including on unselected rows. A row never carries a second status as a pill, and never joins statuses with dots or separators.
+- **Rows.** Each row sits on a row plate (section 4). The leading icon is the file's status icon from section 5. The first line is the file name, then its directory in muted `smallFont`. The second line is one short status phrase in `smallFont`: "1 conflict left", "Ready to mark resolved" once every choice is decided and no marker remains, "Resolved" in `positiveTextColor`, "Handle outside the app" in `neutralTextColor`. Recovery and write failures take priority over the conflict count, including on unselected rows. A row never carries a second status as a pill, and never joins statuses with dots or separators.
 
 ### File toolbar
 
@@ -117,7 +117,7 @@ Mark resolved is always available for a file the app can edit, as `PRD.md:103` r
 
 ### Notices
 
-Notices sit between the file toolbar and the panes and take no height when there are none. Each is a `Kirigami.InlineMessage` for an unusual condition: a failed load or save, a recovery problem, a stale staged result, a mergetool wait, the parent's staging state, the result of a command, or the session-level outside-app warning described in section 3. One message per condition, one line unless the user expands it, with its action (retry, recheck) on the message.
+Notices sit between the file toolbar and the panes and take no height when there are none. Each is a `Kirigami.InlineMessage` for an unusual condition: a failed load or save, a recovery problem, a stale staged result, a mergetool wait, the parent's staging state, the result of a command, or the session-level outside-app warning described in section 3. One message per condition, one line unless the user expands it, with its action (retry, recheck) on the message. The one routine notice is a `Positive` message shown once every choice in the file is decided and no marker remains. It says Mark resolved is the remaining step, carries no action of its own because Mark resolved stays in the toolbar, and disappears when an undo reopens a choice.
 
 ### Panes
 
@@ -210,7 +210,7 @@ Each status fact has one surface. Before adding text, find the fact in this tabl
 | Repository | Header band title | Name in DemiBold; path in the tooltip |
 | Operation and branches | Header band, beside the title | Muted phrase: "Merging feature/backoff into main" |
 | A file's path | File row; the file toolbar for the selected file | Name, then muted directory |
-| A file's state | File row status line | One phrase: "1 conflict left", "Resolved", "Handle outside the app" |
+| A file's state | File row status line | One phrase: "1 conflict left", "Ready to mark resolved", "Resolved", "Handle outside the app" |
 | Undecided conflicts in the selected file | Conflict stepper | Count as the stepper's label |
 | Source identity | Pane header | Title, then muted role and short commit |
 | What the result holds | Result pane header | Title "Result", identity such as "Editable" |

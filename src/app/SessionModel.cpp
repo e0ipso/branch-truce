@@ -422,8 +422,10 @@ bool SessionModel::resolvedAt(std::size_t row) const
 SessionModel::Progress SessionModel::progressAt(std::size_t row) const
 {
     const auto &facts = facts_[row];
-    return {facts.undecided, !journal_.pending(files_[row].id()) && !facts.unsaved, !facts.needsReview,
-            resolvedAt(row), facts.earlierStaged, files_[row].conflictCount()};
+    const auto &id = files_[row].id();
+    const bool recoveryClear = !journal_.pending(id) && !journal_.failure(id);
+    return {facts.undecided, !journal_.pending(id) && !facts.unsaved, !facts.needsReview,
+            resolvedAt(row), facts.earlierStaged, files_[row].conflictCount(), recoveryClear && facts.settled};
 }
 
 // Dimensions come from the current revision and the saved, reviewed and staged
@@ -438,6 +440,7 @@ QVariantMap SessionModel::progressData(std::size_t row) const
         {QStringLiteral("reviewed"), progress.reviewed},
         {QStringLiteral("resolved"), progress.resolved},
         {QStringLiteral("earlierResolved"), progress.earlierStaged},
+        {QStringLiteral("settled"), progress.settled},
         {QStringLiteral("currentRevision"), revisionText(file.current().id)},
         {QStringLiteral("savedRevision"), progress.saved && file.checkpoint() ? revisionText(file.checkpoint()->id) : QString{}},
         {QStringLiteral("reviewedRevision"), progress.reviewed ? revisionText(file.reviewed()->revision.id) : QString{}},
@@ -455,8 +458,8 @@ QString SessionModel::statusAt(std::size_t row) const
     return QString::fromUtf8(statusText(facts_[row].status));
 }
 
-// A file outside the app names its reason and an unresolved file its undecided
-// count; otherwise the status.
+// A file outside the app names its reason, an unresolved file its undecided
+// count and a settled file that Mark resolved is next; otherwise the status.
 QString SessionModel::statusLineAt(std::size_t row) const
 {
     const auto &file = files_[row];
@@ -465,6 +468,7 @@ QString SessionModel::statusLineAt(std::size_t row) const
     const auto progress = progressAt(row);
     if (progress.undecided > 0 && !progress.resolved)
         return tr("%1 undecided").arg(static_cast<qulonglong>(progress.undecided));
+    if (progress.settled) return tr("Ready to mark resolved");
     return statusAt(row);
 }
 
