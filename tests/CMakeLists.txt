@@ -336,14 +336,23 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_test(NAME app.session-coordinator COMMAND branch_truce_coordinator_tests)
     set_tests_properties(app.session-coordinator PROPERTIES TIMEOUT 30)
 
-    add_executable(branch_truce_git_tests git/GitAdapterTests.cpp)
-    target_include_directories(branch_truce_git_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-    target_link_libraries(branch_truce_git_tests PRIVATE branch_truce_git branch_truce_build_options)
-    add_test(NAME git.adapter COMMAND branch_truce_git_tests)
-    add_test(NAME git.conflict-classification COMMAND branch_truce_git_tests --classification-only)
-    set_tests_properties(git.conflict-classification PROPERTIES TIMEOUT 30)
+    # The Git suites run real Git in fixture repositories. They run under the private HOME and XDG
+    # wrapper, and fixture Git reads only the fixture's global configuration.
+    # The tool `git mergetool` runs in the adapter's parent staging cases.
+    add_executable(branch_truce_parent_staging_fixture git/ParentStagingFixture.cpp)
+    target_include_directories(branch_truce_parent_staging_fixture PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_parent_staging_fixture PRIVATE branch_truce_git branch_truce_build_options)
     # The timeout must be at least twice the slowest measured run, including the Git operation deadline.
-    set_tests_properties(git.adapter PROPERTIES TIMEOUT 90)
+    branch_truce_add_unit_test(git.adapter git/GitAdapterTests.cpp LIBS branch_truce_git PRIVATE_XDG TIMEOUT 90
+        DEPENDS branch_truce_parent_staging_fixture ARGS $<TARGET_FILE:branch_truce_parent_staging_fixture>)
+    branch_truce_add_unit_test(git.conflict-classification git/ConflictClassifierTests.cpp LIBS branch_truce_git
+        PRIVATE_XDG TIMEOUT 30)
+    branch_truce_add_unit_test(git.text-conversion git/TextConversionTests.cpp LIBS branch_truce_git PRIVATE_XDG)
+    # Fails while GitAdapter's Git reads the invoking account's ~/.gitconfig and /etc/gitconfig.
+    # WILL_FAIL keeps that known defect visible; remove it once the adapter takes its Git
+    # environment from its caller, and this entry then has to pass.
+    branch_truce_add_unit_test(git.user-config-isolation git/UserConfigIsolationTests.cpp LIBS branch_truce_git
+        PRIVATE_XDG WILL_FAIL)
 
     # The standalone editor fixture checks native text selection, editing and scrolling without product targets.
     set(editor_fixture "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/editor")
