@@ -1,12 +1,20 @@
 #pragma once
 
 #include "core/EditingCommands.h"
-#include <cstdio>
+#include <array>
+#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <optional>
+#include <spawn.h>
 #include <stdexcept>
+#include <string>
 #include <sys/wait.h>
+#include <unistd.h>
+#include <utility>
+#include <vector>
 
 namespace test_support {
 inline branch_truce::TextSnapshot choiceText(const std::string &value)
@@ -16,9 +24,9 @@ inline branch_truce::TextSnapshot choiceText(const std::string &value)
 }
 
 inline branch_truce::FileSession
-choiceFile(std::string left = "header\nleft first\nleft second\nbridge\nleft later\ntail\n",
-           std::string right = "header\nright first\nright second\nbridge\nright later\ntail\n",
-           std::optional<std::string> result = {})
+choiceFile(const std::string &left = "header\nleft first\nleft second\nbridge\nleft later\ntail\n",
+           const std::string &right = "header\nright first\nright second\nbridge\nright later\ntail\n",
+           const std::optional<std::string> &result = {})
 {
     using namespace branch_truce;
     FileSnapshots captured;
@@ -101,15 +109,59 @@ inline branch_truce::FileSession headingFile()
 
 // A result Git wrote with merge.conflictStyle=diff3, with the common earlier
 // version captured unless `captured` is false.
-inline branch_truce::FileSession diff3File(std::string left, std::string right, const std::string &earlier,
-                                           std::string result, bool captured = true)
+inline branch_truce::FileSession diff3File(const std::string &left, const std::string &right,
+                                           const std::string &earlier, std::string result, bool captured = true)
 {
     using namespace branch_truce;
-    auto sources = *choiceFile(std::move(left), std::move(right), result).snapshots();
+    auto sources = *choiceFile(left, right, result).snapshots();
     if (captured)
         sources.earlier = SourceSnapshot{"earlier-object",    "100644",         earlier,
                                          choiceText(earlier), "earlier-commit", "Common earlier version"};
     return FileSession("choices", sources.path, {std::move(result), {}, 0}, Support::Supported, {}, sources, true);
+}
+
+// A process's standard output and its wait status, which is -1 when the
+// process could not be started.
+struct ProcessOutput {
+    std::string text;
+    int status = -1;
+};
+
+// Runs `arguments` from the PATH without a shell and reads its standard
+// output to the end.
+inline ProcessOutput readProcess(std::vector<std::string> arguments)
+{
+    ProcessOutput output;
+    std::array<int, 2> ends{};
+    if (pipe(ends.data()) != 0) return output;
+    std::vector<char *> argv;
+    argv.reserve(arguments.size() + 1);
+    for (auto &argument : arguments) argv.push_back(argument.data());
+    argv.push_back(nullptr);
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, ends[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addclose(&actions, ends[0]);
+    posix_spawn_file_actions_addclose(&actions, ends[1]);
+    pid_t child = 0;
+    const bool started = posix_spawnp(&child, argv.front(), &actions, nullptr, argv.data(), environ) == 0;
+    posix_spawn_file_actions_destroy(&actions);
+    close(ends[1]);
+    std::array<char, 4096> buffer{};
+    while (started) {
+        const auto count = read(ends[0], buffer.data(), buffer.size());
+        if (count == 0 || (count < 0 && errno != EINTR)) break;
+        if (count > 0) output.text.append(buffer.data(), static_cast<std::size_t>(count));
+    }
+    // Closing the read end first lets a child still writing end on SIGPIPE.
+    close(ends[0]);
+    if (!started) return output;
+    int status = 0;
+    while (waitpid(child, &status, 0) == -1) {
+        if (errno != EINTR) return output;
+    }
+    output.status = status;
+    return output;
 }
 
 // What `git merge-file --diff3` on the PATH writes for three versions, with
@@ -120,24 +172,20 @@ inline std::string gitDiff3(const std::string &left, const std::string &earlier,
     auto pattern = (std::filesystem::temp_directory_path() / "branch-truce-diff3.XXXXXX").string();
     if (!mkdtemp(pattern.data())) throw std::runtime_error("cannot create a directory for git merge-file");
     const std::filesystem::path directory(pattern);
-    std::string command = "git merge-file --diff3 -p -L ours -L base -L theirs";
+    std::vector<std::string> arguments{"git",  "merge-file", "--diff3", "-p", "-L",
+                                       "ours", "-L",         "base",    "-L", "theirs"};
     const std::pair<const char *, const std::string *> versions[] = {
         {"left", &left}, {"base", &earlier}, {"right", &right}};
+    arguments.reserve(arguments.size() + std::size(versions));
     for (const auto &[name, text] : versions) {
         std::ofstream(directory / name, std::ios::binary) << *text;
-        command += " '" + (directory / name).string() + "'";
+        arguments.push_back((directory / name).string());
     }
-    std::string merged;
-    int status = -1;
-    if (auto *pipe = popen(command.c_str(), "r")) {
-        char buffer[4096];
-        for (std::size_t read; (read = std::fread(buffer, 1, sizeof buffer, pipe)) > 0;) merged.append(buffer, read);
-        status = pclose(pipe);
-    }
+    const auto merged = readProcess(std::move(arguments));
     std::filesystem::remove_all(directory);
-    if (status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) > 127)
+    if (merged.status == -1 || !WIFEXITED(merged.status) || WEXITSTATUS(merged.status) > 127)
         throw std::runtime_error("git merge-file failed");
-    return merged;
+    return merged.text;
 }
 
 // The common earlier version underlines a heading with exactly seven '='
@@ -169,12 +217,12 @@ inline branch_truce::FileSession underlineEndedBaseFile(bool captured = true, bo
 // choices change text that matches neither side. By default one conflict
 // changes three lines on each side.
 inline branch_truce::FileSession
-commonVersionFile(std::string left = "header\nleft one\nleft two\nleft three\ntail\n",
-                  std::string right = "header\nright one\nright two\nright three\ntail\n",
+commonVersionFile(const std::string &left = "header\nleft one\nleft two\nleft three\ntail\n",
+                  const std::string &right = "header\nright one\nright two\nright three\ntail\n",
                   const std::string &earlier = "header\nbase one\nbase two\nbase three\ntail\n")
 {
     using namespace branch_truce;
-    auto sources = *choiceFile(std::move(left), std::move(right)).snapshots();
+    auto sources = *choiceFile(left, right).snapshots();
     sources.earlier = SourceSnapshot{"earlier-object",    "100644",         earlier,
                                      choiceText(earlier), "earlier-commit", "Common earlier version"};
     sources.launchResult.text = choiceText(earlier);

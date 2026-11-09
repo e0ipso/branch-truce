@@ -1,4 +1,4 @@
-// Correspondence: the algorithm contract and the map's input checks.
+// Correspondence: the algorithm contract, exact line passages, anchors and the map's input checks.
 #include "TestHarness.h"
 #include "core/Correspondence.h"
 #include "core/ResourceLimits.h"
@@ -7,7 +7,9 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 using namespace branch_truce;
 
@@ -63,6 +65,101 @@ void implementationsKeepTheAlgorithmContract()
     keepsTheContract(WholeTextCorrespondence{});
 }
 
+const char *name(PassageKind kind)
+{
+    switch (kind) {
+    case PassageKind::Equal: return "equal";
+    case PassageKind::Changed: return "changed";
+    case PassageKind::SourceOnly: return "source only";
+    case PassageKind::ResultOnly: return "result only";
+    case PassageKind::Ambiguous: break;
+    }
+    return "ambiguous";
+}
+
+std::string show(const std::vector<Passage> &passages)
+{
+    std::string text;
+    for (const auto &passage : passages) {
+        text += name(passage.kind);
+        text += ' ';
+        text += std::to_string(passage.source.begin);
+        text += '-';
+        text += std::to_string(passage.source.end);
+        text += ' ';
+        text += std::to_string(passage.result.begin);
+        text += '-';
+        text += std::to_string(passage.result.end);
+        text += '\n';
+    }
+    return text;
+}
+
+// ExactLineCorrespondence gives exactly `expected`, every time, as a partition
+// of both texts whose equal passages cover identical bytes.
+void expectPassages(std::string_view source, std::string_view result, const std::vector<Passage> &expected)
+{
+    const ExactLineCorrespondence algorithm;
+    const auto actual = algorithm.compare(source, result);
+    if (actual != expected) {
+        throw std::runtime_error("passages differ\nactual\n" + show(actual) + "expected\n" + show(expected));
+    }
+    CHECK(actual == expected);
+    for (int repeat = 0; repeat < 4; ++repeat) CHECK(algorithm.compare(source, result) == actual);
+    std::size_t sourceEnd = 0;
+    std::size_t resultEnd = 0;
+    for (const auto &passage : actual) {
+        CHECK(passage.source.begin == sourceEnd && passage.result.begin == resultEnd);
+        CHECK(validByteRange(source, passage.source) && validByteRange(result, passage.result));
+        if (passage.kind == PassageKind::Equal) CHECK(slice(source, passage.source) == slice(result, passage.result));
+        sourceEnd = passage.source.end;
+        resultEnd = passage.result.end;
+    }
+    CHECK(sourceEnd == source.size() && resultEnd == result.size());
+}
+
+void partitionsAreDeterministicForEachKindOfPassage()
+{
+    expectPassages("repeat\nrepeat\n", "repeat\nrepeat\n", {{{0, 14}, {0, 14}, PassageKind::Equal}});
+    expectPassages("head\nold\nend\n", "head\nnew\nend\n",
+                   {{{0, 5}, {0, 5}, PassageKind::Equal},
+                    {{5, 9}, {5, 9}, PassageKind::Changed},
+                    {{9, 13}, {9, 13}, PassageKind::Equal}});
+    expectPassages("head\nend\n", "head\ninserted\nend\n",
+                   {{{0, 5}, {0, 5}, PassageKind::Equal},
+                    {{5, 5}, {5, 14}, PassageKind::ResultOnly},
+                    {{5, 9}, {14, 18}, PassageKind::Equal}});
+    expectPassages("head\ndeleted\nend\n", "head\nend\n",
+                   {{{0, 5}, {0, 5}, PassageKind::Equal},
+                    {{5, 13}, {5, 5}, PassageKind::SourceOnly},
+                    {{13, 17}, {5, 9}, PassageKind::Equal}});
+    expectPassages("head\nrepeat\nrepeat\nend\n", "head\nrepeat\nend\n",
+                   {{{0, 5}, {0, 5}, PassageKind::Equal},
+                    {{5, 19}, {5, 12}, PassageKind::Ambiguous},
+                    {{19, 23}, {12, 16}, PassageKind::Equal}});
+    expectPassages("head\none\ntwo\nend\n", "head\ntwo\none\nend\n",
+                   {{{0, 5}, {0, 5}, PassageKind::Equal},
+                    {{5, 13}, {5, 13}, PassageKind::Ambiguous},
+                    {{13, 17}, {13, 17}, PassageKind::Equal}});
+}
+
+void aLongUniqueTextAlignsAsOneEqualPassage()
+{
+    std::string source;
+    for (int line = 0; line < 3500; ++line) {
+        source += "unique line ";
+        source += std::to_string(line);
+        source += '\n';
+    }
+    const auto result = "manual prefix\n" + source + "manual suffix\n";
+    const auto passages = ExactLineCorrespondence{}.compare(source, result);
+    CHECK(passages
+          == std::vector<Passage>{
+              {{0, 0}, {0, 14}, PassageKind::ResultOnly},
+              {{0, source.size()}, {14, 14 + source.size()}, PassageKind::Equal},
+              {{source.size(), source.size()}, {14 + source.size(), result.size()}, PassageKind::ResultOnly}});
+}
+
 std::shared_ptr<const FileSnapshots> sources(const std::string &text, const std::string &result)
 {
     FileSnapshots captured;
@@ -100,7 +197,9 @@ ResultAnchor bound(CorrespondenceMap &map, SourceAnchor source)
 // The text after a choice replaces the anchor's range.
 CorrespondenceMap chosen(const CorrespondenceMap &map, const std::string &id, const std::string &replacement)
 {
-    return map.edited(map.revision() + 1, {*map.anchor(id)->result, replacement}, false, id);
+    const auto *anchor = map.anchor(id);
+    if (anchor == nullptr || !anchor->result) throw std::runtime_error("the anchor has no result range");
+    return map.edited(map.revision() + 1, {*anchor->result, replacement}, false, id);
 }
 
 void repeatedAndReorderedPassagesLeaveAnchorsAmbiguous()
@@ -213,6 +312,10 @@ int main()
 {
     test_support::Suite suite("CorrespondenceTests");
     suite.run("implementations keep the algorithm contract", implementationsKeepTheAlgorithmContract);
+    suite.run("correspondence partitions are deterministic for equal changed inserted deleted and ambiguous text",
+              partitionsAreDeterministicForEachKindOfPassage);
+    suite.run("a long unique text aligns as one equal passage between inserted lines",
+              aLongUniqueTextAlignsAsOneEqualPassage);
     suite.run("the map checks every text before the algorithm sees it", theMapChecksEveryTextBeforeTheAlgorithmSeesIt);
     suite.run("repeated and reordered passages leave anchors ambiguous",
               repeatedAndReorderedPassagesLeaveAnchorsAmbiguous);

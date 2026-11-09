@@ -1,3 +1,4 @@
+// Word differences: token ranges for a line pair and for a session's sources and result.
 #include "TestHarness.h"
 #include "core/FileWordDifferences.h"
 #include "core/WordDifferences.h"
@@ -13,6 +14,7 @@ namespace {
 std::vector<std::string> words(std::string_view text, const std::vector<ByteRange> &ranges)
 {
     std::vector<std::string> found;
+    found.reserve(ranges.size());
     for (const auto &range : ranges) found.emplace_back(text.substr(range.begin, range.end - range.begin));
     return found;
 }
