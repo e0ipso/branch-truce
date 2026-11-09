@@ -1,7 +1,9 @@
 // The Git mergetool launcher waits for the reviewed result to be handed back to its parent process.
 #include "mergetool/MergetoolLauncher.h"
+#include "mergetool/MergetoolMessages.h"
 #include "mergetool/MergetoolProtocol.h"
 
+#include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -9,6 +11,7 @@
 #include <QFileInfo>
 #include <QLocalSocket>
 #include <QProcess>
+#include <QScopeGuard>
 #include <QTextStream>
 #include <QThread>
 #include <QUuid>
@@ -25,27 +28,57 @@ int fail(const QString &message)
     return 1;
 }
 
-bool readFrame(QLocalSocket *socket, QByteArray *buffer, QJsonObject *object, bool untilDecision)
+// Reads one frame's payload. A negative waitMs waits for as long as the session stays connected.
+std::optional<QByteArray> readPayload(QLocalSocket &socket, QByteArray &buffer, int waitMs)
 {
-    while (true) {
-        QString error;
-        const auto frame = takeMergetoolFrame(buffer, object, &error);
-        if (frame == MergetoolFrame::Invalid) {
-            fail(error);
-            return false;
-        }
-        if (frame == MergetoolFrame::Ready) return true;
-        if (socket->bytesAvailable() > 0) {
-            buffer->append(socket->readAll());
+    QElapsedTimer clock;
+    clock.start();
+    for (;;) {
+        QByteArray payload;
+        const auto frame = takeMergetoolFrame(&buffer, &payload);
+        if (frame == MergetoolFrame::Ready) return payload;
+        if (frame == MergetoolFrame::Invalid) return std::nullopt;
+        if (socket.bytesAvailable() > 0) {
+            buffer += socket.read(4 + kMergetoolFrameLimit - buffer.size());
             continue;
         }
-        if (socket->state() != QLocalSocket::ConnectedState) return false;
-        const int slice = untilDecision ? 1000 : 15000;
-        if (!socket->waitForReadyRead(slice)) {
-            if (!untilDecision || socket->state() != QLocalSocket::ConnectedState) return false;
-        }
-        buffer->append(socket->readAll());
+        if (socket.state() != QLocalSocket::ConnectedState) return std::nullopt;
+        const qint64 left = waitMs < 0 ? 1000 : waitMs - clock.elapsed();
+        if (left <= 0) return std::nullopt;
+        socket.waitForReadyRead(static_cast<int>(left));
     }
+}
+
+bool sendMessage(QLocalSocket &socket, const MergetoolMessage &message)
+{
+    const auto frame = mergetoolFrame(encodeMergetoolMessage(message));
+    return !frame.isEmpty() && socket.write(frame) == frame.size() && socket.waitForBytesWritten(5000);
+}
+
+QString otherVersion(int version)
+{
+    return QStringLiteral("The Branch Truce window speaks mergetool protocol %1 and this launcher speaks %2. "
+                          "Restart Branch Truce so the window and the launcher come from the same installation.")
+        .arg(version)
+        .arg(kMergetoolProtocolVersion);
+}
+
+// The session's reply or decision, or why there is none.
+struct Reply {
+    std::optional<MergetoolMessage> message;
+    QString failure;
+};
+
+Reply readReply(QLocalSocket &socket, QByteArray &buffer, int waitMs)
+{
+    const auto payload = readPayload(socket, buffer, waitMs);
+    if (!payload) return {};
+    const auto decoded = decodeMergetoolMessage(*payload);
+    if (decoded.failure == MergetoolDecodeFailure::OtherVersion) return {std::nullopt, otherVersion(decoded.version)};
+    if (!decoded.message) return {std::nullopt, decoded.error};
+    if (const auto *unsupported = std::get_if<UnsupportedMessage>(&*decoded.message))
+        return {std::nullopt, otherVersion(unsupported->version)};
+    return {decoded.message, {}};
 }
 
 // Once a package upgrade replaces or removes the running file, Linux names the
@@ -99,10 +132,12 @@ bool connectSession(QLocalSocket *socket, const QString &name, int attempts)
 }
 
 // waitForConnected returns at once when no server exists, so counted retries
-// finish in milliseconds. After the GUI starts, spend that 75x200ms budget
-// as wall-clock time.
-constexpr qint64 kPostSpawnListenDeadlineMs = 75 * 200;
+// finish in milliseconds. After the GUI starts, the launcher retries for this
+// long in wall-clock time; --session-wait changes it.
+constexpr qint64 kSessionWaitMs = 15000;
 constexpr qint64 kListenRetrySliceMs = 200;
+// How long the session may take to accept or reject the attach.
+constexpr int kReplyWaitMs = 15000;
 
 bool connectUntilDeadline(QLocalSocket *socket, const QString &name, qint64 deadlineMs)
 {
@@ -131,6 +166,25 @@ int runMergetoolLauncher(int argc, char **argv, const git::GitProgram &git)
     QCoreApplication application(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("canpicasoft.com"));
+    QCommandLineParser parser;
+    parser.addOption({QStringLiteral("mergetool"), QStringLiteral("Run as the launcher for git mergetool.")});
+    const QCommandLineOption sessionWait(
+        QStringLiteral("session-wait"),
+        QStringLiteral("Seconds to wait for a started Branch Truce window to listen; the default is %1.")
+            .arg(kSessionWaitMs / 1000),
+        QStringLiteral("seconds"));
+    parser.addOption(sessionWait);
+    if (!parser.parse(QCoreApplication::arguments()) || !parser.positionalArguments().isEmpty())
+        return fail(parser.errorText().isEmpty() ? QStringLiteral("The launcher takes no arguments.")
+                                                 : parser.errorText());
+    qint64 waitMs = kSessionWaitMs;
+    if (parser.isSet(sessionWait)) {
+        bool number = false;
+        const auto seconds = parser.value(sessionWait).toDouble(&number);
+        if (!number || seconds < 0 || seconds > 3600)
+            return fail(QStringLiteral("--session-wait takes a number of seconds from 0 to 3600."));
+        waitMs = static_cast<qint64>(seconds * 1000);
+    }
     const auto mergedPath = qgetenv("MERGED");
     const auto repositoryPath = mergetoolRepositoryPath(mergedPath);
     if (!repositoryPath) return fail(QStringLiteral("MERGED is missing or is not a repository path."));
@@ -161,14 +215,18 @@ int runMergetoolLauncher(int argc, char **argv, const git::GitProgram &git)
         || !readSide("REMOTE", &sources.remote, &sources.remotePresent))
         return fail(error);
 
+    // The window and every launcher of this user meet in one private directory.
+    const auto directory = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
+    if (!prepareMergetoolSocketDirectory(directory, &error)) return fail(error);
     const auto key = mergetoolSessionKey(discovered.repository);
     const auto invocation = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const auto intake =
-        mergetoolIntakeRoot() + QLatin1Char('/') + QString::fromLatin1(key) + QLatin1Char('/') + invocation;
-    if (key.isEmpty() || !writeMergetoolIntake(intake, invocation, sources, &error))
+    const auto intake = writeMergetoolIntake(mergetoolIntakeRoot(directory), key, invocation, sources, &error);
+    if (intake.isEmpty())
         return fail(error.isEmpty() ? QStringLiteral("The mergetool inputs could not be kept.") : error);
+    // The session reads the copies when it accepts the attach; nothing needs them after this launcher.
+    const auto removeIntake = qScopeGuard([&intake] { removeMergetoolIntake(intake); });
 
-    const auto server = mergetoolServerName(discovered.repository);
+    const auto server = mergetoolServerName(directory, discovered.repository);
     const bool noSpawn = qEnvironmentVariableIsSet("BRANCH_TRUCE_MERGETOOL_NO_SPAWN");
     QLocalSocket socket;
     bool connected = connectSession(&socket, server, 5);
@@ -177,39 +235,32 @@ int runMergetoolLauncher(int argc, char **argv, const git::GitProgram &git)
         if (!program) return fail(error);
         if (!startSession(*program, discovered.repository.worktreeRoot, sources.path))
             return fail(QStringLiteral("%1 could not be started.").arg(*program));
-        connected = connectUntilDeadline(&socket, server, kPostSpawnListenDeadlineMs);
+        connected = connectUntilDeadline(&socket, server, waitMs);
     }
     if (!connected) return fail(QStringLiteral("No Branch Truce session is listening for this repository."));
     // The /tmp fallback directory is shared, so check who answered before sending anything.
     if (!mergetoolPeerIsCurrentUser(socket.socketDescriptor()))
         return fail(QStringLiteral("The session socket does not belong to this user."));
 
-    const QJsonObject attach{{QStringLiteral("v"), 1},
-                             {QStringLiteral("kind"), QStringLiteral("attach")},
-                             {QStringLiteral("invocation"), invocation},
-                             {QStringLiteral("intake"), intake},
-                             {QStringLiteral("path"), QString::fromLatin1(sources.path.toHex())}};
-    if (!writeMergetoolFrame(&socket, attach, &error)) return fail(error);
-    QByteArray buffer = socket.readAll();
-    QJsonObject reply;
-    if (!readFrame(&socket, &buffer, &reply, false)) return fail(QStringLiteral("The session rejected this path."));
-    const bool attached = reply.value(QStringLiteral("kind")).toString() == QLatin1String("attached")
-        && reply.value(QStringLiteral("invocation")).toString() == invocation;
-    if (!attached) {
-        const auto reason = reply.value(QStringLiteral("reason")).toString();
-        return fail(reason.isEmpty() ? QStringLiteral("The session rejected this path.") : reason);
+    if (!sendMessage(socket, AttachMessage{invocation, intake, git.environment}))
+        return fail(QStringLiteral("The mergetool attach could not be sent."));
+    QByteArray buffer;
+    const auto reply = readReply(socket, buffer, kReplyWaitMs);
+    const auto *attached = reply.message ? std::get_if<AttachedMessage>(&*reply.message) : nullptr;
+    if (!attached || attached->invocation != invocation) {
+        const auto *rejected = reply.message ? std::get_if<RejectedMessage>(&*reply.message) : nullptr;
+        return fail(rejected                       ? rejected->reason
+                        : !reply.failure.isEmpty() ? reply.failure
+                                                   : QStringLiteral("The session rejected this path."));
     }
 
-    QJsonObject decision;
-    const bool decided = readFrame(&socket, &buffer, &decision, true);
-    const auto kind = decision.value(QStringLiteral("kind")).toString();
-    const bool resolved = decided && kind == QLatin1String("resolved")
-        && decision.value(QStringLiteral("invocation")).toString() == invocation
-        && !decision.value(QStringLiteral("object")).toString().isEmpty()
-        && !decision.value(QStringLiteral("revision")).toString().isEmpty();
-    if (resolved) return 0;
+    const auto decision = readReply(socket, buffer, -1);
+    const auto *resolved = decision.message ? std::get_if<ResolvedMessage>(&*decision.message) : nullptr;
+    if (resolved && resolved->invocation == invocation) return 0;
     if (!restoreMergetoolFile(mergedPath, sources.merged, &error)) return fail(error);
-    if (!decided) return fail(QStringLiteral("The launcher closed before an explicit decision."));
-    return 1;
+    const auto *leave = decision.message ? std::get_if<LeaveMessage>(&*decision.message) : nullptr;
+    if (leave && leave->invocation == invocation) return 1;
+    return fail(!decision.failure.isEmpty() ? decision.failure
+                                            : QStringLiteral("The launcher closed before an explicit decision."));
 }
 }

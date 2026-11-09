@@ -324,6 +324,10 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_test(NAME app.resolution COMMAND branch_truce_resolution_tests)
     set_tests_properties(app.resolution PROPERTIES TIMEOUT 90)
 
+    # The launcher protocol alone: messages, framing, the listener against misbehaving peers, paths and restore.
+    branch_truce_add_unit_test(mergetool.protocol app/MergetoolProtocolTests.cpp LIBS branch_truce_mergetool_protocol
+        TIMEOUT 60)
+
     add_executable(branch_truce_mergetool_tests app/MergetoolLauncherTests.cpp)
     target_include_directories(branch_truce_mergetool_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_mergetool_tests PRIVATE branch_truce_controller branch_truce_build_options)

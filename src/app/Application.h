@@ -42,6 +42,8 @@ public:
         // started its Git with the same ones. The process environment selects
         // them by default, as it does for the Git the session's tasks run.
         git::GitEnvironment gitEnvironment = git::GitEnvironment::fromProcess();
+        // Where the session listens for mergetool launchers and they leave their inputs.
+        QString mergetoolDirectory = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
     };
     explicit Application(Config config, QObject *parent = nullptr);
 

@@ -9,7 +9,8 @@ Application::Application(Config config, QObject *parent)
       coordinator_(store_, config.gitExecutable, this),
       publisher_(store_, coordinator_, config.gitExecutable, this),
       mergetool_(
-          publisher_, store_, coordinator_, [this] { return loader_.repository(); }, config.gitExecutable, this),
+          publisher_, store_, coordinator_, [this] { return loader_.repository(); },
+          {config.mergetoolDirectory, config.gitEnvironment, config.gitExecutable}, this),
       editor_(store_, this),
       selection_(files_, editor_, this),
       selectedFile_(files_, selection_, this),

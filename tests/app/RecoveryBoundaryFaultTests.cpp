@@ -575,8 +575,9 @@ public:
                           runtime = conflict.environment.value(QStringLiteral("XDG_RUNTIME_DIR"));
                           CHECK(QDir::isAbsolutePath(runtime));
                           CHECK(qEnvironmentVariable("XDG_RUNTIME_DIR") == runtime);
-                          CHECK(mergetoolSocketDirectory() == runtime + QStringLiteral("/branch-truce"));
-                          CHECK(QFileInfo::exists(mergetoolSocketDirectory()));
+                          CHECK(mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"))
+                                == runtime + QStringLiteral("/branch-truce"));
+                          CHECK(QFileInfo::exists(mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"))));
                       }
                       CHECK(qEnvironmentVariableIsSet("XDG_RUNTIME_DIR") == wasSet);
                       CHECK(qgetenv("XDG_RUNTIME_DIR") == previous);

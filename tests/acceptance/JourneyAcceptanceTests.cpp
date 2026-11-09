@@ -227,7 +227,7 @@ public:
         // Opening a session inspects Git and never mutates the repository.
         CHECK(repo.snapshot() == before);
         // The session listens in the sandbox's private runtime directory, not a fallback.
-        const auto socket = mergetoolSocketDirectory();
+        const auto socket = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
         if (socket != sandbox->runtime.path() + QStringLiteral("/branch-truce"))
             throw std::runtime_error("socket directory outside the private runtime directory: " + socket.toStdString());
         CHECK(controller->mergetoolSession()->listening() && QFileInfo(socket).isDir());
