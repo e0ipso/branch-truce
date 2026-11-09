@@ -9,7 +9,7 @@ license=('GPL-3.0-or-later' 'CC0-1.0')
 depends=('gcc-libs' 'glibc' 'git>=2.43' 'qt6-base>=6.6' 'qt6-declarative>=6.6'
          'kirigami>=6.0' 'syntax-highlighting>=6.0' 'qqc2-desktop-style'
          'breeze' 'breeze-icons' 'hicolor-icon-theme' 'qt6-svg' 'qt6-wayland')
-makedepends=('cmake>=3.28' 'ninja' 'extra-cmake-modules>=6.0')
+makedepends=('cmake>=3.28' 'ninja' 'extra-cmake-modules>=6.0' 'qt6-tools>=6.6')
 source=('branch-truce.tar.gz')
 # Keep makepkg's native buildflags/strip handling, without a second debug package.
 options=('!debug')

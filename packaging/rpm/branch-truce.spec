@@ -25,6 +25,7 @@ BuildRequires:  cmake(Qt6Network)
 BuildRequires:  cmake(Qt6Qml)
 BuildRequires:  cmake(Qt6Quick)
 BuildRequires:  cmake(Qt6QuickControls2)
+BuildRequires:  cmake(Qt6LinguistTools)
 BuildRequires:  cmake(KF6Kirigami) >= 6.0
 BuildRequires:  cmake(KF6SyntaxHighlighting) >= 6.0
 

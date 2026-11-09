@@ -16,7 +16,7 @@ esac
 # Tuxedo needs its vendor Qt/KDE repository enabled. Stock noble has Qt 6.4.
 # Every runtime Depends of the package belongs here too (tests/packaging/ProvisioningDepends.sh).
 # app.startup-appearance also exercises plasma-integration's KDE platform theme plugin.
-packages=(g++ cmake make git extra-cmake-modules qt6-base-dev qt6-declarative-dev
+packages=(g++ cmake make git extra-cmake-modules qt6-base-dev qt6-declarative-dev qt6-tools-dev qt6-l10n-tools
     libkirigami-dev libkf6syntaxhighlighting-dev qml6-module-org-kde-kirigami qml6-module-org-kde-desktop
     qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-shapes
     qml6-module-qtquick-templates qml6-module-qtquick-window qml6-module-qtqml-models qml6-module-qtqml-workerscript

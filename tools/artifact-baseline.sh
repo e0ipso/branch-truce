@@ -15,7 +15,7 @@ if command -v g++ >/dev/null; then
     printf 'compiler\t%s\n' "$(g++ --version | head -1)"
 fi
 packages=(libc6 libstdc++6 g++ cmake debhelper dpkg-dev git extra-cmake-modules
-    qt6-base-dev qt6-declarative-dev libkirigami-dev libkf6syntaxhighlighting-dev
+    qt6-base-dev qt6-declarative-dev qt6-tools-dev qt6-l10n-tools libkirigami-dev libkf6syntaxhighlighting-dev
     libqt6core6t64 libqt6gui6 libqt6gui6t64 libqt6qml6 libqt6quick6
     qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-layouts
     qml6-module-org-kde-kirigami qml6-module-org-kde-desktop kde-style-breeze
