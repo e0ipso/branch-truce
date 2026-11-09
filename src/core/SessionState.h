@@ -125,6 +125,9 @@ public:
     // Captures the review declaration of Mark resolved, not a review-only UI
     // action. Cancelling confirmation calls nothing and changes nothing.
     Transition beginMarkResolved(RevisionId expected, bool confirmUndecided = false);
+    // Outcomes are for revisions the session still stores: the current one,
+    // an undo history entry or the launch revision. An outcome for a revision
+    // a later edit discarded is stale.
     Transition recordCheckpoint(RevisionId revision, Outcome outcome, std::string detail = {});
     Transition recordWrite(RevisionId revision, Outcome outcome, std::string detail = {});
     Transition recordStage(RevisionId revision, Outcome outcome, std::string objectId = {}, std::string mode = {},

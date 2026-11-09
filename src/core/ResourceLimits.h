@@ -19,6 +19,10 @@ inline constexpr std::size_t kMaxRecoveryPayloadBytes = 8388608;
 // Longest conflict marker the engine recognizes. Git's default is 7, and
 // projects that change it with conflict-marker-size use a few dozen.
 inline constexpr std::size_t kMaxConflictMarkerSize = 1024;
+// Text the undo history of one file may hold. Each revision counts its result
+// text and its correspondence's copy of it. Older undo steps go first, so
+// even a file at the recovery payload limit keeps about 16 of them.
+inline constexpr std::size_t kMaxHistoryBytes = 268435456;
 
 enum class TextLimit { Within, LineBytes, RecoveryPayload };
 

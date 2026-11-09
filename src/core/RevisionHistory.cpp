@@ -1,10 +1,18 @@
 // Revision history stores a file's result revisions and the undo cursor over them.
 #include "RevisionHistory.h"
+#include "ResourceLimits.h"
 
 #include <algorithm>
 #include <stdexcept>
 
 namespace branch_truce {
+namespace {
+std::size_t textBytes(const Revision &revision) noexcept
+{
+    return revision.draft.text.size() + (revision.correspondence ? revision.correspondence->text().size() : 0);
+}
+}
+
 RevisionHistory::RevisionHistory(Revision launch)
     : current_(std::make_shared<const Revision>(std::move(launch))),
       entries_{current_->id},
@@ -64,7 +72,21 @@ void RevisionHistory::append(RevisionId id)
 
 void RevisionHistory::prune()
 {
-    // Every revision stays stored, as before the history was split out.
+    const auto reachable = [&](RevisionId id) {
+        return id == launch_ || id == current_->id || std::find(entries_.begin(), entries_.end(), id) != entries_.end();
+    };
+    const auto total = [&] {
+        std::size_t bytes = 0;
+        for (const auto &[id, revision] : revisions_) bytes += textBytes(*revision);
+        return bytes;
+    };
+    std::erase_if(revisions_, [&](const auto &stored) { return !reachable(stored.first); });
+    // Undo reaches back as far as the size bound allows, never past the cursor.
+    while (cursor_ > 0 && total() > kMaxHistoryBytes) {
+        entries_.erase(entries_.begin());
+        --cursor_;
+        std::erase_if(revisions_, [&](const auto &stored) { return !reachable(stored.first); });
+    }
 }
 
 }

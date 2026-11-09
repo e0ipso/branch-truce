@@ -92,6 +92,48 @@ void markersFollowTheCapturedMarkerSize()
     CHECK(oversized.support() == Support::OutsideApp && !oversized.correspondence());
 }
 
+void copiesShareRevisionsAndDiscardedBranchesAreDropped()
+{
+    FileSession file("plain", "plain.txt", {"a\n", {}, 0});
+    CHECK(file.editResult(1, {{0, 1}, "b"}) == Transition::Applied);
+    CHECK(file.editResult(2, {{0, 1}, "c"}) == Transition::Applied);
+    const auto copy = file;
+    CHECK(&copy.current() == &file.current());
+    // Undo publishes revision 4 as a copy of 2; the next edit discards 3 and 4.
+    CHECK(file.undo(3) == Transition::Applied && file.current().id == 4);
+    CHECK(file.editResult(4, {{0, 1}, "d"}) == Transition::Applied && file.current().id == 5);
+    CHECK(file.recordCheckpoint(3, Outcome::Succeeded) == Transition::StaleRevision);
+    CHECK(file.recordCheckpoint(4, Outcome::Succeeded) == Transition::StaleRevision);
+    CHECK(!file.checkpoint() && !file.checkpointOutcome());
+    // History entries, the current revision and the launch revision remain.
+    CHECK(file.recordCheckpoint(2, Outcome::Succeeded) == Transition::Applied);
+    CHECK(file.recordCheckpoint(5, Outcome::Succeeded) == Transition::Applied);
+    CHECK(file.undo(5) == Transition::Applied && file.current().draft.text == "b\n");
+    CHECK(file.undo(6) == Transition::Applied && file.current().draft.text == "a\n");
+    // The copy kept its own history.
+    CHECK(copy.current().draft.text == "c\n" && copy.canUndo() && !copy.canRedo());
+}
+
+void undoReachesBackAsFarAsTheHistorySizeAllows()
+{
+    // Each revision holds one payload-sized text, so the history fits this many.
+    const auto fits = kMaxHistoryBytes / kMaxRecoveryPayloadBytes;
+    std::string text;
+    text.reserve(kMaxRecoveryPayloadBytes);
+    while (text.size() < kMaxRecoveryPayloadBytes) text += std::string(1023, 'x') + '\n';
+    FileSession file("plain", "plain.txt", {text, {}, 0});
+    for (std::size_t edit = 0; edit < fits + 8; ++edit)
+        CHECK(file.editResult(file.current().id, {{0, 1}, edit % 2 ? "x" : "y"}) == Transition::Applied);
+    std::size_t undone = 0;
+    while (file.canUndo()) {
+        CHECK(file.undo(file.current().id) == Transition::Applied);
+        ++undone;
+    }
+    CHECK(undone > 0 && undone < fits);
+    // Discarding without a checkpoint still restores the launch text.
+    CHECK(file.discardToCheckpoint(file.current().id) == Transition::Applied && file.current().draft.text == text);
+}
+
 void launchTextOutsideTheInvariantIsUnreadable()
 {
     for (const auto *text : {"bad \xff\n", "crlf\r\n"}) {
@@ -113,5 +155,8 @@ int main()
     suite.run("only accepted decisions carry a combination order", onlyAcceptedDecisionsCarryAnOrder);
     suite.run("launch text outside that invariant is unreadable", launchTextOutsideTheInvariantIsUnreadable);
     suite.run("markers follow the captured conflict-marker-size", markersFollowTheCapturedMarkerSize);
+    suite.run("copies share revisions and discarded branches are dropped",
+              copiesShareRevisionsAndDiscardedBranchesAreDropped);
+    suite.run("undo reaches back as far as the history size allows", undoReachesBackAsFarAsTheHistorySizeAllows);
     return suite.report();
 }

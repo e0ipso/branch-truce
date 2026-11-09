@@ -26,6 +26,11 @@ struct Revision {
 // back to an entry: they publish a fresh copy of it, so every revision a
 // caller has seen keeps its identity. A copy of the history shares every
 // revision with the original.
+//
+// Only reachable revisions are kept: the history entries, the current
+// revision and the launch revision. Others are dropped as soon as they become
+// unreachable, and the oldest entries leave the history once the text the
+// history holds passes kMaxHistoryBytes.
 class RevisionHistory {
 public:
     RevisionHistory() = default;
