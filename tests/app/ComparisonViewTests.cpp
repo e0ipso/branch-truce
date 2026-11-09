@@ -1,20 +1,16 @@
-#include "app/ApplicationController.h"
-#include "fixtures/GitOnPath.h"
-#include "recovery/RecoveryRestore.h"
-#include "core/ResourceLimits.h"
 #include "TestHarness.h"
+#include "app/ApplicationController.h"
+#include "core/ResourceLimits.h"
 #include "fixtures/ChoiceFile.h"
+#include "fixtures/GitOnPath.h"
 #include "fixtures/QuickScene.h"
 #include "fixtures/RecoveryFaults.h"
+#include "recovery/RecoveryRestore.h"
 #include "storage/TextFormat.h"
 #include "ui/TextBlocks.h"
 #include <QAbstractTextDocumentLayout>
 #include <QAccessible>
 #include <QApplication>
-#include <algorithm>
-#include <atomic>
-#include <cstdio>
-#include <optional>
 #include <QClipboard>
 #include <QColor>
 #include <QElapsedTimer>
@@ -24,23 +20,27 @@
 #include <QInputMethodEvent>
 #include <QKeyEvent>
 #include <QMap>
-#include <QSet>
-#include <QSignalSpy>
 #include <QQmlApplicationEngine>
 #include <QQmlExpression>
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
+#include <QSet>
+#include <QSignalSpy>
 #include <QTcpServer>
 #include <QTemporaryDir>
 #include <QTest>
-#include <QTimer>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
+#include <QTimer>
 #include <QWheelEvent>
 #include <QtQml/qqml.h>
 #include <QtQuickTest/quicktest.h>
+#include <algorithm>
+#include <atomic>
+#include <cstdio>
+#include <optional>
 #include <tuple>
 
 using namespace branch_truce;
@@ -77,9 +77,12 @@ QtMessageHandler previousGutterHandler = nullptr;
 void gutterWarningHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
 {
     if (message.contains(QStringLiteral("LineGutter.qml"))
-        && message.contains(QStringLiteral("Cannot read property 'right' of null"))) ++gutterAnchorErrors;
-    if (previousGutterHandler) previousGutterHandler(type, context, message);
-    else std::fprintf(stderr, "%s\n", qPrintable(message));
+        && message.contains(QStringLiteral("Cannot read property 'right' of null")))
+        ++gutterAnchorErrors;
+    if (previousGutterHandler)
+        previousGutterHandler(type, context, message);
+    else
+        std::fprintf(stderr, "%s\n", qPrintable(message));
 }
 
 class GutterWarningCapture {
@@ -139,10 +142,13 @@ public:
     {
         auto *target = test_support::fileOverflowControl(name)
             ? test_support::fileToolbarControl(window, name)
-            : test_support::waitForStable(window, name, [&] {
-                auto *candidate = item(name);
-                return test_support::reachable(window, candidate) ? candidate : nullptr;
-            }, 60);
+            : test_support::waitForStable(
+                  window, name,
+                  [&] {
+                      auto *candidate = item(name);
+                      return test_support::reachable(window, candidate) ? candidate : nullptr;
+                  },
+                  60);
         if (!target->isVisible() || !target->isEnabled() || target->width() <= 0 || target->height() <= 0)
             throw std::runtime_error(std::string("unavailable control: ") + name);
         const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0)).toPoint();
@@ -151,8 +157,8 @@ public:
     }
     bool toolbarEnabled(const char *name)
     {
-        auto *button = test_support::fileOverflowControl(name)
-            ? test_support::fileToolbarControl(window, name) : item(name);
+        auto *button =
+            test_support::fileOverflowControl(name) ? test_support::fileToolbarControl(window, name) : item(name);
         const bool enabled = button->isEnabled();
         if (test_support::fileOverflowControl(name)) test_support::closeFileToolbarMenu(window);
         return enabled;
@@ -165,7 +171,7 @@ public:
     {
         auto *target = item(name);
         test_support::settleFor(std::string("layout of ") + name,
-            [&] { return target->isVisible() && target->width() > 0 && target->height() > 0; });
+                                [&] { return target->isVisible() && target->width() > 0 && target->height() > 0; });
         if (!QQuickTest::qWaitForPolish(window, 5000))
             throw std::runtime_error(std::string("the window kept polishing before clicking ") + name);
         click(name);
@@ -179,15 +185,16 @@ public:
         const auto name = QString::fromLatin1(entry);
         test_support::clickItem(window, test_support::waitForLayout(window, name, 60));
         test_support::settleFor(std::string("the menu holding ") + entry + " to close",
-            [&] { return !test_support::visualItem(window->contentItem(), name); });
+                                [&] { return !test_support::visualItem(window->contentItem(), name); });
     }
     void checkRecovered(const Draft &expected, std::size_t expectedFiles = 1)
     {
         const auto replay = replayRecovery(storage::RecoveryStore(controller.files()->recoveryDirectory()));
         if (!replay.succeeded) throw std::runtime_error("comparison recovery: " + replay.error.toStdString());
         CHECK(replay.succeeded && replay.files.size() == expectedFiles);
-        const auto recovered = std::find_if(replay.files.begin(), replay.files.end(),
-            [&](const FileSession &candidate) { return candidate.id() == file().id(); });
+        const auto recovered =
+            std::find_if(replay.files.begin(), replay.files.end(),
+                         [&](const FileSession &candidate) { return candidate.id() == file().id(); });
         CHECK(recovered != replay.files.end());
         CHECK(recovered->current().draft == expected);
         CHECK(recovered->current().id == file().current().id);
@@ -210,10 +217,7 @@ FileSession namedChoiceFile(const std::string &id)
     return FileSession(id, path, {text, {}, 0}, Support::Supported, {}, std::move(sources), true);
 }
 
-void clickItem(Fixture &fixture, QQuickItem *target)
-{
-    test_support::clickItem(fixture.window, target);
-}
+void clickItem(Fixture &fixture, QQuickItem *target) { test_support::clickItem(fixture.window, target); }
 
 QQuickItem *waitForLayout(Fixture &fixture, const QString &name)
 {
@@ -283,12 +287,19 @@ WorkSnapshot captureWork(Fixture &fixture)
 {
     const auto &current = fixture.file().current();
     const auto facts = fixture.file().facts();
-    return {current.id, current.draft, fixture.file().canUndo(), fixture.file().canRedo(),
-        QVariant(fixture.controller.selectedFile()->progress()),
-        facts.undecided, facts.unsaved, facts.resolved, facts.needsReview, facts.status,
-        fixture.item("resultText")->property("text").toString(),
-        fixture.item("stage2Text")->property("text").toString(),
-        fixture.item("stage3Text")->property("text").toString()};
+    return {current.id,
+            current.draft,
+            fixture.file().canUndo(),
+            fixture.file().canRedo(),
+            QVariant(fixture.controller.selectedFile()->progress()),
+            facts.undecided,
+            facts.unsaved,
+            facts.resolved,
+            facts.needsReview,
+            facts.status,
+            fixture.item("resultText")->property("text").toString(),
+            fixture.item("stage2Text")->property("text").toString(),
+            fixture.item("stage3Text")->property("text").toString()};
 }
 
 void checkUnchanged(Fixture &fixture, const WorkSnapshot &before)
@@ -298,35 +309,33 @@ void checkUnchanged(Fixture &fixture, const WorkSnapshot &before)
     CHECK(after.draft == before.draft);
     CHECK(after.canUndo == before.canUndo && after.canRedo == before.canRedo);
     CHECK(after.progress == before.progress);
-    CHECK(after.undecided == before.undecided && after.unsaved == before.unsaved
-        && after.resolved == before.resolved && after.needsReview == before.needsReview
-        && after.status == before.status);
+    CHECK(after.undecided == before.undecided && after.unsaved == before.unsaved && after.resolved == before.resolved
+          && after.needsReview == before.needsReview && after.status == before.status);
     CHECK(after.resultText == before.resultText && after.leftText == before.leftText
-        && after.rightText == before.rightText);
+          && after.rightText == before.rightText);
 }
 
 void expectDiagnostic(Fixture &fixture, const QString &diagnostic)
 {
-    auto *button = test_support::waitForStable(fixture.window, "Technical details", [&] {
-        return test_support::reachableButton(fixture.window, fixture.window->contentItem(), "Technical details");
-    }, 60);
+    auto *button = test_support::waitForStable(
+        fixture.window, "Technical details",
+        [&] {
+            return test_support::reachableButton(fixture.window, fixture.window->contentItem(), "Technical details");
+        },
+        60);
     test_support::clickItem(fixture.window, button);
-    settleFor("captured file diagnostic", [&] {
-        return fixture.item("selectedProblemDiagnostic")->isVisible();
-    });
+    settleFor("captured file diagnostic", [&] { return fixture.item("selectedProblemDiagnostic")->isVisible(); });
     auto *text = fixture.item("selectedProblemDiagnostic");
     CHECK(text->property("text").toString() == diagnostic);
     CHECK(text->property("readOnly").toBool() && text->property("selectByMouse").toBool());
     CHECK(text->property("textFormat").toInt() == 0); // TextEdit.PlainText
     QTest::keyClick(fixture.window, Qt::Key_Escape);
-    settleFor("file diagnostics closed", [&] {
-        return !fixture.object("selectedProblemDetails")->property("visible").toBool();
-    });
+    settleFor("file diagnostics closed",
+              [&] { return !fixture.object("selectedProblemDetails")->property("visible").toBool(); });
 }
 
-void expectProgress(Fixture &fixture, bool saved, bool reviewed, bool resolved, bool earlier,
-                    const QString &current, const QString &savedRevision,
-                    const QString &reviewedRevision, const QString &stagedRevision,
+void expectProgress(Fixture &fixture, bool saved, bool reviewed, bool resolved, bool earlier, const QString &current,
+                    const QString &savedRevision, const QString &reviewedRevision, const QString &stagedRevision,
                     qulonglong undecided, qulonglong conflicts = 0)
 {
     CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
@@ -364,9 +373,8 @@ void expectProgress(Fixture &fixture, bool saved, bool reviewed, bool resolved, 
     CHECK(progress.value(QStringLiteral("conflicts")).toULongLong() == conflicts);
 }
 
-void expectNavigation(Fixture &fixture, const QString &mode, const QString &fileId,
-                      const QString &scope, int index, int count, int begin, int end,
-                      const QString &label, const QString &contribution = {})
+void expectNavigation(Fixture &fixture, const QString &mode, const QString &fileId, const QString &scope, int index,
+                      int count, int begin, int end, const QString &label, const QString &contribution = {})
 {
     const auto target = fixture.controller.navigationTarget();
     const auto actual = target.value(QStringLiteral("label")).toString();
@@ -384,8 +392,7 @@ void expectNavigation(Fixture &fixture, const QString &mode, const QString &file
     CHECK(target.value(QStringLiteral("utf16End")).toInt() == end);
     CHECK(target.value(QStringLiteral("byteBegin")).toULongLong() == static_cast<qulonglong>(begin));
     CHECK(target.value(QStringLiteral("byteEnd")).toULongLong() == static_cast<qulonglong>(end));
-    if (!contribution.isEmpty())
-        CHECK(target.value(QStringLiteral("contributionId")).toString() == contribution);
+    if (!contribution.isEmpty()) CHECK(target.value(QStringLiteral("contributionId")).toString() == contribution);
     auto *editor = fixture.item("resultText");
     const int selectionStart = editor->property("selectionStart").toInt();
     const int selectionEnd = editor->property("selectionEnd").toInt();
@@ -406,17 +413,16 @@ std::string numberedLines(const std::string &prefix, int first, int count)
 qreal paneLineHeight(QQuickItem *editor)
 {
     auto *document = editor->property("textDocument").value<QQuickTextDocument *>()->textDocument();
-    settle([&] { return document->begin().blockFormat().lineHeightType() == QTextBlockFormat::LineDistanceHeight
-        && document->lastBlock().blockFormat().lineHeightType() == QTextBlockFormat::LineDistanceHeight; });
+    settle([&] {
+        return document->begin().blockFormat().lineHeightType() == QTextBlockFormat::LineDistanceHeight
+            && document->lastBlock().blockFormat().lineHeightType() == QTextBlockFormat::LineDistanceHeight;
+    });
     const auto lines = editor->property("lineCount").toInt();
     CHECK(lines > 0);
     return editor->property("contentHeight").toReal() / lines;
 }
 
-qreal contentY(QQuickItem *viewport)
-{
-    return viewport->property("contentY").toReal();
-}
+qreal contentY(QQuickItem *viewport) { return viewport->property("contentY").toReal(); }
 
 // Waits until the panes keep their place, so the window has finished its
 // layout and the view has placed the panes for the selected file.
@@ -436,7 +442,7 @@ void wheelTo(Fixture &fixture, const char *name, qreal target)
     for (int notch = 0; notch < 400 && contentY(viewport) < target; ++notch) {
         const auto point = viewport->mapToScene(QPointF(viewport->width() / 2, viewport->height() / 2));
         QWheelEvent wheel(point, fixture.window->mapToGlobal(point), QPoint(), QPoint(0, -120), Qt::NoButton,
-            Qt::NoModifier, Qt::NoScrollPhase, false);
+                          Qt::NoModifier, Qt::NoScrollPhase, false);
         timestamp += 250;
         wheel.setTimestamp(timestamp);
         QCoreApplication::sendEvent(fixture.window, &wheel);
@@ -450,8 +456,8 @@ void wheelTo(Fixture &fixture, const char *name, qreal target)
 FileSession insertionFile()
 {
     const auto left = numberedLines("shared", 1, 400);
-    const auto right = numberedLines("shared", 1, 50) + numberedLines("right only", 1, 30)
-        + numberedLines("shared", 51, 350);
+    const auto right =
+        numberedLines("shared", 1, 50) + numberedLines("right only", 1, 30) + numberedLines("shared", 51, 350);
     return test_support::choiceFile(left, right, right);
 }
 
@@ -611,13 +617,17 @@ PaneMarks paintedMarks(Fixture &fixture, const std::string &pane)
         if (!child->isVisible() || text.isEmpty()) continue;
         CHECK(number);
         const auto description = qmlValue(child, QStringLiteral("Accessible.description")).toString();
-        if (description.contains("Matches both captured sources")) found.letters.insert(line, "B");
-        else if (description.contains("Matches the captured left source")) found.letters.insert(line, "L");
-        else if (description.contains("Matches the captured right source")) found.letters.insert(line, "R");
-        else if (description.contains("Edited by hand")) found.letters.insert(line, "m");
+        if (description.contains("Matches both captured sources"))
+            found.letters.insert(line, "B");
+        else if (description.contains("Matches the captured left source"))
+            found.letters.insert(line, "L");
+        else if (description.contains("Matches the captured right source"))
+            found.letters.insert(line, "R");
+        else if (description.contains("Edited by hand"))
+            found.letters.insert(line, "m");
     }
-    CHECK(!test_support::visualItem(fixture.window->contentItem(),
-        QString::fromStdString(pane + "GutterDecisionSlot")));
+    CHECK(
+        !test_support::visualItem(fixture.window->contentItem(), QString::fromStdString(pane + "GutterDecisionSlot")));
     found.tinted = tintedLines(fixture.item((pane + "Text").c_str()));
     return found;
 }
@@ -642,8 +652,8 @@ void expectMarks(Fixture &fixture, const std::string &when, const std::string &p
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     const auto painted = paintedMarks(fixture, pane);
     if (painted != expected)
-        throw std::runtime_error(when + ", " + pane + " paints " + describeMarks(painted)
-            + ", not " + describeMarks(expected));
+        throw std::runtime_error(when + ", " + pane + " paints " + describeMarks(painted) + ", not "
+                                 + describeMarks(expected));
     if (pane != "stage2" && pane != "stage3") return;
     // The remaining number/state gutter shares the full viewport's row fills,
     // including accepted rows and after history changes.
@@ -671,7 +681,7 @@ void expectMarks(Fixture &fixture, const std::string &when, const std::string &p
 // each gets a glyph of its kind, and a background of its kind unless it is
 // ignored, whose text is tinted instead. The other lines carry no mark.
 PaneMarks regionMarks(const QString &second, const QString &fourth, const QString &sixth,
-    const QMap<int, QString> &letters = {})
+                      const QMap<int, QString> &letters = {})
 {
     PaneMarks marks;
     marks.letters = letters;
@@ -706,9 +716,11 @@ std::vector<Band> paintedBands(Fixture &fixture, const std::string &side)
         const auto line = [&](const char *name) {
             return qmlValue(band, QStringLiteral("modelData.") + QLatin1String(name)).toInt();
         };
-        const auto y = [&](const char *name) { return band->mapToScene(QPointF(0, band->property(name).toReal())).y(); };
-        bands.push_back({band->property("kind").toString(), line("sourceBegin"), line("sourceEnd"),
-            line("resultBegin"), line("resultEnd"), y("sourceTop"), y("sourceBottom"), y("resultTop"), y("resultBottom")});
+        const auto y = [&](const char *name) {
+            return band->mapToScene(QPointF(0, band->property(name).toReal())).y();
+        };
+        bands.push_back({band->property("kind").toString(), line("sourceBegin"), line("sourceEnd"), line("resultBegin"),
+                         line("resultEnd"), y("sourceTop"), y("sourceBottom"), y("resultTop"), y("resultBottom")});
     }
     std::sort(bands.begin(), bands.end(), [](const Band &a, const Band &b) { return a.sourceBegin < b.sourceBegin; });
     return bands;
@@ -720,7 +732,8 @@ std::vector<std::string> bandLines(Fixture &fixture, const std::string &side)
     std::vector<std::string> lines;
     for (const auto &band : paintedBands(fixture, side)) {
         lines.push_back(band.kind.toStdString() + " " + std::to_string(band.sourceBegin) + "-"
-            + std::to_string(band.sourceEnd) + ">" + std::to_string(band.resultBegin) + "-" + std::to_string(band.resultEnd));
+                        + std::to_string(band.sourceEnd) + ">" + std::to_string(band.resultBegin) + "-"
+                        + std::to_string(band.resultEnd));
     }
     return lines;
 }
@@ -757,7 +770,7 @@ std::optional<std::pair<qreal, qreal>> paintedSpan(Fixture &fixture, const std::
 // Waits until one side's handle draws the expected bands, each with its ends
 // on the lines that the source pane and the result paint for its passage.
 void expectBands(Fixture &fixture, const std::string &when, const std::string &side,
-    const std::vector<std::string> &expected)
+                 const std::vector<std::string> &expected)
 {
     const auto misplaced = [&]() -> std::string {
         if (bandLines(fixture, side) != expected) return "the wrong bands";
@@ -767,7 +780,7 @@ void expectBands(Fixture &fixture, const std::string &when, const std::string &s
             if (!source || !result) return "line geometry not ready";
             const auto off = [](qreal a, qreal b) { return std::abs(a - b) > 0.5; };
             if (off(band.sourceTop, source->first) || off(band.sourceBottom, source->second)
-                    || off(band.resultTop, result->first) || off(band.resultBottom, result->second))
+                || off(band.resultTop, result->first) || off(band.resultBottom, result->second))
                 return "a band at " + std::to_string(band.sourceTop) + "-" + std::to_string(band.sourceBottom) + ">"
                     + std::to_string(band.resultTop) + "-" + std::to_string(band.resultBottom) + " over lines at "
                     + std::to_string(source->first) + "-" + std::to_string(source->second) + ">"
@@ -808,7 +821,8 @@ QList<int> linesStarting(Fixture &fixture, const QStringList &prefixes)
     QList<int> found;
     const auto lines = fixture.text().split(QLatin1Char('\n'));
     for (int i = 0; i < lines.size(); ++i)
-        if (std::any_of(prefixes.begin(), prefixes.end(), [&](const QString &prefix) { return lines[i].startsWith(prefix); }))
+        if (std::any_of(prefixes.begin(), prefixes.end(),
+                        [&](const QString &prefix) { return lines[i].startsWith(prefix); }))
             found.push_back(i + 1);
     return found;
 }
@@ -821,7 +835,8 @@ QMap<int, QQuickItem *> foldParts(QQuickItem *layer)
     auto *rows = layer->findChild<QQuickItem *>(layer->objectName() + QStringLiteral("Rows"));
     if (!rows) throw std::runtime_error("missing folded rows");
     for (auto *child : rows->childItems())
-        if (child->isVisible() && child->property("line").isValid()) found.insert(child->property("line").toInt(), child);
+        if (child->isVisible() && child->property("line").isValid())
+            found.insert(child->property("line").toInt(), child);
     return found;
 }
 
@@ -865,15 +880,18 @@ MarkerLook markerLook(Fixture &fixture)
     auto *editor = fixture.item("resultText");
     const auto first = sceneRectangle(editor, 0);
     const auto bridge = sceneRectangle(editor, static_cast<int>(fixture.text().indexOf("bridge")));
-    look.rowsToBridge = std::round((bridge.top() - first.top()) / fixture.item("comparisonView")->property("rowHeight").toReal() * 100) / 100;
+    look.rowsToBridge =
+        std::round((bridge.top() - first.top()) / fixture.item("comparisonView")->property("rowHeight").toReal() * 100)
+        / 100;
     return look;
 }
 
 std::string describeLook(const MarkerLook &look)
 {
     return ("hidden [" + listed(look.hidden) + "] numbered [" + listed(look.numbered) + "] marked ["
-        + listed(look.marked) + "] rows [" + listed(look.rows) + "] bridge at row "
-        + QString::number(look.rowsToBridge)).toStdString();
+            + listed(look.marked) + "] rows [" + listed(look.rows) + "] bridge at row "
+            + QString::number(look.rowsToBridge))
+        .toStdString();
 }
 
 // markedFile() with both blocks folded: lines 2-8 and 10-14 show as rows on lines 2 and 10.
@@ -905,7 +923,8 @@ void expectCursor(Fixture &fixture, const std::string &when, int position)
     for (int turn = 0; turn < 5; ++turn) QCoreApplication::processEvents();
     const int at = editor->property("cursorPosition").toInt();
     if (at != position)
-        throw std::runtime_error(when + ": the cursor is at " + std::to_string(at) + ", not " + std::to_string(position));
+        throw std::runtime_error(when + ": the cursor is at " + std::to_string(at) + ", not "
+                                 + std::to_string(position));
 }
 
 // Which cases one run executes. The deletion-at-limit cases edit multi-megabyte buffers in the
@@ -918,11 +937,11 @@ enum class Selection { All, Scenes, Boundary, Display };
 class Group {
 public:
     Group(test_support::Suite &suite, bool selected) : suite_(suite), selected_(selected) {}
-    template<typename Test>
-    void run(const std::string &name, Test test)
+    template <typename Test> void run(const std::string &name, Test test)
     {
         if (selected_) suite_.run(name, std::move(test));
     }
+
 private:
     test_support::Suite &suite_;
     bool selected_;
@@ -941,8 +960,8 @@ public:
             auto sources = *test_support::batchFile().snapshots();
             sources.path = "src/net/retry.cpp";
             const auto launch = sources.launchResult.text.utf8;
-            Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0},
-                Support::Supported, {}, sources, true));
+            Fixture fixture(
+                FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
             const auto before = captureWork(fixture);
             for (const auto height : {720, 800}) {
                 fixture.window->resize(1280, height);
@@ -1011,10 +1030,9 @@ public:
                 CHECK(std::abs(viewport->width() - viewport->parentItem()->width()) < 0.01);
                 CHECK(fixture.item((prefix + "Backgrounds").c_str())->width() >= viewport->width());
                 auto *gutter = fixture.item((prefix + "Gutter").c_str());
-                CHECK(std::abs(gutter->mapToScene(QPointF()).x()
-                    - viewport->mapToScene(QPointF()).x()) < 0.01);
+                CHECK(std::abs(gutter->mapToScene(QPointF()).x() - viewport->mapToScene(QPointF()).x()) < 0.01);
                 CHECK(!test_support::visualItem(fixture.window->contentItem(),
-                    QString::fromStdString(prefix + "ChoiceColumn")));
+                                                QString::fromStdString(prefix + "ChoiceColumn")));
                 const auto width = viewport->width();
                 CHECK(comparison->setProperty("showChoices", false));
                 CHECK(std::abs(viewport->width() - width) < 0.01);
@@ -1038,11 +1056,11 @@ public:
                     auto *pane = fixture.item("stage2Viewport")->parentItem()->parentItem();
                     auto *focus = fixture.window->activeFocusItem();
                     throw std::runtime_error(std::string(error.what()) + "; sourceHoveredLine="
-                        + std::to_string(pane->property("hoveredLine").toInt())
-                        + " rowHovered=" + std::to_string(row->property("rowHovered").toBool())
-                        + " revealed=" + std::to_string(row->property("revealed").toBool())
-                        + " choiceFocused=" + std::to_string(row->property("choiceFocused").toBool())
-                        + " activeFocus=" + (focus ? focus->objectName().toStdString() : "none"));
+                                             + std::to_string(pane->property("hoveredLine").toInt()) + " rowHovered="
+                                             + std::to_string(row->property("rowHovered").toBool()) + " revealed="
+                                             + std::to_string(row->property("revealed").toBool()) + " choiceFocused="
+                                             + std::to_string(row->property("choiceFocused").toBool())
+                                             + " activeFocus=" + (focus ? focus->objectName().toStdString() : "none"));
                 }
             };
             QTest::mouseMove(fixture.window, QPoint(5, 5));
@@ -1060,8 +1078,7 @@ public:
             // must reveal the overlay and retain source/counterpart highlighting.
             auto *viewport = fixture.item("stage2Viewport");
             const auto rowY = button->mapToItem(viewport, center).y();
-            QTest::mouseMove(fixture.window,
-                viewport->mapToScene(QPointF(viewport->width() / 2, rowY)).toPoint());
+            QTest::mouseMove(fixture.window, viewport->mapToScene(QPointF(viewport->width() / 2, rowY)).toPoint());
             waitOverlay("source code hover reveals its overlay", [&] {
                 auto *row = button->parentItem();
                 auto *pane = viewport->parentItem()->parentItem();
@@ -1074,7 +1091,7 @@ public:
             auto *bar = fixture.item("stage2VerticalScrollBar");
             if (bar->isVisible())
                 CHECK(button->mapRectToScene(button->boundingRect()).right()
-                    <= bar->mapRectToScene(bar->boundingRect()).left());
+                      <= bar->mapRectToScene(bar->boundingRect()).left());
             QTest::mouseMove(fixture.window, QPoint(5, 5));
             waitOverlay("source overlay hidden after leaving hover", [&] { return !test_support::painted(button); });
             // Traverse the real native Tab chain; opacity must not remove the target.
@@ -1171,15 +1188,18 @@ public:
             cursorAt("left later");
             settleFor("both sides can resolve", [&] { return enabled(true, true); });
             clickItem(fixture, button("stage2"));
-            settleFor("the second conflict resolved using Left", [&] { return decided(sections[1], "stage2", "stage3"); });
+            settleFor("the second conflict resolved using Left",
+                      [&] { return decided(sections[1], "stage2", "stage3"); });
             CHECK(state(sections[0], "stage2") == "undecided" && state(sections[0], "stage3") == "undecided");
             CHECK(!fixture.object("replacementDialog")->property("visible").toBool());
             // Outside every conflict the headers take the next undecided one, wrapping to the first.
             cursorAt("tail");
             settleFor("the first conflict is next", [&] { return enabled(true, true); });
-            CHECK(test_support::accessibleName(button("stage3")) == QStringLiteral("Resolve the current conflict using Right"));
+            CHECK(test_support::accessibleName(button("stage3"))
+                  == QStringLiteral("Resolve the current conflict using Right"));
             clickItem(fixture, button("stage3"));
-            settleFor("the first conflict resolved using Right", [&] { return decided(sections[0], "stage3", "stage2"); });
+            settleFor("the first conflict resolved using Right",
+                      [&] { return decided(sections[0], "stage3", "stage2"); });
             CHECK(fixture.controller.selectedFile()->markerBlocks().isEmpty());
             CHECK(fixture.text() == QStringLiteral("header\nright first\nright second\nbridge\nleft later\ntail\n"));
             // With no undecided conflict left, neither header can resolve one.
@@ -1193,9 +1213,9 @@ public:
             // The native replay's identity, with a title far wider than the header.
             auto *narrow = header("stage3Label");
             CHECK(narrow->setProperty("title", QString(80, QLatin1Char('t')))
-                && narrow->setProperty("identityRole", QStringLiteral("Merged commit"))
-                && narrow->setProperty("identityHash", QStringLiteral("017b782636"))
-                && narrow->setProperty("identity", QString::fromUtf8("Merged commit \u00b7 017b782636")));
+                  && narrow->setProperty("identityRole", QStringLiteral("Merged commit"))
+                  && narrow->setProperty("identityHash", QStringLiteral("017b782636"))
+                  && narrow->setProperty("identity", QString::fromUtf8("Merged commit \u00b7 017b782636")));
             settleFor("a long title in a narrow header", [&] {
                 const auto bounds = narrow->mapRectToScene(narrow->boundingRect());
                 return bounds.right() <= fixture.window->width() + 0.5
@@ -1210,8 +1230,10 @@ public:
             auto *document = editor->property("textDocument").value<QQuickTextDocument *>();
             CHECK(document && document->textDocument());
             auto *text = document->textDocument();
-            settle([&] { return text->begin().blockFormat().lineHeightType() == QTextBlockFormat::LineDistanceHeight
-                && text->lastBlock().blockFormat().lineHeightType() == QTextBlockFormat::LineDistanceHeight; });
+            settle([&] {
+                return text->begin().blockFormat().lineHeightType() == QTextBlockFormat::LineDistanceHeight
+                    && text->lastBlock().blockFormat().lineHeightType() == QTextBlockFormat::LineDistanceHeight;
+            });
             const auto first = sceneRectangle(editor, text->begin().position());
             const auto second = sceneRectangle(editor, text->begin().next().position());
             const auto row = second.y() - first.y();
@@ -1242,7 +1264,8 @@ public:
                     const auto b = sceneRectangle(editor, first.position() + layout->lineAt(row).textStart());
                     CHECK(std::abs((b.y() - a.y()) - expected) < 0.01);
                 }
-                const auto last = sceneRectangle(editor, first.position() + layout->lineAt(layout->lineCount() - 1).textStart());
+                const auto last =
+                    sceneRectangle(editor, first.position() + layout->lineAt(layout->lineCount() - 1).textStart());
                 const auto next = sceneRectangle(editor, first.next().position());
                 CHECK(std::abs(next.y() - last.y() - expected) < 0.01);
                 CHECK(expected > last.height());
@@ -1289,7 +1312,8 @@ public:
             settle([&] { return fixture.controller.files()->hasPendingRecovery(); });
             const std::function<QQuickItem *(QQuickItem *)> rowFor = [&](QQuickItem *item) -> QQuickItem * {
                 if (item->property("fileId").toString() == QStringLiteral("choices")
-                    && item->property("subtitle").isValid()) return item;
+                    && item->property("subtitle").isValid())
+                    return item;
                 for (auto *child : item->childItems())
                     if (auto *found = rowFor(child)) return found;
                 return nullptr;
@@ -1315,26 +1339,35 @@ public:
             sources.launchResult.text.format.encoding = SnapshotFormat::Encoding::Utf16LittleEndian;
             sources.launchResult.text.format.newline = SnapshotFormat::Newline::CrLf;
             sources.launchResult.text.format.bom = true;
-            const auto encoded = storage::serializeText(QByteArray::fromStdString(sources.launchResult.text.utf8),
-                {storage::TextEncoding::Utf16LittleEndian, true, storage::Newline::CrLf, true});
+            const auto encoded =
+                storage::serializeText(QByteArray::fromStdString(sources.launchResult.text.utf8),
+                                       {storage::TextEncoding::Utf16LittleEndian, true, storage::Newline::CrLf, true});
             CHECK(encoded.document);
             sources.launchResult.text.bytes = encoded.document->originalBytes.toStdString();
             sources.launchResult.identity.size = encoded.document->originalBytes.size();
             Fixture fixture(FileSession("choices", "choices.txt", {sources.launchResult.text.utf8, {}, 0},
-                Support::Supported, {}, sources, true));
+                                        Support::Supported, {}, sources, true));
             const auto before = captureWork(fixture);
-            CHECK(fixture.controller.selectedFile()->formatDescription() == QStringLiteral("UTF-16 LE with BOM · CRLF"));
-            CHECK(fixture.item("fileFacts")->property("text").toString().contains(QStringLiteral("UTF-16 LE with BOM · CRLF")));
+            CHECK(fixture.controller.selectedFile()->formatDescription()
+                  == QStringLiteral("UTF-16 LE with BOM · CRLF"));
+            CHECK(fixture.item("fileFacts")
+                      ->property("text")
+                      .toString()
+                      .contains(QStringLiteral("UTF-16 LE with BOM · CRLF")));
             checkUnchanged(fixture, before);
         });
         suite.run("header operation and footer progress stay separate", [] {
             Fixture fixture;
             auto *subtitle = fixture.item("repositorySubtitle");
             CHECK(subtitle->property("text").toString() == fixture.controller.loader()->operationDescription());
-            CHECK(fixture.item("workflowStatus")->property("text").toString() == QStringLiteral("0 of 1 file resolved"));
+            CHECK(fixture.item("workflowStatus")->property("text").toString()
+                  == QStringLiteral("0 of 1 file resolved"));
             CHECK(fixture.controller.files()->appendFile(
                 FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
-            settle([&] { return fixture.item("workflowStatus")->property("text").toString() == QStringLiteral("0 of 2 files resolved"); });
+            settle([&] {
+                return fixture.item("workflowStatus")->property("text").toString()
+                    == QStringLiteral("0 of 2 files resolved");
+            });
             CHECK(subtitle->property("text").toString() == fixture.controller.loader()->operationDescription());
         });
         suite.run("actual comparison keeps verified sources around the editable launch result", [] {
@@ -1344,12 +1377,15 @@ public:
             CHECK(fixture.text().toStdString() == launch);
             for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
                 const auto *prefix = side == SourceSide::Stage2 ? "stage2" : "stage3";
-                const auto &source = side == SourceSide::Stage2 ? fixture.file().snapshots()->stage2 : fixture.file().snapshots()->stage3;
+                const auto &source = side == SourceSide::Stage2 ? fixture.file().snapshots()->stage2
+                                                                : fixture.file().snapshots()->stage3;
                 CHECK(fixture.item((std::string(prefix) + "Text").c_str())->property("readOnly").toBool());
-                CHECK(fixture.item((std::string(prefix) + "Text").c_str())->property("text").toString().toStdString() == source->worktree.utf8);
+                CHECK(fixture.item((std::string(prefix) + "Text").c_str())->property("text").toString().toStdString()
+                      == source->worktree.utf8);
                 const auto label = fixture.item((std::string(prefix) + "Label").c_str())->property("text").toString();
                 CHECK(label.contains(QString::fromStdString(source->label)));
-                const auto identity = fixture.item((std::string(prefix) + "Identity").c_str())->property("text").toString();
+                const auto identity =
+                    fixture.item((std::string(prefix) + "Identity").c_str())->property("text").toString();
                 CHECK(identity == QString::fromStdString(*source->commitId).left(10));
                 const auto projected = fixture.controller.selectedFile()->property(prefix).toMap();
                 CHECK(projected.value("commitId").toString().toStdString() == *source->commitId);
@@ -1367,42 +1403,55 @@ public:
             const auto describe = [&](const char *name) {
                 auto *item = fixture.item(name);
                 auto *iface = QAccessible::queryAccessibleInterface(item);
-                return QStringLiteral("%1 checkable=%2 role=%3").arg(QLatin1String(name))
+                return QStringLiteral("%1 checkable=%2 role=%3")
+                    .arg(QLatin1String(name))
                     .arg(item->property("checkable").toBool())
                     .arg(iface ? static_cast<int>(iface->role()) : -1);
             };
             QStringList commands;
             QStringList expectedCommands;
             for (const auto *name : {"saveDraft", "markResolved", "undoCommand", "redoCommand", "openHandoff",
-                     "previousUndecided", "undecidedCounter", "nextUndecided"}) {
+                                     "previousUndecided", "undecidedCounter", "nextUndecided"}) {
                 commands << describe(name);
-                expectedCommands << QStringLiteral("%1 checkable=0 role=%2").arg(QLatin1String(name)).arg(static_cast<int>(QAccessible::Button));
+                expectedCommands << QStringLiteral("%1 checkable=0 role=%2")
+                                        .arg(QLatin1String(name))
+                                        .arg(static_cast<int>(QAccessible::Button));
             }
             for (const auto *name : {"navigateMenu"}) {
                 commands << describe(name);
-                expectedCommands << QStringLiteral("%1 checkable=0 role=%2").arg(QLatin1String(name)).arg(static_cast<int>(QAccessible::ButtonMenu));
+                expectedCommands << QStringLiteral("%1 checkable=0 role=%2")
+                                        .arg(QLatin1String(name))
+                                        .arg(static_cast<int>(QAccessible::ButtonMenu));
             }
             QStringList toggles;
             QStringList expectedToggles;
             for (const auto *name : {"toggleFileList"}) {
                 toggles << describe(name);
-                expectedToggles << QStringLiteral("%1 checkable=1 role=%2").arg(QLatin1String(name)).arg(static_cast<int>(QAccessible::CheckBox));
+                expectedToggles << QStringLiteral("%1 checkable=1 role=%2")
+                                       .arg(QLatin1String(name))
+                                       .arg(static_cast<int>(QAccessible::CheckBox));
             }
             test_support::fileToolbarControl(fixture.window, "copyResult");
             for (const auto *name : {"copyResult", "pasteResult", "discardUnsaved", "sourceChoicesMenu"}) {
                 commands << describe(name);
-                expectedCommands << QStringLiteral("%1 checkable=0 role=%2").arg(QLatin1String(name)).arg(static_cast<int>(QAccessible::MenuItem));
+                expectedCommands << QStringLiteral("%1 checkable=0 role=%2")
+                                        .arg(QLatin1String(name))
+                                        .arg(static_cast<int>(QAccessible::MenuItem));
             }
             toggles << describe("showSourceChoices");
-            expectedToggles << QStringLiteral("showSourceChoices checkable=1 role=%1").arg(static_cast<int>(QAccessible::MenuItem));
+            expectedToggles
+                << QStringLiteral("showSourceChoices checkable=1 role=%1").arg(static_cast<int>(QAccessible::MenuItem));
             if (commands != expectedCommands || toggles != expectedToggles)
-                throw std::runtime_error(("commands:\n" + commands.join('\n') + "\ntoggles:\n" + toggles.join('\n')).toStdString());
+                throw std::runtime_error(
+                    ("commands:\n" + commands.join('\n') + "\ntoggles:\n" + toggles.join('\n')).toStdString());
             CHECK(commands == expectedCommands && toggles == expectedToggles);
             auto *discard = fixture.item("discardUnsaved");
             auto *discardFace = QAccessible::queryAccessibleInterface(discard);
             CHECK(discardFace && discardFace->role() == QAccessible::MenuItem);
             QTest::keyClick(fixture.window, Qt::Key_Escape);
-            settle([&] { return !test_support::namedButton(fixture.window->contentItem(), QStringLiteral("copyResult")); });
+            settle([&] {
+                return !test_support::namedButton(fixture.window->contentItem(), QStringLiteral("copyResult"));
+            });
             fixture.click("navigateMenu");
             auto *difference = test_support::waitForLayout(fixture.window, QStringLiteral("previousDifference"), 60);
             auto *differenceFace = QAccessible::queryAccessibleInterface(difference);
@@ -1425,13 +1474,14 @@ public:
             QQmlExpression narrow(qmlContext(toolbar), toolbar, QStringLiteral("Layout.maximumWidth = 100"));
             narrow.evaluate();
             CHECK(!narrow.hasError());
-            auto *more = test_support::waitForStable(fixture.window, "file toolbar overflow", [&] {
-                return test_support::namedButton(toolbar, QStringLiteral("More Actions"));
-            }, 60);
+            auto *more = test_support::waitForStable(
+                fixture.window, "file toolbar overflow",
+                [&] { return test_support::namedButton(toolbar, QStringLiteral("More Actions")); }, 60);
             clickItem(fixture, more);
-            auto *entry = test_support::waitForStable(fixture.window, "overflowed Undo", [&] {
-                return test_support::namedButton(fixture.window->contentItem(), QStringLiteral("undoCommand"));
-            }, 60);
+            auto *entry = test_support::waitForStable(
+                fixture.window, "overflowed Undo",
+                [&] { return test_support::namedButton(fixture.window->contentItem(), QStringLiteral("undoCommand")); },
+                60);
             CHECK(entry->objectName() == "undoCommand");
             auto *menu = entry->property("containingMenu").value<QObject *>();
             CHECK(menu && menu->property("visible").toBool());
@@ -1454,7 +1504,8 @@ public:
             CHECK(fixture.item("showEarlier")->setProperty("checked", true));
             settle([&] { return fixture.item("earlierText")->isVisible(); });
             CHECK(fixture.item("earlierText")->property("readOnly").toBool());
-            CHECK(fixture.item("earlierText")->property("text").toString().toStdString() == fixture.file().snapshots()->earlier->worktree.utf8);
+            CHECK(fixture.item("earlierText")->property("text").toString().toStdString()
+                  == fixture.file().snapshots()->earlier->worktree.utf8);
             // The source choices start shown in the gutters; collapse them for the resize below.
             CHECK(fixture.item("scopedChoices")->isVisible());
             fixture.click("showSourceChoices");
@@ -1463,13 +1514,14 @@ public:
             auto *pane = fixture.item("stage2Viewport")->parentItem()->parentItem();
             const auto width = pane->width();
             QQmlExpression resize(qmlContext(pane), pane,
-                QStringLiteral("SplitView.preferredWidth = %1").arg(width + 80));
+                                  QStringLiteral("SplitView.preferredWidth = %1").arg(width + 80));
             resize.evaluate();
             if (resize.hasError()) throw std::runtime_error(resize.error().toString().toStdString());
             settle([&] { return pane->width() > width + 20; });
             fixture.window->resize(1700, 1150);
             settle([&] { return fixture.item("comparisonPanes")->width() > 1200; });
-            CHECK(fixture.item("stage2Text")->property("text") == left && fixture.item("stage3Text")->property("text") == right);
+            CHECK(fixture.item("stage2Text")->property("text") == left
+                  && fixture.item("stage3Text")->property("text") == right);
             CHECK(!fixture.item("earlierText")->isVisible() && !fixture.item("scopedChoices")->isVisible());
             CHECK(fixture.text().toStdString() == before.draft.text);
             CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
@@ -1500,7 +1552,8 @@ public:
             fixture.key(Qt::Key_E, Qt::NoModifier, QString::fromUtf8("\xc3\xa9"));
             const auto replaced = fixture.file().current();
             CHECK(replaced.id == typed.id + 1 && replaced.draft.text == "alaunch \xc3\xa9\n");
-            CHECK(replaced.draft.decisions == initial.draft.decisions && fixture.text().toStdString() == replaced.draft.text);
+            CHECK(replaced.draft.decisions == initial.draft.decisions
+                  && fixture.text().toStdString() == replaced.draft.text);
             fixture.checkRecovered(replaced.draft);
             fixture.key(Qt::Key_Z, Qt::ControlModifier);
             CHECK(fixture.file().current().draft == typed.draft && fixture.text().toStdString() == typed.draft.text);
@@ -1627,90 +1680,121 @@ public:
             fixture.key(Qt::Key_Z, Qt::ControlModifier);
             CHECK(fixture.file().current().draft == before.draft);
         });
-        for (const auto &[scopeName, scope] : {
-                 std::pair{QStringLiteral("left"), ChoicePreviewFlow::NonConflicting::LeftChanges},
-                 std::pair{QStringLiteral("right"), ChoicePreviewFlow::NonConflicting::RightChanges},
-                 std::pair{QStringLiteral("both"), ChoicePreviewFlow::NonConflicting::BothChanges}}) {
-            suite.run("batch preview identifies its file and source scope without changing another file " + scopeName.toStdString(), [=] {
-                Fixture fixture;
-                auto captured = *test_support::batchFile().snapshots();
-                captured.path = "other.txt";
-                CHECK(fixture.controller.files()->appendFile(FileSession("other", captured.path,
-                    {captured.launchResult.text.utf8, {}, 0}, Support::Supported, {}, captured, true)));
-                const auto other = fixture.controller.files()->file("other")->current();
-                CHECK(fixture.controller.previewNonConflicting("choices", "1", scope));
-                const auto preview = fixture.controller.nonConflictingPreview();
-                CHECK(preview.value("path").toString() == "choices.txt");
-                CHECK(preview.value("scope").toString() == (scopeName == "left" ? "Left" : scopeName == "right" ? "Right" : "Left and Right"));
-                CHECK(preview.value("changes").toList().size() == (scopeName == "both" ? 2 : 1));
-                for (const auto &change : preview.value("changes").toList()) {
-                    const auto label = change.toMap().value("scope").toString();
-                    CHECK(label.startsWith(scopeName == "right" ? "Right" : "Left") || (scopeName == "both" && label.startsWith("Right")));
-                }
-                CHECK(fixture.controller.applyNonConflicting());
-                CHECK(fixture.controller.files()->file("other")->current().id == other.id);
-                CHECK(fixture.controller.files()->file("other")->current().draft == other.draft);
-                const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()));
-                CHECK(replay.succeeded && replay.files.size() == 2);
-                for (const auto &file : replay.files)
-                    CHECK(file.current().draft == fixture.controller.files()->file(file.id())->current().draft);
-            });
+        for (const auto &[scopeName, scope] :
+             {std::pair{QStringLiteral("left"), ChoicePreviewFlow::NonConflicting::LeftChanges},
+              std::pair{QStringLiteral("right"), ChoicePreviewFlow::NonConflicting::RightChanges},
+              std::pair{QStringLiteral("both"), ChoicePreviewFlow::NonConflicting::BothChanges}}) {
+            suite.run(
+                "batch preview identifies its file and source scope without changing another file "
+                    + scopeName.toStdString(),
+                [=] {
+                    Fixture fixture;
+                    auto captured = *test_support::batchFile().snapshots();
+                    captured.path = "other.txt";
+                    CHECK(fixture.controller.files()->appendFile(FileSession("other", captured.path,
+                                                                             {captured.launchResult.text.utf8, {}, 0},
+                                                                             Support::Supported, {}, captured, true)));
+                    const auto other = fixture.controller.files()->file("other")->current();
+                    CHECK(fixture.controller.previewNonConflicting("choices", "1", scope));
+                    const auto preview = fixture.controller.nonConflictingPreview();
+                    CHECK(preview.value("path").toString() == "choices.txt");
+                    CHECK(preview.value("scope").toString()
+                          == (scopeName == "left"        ? "Left"
+                                  : scopeName == "right" ? "Right"
+                                                         : "Left and Right"));
+                    CHECK(preview.value("changes").toList().size() == (scopeName == "both" ? 2 : 1));
+                    for (const auto &change : preview.value("changes").toList()) {
+                        const auto label = change.toMap().value("scope").toString();
+                        CHECK(label.startsWith(scopeName == "right" ? "Right" : "Left")
+                              || (scopeName == "both" && label.startsWith("Right")));
+                    }
+                    CHECK(fixture.controller.applyNonConflicting());
+                    CHECK(fixture.controller.files()->file("other")->current().id == other.id);
+                    CHECK(fixture.controller.files()->file("other")->current().draft == other.draft);
+                    const auto replay =
+                        replayRecovery(storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()));
+                    CHECK(replay.succeeded && replay.files.size() == 2);
+                    for (const auto &file : replay.files)
+                        CHECK(file.current().draft == fixture.controller.files()->file(file.id())->current().draft);
+                });
         }
         for (const int operation : {0, 1, 2}) {
-            suite.run("wave 9 real confirmation cancellation and stale application preserve the draft " + std::to_string(operation), [=] {
-                Fixture fixture(operation == 1 ? test_support::batchFile() : test_support::choiceFile());
-                const auto before = fixture.file().current();
-                const auto target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-                const auto open = [&] {
-                    if (operation == 0)
-                        CHECK(QMetaObject::invokeMethod(fixture.window, "choose", Q_ARG(QString, QString::fromStdString(target.source.contributionId)),
-                            Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Action::CombineRightFirst))));
-                    else
-                        CHECK(QMetaObject::invokeMethod(fixture.window, operation == 1 ? "chooseNonConflicting" : "chooseWholeFile",
-                            Q_ARG(int, operation == 1 ? static_cast<int>(ChoicePreviewFlow::NonConflicting::BothChanges)
-                                : static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
-                };
-                const auto apply = [&] { return operation == 0 ? fixture.controller.applyChoice(true)
-                    : operation == 1 ? fixture.controller.applyNonConflicting() : fixture.controller.applyWholeFile(); };
-                const auto *dialogName = operation == 0 ? "replacementDialog" : operation == 1 ? "nonConflictingDialog" : "wholeFileDialog";
-                open();
-                auto *dialog = fixture.object(dialogName);
-                CHECK(dialog->property("visible").toBool());
-                CHECK(QMetaObject::invokeMethod(dialog, "reject"));
-                CHECK(fixture.controller.commandPreview().isEmpty() && fixture.controller.nonConflictingPreview().isEmpty()
-                    && fixture.controller.wholeFilePreview().isEmpty());
-                CHECK(!apply() && fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
-                fixture.checkRecovered(before.draft);
-                open();
-                CHECK(fixture.controller.editResult("choices", QString::number(before.id), 0, 0, "newer manual edit\n"));
-                const auto newer = fixture.file().current();
-                CHECK(!apply() && fixture.file().current().id == newer.id && fixture.file().current().draft == newer.draft);
-                fixture.checkRecovered(newer.draft);
-            });
+            suite.run(
+                "wave 9 real confirmation cancellation and stale application preserve the draft "
+                    + std::to_string(operation),
+                [=] {
+                    Fixture fixture(operation == 1 ? test_support::batchFile() : test_support::choiceFile());
+                    const auto before = fixture.file().current();
+                    const auto target =
+                        test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+                    const auto open = [&] {
+                        if (operation == 0)
+                            CHECK(QMetaObject::invokeMethod(
+                                fixture.window, "choose",
+                                Q_ARG(QString, QString::fromStdString(target.source.contributionId)),
+                                Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Action::CombineRightFirst))));
+                        else
+                            CHECK(QMetaObject::invokeMethod(
+                                fixture.window, operation == 1 ? "chooseNonConflicting" : "chooseWholeFile",
+                                Q_ARG(int,
+                                      operation == 1 ? static_cast<int>(ChoicePreviewFlow::NonConflicting::BothChanges)
+                                                     : static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
+                    };
+                    const auto apply = [&] {
+                        return operation == 0 ? fixture.controller.applyChoice(true)
+                            : operation == 1  ? fixture.controller.applyNonConflicting()
+                                              : fixture.controller.applyWholeFile();
+                    };
+                    const auto *dialogName = operation == 0 ? "replacementDialog"
+                        : operation == 1                    ? "nonConflictingDialog"
+                                                            : "wholeFileDialog";
+                    open();
+                    auto *dialog = fixture.object(dialogName);
+                    CHECK(dialog->property("visible").toBool());
+                    CHECK(QMetaObject::invokeMethod(dialog, "reject"));
+                    CHECK(fixture.controller.commandPreview().isEmpty()
+                          && fixture.controller.nonConflictingPreview().isEmpty()
+                          && fixture.controller.wholeFilePreview().isEmpty());
+                    CHECK(!apply() && fixture.file().current().id == before.id
+                          && fixture.file().current().draft == before.draft);
+                    fixture.checkRecovered(before.draft);
+                    open();
+                    CHECK(fixture.controller.editResult("choices", QString::number(before.id), 0, 0,
+                                                        "newer manual edit\n"));
+                    const auto newer = fixture.file().current();
+                    CHECK(!apply() && fixture.file().current().id == newer.id
+                          && fixture.file().current().draft == newer.draft);
+                    fixture.checkRecovered(newer.draft);
+                });
         }
         suite.run("Save and discard controls keep the app baseline and retry a failed Save", [] {
             Fixture fixture;
             auto saved = fixture.file().current().draft;
             saved.text += "saved app draft\n";
             saved.decisions["kept"] = {DecisionValue::Accepted, 4};
-            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, saved) == Transition::Applied);
+            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, saved)
+                  == Transition::Applied);
             settle([&] { return fixture.controller.selectedFile()->unsaved(); });
             fixture.click("saveDraft");
             CHECK(fixture.controller.commandMessage() == "Draft saved in Branch Truce; repository file unchanged.");
             settle([&] { return fixture.item("commandMessage")->isVisible(); });
-            CHECK(fixture.item("commandMessage")->property("text").toString()
-                  .contains("Draft saved in Branch Truce; repository file unchanged"));
+            CHECK(fixture.item("commandMessage")
+                      ->property("text")
+                      .toString()
+                      .contains("Draft saved in Branch Truce; repository file unchanged"));
             CHECK(fixture.file().checkpoint() && fixture.file().checkpoint()->draft == saved);
             CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
             const auto savedStore = storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()).read();
             CHECK(savedStore.succeeded);
             CHECK(std::any_of(savedStore.transactions.cbegin(), savedStore.transactions.cend(), [](const auto &state) {
-                return state.value("action") == "manual-save" && state.value("written").isNull() && state.value("staged").isNull();
+                return state.value("action") == "manual-save" && state.value("written").isNull()
+                    && state.value("staged").isNull();
             }));
             auto discarded = saved;
             discarded.text += "discarded edit\n";
             discarded.decisions["kept"] = {DecisionValue::Ignored, {}};
-            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, discarded) == Transition::Applied);
+            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, discarded)
+                  == Transition::Applied);
             settle([&] { return fixture.controller.selectedFile()->unsaved(); });
             CHECK(fixture.file().checkpoint()->draft == saved);
             fixture.click("discardUnsaved");
@@ -1719,15 +1803,17 @@ public:
             CHECK(fixture.text().toStdString() == saved.text);
             CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
             const auto discardedStore = storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()).read();
-            CHECK(discardedStore.succeeded && discardedStore.transactions.back().value("action") == "discard-to-checkpoint");
+            CHECK(discardedStore.succeeded
+                  && discardedStore.transactions.back().value("action") == "discard-to-checkpoint");
             const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()));
             CHECK(replay.succeeded && replay.files.front().current().draft == saved);
             CHECK(replay.files.front().current().draft != discarded && !replay.files.front().written()
                   && !replay.files.front().staged());
 
             CHECK(fixture.controller.editResult("choices", QString::number(fixture.file().current().id),
-                static_cast<int>(QString::fromStdString(saved.text).size()),
-                static_cast<int>(QString::fromStdString(saved.text).size()), "retry me\n"));
+                                                static_cast<int>(QString::fromStdString(saved.text).size()),
+                                                static_cast<int>(QString::fromStdString(saved.text).size()),
+                                                "retry me\n"));
             const auto edited = fixture.file().current().draft;
             {
                 recovery_faults::Failure fault(recovery_faults::Point::JournalSync);
@@ -1784,7 +1870,8 @@ public:
             auto *right = fixture.item("stage3Text");
             CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Right source."));
             CHECK(right->property("selectedText").toString() == "right only");
-            CHECK(right->property("selectionStart").toInt() == right->property("text").toString().indexOf("right only"));
+            CHECK(right->property("selectionStart").toInt()
+                  == right->property("text").toString().indexOf("right only"));
             checkUnchanged(fixture, before);
 
             CHECK(scope->setProperty("currentIndex", 1));
@@ -1794,7 +1881,8 @@ public:
             auto *result = fixture.item("resultText");
             CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Editable result."));
             CHECK(result->property("selectedText").toString() == "base conflict");
-            CHECK(result->property("selectionStart").toInt() == result->property("text").toString().indexOf("base conflict"));
+            CHECK(result->property("selectionStart").toInt()
+                  == result->property("text").toString().indexOf("base conflict"));
             checkUnchanged(fixture, before);
 
             CHECK(fixture.item("showEarlier")->setProperty("checked", true));
@@ -1806,7 +1894,8 @@ public:
             auto *earlier = fixture.item("earlierText");
             CHECK(fixture.item("searchStatus")->property("text").toString().startsWith("Passage in Earlier version."));
             CHECK(earlier->property("selectedText").toString() == "base conflict");
-            CHECK(earlier->property("selectionStart").toInt() == earlier->property("text").toString().indexOf("base conflict"));
+            CHECK(earlier->property("selectionStart").toInt()
+                  == earlier->property("text").toString().indexOf("base conflict"));
             checkUnchanged(fixture, before);
         });
         suite.run("Find selects a passage and wraps to the earlier match", [] {
@@ -1871,7 +1960,8 @@ public:
             settlePanes(fixture);
             const auto aligned = [&](const char *what) {
                 for (const std::string pane : {"result", "stage3"}) {
-                    settleFor(pane + " line numbers " + what, [&] { return gutterMisalignment(fixture, pane).empty(); });
+                    settleFor(pane + " line numbers " + what,
+                              [&] { return gutterMisalignment(fixture, pane).empty(); });
                     CHECK(gutterMisalignment(fixture, pane).empty());
                 }
             };
@@ -1888,8 +1978,9 @@ public:
             const auto *document = editor->property("textDocument").value<QQuickTextDocument *>()->textDocument();
             for (auto block = document->begin(); block.isValid(); block = block.next()) {
                 const auto row = sceneRectangle(editor, block.position());
-                wrappedInView = wrappedInView || (row.top() >= top && row.top() < top + viewport->height()
-                    && visualLines(editor, block.blockNumber()) > 1);
+                wrappedInView = wrappedInView
+                    || (row.top() >= top && row.top() < top + viewport->height()
+                        && visualLines(editor, block.blockNumber()) > 1);
             }
             CHECK(wrappedInView);
             CHECK(fixture.item("wrapLines")->setProperty("checked", false));
@@ -1901,8 +1992,8 @@ public:
             Fixture fixture(test_support::choiceFile(shared + "left\n", shared + "right\n", shared + "right\n"));
             settlePanes(fixture);
             // The text after the tabs, its column in the line, and the tab stops it sits on.
-            const std::array<std::tuple<QString, int, int>, 4> lines{{
-                {"\tone", 1, 1}, {"abc\ttwo", 4, 1}, {"abcde\tthree", 6, 2}, {"\t\tfour", 2, 2}}};
+            const std::array<std::tuple<QString, int, int>, 4> lines{
+                {{"\tone", 1, 1}, {"abc\ttwo", 4, 1}, {"abcde\tthree", 6, 2}, {"\t\tfour", 2, 2}}};
             const auto checkTabs = [&] {
                 // Four characters as drawn in the result, independent of font metrics metadata.
                 const auto four = columnOffset(fixture.item("resultText"), QStringLiteral("abcde\n"), 4);
@@ -1914,7 +2005,8 @@ public:
                         const auto offset = columnOffset(editor, text, column);
                         if (std::abs(offset - stops * four) > 0.5)
                             throw std::runtime_error(std::string(name) + ": text after the tab in " + text.toStdString()
-                                + " starts at " + std::to_string(offset) + ", not " + std::to_string(stops * four));
+                                                     + " starts at " + std::to_string(offset) + ", not "
+                                                     + std::to_string(stops * four));
                     }
                 }
             };
@@ -1930,10 +2022,12 @@ public:
         suite.run("code and line numbers use the theme's fixed-width font", [] {
             auto sources = *test_support::choiceFile().snapshots();
             const auto earlier = sources.stage2->worktree.utf8;
-            sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
-                test_support::choiceText(earlier), "earlier-commit", "Common earlier version"};
+            sources.earlier = SourceSnapshot{"earlier-object", "100644",
+                                             earlier,          test_support::choiceText(earlier),
+                                             "earlier-commit", "Common earlier version"};
             const auto launch = sources.launchResult.text.utf8;
-            Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
+            Fixture fixture(
+                FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
             fixture.click("showEarlier");
             settle([&] { return fixture.item("earlierText")->isVisible(); });
             settlePanes(fixture);
@@ -1943,7 +2037,7 @@ public:
                 const auto font = editor->property("font").value<QFont>();
                 if (font != fixed)
                     throw std::runtime_error(pane + " uses " + font.toString().toStdString() + ", not the fixed-width "
-                        + fixed.toString().toStdString());
+                                             + fixed.toString().toStdString());
                 auto *gutter = fixture.item((pane + "Gutter").c_str());
                 settleFor(pane + " line numbers", [&] { return !gutterNumbers(gutter).isEmpty(); });
                 for (auto *child : gutter->childItems()) {
@@ -1955,43 +2049,53 @@ public:
         });
         suite.run("every coloured line has a gutter glyph of its kind", [] {
             Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
-                "header\nright first\nshared\nright extra\ntail\n"));
-            const QMap<QString, QString> glyphs{{"added", "+"}, {"changed", "~"}, {"conflict", "!"},
-                {"manual", "m"}, {"accepted", QString(QChar(0x2713))}, {"ignored", QString(QChar(0x00d7))},
-                {"removed", QString(QChar(0x2212))}};
+                                                     "header\nright first\nshared\nright extra\ntail\n"));
+            const QMap<QString, QString> glyphs{{"added", "+"},
+                                                {"changed", "~"},
+                                                {"conflict", "!"},
+                                                {"manual", "m"},
+                                                {"accepted", QString(QChar(0x2713))},
+                                                {"ignored", QString(QChar(0x00d7))},
+                                                {"removed", QString(QChar(0x2212))}};
             // Each coloured line has one state glyph. A gap on that same line
             // is described by the glyph instead of adding a second symbol.
-            struct Painted { QSet<QString> kinds; int unmarked = 0; };
+            struct Painted {
+                QSet<QString> kinds;
+                int unmarked = 0;
+            };
             const auto painted = [&](const std::string &pane) {
                 Painted found;
                 QMap<QPair<int, QString>, QString> shown;
                 for (auto *glyph : fixture.item((pane + "GutterMarkerSlot").c_str())->childItems()) {
                     if (glyph->isVisible() && glyph->property("kind").isValid())
                         shown.insert({glyph->property("line").toInt(), glyph->property("kind").toString()},
-                            glyph->property("text").toString());
+                                     glyph->property("text").toString());
                 }
                 for (const auto *suffix : {"BackgroundsLines", "BackgroundsGaps"}) {
-                  for (auto *fill : fixture.item((pane + suffix).c_str())->childItems()) {
-                    if (!fill->isVisible() || !fill->property("line").isValid()) continue;
-                    const auto kind = fill->property("kind").toString();
-                    found.kinds.insert(kind);
-                    const auto line = fill->property("line").toInt();
-                    const auto glyph = shown.value({line, kind});
-                    if (QString::fromLatin1(suffix) == "BackgroundsGaps") {
-                        const auto lineKind = qmlValue(fixture.item((pane + "Gutter").c_str()),
-                            QStringLiteral("lineKind(%1)").arg(line)).toString();
-                        if (!lineKind.isEmpty()) {
-                            const auto description = qmlValue(fixture.item((pane + "Gutter").c_str()),
-                                QStringLiteral("lineDescription(%1)").arg(line)).toString()
-                                .contains(QStringLiteral("Unmatched lines at this boundary"));
-                            if (shown.value({line, lineKind}) != glyphs.value(lineKind)
-                                || shown.contains({line, QStringLiteral("removed")}) || !description)
-                                ++found.unmarked;
-                            continue;
+                    for (auto *fill : fixture.item((pane + suffix).c_str())->childItems()) {
+                        if (!fill->isVisible() || !fill->property("line").isValid()) continue;
+                        const auto kind = fill->property("kind").toString();
+                        found.kinds.insert(kind);
+                        const auto line = fill->property("line").toInt();
+                        const auto glyph = shown.value({line, kind});
+                        if (QString::fromLatin1(suffix) == "BackgroundsGaps") {
+                            const auto lineKind = qmlValue(fixture.item((pane + "Gutter").c_str()),
+                                                           QStringLiteral("lineKind(%1)").arg(line))
+                                                      .toString();
+                            if (!lineKind.isEmpty()) {
+                                const auto description =
+                                    qmlValue(fixture.item((pane + "Gutter").c_str()),
+                                             QStringLiteral("lineDescription(%1)").arg(line))
+                                        .toString()
+                                        .contains(QStringLiteral("Unmatched lines at this boundary"));
+                                if (shown.value({line, lineKind}) != glyphs.value(lineKind)
+                                    || shown.contains({line, QStringLiteral("removed")}) || !description)
+                                    ++found.unmarked;
+                                continue;
+                            }
                         }
+                        if (glyph.isEmpty() || glyph != glyphs.value(kind)) ++found.unmarked;
                     }
-                    if (glyph.isEmpty() || glyph != glyphs.value(kind)) ++found.unmarked;
-                  }
                 }
                 return found;
             };
@@ -2018,7 +2122,9 @@ public:
             for (auto *fill : fixture.item("resultBackgroundsGaps")->childItems()) {
                 if (!fill->isVisible() || !fill->property("line").isValid()) continue;
                 const auto line = fill->property("line").toInt();
-                if (!qmlValue(fixture.item("resultGutter"), QStringLiteral("lineKind(%1)").arg(line)).toString().isEmpty())
+                if (!qmlValue(fixture.item("resultGutter"), QStringLiteral("lineKind(%1)").arg(line))
+                         .toString()
+                         .isEmpty())
                     ++describedGaps;
             }
             CHECK(gapGlyphs + describedGaps > 0);
@@ -2038,7 +2144,8 @@ public:
                 const auto stage3 = paintedMarks(fixture, "stage3");
                 const auto ignored = stage3.glyphs.keys(QStringLiteral("ignored"));
                 return !ignored.isEmpty() && stage3.tinted.keys() == ignored
-                    && std::none_of(ignored.begin(), ignored.end(), [&](int line) { return stage3.backgrounds.contains(line); });
+                    && std::none_of(ignored.begin(), ignored.end(),
+                                    [&](int line) { return stage3.backgrounds.contains(line); });
             };
             settleFor("stage3 ignored tint", ignoredTinted);
             CHECK(ignoredTinted());
@@ -2054,49 +2161,49 @@ public:
                 CHECK(qmlValue(gutter, QStringLiteral("rowSlots.count")).toInt() == 0);
                 qmlValue(gutter, QStringLiteral("rows = []"));
                 qmlValue(gutter, QStringLiteral("invalidate()"));
-                settleFor("gutter rows restored", [&] {
-                    return qmlValue(gutter, QStringLiteral("rowSlots.count")).toInt() > 0;
-                });
+                settleFor("gutter rows restored",
+                          [&] { return qmlValue(gutter, QStringLiteral("rowSlots.count")).toInt() > 0; });
             }
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
             CHECK(gutterAnchorErrors == 0);
         });
-        suite.run("a hand edit outside every region shows the neutral background, one m glyph and inspectable provenance", [] {
-            Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
-                "header\nright first\nshared\nright extra\ntail\n"));
-            const auto revision = [&] { return QString::number(fixture.file().current().id); };
-            CHECK(fixture.controller.previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
-            CHECK(fixture.controller.applyWholeFile());
-            // Line 1 is the header both sides share, so no choice region covers it.
-            const auto header = [&](const QString &background, const QString &glyph, const QString &letter) {
-                const auto marks = paintedMarks(fixture, "result");
-                return marks.backgrounds.value(1) == background && marks.glyphs.value(1) == glyph
-                    && marks.letters.value(1) == letter;
-            };
-            settleFor("the shared header before the edit", [&] { return header({}, {}, "B"); });
-            CHECK(fixture.controller.editResult("choices", revision(), 0, 6, "HEADER"));
-            settleFor("the hand-edited header", [&] { return header("manual", "manual", "m"); });
-            CHECK(header("manual", "manual", "m"));
-            const auto edited = fixture.file().correspondence()->handEditedRanges();
-            CHECK((edited == std::vector<ByteRange>{{0, 6}}));
-            // Undo and redo take the marking with the revision.
-            CHECK(fixture.controller.undo("choices", revision()));
-            settleFor("the header after undo", [&] { return header({}, {}, "B"); });
-            CHECK(header({}, {}, "B"));
-            CHECK(fixture.controller.redo("choices", revision()));
-            settleFor("the header after redo", [&] { return header("manual", "manual", "m"); });
-            CHECK(header("manual", "manual", "m"));
-            // The fill is the theme's neutral background.
-            int filled = 0;
-            for (auto *fill : fixture.item("resultBackgroundsLines")->childItems()) {
-                if (!fill->isVisible() || fill->property("line").toInt() != 1)
-                    continue;
-                ++filled;
-                CHECK(fill->property("color").value<QColor>()
-                    == qmlValue(fill, QStringLiteral("Kirigami.Theme.neutralBackgroundColor")).value<QColor>());
-            }
-            CHECK(filled == 1);
-        });
+        suite.run(
+            "a hand edit outside every region shows the neutral background, one m glyph and inspectable provenance",
+            [] {
+                Fixture fixture(test_support::choiceFile("header\nleft first\nshared\ntail\n",
+                                                         "header\nright first\nshared\nright extra\ntail\n"));
+                const auto revision = [&] { return QString::number(fixture.file().current().id); };
+                CHECK(fixture.controller.previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
+                CHECK(fixture.controller.applyWholeFile());
+                // Line 1 is the header both sides share, so no choice region covers it.
+                const auto header = [&](const QString &background, const QString &glyph, const QString &letter) {
+                    const auto marks = paintedMarks(fixture, "result");
+                    return marks.backgrounds.value(1) == background && marks.glyphs.value(1) == glyph
+                        && marks.letters.value(1) == letter;
+                };
+                settleFor("the shared header before the edit", [&] { return header({}, {}, "B"); });
+                CHECK(fixture.controller.editResult("choices", revision(), 0, 6, "HEADER"));
+                settleFor("the hand-edited header", [&] { return header("manual", "manual", "m"); });
+                CHECK(header("manual", "manual", "m"));
+                const auto edited = fixture.file().correspondence()->handEditedRanges();
+                CHECK((edited == std::vector<ByteRange>{{0, 6}}));
+                // Undo and redo take the marking with the revision.
+                CHECK(fixture.controller.undo("choices", revision()));
+                settleFor("the header after undo", [&] { return header({}, {}, "B"); });
+                CHECK(header({}, {}, "B"));
+                CHECK(fixture.controller.redo("choices", revision()));
+                settleFor("the header after redo", [&] { return header("manual", "manual", "m"); });
+                CHECK(header("manual", "manual", "m"));
+                // The fill is the theme's neutral background.
+                int filled = 0;
+                for (auto *fill : fixture.item("resultBackgroundsLines")->childItems()) {
+                    if (!fill->isVisible() || fill->property("line").toInt() != 1) continue;
+                    ++filled;
+                    CHECK(fill->property("color").value<QColor>()
+                          == qmlValue(fill, QStringLiteral("Kirigami.Theme.neutralBackgroundColor")).value<QColor>());
+                }
+                CHECK(filled == 1);
+            });
         {
             // The batch fixture has a left and a right region on lines 2, 4 and 6, and
             // its result is the common earlier version. The result's letters name the
@@ -2120,60 +2227,65 @@ public:
             };
             const std::array<Choice, 3> choices{{
                 {"accept", ChoicePreviewFlow::Action::Accept, "accepted", "undecided", true,
-                    regionMarks("accepted", {}, "conflict"),
-                    regionMarks("accepted", "changed", "conflict", leftLetters),
-                    regionMarks("changed", "changed", "conflict")},
+                 regionMarks("accepted", {}, "conflict"), regionMarks("accepted", "changed", "conflict", leftLetters),
+                 regionMarks("changed", "changed", "conflict")},
                 {"ignore", ChoicePreviewFlow::Action::Ignore, "ignored", "undecided", false,
-                    regionMarks("ignored", {}, "conflict"),
-                    regionMarks("changed", "changed", "conflict", launchLetters),
-                    regionMarks({}, "changed", "conflict")},
+                 regionMarks("ignored", {}, "conflict"), regionMarks("changed", "changed", "conflict", launchLetters),
+                 regionMarks({}, "changed", "conflict")},
                 {"resolve", ChoicePreviewFlow::Action::ResolveUsingSide, "accepted", "ignored", true,
-                    regionMarks("accepted", {}, "conflict"),
-                    regionMarks("accepted", "changed", "conflict", leftLetters),
-                    regionMarks("ignored", "changed", "conflict")},
+                 regionMarks("accepted", {}, "conflict"), regionMarks("accepted", "changed", "conflict", leftLetters),
+                 regionMarks("ignored", "changed", "conflict")},
             }};
             for (const auto &choice : choices) {
                 // regionMarks gives an ignored line a tinted text and no background,
                 // so undo also checks that the tint goes.
                 suite.run("a scoped " + choice.name.toStdString()
-                    + " repaints all three panes and inspected provenance, and undo restores them", [choice, launchLetters] {
-                    Fixture fixture;
-                    settlePanes(fixture);
-                    expectMarks(fixture, "at launch", "stage2", regionMarks("changed", {}, "conflict"));
-                    expectMarks(fixture, "at launch", "result", regionMarks("changed", "changed", "conflict", launchLetters));
-                    expectMarks(fixture, "at launch", "stage3", regionMarks({}, "changed", "conflict"));
-                    const auto before = fixture.text();
-                    const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-                    CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                        QString::fromStdString(target.source.contributionId), choice.action));
-                    CHECK(fixture.controller.applyChoice(true));
-                    CHECK((fixture.text() != before) == choice.resultChanges);
-                    if (choice.resultChanges) CHECK(fixture.text().contains(QStringLiteral("\nleft only\n")));
-                    // Both scopes of a region share its decisions, so they end in the same state.
-                    int chosen = 0;
-                    for (const auto &entry : fixture.controller.selectedFile()->regions()) {
-                        const auto region = entry.toMap();
-                        const bool left = region.value("side").toString() == "stage2";
-                        const bool here = region.value("sourceLineBegin").toInt() == 2;
-                        chosen += left && here;
-                        const auto expected = !here ? QStringLiteral("undecided") : left ? choice.leftState : choice.rightState;
-                        if (region.value("state").toString() != expected)
-                            throw std::runtime_error(region.value("id").toString().toStdString() + " is "
-                                + region.value("state").toString().toStdString() + ", not " + expected.toStdString());
-                    }
-                    CHECK(chosen == 2);
-                    const auto when = "after " + choice.name.toStdString();
-                    expectMarks(fixture, when, "stage2", choice.stage2);
-                    expectMarks(fixture, when, "result", choice.result);
-                    expectMarks(fixture, when, "stage3", choice.stage3);
-                    // Undo returns every pane to the undecided look of launch.
-                    CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
-                    CHECK(fixture.text() == before);
-                    const auto undone = "after undoing " + choice.name.toStdString();
-                    expectMarks(fixture, undone, "stage2", regionMarks("changed", {}, "conflict"));
-                    expectMarks(fixture, undone, "result", regionMarks("changed", "changed", "conflict", launchLetters));
-                    expectMarks(fixture, undone, "stage3", regionMarks({}, "changed", "conflict"));
-                });
+                              + " repaints all three panes and inspected provenance, and undo restores them",
+                          [choice, launchLetters] {
+                              Fixture fixture;
+                              settlePanes(fixture);
+                              expectMarks(fixture, "at launch", "stage2", regionMarks("changed", {}, "conflict"));
+                              expectMarks(fixture, "at launch", "result",
+                                          regionMarks("changed", "changed", "conflict", launchLetters));
+                              expectMarks(fixture, "at launch", "stage3", regionMarks({}, "changed", "conflict"));
+                              const auto before = fixture.text();
+                              const auto &target =
+                                  test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+                              CHECK(fixture.controller.previewChoice(
+                                  "choices", QString::number(fixture.file().current().id),
+                                  QString::fromStdString(target.source.contributionId), choice.action));
+                              CHECK(fixture.controller.applyChoice(true));
+                              CHECK((fixture.text() != before) == choice.resultChanges);
+                              if (choice.resultChanges) CHECK(fixture.text().contains(QStringLiteral("\nleft only\n")));
+                              // Both scopes of a region share its decisions, so they end in the same state.
+                              int chosen = 0;
+                              for (const auto &entry : fixture.controller.selectedFile()->regions()) {
+                                  const auto region = entry.toMap();
+                                  const bool left = region.value("side").toString() == "stage2";
+                                  const bool here = region.value("sourceLineBegin").toInt() == 2;
+                                  chosen += left && here;
+                                  const auto expected = !here ? QStringLiteral("undecided")
+                                      : left                  ? choice.leftState
+                                                              : choice.rightState;
+                                  if (region.value("state").toString() != expected)
+                                      throw std::runtime_error(region.value("id").toString().toStdString() + " is "
+                                                               + region.value("state").toString().toStdString()
+                                                               + ", not " + expected.toStdString());
+                              }
+                              CHECK(chosen == 2);
+                              const auto when = "after " + choice.name.toStdString();
+                              expectMarks(fixture, when, "stage2", choice.stage2);
+                              expectMarks(fixture, when, "result", choice.result);
+                              expectMarks(fixture, when, "stage3", choice.stage3);
+                              // Undo returns every pane to the undecided look of launch.
+                              CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
+                              CHECK(fixture.text() == before);
+                              const auto undone = "after undoing " + choice.name.toStdString();
+                              expectMarks(fixture, undone, "stage2", regionMarks("changed", {}, "conflict"));
+                              expectMarks(fixture, undone, "result",
+                                          regionMarks("changed", "changed", "conflict", launchLetters));
+                              expectMarks(fixture, undone, "stage3", regionMarks({}, "changed", "conflict"));
+                          });
             }
         }
         suite.run("each non-equal passage gets a band from its source lines to its result lines", [] {
@@ -2195,14 +2307,18 @@ public:
                 std::vector<std::string> right;
             };
             const std::array<Choice, 2> choices{{
-                {"accept", ChoicePreviewFlow::Action::Accept, {"accepted 2-3>2-3", "conflict 6-7>6-7"},
-                    {"changed 2-3>2-3", "changed 4-5>4-5", "conflict 6-7>6-7"}},
+                {"accept",
+                 ChoicePreviewFlow::Action::Accept,
+                 {"accepted 2-3>2-3", "conflict 6-7>6-7"},
+                 {"changed 2-3>2-3", "changed 4-5>4-5", "conflict 6-7>6-7"}},
                 {"ignore", ChoicePreviewFlow::Action::Ignore, {"ignored 2-3>2-3", "conflict 6-7>6-7"}, right},
             }};
             for (const auto &choice : choices) {
-                const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+                const auto &target =
+                    test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
                 CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                    QString::fromStdString(target.source.contributionId), choice.action));
+                                                       QString::fromStdString(target.source.contributionId),
+                                                       choice.action));
                 CHECK(fixture.controller.applyChoice(true));
                 const auto when = "after " + choice.name.toStdString();
                 expectBands(fixture, when, "stage2", choice.left);
@@ -2232,17 +2348,20 @@ public:
             const auto selectionEnd = editor->property("selectionEnd");
             const auto cursor = editor->property("cursorPosition");
             const auto before = fixture.file().current();
-            const auto point = source->mapToScene(QPointF(source->width() / 2,
-                (band.sourceTop + band.sourceBottom) / 2 - source->mapToScene(QPointF()).y())).toPoint();
+            const auto point =
+                source
+                    ->mapToScene(QPointF(source->width() / 2,
+                                         (band.sourceTop + band.sourceBottom) / 2 - source->mapToScene(QPointF()).y()))
+                    .toPoint();
             const auto previous = fixture.item("stage2Backgrounds")->property("current");
             QTest::mouseMove(fixture.window, point);
             const auto highlighted = [&](const char *name, int line) {
                 auto *layer = fixture.item(name);
                 const auto color = qmlValue(layer, "Kirigami.Theme.highlightColor").value<QColor>();
                 for (auto *fill : fixture.item((std::string(name) + "Current").c_str())->childItems()) {
-                    if (fill->isVisible()
-                        && fill->property("line").toInt() == line
-                        && fill->property("color").value<QColor>() == color) return true;
+                    if (fill->isVisible() && fill->property("line").toInt() == line
+                        && fill->property("color").value<QColor>() == color)
+                        return true;
                 }
                 return false;
             };
@@ -2260,9 +2379,8 @@ public:
             CHECK(fixture.file().current().id == before.id);
             CHECK(fixture.file().current().draft == before.draft);
             QTest::mouseMove(fixture.window, QPoint(1, 1));
-            settleFor("hover clears", [&] {
-                return fixture.item("stage2Backgrounds")->property("current") == previous;
-            });
+            settleFor("hover clears",
+                      [&] { return fixture.item("stage2Backgrounds")->property("current") == previous; });
         });
         suite.run("band ends move with the scroll of either pane", [] {
             // The result holds 30 lines after line 50 that the left source lacks, so the
@@ -2325,84 +2443,98 @@ public:
             CHECK(std::abs(result->width() - resultWidth) < 1 && std::abs(right->width() - (rightWidth - 80)) < 2);
             expectBands(fixture, "after the drag", "stage2", bandsBefore);
         });
-        suite.run("each marker block folds into one labelled row behind a conflict band, keeps the buffer and shows on the toggle", [] {
-            // markedFile(true) writes both sections between markers with diff3 base sections:
-            // blocks on lines 2-11 and 13-19, whose marker lines are 2, 5, 8, 11, 13, 15, 17 and 19.
-            Fixture fixture(test_support::markedFile(true));
-            settlePanes(fixture);
-            const auto text = QString::fromStdString(test_support::markedText(true));
-            const auto markerLines = linesStarting(fixture, {"<<<<<<<", "|||||||", "=======", ">>>>>>>"});
-            CHECK(markerLines == QList<int>({2, 5, 8, 11, 13, 15, 17, 19}));
-            const auto lineCount = resultDocument(fixture).blockCount();
-            const auto blockLines = numbers(2, 12) + numbers(13, 20);
-            // Folded: each block keeps one row on its opening line, which keeps its number and is
-            // marked as a conflict with markers remaining; the rest of the block takes no row and
-            // gets no number, so the numbers go from 2 to 12 and from 13 to 20.
-            const auto hidden = numbers(3, 12) + numbers(14, 20);
-            const MarkerLook folded{hidden, numbers(1, lineCount + 1, hidden), {2, 13}, {2, 13}, 2};
-            expectLook(fixture, "at launch", folded);
-            CHECK(fixture.text() == text && fixture.file().current().draft.text == text.toStdString());
-            CHECK(resultDocument(fixture).toPlainText() == text);
-            // The row has the conflict colours: the ! glyph and the label in negativeTextColor,
-            // the label DemiBold, on negativeBackgroundColor. Each layer's own theme gives the
-            // colours, as the backgrounds layer takes no input.
-            const auto theme = [&](const char *layer, const char *role) {
-                return qmlValue(fixture.item(layer), QStringLiteral("Kirigami.Theme.") + QLatin1String(role)).value<QColor>();
-            };
-            for (auto *fill : fixture.item("resultBackgroundsLines")->childItems()) {
-                if (fill->isVisible() && fill->property("kind").toString() == "markers")
-                    CHECK(fill->property("color").value<QColor>() == theme("resultBackgrounds", "negativeBackgroundColor"));
-            }
-            for (auto *glyph : fixture.item("resultGutterMarkerSlot")->childItems()) {
-                if (glyph->isVisible() && glyph->property("kind").toString() == "markers") {
-                    CHECK(glyph->property("text").toString() == "!");
-                    CHECK(glyph->property("color").value<QColor>() == theme("resultGutterMarkerSlot", "negativeTextColor"));
+        suite.run(
+            "each marker block folds into one labelled row behind a conflict band, keeps the buffer and shows on the "
+            "toggle",
+            [] {
+                // markedFile(true) writes both sections between markers with diff3 base sections:
+                // blocks on lines 2-11 and 13-19, whose marker lines are 2, 5, 8, 11, 13, 15, 17 and 19.
+                Fixture fixture(test_support::markedFile(true));
+                settlePanes(fixture);
+                const auto text = QString::fromStdString(test_support::markedText(true));
+                const auto markerLines = linesStarting(fixture, {"<<<<<<<", "|||||||", "=======", ">>>>>>>"});
+                CHECK(markerLines == QList<int>({2, 5, 8, 11, 13, 15, 17, 19}));
+                const auto lineCount = resultDocument(fixture).blockCount();
+                const auto blockLines = numbers(2, 12) + numbers(13, 20);
+                // Folded: each block keeps one row on its opening line, which keeps its number and is
+                // marked as a conflict with markers remaining; the rest of the block takes no row and
+                // gets no number, so the numbers go from 2 to 12 and from 13 to 20.
+                const auto hidden = numbers(3, 12) + numbers(14, 20);
+                const MarkerLook folded{hidden, numbers(1, lineCount + 1, hidden), {2, 13}, {2, 13}, 2};
+                expectLook(fixture, "at launch", folded);
+                CHECK(fixture.text() == text && fixture.file().current().draft.text == text.toStdString());
+                CHECK(resultDocument(fixture).toPlainText() == text);
+                // The row has the conflict colours: the ! glyph and the label in negativeTextColor,
+                // the label DemiBold, on negativeBackgroundColor. Each layer's own theme gives the
+                // colours, as the backgrounds layer takes no input.
+                const auto theme = [&](const char *layer, const char *role) {
+                    return qmlValue(fixture.item(layer), QStringLiteral("Kirigami.Theme.") + QLatin1String(role))
+                        .value<QColor>();
+                };
+                for (auto *fill : fixture.item("resultBackgroundsLines")->childItems()) {
+                    if (fill->isVisible() && fill->property("kind").toString() == "markers")
+                        CHECK(fill->property("color").value<QColor>()
+                              == theme("resultBackgrounds", "negativeBackgroundColor"));
                 }
-            }
-            for (auto *row : foldParts(fixture.item("resultFoldedRows"))) {
-                auto *fill = row->property("item").value<QQuickItem *>();
-                CHECK(fill && fill->property("color").value<QColor>() == theme("resultFoldedRows", "negativeBackgroundColor"));
-                // The row covers its whole line, from the gutter to the right edge.
-                CHECK(row->width() >= fixture.item("resultViewport")->width() && row->height() > 0);
-            }
-            auto *label = fixture.item("resultConflictRow-2");
-            CHECK(label->isVisible() && label->property("text").toString() == "Unresolved conflict");
-            CHECK(label->property("color").value<QColor>() == theme("resultFoldedRows", "negativeTextColor"));
-            CHECK(label->property("font").value<QFont>().weight() == QFont::DemiBold);
-            const auto described = qmlValue(foldParts(fixture.item("resultFoldedRows")).value(2)->property("item")
-                .value<QQuickItem *>(), QStringLiteral("Accessible.description")).toString();
-            if (described != "Lines 2 to 11 are folded. Show conflict markers shows them.")
-                throw std::runtime_error("first row described as " + described.toStdString());
-            // Each row offers Take both for its section, beside the label.
-            for (const std::size_t at : {std::size_t{0}, std::size_t{1}}) {
-                const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section, at);
-                const auto name = "resultTakeBoth-" + target.source.contributionId;
-                auto *takeBoth = fixture.item(name.c_str());
-                CHECK(takeBoth->isVisible() && takeBoth->isEnabled() && takeBoth->property("text").toString() == "Take both");
-                CHECK(qmlValue(takeBoth, QStringLiteral("icon.name")).toString() == "merge");
-                CHECK(!takeBoth->property("flat").toBool());
-                CHECK(takeBoth->activeFocusOnTab());
-            }
-            // Every band to the result meets a block, so each side has one conflict band per
-            // block, from its lines to the whole block, which ends on the block's row.
-            for (const auto *side : {"stage2", "stage3"}) {
-                const auto bands = bandLines(fixture, side);
-                CHECK(bands.size() == 2);
-                for (const auto &band : bands)
-                    if (band.rfind("conflict ", 0) != 0) throw std::runtime_error(std::string(side) + " band " + band);
-                CHECK(bands[0].ends_with(">2-12") && bands[1].ends_with(">13-20"));
-            }
-            // The toggle shows the raw lines as conflicts, drops the rows and changes no work.
-            const auto before = captureWork(fixture);
-            auto *toggle = fixture.object("showConflictMarkers");
-            CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
-            CHECK(toggle->property("checked").toBool());
-            expectLook(fixture, "with the markers shown", {{}, numbers(1, lineCount + 1), blockLines, {}, 11});
-            checkUnchanged(fixture, before);
-            CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
-            expectLook(fixture, "with the markers folded again", folded);
-            checkUnchanged(fixture, before);
-        });
+                for (auto *glyph : fixture.item("resultGutterMarkerSlot")->childItems()) {
+                    if (glyph->isVisible() && glyph->property("kind").toString() == "markers") {
+                        CHECK(glyph->property("text").toString() == "!");
+                        CHECK(glyph->property("color").value<QColor>()
+                              == theme("resultGutterMarkerSlot", "negativeTextColor"));
+                    }
+                }
+                for (auto *row : foldParts(fixture.item("resultFoldedRows"))) {
+                    auto *fill = row->property("item").value<QQuickItem *>();
+                    CHECK(fill
+                          && fill->property("color").value<QColor>()
+                              == theme("resultFoldedRows", "negativeBackgroundColor"));
+                    // The row covers its whole line, from the gutter to the right edge.
+                    CHECK(row->width() >= fixture.item("resultViewport")->width() && row->height() > 0);
+                }
+                auto *label = fixture.item("resultConflictRow-2");
+                CHECK(label->isVisible() && label->property("text").toString() == "Unresolved conflict");
+                CHECK(label->property("color").value<QColor>() == theme("resultFoldedRows", "negativeTextColor"));
+                CHECK(label->property("font").value<QFont>().weight() == QFont::DemiBold);
+                const auto described =
+                    qmlValue(
+                        foldParts(fixture.item("resultFoldedRows")).value(2)->property("item").value<QQuickItem *>(),
+                        QStringLiteral("Accessible.description"))
+                        .toString();
+                if (described != "Lines 2 to 11 are folded. Show conflict markers shows them.")
+                    throw std::runtime_error("first row described as " + described.toStdString());
+                // Each row offers Take both for its section, beside the label.
+                for (const std::size_t at : {std::size_t{0}, std::size_t{1}}) {
+                    const auto &target =
+                        test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section, at);
+                    const auto name = "resultTakeBoth-" + target.source.contributionId;
+                    auto *takeBoth = fixture.item(name.c_str());
+                    CHECK(takeBoth->isVisible() && takeBoth->isEnabled()
+                          && takeBoth->property("text").toString() == "Take both");
+                    CHECK(qmlValue(takeBoth, QStringLiteral("icon.name")).toString() == "merge");
+                    CHECK(!takeBoth->property("flat").toBool());
+                    CHECK(takeBoth->activeFocusOnTab());
+                }
+                // Every band to the result meets a block, so each side has one conflict band per
+                // block, from its lines to the whole block, which ends on the block's row.
+                for (const auto *side : {"stage2", "stage3"}) {
+                    const auto bands = bandLines(fixture, side);
+                    CHECK(bands.size() == 2);
+                    for (const auto &band : bands)
+                        if (band.rfind("conflict ", 0) != 0)
+                            throw std::runtime_error(std::string(side) + " band " + band);
+                    CHECK(bands[0].ends_with(">2-12") && bands[1].ends_with(">13-20"));
+                }
+                // The toggle shows the raw lines as conflicts, drops the rows and changes no work.
+                const auto before = captureWork(fixture);
+                auto *toggle = fixture.object("showConflictMarkers");
+                CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
+                CHECK(toggle->property("checked").toBool());
+                expectLook(fixture, "with the markers shown", {{}, numbers(1, lineCount + 1), blockLines, {}, 11});
+                checkUnchanged(fixture, before);
+                CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
+                expectLook(fixture, "with the markers folded again", folded);
+                checkUnchanged(fixture, before);
+            });
         suite.run("unmapped recognized markers fold without offering unsafe choices", [] {
             Fixture fixture(test_support::underlinedBaseFile(false));
             settlePanes(fixture);
@@ -2418,7 +2550,8 @@ public:
             const auto original = captureWork(fixture);
             const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
             CHECK(!fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::CombineLeftFirst));
+                                                    QString::fromStdString(target.source.contributionId),
+                                                    ChoicePreviewFlow::Action::CombineLeftFirst));
             checkUnchanged(fixture, original);
             auto *toggle = fixture.object("showConflictMarkers");
             CHECK(QMetaObject::invokeMethod(toggle, "trigger"));
@@ -2449,10 +2582,10 @@ public:
         suite.run("a long marker label stays one row with wrapping enabled", [] {
             auto marked = test_support::markedText();
             marked.replace(marked.find("<<<<<<< ours"), std::string("<<<<<<< ours").size(),
-                "<<<<<<< " + std::string(400, 'x'));
-            Fixture fixture(test_support::choiceFile(
-                "header\nleft first\nleft second\nbridge\nleft later\ntail\n",
-                "header\nright first\nright second\nbridge\nright later\ntail\n", marked));
+                           "<<<<<<< " + std::string(400, 'x'));
+            Fixture fixture(test_support::choiceFile("header\nleft first\nleft second\nbridge\nleft later\ntail\n",
+                                                     "header\nright first\nright second\nbridge\nright later\ntail\n",
+                                                     marked));
             settlePanes(fixture);
             const auto before = captureWork(fixture);
             CHECK(fixture.item("wrapLines")->setProperty("checked", true));
@@ -2574,7 +2707,8 @@ public:
             const auto before = captureWork(fixture);
             CHECK(QMetaObject::invokeMethod(fixture.object("showFirstMarker"), "trigger"));
             // The cursor stays on the marker it went to, the row's line, which the view now shows.
-            expectCursor(fixture, "after going to the first marker", static_cast<int>(fixture.text().indexOf("<<<<<<< ours")));
+            expectCursor(fixture, "after going to the first marker",
+                         static_cast<int>(fixture.text().indexOf("<<<<<<< ours")));
             CHECK(toggle->property("checked").toBool() && foldedLines(fixture).isEmpty());
             checkUnchanged(fixture, before);
         });
@@ -2584,7 +2718,7 @@ public:
                 for (const auto &entry : fixture.controller.selectedFile()->regions()) {
                     const auto region = entry.toMap();
                     found << region.value("side").toString() + ":" + region.value("section").toString() + "="
-                        + (region.value("markersRemain").toBool() ? "remain" : "gone");
+                            + (region.value("markersRemain").toBool() ? "remain" : "gone");
                 }
                 found.sort();
                 return found;
@@ -2595,16 +2729,17 @@ public:
                 Fixture fixture(test_support::markedFile());
                 settlePanes(fixture);
                 if (shown) CHECK(QMetaObject::invokeMethod(fixture.object("showConflictMarkers"), "trigger"));
-                expectLook(fixture, shown ? "shown before Save" : "folded before Save", shown
-                    ? MarkerLook{{}, numbers(1, 17), numbers(2, 9) + numbers(10, 15), {}, 8}
-                    : markedFolded());
+                expectLook(fixture, shown ? "shown before Save" : "folded before Save",
+                           shown ? MarkerLook{{}, numbers(1, 17), numbers(2, 9) + numbers(10, 15), {}, 8}
+                                 : markedFolded());
                 const auto header = static_cast<int>(fixture.text().indexOf("header"));
                 fixture.select(header, header);
                 fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
                 settle([&] { return fixture.controller.selectedFile()->unsaved(); });
                 fixture.click("saveDraft");
                 CHECK(fixture.file().checkpoint());
-                const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()));
+                const auto replay =
+                    replayRecovery(storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()));
                 CHECK(replay.succeeded && replay.files.size() == 1 && replay.files.front().checkpoint());
                 const auto bytes = replay.files.front().checkpoint()->draft.text;
                 CHECK(bytes == "x" + test_support::markedText() && bytes == fixture.file().checkpoint()->draft.text);
@@ -2622,15 +2757,16 @@ public:
             const auto &first = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
             const auto section = QString::fromStdString(first.section);
             CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                QString::fromStdString(first.source.contributionId), ChoicePreviewFlow::Action::ResolveUsingSide));
+                                                   QString::fromStdString(first.source.contributionId),
+                                                   ChoicePreviewFlow::Action::ResolveUsingSide));
             CHECK(fixture.controller.applyChoice(true));
             CHECK(!fixture.text().contains(QStringLiteral(">>>>>>> theirs\nbridge")));
             CHECK(fixture.controller.selectedFile()->markerBlocks().size() == 1);
             for (const auto &entry : remaining(fixture))
                 CHECK(entry.endsWith(entry.contains(":" + section + "=") ? "=gone" : "=remain"));
             // The second block, now lines 5-9, folds into its row on line 5.
-            expectLook(fixture, "after resolving the first section", {{6, 7, 8, 9}, numbers(1, 12, {6, 7, 8, 9}),
-                {5}, {5}, 3});
+            expectLook(fixture, "after resolving the first section",
+                       {{6, 7, 8, 9}, numbers(1, 12, {6, 7, 8, 9}), {5}, {5}, 3});
             CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
             CHECK(remaining(fixture) == atLaunch);
             expectLook(fixture, "after undoing the choice", markedFolded());
@@ -2641,13 +2777,16 @@ public:
             auto *notice = fixture.item("settledNotice");
             const auto rowLine = [&] {
                 const auto row = fixture.controller.files()->rowOf("choices");
-                return fixture.controller.files()->data(fixture.controller.files()->index(row), SessionModel::StatusLineRole).toString();
+                return fixture.controller.files()
+                    ->data(fixture.controller.files()->index(row), SessionModel::StatusLineRole)
+                    .toString();
             };
             CHECK(!notice->isVisible() && rowLine() != QStringLiteral("Ready to mark resolved"));
             const auto resolve = [&](SourceSide side, std::size_t section) {
                 const auto &target = test_support::choiceTarget(fixture.file(), side, ChoiceScope::Section, section);
                 CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                    QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::ResolveUsingSide));
+                                                       QString::fromStdString(target.source.contributionId),
+                                                       ChoicePreviewFlow::Action::ResolveUsingSide));
                 CHECK(fixture.controller.applyChoice(true));
             };
             resolve(SourceSide::Stage2, 0);
@@ -2687,12 +2826,14 @@ public:
             const auto resolve = [&](SourceSide side, std::size_t at) {
                 const auto &target = test_support::choiceTarget(fixture.file(), side, ChoiceScope::Section, at);
                 CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                    QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::ResolveUsingSide));
+                                                       QString::fromStdString(target.source.contributionId),
+                                                       ChoicePreviewFlow::Action::ResolveUsingSide));
                 CHECK(fixture.controller.applyChoice(true));
             };
             // Deciding the first section keeps the block, its fold and every region's markers.
             resolve(SourceSide::Stage2, 0);
-            CHECK(fixture.text() == QString::fromStdString(test_support::splitText()) && remain() == atLaunch && folded());
+            CHECK(fixture.text() == QString::fromStdString(test_support::splitText()) && remain() == atLaunch
+                  && folded());
             settle([&] { return foldedLines(fixture) == numbers(3, 11); });
             // Deciding the second removes the block, so nothing folds and no region has markers.
             resolve(SourceSide::Stage3, 1);
@@ -2702,7 +2843,8 @@ public:
             settle([&] { return foldedLines(fixture).isEmpty(); });
             // One undo brings back the block and its fold.
             CHECK(fixture.controller.undo("choices", QString::number(fixture.file().current().id)));
-            CHECK(fixture.text() == QString::fromStdString(test_support::splitText()) && remain() == atLaunch && folded());
+            CHECK(fixture.text() == QString::fromStdString(test_support::splitText()) && remain() == atLaunch
+                  && folded());
             settle([&] { return foldedLines(fixture) == numbers(3, 11); });
         });
         suite.run("Take both on a folded row previews either order, and the result gutter has none", [] {
@@ -2717,7 +2859,8 @@ public:
             const auto id = target.source.contributionId;
             const auto button = "resultTakeBoth-" + id;
             for (const bool leftFirst : {true, false}) {
-                const auto entry = std::string(leftFirst ? "resultTakeBothLeftFirst-" : "resultTakeBothRightFirst-") + id;
+                const auto entry =
+                    std::string(leftFirst ? "resultTakeBothLeftFirst-" : "resultTakeBothRightFirst-") + id;
                 // Closing the preview can move this row while its modal overlay fades out.
                 test_support::waitForLayout(fixture.window, QString::fromStdString(button), 60);
                 fixture.clickMenuEntry(button.c_str(), entry.c_str());
@@ -2737,7 +2880,9 @@ public:
             }
             // Hiding the source choices hides Take both too; the row stays.
             fixture.click("showSourceChoices");
-            settle([&] { return !test_support::visualItem(fixture.window->contentItem(), QString::fromStdString(button)); });
+            settle([&] {
+                return !test_support::visualItem(fixture.window->contentItem(), QString::fromStdString(button));
+            });
             expectLook(fixture, "with the choices hidden", markedFolded());
             checkUnchanged(fixture, before);
         });
@@ -2767,8 +2912,10 @@ public:
             Fixture fixture(test_support::choiceFile("same\nleftA\nmid\nleftB\n", result, result));
             CHECK(fixture.file().facts().undecided == 4);
             const auto noConflicts = [&] {
-                settle([&] { return fixture.item("undecidedCounter")->property("text").toString()
-                    == QStringLiteral("No conflicts to step through"); });
+                settle([&] {
+                    return fixture.item("undecidedCounter")->property("text").toString()
+                        == QStringLiteral("No conflicts to step through");
+                });
                 for (const auto *name : {"previousUndecided", "undecidedCounter", "nextUndecided"})
                     CHECK(!fixture.item(name)->isEnabled());
                 CHECK(fixture.controller.selectedFile()->progress().value("conflicts").toInt() == 0);
@@ -2776,7 +2923,8 @@ public:
             noConflicts();
             const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
             CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::Ignore));
+                                                   QString::fromStdString(target.source.contributionId),
+                                                   ChoicePreviewFlow::Action::Ignore));
             CHECK(fixture.controller.applyChoice(true));
             CHECK(fixture.file().facts().undecided == 3);
             CHECK(fixture.text().toStdString() == result);
@@ -2800,7 +2948,7 @@ public:
                 CHECK(fixture.item(name)->isEnabled());
                 fixture.click(name);
                 expectNavigation(fixture, "conflict", "choices", "result", 0, 1, begin, end,
-                    QStringLiteral("Conflict 1 of 1 · result bytes %1-%2").arg(begin).arg(end));
+                                 QStringLiteral("Conflict 1 of 1 · result bytes %1-%2").arg(begin).arg(end));
                 CHECK(fixture.item("resultText")->hasActiveFocus());
             }
             CHECK(fixture.file().current().id == before.id && fixture.file().current().draft == before.draft);
@@ -2812,26 +2960,21 @@ public:
             const auto revision = fixture.file().current().id;
             CHECK(revision == 1);
             CHECK(fixture.file().facts().undecided == 4);
-            expectProgress(fixture, false, false, false, false,
-                QStringLiteral("1"), {}, {}, {}, 4);
+            expectProgress(fixture, false, false, false, false, QStringLiteral("1"), {}, {}, {}, 4);
 
             fixture.select(0, 0);
             fixture.clickMenuEntry("navigateMenu", "nextDifference");
-            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"),
-                QStringLiteral("result"), 0, 2, 5, 9,
-                QStringLiteral("Difference 1 of 2 · result bytes 5-9"));
+            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"), QStringLiteral("result"),
+                             0, 2, 5, 9, QStringLiteral("Difference 1 of 2 · result bytes 5-9"));
             fixture.clickMenuEntry("navigateMenu", "nextDifference");
-            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"),
-                QStringLiteral("result"), 1, 2, 13, 17,
-                QStringLiteral("Difference 2 of 2 · result bytes 13-17"));
+            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"), QStringLiteral("result"),
+                             1, 2, 13, 17, QStringLiteral("Difference 2 of 2 · result bytes 13-17"));
             fixture.clickMenuEntry("navigateMenu", "nextDifference");
-            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"),
-                QStringLiteral("result"), 0, 2, 5, 9,
-                QStringLiteral("Difference 1 of 2 · result bytes 5-9"));
+            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"), QStringLiteral("result"),
+                             0, 2, 5, 9, QStringLiteral("Difference 1 of 2 · result bytes 5-9"));
             fixture.clickMenuEntry("navigateMenu", "previousDifference");
-            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"),
-                QStringLiteral("result"), 1, 2, 13, 17,
-                QStringLiteral("Difference 2 of 2 · result bytes 13-17"));
+            expectNavigation(fixture, QStringLiteral("difference"), QStringLiteral("choices"), QStringLiteral("result"),
+                             1, 2, 13, 17, QStringLiteral("Difference 2 of 2 · result bytes 13-17"));
 
             // Contribution decisions remain four, while this markerless draft has no conflicts.
             for (const auto *name : {"nextUndecided", "previousUndecided", "undecidedCounter"})
@@ -2840,35 +2983,29 @@ public:
             // Explicit legacy source-decision callers retain their exact four targets.
             fixture.select(0, 0);
             CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
-            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
-                QStringLiteral("result"), 0, 4, 5, 9,
-                QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
-                QStringLiteral("pick/1/5/11"));
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"),
+                             0, 4, 5, 9, QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
+                             QStringLiteral("pick/1/5/11"));
             CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
-            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
-                QStringLiteral("result"), 1, 4, 5, 9,
-                QStringLiteral("Undecided 2 of 4 · Right · result bytes 5-9"),
-                QStringLiteral("pick/2/5/9"));
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"),
+                             1, 4, 5, 9, QStringLiteral("Undecided 2 of 4 · Right · result bytes 5-9"),
+                             QStringLiteral("pick/2/5/9"));
             CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
-            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
-                QStringLiteral("result"), 2, 4, 13, 17,
-                QStringLiteral("Undecided 3 of 4 · Left · result bytes 13-17"),
-                QStringLiteral("pick/1/15/21"));
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"),
+                             2, 4, 13, 17, QStringLiteral("Undecided 3 of 4 · Left · result bytes 13-17"),
+                             QStringLiteral("pick/1/15/21"));
             CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
-            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
-                QStringLiteral("result"), 3, 4, 13, 17,
-                QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
-                QStringLiteral("pick/2/13/17"));
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"),
+                             3, 4, 13, 17, QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
+                             QStringLiteral("pick/2/13/17"));
             CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, 1));
-            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
-                QStringLiteral("result"), 0, 4, 5, 9,
-                QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
-                QStringLiteral("pick/1/5/11"));
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"),
+                             0, 4, 5, 9, QStringLiteral("Undecided 1 of 4 · Left · result bytes 5-9"),
+                             QStringLiteral("pick/1/5/11"));
             CHECK(fixture.controller.navigate(FileNavigator::Mode::Undecided, -1));
-            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"),
-                QStringLiteral("result"), 3, 4, 13, 17,
-                QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
-                QStringLiteral("pick/2/13/17"));
+            expectNavigation(fixture, QStringLiteral("undecided"), QStringLiteral("choices"), QStringLiteral("result"),
+                             3, 4, 13, 17, QStringLiteral("Undecided 4 of 4 · Right · result bytes 13-17"),
+                             QStringLiteral("pick/2/13/17"));
             CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
             CHECK(fixture.file().current().id == revision);
             CHECK(fixture.text().toStdString() == result);
@@ -2876,25 +3013,26 @@ public:
             CHECK(fixture.item("saveDraft")->isEnabled());
             fixture.click("saveDraft");
             CHECK(fixture.controller.commandMessage()
-                == QStringLiteral("Draft saved in Branch Truce; repository file unchanged."));
+                  == QStringLiteral("Draft saved in Branch Truce; repository file unchanged."));
             CHECK(fixture.file().checkpoint() && fixture.file().checkpoint()->id == revision);
             CHECK(!fixture.file().written() && !fixture.file().staged() && !fixture.file().reviewed());
-            expectProgress(fixture, true, false, false, false,
-                QStringLiteral("1"), QStringLiteral("1"), {}, {}, 4);
+            expectProgress(fixture, true, false, false, false, QStringLiteral("1"), QStringLiteral("1"), {}, {}, 4);
 
             // Progress keeps the review, write and stage revisions separate.
             CHECK(fixture.controller.files()->beginMarkResolved("choices", revision, true) == Transition::Applied);
             CHECK(fixture.file().reviewed() && fixture.file().reviewed()->revision.id == revision);
             CHECK(!fixture.file().written() && !fixture.file().staged() && !fixture.file().facts().resolved);
-            expectProgress(fixture, true, true, false, false,
-                QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"), {}, 4);
-            CHECK(fixture.controller.files()->recordWrite("choices", revision, Outcome::Succeeded) == Transition::Applied);
-            CHECK(fixture.controller.files()->recordStage("choices", revision, Outcome::Succeeded,
-                "verified-object", "100644") == Transition::Applied);
+            expectProgress(fixture, true, true, false, false, QStringLiteral("1"), QStringLiteral("1"),
+                           QStringLiteral("1"), {}, 4);
+            CHECK(fixture.controller.files()->recordWrite("choices", revision, Outcome::Succeeded)
+                  == Transition::Applied);
+            CHECK(fixture.controller.files()->recordStage("choices", revision, Outcome::Succeeded, "verified-object",
+                                                          "100644")
+                  == Transition::Applied);
             CHECK(fixture.file().facts().resolved && fixture.file().staged()->revision.id == revision);
             CHECK(fixture.text().toStdString() == result);
-            expectProgress(fixture, true, true, true, false,
-                QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"), 4);
+            expectProgress(fixture, true, true, true, false, QStringLiteral("1"), QStringLiteral("1"),
+                           QStringLiteral("1"), QStringLiteral("1"), 4);
 
             CHECK(fixture.controller.files()->appendFile(
                 FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
@@ -2902,15 +3040,18 @@ public:
             CHECK(fixture.file().facts().resolved);
             fixture.click("nextUnfinished");
             expectNavigation(fixture, QStringLiteral("unfinished"), QStringLiteral("outside"),
-                QStringLiteral("outside-editor"), 0, 1, 0, 0,
-                QStringLiteral("Unfinished file · outside the editor · diagram.png"));
+                             QStringLiteral("outside-editor"), 0, 1, 0, 0,
+                             QStringLiteral("Unfinished file · outside the editor · diagram.png"));
             const auto unfinished = fixture.controller.navigationTarget();
             CHECK(unfinished.value(QStringLiteral("support")).toString() == QStringLiteral("outside-app"));
             CHECK(!unfinished.value(QStringLiteral("resolved")).toBool());
             CHECK(unfinished.value(QStringLiteral("path")).toString() == QStringLiteral("diagram.png"));
-            CHECK(fixture.item("selectedProblem")->property("text").toString() == QStringLiteral("This file must be resolved outside Branch Truce"));
-            CHECK(fixture.item("selectedProblem")->property("explanation").toString().contains(
-                QStringLiteral("outstanding")));
+            CHECK(fixture.item("selectedProblem")->property("text").toString()
+                  == QStringLiteral("This file must be resolved outside Branch Truce"));
+            CHECK(fixture.item("selectedProblem")
+                      ->property("explanation")
+                      .toString()
+                      .contains(QStringLiteral("outstanding")));
             expectDiagnostic(fixture, QStringLiteral("image content"));
             const auto *outside = fixture.controller.files()->file("outside");
             CHECK(outside && outside->support() == Support::OutsideApp);
@@ -2918,8 +3059,8 @@ public:
             CHECK(outside->current().draft.text.empty() && !outside->facts().resolved);
             fixture.click("previousUnfinished");
             expectNavigation(fixture, QStringLiteral("unfinished"), QStringLiteral("outside"),
-                QStringLiteral("outside-editor"), 0, 1, 0, 0,
-                QStringLiteral("Unfinished file · outside the editor · diagram.png"));
+                             QStringLiteral("outside-editor"), 0, 1, 0, 0,
+                             QStringLiteral("Unfinished file · outside the editor · diagram.png"));
             CHECK(fixture.file().support() == Support::Supported && fixture.file().facts().resolved);
 
             CHECK(fixture.controller.selectFile(QStringLiteral("choices")));
@@ -2929,10 +3070,10 @@ public:
             CHECK(fixture.controller.files()->replaceDraft("choices", revision, newer) == Transition::Applied);
             CHECK(fixture.file().current().id == revision + 1);
             CHECK(fixture.file().staged() && fixture.file().staged()->revision.id == revision);
-            CHECK(fixture.file().facts().earlierStaged && !fixture.file().facts().resolved && fixture.file().facts().unsaved);
+            CHECK(fixture.file().facts().earlierStaged && !fixture.file().facts().resolved
+                  && fixture.file().facts().unsaved);
             settle([&] { return fixture.text().toStdString() == newer.text; });
-            expectProgress(fixture, false, false, false, true,
-                QStringLiteral("2"), {}, {}, QStringLiteral("1"), 4);
+            expectProgress(fixture, false, false, false, true, QStringLiteral("2"), {}, {}, QStringLiteral("1"), 4);
 
             const auto heldRevision = fixture.file().current().id;
             const auto heldText = fixture.text();
@@ -2942,8 +3083,8 @@ public:
             const int selectionStart = editor->property("selectionStart").toInt();
             const int selectionEnd = editor->property("selectionEnd").toInt();
             if (cursor != 6 || selectionStart != 1 || selectionEnd != 6)
-                throw std::runtime_error("held selection " + std::to_string(selectionStart)
-                    + "-" + std::to_string(selectionEnd) + " cursor " + std::to_string(cursor));
+                throw std::runtime_error("held selection " + std::to_string(selectionStart) + "-"
+                                         + std::to_string(selectionEnd) + " cursor " + std::to_string(cursor));
             CHECK(cursor == 6 && selectionStart == 1 && selectionEnd == 6);
             CHECK(fixture.controller.fileListVisible() && fixture.item("fileList")->isVisible());
             CHECK(fixture.item("toggleFileList")->property("checked").toBool());
@@ -2963,7 +3104,8 @@ public:
             CHECK(fixture.item("toggleFileList")->property("checked").toBool());
             CHECK(test_support::accessibleName(fixture.item("toggleFileList")) == QStringLiteral("Show file list"));
             CHECK(fixture.controller.selectedFileId() == QStringLiteral("choices"));
-            CHECK(fixture.file().current().id == heldRevision && fixture.text() == heldText && fixture.file().facts().unsaved);
+            CHECK(fixture.file().current().id == heldRevision && fixture.text() == heldText
+                  && fixture.file().facts().unsaved);
             CHECK(editor->property("cursorPosition").toInt() == cursor);
             CHECK(editor->property("selectionStart").toInt() == selectionStart);
             CHECK(editor->property("selectionEnd").toInt() == selectionEnd);
@@ -2973,11 +3115,14 @@ public:
         });
         suite.run("toggling the file list restores the result viewport scroll position", [] {
             std::string result;
-            for (int line = 0; line < 200; ++line) result += std::string(240, static_cast<char>('a' + line % 26)) + "\n";
+            for (int line = 0; line < 200; ++line)
+                result += std::string(240, static_cast<char>('a' + line % 26)) + "\n";
             Fixture fixture(test_support::choiceFile("left\n", result, result));
             auto *viewport = fixture.item("resultViewport");
-            settle([&] { return viewport->property("contentHeight").toReal() > viewport->height() * 2
-                && viewport->property("contentWidth").toReal() > viewport->width() * 2; });
+            settle([&] {
+                return viewport->property("contentHeight").toReal() > viewport->height() * 2
+                    && viewport->property("contentWidth").toReal() > viewport->width() * 2;
+            });
             // Let the initial file placement run before establishing the scroll
             // position whose preservation this test exercises.
             test_support::waitForStable(fixture.window, "initial result viewport", [&] { return viewport; }, 60);
@@ -2985,14 +3130,18 @@ public:
             fixture.select(0, 0);
             CHECK(viewport->setProperty("contentY", 600.0));
             CHECK(viewport->setProperty("contentX", 40.0));
-            settle([&] { return viewport->property("contentY").toReal() == 600.0
-                && viewport->property("contentX").toReal() == 40.0; });
+            settle([&] {
+                return viewport->property("contentY").toReal() == 600.0
+                    && viewport->property("contentX").toReal() == 40.0;
+            });
             // Move the viewport between the note and the restore, as the relayout does.
-            const auto moved = QObject::connect(&fixture.controller, &ApplicationController::fileListChanged, viewport,
+            const auto moved = QObject::connect(
+                &fixture.controller, &ApplicationController::fileListChanged, viewport,
                 [viewport] {
                     viewport->setProperty("contentY", 0.0);
                     viewport->setProperty("contentX", 0.0);
-                }, Qt::DirectConnection);
+                },
+                Qt::DirectConnection);
             fixture.click("toggleFileList");
             QObject::disconnect(moved);
             CHECK(!fixture.controller.fileListVisible());
@@ -3009,7 +3158,8 @@ public:
             Fixture fixture;
             auto *sidebar = test_support::waitForLayout(fixture.window, QStringLiteral("fileList"), 60)->parentItem();
             auto *split = sidebar->parentItem();
-            while (split && !QByteArray(split->metaObject()->className()).contains("SplitView")) split = split->parentItem();
+            while (split && !QByteArray(split->metaObject()->className()).contains("SplitView"))
+                split = split->parentItem();
             CHECK(split);
             const auto minimum = qmlValue(sidebar, QStringLiteral("SplitView.minimumWidth")).toReal();
             const auto maximum = [&] { return qmlValue(sidebar, QStringLiteral("SplitView.maximumWidth")).toReal(); };
@@ -3018,7 +3168,7 @@ public:
                 const auto edge = sidebar->mapToScene(QPointF(sidebar->width(), 0)).x();
                 for (auto *child : split->childItems()) {
                     if (child->isVisible() && child->width() > 0 && child->width() < 40
-                            && std::abs(child->mapToScene(QPointF()).x() - edge) < 2)
+                        && std::abs(child->mapToScene(QPointF()).x() - edge) < 2)
                         return child;
                 }
                 throw std::runtime_error("no split handle beside the file list");
@@ -3075,8 +3225,7 @@ public:
 
             // Five new lines at the top of the result move the mapping with them.
             fixture.select(0, 0);
-            for (int typed = 0; typed < 5; ++typed)
-                fixture.key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
+            for (int typed = 0; typed < 5; ++typed) fixture.key(Qt::Key_Return, Qt::NoModifier, QStringLiteral("\r"));
             settle([&] { return fixture.file().current().draft.text.starts_with("\n\n\n\n\nshared 1\n"); });
             wheelTo(fixture, "stage2Viewport", 120 * line);
             CHECK(std::abs(contentY(result) - (contentY(left) + 35 * line)) < 1);
@@ -3124,8 +3273,10 @@ public:
             bool ambiguous = false;
             for (const auto &value : fixture.controller.selectedFile()->passages()) {
                 const auto passage = value.toMap();
-                ambiguous = ambiguous || (passage.value("side") == "stage2" && passage.value("kind") == "ambiguous"
-                    && passage.value("sourceLineBegin").toInt() <= 81 && passage.value("sourceLineEnd").toInt() >= 121);
+                ambiguous = ambiguous
+                    || (passage.value("side") == "stage2" && passage.value("kind") == "ambiguous"
+                        && passage.value("sourceLineBegin").toInt() <= 81
+                        && passage.value("sourceLineEnd").toInt() >= 121);
             }
             CHECK(ambiguous);
             auto *leftView = fixture.item("stage2Viewport");
@@ -3153,10 +3304,12 @@ public:
         suite.run("the shown earlier version scrolls with the other panes", [] {
             auto sources = *insertionFile().snapshots();
             const auto earlier = sources.stage2->worktree.utf8;
-            sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
-                test_support::choiceText(earlier), "earlier-commit", "Common earlier version"};
+            sources.earlier = SourceSnapshot{"earlier-object", "100644",
+                                             earlier,          test_support::choiceText(earlier),
+                                             "earlier-commit", "Common earlier version"};
             const auto launch = sources.launchResult.text.utf8;
-            Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
+            Fixture fixture(
+                FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
             fixture.click("showEarlier");
             auto *left = fixture.item("stage2Viewport");
             auto *earlierView = fixture.item("earlierViewport");
@@ -3170,10 +3323,12 @@ public:
         suite.run("the earlier version catches up with the other panes when it is first shown", [] {
             auto sources = *insertionFile().snapshots();
             const auto earlier = sources.stage2->worktree.utf8;
-            sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
-                test_support::choiceText(earlier), "earlier-commit", "Common earlier version"};
+            sources.earlier = SourceSnapshot{"earlier-object", "100644",
+                                             earlier,          test_support::choiceText(earlier),
+                                             "earlier-commit", "Common earlier version"};
             const auto launch = sources.launchResult.text.utf8;
-            Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
+            Fixture fixture(
+                FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
             auto *left = fixture.item("stage2Viewport");
             auto *earlierView = fixture.item("earlierViewport");
             auto *editor = fixture.item("resultText");
@@ -3266,14 +3421,16 @@ public:
             CHECK(editor->property("cursorPosition").toInt() == offset);
             CHECK(editor->property("selectionStart").toInt() == editor->property("selectionEnd").toInt());
             // No pane follows the replaced text to its end.
-            for (std::size_t pane = 0; pane < panes.size(); ++pane) CHECK(std::abs(contentY(panes[pane]) - typed[pane]) < 1);
+            for (std::size_t pane = 0; pane < panes.size(); ++pane)
+                CHECK(std::abs(contentY(panes[pane]) - typed[pane]) < 1);
 
             fixture.key(Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
             CHECK(fixture.file().current().draft.text.find("xshared 20\n") != std::string::npos);
             settleReplacement();
             // The cursor follows the restored insertion, as it did when the character was typed.
             CHECK(editor->property("cursorPosition").toInt() == offset + 1);
-            for (std::size_t pane = 0; pane < panes.size(); ++pane) CHECK(std::abs(contentY(panes[pane]) - typed[pane]) < 1);
+            for (std::size_t pane = 0; pane < panes.size(); ++pane)
+                CHECK(std::abs(contentY(panes[pane]) - typed[pane]) < 1);
         };
         // The view restores the result viewport once, with no reapply after the next frame, so
         // let the window draw frames after the undo before reading the panes.
@@ -3291,8 +3448,8 @@ public:
             const auto typed = contentY(result);
             CHECK(std::abs(typed - 220 * line) < 1);
             int frames = 0;
-            const auto counter = QObject::connect(fixture.window, &QQuickWindow::frameSwapped, fixture.window,
-                [&frames] { ++frames; });
+            const auto counter =
+                QObject::connect(fixture.window, &QQuickWindow::frameSwapped, fixture.window, [&frames] { ++frames; });
             fixture.key(Qt::Key_Z, Qt::ControlModifier);
             CHECK(fixture.file().current().draft.text.find("xshared") == std::string::npos);
             settleFor("three frames after the undo", [&] {
@@ -3305,9 +3462,11 @@ public:
             CHECK(cursorInView(fixture));
             if (std::abs(contentY(result) - typed) >= 1)
                 throw std::runtime_error("result viewport moved from " + std::to_string(typed) + " to "
-                    + std::to_string(contentY(result)) + " after " + std::to_string(frames) + " frames");
+                                         + std::to_string(contentY(result)) + " after " + std::to_string(frames)
+                                         + " frames");
         };
-        const std::string undoRedoName = "undo and redo keep the result cursor and scroll position, and the sources stay";
+        const std::string undoRedoName =
+            "undo and redo keep the result cursor and scroll position, and the sources stay";
         const std::string framesName = "undo keeps the result viewport after the window draws";
         suite.run(undoRedoName, undoRedoKeepViewport);
         suite.run(framesName, undoKeepsViewportAfterFrames);
@@ -3343,7 +3502,8 @@ public:
             const auto before = fixture.text();
             const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
             CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::ResolveUsingSide));
+                                                   QString::fromStdString(target.source.contributionId),
+                                                   ChoicePreviewFlow::Action::ResolveUsingSide));
             CHECK(fixture.controller.applyChoice(true));
             CHECK(fixture.text() != before && !fixture.text().contains(QStringLiteral("right only")));
             settleReplacement();
@@ -3359,7 +3519,8 @@ public:
             CHECK(cursorInView(fixture));
             const auto &target = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
             CHECK(fixture.controller.previewChoice("choices", QString::number(fixture.file().current().id),
-                QString::fromStdString(target.source.contributionId), ChoicePreviewFlow::Action::ResolveUsingSide));
+                                                   QString::fromStdString(target.source.contributionId),
+                                                   ChoicePreviewFlow::Action::ResolveUsingSide));
             CHECK(fixture.controller.applyChoice(true));
             CHECK(!fixture.text().contains(QStringLiteral("right only")));
             settleReplacement();
@@ -3389,13 +3550,16 @@ public:
             };
             CHECK(fixture.controller.previewWholeFile("choices", revision(), ChoicePreviewFlow::Side::LeftSide));
             CHECK(fixture.controller.applyWholeFile());
-            CHECK(fixture.text().contains(QStringLiteral("left first\n")) && fixture.text().contains(QStringLiteral("left last\n")));
+            CHECK(fixture.text().contains(QStringLiteral("left first\n"))
+                  && fixture.text().contains(QStringLiteral("left last\n")));
             kept();
             CHECK(fixture.controller.undo("choices", revision()));
-            CHECK(fixture.text().contains(QStringLiteral("right first\n")) && fixture.text().contains(QStringLiteral("right last\n")));
+            CHECK(fixture.text().contains(QStringLiteral("right first\n"))
+                  && fixture.text().contains(QStringLiteral("right last\n")));
             kept();
             CHECK(fixture.controller.redo("choices", revision()));
-            CHECK(fixture.text().contains(QStringLiteral("left first\n")) && fixture.text().contains(QStringLiteral("left last\n")));
+            CHECK(fixture.text().contains(QStringLiteral("left first\n"))
+                  && fixture.text().contains(QStringLiteral("left last\n")));
             kept();
         });
         suite.run("a failed Discard shows the restored result and retry finishes it", [] {
@@ -3403,13 +3567,15 @@ public:
             auto saved = fixture.file().current().draft;
             saved.text += "saved app draft\n";
             saved.decisions["kept"] = {DecisionValue::Accepted, 4};
-            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, saved) == Transition::Applied);
+            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, saved)
+                  == Transition::Applied);
             settle([&] { return fixture.controller.selectedFile()->unsaved(); });
             fixture.click("saveDraft");
             auto discarded = saved;
             discarded.text += "discarded edit\n";
             discarded.decisions["kept"] = {DecisionValue::Ignored, {}};
-            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, discarded) == Transition::Applied);
+            CHECK(fixture.controller.files()->replaceDraft("choices", fixture.file().current().id, discarded)
+                  == Transition::Applied);
             settle([&] { return fixture.controller.selectedFile()->unsaved(); });
             auto *discardButton = test_support::fileToolbarControl(fixture.window, "discardUnsaved");
             {
@@ -3471,14 +3637,16 @@ public:
             fixture.click("markResolved");
             fixture.clickLaidOut("confirmResolution");
             settle([&] {
-                return fixture.controller.selectedFile()->status()
-                    == QStringLiteral("Repository write failed");
+                return fixture.controller.selectedFile()->status() == QStringLiteral("Repository write failed");
             });
             CHECK(fixture.text() == text);
             CHECK(fixture.file().reviewed() && fixture.file().checkpoint() && !fixture.file().written());
             CHECK(!fixture.file().facts().resolved && !fixture.file().staged());
             settle([&] { return fixture.item("fileFailureNotice")->isVisible(); });
-            CHECK(fixture.item("fileFailureNotice")->property("text").toString().contains(QStringLiteral("Repository write failed")));
+            CHECK(fixture.item("fileFailureNotice")
+                      ->property("text")
+                      .toString()
+                      .contains(QStringLiteral("Repository write failed")));
             CHECK(!fixture.item("parentStagingState")->isVisible());
         });
         suite.run("closing with work outstanding opens the handoff and each route returns to its file", [] {
@@ -3491,7 +3659,7 @@ public:
             CHECK(files->recordCheckpoint("published", 1, Outcome::Succeeded) == Transition::Applied);
             CHECK(files->recordWrite("published", 1, Outcome::Succeeded) == Transition::Applied);
             CHECK(files->recordStage("published", 1, Outcome::Succeeded, "verified-object", "100644")
-                == Transition::Applied);
+                  == Transition::Applied);
             CHECK(files->file("published")->facts().resolved);
             CHECK(files->appendFile(FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
 
@@ -3503,7 +3671,7 @@ public:
             settleFor("handoff opened by close", opened);
             CHECK(fixture.window->isVisible() && fixture.controller.sessionOutcome().isEmpty());
             CHECK(fixture.item("handoffOutcome")->property("text").toString()
-                == QStringLiteral("3 of 4 files in this session remain outstanding. This session is not finished."));
+                  == QStringLiteral("3 of 4 files in this session remain outstanding. This session is not finished."));
             CHECK(!fixture.item("handoffFinish")->isVisible());
 
             QStringList outstanding;
@@ -3527,9 +3695,11 @@ public:
                 const auto route = QStringLiteral("handoffRoute-") + id;
                 clickItem(fixture, waitForLayout(fixture, route));
                 // Until its fade-out ends the closing dialog's overlay takes the next click.
-                settleFor("handoff closed by route " + id.toStdString(), [&] { return !dialog->property("visible").toBool(); });
+                settleFor("handoff closed by route " + id.toStdString(),
+                          [&] { return !dialog->property("visible").toBool(); });
                 if (fixture.controller.selectedFileId() != id)
-                    throw std::runtime_error(("route " + id + " selected " + fixture.controller.selectedFileId()).toStdString());
+                    throw std::runtime_error(
+                        ("route " + id + " selected " + fixture.controller.selectedFileId()).toStdString());
                 CHECK(fixture.controller.selectedFileId() == id);
             }
             CHECK(fixture.controller.selectFile(QStringLiteral("outside")));
@@ -3539,14 +3709,18 @@ public:
             int ended = 0;
             bool clean = true;
             QObject::connect(&fixture.controller, &ApplicationController::sessionEnded, &fixture.controller,
-                             [&](const QString &, bool value) { ++ended; clean = value; });
+                             [&](const QString &, bool value) {
+                                 ++ended;
+                                 clean = value;
+                             });
             fixture.click("openHandoff");
             settleFor("handoff opened for leave", opened);
             auto *leave = waitForLayout(fixture, QStringLiteral("handoffLeave"));
             CHECK(leave == fixture.item("handoffLeave") && leave->isEnabled());
             clickItem(fixture, leave);
             CHECK(ended == 1 && !clean);
-            CHECK(fixture.controller.sessionOutcome().startsWith(QStringLiteral("Left with 3 of 4 files outstanding.")));
+            CHECK(
+                fixture.controller.sessionOutcome().startsWith(QStringLiteral("Left with 3 of 4 files outstanding.")));
             CHECK(!fixture.controller.leaveSession() && ended == 1);
             CHECK(QMetaObject::invokeMethod(dialog, "close"));
             settleFor("handoff closed after leave", [&] { return !opened(); });
@@ -3597,24 +3771,27 @@ public:
             CHECK(held && held->support() == Support::LargeFile && !held->correspondence());
             CHECK(fixture.controller.selectFile(QStringLiteral("large")));
             auto *message = fixture.item("selectedProblem");
-            settleFor("large file placeholder", [&] { return message->isVisible() && !fixture.item("resultText")->isVisible(); });
+            settleFor("large file placeholder",
+                      [&] { return message->isVisible() && !fixture.item("resultText")->isVisible(); });
             CHECK(message->property("text").toString() == QStringLiteral("The file is over 4000 lines"));
             CHECK(message->property("explanation").toString() == QStringLiteral("Are you sure you want to load it?"));
             auto *load = fixture.object("loadLargeFileAction");
             CHECK(message->property("helpfulAction").value<QObject *>() == load);
             // The placeholder lays out again when it switches files, so click once it holds still.
-            auto *button = test_support::waitForStable(fixture.window, "Load button", [&] {
-                return test_support::visualButton(message, [&](QQuickItem *item) {
-                    return item->property("action").value<QObject *>() == load;
-                });
-            }, 60);
+            auto *button = test_support::waitForStable(
+                fixture.window, "Load button",
+                [&] {
+                    return test_support::visualButton(
+                        message, [&](QQuickItem *item) { return item->property("action").value<QObject *>() == load; });
+                },
+                60);
             CHECK(button->isEnabled());
-            CHECK(fixture.text().isEmpty() && fixture.controller.selectedFile()->property("resultText").toString().isEmpty());
+            CHECK(fixture.text().isEmpty()
+                  && fixture.controller.selectedFile()->property("resultText").toString().isEmpty());
             CHECK(button->property("text").toString() == QStringLiteral("Load"));
             clickItem(fixture, button);
-            settleFor("large file loaded", [&] {
-                return fixture.item("resultText")->isVisible() && fixture.text().toStdString() == large;
-            });
+            settleFor("large file loaded",
+                      [&] { return fixture.item("resultText")->isVisible() && fixture.text().toStdString() == large; });
             const auto *loaded = fixture.controller.files()->file("large");
             CHECK(loaded->support() == Support::Supported && loaded->correspondence());
             CHECK(loaded->current().id == 2 && !loaded->canUndo());
@@ -3623,7 +3800,7 @@ public:
             const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.files()->recoveryDirectory()));
             CHECK(replay.succeeded && !replay.userWork && !replay.editedFiles.contains("large"));
             const auto recovered = std::find_if(replay.files.begin(), replay.files.end(),
-                [](const FileSession &candidate) { return candidate.id() == "large"; });
+                                                [](const FileSession &candidate) { return candidate.id() == "large"; });
             CHECK(recovered != replay.files.end() && recovered->support() == Support::Supported);
             CHECK(recovered->current().id == 2 && recovered->current().draft == loaded->current().draft);
         });
@@ -3633,7 +3810,8 @@ public:
             CHECK(server.listen(QHostAddress::LocalHost));
             // A file name cannot hold a slash, so the image address spells its slashes as entities.
             const auto path = QStringLiteral("<b>x</b><img src=\"http:&#47;&#47;127.0.0.1:%1&#47;probe\">.txt")
-                .arg(server.serverPort()).toStdString();
+                                  .arg(server.serverPort())
+                                  .toStdString();
             auto sources = *test_support::choiceFile().snapshots();
             sources.path = path;
             const auto launch = sources.launchResult.text.utf8;
@@ -3677,14 +3855,14 @@ public:
                 if (showing == 0) problems.append(what + QStringLiteral(" has no label"));
             };
             for (const auto *name : {"handoffOutcome", "inventoryWarning", "recoveryProblem", "commandMessage",
-                     "parentStagingState", "mergetoolHolding", "mergetoolWait", "choiceNotice"}) {
+                                     "parentStagingState", "mergetoolHolding", "mergetoolWait", "choiceNotice"}) {
                 auto *notice = fixture.item(name);
                 CHECK(notice->setProperty("visible", true) && notice->setProperty("text", message));
             }
             for (const auto *name : {"sessionPlaceholder", "selectedProblem"}) {
                 auto *placeholder = fixture.item(name);
                 CHECK(placeholder->setProperty("visible", true) && placeholder->setProperty("text", message)
-                    && placeholder->setProperty("explanation", message));
+                      && placeholder->setProperty("explanation", message));
             }
             // Attached tooltips share one popup per engine.
             auto *heading = fixture.item("repositoryHeading");
@@ -3692,12 +3870,12 @@ public:
             auto *tooltip = shared.evaluate().value<QObject *>();
             CHECK(tooltip && !shared.hasError());
             CHECK(tooltip->setProperty("parent", QVariant::fromValue(heading)) && tooltip->setProperty("text", message)
-                && tooltip->setProperty("visible", true));
+                  && tooltip->setProperty("visible", true));
             const auto requested = QTest::qWaitFor([&] { return server.hasPendingConnections(); }, 1000);
             server.close();
-            for (const auto *name : {"handoffOutcome", "inventoryWarning", "recoveryProblem", "commandMessage",
-                     "parentStagingState", "mergetoolHolding", "mergetoolWait", "choiceNotice", "sessionPlaceholder",
-                     "selectedProblem"})
+            for (const auto *name :
+                 {"handoffOutcome", "inventoryWarning", "recoveryProblem", "commandMessage", "parentStagingState",
+                  "mergetoolHolding", "mergetoolWait", "choiceNotice", "sessionPlaceholder", "selectedProblem"})
                 expectPlain(fixture.item(name), QString::fromLatin1(name));
             auto *tooltipContent = tooltip->property("contentItem").value<QQuickItem *>();
             CHECK(tooltipContent);
@@ -3707,9 +3885,9 @@ public:
             if (!problems.isEmpty()) throw std::runtime_error(problems.join(QStringLiteral("; ")).toStdString());
         });
         boundary.run("Backspace and Delete shorten an exact 262144-byte line", [] {
-            deletionAtLimit(std::string(262144, 'a'), QStringLiteral(
-                "Line of 262145 bytes exceeds the supported 262144 byte line limit. "
-                "The existing edit was kept and this change was not acknowledged."));
+            deletionAtLimit(std::string(262144, 'a'),
+                            QStringLiteral("Line of 262145 bytes exceeds the supported 262144 byte line limit. "
+                                           "The existing edit was kept and this change was not acknowledged."));
         });
         boundary.run("Backspace and Delete shorten an exact 8388608-byte buffer", [] {
             // Lines stay below the line limit so only the buffer limit applies.
@@ -3718,9 +3896,10 @@ public:
             for (int i = 0; i < 63; ++i) atLimit += std::string(131071, 'p') + '\n';
             atLimit += std::string(131072, 'p');
             CHECK(atLimit.size() == 8388608 && assessText(atLimit).limit == TextLimit::Within);
-            deletionAtLimit(atLimit, QStringLiteral(
-                "Text of 8388609 bytes exceeds the supported 8388608 byte recovery payload limit. "
-                "The existing edit was kept and this change was not acknowledged."));
+            deletionAtLimit(
+                atLimit,
+                QStringLiteral("Text of 8388609 bytes exceeds the supported 8388608 byte recovery payload limit. "
+                               "The existing edit was kept and this change was not acknowledged."));
         });
         return results.report();
     }
@@ -3740,10 +3919,14 @@ int main(int argc, char **argv)
     // Wayland session.
     const auto arguments = QCoreApplication::arguments();
     auto selection = Selection::All;
-    if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("scenes")) selection = Selection::Scenes;
-    else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("boundary")) selection = Selection::Boundary;
-    else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("display")) selection = Selection::Display;
-    else if (arguments.size() != 1) return 2;
+    if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("scenes"))
+        selection = Selection::Scenes;
+    else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("boundary"))
+        selection = Selection::Boundary;
+    else if (arguments.size() == 2 && arguments.at(1) == QStringLiteral("display"))
+        selection = Selection::Display;
+    else if (arguments.size() != 1)
+        return 2;
     // Synthetic offscreen integration owns its own clipboard. Physical desktop
     // input and window-manager behavior remain a separate verification layer.
     // The display cases use neither the clipboard nor real input, and leave the

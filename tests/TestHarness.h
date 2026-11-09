@@ -20,8 +20,7 @@ inline void check(bool condition, const char *expression, const char *file, int 
 class Suite {
 public:
     explicit Suite(const char *name) : name_(name) {}
-    template<typename Test>
-    void run(const std::string &name, Test test)
+    template <typename Test> void run(const std::string &name, Test test)
     {
         ++tests_;
         try {
@@ -38,6 +37,7 @@ public:
                   << " failures=" << failures_ << '\n';
         return failures_ == 0 ? 0 : 1;
     }
+
 private:
     const char *name_;
     int tests_ = 0;

@@ -2,8 +2,8 @@
 #pragma once
 #include <QtQml/qqmlregistration.h>
 
-#include "core/SessionState.h"
 #include "core/EditingCommands.h"
+#include "core/SessionState.h"
 #include "recovery/RecoveryJournal.h"
 #include <QAbstractListModel>
 #include <QByteArray>
@@ -33,12 +33,32 @@ class SessionModel : public QAbstractListModel {
     Q_PROPERTY(bool hasPendingRecovery READ hasPendingRecovery NOTIFY summaryChanged)
 public:
     enum Role {
-        FileIdRole = Qt::UserRole + 1, PathRole, DecisionsRole, CurrentRevisionRole,
-        SupportRole, SupportDetailRole, UndecidedRole, UnsavedRole, ReviewNeededRole,
-        ResolvedRole, StatusRole, FinishBlockersRole, CanUndoRole, CanRedoRole,
-        PendingInputRole, PendingTextRole, RecoveryStateRole, RecoveryErrorRole,
-        ProgressRole, StatusIconRole, StatusLineRole, ChipsRole, MimeIconRole,
-        MimeDescriptionRole, SummaryRole, ConflictCountRole
+        FileIdRole = Qt::UserRole + 1,
+        PathRole,
+        DecisionsRole,
+        CurrentRevisionRole,
+        SupportRole,
+        SupportDetailRole,
+        UndecidedRole,
+        UnsavedRole,
+        ReviewNeededRole,
+        ResolvedRole,
+        StatusRole,
+        FinishBlockersRole,
+        CanUndoRole,
+        CanRedoRole,
+        PendingInputRole,
+        PendingTextRole,
+        RecoveryStateRole,
+        RecoveryErrorRole,
+        ProgressRole,
+        StatusIconRole,
+        StatusLineRole,
+        ChipsRole,
+        MimeIconRole,
+        MimeDescriptionRole,
+        SummaryRole,
+        ConflictCountRole
     };
     Q_ENUM(Role)
 
@@ -128,8 +148,8 @@ public:
     Transition beginMarkResolved(const std::string &id, RevisionId expected, bool confirmUndecided = false);
     Transition recordCheckpoint(const std::string &id, RevisionId revision, Outcome outcome, std::string detail = {});
     Transition recordWrite(const std::string &id, RevisionId revision, Outcome outcome, std::string detail = {});
-    Transition recordStage(const std::string &id, RevisionId revision, Outcome outcome,
-                           std::string objectId = {}, std::string mode = {}, std::string detail = {});
+    Transition recordStage(const std::string &id, RevisionId revision, Outcome outcome, std::string objectId = {},
+                           std::string mode = {}, std::string detail = {});
     Transition setSupport(const std::string &id, Support support, std::string detail = {});
     Transition loadLargeFile(const std::string &id);
 
@@ -162,8 +182,7 @@ private:
     [[nodiscard]] Route routeAt(std::size_t row) const;
     [[nodiscard]] QStringList blockersAt(std::size_t row) const;
     [[nodiscard]] QVariantMap handoffEntry(std::size_t row) const;
-    template<typename Command>
-    Transition update(const std::string &id, const QString &action, Command command)
+    template <typename Command> Transition update(const std::string &id, const QString &action, Command command)
     {
         const auto found = storageRowOf(id);
         if (found < 0) return Transition::StaleRevision;

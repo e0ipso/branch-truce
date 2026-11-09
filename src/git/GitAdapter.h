@@ -11,8 +11,15 @@
 namespace branch_truce::git {
 
 enum class Operation {
-    DiscoverRepository, ListUnmerged, Status, InspectIndex, ReadObject,
-    ReadConfiguration, ReadAttributes, MaterializeSource, StageFile,
+    DiscoverRepository,
+    ListUnmerged,
+    Status,
+    InspectIndex,
+    ReadObject,
+    ReadConfiguration,
+    ReadAttributes,
+    MaterializeSource,
+    StageFile,
     // Read-only preflight before releasing a mergetool parent to stage this path.
     // It cannot prevent helpers the independent parent ran before launching us,
     // or guarantee that the parent preserves this checked configuration.
@@ -21,8 +28,15 @@ enum class Operation {
     CanonicalizeText
 };
 enum class Outcome {
-    Success, Rejected, LaunchFailure, ExitFailure, ProcessFailure, Cancelled,
-    TimedOut, OutputLimit, InspectionFailure
+    Success,
+    Rejected,
+    LaunchFailure,
+    ExitFailure,
+    ProcessFailure,
+    Cancelled,
+    TimedOut,
+    OutputLimit,
+    InspectionFailure
 };
 // Only the selected path's index entries are observed. Changes are not attributed
 // to this process rather than a concurrent writer, and do not describe the worktree.
@@ -114,6 +128,7 @@ public:
     [[nodiscard]] bool busy() const;
 Q_SIGNALS:
     void finished(const branch_truce::git::Result &result);
+
 private:
     class State;
     std::unique_ptr<State> d;

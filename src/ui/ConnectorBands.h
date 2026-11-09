@@ -9,8 +9,7 @@ namespace branch_truce {
 class ConnectorBands : public QObject {
     Q_OBJECT
     QML_ELEMENT
-#define BAND_PROPERTY(type, name, Name) \
-    Q_PROPERTY(type name READ name WRITE set##Name NOTIFY inputsChanged)
+#define BAND_PROPERTY(type, name, Name) Q_PROPERTY(type name READ name WRITE set##Name NOTIFY inputsChanged)
     BAND_PROPERTY(QString, side, Side)
     BAND_PROPERTY(QVariantList, passages, Passages)
     BAND_PROPERTY(QVariantList, regions, Regions)
@@ -34,18 +33,31 @@ class ConnectorBands : public QObject {
     Q_PROPERTY(QVariantList visibleBands READ visibleBands NOTIFY changed)
 public:
     explicit ConnectorBands(QObject *parent = nullptr);
-#define BAND_ACCESSORS(type, name, Name) \
-    type name() const { return name##_; } \
-    void set##Name(const type &value) { if (name##_ == value) return; name##_ = value; projectionDirty_ = true; update(); Q_EMIT inputsChanged(); }
+#define BAND_ACCESSORS(type, name, Name)                                                                               \
+    type name() const { return name##_; }                                                                              \
+    void set##Name(const type &value)                                                                                  \
+    {                                                                                                                  \
+        if (name##_ == value) return;                                                                                  \
+        name##_ = value;                                                                                               \
+        projectionDirty_ = true;                                                                                       \
+        update();                                                                                                      \
+        Q_EMIT inputsChanged();                                                                                        \
+    }
     BAND_ACCESSORS(QString, side, Side)
     BAND_ACCESSORS(QVariantList, passages, Passages)
     BAND_ACCESSORS(QVariantList, regions, Regions)
     BAND_ACCESSORS(QVariantList, markerBlocks, MarkerBlocks)
     BAND_ACCESSORS(QVariantMap, fold, Fold)
 #undef BAND_ACCESSORS
-#define BAND_REAL(name, Name) \
-    qreal name() const { return name##_; } \
-    void set##Name(qreal value) { if (qFuzzyCompare(name##_, value)) return; name##_ = value; update(); Q_EMIT inputsChanged(); }
+#define BAND_REAL(name, Name)                                                                                          \
+    qreal name() const { return name##_; }                                                                             \
+    void set##Name(qreal value)                                                                                        \
+    {                                                                                                                  \
+        if (qFuzzyCompare(name##_, value)) return;                                                                     \
+        name##_ = value;                                                                                               \
+        update();                                                                                                      \
+        Q_EMIT inputsChanged();                                                                                        \
+    }
     BAND_REAL(sourceParentY, SourceParentY)
     BAND_REAL(resultParentY, ResultParentY)
     BAND_REAL(sourceEditorY, SourceEditorY)
@@ -58,7 +70,13 @@ public:
     BAND_REAL(rule, Rule)
 #undef BAND_REAL
     QVariantList current() const { return current_; }
-    void setCurrent(const QVariantList &value) { if (current_ == value) return; current_ = value; update(); Q_EMIT inputsChanged(); }
+    void setCurrent(const QVariantList &value)
+    {
+        if (current_ == value) return;
+        current_ = value;
+        update();
+        Q_EMIT inputsChanged();
+    }
     TextBlocks *sourceBlocks() const { return sourceBlocks_; }
     TextBlocks *resultBlocks() const { return resultBlocks_; }
     void setSourceBlocks(TextBlocks *blocks);
@@ -70,6 +88,7 @@ public:
 Q_SIGNALS:
     void inputsChanged();
     void changed();
+
 private:
     void update();
     QString side_;

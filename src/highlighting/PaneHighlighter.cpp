@@ -8,10 +8,7 @@
 #include <utility>
 
 namespace branch_truce {
-PaneHighlighter::PaneHighlighter(QTextDocument *document)
-    : PaneHighlighterBase(static_cast<QObject *>(document))
-{
-}
+PaneHighlighter::PaneHighlighter(QTextDocument *document) : PaneHighlighterBase(static_cast<QObject *>(document)) {}
 
 void PaneHighlighter::attach()
 {
@@ -21,7 +18,7 @@ void PaneHighlighter::attach()
 
 #ifdef BRANCH_TRUCE_SYNTAX_HIGHLIGHTING
 void PaneHighlighter::highlight(const KSyntaxHighlighting::Definition &definition,
-    const KSyntaxHighlighting::Theme &theme)
+                                const KSyntaxHighlighting::Theme &theme)
 {
     // setDefinition rehighlights an attached document when the definition
     // changes; setTheme never does.
@@ -29,8 +26,10 @@ void PaneHighlighter::highlight(const KSyntaxHighlighting::Definition &definitio
     const bool redefine = definition != this->definition();
     if (recolour) setTheme(theme);
     setDefinition(definition);
-    if (document() != parent()) attach();
-    else if (recolour && !redefine && definition.isValid()) rehighlight();
+    if (document() != parent())
+        attach();
+    else if (recolour && !redefine && definition.isValid())
+        rehighlight();
 }
 #endif
 
@@ -66,7 +65,8 @@ void PaneHighlighter::updateDecorations()
         appliedDocument_ = target;
     }
     appliedDecorations_.removeIf([target](const AppliedDecorations &entry) {
-        return !entry.block.isValid() || entry.block.document() != target
+        return !entry.block.isValid()
+            || entry.block.document() != target
             // Deleted block handles can still have a document. Retain only
             // identities that are reachable in the current document tree.
             || target->findBlockByNumber(entry.block.blockNumber()) != entry.block;
@@ -74,8 +74,7 @@ void PaneHighlighter::updateDecorations()
     // Old overlays follow their live blocks across edits. Include them to
     // clear removed ranges, then add the blocks wanted by the new overlays.
     std::set<int> candidates;
-    for (const auto &entry : std::as_const(appliedDecorations_))
-        candidates.insert(entry.block.blockNumber());
+    for (const auto &entry : std::as_const(appliedDecorations_)) candidates.insert(entry.block.blockNumber());
     for (const auto &range : std::as_const(decorations_)) {
         const auto first = target->findBlock(range.start);
         if (!first.isValid()) continue;
@@ -88,7 +87,7 @@ void PaneHighlighter::updateDecorations()
         const auto block = target->findBlockByNumber(number);
         const auto wanted = blockDecorations(block.position(), block.position() + block.length() - 1);
         const auto found = std::find_if(appliedDecorations_.cbegin(), appliedDecorations_.cend(),
-            [&block](const AppliedDecorations &entry) { return entry.block == block; });
+                                        [&block](const AppliedDecorations &entry) { return entry.block == block; });
         if (found == appliedDecorations_.cend()) {
             if (wanted.isEmpty()) continue;
         } else if (found->revision == block.revision() && found->text == block.text() && found->ranges == wanted) {
@@ -134,30 +133,32 @@ QList<QTextLayout::FormatRange> PaneHighlighter::blockDecorations(int begin, int
         result.append(local);
     };
     auto from = std::upper_bound(reach_.cbegin(), reach_.cend(), begin) - reach_.cbegin();
-    for (; from < decorations_.size() && decorations_[from].start < end; ++from)
-        append(decorations_[from]);
+    for (; from < decorations_.size() && decorations_[from].start < end; ++from) append(decorations_[from]);
     // Keep search's final overlay after all word/syntax formatting.
-    auto match = std::lower_bound(searchDecorations_.cbegin(), searchDecorations_.cend(), begin,
-        [](const auto &range, int position) { return range.start + range.length <= position; });
+    auto match =
+        std::lower_bound(searchDecorations_.cbegin(), searchDecorations_.cend(), begin,
+                         [](const auto &range, int position) { return range.start + range.length <= position; });
     for (; match != searchDecorations_.cend() && match->start < end; ++match) append(*match);
     return result;
 }
 
 void PaneHighlighter::rememberDecorations(const QTextBlock &block, const QString &text,
-                                         const QList<QTextLayout::FormatRange> &ranges)
+                                          const QList<QTextLayout::FormatRange> &ranges)
 {
     if (appliedDocument_ != document()) {
         appliedDecorations_.clear();
         appliedDocument_ = document();
     }
     const auto found = std::find_if(appliedDecorations_.begin(), appliedDecorations_.end(),
-        [&block](const AppliedDecorations &entry) { return entry.block == block; });
+                                    [&block](const AppliedDecorations &entry) { return entry.block == block; });
     if (ranges.isEmpty()) {
         if (found != appliedDecorations_.end()) appliedDecorations_.erase(found);
     } else {
         const AppliedDecorations applied{block, text, block.revision(), ranges};
-        if (found == appliedDecorations_.end()) appliedDecorations_.append(applied);
-        else *found = applied;
+        if (found == appliedDecorations_.end())
+            appliedDecorations_.append(applied);
+        else
+            *found = applied;
     }
 }
 

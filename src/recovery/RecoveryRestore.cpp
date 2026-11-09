@@ -24,8 +24,10 @@ bool sameOperation(const SnapshotProvenance &p, const git::RepositoryContext &re
 {
     return p.worktreeRoot == repository.worktreeRoot.toStdString()
         && p.gitDirectory == repository.gitDirectory.toStdString()
-        && ((p.operation == SnapshotProvenance::Operation::Merge && repository.operation == git::RepositoryOperation::Merge)
-            || (p.operation == SnapshotProvenance::Operation::Rebase && repository.operation == git::RepositoryOperation::Rebase))
+        && ((p.operation == SnapshotProvenance::Operation::Merge
+             && repository.operation == git::RepositoryOperation::Merge)
+            || (p.operation == SnapshotProvenance::Operation::Rebase
+                && repository.operation == git::RepositoryOperation::Rebase))
         && p.stage2CommitId == repository.stage2.commitId.toStdString()
         && p.stage3CommitId == repository.stage3.commitId.toStdString()
         && p.baseCommitId.value_or("") == repository.baseCommitId.toStdString()
@@ -75,7 +77,7 @@ std::optional<QByteArray> serialized(const FileSession &file, const Revision &re
     if (!snapshots) return {};
     const auto &format = snapshots->launchResult.text.format;
     const storage::TextFormat target{static_cast<storage::TextEncoding>(format.encoding), format.bom,
-        static_cast<storage::Newline>(format.newline), format.finalNewline};
+                                     static_cast<storage::Newline>(format.newline), format.finalNewline};
     const auto result = storage::serializeText(QByteArray::fromStdString(revision.draft.text), target);
     return result.document ? std::optional<QByteArray>(result.document->originalBytes) : std::nullopt;
 }
@@ -86,10 +88,12 @@ bool originalIndex(const QList<git::IndexEntry> &entries, const FileSnapshots &s
     bool seen[4]{};
     for (const auto &entry : entries) {
         const auto &source = entry.stage == 1 ? snapshots.earlier
-            : entry.stage == 2 ? snapshots.stage2 : snapshots.stage3;
+            : entry.stage == 2                ? snapshots.stage2
+                                              : snapshots.stage3;
         if (entry.stage < 1 || entry.stage > 3 || seen[entry.stage] || !source
             || entry.path.toStdString() != snapshots.path || entry.objectId.toStdString() != source->objectId
-            || entry.mode.toStdString() != source->mode) return false;
+            || entry.mode.toStdString() != source->mode)
+            return false;
         seen[entry.stage] = true;
     }
     return true;
@@ -106,12 +110,14 @@ ConversionSnapshot conversionSnapshot(const git::ConversionPolicy &live)
 }
 
 std::optional<QByteArray> stagedIdentity(const FileSession &file, const Revision &revision,
-    const QList<git::IndexEntry> &entries, const git::RepositoryContext &repository, const QString &executable)
+                                         const QList<git::IndexEntry> &entries,
+                                         const git::RepositoryContext &repository, const QString &executable)
 {
     const auto *snapshots = file.snapshots();
     const auto path = QByteArray::fromStdString(file.path());
     if (!snapshots || entries.size() != 1 || entries.front().stage != 0 || entries.front().path != path
-        || entries.front().mode.toStdString() != snapshots->resultMode) return {};
+        || entries.front().mode.toStdString() != snapshots->resultMode)
+        return {};
     const auto bytes = serialized(file, revision);
     if (!bytes) return {};
     git::Request request;
@@ -120,17 +126,19 @@ std::optional<QByteArray> stagedIdentity(const FileSession &file, const Revision
     request.path = path;
     request.input = *bytes;
     const auto canonical = inspect(executable, request);
-    if (canonical.outcome != git::Outcome::Success || conversionSnapshot(canonical.conversionPolicy) != snapshots->conversion
-        || canonical.canonicalObjectId != entries.front().objectId) return {};
+    if (canonical.outcome != git::Outcome::Success
+        || conversionSnapshot(canonical.conversionPolicy) != snapshots->conversion
+        || canonical.canonicalObjectId != entries.front().objectId)
+        return {};
     return canonical.canonicalObjectId;
 }
 
-void completeMutations(std::vector<RecoveryMutation> &mutations, const std::string &fileId,
-                       const QString &kind, RevisionId revision)
+void completeMutations(std::vector<RecoveryMutation> &mutations, const std::string &fileId, const QString &kind,
+                       RevisionId revision)
 {
     for (auto &mutation : mutations) {
-        if (mutation.kind == kind && mutation.target.id() == fileId
-            && mutation.target.current().id == revision) mutation.completed = true;
+        if (mutation.kind == kind && mutation.target.id() == fileId && mutation.target.current().id == revision)
+            mutation.completed = true;
     }
 }
 
@@ -143,57 +151,67 @@ bool sameFileCopy(const SnapshotFileIdentity &launch, const SnapshotFileIdentity
 
 // copied receives the live identity when the only change is such a copy. The
 // file still fails; the caller decides whether a waiting launcher proves it.
-QString reconcile(FileSession &file, std::vector<RecoveryMutation> &mutations,
-                  const std::vector<FileSession> &observed, const git::RepositoryContext &repository,
-                  const QString &executable, const QString &directory,
+QString reconcile(FileSession &file, std::vector<RecoveryMutation> &mutations, const std::vector<FileSession> &observed,
+                  const git::RepositoryContext &repository, const QString &executable, const QString &directory,
                   std::optional<SnapshotFileIdentity> &copied)
 {
     copied.reset();
     const auto *captured = file.snapshots();
-    if (!captured) return file.support() == Support::Supported
-        ? QStringLiteral("Recovery has no admitted source and result captures; file remains outstanding.") : QString{};
+    if (!captured)
+        return file.support() == Support::Supported
+            ? QStringLiteral("Recovery has no admitted source and result captures; file remains outstanding.")
+            : QString{};
     const auto path = QByteArray::fromStdString(file.path());
-    if (file.id() != path.toHex().toStdString()) return QStringLiteral("Recovered file identity does not match its exact path.");
+    if (file.id() != path.toHex().toStdString())
+        return QStringLiteral("Recovered file identity does not match its exact path.");
     const auto disk = storage::captureDestination(repository.worktreeRoot, path);
-    if (!disk.destination) return QStringLiteral("Recovery could not validate the current repository file: %1").arg(disk.diagnostic);
+    if (!disk.destination)
+        return QStringLiteral("Recovery could not validate the current repository file: %1").arg(disk.diagnostic);
     git::Request indexRequest;
     indexRequest.operation = git::Operation::InspectIndex;
     indexRequest.directory = repository.worktreeRoot;
     indexRequest.path = path;
     const auto index = inspect(executable, indexRequest);
-    if (index.outcome != git::Outcome::Success) return QStringLiteral("Recovery could not inspect the current Git index.");
+    if (index.outcome != git::Outcome::Success)
+        return QStringLiteral("Recovery could not inspect the current Git index.");
 
     // A crash can lose the completion callback after Git installed the exact
     // reviewed result. Verify content, policy, mode and the written revision,
     // then persist that observation before exposing a resolved state.
     for (auto &mutation : mutations) {
         if (mutation.completed || mutation.kind != QLatin1String("staging") || mutation.target.id() != file.id()
-            || mutation.observation == QLatin1String("not-attempted") || mutation.observation == QLatin1String("unchanged")
-            || !file.written() || file.written()->id != mutation.target.current().id) continue;
+            || mutation.observation == QLatin1String("not-attempted")
+            || mutation.observation == QLatin1String("unchanged") || !file.written()
+            || file.written()->id != mutation.target.current().id)
+            continue;
         const auto bytes = serialized(file, *file.written());
         const auto objectId = stagedIdentity(file, *file.written(), index.indexEntries, repository, executable);
         if (!bytes || !objectId || *bytes != disk.destination->bytes()
-            || (((disk.destination->identity().mode & 0111U) != 0) != (captured->resultMode == "100755"))) continue;
+            || (((disk.destination->identity().mode & 0111U) != 0) != (captured->resultMode == "100755")))
+            continue;
         auto candidate = file;
         if (candidate.recordStage(file.written()->id, Outcome::Succeeded, objectId->toStdString(), captured->resultMode,
-                "Recovered staging completion verified against disk and index") != Transition::Applied) continue;
-        const auto committed = storage::RecoveryStore(directory).commit(recoveryTransaction(candidate,
-            QStringLiteral("stage-outcome"), QUuid::createUuid().toString(QUuid::WithoutBraces)));
+                                  "Recovered staging completion verified against disk and index")
+            != Transition::Applied)
+            continue;
+        const auto committed = storage::RecoveryStore(directory).commit(recoveryTransaction(
+            candidate, QStringLiteral("stage-outcome"), QUuid::createUuid().toString(QUuid::WithoutBraces)));
         if (!committed.succeeded)
-            return QStringLiteral("Staging evidence matched, but recovery could not retain its completion: %1").arg(committed.error);
+            return QStringLiteral("Staging evidence matched, but recovery could not retain its completion: %1")
+                .arg(committed.error);
         file = std::move(candidate);
         captured = file.snapshots();
         completeMutations(mutations, file.id(), QStringLiteral("staging"), file.written()->id);
     }
 
-    const auto live = std::find_if(observed.begin(), observed.end(), [&](const auto &entry) { return entry.id() == file.id(); });
+    const auto live =
+        std::find_if(observed.begin(), observed.end(), [&](const auto &entry) { return entry.id() == file.id(); });
     const bool sourcesMatch = live != observed.end() && live->snapshots()
-        && live->snapshots()->conversion == captured->conversion
-        && live->snapshots()->earlier == captured->earlier && live->snapshots()->stage2 == captured->stage2
-        && live->snapshots()->stage3 == captured->stage3;
+        && live->snapshots()->conversion == captured->conversion && live->snapshots()->earlier == captured->earlier
+        && live->snapshots()->stage2 == captured->stage2 && live->snapshots()->stage3 == captured->stage3;
     const bool launchMatches = sourcesMatch && live->snapshots()->launchResult == captured->launchResult;
-    bool policyMatches = live != observed.end() && live->snapshots()
-        && live->snapshots()->conversion == captured->conversion;
+    bool policyMatches =
+        live != observed.end() && live->snapshots() && live->snapshots()->conversion == captured->conversion;
     const auto &launch = captured->launchResult;
     const bool launchBytes = disk.destination->bytes() == QByteArray::fromStdString(launch.text.bytes);
     bool diskMatches = launchMatches && disk.destination->identity() == launch.identity && launchBytes;
@@ -215,13 +233,18 @@ QString reconcile(FileSession &file, std::vector<RecoveryMutation> &mutations,
         indexMatches = objectId && objectId->toStdString() == staged.objectId && staged.mode == captured->resultMode;
     }
     for (const auto &mutation : mutations) {
-        if (mutation.completed || mutation.target.id() != file.id() || mutation.observation == QLatin1String("not-attempted")
-            || mutation.observation == QLatin1String("unchanged")) continue;
+        if (mutation.completed || mutation.target.id() != file.id()
+            || mutation.observation == QLatin1String("not-attempted")
+            || mutation.observation == QLatin1String("unchanged"))
+            continue;
         const auto bytes = serialized(mutation.target, mutation.target.current());
         const bool resultPresent = bytes && *bytes == disk.destination->bytes();
-        return resultPresent
-            ? QStringLiteral("Interrupted %1: result bytes are present; completion is uncertain. Inspect disk and index before retrying.").arg(mutation.kind)
-            : QStringLiteral("Interrupted %1: current disk/index evidence cannot establish completion. Outcome uncertain; no retry was performed.").arg(mutation.kind);
+        return resultPresent ? QStringLiteral("Interrupted %1: result bytes are present; completion is uncertain. "
+                                              "Inspect disk and index before retrying.")
+                                   .arg(mutation.kind)
+                             : QStringLiteral("Interrupted %1: current disk/index evidence cannot establish "
+                                              "completion. Outcome uncertain; no retry was performed.")
+                                   .arg(mutation.kind);
     }
     const bool modeMatches = ((disk.destination->identity().mode & 0111U) != 0) == (captured->resultMode == "100755");
     const auto finalDisk = storage::captureDestination(repository.worktreeRoot, path);
@@ -235,19 +258,21 @@ QString reconcile(FileSession &file, std::vector<RecoveryMutation> &mutations,
         return copiedLaunchFailure();
     }
     if (!diskMatches || !indexMatches || !policyMatches || !modeMatches)
-        return QStringLiteral("Recovered draft retained, but the repository file, index or conversion policy changed. Work remains outstanding; no publication is authorized.");
+        return QStringLiteral("Recovered draft retained, but the repository file, index or conversion policy changed. "
+                              "Work remains outstanding; no publication is authorized.");
     return {};
 }
 }
 
 QString copiedLaunchFailure()
 {
-    return QStringLiteral("Recovered draft retained, but the repository file was replaced by a copy with the same bytes. "
+    return QStringLiteral(
+        "Recovered draft retained, but the repository file was replaced by a copy with the same bytes. "
         "Work remains outstanding unless git mergetool is waiting on this path with those bytes.");
 }
 
 QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
-    const git::RepositoryContext &repository, const QString &executable)
+                               const git::RepositoryContext &repository, const QString &executable)
 {
     const auto path = QByteArray::fromStdString(captured.path);
     const auto validatedFile = [&] {
@@ -261,8 +286,9 @@ QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFile
     indexRequest.path = path;
     git::Request policyRequest = indexRequest;
     policyRequest.operation = git::Operation::ReadAttributes;
-    const auto changed = QStringLiteral("Recovered draft retained, but the repository file, index or conversion policy "
-        "changed after recovery validation. Work remains outstanding; no publication is authorized.");
+    const auto changed =
+        QStringLiteral("Recovered draft retained, but the repository file, index or conversion policy "
+                       "changed after recovery validation. Work remains outstanding; no publication is authorized.");
     if (!validatedFile()) return changed;
     const auto index = inspect(executable, indexRequest);
     if (index.outcome != git::Outcome::Success || !originalIndex(index.indexEntries, captured)) return changed;
@@ -271,16 +297,18 @@ QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFile
         return changed;
     // As in the restore, the file and index must not move while Git inspected them.
     const auto finalIndex = inspect(executable, indexRequest);
-    if (!validatedFile() || finalIndex.outcome != git::Outcome::Success || finalIndex.standardOutput != index.standardOutput)
+    if (!validatedFile() || finalIndex.outcome != git::Outcome::Success
+        || finalIndex.standardOutput != index.standardOutput)
         return changed;
     return {};
 }
 
 storage::RecoveryTransaction mutationRecoveryTransaction(const FileSession &file, const QString &kind,
-    const QString &id, const QString &observation)
+                                                         const QString &id, const QString &observation)
 {
-    auto result = recoveryTransaction(file, observation.isEmpty() ? QStringLiteral("mutation-intent")
-        : QStringLiteral("mutation-observation"), QUuid::createUuid().toString(QUuid::WithoutBraces));
+    auto result = recoveryTransaction(
+        file, observation.isEmpty() ? QStringLiteral("mutation-intent") : QStringLiteral("mutation-observation"),
+        QUuid::createUuid().toString(QUuid::WithoutBraces));
     result.state.insert(QStringLiteral("mutationId"), id);
     result.state.insert(QStringLiteral("mutationKind"), kind);
     if (!observation.isEmpty()) result.state.insert(QStringLiteral("observation"), observation);
@@ -291,7 +319,10 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
 {
     RecoveryReplay result;
     const auto read = store.read();
-    if (!read.succeeded) { result.error = read.error; return result; }
+    if (!read.succeeded) {
+        result.error = read.error;
+        return result;
+    }
     result.incompleteTail = read.incompleteTail;
     RecoveryRecordDecoder decoder(store);
     std::map<std::string, FileSession> files;
@@ -308,17 +339,20 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
                     "Invalid recovery file identity.");
             auto found = files.find(id);
             if (action == QLatin1String("open")) {
-                require(found == files.end() || (!found->second.snapshots() && found->second.current().id == 1
-                    && found->second.current().draft == Draft{} && !found->second.checkpoint()),
-                    "Recovery attempted to replace an acknowledged session.");
+                require(found == files.end()
+                            || (!found->second.snapshots() && found->second.current().id == 1
+                                && found->second.current().draft == Draft{} && !found->second.checkpoint()),
+                        "Recovery attempted to replace an acknowledged session.");
                 const auto draft = decoder.draft(state.value("current").toObject().value("draft"));
                 auto snapshots = decoder.snapshots(state.value("snapshots"));
-                files.insert_or_assign(id, FileSession(id, path, draft,
-                    decoder.enumeration<Support>(state.value("support"), 3),
-                    decoder.bytes(state.value("supportDetail")), std::move(snapshots)));
+                files.insert_or_assign(id,
+                                       FileSession(id, path, draft,
+                                                   decoder.enumeration<Support>(state.value("support"), 3),
+                                                   decoder.bytes(state.value("supportDetail")), std::move(snapshots)));
                 found = files.find(id);
             } else {
-                require(found != files.end() && found->second.path() == path, "Recovery command has no matching open file.");
+                require(found != files.end() && found->second.path() == path,
+                        "Recovery command has no matching open file.");
                 // Loading a large file is not an edit; reopening it asks again.
                 const bool loadLarge = action == QLatin1String("load-large");
                 if (!loadLarge) {
@@ -327,18 +361,24 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
                 }
                 auto &file = found->second;
                 Transition transition = Transition::InvalidOutcome;
-                if (loadLarge) transition = file.loadLargeFile();
+                if (loadLarge)
+                    transition = file.loadLargeFile();
                 else if (action == QLatin1String("replace-draft")) {
                     const auto current = state.value("current").toObject();
                     transition = file.replaceDraft(file.current().id, decoder.draft(current.value("draft")),
-                        decoder.handEdited(current.value("handEdited")),
-                        decoder.handEditedRanges(current.value("handEditedRanges")));
-                } else if (action == QLatin1String("undo")) transition = file.undo(file.current().id);
-                else if (action == QLatin1String("redo")) transition = file.redo(file.current().id);
-                else if (action == QLatin1String("discard-to-checkpoint")) transition = file.discardToCheckpoint(file.current().id);
-                else if (action == QLatin1String("discard-to-staged")) transition = file.discardToStaged(file.current().id);
+                                                   decoder.handEdited(current.value("handEdited")),
+                                                   decoder.handEditedRanges(current.value("handEditedRanges")));
+                } else if (action == QLatin1String("undo"))
+                    transition = file.undo(file.current().id);
+                else if (action == QLatin1String("redo"))
+                    transition = file.redo(file.current().id);
+                else if (action == QLatin1String("discard-to-checkpoint"))
+                    transition = file.discardToCheckpoint(file.current().id);
+                else if (action == QLatin1String("discard-to-staged"))
+                    transition = file.discardToStaged(file.current().id);
                 else if (action == QLatin1String("mark-resolved-review"))
-                    transition = file.beginMarkResolved(file.current().id,
+                    transition = file.beginMarkResolved(
+                        file.current().id,
                         decoder.boolean(state.value("reviewed").toObject().value("confirmedUndecided")));
                 else if (action == QLatin1String("manual-save")) {
                     const auto outcome = decoder.outcome(state.value("checkpointOutcome"));
@@ -349,24 +389,29 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
                 } else if (action == QLatin1String("stage-outcome")) {
                     const auto outcome = decoder.outcome(state.value("stageOutcome"));
                     const auto staged = state.value("staged").toObject();
-                    transition = file.recordStage(outcome.revision, outcome.outcome,
+                    transition = file.recordStage(
+                        outcome.revision, outcome.outcome,
                         outcome.outcome == Outcome::Succeeded ? decoder.bytes(staged.value("objectId")) : std::string{},
-                        outcome.outcome == Outcome::Succeeded ? decoder.bytes(staged.value("mode")) : std::string{}, outcome.detail);
+                        outcome.outcome == Outcome::Succeeded ? decoder.bytes(staged.value("mode")) : std::string{},
+                        outcome.detail);
                 } else if (action == QLatin1String("support"))
                     transition = file.setSupport(decoder.enumeration<Support>(state.value("support"), 3),
-                        decoder.bytes(state.value("supportDetail")));
-                else if (action == QLatin1String("mutation-intent") || action == QLatin1String("mutation-observation")) {
+                                                 decoder.bytes(state.value("supportDetail")));
+                else if (action == QLatin1String("mutation-intent")
+                         || action == QLatin1String("mutation-observation")) {
                     const auto mutationId = state.take("mutationId").toString();
                     const auto kind = state.take("mutationKind").toString();
-                    require(!QUuid(mutationId).isNull() && (kind == QLatin1String("publication") || kind == QLatin1String("staging")),
+                    require(!QUuid(mutationId).isNull()
+                                && (kind == QLatin1String("publication") || kind == QLatin1String("staging")),
                             "Invalid recovery mutation identity.");
                     if (action == QLatin1String("mutation-intent")) {
                         require(intents.emplace(mutationId, state).second, "Duplicate recovery mutation intent.");
                         result.mutations.push_back({mutationId, kind, {}, file});
                     } else {
                         const auto observation = state.take("observation").toString();
-                        require(observation == QLatin1String("not-attempted") || observation == QLatin1String("unchanged")
-                            || observation == QLatin1String("changed") || observation == QLatin1String("uncertain"),
+                        require(
+                            observation == QLatin1String("not-attempted") || observation == QLatin1String("unchanged")
+                                || observation == QLatin1String("changed") || observation == QLatin1String("uncertain"),
                             "Invalid recovery mutation observation.");
                         const auto intent = intents.find(mutationId);
                         require(intent != intents.end(), "Recovery mutation observation has no intent.");
@@ -375,8 +420,9 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
                         expected.insert("transactionId", transactionId);
                         require(expected == state, "Recovery mutation observation changed its original target.");
                         const auto mutation = std::find_if(result.mutations.begin(), result.mutations.end(),
-                            [&](const auto &entry) { return entry.id == mutationId; });
-                        require(mutation != result.mutations.end() && mutation->kind == kind && mutation->observation.isEmpty(),
+                                                           [&](const auto &entry) { return entry.id == mutationId; });
+                        require(mutation != result.mutations.end() && mutation->kind == kind
+                                    && mutation->observation.isEmpty(),
                                 "Duplicate or mismatched recovery mutation observation.");
                         mutation->observation = observation;
                         continue; // An old completion never replaces a newer draft or discard.
@@ -386,12 +432,15 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store)
                 require(transition == Transition::Applied, "Unsupported or inconsistent recovery transition.");
             }
             const auto encoded = recoveryTransaction(found->second, action, transactionId).state;
-            require(encoded.value("snapshots") == state.value("snapshots"), "Recovery session or immutable capture identity changed.");
+            require(encoded.value("snapshots") == state.value("snapshots"),
+                    "Recovery session or immutable capture identity changed.");
             require(encoded == withDerivedValues(state, encoded, decoder),
                     "Recovery state schema or transition does not match the acknowledged record.");
             if (action == QLatin1String("write-outcome") || action == QLatin1String("stage-outcome")) {
-                const auto kind = action == QLatin1String("write-outcome") ? QStringLiteral("publication") : QStringLiteral("staging");
-                const auto &outcome = action == QLatin1String("write-outcome") ? found->second.writeOutcome() : found->second.stageOutcome();
+                const auto kind = action == QLatin1String("write-outcome") ? QStringLiteral("publication")
+                                                                           : QStringLiteral("staging");
+                const auto &outcome = action == QLatin1String("write-outcome") ? found->second.writeOutcome()
+                                                                               : found->second.stageOutcome();
                 // Match completion in journal order before a later revision can
                 // replace the file's latest outcome, or a new intent can reuse it.
                 if (outcome && outcome->outcome == Outcome::Succeeded)
@@ -425,10 +474,7 @@ struct RecoveryCandidate {
     bool setAside = false;
 };
 
-QString setAsideMarker(const QString &directory)
-{
-    return directory + QStringLiteral("/set-aside");
-}
+QString setAsideMarker(const QString &directory) { return directory + QStringLiteral("/set-aside"); }
 
 QString lastChanged(const QString &directory)
 {
@@ -442,8 +488,9 @@ QString setAside(const QString &directory)
     const auto path = setAsideMarker(directory);
     QSaveFile marker(path);
     const auto text = QStringLiteral("Set aside by Branch Truce on %1. Start Branch Truce with "
-        "--recovery-session %2 to restore it.\n").arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODate),
-        QFileInfo(directory).fileName()).toUtf8();
+                                     "--recovery-session %2 to restore it.\n")
+                          .arg(QDateTime::currentDateTimeUtc().toString(Qt::ISODate), QFileInfo(directory).fileName())
+                          .toUtf8();
     if (!marker.open(QIODevice::WriteOnly) || marker.write(text) != text.size() || !marker.commit())
         return marker.errorString();
     if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner))
@@ -453,8 +500,8 @@ QString setAside(const QString &directory)
 }
 
 RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude,
-    const git::RepositoryContext &repository, const std::vector<FileSession> &observed, const QString &executable,
-    const QString &chosenSession)
+                                const git::RepositoryContext &repository, const std::vector<FileSession> &observed,
+                                const QString &executable, const QString &chosenSession)
 {
     RecoveryRestore result;
     std::vector<RecoveryCandidate> candidates;
@@ -462,12 +509,15 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
     for (const auto &entry : QDir(inventory).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
         if (entry.absoluteFilePath() == exclude) continue;
         if (entry.isSymLink() || entry.ownerId() != ::geteuid()) {
-            result.diagnostics.push_back(QStringLiteral("Unsafe recovery directory rejected: %1").arg(entry.fileName()));
+            result.diagnostics.push_back(
+                QStringLiteral("Unsafe recovery directory rejected: %1").arg(entry.fileName()));
             continue;
         }
         auto lease = std::make_shared<QLockFile>(entry.absoluteFilePath() + QStringLiteral("/session.lock"));
         if (!lease->tryLock(0)) {
-            result.diagnostics.push_back(QStringLiteral("Recovery session %1 is active or unavailable; it was not restored.").arg(entry.fileName()));
+            result.diagnostics.push_back(
+                QStringLiteral("Recovery session %1 is active or unavailable; it was not restored.")
+                    .arg(entry.fileName()));
             chosenUnavailable = chosenUnavailable || entry.fileName() == chosenSession;
             continue;
         }
@@ -476,15 +526,19 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         if (setAside && entry.fileName() != chosenSession) continue;
         auto replay = replayRecovery(storage::RecoveryStore(entry.absoluteFilePath()));
         if (!replay.succeeded) {
-            result.diagnostics.push_back(QStringLiteral("Recovery %1 rejected: %2").arg(entry.fileName(), replay.error));
+            result.diagnostics.push_back(
+                QStringLiteral("Recovery %1 rejected: %2").arg(entry.fileName(), replay.error));
             continue;
         }
-        const auto captured = std::find_if(replay.files.begin(), replay.files.end(), [](const auto &file) { return file.snapshots(); });
+        const auto captured =
+            std::find_if(replay.files.begin(), replay.files.end(), [](const auto &file) { return file.snapshots(); });
         if (captured == replay.files.end()) continue;
         const auto &provenance = captured->snapshots()->provenance;
         if (provenance.worktreeRoot != repository.worktreeRoot.toStdString()) continue;
         if (!repository.supported || !sameOperation(provenance, repository)) {
-            result.diagnostics.push_back(QStringLiteral("Recovery %1 rejected: worktree/operation session identity does not match.").arg(entry.fileName()));
+            result.diagnostics.push_back(
+                QStringLiteral("Recovery %1 rejected: worktree/operation session identity does not match.")
+                    .arg(entry.fileName()));
             continue;
         }
         candidates.push_back({entry.absoluteFilePath(), std::move(lease), std::move(replay), setAside});
@@ -493,13 +547,19 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
     RecoveryCandidate *adopted = nullptr;
     bool chosen = false;
     if (!chosenSession.isEmpty()) {
-        const auto match = std::find_if(candidates.begin(), candidates.end(),
-            [&](const auto &candidate) { return QFileInfo(candidate.directory).fileName() == chosenSession; });
+        const auto match = std::find_if(candidates.begin(), candidates.end(), [&](const auto &candidate) {
+            return QFileInfo(candidate.directory).fileName() == chosenSession;
+        });
         if (match == candidates.end()) {
             if (!chosenUnavailable)
-                result.diagnostics.push_back(QStringLiteral("Recovery session %1 does not match this operation; it was not restored.").arg(chosenSession));
+                result.diagnostics.push_back(
+                    QStringLiteral("Recovery session %1 does not match this operation; it was not restored.")
+                        .arg(chosenSession));
         } else if (match->setAside && !QFile::remove(setAsideMarker(match->directory))) {
-            result.diagnostics.push_back(QStringLiteral("Recovery session %1 is set aside and its marker could not be removed; it was not restored.").arg(chosenSession));
+            result.diagnostics.push_back(
+                QStringLiteral(
+                    "Recovery session %1 is set aside and its marker could not be removed; it was not restored.")
+                    .arg(chosenSession));
             candidates.erase(match);
         } else {
             adopted = &*match;
@@ -518,19 +578,26 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
     // the choice ambiguous. Several edited stores still block.
     if (!adopted && !lostChoice && edited.size() == 1) adopted = edited.front();
     if (!adopted && (edited.size() > 1 || (lostChoice && !edited.empty()))) {
-        result.diagnostics.push_back((lostChoice
-            ? QStringLiteral("Recovery session %1 was not restored, and no other recovery session with app edits is restored in its place; "
-                "restoration is blocked rather than guessing. ").arg(chosenSession)
-            : QStringLiteral("Multiple recovery sessions with app edits match this operation; restoration is blocked rather than guessing. "))
-            + QStringLiteral("To restore one, choose it in this window, or close every Branch Truce window and start Branch Truce with "
+        result.diagnostics.push_back(
+            (lostChoice ? QStringLiteral("Recovery session %1 was not restored, and no other recovery session with app "
+                                         "edits is restored in its place; "
+                                         "restoration is blocked rather than guessing. ")
+                              .arg(chosenSession)
+                        : QStringLiteral("Multiple recovery sessions with app edits match this operation; restoration "
+                                         "is blocked rather than guessing. "))
+            + QStringLiteral(
+                "To restore one, choose it in this window, or close every Branch Truce window and start Branch Truce "
+                "with "
                 "--recovery-session followed by the session to keep. The other sessions are set aside, not deleted."));
         for (const auto *candidate : edited) {
-            RecoveryChoice choice{QFileInfo(candidate->directory).fileName(), candidate->directory,
-                                  lastChanged(candidate->directory), {}};
+            RecoveryChoice choice{QFileInfo(candidate->directory).fileName(),
+                                  candidate->directory,
+                                  lastChanged(candidate->directory),
+                                  {}};
             for (const auto &file : candidate->replay.files)
                 if (candidate->replay.editedFiles.contains(file.id())) choice.paths.push_back(file.path());
-            result.diagnostics.push_back(QStringLiteral("Recovery session %1 was last changed %2.")
-                .arg(choice.session, choice.lastChanged));
+            result.diagnostics.push_back(
+                QStringLiteral("Recovery session %1 was last changed %2.").arg(choice.session, choice.lastChanged));
             result.choices.push_back(std::move(choice));
         }
     }
@@ -540,40 +607,47 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
             if (&candidate == adopted || (!chosen && candidate.replay.userWork)) continue;
             const auto name = QFileInfo(candidate.directory).fileName();
             if (const auto error = setAside(candidate.directory); !error.isEmpty())
-                result.diagnostics.push_back(QStringLiteral("Recovery session %1 could not be set aside: %2").arg(name, error));
+                result.diagnostics.push_back(
+                    QStringLiteral("Recovery session %1 could not be set aside: %2").arg(name, error));
             else if (candidate.replay.userWork)
-                result.diagnostics.push_back(QStringLiteral("Recovery session %1 was set aside, not deleted.").arg(name));
+                result.diagnostics.push_back(
+                    QStringLiteral("Recovery session %1 was set aside, not deleted.").arg(name));
             else
                 ++setAsideWithoutEdits;
         }
     }
     if (setAsideWithoutEdits > 0)
-        result.diagnostics.push_back(QStringLiteral("Recovery sessions without app edits that were set aside: %1.").arg(setAsideWithoutEdits));
+        result.diagnostics.push_back(
+            QStringLiteral("Recovery sessions without app edits that were set aside: %1.").arg(setAsideWithoutEdits));
 
     if (adopted) {
         auto &replay = adopted->replay;
-        const auto captured = std::find_if(replay.files.begin(), replay.files.end(), [](const auto &file) { return file.snapshots(); });
+        const auto captured =
+            std::find_if(replay.files.begin(), replay.files.end(), [](const auto &file) { return file.snapshots(); });
         const auto sessionId = captured->snapshots()->provenance.sessionId;
         result.found = true;
         result.directory = adopted->directory;
         result.userWork = replay.userWork;
         result.lease = std::move(adopted->lease);
         if (replay.incompleteTail)
-            result.diagnostics.push_back(QStringLiteral("An interrupted final recovery record was ignored. Pending input may need repeating."));
+            result.diagnostics.push_back(
+                QStringLiteral("An interrupted final recovery record was ignored. Pending input may need repeating."));
         for (auto &file : replay.files) {
             std::optional<SnapshotFileIdentity> copied;
-            const auto failure = reconcile(file, replay.mutations, observed, repository, executable, adopted->directory, copied);
+            const auto failure =
+                reconcile(file, replay.mutations, observed, repository, executable, adopted->directory, copied);
             if (!failure.isEmpty()) result.failures.emplace(file.id(), failure);
             if (copied) result.copiedLaunches.emplace(file.id(), *copied);
             result.files.push_back(std::move(file));
         }
         for (const auto &file : observed) {
-            if (std::none_of(result.files.begin(), result.files.end(), [&](const auto &recovered) { return recovered.id() == file.id(); })) {
+            if (std::none_of(result.files.begin(), result.files.end(),
+                             [&](const auto &recovered) { return recovered.id() == file.id(); })) {
                 result.newFiles.insert(file.id());
                 auto snapshots = file.snapshots() ? std::optional<FileSnapshots>(*file.snapshots()) : std::nullopt;
                 if (snapshots) snapshots->provenance.sessionId = sessionId;
                 result.files.emplace_back(file.id(), file.path(), file.current().draft, file.support(),
-                    file.supportDetail(), std::move(snapshots));
+                                          file.supportDetail(), std::move(snapshots));
             }
         }
     }
@@ -586,7 +660,9 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
             if (!file.snapshots()) continue;
             if (fresh.outcome != git::Outcome::Success || !fresh.repository.supported
                 || !sameOperation(file.snapshots()->provenance, fresh.repository)) {
-                result.failures.insert_or_assign(file.id(), QStringLiteral("Operation identity changed during recovery validation; work remains outstanding."));
+                result.failures.insert_or_assign(
+                    file.id(),
+                    QStringLiteral("Operation identity changed during recovery validation; work remains outstanding."));
                 result.copiedLaunches.erase(file.id());
             }
         }

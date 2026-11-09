@@ -11,8 +11,8 @@ namespace branch_truce {
 namespace {
 bool boundary(std::string_view text, std::size_t position)
 {
-    return position <= text.size() && (position == text.size()
-        || (static_cast<unsigned char>(text[position]) & 0xc0U) != 0x80U);
+    return position <= text.size()
+        && (position == text.size() || (static_cast<unsigned char>(text[position]) & 0xc0U) != 0x80U);
 }
 
 struct Line {
@@ -21,8 +21,7 @@ struct Line {
     std::size_t token;
 };
 
-std::vector<Line> lines(std::string_view text,
-                       std::map<std::string_view, std::size_t, std::less<>> &tokens)
+std::vector<Line> lines(std::string_view text, std::map<std::string_view, std::size_t, std::less<>> &tokens)
 {
     std::vector<Line> result;
     for (std::size_t begin = 0; begin < text.size();) {
@@ -42,8 +41,7 @@ struct LineMatch {
     bool operator==(const LineMatch &) const = default;
 };
 
-std::vector<std::size_t> lcsLengths(std::span<const Line> source,
-                                    std::span<const Line> result, bool reverse)
+std::vector<std::size_t> lcsLengths(std::span<const Line> source, std::span<const Line> result, bool reverse)
 {
     std::vector<std::size_t> row(result.size() + 1);
     for (std::size_t i = 0; i < source.size(); ++i) {
@@ -51,8 +49,8 @@ std::vector<std::size_t> lcsLengths(std::span<const Line> source,
         std::size_t diagonal = 0;
         for (std::size_t j = 0; j < result.size(); ++j) {
             const auto previous = row[j + 1];
-            row[j + 1] = token == result[reverse ? result.size() - 1 - j : j].token
-                ? diagonal + 1 : std::max(row[j], previous);
+            row[j + 1] =
+                token == result[reverse ? result.size() - 1 - j : j].token ? diagonal + 1 : std::max(row[j], previous);
             diagonal = previous;
         }
     }
@@ -63,9 +61,8 @@ std::vector<std::size_t> lcsLengths(std::span<const Line> source,
 // first/last optimal crossing at every split traces the two boundary paths of
 // the optimal-alignment graph, including skips at equal lines. A match shared
 // by both boundaries is shared by every optimal alignment.
-void boundaryAlignment(std::span<const Line> source, std::span<const Line> result,
-                       std::size_t sourceOffset, std::size_t resultOffset,
-                       bool last, std::vector<LineMatch> &matches)
+void boundaryAlignment(std::span<const Line> source, std::span<const Line> result, std::size_t sourceOffset,
+                       std::size_t resultOffset, bool last, std::vector<LineMatch> &matches)
 {
     if (source.empty() || result.empty()) return;
     if (source.size() == 1) {
@@ -92,10 +89,9 @@ void boundaryAlignment(std::span<const Line> source, std::span<const Line> resul
             }
         }
     } // Release the rows before descending, keeping workspace linear.
-    boundaryAlignment(source.first(middle), result.first(split), sourceOffset,
-                      resultOffset, last, matches);
-    boundaryAlignment(source.subspan(middle), result.subspan(split), sourceOffset + middle,
-                      resultOffset + split, last, matches);
+    boundaryAlignment(source.first(middle), result.first(split), sourceOffset, resultOffset, last, matches);
+    boundaryAlignment(source.subspan(middle), result.subspan(split), sourceOffset + middle, resultOffset + split, last,
+                      matches);
 }
 
 std::vector<std::size_t> lineStarts(std::string_view text)
@@ -145,21 +141,17 @@ struct Projection {
     bool changed = false;
 };
 
-Projection project(const std::vector<Passage> &passages, ByteRange range,
-                   InsertionAffinity affinity, const LinePairing *pairing = nullptr)
+Projection project(const std::vector<Passage> &passages, ByteRange range, InsertionAffinity affinity,
+                   const LinePairing *pairing = nullptr)
 {
     Projection projection;
     for (const auto &passage : passages) {
         const auto s = passage.source;
-        const bool overlap = range.begin == range.end
-            ? s.begin < range.begin && range.begin < s.end
-            : s.begin < range.end && range.begin < s.end;
-        const bool interiorInsertion = s.begin == s.end
-            && range.begin < s.begin && s.begin < range.end;
-        if ((overlap || interiorInsertion) && passage.kind == PassageKind::Ambiguous)
-            return projection;
-        if ((overlap || interiorInsertion) && passage.kind != PassageKind::Equal)
-            projection.changed = true;
+        const bool overlap = range.begin == range.end ? s.begin < range.begin && range.begin < s.end
+                                                      : s.begin < range.end && range.begin < s.end;
+        const bool interiorInsertion = s.begin == s.end && range.begin < s.begin && s.begin < range.end;
+        if ((overlap || interiorInsertion) && passage.kind == PassageKind::Ambiguous) return projection;
+        if ((overlap || interiorInsertion) && passage.kind != PassageKind::Equal) projection.changed = true;
     }
     const bool empty = range.begin == range.end;
     const auto position = [&](std::size_t offset, InsertionAffinity insertion) -> std::optional<std::size_t> {
@@ -202,29 +194,31 @@ void invalidate(ResultAnchor &anchor, AnchorState state)
 // Ranges in text order, with overlapping or touching ones joined.
 std::vector<ByteRange> joined(std::vector<ByteRange> ranges)
 {
-    std::sort(ranges.begin(), ranges.end(), [](const auto &a, const auto &b) {
-        return a.begin != b.begin ? a.begin < b.begin : a.end < b.end;
-    });
+    std::sort(ranges.begin(), ranges.end(),
+              [](const auto &a, const auto &b) { return a.begin != b.begin ? a.begin < b.begin : a.end < b.end; });
     std::vector<ByteRange> result;
     for (const auto &range : ranges) {
         if (!result.empty() && range.begin <= result.back().end)
             result.back().end = std::max(result.back().end, range.end);
-        else result.push_back(range);
+        else
+            result.push_back(range);
     }
     return result;
 }
 
 // Hand-edited ranges after `edit` replaced its range with `inserted` bytes.
 // The replaced text leaves them, and a hand edit adds the text it wrote.
-std::vector<ByteRange> editedRanges(const std::vector<ByteRange> &ranges, ByteRange edit,
-                                    std::size_t inserted, bool manual)
+std::vector<ByteRange> editedRanges(const std::vector<ByteRange> &ranges, ByteRange edit, std::size_t inserted,
+                                    bool manual)
 {
     const auto shift = [&](std::size_t offset) { return offset - (edit.end - edit.begin) + inserted; };
     std::vector<ByteRange> result;
     for (const auto &range : ranges) {
         if (range.begin == range.end) {
-            if (range.begin <= edit.begin) result.push_back(range);
-            else if (range.begin >= edit.end) result.push_back({shift(range.begin), shift(range.end)});
+            if (range.begin <= edit.begin)
+                result.push_back(range);
+            else if (range.begin >= edit.end)
+                result.push_back({shift(range.begin), shift(range.end)});
             continue;
         }
         if (range.begin < edit.begin) result.push_back({range.begin, std::min(range.end, edit.begin)});
@@ -237,8 +231,8 @@ std::vector<ByteRange> editedRanges(const std::vector<ByteRange> &ranges, ByteRa
 // Hand-edited ranges after a whole-buffer update with these old-to-new
 // passages. A range edge inside changed text widens to cover it, and every
 // changed passage is a hand edit too.
-std::vector<ByteRange> recomputedRanges(const std::vector<ByteRange> &ranges,
-                                        const std::vector<Passage> &changes, std::size_t size)
+std::vector<ByteRange> recomputedRanges(const std::vector<ByteRange> &ranges, const std::vector<Passage> &changes,
+                                        std::size_t size)
 {
     const auto moved = [&](std::size_t offset, bool end) {
         for (const auto &passage : changes) {
@@ -262,8 +256,8 @@ bool within(const SourceAnchor &outer, const SourceAnchor &inner)
 {
     const auto &a = outer.range;
     const auto &b = inner.range;
-    return outer.side == inner.side && (b.begin == b.end ? a.begin < b.begin && b.begin < a.end
-        : a.begin <= b.begin && b.end <= a.end);
+    return outer.side == inner.side
+        && (b.begin == b.end ? a.begin < b.begin && b.begin < a.end : a.begin <= b.begin && b.end <= a.end);
 }
 
 // Another nonempty contribution from the chosen side, such as the next surplus
@@ -272,8 +266,7 @@ bool sibling(const SourceAnchor &chosen, const SourceAnchor &other)
 {
     const auto &a = chosen.range;
     const auto &b = other.range;
-    return chosen.side == other.side && a.begin != a.end && b.begin != b.end
-        && (a.end <= b.begin || b.end <= a.begin);
+    return chosen.side == other.side && a.begin != a.end && b.begin != b.end && (a.end <= b.begin || b.end <= a.begin);
 }
 
 void transform(ResultAnchor &anchor, const ResultEdit &edit, bool manual, bool selected, bool beside)
@@ -296,7 +289,8 @@ void transform(ResultAnchor &anchor, const ResultEdit &edit, bool manual, bool s
             invalidate(anchor, AnchorState::Invalidated);
             return;
         }
-        if (position >= edit.range.end && position != edit.range.begin) position = shift(position);
+        if (position >= edit.range.end && position != edit.range.begin)
+            position = shift(position);
         else if (position == edit.range.begin) {
             position = edit.range.begin + (anchor.source.affinity == InsertionAffinity::After ? inserted : 0);
         }
@@ -319,8 +313,10 @@ void transform(ResultAnchor &anchor, const ResultEdit &edit, bool manual, bool s
     } else {
         // Typing across a boundary still changes this range by hand. A command
         // that replaces all of it leaves no hand edit behind.
-        if (manual) anchor.handEdited = true;
-        else if (edit.range.begin <= range.begin && range.end <= edit.range.end) anchor.handEdited = false;
+        if (manual)
+            anchor.handEdited = true;
+        else if (edit.range.begin <= range.begin && range.end <= edit.range.end)
+            anchor.handEdited = false;
         invalidate(anchor, AnchorState::Invalidated);
         return;
     }
@@ -336,10 +332,20 @@ bool validUtf8(std::string_view text) noexcept
         std::size_t count = 0;
         std::uint32_t value = 0;
         std::uint32_t minimum = 0;
-        if (first >= 0xc2U && first <= 0xdfU) { count = 1; value = first & 0x1fU; minimum = 0x80; }
-        else if (first >= 0xe0U && first <= 0xefU) { count = 2; value = first & 0x0fU; minimum = 0x800; }
-        else if (first >= 0xf0U && first <= 0xf4U) { count = 3; value = first & 0x07U; minimum = 0x10000; }
-        else return false;
+        if (first >= 0xc2U && first <= 0xdfU) {
+            count = 1;
+            value = first & 0x1fU;
+            minimum = 0x80;
+        } else if (first >= 0xe0U && first <= 0xefU) {
+            count = 2;
+            value = first & 0x0fU;
+            minimum = 0x800;
+        } else if (first >= 0xf0U && first <= 0xf4U) {
+            count = 3;
+            value = first & 0x07U;
+            minimum = 0x10000;
+        } else
+            return false;
         if (count > text.size() - i) return false;
         for (std::size_t n = 0; n < count; ++n) {
             const auto next = static_cast<unsigned char>(text[i++]);
@@ -362,10 +368,8 @@ std::vector<Passage> ExactLineCorrespondence::compare(std::string_view source, s
         throw std::invalid_argument("Correspondence requires valid UTF-8 text");
     const auto sourceBudget = assessText(source);
     const auto resultBudget = assessText(result);
-    if (sourceBudget.limit != TextLimit::Within)
-        throw std::invalid_argument(textLimitDiagnostic(sourceBudget));
-    if (resultBudget.limit != TextLimit::Within)
-        throw std::invalid_argument(textLimitDiagnostic(resultBudget));
+    if (sourceBudget.limit != TextLimit::Within) throw std::invalid_argument(textLimitDiagnostic(sourceBudget));
+    if (resultBudget.limit != TextLimit::Within) throw std::invalid_argument(textLimitDiagnostic(resultBudget));
     if (source == result) return {{{0, source.size()}, {0, result.size()}, PassageKind::Equal}};
     std::map<std::string_view, std::size_t, std::less<>> tokens;
     const auto a = lines(source, tokens);
@@ -376,13 +380,13 @@ std::vector<Passage> ExactLineCorrespondence::compare(std::string_view source, s
     boundaryAlignment(a, b, 0, 0, true, last);
     std::vector<Passage> passages;
     const auto emit = [&](Passage passage) {
-        if (!passages.empty() && passage.kind == PassageKind::Equal
-            && passages.back().kind == PassageKind::Equal
+        if (!passages.empty() && passage.kind == PassageKind::Equal && passages.back().kind == PassageKind::Equal
             && passages.back().source.end == passage.source.begin
             && passages.back().result.end == passage.result.begin) {
             passages.back().source.end = passage.source.end;
             passages.back().result.end = passage.result.end;
-        } else passages.push_back(passage);
+        } else
+            passages.push_back(passage);
     };
     const auto sourceOffset = [&](std::size_t i) { return i == a.size() ? source.size() : a[i].begin; };
     const auto resultOffset = [&](std::size_t j) { return j == b.size() ? result.size() : b[j].begin; };
@@ -390,11 +394,13 @@ std::vector<Passage> ExactLineCorrespondence::compare(std::string_view source, s
     std::size_t resultStart = 0;
     const auto gap = [&](std::size_t sourceEnd, std::size_t resultEnd, bool ambiguous) {
         if (sourceStart == sourceEnd && resultStart == resultEnd) return;
-        const auto kind = ambiguous ? PassageKind::Ambiguous
+        const auto kind = ambiguous    ? PassageKind::Ambiguous
             : sourceStart == sourceEnd ? PassageKind::ResultOnly
-            : resultStart == resultEnd ? PassageKind::SourceOnly : PassageKind::Changed;
+            : resultStart == resultEnd ? PassageKind::SourceOnly
+                                       : PassageKind::Changed;
         emit({{sourceOffset(sourceStart), sourceOffset(sourceEnd)},
-              {resultOffset(resultStart), resultOffset(resultEnd)}, kind});
+              {resultOffset(resultStart), resultOffset(resultEnd)},
+              kind});
     };
     std::size_t nextMatch = 0;
     for (std::size_t k = 0; k < first.size(); ++k) {
@@ -410,12 +416,13 @@ std::vector<Passage> ExactLineCorrespondence::compare(std::string_view source, s
     return passages;
 }
 
-CorrespondenceMap::CorrespondenceMap(RevisionId revision, const FileSnapshots &sources,
-                                     std::string result,
+CorrespondenceMap::CorrespondenceMap(RevisionId revision, const FileSnapshots &sources, std::string result,
                                      std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
-    : revision_(revision), sessionId_(sources.provenance.sessionId), path_(sources.path),
-      algorithm_(algorithm ? std::move(algorithm)
-        : std::make_shared<ExactLineCorrespondence>()), text_(std::move(result))
+    : revision_(revision),
+      sessionId_(sources.provenance.sessionId),
+      path_(sources.path),
+      algorithm_(algorithm ? std::move(algorithm) : std::make_shared<ExactLineCorrespondence>()),
+      text_(std::move(result))
 {
     if (!validUtf8(text_)) throw std::invalid_argument("Correspondence requires valid UTF-8 text");
     std::map<SourceSide, std::string> texts;
@@ -462,8 +469,9 @@ const ResultAnchor *CorrespondenceMap::anchor(const std::string &id) const noexc
 bool CorrespondenceMap::bind(SourceAnchor source)
 {
     const auto text = sources_->find(source.side);
-    if (source.contributionId.empty() || text == sources_->end()
-        || !validByteRange(text->second, source.range) || anchors_.contains(source.contributionId)) return false;
+    if (source.contributionId.empty() || text == sources_->end() || !validByteRange(text->second, source.range)
+        || anchors_.contains(source.contributionId))
+        return false;
     if (!resultLines_) resultLines_ = std::make_shared<const std::vector<std::size_t>>(lineStarts(text_));
     const LinePairing pairing{sourceLines_->at(source.side), *resultLines_};
     const auto projected = project(passages_.at(source.side), source.range, source.affinity, &pairing);
@@ -471,9 +479,10 @@ bool CorrespondenceMap::bind(SourceAnchor source)
     const AnchorOrigin origin{sessionId_, path_, sourceObjectIds_.at(source.side)};
     // Launch text that differs from its source needs confirmation to replace,
     // but nobody has edited it by hand yet.
-    anchors_.emplace(id, ResultAnchor{origin, std::move(source), revision_, projected.state,
-        projected.range, projected.changed && projected.range && projected.range->begin != projected.range->end,
-        false});
+    anchors_.emplace(
+        id,
+        ResultAnchor{origin, std::move(source), revision_, projected.state, projected.range,
+                     projected.changed && projected.range && projected.range->begin != projected.range->end, false});
     return true;
 }
 
@@ -482,7 +491,8 @@ void CorrespondenceMap::settle(SourceSide side, const std::vector<ByteRange> &dr
     const auto source = sources_->find(side);
     if (source == sources_->end() || std::none_of(anchors_.begin(), anchors_.end(), [&](const auto &entry) {
             return entry.second.source.side == side && entry.second.state == AnchorState::Ambiguous;
-        })) return;
+        }))
+        return;
     auto cuts = dropped;
     std::sort(cuts.begin(), cuts.end(), [](const auto &a, const auto &b) { return a.begin < b.begin; });
     // The result's kept pieces in order, each with where it starts in the view.
@@ -495,8 +505,8 @@ void CorrespondenceMap::settle(SourceSide side, const std::vector<ByteRange> &dr
         view.append(text_, from, end - from);
     };
     for (const auto &cut : cuts) {
-        if (cut.begin < from || cut.end < cut.begin || text_.size() < cut.end
-            || !validByteRange(text_, cut)) throw std::invalid_argument("Dropped result ranges must be disjoint");
+        if (cut.begin < from || cut.end < cut.begin || text_.size() < cut.end || !validByteRange(text_, cut))
+            throw std::invalid_argument("Dropped result ranges must be disjoint");
         if (cut.begin == cut.end) continue;
         keep(cut.begin);
         from = cut.end;
@@ -512,7 +522,7 @@ void CorrespondenceMap::settle(SourceSide side, const std::vector<ByteRange> &dr
         for (const auto &[at, piece] : pieces) {
             const auto end = at + piece.end - piece.begin;
             if (range.begin == range.end ? at <= range.begin && range.begin <= end
-                    : at <= range.begin && range.end <= end)
+                                         : at <= range.begin && range.end <= end)
                 found.push_back(piece.begin + range.begin - at);
         }
         if (found.size() != 1) return std::nullopt;
@@ -544,8 +554,8 @@ CorrespondenceMap CorrespondenceMap::atRevision(RevisionId revision) const
     return result;
 }
 
-CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdit &edit,
-                                           bool manual, const std::string &selectedAnchor) const
+CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdit &edit, bool manual,
+                                            const std::string &selectedAnchor) const
 {
     if (!validByteRange(text_, edit.range) || !validUtf8(edit.replacement))
         throw std::invalid_argument("Result edit must use UTF-8 character boundaries");
@@ -577,9 +587,10 @@ CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdi
 }
 
 CorrespondenceMap CorrespondenceMap::rebuilt(RevisionId revision, ByteRange range,
-                                            const std::vector<KeptSpan> &spans) const
+                                             const std::vector<KeptSpan> &spans) const
 {
-    if (!validByteRange(text_, range)) throw std::invalid_argument("A rebuilt range must use UTF-8 character boundaries");
+    if (!validByteRange(text_, range))
+        throw std::invalid_argument("A rebuilt range must use UTF-8 character boundaries");
     std::string replacement;
     // Where each span's kept text starts in the new text.
     std::vector<std::size_t> starts;
@@ -610,8 +621,10 @@ CorrespondenceMap CorrespondenceMap::rebuilt(RevisionId revision, ByteRange rang
             const auto &kept = spans[i];
             if (old.begin < kept.span.begin || kept.span.end < old.end) continue;
             const auto cut = std::find_if(kept.dropped.begin(), kept.dropped.end(), [&](const auto &dropped) {
-                return dropped == old || (old.begin == old.end ? dropped.begin < old.begin && old.begin < dropped.end
-                    : overlaps(dropped, old) && (dropped.begin < old.begin || old.end < dropped.end));
+                return dropped == old
+                    || (old.begin == old.end
+                            ? dropped.begin < old.begin && old.begin < dropped.end
+                            : overlaps(dropped, old) && (dropped.begin < old.begin || old.end < dropped.end));
             });
             if (cut == kept.dropped.end()) return ByteRange{place(i, old.begin), place(i, old.end)};
             if (*cut == old) return ByteRange{place(i, old.begin), place(i, old.begin)};
@@ -626,7 +639,8 @@ CorrespondenceMap CorrespondenceMap::rebuilt(RevisionId revision, ByteRange rang
         if (anchor.state != AnchorState::Mapped || !anchor.result) continue;
         const auto old = *anchor.result;
         if (old.begin == old.end && old.begin == range.begin) {
-            const auto position = range.begin + (anchor.source.affinity == InsertionAffinity::After ? replacement.size() : 0);
+            const auto position =
+                range.begin + (anchor.source.affinity == InsertionAffinity::After ? replacement.size() : 0);
             anchor.result = ByteRange{position, position};
         } else if (old.end <= range.begin && old.begin < range.begin) {
             continue;
@@ -656,9 +670,8 @@ CorrespondenceMap CorrespondenceMap::rebuilt(RevisionId revision, ByteRange rang
         for (std::size_t i = 0; i < spans.size(); ++i) {
             const auto &kept = spans[i];
             if (position < kept.span.begin || kept.span.end < position) continue;
-            if (std::none_of(kept.dropped.begin(), kept.dropped.end(), [&](const auto &cut) {
-                    return cut.begin < position && position < cut.end;
-                })) {
+            if (std::none_of(kept.dropped.begin(), kept.dropped.end(),
+                             [&](const auto &cut) { return cut.begin < position && position < cut.end; })) {
                 edited.push_back({place(i, position), place(i, position)});
                 return;
             }
@@ -666,9 +679,12 @@ CorrespondenceMap CorrespondenceMap::rebuilt(RevisionId revision, ByteRange rang
     };
     for (const auto &old : handEditedRanges_) {
         if (old.begin == old.end) {
-            if (old.begin <= range.begin) edited.push_back(old);
-            else if (old.begin >= range.end) edited.push_back({shift(old.begin), shift(old.end)});
-            else keptPosition(old.begin);
+            if (old.begin <= range.begin)
+                edited.push_back(old);
+            else if (old.begin >= range.end)
+                edited.push_back({shift(old.begin), shift(old.end)});
+            else
+                keptPosition(old.begin);
             continue;
         }
         if (old.begin < range.begin) edited.push_back({old.begin, std::min(old.end, range.begin)});

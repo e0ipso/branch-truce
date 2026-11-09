@@ -1,5 +1,5 @@
-#include "app/NavigationTargets.h"
 #include "TestHarness.h"
+#include "app/NavigationTargets.h"
 #include "fixtures/ChoiceFile.h"
 #include <algorithm>
 
@@ -55,8 +55,10 @@ int main()
         const auto targets = undecidedTargets(file);
         // Each side has one line choice per region, so no section is a target.
         CHECK(targets.size() == 4);
-        CHECK(at(targets[0], 0, 11, SourceSide::Stage2) && targets[0].contributionId == lineChoice(file, SourceSide::Stage2));
-        CHECK(at(targets[1], 0, 11, SourceSide::Stage3) && targets[1].contributionId == lineChoice(file, SourceSide::Stage3));
+        CHECK(at(targets[0], 0, 11, SourceSide::Stage2)
+              && targets[0].contributionId == lineChoice(file, SourceSide::Stage2));
+        CHECK(at(targets[1], 0, 11, SourceSide::Stage3)
+              && targets[1].contributionId == lineChoice(file, SourceSide::Stage3));
         CHECK(at(targets[2], 18, result.size(), SourceSide::Stage2)
               && targets[2].contributionId == lineChoice(file, SourceSide::Stage2, 1));
         CHECK(at(targets[3], 18, result.size(), SourceSide::Stage3)
@@ -72,8 +74,9 @@ int main()
         const auto before = undecidedTargets(file);
         CHECK(before.size() == 6);
         const auto &left = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section);
-        CHECK(applyChoice(file, previewChoice(file, file.current().id, left.source.contributionId,
-            ChoiceAction::Accept), true) == Transition::Applied);
+        CHECK(applyChoice(
+                  file, previewChoice(file, file.current().id, left.source.contributionId, ChoiceAction::Accept), true)
+              == Transition::Applied);
         const auto after = undecidedTargets(file);
         CHECK(after.size() == 4);
         for (std::size_t occurrence = 0; occurrence < 2; ++occurrence) {
@@ -89,7 +92,8 @@ int main()
         CHECK(after[0].side == SourceSide::Stage3 && after[1].side == SourceSide::Stage3);
         CHECK(undecidedChoice(file, test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Line)));
         CHECK(after[0].byteBegin == before[2].byteBegin && after[0].byteEnd == before[2].byteEnd);
-        CHECK(std::is_sorted(after.begin(), after.end(), [](const auto &l, const auto &r) { return l.byteBegin < r.byteBegin; }));
+        CHECK(std::is_sorted(after.begin(), after.end(),
+                             [](const auto &l, const auto &r) { return l.byteBegin < r.byteBegin; }));
     });
 
     suite.run("utf16Offset counts UTF-16 units up to a byte offset and refuses one past the end", [] {

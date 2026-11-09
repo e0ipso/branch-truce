@@ -30,9 +30,8 @@ public:
         const auto changed = add(pane + QStringLiteral(".contentsChanged"));
         const auto update = add(pane + QStringLiteral(".layout.update"));
         const auto size = add(pane + QStringLiteral(".layout.documentSizeChanged"));
-        connect(document, &QTextDocument::contentsChange, this, [this, text, nonText](int, int removed, int added) {
-            mark(removed || added ? text : nonText);
-        });
+        connect(document, &QTextDocument::contentsChange, this,
+                [this, text, nonText](int, int removed, int added) { mark(removed || added ? text : nonText); });
         connect(document, &QTextDocument::contentsChanged, this, [this, changed] { mark(changed); });
         if (auto *layout = document->documentLayout()) {
             connect(layout, &QAbstractTextDocumentLayout::update, this, [this, update] { mark(update); });
@@ -84,7 +83,7 @@ public:
 private:
     static qint64 processCpuUs()
     {
-        timespec now {};
+        timespec now{};
         if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &now) != 0) return -1;
         return static_cast<qint64>(now.tv_sec) * 1000000 + now.tv_nsec / 1000;
     }

@@ -39,12 +39,14 @@ void report()
     const auto windowIcon = QGuiApplication::topLevelWindows().constFirst()->icon();
     const auto desktopName = QGuiApplication::desktopFileName();
     const QJsonObject icon{{QStringLiteral("null"), windowIcon.isNull()},
-        // A theme icon carries its lookup name; the bundled resource has none.
-        {QStringLiteral("name"), windowIcon.name()},
-        {QStringLiteral("themeHasApplicationIcon"), QIcon::hasThemeIcon(desktopName)},
-        {QStringLiteral("small"), rendersAt(windowIcon, 16)},
-        {QStringLiteral("large"), rendersAt(windowIcon, 128)}};
-    const QJsonObject state{{QStringLiteral("windowIcon"), icon}, {QStringLiteral("style"), QQuickStyle::name()},
+                           // A theme icon carries its lookup name; the bundled resource has none.
+                           {QStringLiteral("name"), windowIcon.name()},
+                           {QStringLiteral("themeHasApplicationIcon"), QIcon::hasThemeIcon(desktopName)},
+                           {QStringLiteral("small"), rendersAt(windowIcon, 16)},
+                           {QStringLiteral("large"), rendersAt(windowIcon, 128)}};
+    const QJsonObject state{
+        {QStringLiteral("windowIcon"), icon},
+        {QStringLiteral("style"), QQuickStyle::name()},
         {QStringLiteral("theme"), QIcon::themeName()},
         {QStringLiteral("fallbackTheme"), QIcon::fallbackThemeName()},
         {QStringLiteral("documentSave"), !QIcon::fromTheme(QStringLiteral("document-save")).isNull()},
@@ -53,10 +55,7 @@ void report()
     std::fflush(stdout);
 }
 
-void schedule()
-{
-    QTimer::singleShot(0, QCoreApplication::instance(), report);
-}
+void schedule() { QTimer::singleShot(0, QCoreApplication::instance(), report); }
 }
 
 Q_COREAPP_STARTUP_FUNCTION(schedule)

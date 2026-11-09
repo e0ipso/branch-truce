@@ -1,6 +1,6 @@
-#include "storage/RecoveryStore.h"
 #include "TestHarness.h"
 #include "fixtures/RecoveryFaults.h"
+#include "storage/RecoveryStore.h"
 #include <QCoreApplication>
 #include <QFile>
 #include <QFileInfo>
@@ -56,8 +56,8 @@ public:
             const auto frame = complete.mid(acknowledged.size());
             CHECK(frame.endsWith('\n') && frame.size() > 6);
             // Payloads have landed but the record may stop anywhere before its newline.
-            for (const qsizetype cut : std::array<qsizetype, 6>{0, 1, frame.size() / 3,
-                    frame.size() / 2, frame.size() - 2, frame.size() - 1}) {
+            for (const qsizetype cut : std::array<qsizetype, 6>{0, 1, frame.size() / 3, frame.size() / 2,
+                                                                frame.size() - 2, frame.size() - 1}) {
                 overwrite(journalPath, acknowledged + frame.left(cut));
                 const auto recovered = RecoveryStore(store.directory()).read();
                 CHECK(recovered.succeeded && recovered.incompleteTail == (cut != 0));
@@ -72,35 +72,37 @@ public:
             }
             QString error;
             CHECK(store.payload(RecoveryStore::digest(QByteArray("first\0exact bytes", 17)), &error)
-                == QByteArray("first\0exact bytes", 17));
+                  == QByteArray("first\0exact bytes", 17));
             CHECK(error.isEmpty());
         });
         for (const auto point : {recovery_faults::Point::PayloadSync, recovery_faults::Point::JournalSync}) {
             suite.run("recovery write failure retains the prior commit and idempotent retry "
-                      + std::to_string(static_cast<int>(point)), [=] {
-                QTemporaryDir directory;
-                CHECK(directory.isValid());
-                RecoveryStore store(directory.path() + "/recovery");
-                const auto first = transaction("first", "already acknowledged");
-                const auto pending = transaction("stable-retry-identity", "new pending bytes");
-                CHECK(store.commit(first).succeeded);
-                recovery_faults::Failure fault(point);
-                const auto failed = store.commit(pending);
-                CHECK(recovery_faults::failures == 1 && !failed.succeeded && !failed.error.isEmpty());
-                const auto interrupted = store.read();
-                CHECK(interrupted.succeeded && interrupted.transactions.front() == first.state);
-                if (point == recovery_faults::Point::PayloadSync)
-                    CHECK(interrupted.transactions == QList<QJsonObject>{first.state});
-                else
-                    CHECK(interrupted.transactions == QList<QJsonObject>{first.state, pending.state});
-                CHECK(store.commit(pending).succeeded && store.commit(pending).succeeded);
-                const auto recovered = RecoveryStore(store.directory()).read();
-                CHECK(recovered.succeeded && !recovered.incompleteTail);
-                CHECK(recovered.transactions == QList<QJsonObject>{first.state, pending.state});
-                QString error;
-                CHECK(store.payload(RecoveryStore::digest("new pending bytes"), &error) == "new pending bytes");
-                CHECK(error.isEmpty());
-            });
+                          + std::to_string(static_cast<int>(point)),
+                      [=] {
+                          QTemporaryDir directory;
+                          CHECK(directory.isValid());
+                          RecoveryStore store(directory.path() + "/recovery");
+                          const auto first = transaction("first", "already acknowledged");
+                          const auto pending = transaction("stable-retry-identity", "new pending bytes");
+                          CHECK(store.commit(first).succeeded);
+                          recovery_faults::Failure fault(point);
+                          const auto failed = store.commit(pending);
+                          CHECK(recovery_faults::failures == 1 && !failed.succeeded && !failed.error.isEmpty());
+                          const auto interrupted = store.read();
+                          CHECK(interrupted.succeeded && interrupted.transactions.front() == first.state);
+                          if (point == recovery_faults::Point::PayloadSync)
+                              CHECK(interrupted.transactions == QList<QJsonObject>{first.state});
+                          else
+                              CHECK(interrupted.transactions == QList<QJsonObject>{first.state, pending.state});
+                          CHECK(store.commit(pending).succeeded && store.commit(pending).succeeded);
+                          const auto recovered = RecoveryStore(store.directory()).read();
+                          CHECK(recovered.succeeded && !recovered.incompleteTail);
+                          CHECK(recovered.transactions == QList<QJsonObject>{first.state, pending.state});
+                          QString error;
+                          CHECK(store.payload(RecoveryStore::digest("new pending bytes"), &error)
+                                == "new pending bytes");
+                          CHECK(error.isEmpty());
+                      });
         }
         suite.run("recovery payload envelope keeps the boundary and the acknowledged journal", [] {
             QTemporaryDir directory;
@@ -209,7 +211,7 @@ public:
             CHECK(store.commit(after).succeeded);
             auto reloaded = RecoveryStore(store.directory()).read();
             CHECK(reloaded.succeeded
-                && reloaded.transactions == (QList<QJsonObject>{foreignA.state, foreignB.state, after.state}));
+                  && reloaded.transactions == (QList<QJsonObject>{foreignA.state, foreignB.state, after.state}));
 
             // A journal whose payloads are missing is refused.
             overwrite(journalPath, acknowledged);
@@ -217,7 +219,8 @@ public:
             auto failed = store.commit(transaction("missing", "four"));
             CHECK(!failed.succeeded && failed.error.contains("missing or unsafe"));
             CHECK(readFile(journalPath) == acknowledged);
-            overwritePrivate(store.directory() + "/payloads/" + QString::fromLatin1(RecoveryStore::digest("one")), "one");
+            overwritePrivate(store.directory() + "/payloads/" + QString::fromLatin1(RecoveryStore::digest("one")),
+                             "one");
 
             // An unknown header is refused.
             auto unknown = acknowledged;
@@ -235,7 +238,8 @@ public:
 
             // A journal other users can read is refused even when its bytes are unchanged.
             const auto before = readFile(journalPath);
-            CHECK(QFile::setPermissions(journalPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadOther));
+            CHECK(QFile::setPermissions(journalPath,
+                                        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadOther));
             failed = store.commit(transaction("exposed", "seven"));
             CHECK(!failed.succeeded && failed.error.contains("unavailable or unsafe"));
             CHECK(readFile(journalPath) == before);

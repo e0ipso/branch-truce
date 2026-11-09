@@ -20,7 +20,9 @@ void ConnectorBands::setSourceBlocks(TextBlocks *blocks)
     if (sourceBlocks_ == blocks) return;
     disconnect(sourceConnection_);
     sourceBlocks_ = blocks;
-    if (blocks) sourceConnection_ = connect(blocks, &TextBlocks::layoutChanged, this, &ConnectorBands::update, Qt::QueuedConnection);
+    if (blocks)
+        sourceConnection_ =
+            connect(blocks, &TextBlocks::layoutChanged, this, &ConnectorBands::update, Qt::QueuedConnection);
     update();
     Q_EMIT inputsChanged();
 }
@@ -29,7 +31,9 @@ void ConnectorBands::setResultBlocks(TextBlocks *blocks)
     if (resultBlocks_ == blocks) return;
     disconnect(resultConnection_);
     resultBlocks_ = blocks;
-    if (blocks) resultConnection_ = connect(blocks, &TextBlocks::layoutChanged, this, &ConnectorBands::update, Qt::QueuedConnection);
+    if (blocks)
+        resultConnection_ =
+            connect(blocks, &TextBlocks::layoutChanged, this, &ConnectorBands::update, Qt::QueuedConnection);
     update();
     Q_EMIT inputsChanged();
 }
@@ -57,7 +61,8 @@ QVariantMap ConnectorBands::bandAt(qreal x, qreal y, qreal width, bool leftSide)
         const qreal resultBottom = band.value(QStringLiteral("resultBottom")).toReal();
         // Keep the attachment edges inclusive, as with the former straight bands.
         if ((sourceX == 0 && y >= sourceTop && y <= sourceBottom)
-            || (sourceX == width && y >= resultTop && y <= resultBottom)) return band;
+            || (sourceX == width && y >= resultTop && y <= resultBottom))
+            return band;
         // Match ConnectorHandle's cubic edges in source-to-result coordinates.
         // Clipping happens after constructing the full, scrolled passage bounds.
         QPainterPath ribbon;
@@ -77,7 +82,8 @@ void ConnectorBands::update()
         all.clear();
         QMap<int, QString> lines, boundaries;
         const auto decide = [](QMap<int, QString> &states, int line, const QString &kind) {
-            if (!states.contains(line) || PaneMarks::rank(states.value(line)) < PaneMarks::rank(kind)) states[line] = kind;
+            if (!states.contains(line) || PaneMarks::rank(states.value(line)) < PaneMarks::rank(kind))
+                states[line] = kind;
         };
         const auto conflicts = PaneMarks::conflictingLines(passages_);
         for (const auto &value : PaneMarks::stylingRegions(regions_)) {
@@ -99,7 +105,8 @@ void ConnectorBands::update()
             const int sb = number(passage, "sourceLineBegin"), se = number(passage, "sourceLineEnd");
             const int rb = number(passage, "resultLineBegin"), re = number(passage, "resultLineEnd");
             const auto kind = string(passage, "kind");
-            const bool equal = passage.value(QStringLiteral("comparisonKind"), kind).toString() == QLatin1String("equal");
+            const bool equal =
+                passage.value(QStringLiteral("comparisonKind"), kind).toString() == QLatin1String("equal");
             if (!equal || sb >= se || se - sb != re - rb) {
                 projected.append(value);
                 continue;
@@ -133,7 +140,11 @@ void ConnectorBands::update()
             int row = 0, stop = 0;
             for (auto it = rows.cbegin(); it != rows.cend(); ++it) {
                 const int first = it.key().toInt(), last = number(it.value().toMap(), "last") + 1;
-                if (meets(rb, re, first, last)) { row = first; stop = last; break; }
+                if (meets(rb, re, first, last)) {
+                    row = first;
+                    stop = last;
+                    break;
+                }
             }
             if (row > 0 && (passageKind != QLatin1String("equal") || (rb > row && re <= stop))) {
                 if (folded.contains(row)) {
@@ -146,17 +157,23 @@ void ConnectorBands::update()
                     all[i] = band;
                 } else {
                     folded[row] = static_cast<int>(all.size());
-                    all.append(QVariantMap{{"kind", "conflict"}, {"sourceBegin", sb}, {"sourceEnd", se},
-                        {"resultBegin", std::min(row, rb)}, {"resultEnd", std::max(stop, re)}});
+                    all.append(QVariantMap{{"kind", "conflict"},
+                                           {"sourceBegin", sb},
+                                           {"sourceEnd", se},
+                                           {"resultBegin", std::min(row, rb)},
+                                           {"resultEnd", std::max(stop, re)}});
                 }
                 continue;
             }
             if (passageKind == QLatin1String("equal")) continue;
-            QString kind = passageKind == QLatin1String("result-only") || passageKind == QLatin1String("added") ? QStringLiteral("added")
-                : passageKind == QLatin1String("source-only") ? QStringLiteral("removed") : QStringLiteral("changed");
+            QString kind = passageKind == QLatin1String("result-only") || passageKind == QLatin1String("added")
+                ? QStringLiteral("added")
+                : passageKind == QLatin1String("source-only") ? QStringLiteral("removed")
+                                                              : QStringLiteral("changed");
             const auto &states = sb == se ? boundaries : lines;
             for (int line = sb; line < std::max(se, sb + 1); ++line)
-                if (states.contains(line) && PaneMarks::rank(states.value(line)) > PaneMarks::rank(kind)) kind = states.value(line);
+                if (states.contains(line) && PaneMarks::rank(states.value(line)) > PaneMarks::rank(kind))
+                    kind = states.value(line);
             for (const auto &blockValue : markerBlocks_) {
                 const auto block = blockValue.toMap();
                 if (meets(rb, re, number(block, "resultLineBegin"), number(block, "resultLineEnd"))) {
@@ -164,7 +181,8 @@ void ConnectorBands::update()
                     break;
                 }
             }
-            all.append(QVariantMap{{"kind", kind}, {"sourceBegin", sb}, {"sourceEnd", se}, {"resultBegin", rb}, {"resultEnd", re}});
+            all.append(QVariantMap{
+                {"kind", kind}, {"sourceBegin", sb}, {"sourceEnd", se}, {"resultBegin", rb}, {"resultEnd", re}});
         }
         projectionDirty_ = false;
     }
@@ -184,14 +202,18 @@ void ConnectorBands::update()
             const qreal extent = below ? viewportHeight_ : 0;
             const qreal sourceLine = sourceBlocks_->lineAtY(sourceScroll_ + extent - sourceEditorY_ - sourcePadding_);
             const qreal resultLine = resultBlocks_->lineAtY(resultScroll_ + extent - resultEditorY_ - resultPadding_
-                - resultParentY_ + sourceParentY_);
+                                                            - resultParentY_ + sourceParentY_);
             qsizetype low = 0, high = all.size();
             while (low < high) {
                 const qsizetype middle = low + (high - low) / 2;
                 const auto band = all.at(middle).toMap();
-                const bool found = below ? number(band, "sourceBegin") > sourceLine && number(band, "resultBegin") > resultLine
+                const bool found = below
+                    ? number(band, "sourceBegin") > sourceLine && number(band, "resultBegin") > resultLine
                     : number(band, "sourceEnd") >= sourceLine || number(band, "resultEnd") >= resultLine;
-                if (found) high = middle; else low = middle + 1;
+                if (found)
+                    high = middle;
+                else
+                    low = middle + 1;
             }
             return low;
         };
@@ -207,11 +229,16 @@ void ConnectorBands::update()
             for (const auto &rangeValue : current_) {
                 const auto range = rangeValue.toList();
                 if (range.size() >= 2 && sb < std::max(range[1].toInt(), range[0].toInt() + 1)
-                    && range[0].toInt() < std::max(se, sb + 1)) { current = true; break; }
+                    && range[0].toInt() < std::max(se, sb + 1)) {
+                    current = true;
+                    break;
+                }
             }
             band.insert(QStringLiteral("current"), current);
-            band.insert(QStringLiteral("sourceTop"), st); band.insert(QStringLiteral("sourceBottom"), sl);
-            band.insert(QStringLiteral("resultTop"), rt); band.insert(QStringLiteral("resultBottom"), rl);
+            band.insert(QStringLiteral("sourceTop"), st);
+            band.insert(QStringLiteral("sourceBottom"), sl);
+            band.insert(QStringLiteral("resultTop"), rt);
+            band.insert(QStringLiteral("resultBottom"), rl);
             visible.append(band);
         }
     }

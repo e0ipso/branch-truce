@@ -11,7 +11,8 @@ std::optional<RevisionId> parseRevisionId(const QString &value)
 }
 
 std::variant<CommandTarget, Transition> checkCommand(const SessionModel &files, const QString &selectedFileId,
-    bool composing, const QString &fileId, const QString &revision, CommandCheck check)
+                                                     bool composing, const QString &fileId, const QString &revision,
+                                                     CommandCheck check)
 {
     const auto *file = files.file(fileId.toStdString());
     const auto id = parseRevisionId(revision);

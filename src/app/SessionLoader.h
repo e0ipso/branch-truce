@@ -1,12 +1,12 @@
 // Session loading discovers conflicted files and offers recoverable work without silently replacing it.
 #pragma once
-#include <QtQml/qqmlregistration.h>
+#include "git/ConflictClassifier.h"
 #include "mergetool/MergetoolSession.h"
 #include "recovery/RecoveryRestore.h"
-#include "git/ConflictClassifier.h"
 #include <QObject>
 #include <QString>
 #include <QVariantList>
+#include <QtQml/qqmlregistration.h>
 #include <functional>
 #include <map>
 #include <string>
@@ -57,7 +57,9 @@ public:
         // Captures the publication baselines, adopts this load's copied
         // launches, then starts the mergetool listener.
         std::function<MergetoolSession::Listen(const git::RepositoryContext &repository,
-            std::map<std::string, SnapshotFileIdentity> copiedLaunches, QString *error)> startSession;
+                                               std::map<std::string, SnapshotFileIdentity> copiedLaunches,
+                                               QString *error)>
+            startSession;
     };
     // gitExecutable is the Git that classifies the conflicts and restores recovery.
     SessionLoader(SessionModel &files, SessionCoordinator &coordinator, QString gitExecutable, Owners owners,

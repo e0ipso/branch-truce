@@ -6,20 +6,20 @@
 #include <QAccessible>
 #include <QCoreApplication>
 #include <QDir>
-#include <QFile>
-#include <QGuiApplication>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QImage>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
+#include <QGuiApplication>
+#include <QImage>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QQmlExpression>
 #include <QQuickItem>
+#include <QQuickStyle>
 #include <QQuickTextDocument>
 #include <QQuickWindow>
-#include <QQuickStyle>
 #include <QSignalSpy>
 #include <QStringList>
 #include <QTest>
@@ -34,23 +34,19 @@
 #include <string>
 
 namespace test_support {
-template<typename Predicate>
-void settle(Predicate ready)
+template <typename Predicate> void settle(Predicate ready)
 {
     QElapsedTimer deadline;
     deadline.start();
-    while (!ready() && deadline.elapsed() < 5000)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    while (!ready() && deadline.elapsed() < 5000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     CHECK(ready());
 }
 
-template<typename Predicate>
-void settleFor(const std::string &what, Predicate ready)
+template <typename Predicate> void settleFor(const std::string &what, Predicate ready)
 {
     QElapsedTimer deadline;
     deadline.start();
-    while (!ready() && deadline.elapsed() < 5000)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    while (!ready() && deadline.elapsed() < 5000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     if (!ready()) throw std::runtime_error("timed out waiting for " + what);
 }
 
@@ -72,10 +68,14 @@ inline void retainUiEvidence(QQuickWindow *window, const QString &name, QJsonObj
     CHECK(QDir().mkpath(directory));
     CHECK(original.save(QDir(directory).filePath(name + QStringLiteral(".png")), "PNG"));
     metadata.insert(QStringLiteral("schema"), 1);
-    metadata.insert(QStringLiteral("observation"), QStringLiteral("actual offscreen Qt scene with runtime controls style; not a physical Plasma or AT-SPI capture"));
+    metadata.insert(
+        QStringLiteral("observation"),
+        QStringLiteral(
+            "actual offscreen Qt scene with runtime controls style; not a physical Plasma or AT-SPI capture"));
     metadata.insert(QStringLiteral("platform"), QGuiApplication::platformName());
     metadata.insert(QStringLiteral("controls_style"), QQuickStyle::name());
-    metadata.insert(QStringLiteral("source_revision"), qEnvironmentVariable("BRANCH_TRUCE_CI_SOURCE_REVISION", "unavailable"));
+    metadata.insert(QStringLiteral("source_revision"),
+                    qEnvironmentVariable("BRANCH_TRUCE_CI_SOURCE_REVISION", "unavailable"));
     metadata.insert(QStringLiteral("logical_width"), window->width());
     metadata.insert(QStringLiteral("logical_height"), window->height());
     metadata.insert(QStringLiteral("image_width"), original.width());
@@ -130,8 +130,7 @@ inline QString accessibleName(QQuickItem *item)
 {
     auto *iface = QAccessible::queryAccessibleInterface(item);
     const auto name = iface ? iface->text(QAccessible::Name) : QString();
-    if (!name.isEmpty() || !(item->inherits("QQuickAbstractButton") || item->inherits("QQuickText")))
-        return name;
+    if (!name.isEmpty() || !(item->inherits("QQuickAbstractButton") || item->inherits("QQuickText"))) return name;
     return item->property("text").toString();
 }
 
@@ -213,8 +212,8 @@ inline QQuickItem *waitForStable(QQuickWindow *window, const std::string &what,
         }
         ++matches;
         const auto center = target->mapToScene(QPointF(target->width() / 2.0, target->height() / 2.0));
-        state = "visible=" + std::to_string(target->isVisible()) + " size=" + std::to_string(target->width())
-            + "x" + std::to_string(target->height()) + " center=" + std::to_string(center.x()) + ","
+        state = "visible=" + std::to_string(target->isVisible()) + " size=" + std::to_string(target->width()) + "x"
+            + std::to_string(target->height()) + " center=" + std::to_string(center.x()) + ","
             + std::to_string(center.y());
         if (!target->isVisible() || target->width() <= 0 || target->height() <= 0) return false;
         if (center != previous) {
@@ -231,21 +230,22 @@ inline QQuickItem *waitForStable(QQuickWindow *window, const std::string &what,
     };
     QElapsedTimer deadline;
     deadline.start();
-    while (!laidOut() && deadline.elapsed() < 5000)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    if (!laidOut()) throw std::runtime_error("layout of " + what + ": " + state
-        + " matches=" + std::to_string(matches) + " missing=" + std::to_string(missing)
-        + " moves=" + std::to_string(moves));
+    while (!laidOut() && deadline.elapsed() < 5000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    if (!laidOut())
+        throw std::runtime_error("layout of " + what + ": " + state + " matches=" + std::to_string(matches)
+                                 + " missing=" + std::to_string(missing) + " moves=" + std::to_string(moves));
     return found;
 }
 
 inline QQuickItem *waitForLayout(QQuickWindow *window, const QString &name, int stableMs = 0)
 {
-    return waitForStable(window, name.toStdString(),
-                         [&] {
-                             if (auto *visible = visibleItem(window->contentItem(), name)) return visible;
-                             return visualItem(window->contentItem(), name);
-                         }, stableMs);
+    return waitForStable(
+        window, name.toStdString(),
+        [&] {
+            if (auto *visible = visibleItem(window->contentItem(), name)) return visible;
+            return visualItem(window->contentItem(), name);
+        },
+        stableMs);
 }
 
 inline bool painted(QQuickItem *item)
@@ -261,21 +261,25 @@ inline QQuickItem *hoverChoiceControl(QQuickWindow *window, QQuickItem *root, co
     auto *target = reachableButton(window, root, name);
     if (!target) return nullptr;
     QTest::mouseMove(window, target->mapToScene(QPointF(target->width() / 2, target->height() / 2)).toPoint());
-    return waitForStable(window, name.toStdString() + " after hover", [&] {
-        auto *candidate = reachableButton(window, root, name);
-        return painted(candidate) ? candidate : nullptr;
-    }, 60);
+    return waitForStable(
+        window, name.toStdString() + " after hover",
+        [&] {
+            auto *candidate = reachableButton(window, root, name);
+            return painted(candidate) ? candidate : nullptr;
+        },
+        60);
 }
 
 inline bool fileOverflowControl(const char *name)
 {
     // These actions may have hidden measurement delegates as well as live buttons.
     // Always resolve the visible native control, opening overflow when necessary.
-    return QStringList{QStringLiteral("discardUnsaved"), QStringLiteral("copyResult"),
-        QStringLiteral("pasteResult"), QStringLiteral("sourceChoicesMenu"),
-        QStringLiteral("showSourceChoices"), QStringLiteral("saveDraft"), QStringLiteral("markResolved"),
-        QStringLiteral("undoCommand"), QStringLiteral("redoCommand"), QStringLiteral("showEarlier"),
-        QStringLiteral("wrapLines"), QStringLiteral("showWhitespace"), QStringLiteral("openPassageSearch")}
+    return QStringList{
+        QStringLiteral("discardUnsaved"),    QStringLiteral("copyResult"),        QStringLiteral("pasteResult"),
+        QStringLiteral("sourceChoicesMenu"), QStringLiteral("showSourceChoices"), QStringLiteral("saveDraft"),
+        QStringLiteral("markResolved"),      QStringLiteral("undoCommand"),       QStringLiteral("redoCommand"),
+        QStringLiteral("showEarlier"),       QStringLiteral("wrapLines"),         QStringLiteral("showWhitespace"),
+        QStringLiteral("openPassageSearch")}
         .contains(QString::fromLatin1(name));
 }
 
@@ -287,10 +291,10 @@ inline std::string controlGeometry(QQuickWindow *window, const QString &name)
             || accessibleName(item) == "More Actions") {
             const auto rect = item->mapRectToScene(item->boundingRect());
             state += "; " + item->objectName().toStdString() + " visible=" + std::to_string(item->isVisible())
-                + " enabled=" + std::to_string(item->isEnabled()) + " reachable=" + std::to_string(reachable(window, item))
-                + " checked=" + std::to_string(item->property("checked").toBool())
-                + " bounds=" + std::to_string(rect.x()) + "," + std::to_string(rect.y()) + ","
-                + std::to_string(rect.width()) + "," + std::to_string(rect.height());
+                + " enabled=" + std::to_string(item->isEnabled())
+                + " reachable=" + std::to_string(reachable(window, item)) + " checked="
+                + std::to_string(item->property("checked").toBool()) + " bounds=" + std::to_string(rect.x()) + ","
+                + std::to_string(rect.y()) + "," + std::to_string(rect.width()) + "," + std::to_string(rect.height());
         }
         for (auto *child : item->childItems()) self(self, child);
     };
@@ -307,7 +311,7 @@ inline void settleFileToolbarMenu(QQuickItem *more)
         auto *menu = more->property("menu").value<QObject *>();
         if (!menu) return !more->property("checked").toBool();
         return menu->property("visible").toBool() ? menu->property("opened").toBool()
-            : !more->property("checked").toBool();
+                                                  : !more->property("checked").toBool();
     });
 }
 
@@ -329,14 +333,18 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
         if (phase == QStringLiteral("notify") && state == lastState) return;
         lastState = state;
         auto *focus = window->activeFocusItem();
-        const auto row = QStringLiteral("%1ms %2 state=%3 focus=%4:%5 aboutToHideCount=%6 closedCount=%7")
-            .arg(traceClock.elapsed()).arg(phase, state,
-                focus ? QString::fromLatin1(focus->metaObject()->className()) : QStringLiteral("none"),
-                focus ? focus->objectName() : QString())
-            .arg(aboutToHideSpy ? aboutToHideSpy->count() : 0)
-            .arg(closedSpy ? closedSpy->count() : 0);
-        if (transitions.size() < 32) transitions.append(row);
-        else transitions.back() = row;
+        const auto row =
+            QStringLiteral("%1ms %2 state=%3 focus=%4:%5 aboutToHideCount=%6 closedCount=%7")
+                .arg(traceClock.elapsed())
+                .arg(phase, state,
+                     focus ? QString::fromLatin1(focus->metaObject()->className()) : QStringLiteral("none"),
+                     focus ? focus->objectName() : QString())
+                .arg(aboutToHideSpy ? aboutToHideSpy->count() : 0)
+                .arg(closedSpy ? closedSpy->count() : 0);
+        if (transitions.size() < 32)
+            transitions.append(row);
+        else
+            transitions.back() = row;
     };
     // Observe public window events without accepting or changing their route.
     class InputTrace final : public QObject {
@@ -349,22 +357,23 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
             case QEvent::MouseButtonRelease: {
                 const auto *mouse = static_cast<QMouseEvent *>(event);
                 observe(QStringLiteral("window-mouse-%1 button=%2 x=%3 y=%4")
-                    .arg(static_cast<int>(event->type())).arg(static_cast<int>(mouse->button()))
-                    .arg(mouse->position().x()).arg(mouse->position().y()));
+                            .arg(static_cast<int>(event->type()))
+                            .arg(static_cast<int>(mouse->button()))
+                            .arg(mouse->position().x())
+                            .arg(mouse->position().y()));
                 break;
             }
             case QEvent::KeyPress:
             case QEvent::KeyRelease:
-                observe(QStringLiteral("window-key-%1 key=%2").arg(static_cast<int>(event->type()))
-                    .arg(static_cast<QKeyEvent *>(event)->key()));
+                observe(QStringLiteral("window-key-%1 key=%2")
+                            .arg(static_cast<int>(event->type()))
+                            .arg(static_cast<QKeyEvent *>(event)->key()));
                 break;
             case QEvent::FocusIn:
             case QEvent::FocusOut:
             case QEvent::WindowActivate:
             case QEvent::WindowDeactivate:
-            case QEvent::Hide:
-                observe(QStringLiteral("window-event-%1").arg(static_cast<int>(event->type())));
-                break;
+            case QEvent::Hide: observe(QStringLiteral("window-event-%1").arg(static_cast<int>(event->type()))); break;
             default: break;
             }
             return false;
@@ -373,7 +382,7 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
     inputTrace.observe = record;
     window->installEventFilter(&inputTrace);
     QObject::connect(window, &QQuickWindow::activeFocusItemChanged, &inputTrace,
-        [&] { record(QStringLiteral("active focus changed")); });
+                     [&] { record(QStringLiteral("active focus changed")); });
     QQuickItem *observedMore = nullptr;
     QObject *observedMenu = nullptr;
     const auto observePopup = [&](QQuickItem *more) {
@@ -384,11 +393,13 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
             closedSpy.reset();
             // Array order: button visible/checked/pressed, menu visible/opened.
             // Subscribe even before asynchronous Menu creation completes.
-            popupState = std::make_unique<QQmlExpression>(qmlContext(more), more,
-                QStringLiteral("JSON.stringify([visible, checked, pressed, menu ? menu.visible : false, menu ? menu.opened : false])"));
+            popupState =
+                std::make_unique<QQmlExpression>(qmlContext(more), more,
+                                                 QStringLiteral("JSON.stringify([visible, checked, pressed, menu ? "
+                                                                "menu.visible : false, menu ? menu.opened : false])"));
             popupState->setNotifyOnValueChanged(true);
             QObject::connect(popupState.get(), &QQmlExpression::valueChanged, popupState.get(),
-                [&] { record(QStringLiteral("notify")); });
+                             [&] { record(QStringLiteral("notify")); });
             record(QStringLiteral("More observer attached"));
         }
         auto *menu = more->property("menu").value<QObject *>();
@@ -409,9 +420,9 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
         }
         if (reachableButton(window, window->contentItem(), controlName)) {
             try {
-                return waitForStable(window, controlName.toStdString(), [&] {
-                    return reachableButton(window, window->contentItem(), controlName);
-                }, stableMs);
+                return waitForStable(
+                    window, controlName.toStdString(),
+                    [&] { return reachableButton(window, window->contentItem(), controlName); }, stableMs);
             } catch (const std::runtime_error &) {
                 // A closing overflow entry can be reachable at the first
                 // lookup and disappear during the stability wait. Reopen the
@@ -419,9 +430,9 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
                 if (reachableButton(window, window->contentItem(), controlName)) throw;
             }
         }
-        auto *more = waitForStable(window, "file toolbar overflow", [&] {
-            return reachableButton(window, toolbar, QStringLiteral("More Actions"));
-        }, stableMs);
+        auto *more = waitForStable(
+            window, "file toolbar overflow",
+            [&] { return reachableButton(window, toolbar, QStringLiteral("More Actions")); }, stableMs);
         observePopup(more);
         settleFor("file toolbar native menu created", [&] { return observePopup(more) != nullptr; });
         settleFileToolbarMenu(more);
@@ -429,20 +440,19 @@ inline QQuickItem *fileToolbarControl(QQuickWindow *window, const char *name, in
         record(QStringLiteral("before overflow click"));
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
         record(QStringLiteral("after overflow click"));
-        return waitForStable(window, controlName.toStdString() + " in native overflow", [&] {
-            return reachableButton(window, window->contentItem(), controlName);
-        }, stableMs);
+        return waitForStable(
+            window, controlName.toStdString() + " in native overflow",
+            [&] { return reachableButton(window, window->contentItem(), controlName); }, stableMs);
     } catch (const std::exception &error) {
         record(QStringLiteral("failure"));
         throw std::runtime_error(std::string(error.what()) + "; " + controlGeometry(window, controlName)
-            + "; popup-trace [" + transitions.join(QStringLiteral("; ")).toStdString() + "]");
+                                 + "; popup-trace [" + transitions.join(QStringLiteral("; ")).toStdString() + "]");
     }
 }
 
 // Open a range menu at the requested real source line, including decided ranges
 // and later-line scopes that have no permanent gutter button.
-inline void sourceLineMenu(QQuickWindow *window, QQuickItem *editor, QQuickItem *viewport,
-                           int line, int key = 0)
+inline void sourceLineMenu(QQuickWindow *window, QQuickItem *editor, QQuickItem *viewport, int line, int key = 0)
 {
     auto *quick = editor->property("textDocument").value<QQuickTextDocument *>();
     if (!quick) throw std::runtime_error("source editor has no document");
@@ -463,12 +473,12 @@ inline void sourceLineMenu(QQuickWindow *window, QQuickItem *editor, QQuickItem 
     settleFor("source line " + std::to_string(line), [&] {
         QRectF current;
         QMetaObject::invokeMethod(editor, "positionToRectangle", Q_RETURN_ARG(QRectF, current),
-                                 Q_ARG(int, block.position()));
+                                  Q_ARG(int, block.position()));
         const auto point = editor->mapToScene(current.center());
         if (point != previousPoint) held.restart();
         previousPoint = point;
-        return viewport->contains(viewport->mapFromScene(point))
-            && window->contentItem()->contains(point) && held.elapsed() >= 60;
+        return viewport->contains(viewport->mapFromScene(point)) && window->contentItem()->contains(point)
+            && held.elapsed() >= 60;
     });
     if (key) {
         QTest::keyClick(window, static_cast<Qt::Key>(key), key == Qt::Key_F10 ? Qt::ShiftModifier : Qt::NoModifier);
@@ -487,8 +497,7 @@ inline void closeFileToolbarMenu(QQuickWindow *window)
     if (!more) return;
     settleFileToolbarMenu(more);
     auto *menu = more->property("menu").value<QObject *>();
-    if (menu && menu->property("visible").toBool())
-        QTest::keyClick(window, Qt::Key_Escape);
+    if (menu && menu->property("visible").toBool()) QTest::keyClick(window, Qt::Key_Escape);
     settleFor("file toolbar overflow closed", [&] {
         auto *popup = more->property("menu").value<QObject *>();
         return (!popup || !popup->property("visible").toBool()) && !more->property("checked").toBool();
@@ -509,17 +518,15 @@ inline int paintedMarkers(QQuickItem *markers)
     auto *spots = markers->findChild<QQuickItem *>(markers->objectName() + QStringLiteral("Spots"));
     if (!spots) throw std::runtime_error("missing whitespace spots");
     for (auto *child : spots->childItems()) {
-        if (child->isVisible() && child->width() >= 2.0 && child->height() >= 2.0)
-            ++count;
+        if (child->isVisible() && child->width() >= 2.0 && child->height() >= 2.0) ++count;
     }
     return count;
 }
 
 inline int markerKind(QQuickItem *markers, bool tab)
 {
-    const auto expression = tab
-        ? QStringLiteral("spots.filter(function(spot) { return spot.tab; }).length")
-        : QStringLiteral("spots.filter(function(spot) { return !spot.tab; }).length");
+    const auto expression = tab ? QStringLiteral("spots.filter(function(spot) { return spot.tab; }).length")
+                                : QStringLiteral("spots.filter(function(spot) { return !spot.tab; }).length");
     QQmlExpression query(qmlContext(markers), markers, expression);
     const auto value = query.evaluate();
     if (query.hasError()) throw std::runtime_error(query.error().toString().toStdString());

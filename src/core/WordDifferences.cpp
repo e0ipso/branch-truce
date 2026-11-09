@@ -19,10 +19,7 @@ bool wordByte(unsigned char c)
     return c >= 0x80 || c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-bool blank(unsigned char c)
-{
-    return c == ' ' || c == '\t';
-}
+bool blank(unsigned char c) { return c == ' ' || c == '\t'; }
 
 std::vector<Token> tokens(std::string_view text)
 {
@@ -63,8 +60,10 @@ std::vector<ByteRange> ranges(std::string_view text, const std::vector<Token> &a
     std::vector<ByteRange> merged;
     for (std::size_t i = 0; i < all.size(); ++i) {
         if (matched[i] || !all[i].reported) continue;
-        if (!merged.empty() && merged.back().end == all[i].range.begin) merged.back().end = all[i].range.end;
-        else merged.push_back(all[i].range);
+        if (!merged.empty() && merged.back().end == all[i].range.begin)
+            merged.back().end = all[i].range.end;
+        else
+            merged.push_back(all[i].range);
     }
     for (auto &range : merged) {
         auto begin = range.begin;
@@ -81,9 +80,7 @@ WordDifferences wordDifferences(std::string_view left, std::string_view right, s
 {
     const auto a = tokens(left);
     const auto b = tokens(right);
-    const auto same = [&](std::size_t i, std::size_t j) {
-        return view(left, a[i].range) == view(right, b[j].range);
-    };
+    const auto same = [&](std::size_t i, std::size_t j) { return view(left, a[i].range) == view(right, b[j].range); };
     std::size_t prefix = 0;
     while (prefix < a.size() && prefix < b.size() && same(prefix, prefix)) ++prefix;
     std::size_t suffix = 0;
@@ -149,21 +146,21 @@ void append(std::vector<ByteRange> &into, const std::vector<ByteRange> &ranges, 
 
 bool inside(const std::vector<ByteRange> &covered, ByteRange range)
 {
-    return std::any_of(covered.begin(), covered.end(), [&](const auto &cover) {
-        return cover.begin <= range.begin && range.end <= cover.end;
-    });
+    return std::any_of(covered.begin(), covered.end(),
+                       [&](const auto &cover) { return cover.begin <= range.begin && range.end <= cover.end; });
 }
 
 // Ordered and disjoint: the result can differ from both sources at one place.
 void normalize(std::vector<ByteRange> &ranges)
 {
-    std::sort(ranges.begin(), ranges.end(), [](const auto &x, const auto &y) {
-        return x.begin != y.begin ? x.begin < y.begin : x.end < y.end;
-    });
+    std::sort(ranges.begin(), ranges.end(),
+              [](const auto &x, const auto &y) { return x.begin != y.begin ? x.begin < y.begin : x.end < y.end; });
     std::vector<ByteRange> merged;
     for (const auto &range : ranges) {
-        if (!merged.empty() && range.begin <= merged.back().end) merged.back().end = std::max(merged.back().end, range.end);
-        else merged.push_back(range);
+        if (!merged.empty() && range.begin <= merged.back().end)
+            merged.back().end = std::max(merged.back().end, range.end);
+        else
+            merged.push_back(range);
     }
     ranges = std::move(merged);
 }

@@ -1,8 +1,8 @@
 // Word difference decorations highlight changed words without changing the result text.
 #include "WordDifferenceDecorations.h"
-#include "highlighting/PaneHighlighter.h"
 #include "SessionModel.h"
 #include "core/WordDifferences.h"
+#include "highlighting/PaneHighlighter.h"
 #include <QColor>
 #include <QJSValue>
 #include <QMetaMethod>
@@ -72,8 +72,7 @@ QList<std::pair<int, int>> utf16Ranges(std::string_view text, const std::vector<
 WordDifferenceDecorations::WordDifferenceDecorations(SessionModel &files, std::function<QString()> selectedFileId,
                                                      QObject *parent)
     : QObject(parent), files_(files), selectedFileId_(std::move(selectedFileId))
-{
-}
+{}
 
 void WordDifferenceDecorations::attach(QObject *editor, QTextDocument *document)
 {
@@ -118,17 +117,18 @@ void WordDifferenceDecorations::compute(const QString &fileId)
     if (const auto *snapshots = file->snapshots()) {
         for (const auto &[side, ranges] : words.sources) {
             const auto &source = side == SourceSide::Earlier ? snapshots->earlier
-                : side == SourceSide::Stage2 ? snapshots->stage2 : snapshots->stage3;
+                : side == SourceSide::Stage2                 ? snapshots->stage2
+                                                             : snapshots->stage3;
             if (!source) continue;
             const auto &text = source->worktree.utf8;
             ranges_[paneName(side)] = {QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size())),
-                utf16Ranges(text, ranges)};
+                                       utf16Ranges(text, ranges)};
         }
     }
     if (const auto *map = file->correspondence(); map && !words.result.empty()) {
         const auto &text = map->text();
         ranges_[QStringLiteral("result")] = {QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size())),
-            utf16Ranges(text, words.result)};
+                                             utf16Ranges(text, words.result)};
     }
 }
 
@@ -157,11 +157,12 @@ QList<QTextLayout::FormatRange> WordDifferenceDecorations::formats(const Pane &p
         const auto block = pane.document->findBlock(start);
         const auto kind = lines.value(QString::number(block.blockNumber() + 1)).toString();
         // The same role the line background takes for its kind.
-        const auto role = kind == QLatin1String("added") || kind == QLatin1String("accepted") ? QStringLiteral("positive")
+        const auto role = kind == QLatin1String("added") || kind == QLatin1String("accepted")
+            ? QStringLiteral("positive")
             : kind == QLatin1String("conflict") || kind == QLatin1String("markers") ? QStringLiteral("negative")
-            : kind == QLatin1String("manual") ? QStringLiteral("neutral")
-            : kind == QLatin1String("ignored") ? QStringLiteral("disabled")
-            : QStringLiteral("active");
+            : kind == QLatin1String("manual")                                       ? QStringLiteral("neutral")
+            : kind == QLatin1String("ignored")                                      ? QStringLiteral("disabled")
+                                                                                    : QStringLiteral("active");
         QTextLayout::FormatRange range;
         range.start = start;
         range.length = length;

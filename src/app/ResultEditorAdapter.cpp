@@ -22,10 +22,7 @@
 
 namespace branch_truce {
 namespace {
-QString text(const std::string &value)
-{
-    return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size()));
-}
+QString text(const std::string &value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
 
 QTextDocument *textDocument(QObject *editor)
 {
@@ -65,15 +62,14 @@ QString envelopeRejection(const QString &text)
 
 ResultEditorAdapter::ResultEditorAdapter(SessionModel &files, std::function<QString()> selectedFileId,
                                          Placement placement, QObject *parent)
-    : QObject(parent), files_(files), selectedFileId_(std::move(selectedFileId)), placementFor_(std::move(placement)),
+    : QObject(parent),
+      files_(files),
+      selectedFileId_(std::move(selectedFileId)),
+      placementFor_(std::move(placement)),
       words_(files, [this] { return selectedFileId_(); })
-{
-}
+{}
 
-const FileSession *ResultEditorAdapter::selectedFile() const
-{
-    return files_.file(selectedFileId_().toStdString());
-}
+const FileSession *ResultEditorAdapter::selectedFile() const { return files_.file(selectedFileId_().toStdString()); }
 
 void ResultEditorAdapter::attach(QObject *editor)
 {
@@ -117,30 +113,18 @@ void ResultEditorAdapter::attachSource(QObject *editor)
     words_.attach(editor, document);
 }
 
-void ResultEditorAdapter::setSyntaxFileName(const QString &fileName)
-{
-    syntax_.setFileName(fileName);
-}
+void ResultEditorAdapter::setSyntaxFileName(const QString &fileName) { syntax_.setFileName(fileName); }
 
-void ResultEditorAdapter::setSyntaxBackground(const QColor &background)
-{
-    syntax_.setBackground(background);
-}
+void ResultEditorAdapter::setSyntaxBackground(const QColor &background) { syntax_.setBackground(background); }
 
-bool ResultEditorAdapter::composing() const
-{
-    return editor_ && editor_->property("inputMethodComposing").toBool();
-}
+bool ResultEditorAdapter::composing() const { return editor_ && editor_->property("inputMethodComposing").toBool(); }
 
 bool ResultEditorAdapter::hasSelection() const
 {
     return editor_ && !editor_->property("selectedText").toString().isEmpty();
 }
 
-bool ResultEditorAdapter::canPaste() const
-{
-    return editor_ && editor_->property("canPaste").toBool();
-}
+bool ResultEditorAdapter::canPaste() const { return editor_ && editor_->property("canPaste").toBool(); }
 
 void ResultEditorAdapter::setEditable(bool editable)
 {
@@ -158,8 +142,8 @@ ResultEditorAdapter::Caret ResultEditorAdapter::caret() const
 
 bool ResultEditorAdapter::select(int anchor, int cursor)
 {
-    return editor_ && QMetaObject::invokeMethod(editor_, "select", Qt::DirectConnection,
-        Q_ARG(int, anchor), Q_ARG(int, cursor));
+    return editor_
+        && QMetaObject::invokeMethod(editor_, "select", Qt::DirectConnection, Q_ARG(int, anchor), Q_ARG(int, cursor));
 }
 
 void ResultEditorAdapter::setCursorPosition(int cursor)
@@ -190,7 +174,7 @@ void ResultEditorAdapter::capture()
     const auto change = changedRange(old, next);
     text_ = next;
     Q_EMIT edited(selectedFileId_(), QString::number(file->current().id), static_cast<int>(change.begin),
-        static_cast<int>(change.oldEnd), next.mid(change.begin, change.newEnd - change.begin));
+                  static_cast<int>(change.oldEnd), next.mid(change.begin, change.newEnd - change.begin));
     sync();
 }
 
@@ -198,21 +182,25 @@ bool ResultEditorAdapter::clipboard(ClipboardAction action)
 {
     if (!editor_ || processingEvent_) return false;
     const char *method = nullptr;
-    if (action == ClipboardAction::Copy) method = "copy";
-    else if (action == ClipboardAction::SelectAll) method = "selectAll";
-    else if (action == ClipboardAction::Cut) method = "cut";
-    else if (action == ClipboardAction::Paste) method = "paste";
-    else return false;
-    if ((action == ClipboardAction::Cut || action == ClipboardAction::Paste)
-        && (!editable_ || composing()))
+    if (action == ClipboardAction::Copy)
+        method = "copy";
+    else if (action == ClipboardAction::SelectAll)
+        method = "selectAll";
+    else if (action == ClipboardAction::Cut)
+        method = "cut";
+    else if (action == ClipboardAction::Paste)
+        method = "paste";
+    else
+        return false;
+    if ((action == ClipboardAction::Cut || action == ClipboardAction::Paste) && (!editable_ || composing()))
         return false;
     if (action == ClipboardAction::Paste) {
         const auto clip = QGuiApplication::clipboard()->text();
         const auto selection = caret();
-        const int from = std::clamp(std::min(selection.selectionStart, selection.selectionEnd), 0,
-            static_cast<int>(text_.size()));
-        const int to = std::clamp(std::max(selection.selectionStart, selection.selectionEnd), 0,
-            static_cast<int>(text_.size()));
+        const int from =
+            std::clamp(std::min(selection.selectionStart, selection.selectionEnd), 0, static_cast<int>(text_.size()));
+        const int to =
+            std::clamp(std::max(selection.selectionStart, selection.selectionEnd), 0, static_cast<int>(text_.size()));
         if (const auto rejection = envelopeRejection(text_.left(from) + clip + text_.mid(to)); !rejection.isEmpty()) {
             Q_EMIT notice(rejection);
             return false;
@@ -242,9 +230,9 @@ bool ResultEditorAdapter::eventFilter(QObject *watched, QEvent *event)
         if (modifiers == Qt::NoModifier && !deletion && (newline || !key->text().isEmpty())) {
             const auto selection = caret();
             const int from = std::clamp(std::min(selection.selectionStart, selection.selectionEnd), 0,
-                static_cast<int>(text_.size()));
+                                        static_cast<int>(text_.size()));
             const int to = std::clamp(std::max(selection.selectionStart, selection.selectionEnd), 0,
-                static_cast<int>(text_.size()));
+                                      static_cast<int>(text_.size()));
             const auto insertion = newline ? QString(QLatin1Char('\n')) : key->text();
             if (const auto rejection = envelopeRejection(text_.left(from) + insertion + text_.mid(to));
                 !rejection.isEmpty()) {
@@ -257,10 +245,14 @@ bool ResultEditorAdapter::eventFilter(QObject *watched, QEvent *event)
     if (watched == editor_ && (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)) {
         auto *key = static_cast<QKeyEvent *>(event);
         QString action;
-        if (key->matches(QKeySequence::Undo)) action = QStringLiteral("undo");
-        else if (key->matches(QKeySequence::Redo)) action = QStringLiteral("redo");
-        else if (key->matches(QKeySequence::Copy)) action = QStringLiteral("copy");
-        else if (key->matches(QKeySequence::Paste)) action = QStringLiteral("paste");
+        if (key->matches(QKeySequence::Undo))
+            action = QStringLiteral("undo");
+        else if (key->matches(QKeySequence::Redo))
+            action = QStringLiteral("redo");
+        else if (key->matches(QKeySequence::Copy))
+            action = QStringLiteral("copy");
+        else if (key->matches(QKeySequence::Paste))
+            action = QStringLiteral("paste");
         if (!action.isEmpty()) {
             event->accept();
             if (event->type() == QEvent::KeyPress) Q_EMIT editActionRequested(action);
@@ -269,8 +261,9 @@ bool ResultEditorAdapter::eventFilter(QObject *watched, QEvent *event)
     }
     const bool middlePaste = (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease)
         && static_cast<QMouseEvent *>(event)->button() == Qt::MiddleButton;
-    if (watched == editor_ && (event->type() == QEvent::KeyPress || event->type() == QEvent::InputMethod
-        || event->type() == QEvent::Drop || middlePaste)) {
+    if (watched == editor_
+        && (event->type() == QEvent::KeyPress || event->type() == QEvent::InputMethod || event->type() == QEvent::Drop
+            || middlePaste)) {
         {
             QScopedValueRollback guard(processingEvent_, true);
             QCoreApplication::sendEvent(watched, event);
@@ -309,19 +302,22 @@ void ResultEditorAdapter::sync()
     if (shown != desired) document_->setPlainText(desired);
     text_ = desired;
     const auto loaded = documentText(*document_);
-    const bool lossless = loaded == desired && !desired.contains(QChar(0x2028))
-        && !desired.contains(QChar(0x2029)) && !desired.contains(QLatin1Char('\r'));
+    const bool lossless = loaded == desired && !desired.contains(QChar(0x2028)) && !desired.contains(QChar(0x2029))
+        && !desired.contains(QLatin1Char('\r'));
     setEditable(file && file->support() == Support::Supported && lossless && !files_.hasPendingRecovery()
-        && !files_.hasRecoveryFailure(file->id()));
+                && !files_.hasRecoveryFailure(file->id()));
     if (!lossless && file && file->support() == Support::Supported)
-        Q_EMIT notice(tr("This text cannot be edited losslessly by the current editor. Its captured result is retained."));
+        Q_EMIT notice(
+            tr("This text cannot be edited losslessly by the current editor. Its captured result is retained."));
     syncing_ = false;
     // Revisions and selections reach the editor here, so word ranges follow them.
     words_.refresh();
     // A new selection, or a loading placeholder replaced by its supported file.
     const bool supported = file && file->support() == Support::Supported;
-    if (placedFileId_ != selectedFileId_() || placedSupported_ != supported) place(file, desired);
-    else if (kept.valid) keepPlace(kept, shown, loaded);
+    if (placedFileId_ != selectedFileId_() || placedSupported_ != supported)
+        place(file, desired);
+    else if (kept.valid)
+        keepPlace(kept, shown, loaded);
 }
 
 // The viewport goes back first, so the cursor moves it only when it would
@@ -371,10 +367,7 @@ ResultEditorAdapter::Location ResultEditorAdapter::location() const
     return location;
 }
 
-void ResultEditorAdapter::holdLocation()
-{
-    heldLocation_ = location();
-}
+void ResultEditorAdapter::holdLocation() { heldLocation_ = location(); }
 
 void ResultEditorAdapter::restoreLocation()
 {
@@ -385,8 +378,8 @@ void ResultEditorAdapter::restoreLocation()
     const auto current = file ? text(pending ? pending->text : file->current().draft.text) : QString{};
     if (current != heldLocation_.text) return;
     // select() places the cursor at the second offset and keeps that range.
-    const int anchor = heldLocation_.cursor == heldLocation_.selectionStart
-        ? heldLocation_.selectionEnd : heldLocation_.selectionStart;
+    const int anchor = heldLocation_.cursor == heldLocation_.selectionStart ? heldLocation_.selectionEnd
+                                                                            : heldLocation_.selectionStart;
     (void)select(anchor, heldLocation_.cursor);
     if (!heldLocation_.hasViewport) return;
     if (auto *viewport = scrollViewport(editor_.data())) {

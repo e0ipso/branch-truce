@@ -1,10 +1,10 @@
 // File and conflict navigation keeps the selected file and result cursor on the requested work.
 #pragma once
-#include <QtQml/qqmlregistration.h>
 #include "core/RevisionId.h"
 #include <QObject>
 #include <QString>
 #include <QVariantMap>
+#include <QtQml/qqmlregistration.h>
 #include <cstddef>
 #include <functional>
 #include <optional>

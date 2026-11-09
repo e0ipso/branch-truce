@@ -101,8 +101,7 @@ public:
     static constexpr const char *TamperTool = "truce-tamper";
     static constexpr const char *TamperedBytes = "bytes the parent wrote after the launcher\n";
 
-    ParentRepository(const QString &launcher, const QList<ConflictPath> &conflicts)
-        : conflicts_(conflicts)
+    ParentRepository(const QString &launcher, const QList<ConflictPath> &conflicts) : conflicts_(conflicts)
     {
         CHECK(directory_.isValid() && home_.isValid() && probe_.isValid() && runtime_.isValid());
         root = QFileInfo(directory_.path()).canonicalFilePath();
@@ -141,7 +140,7 @@ public:
         CHECK(process.waitForFinished(15000));
         if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != expected)
             throw std::runtime_error("fixture git " + arguments.join(' ').toStdString() + ": "
-                + process.readAllStandardError().toStdString());
+                                     + process.readAllStandardError().toStdString());
         return process.readAllStandardOutput();
     }
 
@@ -163,7 +162,7 @@ public:
         const QFileInfo info(QString::fromLatin1(relative));
         QStringList found;
         const auto names = QDir(root).entryList({info.completeBaseName() + QStringLiteral("_*_*.") + info.suffix()},
-            QDir::Files | QDir::Hidden);
+                                                QDir::Files | QDir::Hidden);
         for (const auto &name : names) found.append(root + QLatin1Char('/') + name);
         return found;
     }
@@ -189,18 +188,20 @@ private:
             + shellQuote(launcher) + QStringLiteral(" --mergetool");
         const auto gated = invoke + QStringLiteral("; status=$?; printf '%s %s\\n' \"$MERGED\" \"$status\" >> ")
             + shellQuote(exitsFile()) + QStringLiteral("; waited=0; while [ ! -e ") + shellQuote(releaseFile())
-            + QStringLiteral(" ] && [ $waited -lt 600 ]; do sleep 0.05; waited=$((waited + 1)); done; rm -f ") + shellQuote(releaseFile())
-            + QStringLiteral("; exit $status");
+            + QStringLiteral(" ] && [ $waited -lt 600 ]; do sleep 0.05; waited=$((waited + 1)); done; rm -f ")
+            + shellQuote(releaseFile()) + QStringLiteral("; exit $status");
         // Git word-splits the configured command before eval, so it carries no literal newline.
         const auto tamper = invoke + QStringLiteral("; status=$?; if [ $status -eq 0 ]; then printf '%s\\n' ")
-            + shellQuote(QString::fromLatin1(TamperedBytes).chopped(1)) + QStringLiteral(" > \"$MERGED\"; fi; exit $status");
+            + shellQuote(QString::fromLatin1(TamperedBytes).chopped(1))
+            + QStringLiteral(" > \"$MERGED\"; fi; exit $status");
         global({"user.name", "Branch Truce Tests"});
         global({"user.email", "tests@example.invalid"});
         global({"core.autocrlf", "false"});
         global({"init.defaultBranch", "main"});
         global({"mergetool.keepBackup", "false"});
         global({"mergetool.keepTemporaries", "false"});
-        for (const auto &[tool, command] : {std::pair{Tool, invoke}, std::pair{GatedTool, gated}, std::pair{TamperTool, tamper}}) {
+        for (const auto &[tool, command] :
+             {std::pair{Tool, invoke}, std::pair{GatedTool, gated}, std::pair{TamperTool, tamper}}) {
             global({QStringLiteral("mergetool.%1.cmd").arg(QLatin1String(tool)), command});
             global({QStringLiteral("mergetool.%1.trustExitCode").arg(QLatin1String(tool)), QStringLiteral("true")});
         }
@@ -266,16 +267,18 @@ public:
     {
         for (const auto name : {"HOME", "PATH", "LC_ALL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
                                 "XDG_RUNTIME_DIR", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_TERMINAL_PROMPT"}) {
-            previous_.insert(name, qEnvironmentVariableIsSet(name)
-                ? std::optional<QByteArray>(qgetenv(name)) : std::nullopt);
+            previous_.insert(name,
+                             qEnvironmentVariableIsSet(name) ? std::optional<QByteArray>(qgetenv(name)) : std::nullopt);
             qputenv(name, environment.value(QString::fromLatin1(name)).toUtf8());
         }
     }
     ~ScopedEnvironment()
     {
         for (auto entry = previous_.cbegin(); entry != previous_.cend(); ++entry) {
-            if (entry.value()) qputenv(entry.key().constData(), *entry.value());
-            else qunsetenv(entry.key().constData());
+            if (entry.value())
+                qputenv(entry.key().constData(), *entry.value());
+            else
+                qunsetenv(entry.key().constData());
         }
     }
     ScopedEnvironment(const ScopedEnvironment &) = delete;
@@ -313,8 +316,10 @@ inline std::unique_ptr<ParentProcess> startParent(const ParentRepository &repo, 
     process->setProcessEnvironment(repo.environment);
     process->setWorkingDirectory(repo.root);
     // setsid replaces itself with Git when, as here, its caller is not a group leader.
-    process->start("/usr/bin/setsid", QStringList{"--wait", "/usr/bin/git", "--no-pager", "--literal-pathspecs",
-        "mergetool", "--no-prompt", QStringLiteral("--tool=%1").arg(QLatin1String(tool)), "--"} + paths);
+    process->start("/usr/bin/setsid",
+                   QStringList{"--wait", "/usr/bin/git", "--no-pager", "--literal-pathspecs", "mergetool",
+                               "--no-prompt", QStringLiteral("--tool=%1").arg(QLatin1String(tool)), "--"}
+                       + paths);
     CHECK(process->waitForStarted(5000));
     return process;
 }
@@ -324,7 +329,8 @@ inline void waitParent(QProcess &process, int expected, const QString &detail)
     pump([&] { return process.state() == QProcess::NotRunning; }, detail + " | git mergetool still running");
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != expected)
         throw std::runtime_error("git mergetool exit " + std::to_string(process.exitCode()) + "\n"
-            + process.readAllStandardError().toStdString() + process.readAllStandardOutput().toStdString());
+                                 + process.readAllStandardError().toStdString()
+                                 + process.readAllStandardOutput().toStdString());
 }
 
 }

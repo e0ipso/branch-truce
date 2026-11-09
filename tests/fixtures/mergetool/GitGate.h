@@ -28,26 +28,28 @@ public:
     {
         CHECK(directory_.isValid());
         const auto quoted = [](const QString &value) {
-            return QLatin1Char('\'') + QString(value).replace(QLatin1Char('\''), QStringLiteral("'\\''")) + QLatin1Char('\'');
+            return QLatin1Char('\'') + QString(value).replace(QLatin1Char('\''), QStringLiteral("'\\''"))
+                + QLatin1Char('\'');
         };
         const auto script = QStringLiteral("#!/bin/sh\n"
-            "gate=%1\n"
-            "held=$(cat \"$gate/closed\" 2>/dev/null)\n"
-            "last=\n"
-            "found=\n"
-            "for argument do\n"
-            "  last=$argument\n"
-            "  [ -n \"$held\" ] && [ \"$argument\" = \"$held\" ] && found=1\n"
-            "done\n"
-            "if [ -n \"$found\" ] && [ \"$last\" = %2 ]; then\n"
-            "  arguments=$(mktemp \"$gate/arguments.XXXXXX\") || exit 125\n"
-            "  printf '%s\\n' \"$*\" > \"$arguments\" || exit 125\n"
-            "  call=\"$gate/held.${arguments##*/arguments.}\"\n"
-            "  ln \"$arguments\" \"$call\" || exit 125\n"
-            "  while [ -e \"$call\" ]; do sleep 0.01; done\n"
-            "  rm -f \"$arguments\"\n"
-            "fi\n"
-            "exec /usr/bin/git \"$@\"\n").arg(quoted(directory_.path()), quoted(QString::fromLatin1(path)));
+                                           "gate=%1\n"
+                                           "held=$(cat \"$gate/closed\" 2>/dev/null)\n"
+                                           "last=\n"
+                                           "found=\n"
+                                           "for argument do\n"
+                                           "  last=$argument\n"
+                                           "  [ -n \"$held\" ] && [ \"$argument\" = \"$held\" ] && found=1\n"
+                                           "done\n"
+                                           "if [ -n \"$found\" ] && [ \"$last\" = %2 ]; then\n"
+                                           "  arguments=$(mktemp \"$gate/arguments.XXXXXX\") || exit 125\n"
+                                           "  printf '%s\\n' \"$*\" > \"$arguments\" || exit 125\n"
+                                           "  call=\"$gate/held.${arguments##*/arguments.}\"\n"
+                                           "  ln \"$arguments\" \"$call\" || exit 125\n"
+                                           "  while [ -e \"$call\" ]; do sleep 0.01; done\n"
+                                           "  rm -f \"$arguments\"\n"
+                                           "fi\n"
+                                           "exec /usr/bin/git \"$@\"\n")
+                                .arg(quoted(directory_.path()), quoted(QString::fromLatin1(path)));
         // GitAdapter trusts only executables whose file and directories nobody else can write.
         const auto owner = QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
         CHECK(QDir().mkpath(directory_.filePath(QStringLiteral("bin")))

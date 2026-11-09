@@ -1,9 +1,9 @@
 // The mergetool session connects waiting Git launchers to the window and tracks their published results.
 #pragma once
 
+#include "git/GitAdapter.h"
 #include "publication/ResolutionPublisher.h"
 #include "session/SessionCoordinator.h"
-#include "git/GitAdapter.h"
 #include <QByteArray>
 #include <QHash>
 #include <QObject>

@@ -1,24 +1,24 @@
 // The application controller connects conflict review, result editing and session completion to the window.
 #pragma once
-#include <QtQml/qqmlregistration.h>
 #include "ChoicePreviewFlow.h"
 #include "CommandGuard.h"
-#include "core/ResourceLimits.h"
 #include "FileNavigator.h"
-#include "mergetool/MergetoolSession.h"
-#include "recovery/RecoveryRestore.h"
-#include "publication/ResolutionPublisher.h"
 #include "ResultEditorAdapter.h"
-#include "SessionModel.h"
 #include "SelectedFile.h"
-#include "session/SessionCoordinator.h"
 #include "SessionLoader.h"
+#include "SessionModel.h"
+#include "core/ResourceLimits.h"
+#include "mergetool/MergetoolSession.h"
+#include "publication/ResolutionPublisher.h"
+#include "recovery/RecoveryRestore.h"
+#include "session/SessionCoordinator.h"
 #include <QByteArray>
 #include <QColor>
 #include <QObject>
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
+#include <QtQml/qqmlregistration.h>
 #include <optional>
 #include <string>
 
@@ -88,7 +88,8 @@ public:
     [[nodiscard]] bool parentSessionActive() const;
     [[nodiscard]] bool canEndParentSession() const;
     [[nodiscard]] QVariantMap nonConflictingPreview() const;
-    Q_INVOKABLE bool previewNonConflicting(const QString &fileId, const QString &revision, ChoicePreviewFlow::NonConflicting scope);
+    Q_INVOKABLE bool previewNonConflicting(const QString &fileId, const QString &revision,
+                                           ChoicePreviewFlow::NonConflicting scope);
     Q_INVOKABLE bool applyNonConflicting();
     [[nodiscard]] QVariantMap wholeFilePreview() const;
     [[nodiscard]] bool fileListVisible() const { return fileListVisible_; }
@@ -102,18 +103,18 @@ public:
     [[nodiscard]] bool resultCanPaste() const { return editor_.canPaste(); }
     Q_INVOKABLE bool previewWholeFile(const QString &fileId, const QString &revision, ChoicePreviewFlow::Side side);
     Q_INVOKABLE bool applyWholeFile();
-    Q_INVOKABLE bool previewChoice(const QString &fileId, const QString &revision,
-                                  const QString &target, ChoicePreviewFlow::Action action);
+    Q_INVOKABLE bool previewChoice(const QString &fileId, const QString &revision, const QString &target,
+                                   ChoicePreviewFlow::Action action);
     Q_INVOKABLE bool applyChoice(bool confirmReplacement = false);
     Q_INVOKABLE void cancelChoice();
     // Editor offsets are UTF-16 units and must identify scalar boundaries.
-    bool editResult(const QString &fileId, const QString &revision,
-                               int begin, int end, const QString &replacement);
+    bool editResult(const QString &fileId, const QString &revision, int begin, int end, const QString &replacement);
     Q_INVOKABLE bool undo(const QString &fileId, const QString &revision);
     Q_INVOKABLE bool redo(const QString &fileId, const QString &revision);
     // Save checkpoints the current text and decisions in the app store only.
     Q_INVOKABLE bool saveDraft(const QString &fileId, const QString &revision);
-    // Review, checkpoint and publish one exact revision. Confirmation is required while source choices remain undecided.
+    // Review, checkpoint and publish one exact revision. Confirmation is required while source choices remain
+    // undecided.
     Q_INVOKABLE bool markResolved(const QString &fileId, const QString &revision, bool confirmUndecided = false);
     Q_INVOKABLE void cancelResolution();
     // Moves the result cursor to the first marker named by markerBlocker.

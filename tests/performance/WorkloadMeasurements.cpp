@@ -1,9 +1,9 @@
 // Generates representative files and adverse long lines, measures the product
 // paths, and refuses to report a truncated or unfinished action as completed.
-#include "git/GitAdapter.h"
-#include "storage/RecoveryStore.h"
 #include "core/Correspondence.h"
 #include "core/FileSnapshot.h"
+#include "git/GitAdapter.h"
+#include "storage/RecoveryStore.h"
 
 #include <QByteArray>
 #include <QCoreApplication>
@@ -24,28 +24,28 @@
 
 #include <algorithm>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <map>
 #include <optional>
+#include <poll.h>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <unistd.h>
-#include <utility>
-#include <vector>
-#include <csignal>
-#include <fcntl.h>
-#include <poll.h>
 #include <sys/resource.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
+#include <unistd.h>
+#include <utility>
+#include <vector>
 
 #ifndef BRANCH_TRUCE_MEASUREMENT_BUILD
 #define BRANCH_TRUCE_MEASUREMENT_BUILD "unspecified"
@@ -156,16 +156,15 @@ void inspect(const std::string &bytes, std::uint64_t &lineCount, std::uint64_t &
 
 void emitRecord(const Record &record)
 {
-    std::cout << "MEASURE\t" << record.kind << '\t' << record.name << '\t' << record.outcome << '\t'
-              << record.bytes << '\t' << record.lines << '\t' << record.maxLine << '\t'
-              << (record.elapsedMs ? std::to_string(*record.elapsedMs) : std::string("-")) << '\t'
-              << record.rssKb << '\t' << sanitize(record.detail) << '\n';
+    std::cout << "MEASURE\t" << record.kind << '\t' << record.name << '\t' << record.outcome << '\t' << record.bytes
+              << '\t' << record.lines << '\t' << record.maxLine << '\t'
+              << (record.elapsedMs ? std::to_string(*record.elapsedMs) : std::string("-")) << '\t' << record.rssKb
+              << '\t' << sanitize(record.detail) << '\n';
     std::cout.flush();
 }
 
-Record baseRecord(const std::string &kind, const std::string &name, const std::string &metric,
-                  const std::string &bytes, std::uint64_t byteCount, std::uint64_t lineCount,
-                  std::uint64_t maxLine)
+Record baseRecord(const std::string &kind, const std::string &name, const std::string &metric, const std::string &bytes,
+                  std::uint64_t byteCount, std::uint64_t lineCount, std::uint64_t maxLine)
 {
     Record record;
     record.kind = kind;
@@ -181,8 +180,8 @@ Record baseRecord(const std::string &kind, const std::string &name, const std::s
 
 std::uint64_t since(std::chrono::steady_clock::time_point start)
 {
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - start);
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
     return static_cast<std::uint64_t>(elapsed.count() < 0 ? 0 : elapsed.count());
 }
 
@@ -217,8 +216,7 @@ std::string makeLong(std::size_t bytes, char last)
     return text;
 }
 
-bool covers(const std::vector<branch_truce::Passage> &passages, std::string_view source,
-            std::string_view result)
+bool covers(const std::vector<branch_truce::Passage> &passages, std::string_view source, std::string_view result)
 {
     std::size_t sourceAt = 0;
     std::size_t resultAt = 0;
@@ -246,16 +244,15 @@ branch_truce::SourceSnapshot sourceOf(std::string text, const char *id)
     return source;
 }
 
-bool mapCovers(const branch_truce::CorrespondenceMap &map, const std::string &earlier,
-               const std::string &stage2, const std::string &stage3, const std::string &result)
+bool mapCovers(const branch_truce::CorrespondenceMap &map, const std::string &earlier, const std::string &stage2,
+               const std::string &stage3, const std::string &result)
 {
     const auto check = [&](branch_truce::SourceSide side, const std::string &source) {
         const auto *passages = map.passages(side);
         return passages != nullptr && covers(*passages, source, map.text());
     };
     return map.text() == result && check(branch_truce::SourceSide::Earlier, earlier)
-        && check(branch_truce::SourceSide::Stage2, stage2)
-        && check(branch_truce::SourceSide::Stage3, stage3);
+        && check(branch_truce::SourceSide::Stage2, stage2) && check(branch_truce::SourceSide::Stage3, stage3);
 }
 
 int correspondenceWorker(const std::string &name, const std::string &mode, std::size_t lines, std::size_t bytes)
@@ -281,7 +278,8 @@ int correspondenceWorker(const std::string &name, const std::string &mode, std::
     snapshots.launchResult.text = snapshots.stage2->worktree;
     const auto failBoth = [&](const std::string &outcome, const std::string &detail) {
         for (const char *metric : {"construct", "edit"}) {
-            auto record = baseRecord("correspondence", name + "-" + metric, metric, result, byteCount, lineCount, maxLine);
+            auto record =
+                baseRecord("correspondence", name + "-" + metric, metric, result, byteCount, lineCount, maxLine);
             record.outcome = outcome;
             record.detail = detail;
             emitRecord(record);
@@ -291,7 +289,8 @@ int correspondenceWorker(const std::string &name, const std::string &mode, std::
     try {
         const auto started = std::chrono::steady_clock::now();
         branch_truce::CorrespondenceMap map(1, snapshots, result);
-        auto record = baseRecord("correspondence", name + "-construct", "construct", result, byteCount, lineCount, maxLine);
+        auto record =
+            baseRecord("correspondence", name + "-construct", "construct", result, byteCount, lineCount, maxLine);
         record.elapsedMs = since(started);
         record.rssKb = vmHwmKb();
         if (!mapCovers(map, earlier, stage2, stage3, result)) {
@@ -323,7 +322,8 @@ int correspondenceWorker(const std::string &name, const std::string &mode, std::
         }
         emitRecord(edit);
     } catch (const std::exception &error) {
-        if (!emittedConstruct) failBoth("explicit-failure", error.what());
+        if (!emittedConstruct)
+            failBoth("explicit-failure", error.what());
         else {
             auto edit = baseRecord("correspondence", name + "-edit", "edit", result, byteCount, lineCount, maxLine);
             edit.outcome = "explicit-failure";
@@ -350,8 +350,8 @@ QByteArray rawText(QQuickItem *item)
     return document->toRawText().replace(QChar(0x2029), QChar(u'\n')).toUtf8();
 }
 
-int editorWorker(const std::string &name, const std::string &mode, std::size_t lines, std::size_t bytes,
-                 int budgetMs, bool startup)
+int editorWorker(const std::string &name, const std::string &mode, std::size_t lines, std::size_t bytes, int budgetMs,
+                 bool startup)
 {
     if (qEnvironmentVariable("QT_QPA_PLATFORM") != QLatin1String("offscreen")) {
         std::cout << "editor worker requires QT_QPA_PLATFORM=offscreen\n";
@@ -387,7 +387,8 @@ int editorWorker(const std::string &name, const std::string &mode, std::size_t l
     if (startup) {
         auto record = baseRecord("editor", "editor-startup", "startup", text, 0, 0, 0);
         record.elapsedMs = static_cast<std::uint64_t>(sceneClock.elapsed());
-        record.outcome = editor != nullptr && sourceA != nullptr && sourceB != nullptr ? "completed" : "explicit-failure";
+        record.outcome =
+            editor != nullptr && sourceA != nullptr && sourceB != nullptr ? "completed" : "explicit-failure";
         record.detail = "offscreen software scene startup, excluded from the envelope";
         record.rssKb = vmHwmKb();
         emitRecord(record);
@@ -413,13 +414,14 @@ int editorWorker(const std::string &name, const std::string &mode, std::size_t l
     load.elapsedMs = loadMs;
     load.rssKb = vmHwmKb();
     std::ostringstream loadDetail;
-    loadDetail << "loaded=" << loaded.size() << " expected=" << generated.size()
-               << " width=" << contentWidth << " height=" << contentHeight;
+    loadDetail << "loaded=" << loaded.size() << " expected=" << generated.size() << " width=" << contentWidth
+               << " height=" << contentHeight;
     if (loaded != generated || !panesMatch || !(contentWidth > 0.0) || !(contentHeight > 0.0)) {
         const bool textKept = loaded == generated && panesMatch;
         load.outcome = textKept ? "explicit-failure" : "truncated";
-        load.detail = loadDetail.str() + (textKept ? " text retained but content width is not positive"
-                                                   : " text differs from the generated buffer");
+        load.detail = loadDetail.str()
+            + (textKept ? " text retained but content width is not positive"
+                        : " text differs from the generated buffer");
         emitRecord(load);
         auto key = baseRecord("editor", name + "-key", "key", text, byteCount, lineCount, maxLine);
         key.outcome = "incomplete";
@@ -557,7 +559,8 @@ std::uint64_t gitChildRssKb()
     return peak;
 }
 
-int gitWorker(const std::string &name, const std::string &mode, std::size_t bytes, const std::string &scratch, int budgetMs)
+int gitWorker(const std::string &name, const std::string &mode, std::size_t bytes, const std::string &scratch,
+              int budgetMs)
 {
     QCoreApplication app(gArgc, gArgv);
     const QString home = QString::fromStdString(scratch);
@@ -565,7 +568,9 @@ int gitWorker(const std::string &name, const std::string &mode, std::size_t byte
     QDir().mkpath(repo);
     QByteArray ignored;
     QString error;
-    if (!runGit(repo, home, {QStringLiteral("init"), QStringLiteral("--quiet"), QStringLiteral("--initial-branch=main")}, {}, &ignored, &error)) {
+    if (!runGit(repo, home,
+                {QStringLiteral("init"), QStringLiteral("--quiet"), QStringLiteral("--initial-branch=main")}, {},
+                &ignored, &error)) {
         auto record = baseRecord("git", name, mode, {}, bytes, 1, bytes);
         record.outcome = "explicit-failure";
         record.detail = "git init failed: " + error.toStdString();
@@ -575,7 +580,8 @@ int gitWorker(const std::string &name, const std::string &mode, std::size_t byte
     const std::size_t payloadBytes = mode == "input" ? kGitGuard + 1 : bytes;
     QByteArray payload(static_cast<qsizetype>(payloadBytes), 'g');
     if (!payload.isEmpty()) payload[payload.size() - 1] = 'G';
-    auto record = baseRecord("git", name, mode, {}, static_cast<std::uint64_t>(payload.size()), 1, static_cast<std::uint64_t>(payload.size()));
+    auto record = baseRecord("git", name, mode, {}, static_cast<std::uint64_t>(payload.size()), 1,
+                             static_cast<std::uint64_t>(payload.size()));
     using branch_truce::git::GitAdapter;
     using branch_truce::git::Operation;
     using branch_truce::git::Outcome;
@@ -592,7 +598,8 @@ int gitWorker(const std::string &name, const std::string &mode, std::size_t byte
         request.input = payload;
     } else {
         QByteArray oid;
-        if (!runGit(repo, home, {QStringLiteral("hash-object"), QStringLiteral("-w"), QStringLiteral("--stdin")}, payload, &oid, &error)) {
+        if (!runGit(repo, home, {QStringLiteral("hash-object"), QStringLiteral("-w"), QStringLiteral("--stdin")},
+                    payload, &oid, &error)) {
             record.outcome = "explicit-failure";
             record.detail = "hash-object failed: " + error.toStdString();
             emitRecord(record);
@@ -666,8 +673,8 @@ int recoveryWorker(const std::string &name, const std::string &mode, std::size_t
     if (!payload.isEmpty()) payload[0] = '\0';
     const auto hash = branch_truce::storage::RecoveryStore::digest(payload);
     branch_truce::storage::RecoveryTransaction transaction;
-    transaction.state = QJsonObject{{QStringLiteral("schema"), 1},
-        {QStringLiteral("transactionId"), QStringLiteral("measurement")}};
+    transaction.state =
+        QJsonObject{{QStringLiteral("schema"), 1}, {QStringLiteral("transactionId"), QStringLiteral("measurement")}};
     transaction.payloads.insert(badDigest ? QByteArray(64, '0') : hash, payload);
     if (overload) {
         if (std::signal(SIGXFSZ, SIG_IGN) == SIG_ERR) {
@@ -677,7 +684,7 @@ int recoveryWorker(const std::string &name, const std::string &mode, std::size_t
             emitRecord(record);
             return 0;
         }
-        struct rlimit limit {};
+        struct rlimit limit{};
         limit.rlim_cur = 256 * 1024;
         limit.rlim_max = 256 * 1024;
         if (setrlimit(RLIMIT_FSIZE, &limit) != 0) {
@@ -694,8 +701,8 @@ int recoveryWorker(const std::string &name, const std::string &mode, std::size_t
     const auto listing = store.read();
     QString payloadError;
     const auto loaded = store.payload(hash, &payloadError);
-    const bool acknowledged = committed.succeeded && listing.succeeded && listing.transactions.size() == 1
-        && loaded == payload;
+    const bool acknowledged =
+        committed.succeeded && listing.succeeded && listing.transactions.size() == 1 && loaded == payload;
     auto record = baseRecord("recovery", name, mode == "commit" ? "commit" : mode, {},
                              static_cast<std::uint64_t>(payload.size()), 1, static_cast<std::uint64_t>(payload.size()));
     record.elapsedMs = commitMs;
@@ -729,13 +736,14 @@ int recoveryWorker(const std::string &name, const std::string &mode, std::size_t
     const auto reread = again.read();
     QString againError;
     const auto againBytes = again.payload(hash, &againError);
-    auto reload = baseRecord("recovery", name + "-reload", "reload", {},
-                             static_cast<std::uint64_t>(payload.size()), 1, static_cast<std::uint64_t>(payload.size()));
+    auto reload = baseRecord("recovery", name + "-reload", "reload", {}, static_cast<std::uint64_t>(payload.size()), 1,
+                             static_cast<std::uint64_t>(payload.size()));
     reload.elapsedMs = since(reloadStarted);
     reload.rssKb = vmHwmKb();
     const bool roundTrip = reread.succeeded && reread.transactions.size() == 1 && againBytes == payload;
     reload.outcome = roundTrip ? "completed" : "truncated";
-    reload.detail = roundTrip ? "journal and payload match the acknowledged bytes" : "reload differed from the acknowledged bytes";
+    reload.detail =
+        roundTrip ? "journal and payload match the acknowledged bytes" : "reload differed from the acknowledged bytes";
     emitRecord(reload);
     return 0;
 }
@@ -759,14 +767,22 @@ Args parseArgs(int argc, char **argv)
         const auto take = [&](std::string *value) {
             if (i + 1 < argc) *value = argv[++i];
         };
-        if (key == "--worker") take(&args.kind);
-        else if (key == "--name") take(&args.name);
-        else if (key == "--mode") take(&args.mode);
-        else if (key == "--scratch") take(&args.scratch);
-        else if (key == "--lines" && i + 1 < argc) args.lines = static_cast<std::size_t>(std::strtoull(argv[++i], nullptr, 10));
-        else if (key == "--bytes" && i + 1 < argc) args.bytes = static_cast<std::size_t>(std::strtoull(argv[++i], nullptr, 10));
-        else if (key == "--timeout-ms" && i + 1 < argc) args.timeoutMs = std::atoi(argv[++i]);
-        else if (key == "--startup") args.startup = true;
+        if (key == "--worker")
+            take(&args.kind);
+        else if (key == "--name")
+            take(&args.name);
+        else if (key == "--mode")
+            take(&args.mode);
+        else if (key == "--scratch")
+            take(&args.scratch);
+        else if (key == "--lines" && i + 1 < argc)
+            args.lines = static_cast<std::size_t>(std::strtoull(argv[++i], nullptr, 10));
+        else if (key == "--bytes" && i + 1 < argc)
+            args.bytes = static_cast<std::size_t>(std::strtoull(argv[++i], nullptr, 10));
+        else if (key == "--timeout-ms" && i + 1 < argc)
+            args.timeoutMs = std::atoi(argv[++i]);
+        else if (key == "--startup")
+            args.startup = true;
     }
     return args;
 }
@@ -778,9 +794,11 @@ int workerMain(int argc, char **argv)
     if (args.kind == "editor") {
         if (qgetenv("QT_QPA_PLATFORM").isEmpty()) setenv("QT_QPA_PLATFORM", "offscreen", 0);
         if (qgetenv("QT_QUICK_BACKEND").isEmpty()) setenv("QT_QUICK_BACKEND", "software", 0);
-        return editorWorker(args.name, args.mode, args.lines, args.bytes, std::max(1000, args.timeoutMs - 1000), args.startup);
+        return editorWorker(args.name, args.mode, args.lines, args.bytes, std::max(1000, args.timeoutMs - 1000),
+                            args.startup);
     }
-    if (args.kind == "git") return gitWorker(args.name, args.mode, args.bytes, args.scratch, std::max(1000, args.timeoutMs - 1000));
+    if (args.kind == "git")
+        return gitWorker(args.name, args.mode, args.bytes, args.scratch, std::max(1000, args.timeoutMs - 1000));
     if (args.kind == "recovery") return recoveryWorker(args.name, args.mode, args.bytes, args.scratch);
     std::cerr << "unknown worker\n";
     return 2;
@@ -836,7 +854,8 @@ std::vector<std::string> splitTab(const std::string &line)
         if (c == '\t') {
             fields.push_back(current);
             current.clear();
-        } else current.push_back(c);
+        } else
+            current.push_back(c);
     }
     fields.push_back(current);
     return fields;
@@ -844,10 +863,12 @@ std::vector<std::string> splitTab(const std::string &line)
 
 int outcomeRank(const std::string &outcome)
 {
-    static const char *order[] = {"crashed", "inconsistent", "fabricated-success", "unsupported-resource",
-        "unsupported-timeout", "truncated", "unacknowledged", "explicit-failure", "incomplete",
-        "not-attempted", "completed"};
-    for (int i = 0; i < 11; ++i) if (outcome == order[i]) return i;
+    static const char *order[] = {
+        "crashed",   "inconsistent",   "fabricated-success", "unsupported-resource", "unsupported-timeout",
+        "truncated", "unacknowledged", "explicit-failure",   "incomplete",           "not-attempted",
+        "completed"};
+    for (int i = 0; i < 11; ++i)
+        if (outcome == order[i]) return i;
     return -1;
 }
 
@@ -887,7 +908,8 @@ std::vector<std::string> recordNames(const Spec &spec)
 
 bool nameInSpec(const std::string &name, const Spec &spec)
 {
-    for (const auto &expected : recordNames(spec)) if (expected == name) return true;
+    for (const auto &expected : recordNames(spec))
+        if (expected == name) return true;
     return false;
 }
 
@@ -898,9 +920,21 @@ std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std
         *problem = "could not create /var/tmp scratch";
         return {};
     }
-    std::vector<std::string> args{executable, "--worker", spec.kind, "--name", spec.name, "--mode", spec.mode,
-        "--scratch", scratch, "--timeout-ms", std::to_string(spec.timeoutMs),
-        "--lines", std::to_string(spec.lines), "--bytes", std::to_string(spec.bytes)};
+    std::vector<std::string> args{executable,
+                                  "--worker",
+                                  spec.kind,
+                                  "--name",
+                                  spec.name,
+                                  "--mode",
+                                  spec.mode,
+                                  "--scratch",
+                                  scratch,
+                                  "--timeout-ms",
+                                  std::to_string(spec.timeoutMs),
+                                  "--lines",
+                                  std::to_string(spec.lines),
+                                  "--bytes",
+                                  std::to_string(spec.bytes)};
     if (spec.startup) args.emplace_back("--startup");
     std::vector<char *> pointers;
     pointers.reserve(args.size() + 1);
@@ -954,12 +988,13 @@ std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std
             reaped = true;
             break;
         }
-        pollfd ready {pipefd[0], POLLIN, 0};
+        pollfd ready{pipefd[0], POLLIN, 0};
         poll(&ready, 1, 50);
     }
     char buffer[1024];
     ssize_t count = 0;
-    while ((count = ::read(pipefd[0], buffer, sizeof buffer)) > 0) output.append(buffer, static_cast<std::size_t>(count));
+    while ((count = ::read(pipefd[0], buffer, sizeof buffer)) > 0)
+        output.append(buffer, static_cast<std::size_t>(count));
     ::close(pipefd[0]);
     std::vector<std::string> failures;
     removeScratch(scratch, &failures);
@@ -982,17 +1017,19 @@ std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std
         record.rssKb = std::strtoull(fields[8].c_str(), nullptr, 10);
         record.detail = fields[9];
         record.metric = metricOf(record.name, spec.mode);
-        if (WIFEXITED(status) && WEXITSTATUS(status) != 0 && record.outcome == "completed") record.outcome = "inconsistent";
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0 && record.outcome == "completed")
+            record.outcome = "inconsistent";
         records.push_back(record);
     }
     if (resource || timedOut || records.empty()) {
         const char *outcome = resource ? "unsupported-resource" : timedOut ? "unsupported-timeout" : "crashed";
         const char *detail = resource ? "killed after resident set exceeded 1536 MiB"
-            : timedOut ? "killed after the measurement ceiling"
-            : "no measurement record";
+            : timedOut                ? "killed after the measurement ceiling"
+                                      : "no measurement record";
         for (const auto &expected : recordNames(spec)) {
             bool present = false;
-            for (const auto &record : records) if (record.name == expected) present = true;
+            for (const auto &record : records)
+                if (record.name == expected) present = true;
             if (present) continue;
             Record record;
             record.kind = spec.kind;
@@ -1027,7 +1064,8 @@ std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::string *prob
     std::map<std::string, bool> halted;
     std::vector<Aggregate> results;
     auto findOrAdd = [&](const Record &record, const std::string &group) -> Aggregate & {
-        for (auto &item : results) if (item.name == record.name) return item;
+        for (auto &item : results)
+            if (item.name == record.name) return item;
         Aggregate created;
         created.kind = record.kind;
         created.name = record.name;
@@ -1065,7 +1103,8 @@ std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::string *prob
             const auto records = runOnce(spec, executable, problem);
             for (const auto &record : records) {
                 auto &item = findOrAdd(record, spec.group);
-                if (!item.ranked || outcomeRank(record.outcome) < outcomeRank(item.outcome)) item.outcome = record.outcome;
+                if (!item.ranked || outcomeRank(record.outcome) < outcomeRank(item.outcome))
+                    item.outcome = record.outcome;
                 item.ranked = true;
                 item.detail = record.detail;
                 item.bytes = std::max(item.bytes, record.bytes);
@@ -1107,7 +1146,8 @@ std::string capture(const std::vector<std::string> &args)
     std::string output;
     char buffer[256];
     ssize_t count = 0;
-    while ((count = ::read(pipefd[0], buffer, sizeof buffer)) > 0) output.append(buffer, static_cast<std::size_t>(count));
+    while ((count = ::read(pipefd[0], buffer, sizeof buffer)) > 0)
+        output.append(buffer, static_cast<std::size_t>(count));
     ::close(pipefd[0]);
     int status = 0;
     waitpid(pid, &status, 0);
@@ -1153,7 +1193,9 @@ std::optional<std::uint64_t> qualifying(const std::vector<Aggregate> &results, c
         if (item.group != group || item.metric != metric || item.outcome != "completed") continue;
         const auto mid = medianOf(item.elapsed);
         if (!mid || *mid > static_cast<std::uint64_t>(budgetMs)) continue;
-        const std::uint64_t size = kind == SizeKind::Lines ? item.lines : kind == SizeKind::MaxLine ? item.maxLine : item.bytes;
+        const std::uint64_t size = kind == SizeKind::Lines ? item.lines
+            : kind == SizeKind::MaxLine                    ? item.maxLine
+                                                           : item.bytes;
         if (capGit && item.bytes > kGitGuard) continue;
         if (!best || size > *best) best = size;
     }
@@ -1169,23 +1211,24 @@ std::string sizeOrNone(const std::optional<std::uint64_t> &value, const char *un
 void writeReports(const std::string &path, const std::vector<Aggregate> &results, const std::string &cleanup)
 {
     std::ofstream markdown(path);
-    utsname system {};
+    utsname system{};
     uname(&system);
     const auto mount = capture({"/usr/bin/findmnt", "-T", "/var/tmp", "-n", "-o", "FSTYPE,SOURCE"});
     markdown << "# Workload measurements\n\n";
-    markdown << "Build type " << BRANCH_TRUCE_MEASUREMENT_BUILD << ". Compiler " << __VERSION__
-             << ". Qt " << qVersion() << ". Git " << capture({"/usr/bin/git", "--version"}) << ".\n\n";
-    markdown << "Machine " << system.sysname << " " << system.release << " " << system.machine
-             << ", " << cpuModel() << ", " << sysconf(_SC_NPROCESSORS_ONLN) << " processors, " << memTotal()
-             << ". Scratch filesystem " << (mount.empty() ? "not reported" : mount) << ".\n\n";
+    markdown << "Build type " << BRANCH_TRUCE_MEASUREMENT_BUILD << ". Compiler " << __VERSION__ << ". Qt " << qVersion()
+             << ". Git " << capture({"/usr/bin/git", "--version"}) << ".\n\n";
+    markdown << "Machine " << system.sysname << " " << system.release << " " << system.machine << ", " << cpuModel()
+             << ", " << sysconf(_SC_NPROCESSORS_ONLN) << " processors, " << memTotal() << ". Scratch filesystem "
+             << (mount.empty() ? "not reported" : mount) << ".\n\n";
     markdown << "Editor samples use QT_QPA_PLATFORM=offscreen and QT_QUICK_BACKEND=software. "
              << "They are not a Wayland or KDE session. Recovery and Git scratch live under /var/tmp "
              << "because /tmp is tmpfs on this host.\n\n";
     markdown << "## Decision rule\n\n";
-    markdown << "A completed sample can enter the proposed envelope only when every repeat completed "
-             << "and the median elapsed time is within the budget. The proposed size is the largest measured "
-             << "point that qualifies. Sizes that were not attempted are not claimed. Timeouts, resource kills, "
-             << "truncation, unacknowledged edits, explicit failures and fabricated success stay outside the envelope.\n\n";
+    markdown
+        << "A completed sample can enter the proposed envelope only when every repeat completed "
+        << "and the median elapsed time is within the budget. The proposed size is the largest measured "
+        << "point that qualifies. Sizes that were not attempted are not claimed. Timeouts, resource kills, "
+        << "truncation, unacknowledged edits, explicit failures and fabricated success stay outside the envelope.\n\n";
     markdown << "Budgets are correspondence construction 1000 ms, correspondence edit 1000 ms, "
              << "editor load 1000 ms, editor keystroke 100 ms, Git read 2000 ms, and recovery acknowledgment 500 ms. "
              << "The Git figure cannot exceed the existing 8 MiB output guard.\n\n";
@@ -1194,31 +1237,41 @@ void writeReports(const std::string &path, const std::vector<Aggregate> &results
     markdown << "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n";
     std::string tsvPath = path;
     const auto dot = tsvPath.rfind('.');
-    if (dot == std::string::npos) tsvPath += ".tsv";
-    else tsvPath.replace(dot, std::string::npos, ".tsv");
+    if (dot == std::string::npos)
+        tsvPath += ".tsv";
+    else
+        tsvPath.replace(dot, std::string::npos, ".tsv");
     std::ofstream table(tsvPath);
-    table << "kind\tname\tmetric\tgroup\toutcome\tbytes\tlines\tmax_line\tsamples\tmin_ms\tmedian_ms\tmax_ms\trss_kb\tdetail\n";
+    table << "kind\tname\tmetric\tgroup\toutcome\tbytes\tlines\tmax_line\tsamples\tmin_ms\tmedian_ms\tmax_ms\trss_"
+             "kb\tdetail\n";
     for (const auto &item : results) {
         const auto mid = medianOf(item.elapsed);
-        const auto min = item.elapsed.empty() ? std::optional<std::uint64_t>{} : std::optional<std::uint64_t>{*std::min_element(item.elapsed.begin(), item.elapsed.end())};
-        const auto max = item.elapsed.empty() ? std::optional<std::uint64_t>{} : std::optional<std::uint64_t>{*std::max_element(item.elapsed.begin(), item.elapsed.end())};
+        const auto min = item.elapsed.empty()
+            ? std::optional<std::uint64_t>{}
+            : std::optional<std::uint64_t>{*std::min_element(item.elapsed.begin(), item.elapsed.end())};
+        const auto max = item.elapsed.empty()
+            ? std::optional<std::uint64_t>{}
+            : std::optional<std::uint64_t>{*std::max_element(item.elapsed.begin(), item.elapsed.end())};
         const auto show = [](const std::optional<std::uint64_t> &value) {
             return value ? std::to_string(*value) : std::string("-");
         };
-        markdown << "| " << item.name << " | " << item.outcome << " | " << item.bytes << " | " << item.lines
-                 << " | " << item.maxLine << " | " << item.samples << " | " << show(min) << " | " << show(mid)
-                 << " | " << show(max) << " | " << (item.rssKb == 0 ? std::string("-") : std::to_string(item.rssKb)) << " |\n";
-        table << item.kind << '\t' << item.name << '\t' << item.metric << '\t' << item.group << '\t' << item.outcome << '\t'
-              << item.bytes << '\t' << item.lines << '\t' << item.maxLine << '\t' << item.samples << '\t'
-              << show(min) << '\t' << show(mid) << '\t' << show(max) << '\t' << item.rssKb << '\t' << sanitize(item.detail) << '\n';
+        markdown << "| " << item.name << " | " << item.outcome << " | " << item.bytes << " | " << item.lines << " | "
+                 << item.maxLine << " | " << item.samples << " | " << show(min) << " | " << show(mid) << " | "
+                 << show(max) << " | " << (item.rssKb == 0 ? std::string("-") : std::to_string(item.rssKb)) << " |\n";
+        table << item.kind << '\t' << item.name << '\t' << item.metric << '\t' << item.group << '\t' << item.outcome
+              << '\t' << item.bytes << '\t' << item.lines << '\t' << item.maxLine << '\t' << item.samples << '\t'
+              << show(min) << '\t' << show(mid) << '\t' << show(max) << '\t' << item.rssKb << '\t'
+              << sanitize(item.detail) << '\n';
     }
-    const auto corrLines = qualifying(results, "corr-lines", "construct", kCorrespondenceBudgetMs, SizeKind::Lines, false);
+    const auto corrLines =
+        qualifying(results, "corr-lines", "construct", kCorrespondenceBudgetMs, SizeKind::Lines, false);
     const auto corrEdit = qualifying(results, "corr-lines", "edit", kCorrespondenceBudgetMs, SizeKind::Lines, false);
     const auto editorLines = qualifying(results, "editor-lines", "load", kLoadBudgetMs, SizeKind::Lines, false);
     const auto editorKey = qualifying(results, "editor-lines", "key", kKeyBudgetMs, SizeKind::Lines, false);
     const auto longLoad = qualifying(results, "editor-long", "load", kLoadBudgetMs, SizeKind::MaxLine, false);
     const auto longKey = qualifying(results, "editor-long", "key", kKeyBudgetMs, SizeKind::MaxLine, false);
-    const auto longConstruct = qualifying(results, "corr-long", "construct", kCorrespondenceBudgetMs, SizeKind::MaxLine, false);
+    const auto longConstruct =
+        qualifying(results, "corr-long", "construct", kCorrespondenceBudgetMs, SizeKind::MaxLine, false);
     const auto longEdit = qualifying(results, "corr-long", "edit", kCorrespondenceBudgetMs, SizeKind::MaxLine, false);
     const auto gitRead = qualifying(results, "git-read", "read", kGitBudgetMs, SizeKind::Bytes, true);
     const auto recoveryCommit = qualifying(results, "recovery", "commit", kRecoveryBudgetMs, SizeKind::Bytes, false);
@@ -1238,14 +1291,14 @@ void writeReports(const std::string &path, const std::vector<Aggregate> &results
              << sizeOrNone(editorKey, "lines") << ", long-line editor load " << sizeOrNone(longLoad, "bytes")
              << ", long-line editor keystroke " << sizeOrNone(longKey, "bytes")
              << ", long-line correspondence construction " << sizeOrNone(longConstruct, "bytes")
-             << ", long-line correspondence edit " << sizeOrNone(longEdit, "bytes")
-             << ", Git read " << sizeOrNone(gitRead, "bytes") << ", recovery commit "
-             << sizeOrNone(recoveryCommit, "bytes") << ", recovery reload "
-             << sizeOrNone(recoveryReload, "bytes") << ".\n\n";
+             << ", long-line correspondence edit " << sizeOrNone(longEdit, "bytes") << ", Git read "
+             << sizeOrNone(gitRead, "bytes") << ", recovery commit " << sizeOrNone(recoveryCommit, "bytes")
+             << ", recovery reload " << sizeOrNone(recoveryReload, "bytes") << ".\n\n";
     markdown << "Representative files, three sources, width 96 bytes including the newline: up to "
              << sizeOrNone(smallest({corrLines, corrEdit, editorLines, editorKey}), "lines") << ".\n\n";
     markdown << "Adverse long lines, three panes or three sources: up to "
-             << sizeOrNone(smallest({longLoad, longKey, longConstruct, longEdit}), "bytes on the longest line") << ".\n\n";
+             << sizeOrNone(smallest({longLoad, longKey, longConstruct, longEdit}), "bytes on the longest line")
+             << ".\n\n";
     markdown << "Git process output: up to " << sizeOrNone(gitRead, "bytes")
              << ", and not above the existing 8 MiB guard. The guard was not changed. ";
     for (const auto &item : results) {
@@ -1260,11 +1313,16 @@ void writeReports(const std::string &path, const std::vector<Aggregate> &results
         const auto mid = medianOf(item.elapsed);
         if (item.outcome != "completed" || !mid) continue;
         int budget = -1;
-        if (item.metric == "construct" || item.metric == "edit") budget = kCorrespondenceBudgetMs;
-        else if (item.metric == "load") budget = kLoadBudgetMs;
-        else if (item.metric == "key") budget = kKeyBudgetMs;
-        else if (item.metric == "read") budget = kGitBudgetMs;
-        else if (item.metric == "commit" || item.metric == "reload") budget = kRecoveryBudgetMs;
+        if (item.metric == "construct" || item.metric == "edit")
+            budget = kCorrespondenceBudgetMs;
+        else if (item.metric == "load")
+            budget = kLoadBudgetMs;
+        else if (item.metric == "key")
+            budget = kKeyBudgetMs;
+        else if (item.metric == "read")
+            budget = kGitBudgetMs;
+        else if (item.metric == "commit" || item.metric == "reload")
+            budget = kRecoveryBudgetMs;
         if (budget >= 0 && *mid > static_cast<std::uint64_t>(budget))
             markdown << "- " << item.name << " median " << *mid << " ms, budget " << budget << " ms\n";
     }
@@ -1273,7 +1331,8 @@ void writeReports(const std::string &path, const std::vector<Aggregate> &results
              << "One failed or skipped probe means that part of the envelope is not established.\n\n";
     markdown << "## Outcomes outside the envelope\n\n";
     for (const auto &item : results) {
-        if (item.outcome != "completed") markdown << "- " << item.name << " " << item.outcome << ". " << item.detail << "\n";
+        if (item.outcome != "completed")
+            markdown << "- " << item.name << " " << item.outcome << ". " << item.detail << "\n";
     }
     markdown << "\n## Limitations\n\n";
     markdown << "Each evidence size was repeated three times on one host. The median is not a population statistic. "
@@ -1299,7 +1358,8 @@ int expect(const std::vector<Aggregate> &results, const std::vector<Expectation>
         ++tests;
         ++assertions;
         const Aggregate *found = nullptr;
-        for (const auto &item : results) if (item.name == expected.name) found = &item;
+        for (const auto &item : results)
+            if (item.name == expected.name) found = &item;
         if (found == nullptr || found->outcome != expected.outcome
             || (expected.detail != nullptr && found->detail.find(expected.detail) == std::string::npos)) {
             ++failures;
@@ -1330,23 +1390,30 @@ std::vector<OwnedSpec> buildEvidence()
         owned.spec = {group, kind, owned.name.c_str(), mode, lines, bytes, timeoutMs, repeats, escalating, startup};
         specs.push_back(std::move(owned));
     };
-    for (std::size_t lines : {std::size_t{200}, std::size_t{1000}, std::size_t{2000}, std::size_t{4000}, std::size_t{8000}, std::size_t{16000}})
-        add("corr-lines", "correspondence", "correspondence-lines-" + std::to_string(lines), "lines", lines, 0, lines >= 8000 ? 45000 : 20000, 3, true, false);
+    for (std::size_t lines : {std::size_t{200}, std::size_t{1000}, std::size_t{2000}, std::size_t{4000},
+                              std::size_t{8000}, std::size_t{16000}})
+        add("corr-lines", "correspondence", "correspondence-lines-" + std::to_string(lines), "lines", lines, 0,
+            lines >= 8000 ? 45000 : 20000, 3, true, false);
     for (std::size_t bytes : {std::size_t{4096}, std::size_t{65536}, std::size_t{1048576}, kGitGuard})
-        add("corr-long", "correspondence", "correspondence-long-" + std::to_string(bytes), "long", 0, bytes, 20000, 3, true, false);
-    add("corr-control", "correspondence", "correspondence-identical-4000", "identical", 4000, 0, 20000, 1, false, false);
+        add("corr-long", "correspondence", "correspondence-long-" + std::to_string(bytes), "long", 0, bytes, 20000, 3,
+            true, false);
+    add("corr-control", "correspondence", "correspondence-identical-4000", "identical", 4000, 0, 20000, 1, false,
+        false);
     bool firstEditor = true;
     for (std::size_t lines : {std::size_t{200}, std::size_t{2000}, std::size_t{10000}, std::size_t{20000}}) {
-        add("editor-lines", "editor", "editor-lines-" + std::to_string(lines), "lines", lines, 0, 30000, 3, true, firstEditor);
+        add("editor-lines", "editor", "editor-lines-" + std::to_string(lines), "lines", lines, 0, 30000, 3, true,
+            firstEditor);
         firstEditor = false;
     }
-    for (std::size_t bytes : {std::size_t{1024}, std::size_t{8192}, std::size_t{65536}, std::size_t{262144}, std::size_t{1048576}, std::size_t{4194304}})
+    for (std::size_t bytes : {std::size_t{1024}, std::size_t{8192}, std::size_t{65536}, std::size_t{262144},
+                              std::size_t{1048576}, std::size_t{4194304}})
         add("editor-long", "editor", "editor-long-" + std::to_string(bytes), "long", 0, bytes, 30000, 3, true, false);
     for (std::size_t bytes : {std::size_t{65536}, std::size_t{1048576}, std::size_t{4194304}, kGitGuard})
         add("git-read", "git", "git-read-" + std::to_string(bytes), "read", 0, bytes, 30000, 3, true, false);
     add("git-probe", "git", "git-read-over-limit", "read", 0, kGitGuard + 4096, 30000, 1, false, false);
     add("git-probe", "git", "git-input-over-limit", "input", 0, kGitGuard + 1, 20000, 1, false, false);
-    for (std::size_t bytes : {std::size_t{4096}, std::size_t{65536}, std::size_t{1048576}, std::size_t{4194304}, kGitGuard})
+    for (std::size_t bytes :
+         {std::size_t{4096}, std::size_t{65536}, std::size_t{1048576}, std::size_t{4194304}, kGitGuard})
         add("recovery", "recovery", "recovery-" + std::to_string(bytes), "commit", 0, bytes, 30000, 3, true, false);
     add("recovery-probe", "recovery", "recovery-bad-digest", "bad-digest", 0, 64, 20000, 1, false, false);
     add("recovery-probe", "recovery", "recovery-overload", "overload", 0, 1024ull * 1024ull, 20000, 1, false, false);
@@ -1413,13 +1480,16 @@ int main(int argc, char **argv)
 {
     gArgc = argc;
     gArgv = argv;
-    for (int i = 1; i < argc; ++i) if (std::string(argv[i]) == "--worker") return workerMain(argc, argv);
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--worker") return workerMain(argc, argv);
     std::string profile = "gate";
     std::string report;
     for (int i = 1; i < argc; ++i) {
         const std::string key = argv[i];
-        if (key == "--profile" && i + 1 < argc) profile = argv[++i];
-        else if (key == "--report" && i + 1 < argc) report = argv[++i];
+        if (key == "--profile" && i + 1 < argc)
+            profile = argv[++i];
+        else if (key == "--report" && i + 1 < argc)
+            report = argv[++i];
         else if (key == "--help") {
             std::cout << "usage: workload-measurements --profile gate|evidence [--report PATH]\n";
             return 0;

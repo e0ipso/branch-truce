@@ -8,8 +8,8 @@
 int main()
 {
     if (branch_truce::version() != BRANCH_TRUCE_EXPECTED_VERSION) {
-        std::cerr << "Build version mismatch: got " << branch_truce::version()
-                  << ", expected " << BRANCH_TRUCE_EXPECTED_VERSION << "\n";
+        std::cerr << "Build version mismatch: got " << branch_truce::version() << ", expected "
+                  << BRANCH_TRUCE_EXPECTED_VERSION << "\n";
         return 1;
     }
     std::cout << "1 version assertion passed\n";

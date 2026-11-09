@@ -37,8 +37,7 @@ int main(int argc, char *argv[])
     // executable; it is empty when Git is not on PATH.
     const auto git = QStandardPaths::findExecutable(QStringLiteral("git"));
     for (int index = 1; index < argc; ++index) {
-        if (qstrcmp(argv[index], "--mergetool") == 0)
-            return branch_truce::runMergetoolLauncher(argc, argv, git);
+        if (qstrcmp(argv[index], "--mergetool") == 0) return branch_truce::runMergetoolLauncher(argc, argv, git);
     }
     // QApplication rather than QGuiApplication: the org.kde.desktop style draws its
     // controls through QApplication::style(). See docs/platform-validation.md.
@@ -59,7 +58,8 @@ int main(int argc, char *argv[])
     // An installed icon wins. Isolated launches and the build tree have none, so the
     // bundled symbol keeps the window and its taskbar entry from going blank.
     auto applicationIcon = QIcon::fromTheme(QStringLiteral(BRANCH_TRUCE_APP_ID));
-    if (applicationIcon.isNull()) applicationIcon = QIcon(QStringLiteral(":/branch-truce/icons/branch-truce-symbol.svg"));
+    if (applicationIcon.isNull())
+        applicationIcon = QIcon(QStringLiteral(":/branch-truce/icons/branch-truce-symbol.svg"));
     QApplication::setWindowIcon(applicationIcon);
     branch_truce::ApplicationController controller(git);
     QCoreApplication::setApplicationVersion(controller.version());
@@ -68,9 +68,10 @@ int main(int argc, char *argv[])
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addPositionalArgument(QStringLiteral("repository"),
-                                QStringLiteral("Repository directory, defaults to the current directory."),
-                                QStringLiteral("[repository]"));
-    parser.addOption({QStringLiteral("smoke-test"), QStringLiteral("Load the window and session, report startup state, and exit.")});
+                                 QStringLiteral("Repository directory, defaults to the current directory."),
+                                 QStringLiteral("[repository]"));
+    parser.addOption(
+        {QStringLiteral("smoke-test"), QStringLiteral("Load the window and session, report startup state, and exit.")});
     // A mergetool launcher that starts the GUI names the path Git launched,
     // hex-encoded like its attach frame, so the window opens on it.
     QCommandLineOption launchedPath(QStringLiteral("mergetool-path"),
@@ -78,8 +79,10 @@ int main(int argc, char *argv[])
                                     QStringLiteral("hex-path"));
     launchedPath.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(launchedPath);
-    QCommandLineOption recoverySession(QStringLiteral("recovery-session"),
-        QStringLiteral("Restore this recovery session when several match the operation; the others are set aside, not deleted."),
+    QCommandLineOption recoverySession(
+        QStringLiteral("recovery-session"),
+        QStringLiteral(
+            "Restore this recovery session when several match the operation; the others are set aside, not deleted."),
         QStringLiteral("session"));
     parser.addOption(recoverySession);
     parser.process(application);
@@ -97,34 +100,42 @@ int main(int argc, char *argv[])
     // in the terminal the user returns to.
     QObject::connect(&controller, &branch_truce::ApplicationController::sessionEnded, &application,
                      [&application](const QString &outcome, bool) {
-        QTextStream(stderr) << "Branch Truce: " << outcome << Qt::endl;
-        QTimer::singleShot(0, &application, &QCoreApplication::quit);
-    });
+                         QTextStream(stderr) << "Branch Truce: " << outcome << Qt::endl;
+                         QTimer::singleShot(0, &application, &QCoreApplication::quit);
+                     });
     if (parser.isSet(QStringLiteral("smoke-test"))) {
         auto *loader = controller.loader();
-        QObject::connect(loader, &branch_truce::SessionLoader::launchChanged, &application, [&controller, &application, loader] {
-            if (loader->opening()) return;
-            QJsonArray files;
-            for (int row = 0; row < controller.files()->totalFiles(); ++row) {
-                const auto index = controller.files()->index(row, 0);
-                using Model = branch_truce::SessionModel;
-                files.push_back(QJsonObject{
-                    {QStringLiteral("path"), controller.files()->data(index, Model::PathRole).toString()},
-                    {QStringLiteral("support"), controller.files()->data(index, Model::SupportRole).toString()},
-                    {QStringLiteral("detail"), controller.files()->data(index, Model::SupportDetailRole).toString()},
-                    {QStringLiteral("text"), QString::fromUtf8(QByteArray::fromStdString(controller.files()->fileAt(row)->current().draft.text))}});
-            }
-            const QJsonObject state{{QStringLiteral("state"), loader->startupState()},
-                {QStringLiteral("repository"), loader->repositoryRoot()},
-                {QStringLiteral("operation"), loader->operation()},
-                {QStringLiteral("detail"), loader->detail()},
-                {QStringLiteral("stage2"), loader->stage2()}, {QStringLiteral("stage3"), loader->stage3()},
-                {QStringLiteral("stage2CommitId"), loader->stage2CommitId()}, {QStringLiteral("stage3CommitId"), loader->stage3CommitId()},
-                {QStringLiteral("workflow"), loader->workflow()},
-                {QStringLiteral("resolved"), controller.files()->resolvedFiles()}, {QStringLiteral("files"), files}};
-            QTextStream(stdout) << "BRANCH_TRUCE_SESSION=" << QJsonDocument(state).toJson(QJsonDocument::Compact) << Qt::endl;
-            QTimer::singleShot(0, &application, &QCoreApplication::quit);
-        });
+        QObject::connect(
+            loader, &branch_truce::SessionLoader::launchChanged, &application, [&controller, &application, loader] {
+                if (loader->opening()) return;
+                QJsonArray files;
+                for (int row = 0; row < controller.files()->totalFiles(); ++row) {
+                    const auto index = controller.files()->index(row, 0);
+                    using Model = branch_truce::SessionModel;
+                    files.push_back(QJsonObject{
+                        {QStringLiteral("path"), controller.files()->data(index, Model::PathRole).toString()},
+                        {QStringLiteral("support"), controller.files()->data(index, Model::SupportRole).toString()},
+                        {QStringLiteral("detail"),
+                         controller.files()->data(index, Model::SupportDetailRole).toString()},
+                        {QStringLiteral("text"),
+                         QString::fromUtf8(
+                             QByteArray::fromStdString(controller.files()->fileAt(row)->current().draft.text))}});
+                }
+                const QJsonObject state{{QStringLiteral("state"), loader->startupState()},
+                                        {QStringLiteral("repository"), loader->repositoryRoot()},
+                                        {QStringLiteral("operation"), loader->operation()},
+                                        {QStringLiteral("detail"), loader->detail()},
+                                        {QStringLiteral("stage2"), loader->stage2()},
+                                        {QStringLiteral("stage3"), loader->stage3()},
+                                        {QStringLiteral("stage2CommitId"), loader->stage2CommitId()},
+                                        {QStringLiteral("stage3CommitId"), loader->stage3CommitId()},
+                                        {QStringLiteral("workflow"), loader->workflow()},
+                                        {QStringLiteral("resolved"), controller.files()->resolvedFiles()},
+                                        {QStringLiteral("files"), files}};
+                QTextStream(stdout) << "BRANCH_TRUCE_SESSION=" << QJsonDocument(state).toJson(QJsonDocument::Compact)
+                                    << Qt::endl;
+                QTimer::singleShot(0, &application, &QCoreApplication::quit);
+            });
     }
     const auto directory = paths.isEmpty() ? QDir::currentPath() : QDir(paths.front()).absolutePath();
     const auto preferredFileId = parser.value(launchedPath);

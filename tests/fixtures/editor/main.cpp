@@ -81,6 +81,7 @@ public:
     std::optional<qsizetype> toByte(qsizetype qt) const { return lookup(qt, false); }
     std::optional<qsizetype> toQt(qsizetype byte) const { return lookup(byte, true); }
     bool valid = true;
+
 private:
     std::optional<qsizetype> lookup(qsizetype value, bool reverse) const
     {
@@ -108,19 +109,22 @@ public:
         QElapsedTimer clock;
         clock.start();
         if (failWrites) return false;
-        const auto payload = QJsonDocument(QJsonObject{
-            {QStringLiteral("text"), state.text}, {QStringLiteral("left"), state.left},
-            {QStringLiteral("right"), state.right}}).toJson(QJsonDocument::Compact);
-        const auto record = QJsonDocument(QJsonObject{
-            {QStringLiteral("version"), 1},
-            {QStringLiteral("payload"), QString::fromLatin1(payload.toBase64())},
-            {QStringLiteral("sha256"), QString::fromLatin1(
-                QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex())}}).toJson();
+        const auto payload = QJsonDocument(QJsonObject{{QStringLiteral("text"), state.text},
+                                                       {QStringLiteral("left"), state.left},
+                                                       {QStringLiteral("right"), state.right}})
+                                 .toJson(QJsonDocument::Compact);
+        const auto record =
+            QJsonDocument(QJsonObject{{QStringLiteral("version"), 1},
+                                      {QStringLiteral("payload"), QString::fromLatin1(payload.toBase64())},
+                                      {QStringLiteral("sha256"),
+                                       QString::fromLatin1(
+                                           QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex())}})
+                .toJson();
         QSaveFile file(path);
         file.setDirectWriteFallback(false);
-        if (!file.open(QIODevice::WriteOnly)
-            || !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
-            || file.write(record) != record.size() || !file.commit()) return false;
+        if (!file.open(QIODevice::WriteOnly) || !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+            || file.write(record) != record.size() || !file.commit())
+            return false;
         ++writes;
         maxNanos = qMax(maxNanos, clock.nsecsElapsed());
         return true;
@@ -133,13 +137,13 @@ public:
         const auto payload = QByteArray::fromBase64(record.value(QStringLiteral("payload")).toString().toLatin1());
         if (record.value(QStringLiteral("version")).toInt() != 1
             || record.value(QStringLiteral("sha256")).toString().toLatin1()
-                != QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex()) return std::nullopt;
+                != QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex())
+            return std::nullopt;
         const auto data = QJsonDocument::fromJson(payload).object();
-        if (!data.value(QStringLiteral("text")).isString()
-            || !data.value(QStringLiteral("left")).isString()
-            || !data.value(QStringLiteral("right")).isString()) return std::nullopt;
-        return State{data.value(QStringLiteral("text")).toString(),
-                     data.value(QStringLiteral("left")).toString(),
+        if (!data.value(QStringLiteral("text")).isString() || !data.value(QStringLiteral("left")).isString()
+            || !data.value(QStringLiteral("right")).isString())
+            return std::nullopt;
+        return State{data.value(QStringLiteral("text")).toString(), data.value(QStringLiteral("left")).toString(),
                      data.value(QStringLiteral("right")).toString()};
     }
     QString path;
@@ -183,14 +187,15 @@ public:
     {
         // QTextDocument normalizes paragraph separators and CR; conversion must
         // handle these outside this experiment rather than silently losing them.
-        if (!Positions(text).valid || text.contains(QChar(u'\r'))
-            || text.contains(QChar(0x2028)) || text.contains(QChar(0x2029))) return false;
+        if (!Positions(text).valid || text.contains(QChar(u'\r')) || text.contains(QChar(0x2028))
+            || text.contains(QChar(0x2029)))
+            return false;
         QTextDocument projection;
         projection.setPlainText(text);
         return bufferText(&projection) == text;
     }
-    bool replace(qsizetype expectedRevision, qsizetype startByte, qsizetype endByte,
-                 const QString &replacement, const QString &left, const QString &right)
+    bool replace(qsizetype expectedRevision, qsizetype startByte, qsizetype endByte, const QString &replacement,
+                 const QString &left, const QString &right)
     {
         if (expectedRevision != acknowledged || startByte > endByte) return false;
         const Positions positions(state().text);
@@ -246,6 +251,7 @@ public:
     std::optional<State> pending;
     qsizetype lastStartByte = -1;
     qsizetype lastEndByte = -1;
+
 protected:
     bool eventFilter(QObject *target, QEvent *event) override
     {
@@ -261,8 +267,14 @@ protected:
         if (pending) return true;
         if (event->type() == QEvent::KeyPress) {
             const auto *key = static_cast<QKeyEvent *>(event);
-            if (key->matches(QKeySequence::Undo)) { move(-1); return true; }
-            if (key->matches(QKeySequence::Redo)) { move(1); return true; }
+            if (key->matches(QKeySequence::Undo)) {
+                move(-1);
+                return true;
+            }
+            if (key->matches(QKeySequence::Redo)) {
+                move(1);
+                return true;
+            }
         }
         // Re-enter delivery once under a guard, then observe the complete native event.
         // An IME replacement can emit more than one internal document notification.
@@ -288,7 +300,10 @@ private slots:
             --oldEnd;
             --newEnd;
         }
-        if (oldEnd < before.text.size() && before.text.at(oldEnd).isLowSurrogate()) { ++oldEnd; ++newEnd; }
+        if (oldEnd < before.text.size() && before.text.at(oldEnd).isLowSurrogate()) {
+            ++oldEnd;
+            ++newEnd;
+        }
         const Positions positions(before.text);
         const auto first = positions.toByte(start);
         const auto last = positions.toByte(oldEnd);
@@ -310,6 +325,7 @@ private slots:
         }
         append(next);
     }
+
 private:
     void status(const QString &message) { root->setProperty("statusText", message); }
     void append(const State &next)
@@ -339,6 +355,7 @@ private:
 class DifferenceHighlight : public QSyntaxHighlighter {
 public:
     explicit DifferenceHighlight(QTextDocument *document) : QSyntaxHighlighter(document) {}
+
 protected:
     void highlightBlock(const QString &text) override
     {
@@ -351,7 +368,8 @@ protected:
         }
     }
 };
-void input(QQuickItem *editor, const QString &commit, const QString &preedit = {}, int replaceStart = 0, int replaceLength = 0)
+void input(QQuickItem *editor, const QString &commit, const QString &preedit = {}, int replaceStart = 0,
+           int replaceLength = 0)
 {
     QInputMethodEvent event(preedit, {});
     event.setCommitString(commit, replaceStart, replaceLength);
@@ -402,7 +420,8 @@ int main(int argc, char **argv)
         editor->setProperty("text", QString::fromUtf8("a b"));
         check(document->toPlainText() == QStringLiteral("a b"), "baseline toPlainText normalizes NBSP");
         check(bufferText(document) == QString::fromUtf8("a b"), "raw document preserves NBSP");
-        QTextStream(stdout) << "BASELINE bytes=11 units=7 native-undo=enabled preedit=uncommitted NBSP=normalized-by-toPlainText\n";
+        QTextStream(stdout)
+            << "BASELINE bytes=11 units=7 native-undo=enabled preedit=uncommitted NBSP=normalized-by-toPlainText\n";
     } else {
         QTemporaryDir fixtures(QStringLiteral("/tmp/truce-editor-fixtures-XXXXXX"));
         if (!fixtures.isValid()) return 2;
@@ -412,14 +431,18 @@ int main(int argc, char **argv)
             Adapter adapter(editor, view.rootObject(), recovery);
             const QString unicode = QString::fromUtf8("Aé😀é\t\nrepeat\nrepeat\nNBSP:  ZWJ:👩‍💻 RTL:ع\n");
             recovery.failWrites = true;
-            check(!adapter.initialize(unicode) && editor->property("readOnly").toBool(), "initial recovery failure blocks editing");
+            check(!adapter.initialize(unicode) && editor->property("readOnly").toBool(),
+                  "initial recovery failure blocks editing");
             recovery.failWrites = false;
             check(!adapter.initialize(QStringLiteral("CR\r\n")), "CRLF requires explicit conversion");
             check(!adapter.initialize(QString(QChar(0x2029))), "paragraph separator requires lossless projection");
             check(!adapter.initializeUtf8(QByteArray::fromHex("c080")), "malformed UTF-8 rejected");
             check(adapter.initializeUtf8(unicode.toUtf8()), "initial snapshot before enabling edits");
-            check((QFile::permissions(recovery.path) & (QFileDevice::ReadGroup | QFileDevice::WriteGroup
-                  | QFileDevice::ReadOther | QFileDevice::WriteOther)) == 0, "recovery payload owner-only");
+            check((QFile::permissions(recovery.path)
+                   & (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ReadOther
+                      | QFileDevice::WriteOther))
+                      == 0,
+                  "recovery payload owner-only");
             check(!document->isUndoRedoEnabled(), "native history disabled");
             check(bufferText(document) == unicode, "plain Unicode round trip including final LF");
             Positions positions(unicode);
@@ -452,7 +475,8 @@ int main(int argc, char **argv)
             check(adapter.acknowledged == beforeIme + 1, "cancel preedit adds no command");
             input(editor, QStringLiteral("語"), {}, -1, 1);
             check(adapter.acknowledged == beforeIme + 2, "IME replacement is one transaction");
-            check(adapter.lastStartByte == 10 && adapter.lastEndByte == 13, "IME replacement mapped in old UTF-8 bytes");
+            check(adapter.lastStartByte == 10 && adapter.lastEndByte == 13,
+                  "IME replacement mapped in old UTF-8 bytes");
             editor->setProperty("cursorPosition", 0);
             const int beforeKey = adapter.acknowledged;
             key(editor, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
@@ -468,9 +492,11 @@ int main(int argc, char **argv)
             check(QGuiApplication::clipboard()->text() == QStringLiteral("paste"), "copy uses selection");
             adapter.nativeMethod("cut");
             check(adapter.acknowledged == beforeKey + 4, "cut is one transaction");
-            check(adapter.move(-1) && adapter.move(-1) && adapter.state() == beforePaste, "undo cut and paste in order");
+            check(adapter.move(-1) && adapter.move(-1) && adapter.state() == beforePaste,
+                  "undo cut and paste in order");
             // Command-owned choices, Ignore without text change, manual edit, ordered combination.
-            const State a{QStringLiteral("first\nrepeat\nrepeat\n"), QStringLiteral("accepted"), QStringLiteral("undecided")};
+            const State a{QStringLiteral("first\nrepeat\nrepeat\n"), QStringLiteral("accepted"),
+                          QStringLiteral("undecided")};
             check(adapter.choose(a), "accept first contribution");
             State ignored = a;
             ignored.right = QStringLiteral("ignored");
@@ -482,29 +508,33 @@ int main(int argc, char **argv)
             editor->setProperty("cursorPosition", 5);
             key(editor, Qt::Key_Exclam, Qt::NoModifier, QStringLiteral("!"));
             const State manual = adapter.state();
-            check(manual.text.startsWith(QStringLiteral("first!")) && manual.left == QStringLiteral("accepted"), "manual edit retains decisions");
+            check(manual.text.startsWith(QStringLiteral("first!")) && manual.left == QStringLiteral("accepted"),
+                  "manual edit retains decisions");
             // The fixture explicitly supplies a confirmed replacement, not inferred correspondence.
             State combined = manual;
             combined.text = QStringLiteral("first!\nsecond\nrepeat\nrepeat\n");
             combined.right = QStringLiteral("accepted-after-left-confirmed");
-            check(adapter.replace(adapter.acknowledged, 7, 7, QStringLiteral("second\n"),
-                                  combined.left, combined.right), "confirmed second contribution after manual edit");
+            check(
+                adapter.replace(adapter.acknowledged, 7, 7, QStringLiteral("second\n"), combined.left, combined.right),
+                "confirmed second contribution after manual edit");
             check(adapter.state() == combined, "combination preserves manually edited first side");
             check(adapter.move(-1) && adapter.state() == manual, "undo combination restores text and choices");
             check(adapter.move(-1) && adapter.state() == a, "undo manual edit follows stack");
             check(adapter.move(1) && adapter.move(1) && adapter.state() == combined, "redo command order");
             // Partial line choices with unequal lengths and distinct explicit byte ranges.
-            const State partial{QStringLiteral("left-long\nright\n"), QStringLiteral("line-1"), QStringLiteral("line-2")};
-            check(adapter.replace(adapter.acknowledged, 0, adapter.state().text.toUtf8().size(),
-                                  partial.text, partial.left, partial.right), "explicit partial line command");
+            const State partial{QStringLiteral("left-long\nright\n"), QStringLiteral("line-1"),
+                                QStringLiteral("line-2")};
+            check(adapter.replace(adapter.acknowledged, 0, adapter.state().text.toUtf8().size(), partial.text,
+                                  partial.left, partial.right),
+                  "explicit partial line command");
             check(adapter.move(-1) && adapter.state() == combined, "partial line fixture undo");
             check(adapter.move(1) && adapter.state() == partial, "partial line fixture redo");
             // Failed history persistence must leave the redo transaction available.
             check(adapter.move(-1) && adapter.state() == combined, "undo before failed redo");
             const auto beforeRedoFailure = adapter.acknowledged;
             recovery.failWrites = true;
-            check(!adapter.move(1) && adapter.state() == combined
-                  && adapter.acknowledged == beforeRedoFailure, "failed redo preserves text choices and revision");
+            check(!adapter.move(1) && adapter.state() == combined && adapter.acknowledged == beforeRedoFailure,
+                  "failed redo preserves text choices and revision");
             check(recovery.restore() == combined, "failed redo preserves the durable snapshot");
             recovery.failWrites = false;
             check(adapter.move(1) && adapter.state() == partial, "redo remains available after persistence retry");
@@ -514,7 +544,8 @@ int main(int argc, char **argv)
             check(!adapter.replace(beforeInvalidRange, 2, 1, QStringLiteral("wrong"), a.left, a.right),
                   "reversed byte range rejected");
             check(!adapter.choose(State{QString(QChar(0x2028))}) && adapter.state() == partial
-                  && adapter.acknowledged == beforeInvalidRange, "unsupported choice leaves history and text unchanged");
+                      && adapter.acknowledged == beforeInvalidRange,
+                  "unsupported choice leaves history and text unchanged");
             // A deleted anchor is rejected by the fixture's exact revision/range guard.
             const auto anchorRevision = adapter.acknowledged;
             const auto anchorText = adapter.state().text;
@@ -524,10 +555,13 @@ int main(int argc, char **argv)
                   "deleted anchor changes captured revision");
             const auto afterDelete = adapter.state();
             check(!adapter.replace(anchorRevision, 10, 15, QStringLiteral("wrong"), a.left, a.right)
-                  && adapter.state() == afterDelete, "stale deleted anchor command rejected without fallback");
-            check(!adapter.replace(adapter.acknowledged, 0, 999, QStringLiteral("wrong"), a.left, a.right), "out-of-buffer range rejected");
+                      && adapter.state() == afterDelete,
+                  "stale deleted anchor command rejected without fallback");
+            check(!adapter.replace(adapter.acknowledged, 0, 999, QStringLiteral("wrong"), a.left, a.right),
+                  "out-of-buffer range rejected");
             // Reading aids operate on document layout/formatting, never serialized text.
-            const State reading{QStringLiteral("repeat \tword with long context repeated repeatedly for wrapping\nrepeat\n")};
+            const State reading{
+                QStringLiteral("repeat \tword with long context repeated repeatedly for wrapping\nrepeat\n")};
             check(adapter.choose(reading), "load reading fixture as a command");
             const int beforeAids = adapter.acknowledged;
             DifferenceHighlight highlighter(document);
@@ -547,7 +581,8 @@ int main(int argc, char **argv)
             view.rootObject()->setProperty("earlierVisible", false);
             check(editor->property("selectionStart").toInt() == selection, "base visibility preserves selection");
             check(!document->firstBlock().layout()->formats().isEmpty(), "word highlight has non-color underline");
-            check(document->defaultTextOption().flags().testFlag(QTextOption::ShowTabsAndSpaces), "whitespace rendering enabled");
+            check(document->defaultTextOption().flags().testFlag(QTextOption::ShowTabsAndSpaces),
+                  "whitespace rendering enabled");
             check(bufferText(document) == reading.text && adapter.acknowledged == beforeAids,
                   "reading aids preserve text decisions and history");
             source->setProperty("text", reading.text);
@@ -558,21 +593,27 @@ int main(int argc, char **argv)
             const int beforeFailure = adapter.acknowledged;
             recovery.failWrites = true;
             check(!adapter.choose(a) && !adapter.move(-1) && adapter.state() == acknowledged
-                  && adapter.acknowledged == beforeFailure, "choice and undo persistence failure leave state unchanged");
+                      && adapter.acknowledged == beforeFailure,
+                  "choice and undo persistence failure leave state unchanged");
             editor->setProperty("cursorPosition", 0);
             key(editor, Qt::Key_P, Qt::NoModifier, QStringLiteral("p"));
-            check(adapter.pending.has_value() && editor->property("readOnly").toBool(), "failed persistence freezes pending buffer");
+            check(adapter.pending.has_value() && editor->property("readOnly").toBool(),
+                  "failed persistence freezes pending buffer");
             check(view.rootObject()->property("statusText").toString().contains(QStringLiteral("not acknowledged")),
                   "pending failure visible in scene status");
-            check(adapter.acknowledged == beforeFailure && adapter.state() == acknowledged, "failed persistence does not acknowledge");
+            check(adapter.acknowledged == beforeFailure && adapter.state() == acknowledged,
+                  "failed persistence does not acknowledge");
             const Recovery reopened(recovery.path);
             check(reopened.restore() == acknowledged, "new reader restores last acknowledged text and decisions");
             const auto pendingText = bufferText(document);
             key(editor, Qt::Key_Q, Qt::NoModifier, QStringLiteral("q"));
-            check(bufferText(document) == pendingText && !adapter.move(-1) && !adapter.choose(a), "failure blocks further editing and history");
+            check(bufferText(document) == pendingText && !adapter.move(-1) && !adapter.choose(a),
+                  "failure blocks further editing and history");
             recovery.failWrites = false;
-            check(adapter.retry() && adapter.acknowledged == beforeFailure + 1, "retry acknowledges pending command exactly once");
-            check(recovery.restore() == adapter.state() && bufferText(document) == pendingText, "recovery state equals retried buffer");
+            check(adapter.retry() && adapter.acknowledged == beforeFailure + 1,
+                  "retry acknowledges pending command exactly once");
+            check(recovery.restore() == adapter.state() && bufferText(document) == pendingText,
+                  "recovery state equals retried buffer");
             const auto afterRetry = adapter.acknowledged;
             check(!adapter.retry() && adapter.acknowledged == afterRetry && !adapter.pending,
                   "repeating a successful recovery retry cannot acknowledge input twice");
@@ -585,15 +626,14 @@ int main(int argc, char **argv)
             corrupt.close();
             check(!recovery.restore(), "integrity mismatch rejected");
             QGuiApplication::clipboard()->clear();
-            QTextStream(stdout) << "RECOVERY writes=" << recovery.writes
-                                << " max-snapshot-ns=" << recovery.maxNanos
+            QTextStream(stdout) << "RECOVERY writes=" << recovery.writes << " max-snapshot-ns=" << recovery.maxNanos
                                 << " acknowledged=" << adapter.acknowledged << '\n';
         }
         check(fixtures.remove() && !QFile::exists(fixturePath), "disposable recovery fixtures removed");
         QTextStream(stdout) << "FIXTURES cleaned; clipboard cleared\n";
     }
-    QTextStream(stdout) << "RESULT assertions=" << assertions << " failures=" << failures
-                        << " qt=" << qVersion() << " platform=" << QGuiApplication::platformName() << '\n';
+    QTextStream(stdout) << "RESULT assertions=" << assertions << " failures=" << failures << " qt=" << qVersion()
+                        << " platform=" << QGuiApplication::platformName() << '\n';
     return failures == 0 ? 0 : 1;
 }
 #include "main.moc"

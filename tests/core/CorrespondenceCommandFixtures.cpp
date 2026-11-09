@@ -1,5 +1,5 @@
-#include "core/EditingCommands.h"
 #include "TestHarness.h"
+#include "core/EditingCommands.h"
 #include "fixtures/ChoiceFile.h"
 
 #include <stdexcept>
@@ -58,9 +58,9 @@ std::string show(const std::vector<Passage> &passages)
 {
     std::string text;
     for (const auto &passage : passages) {
-        text += std::to_string(static_cast<int>(passage.kind)) + ' '
-            + std::to_string(passage.source.begin) + '-' + std::to_string(passage.source.end) + ' '
-            + std::to_string(passage.result.begin) + '-' + std::to_string(passage.result.end) + '\n';
+        text += std::to_string(static_cast<int>(passage.kind)) + ' ' + std::to_string(passage.source.begin) + '-'
+            + std::to_string(passage.source.end) + ' ' + std::to_string(passage.result.begin) + '-'
+            + std::to_string(passage.result.end) + '\n';
     }
     return text;
 }
@@ -89,12 +89,11 @@ FileSession mappedFile(std::string source, std::string result)
     FileSnapshots captured;
     captured.path = "mapped.txt";
     captured.provenance.sessionId = "anchor-session";
-    captured.stage2 = SourceSnapshot{"source-object", "100644", source,
-        {source, source, {}}, "source-commit", "Source"};
+    captured.stage2 =
+        SourceSnapshot{"source-object", "100644", source, {source, source, {}}, "source-commit", "Source"};
     captured.launchResult.text = {result, result, {}};
     const auto path = captured.path;
-    return FileSession("mapped", path, {result, {{"choice", {}}}, 0},
-        Support::Supported, {}, std::move(captured));
+    return FileSession("mapped", path, {result, {{"choice", {}}}, 0}, Support::Supported, {}, std::move(captured));
 }
 
 ResultAnchor anchor(const FileSession &file, const std::string &id = "choice")
@@ -119,8 +118,7 @@ const ChoiceTarget &targetFor(const FileSession &file, SourceSide side, ChoiceSc
 void expectDecision(const FileSession &file, const ChoiceTarget &target, Decision expected)
 {
     CHECK(!target.decisions.empty());
-    for (const auto &id : target.decisions)
-        CHECK(file.current().draft.decisions.at(id) == expected);
+    for (const auto &id : target.decisions) CHECK(file.current().draft.decisions.at(id) == expected);
 }
 
 const Decision ignored{DecisionValue::Ignored, {}};
@@ -132,30 +130,30 @@ public:
     int run()
     {
         test_support::Suite suite("CorrespondenceCommandFixtures");
-        suite.run("correspondence partitions are deterministic for equal changed inserted deleted and ambiguous text", [] {
-            expectPassages("repeat\nrepeat\n", "repeat\nrepeat\n",
-                {{{0, 14}, {0, 14}, PassageKind::Equal}});
-            expectPassages("head\nold\nend\n", "head\nnew\nend\n", {
-                {{0, 5}, {0, 5}, PassageKind::Equal},
-                {{5, 9}, {5, 9}, PassageKind::Changed},
-                {{9, 13}, {9, 13}, PassageKind::Equal}});
-            expectPassages("head\nend\n", "head\ninserted\nend\n", {
-                {{0, 5}, {0, 5}, PassageKind::Equal},
-                {{5, 5}, {5, 14}, PassageKind::ResultOnly},
-                {{5, 9}, {14, 18}, PassageKind::Equal}});
-            expectPassages("head\ndeleted\nend\n", "head\nend\n", {
-                {{0, 5}, {0, 5}, PassageKind::Equal},
-                {{5, 13}, {5, 5}, PassageKind::SourceOnly},
-                {{13, 17}, {5, 9}, PassageKind::Equal}});
-            expectPassages("head\nrepeat\nrepeat\nend\n", "head\nrepeat\nend\n", {
-                {{0, 5}, {0, 5}, PassageKind::Equal},
-                {{5, 19}, {5, 12}, PassageKind::Ambiguous},
-                {{19, 23}, {12, 16}, PassageKind::Equal}});
-            expectPassages("head\none\ntwo\nend\n", "head\ntwo\none\nend\n", {
-                {{0, 5}, {0, 5}, PassageKind::Equal},
-                {{5, 13}, {5, 13}, PassageKind::Ambiguous},
-                {{13, 17}, {13, 17}, PassageKind::Equal}});
-        });
+        suite.run("correspondence partitions are deterministic for equal changed inserted deleted and ambiguous text",
+                  [] {
+                      expectPassages("repeat\nrepeat\n", "repeat\nrepeat\n", {{{0, 14}, {0, 14}, PassageKind::Equal}});
+                      expectPassages("head\nold\nend\n", "head\nnew\nend\n",
+                                     {{{0, 5}, {0, 5}, PassageKind::Equal},
+                                      {{5, 9}, {5, 9}, PassageKind::Changed},
+                                      {{9, 13}, {9, 13}, PassageKind::Equal}});
+                      expectPassages("head\nend\n", "head\ninserted\nend\n",
+                                     {{{0, 5}, {0, 5}, PassageKind::Equal},
+                                      {{5, 5}, {5, 14}, PassageKind::ResultOnly},
+                                      {{5, 9}, {14, 18}, PassageKind::Equal}});
+                      expectPassages("head\ndeleted\nend\n", "head\nend\n",
+                                     {{{0, 5}, {0, 5}, PassageKind::Equal},
+                                      {{5, 13}, {5, 5}, PassageKind::SourceOnly},
+                                      {{13, 17}, {5, 9}, PassageKind::Equal}});
+                      expectPassages("head\nrepeat\nrepeat\nend\n", "head\nrepeat\nend\n",
+                                     {{{0, 5}, {0, 5}, PassageKind::Equal},
+                                      {{5, 19}, {5, 12}, PassageKind::Ambiguous},
+                                      {{19, 23}, {12, 16}, PassageKind::Equal}});
+                      expectPassages("head\none\ntwo\nend\n", "head\ntwo\none\nend\n",
+                                     {{{0, 5}, {0, 5}, PassageKind::Equal},
+                                      {{5, 13}, {5, 13}, PassageKind::Ambiguous},
+                                      {{13, 17}, {13, 17}, PassageKind::Equal}});
+                  });
         suite.run("repeated text keeps a selected occurrence and manual edits transform that anchor", [] {
             const std::string source = "repeat\nmiddle\nrepeat\n";
             const std::string result = "manual prefix\n" + source;
@@ -168,7 +166,7 @@ public:
             CHECK(anchor(file).state == AnchorState::Mapped);
             CHECK(anchor(file).result == ByteRange{28, 35});
             CHECK(file.replaceMapped(1, anchor(file), "selected\n", Decision{DecisionValue::Accepted, 1})
-                == Transition::Applied);
+                  == Transition::Applied);
             CHECK(file.current().draft.text == "manual prefix\nrepeat\nmiddle\nselected\n");
             CHECK(file.current().draft.decisions.at("choice") == Decision{DecisionValue::Accepted, 1});
 
@@ -180,17 +178,18 @@ public:
             const std::string prefix = "manual \xc3\xa9\n";
             const std::string suffix = "unrelated manual tail\n";
             CHECK(edited.editResult(1, {{0, 0}, prefix}) == Transition::Applied);
-            CHECK(edited.editResult(edited.current().id, {{prefix.size(), prefix.size() + 5}, {}}) == Transition::Applied);
+            CHECK(edited.editResult(edited.current().id, {{prefix.size(), prefix.size() + 5}, {}})
+                  == Transition::Applied);
             const auto end = edited.current().draft.text.size();
             CHECK(edited.editResult(edited.current().id, {{end, end}, suffix}) == Transition::Applied);
             const auto current = anchor(edited);
             CHECK(current.result == ByteRange{prefix.size(), prefix.size() + 5} && !current.manualOverlap);
             const auto before = observe(edited);
             CHECK(edited.replaceMapped(edited.current().id, issued, "stale", Decision{DecisionValue::Accepted, 1}, true)
-                == Transition::StaleRevision);
+                  == Transition::StaleRevision);
             expectUnchanged(edited, before);
             CHECK(edited.replaceMapped(edited.current().id, current, "accepted\n", Decision{DecisionValue::Accepted, 1})
-                == Transition::Applied);
+                  == Transition::Applied);
             const auto chosen = edited.current().draft;
             CHECK(chosen.text == prefix + "accepted\nright\nend\n" + suffix);
             CHECK(chosen.decisions.at("choice") == Decision{DecisionValue::Accepted, 1});
@@ -208,19 +207,20 @@ public:
             CHECK(*edited.snapshots() == *mappedFile(same, same).snapshots());
         });
         suite.run("stale ambiguous and cancelled commands leave text and decisions untouched", [] {
-            auto ambiguous = test_support::choiceFile("head\nrepeat\nrepeat\ntail\n",
-                "head\nchanged\nrepeat\ntail\n", "head\nrepeat\ntail\n");
+            auto ambiguous = test_support::choiceFile("head\nrepeat\nrepeat\ntail\n", "head\nchanged\nrepeat\ntail\n",
+                                                      "head\nrepeat\ntail\n");
             const auto ambiguousSources = *ambiguous.snapshots();
             int repeats = 0;
             for (const auto &target : ambiguous.choices()) {
                 if (target.scope != ChoiceScope::Line || target.source.side != SourceSide::Stage2) continue;
                 const auto text = std::string_view(ambiguous.snapshots()->stage2->worktree.utf8);
-                const auto line = text.substr(target.source.range.begin,
-                    target.source.range.end - target.source.range.begin);
+                const auto line =
+                    text.substr(target.source.range.begin, target.source.range.end - target.source.range.begin);
                 if (line != "repeat\n") continue;
                 ++repeats;
                 const auto before = observe(ambiguous);
-                const auto rejected = previewChoice(ambiguous, before.id, target.source.contributionId, ChoiceAction::Accept);
+                const auto rejected =
+                    previewChoice(ambiguous, before.id, target.source.contributionId, ChoiceAction::Accept);
                 CHECK(rejected.state == Transition::AmbiguousTarget);
                 CHECK(applyChoice(ambiguous, rejected, true) == Transition::AmbiguousTarget);
                 expectUnchanged(ambiguous, before);
@@ -247,8 +247,8 @@ public:
             auto combination = test_support::combinationFile(ChoiceScope::Line);
             CHECK(combination.editResult(1, {{0, 0}, prefix}) == Transition::Applied);
             const auto first = targetFor(combination, SourceSide::Stage2, ChoiceScope::Line, "left first\n");
-            const auto combined = previewChoice(combination, combination.current().id,
-                first.source.contributionId, ChoiceAction::CombineRightFirst);
+            const auto combined = previewChoice(combination, combination.current().id, first.source.contributionId,
+                                                ChoiceAction::CombineRightFirst);
             const auto combinedBefore = observe(combination);
             CHECK(combined.state == Transition::ConfirmationRequired);
             CHECK(combined.replacement == "right first\nleft first\n");
@@ -295,8 +295,8 @@ public:
             CHECK(file.current().draft.text == prefix + original);
             steps.push_back(file.current().draft);
 
-            const auto acceptPresent = previewChoice(file, file.current().id,
-                leftFirst.source.contributionId, ChoiceAction::Accept);
+            const auto acceptPresent =
+                previewChoice(file, file.current().id, leftFirst.source.contributionId, ChoiceAction::Accept);
             CHECK(acceptPresent.state == Transition::Applied);
             CHECK(applyChoice(file, acceptPresent) == Transition::Applied);
             CHECK(file.current().draft.text == prefix + original);
@@ -308,8 +308,8 @@ public:
             expectDecision(file, rightLater, undecided);
             steps.push_back(file.current().draft);
 
-            const auto acceptOther = previewChoice(file, file.current().id,
-                rightLater.source.contributionId, ChoiceAction::Accept);
+            const auto acceptOther =
+                previewChoice(file, file.current().id, rightLater.source.contributionId, ChoiceAction::Accept);
             CHECK(acceptOther.state == Transition::ConfirmationRequired);
             CHECK(acceptOther.replacement == "right later\n");
             CHECK(applyChoice(file, acceptOther) == Transition::ConfirmationRequired);
@@ -324,8 +324,8 @@ public:
             expectDecision(file, rightSecond, undecided);
             steps.push_back(file.current().draft);
 
-            const auto ignore = previewChoice(file, file.current().id,
-                leftSecond.source.contributionId, ChoiceAction::Ignore);
+            const auto ignore =
+                previewChoice(file, file.current().id, leftSecond.source.contributionId, ChoiceAction::Ignore);
             CHECK(ignore.state == Transition::Applied);
             CHECK(applyChoice(file, ignore) == Transition::Applied);
             CHECK(file.current().draft.text == steps.back().text);
@@ -358,17 +358,21 @@ public:
             };
             // Each line maps to the result line at its own index, and replacing
             // that launch text needs confirmation. The section keeps the whole block.
-            for (const auto &[target, expected] : {std::pair{leftOne, "base one\n"}, {leftTwo, "base two\n"},
-                     {leftThree, "base three\n"}, {rightOne, "base one\n"}, {rightTwo, "base two\n"},
-                     {rightThree, "base three\n"}}) {
+            for (const auto &[target, expected] : {std::pair{leftOne, "base one\n"},
+                                                   {leftTwo, "base two\n"},
+                                                   {leftThree, "base three\n"},
+                                                   {rightOne, "base one\n"},
+                                                   {rightTwo, "base two\n"},
+                                                   {rightThree, "base three\n"}}) {
                 CHECK(mapped(target) == expected);
                 CHECK(anchor(file, target.source.contributionId).manualOverlap);
             }
             CHECK(mapped(targetFor(file, SourceSide::Stage2, ChoiceScope::Section, "left one\nleft two\nleft three\n"))
-                == "base one\nbase two\nbase three\n");
+                  == "base one\nbase two\nbase three\n");
             std::vector<Draft> steps{file.current().draft};
 
-            const auto acceptLeft = previewChoice(file, file.current().id, leftTwo.source.contributionId, ChoiceAction::Accept);
+            const auto acceptLeft =
+                previewChoice(file, file.current().id, leftTwo.source.contributionId, ChoiceAction::Accept);
             CHECK(acceptLeft.state == Transition::ConfirmationRequired);
             CHECK(acceptLeft.before == "base two\n" && acceptLeft.replacement == "left two\n");
             CHECK(applyChoice(file, acceptLeft) == Transition::ConfirmationRequired);
@@ -376,12 +380,14 @@ public:
             CHECK(applyChoice(file, acceptLeft, true) == Transition::Applied);
             CHECK(file.current().draft.text == "header\nbase one\nleft two\nbase three\ntail\n");
             expectDecision(file, leftTwo, Decision{DecisionValue::Accepted, {}});
-            for (const auto &other : {leftOne, leftThree, rightOne, rightTwo, rightThree}) expectDecision(file, other, undecided);
+            for (const auto &other : {leftOne, leftThree, rightOne, rightTwo, rightThree})
+                expectDecision(file, other, undecided);
             // The competing line follows the text that replaced its own.
             CHECK(mapped(rightTwo) == "left two\n");
             steps.push_back(file.current().draft);
 
-            const auto acceptRight = previewChoice(file, file.current().id, rightThree.source.contributionId, ChoiceAction::Accept);
+            const auto acceptRight =
+                previewChoice(file, file.current().id, rightThree.source.contributionId, ChoiceAction::Accept);
             CHECK(acceptRight.state == Transition::ConfirmationRequired);
             CHECK(acceptRight.before == "base three\n" && acceptRight.replacement == "right three\n");
             CHECK(applyChoice(file, acceptRight, true) == Transition::Applied);
@@ -391,7 +397,8 @@ public:
             for (const auto &other : {leftOne, leftThree, rightOne, rightTwo}) expectDecision(file, other, undecided);
             steps.push_back(file.current().draft);
 
-            const auto ignore = previewChoice(file, file.current().id, leftOne.source.contributionId, ChoiceAction::Ignore);
+            const auto ignore =
+                previewChoice(file, file.current().id, leftOne.source.contributionId, ChoiceAction::Ignore);
             CHECK(ignore.state == Transition::Applied);
             CHECK(applyChoice(file, ignore) == Transition::Applied);
             CHECK(file.current().draft.text == steps.back().text);
@@ -406,7 +413,7 @@ public:
         });
         suite.run("surplus lines insert at the end of an uneven block and the last line keeps extra result lines", [] {
             auto file = test_support::commonVersionFile("header\nl1\nl2\nl3\nl4\ntail\n", "header\nr1\nr2\ntail\n",
-                "header\nb1\nb2\nb3\ntail\n");
+                                                        "header\nb1\nb2\nb3\ntail\n");
             const auto sources = *file.snapshots();
             const auto l1 = targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "l1\n");
             const auto l2 = targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "l2\n");
@@ -436,7 +443,8 @@ public:
             std::vector<Draft> steps{file.current().draft};
 
             for (const auto *target : {&l1, &r2}) {
-                const auto preview = previewChoice(file, file.current().id, target->source.contributionId, ChoiceAction::Accept);
+                const auto preview =
+                    previewChoice(file, file.current().id, target->source.contributionId, ChoiceAction::Accept);
                 CHECK(preview.state == Transition::ConfirmationRequired);
                 CHECK(applyChoice(file, preview, true) == Transition::Applied);
                 steps.push_back(file.current().draft);
@@ -457,26 +465,33 @@ public:
             CHECK(*file.snapshots() == sources);
 
             // Several surplus lines accepted in source order keep that order.
-            auto surplus = test_support::commonVersionFile("header\nl1\nl2\nl3\ntail\n", "header\nr1\ntail\n", "header\nb1\ntail\n");
+            auto surplus = test_support::commonVersionFile("header\nl1\nl2\nl3\ntail\n", "header\nr1\ntail\n",
+                                                           "header\nb1\ntail\n");
             for (const auto *text : {"l2\n", "l3\n"}) {
                 const auto target = targetFor(surplus, SourceSide::Stage2, ChoiceScope::Line, text);
-                const auto preview = previewChoice(surplus, surplus.current().id, target.source.contributionId, ChoiceAction::Accept);
+                const auto preview =
+                    previewChoice(surplus, surplus.current().id, target.source.contributionId, ChoiceAction::Accept);
                 CHECK(preview.state == Transition::Applied);
                 CHECK(applyChoice(surplus, preview) == Transition::Applied);
             }
             CHECK(surplus.current().draft.text == "header\nb1\nl2\nl3\ntail\n");
         });
         suite.run("repeated identical lines in a multi-line conflict stay unmapped with the existing reason", [] {
-            auto file = test_support::commonVersionFile("head\nrepeat\nrepeat\nmid\nleft one\nleft two\ntail\n",
-                "head\nright\ntail\n", "head\nrepeat\nmid\nbase one\nbase two\ntail\n");
+            auto file =
+                test_support::commonVersionFile("head\nrepeat\nrepeat\nmid\nleft one\nleft two\ntail\n",
+                                                "head\nright\ntail\n", "head\nrepeat\nmid\nbase one\nbase two\ntail\n");
             const auto sources = *file.snapshots();
             const auto text = std::string_view(file.snapshots()->stage2->worktree.utf8);
             const ChoiceTarget *section = nullptr;
             int repeats = 0;
             for (const auto &target : file.choices()) {
                 if (target.source.side != SourceSide::Stage2) continue;
-                if (target.scope == ChoiceScope::Section) { section = &target; continue; }
-                if (text.substr(target.source.range.begin, target.source.range.end - target.source.range.begin) != "repeat\n")
+                if (target.scope == ChoiceScope::Section) {
+                    section = &target;
+                    continue;
+                }
+                if (text.substr(target.source.range.begin, target.source.range.end - target.source.range.begin)
+                    != "repeat\n")
                     continue;
                 ++repeats;
                 CHECK(anchor(file, target.source.contributionId).state == AnchorState::Ambiguous);
@@ -494,10 +509,13 @@ public:
             CHECK(section != nullptr && section->decisions.size() == 5);
             const auto mid = targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "mid\n");
             CHECK(anchor(file, mid.source.contributionId).state == AnchorState::Mapped);
-            CHECK(anchor(file, targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "left one\n").source.contributionId).state
+            CHECK(
+                anchor(file, targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "left one\n").source.contributionId)
+                    .state
                 == AnchorState::Mapped);
             const auto leftTwo = targetFor(file, SourceSide::Stage2, ChoiceScope::Line, "left two\n");
-            const auto accept = previewChoice(file, file.current().id, leftTwo.source.contributionId, ChoiceAction::Accept);
+            const auto accept =
+                previewChoice(file, file.current().id, leftTwo.source.contributionId, ChoiceAction::Accept);
             CHECK(accept.state == Transition::ConfirmationRequired && accept.before == "base two\n");
             CHECK(applyChoice(file, accept, true) == Transition::Applied);
             CHECK(file.current().draft.text == "head\nrepeat\nmid\nbase one\nleft two\ntail\n");
@@ -516,8 +534,8 @@ public:
             std::vector<Draft> steps{file.current().draft};
             CHECK(file.editResult(1, {{0, 0}, prefix}) == Transition::Applied);
             steps.push_back(file.current().draft);
-            const auto ignore = previewChoice(file, file.current().id,
-                leftLater.source.contributionId, ChoiceAction::Ignore);
+            const auto ignore =
+                previewChoice(file, file.current().id, leftLater.source.contributionId, ChoiceAction::Ignore);
             CHECK(ignore.state == Transition::Applied);
             CHECK(applyChoice(file, ignore) == Transition::Applied);
             CHECK(file.current().draft.text == prefix + "header\nleft first\nbridge\nleft later\ntail\n");
@@ -527,8 +545,8 @@ public:
             expectDecision(file, rightFirst, undecided);
             steps.push_back(file.current().draft);
 
-            const auto preview = previewChoice(file, file.current().id,
-                leftFirst.source.contributionId, ChoiceAction::CombineRightFirst);
+            const auto preview = previewChoice(file, file.current().id, leftFirst.source.contributionId,
+                                               ChoiceAction::CombineRightFirst);
             CHECK(preview.state == Transition::ConfirmationRequired);
             CHECK(preview.replacement == "right first\nleft first\n");
             CHECK(preview.sourceOrder.size() == 2);
@@ -537,8 +555,7 @@ public:
             CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired);
             expectCurrent(file, steps.back());
             CHECK(applyChoice(file, preview, true) == Transition::Applied);
-            CHECK(file.current().draft.text
-                == prefix + "header\nright first\nleft first\nbridge\nleft later\ntail\n");
+            CHECK(file.current().draft.text == prefix + "header\nright first\nleft first\nbridge\nleft later\ntail\n");
             expectDecision(file, rightFirst, Decision{DecisionValue::Accepted, 1});
             expectDecision(file, leftFirst, Decision{DecisionValue::Accepted, 2});
             expectDecision(file, leftLater, ignored);
@@ -550,7 +567,8 @@ public:
         suite.run("non-conflicting batches and whole-file replacement undo and redo in action order", [] {
             const std::string prefix = "manual prefix\n";
             const std::string earlier = "header\nbase left\nbridge one\nbase right\nbridge two\nbase conflict\ntail\n";
-            const std::string batched = prefix + "header\nleft only\nbridge one\nright only\nbridge two\nbase conflict\ntail\n";
+            const std::string batched =
+                prefix + "header\nleft only\nbridge one\nright only\nbridge two\nbase conflict\ntail\n";
             auto file = test_support::batchFile();
             const auto sources = *file.snapshots();
             const auto conflict = targetFor(file, SourceSide::Stage2, ChoiceScope::Section, "left conflict\n");
@@ -560,8 +578,8 @@ public:
             CHECK(file.current().draft.text == prefix + earlier);
             steps.push_back(file.current().draft);
 
-            const auto ignore = previewChoice(file, file.current().id,
-                conflict.source.contributionId, ChoiceAction::Ignore);
+            const auto ignore =
+                previewChoice(file, file.current().id, conflict.source.contributionId, ChoiceAction::Ignore);
             CHECK(ignore.state == Transition::Applied);
             CHECK(applyChoice(file, ignore) == Transition::Applied);
             CHECK(file.current().draft.text == steps.back().text);
@@ -577,8 +595,10 @@ public:
             CHECK(applyNonConflicting(file, batch, true) == Transition::Applied);
             CHECK(file.current().draft.text == batched);
             for (const auto &[id, value] : file.current().draft.decisions) {
-                if (batch.command.decisions.contains(id)) CHECK(value == Decision{DecisionValue::Accepted, {}});
-                else CHECK(value == ignoredDraft.decisions.at(id));
+                if (batch.command.decisions.contains(id))
+                    CHECK(value == Decision{DecisionValue::Accepted, {}});
+                else
+                    CHECK(value == ignoredDraft.decisions.at(id));
             }
             expectDecision(file, conflict, ignored);
             steps.push_back(file.current().draft);
@@ -588,10 +608,12 @@ public:
             CHECK(whole.replacement == file.snapshots()->stage3->worktree.utf8);
             CHECK(applyWholeFile(file, whole, true) == Transition::Applied);
             CHECK(file.current().draft.text == file.snapshots()->stage3->worktree.utf8);
-            CHECK(file.current().draft.text == "header\nbase left\nbridge one\nright only\nbridge two\nright conflict\ntail\n");
+            CHECK(file.current().draft.text
+                  == "header\nbase left\nbridge one\nright only\nbridge two\nright conflict\ntail\n");
             for (const auto &contribution : whole.contributions) {
-                const auto expected = Decision{contribution.source.side == SourceSide::Stage3
-                    ? DecisionValue::Accepted : DecisionValue::Ignored, {}};
+                const auto expected = Decision{contribution.source.side == SourceSide::Stage3 ? DecisionValue::Accepted
+                                                                                              : DecisionValue::Ignored,
+                                               {}};
                 CHECK(contribution.after == expected);
                 CHECK(file.current().draft.decisions.at(contribution.source.contributionId) == expected);
             }
@@ -613,7 +635,4 @@ public:
     }
 };
 
-int main()
-{
-    return CorrespondenceCommandFixtures{}.run();
-}
+int main() { return CorrespondenceCommandFixtures{}.run(); }

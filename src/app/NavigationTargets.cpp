@@ -52,9 +52,11 @@ std::vector<ScopeTarget> differenceTargets(const FileSession &file)
         if (left.byteBegin != right.byteBegin) return left.byteBegin < right.byteBegin;
         return left.byteEnd < right.byteEnd;
     });
-    targets.erase(std::unique(targets.begin(), targets.end(), [](const auto &left, const auto &right) {
-        return left.byteBegin == right.byteBegin && left.byteEnd == right.byteEnd;
-    }), targets.end());
+    targets.erase(std::unique(targets.begin(), targets.end(),
+                              [](const auto &left, const auto &right) {
+                                  return left.byteBegin == right.byteBegin && left.byteEnd == right.byteEnd;
+                              }),
+                  targets.end());
     return targets;
 }
 
@@ -80,11 +82,11 @@ std::vector<ScopeTarget> undecidedTargets(const FileSession &file)
             && anchor->result->end >= anchor->result->begin && anchor->result->end <= result.size()
             && utf16Offset(result, anchor->result->begin) >= 0 && utf16Offset(result, anchor->result->end) >= 0;
         if (mapped) {
-            targets.push_back({anchor->result->begin, anchor->result->end, true,
-                target.source.contributionId, target.source.side});
+            targets.push_back(
+                {anchor->result->begin, anchor->result->end, true, target.source.contributionId, target.source.side});
         } else {
-            targets.push_back({target.source.range.begin, target.source.range.end, false,
-                target.source.contributionId, target.source.side});
+            targets.push_back({target.source.range.begin, target.source.range.end, false, target.source.contributionId,
+                               target.source.side});
         }
     }
     std::sort(targets.begin(), targets.end(), [](const auto &left, const auto &right) {

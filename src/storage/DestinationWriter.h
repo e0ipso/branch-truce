@@ -10,9 +10,18 @@
 
 namespace branch_truce::storage {
 enum class DestinationFailure {
-    None, InvalidPath, Symlink, NotRegularFile, PermissionDenied, PathChanged,
-    ContentChanged, UnsupportedMetadata, UnsupportedFilesystem, IoError,
-    Cancelled, CleanupFailure
+    None,
+    InvalidPath,
+    Symlink,
+    NotRegularFile,
+    PermissionDenied,
+    PathChanged,
+    ContentChanged,
+    UnsupportedMetadata,
+    UnsupportedFilesystem,
+    IoError,
+    Cancelled,
+    CleanupFailure
 };
 enum class PublicationState { Unchanged, Published, Uncertain };
 struct DestinationCapture;
@@ -27,12 +36,13 @@ public:
     [[nodiscard]] const QByteArray &path() const;
     [[nodiscard]] const QByteArray &bytes() const;
     [[nodiscard]] SnapshotFileIdentity identity() const;
+
 private:
     explicit DestinationSnapshot(std::shared_ptr<const State> state);
     std::shared_ptr<const State> d;
     friend DestinationCapture captureDestination(const QString &, const QByteArray &);
-    friend PublicationResult publishDestination(const DestinationSnapshot &, const QByteArray &,
-        const QByteArray &, const std::function<bool()> &);
+    friend PublicationResult publishDestination(const DestinationSnapshot &, const QByteArray &, const QByteArray &,
+                                                const std::function<bool()> &);
 };
 struct DestinationCapture {
     std::optional<DestinationSnapshot> destination;
@@ -62,6 +72,6 @@ struct PublicationResult {
 // beginMutation is mandatory and runs before creating any temporary entry.
 // No draft buffer is consumed or changed. Failures never authorize staging.
 [[nodiscard]] PublicationResult publishDestination(const DestinationSnapshot &expected,
-    const QByteArray &serializedBytes, const QByteArray &agreedGitMode,
-    const std::function<bool()> &beginMutation);
+                                                   const QByteArray &serializedBytes, const QByteArray &agreedGitMode,
+                                                   const std::function<bool()> &beginMutation);
 } // namespace branch_truce::storage

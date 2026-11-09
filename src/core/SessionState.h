@@ -90,18 +90,45 @@ struct StagedResult {
 // until the user confirms it with loadLargeFile().
 enum class Support { Supported, OutsideApp, Unreadable, LargeFile };
 enum class Transition {
-    Applied, NoChange, StaleRevision, ConfirmationRequired, Blocked, InvalidOutcome,
-    InvalidAnchor, AmbiguousTarget
+    Applied,
+    NoChange,
+    StaleRevision,
+    ConfirmationRequired,
+    Blocked,
+    InvalidOutcome,
+    InvalidAnchor,
+    AmbiguousTarget
 };
 enum class Blocker {
-    OutsideApp, Unreadable, LargeFile, UnresolvedMarkers, Undecided, UnsavedDraft,
-    ReviewNeeded, WriteRequired, StageRequired, EarlierStagedResult,
-    CheckpointFailed, WriteFailed, StageFailed, UncertainOutcome
+    OutsideApp,
+    Unreadable,
+    LargeFile,
+    UnresolvedMarkers,
+    Undecided,
+    UnsavedDraft,
+    ReviewNeeded,
+    WriteRequired,
+    StageRequired,
+    EarlierStagedResult,
+    CheckpointFailed,
+    WriteFailed,
+    StageFailed,
+    UncertainOutcome
 };
 enum class FileStatus {
-    OutsideApp, Unreadable, LargeFile, OutcomeUncertain, CheckpointFailed, WriteFailed,
-    StageFailed, EarlierStaged, Resolved, WrittenUnresolved, SavedDraft,
-    Undecided, ReviewNeeded
+    OutsideApp,
+    Unreadable,
+    LargeFile,
+    OutcomeUncertain,
+    CheckpointFailed,
+    WriteFailed,
+    StageFailed,
+    EarlierStaged,
+    Resolved,
+    WrittenUnresolved,
+    SavedDraft,
+    Undecided,
+    ReviewNeeded
 };
 
 struct FileFacts {
@@ -123,9 +150,8 @@ struct FileFacts {
 // must come from adapters that have persisted/verified the exact revision.
 class FileSession {
 public:
-    FileSession(std::string id, std::string path, Draft initial,
-                Support support = Support::Supported, std::string supportDetail = {},
-                std::optional<FileSnapshots> snapshots = std::nullopt,
+    FileSession(std::string id, std::string path, Draft initial, Support support = Support::Supported,
+                std::string supportDetail = {}, std::optional<FileSnapshots> snapshots = std::nullopt,
                 bool initializeChoices = false);
 
     [[nodiscard]] const std::string &id() const noexcept { return id_; }
@@ -136,9 +162,7 @@ public:
     // Null for sessions without an admitted source/result capture.
     [[nodiscard]] const FileSnapshots *snapshots() const noexcept { return snapshots_.get(); }
     [[nodiscard]] const Revision &current() const { return revisions_.at(current_); }
-    [[nodiscard]] const CorrespondenceMap *correspondence() const noexcept {
-        return current().correspondence.get();
-    }
+    [[nodiscard]] const CorrespondenceMap *correspondence() const noexcept { return current().correspondence.get(); }
     // Conflict-marker blocks and orphan marker lines in the current result.
     // A marker-like line the correspondence maps to identical text in a
     // captured side, or in the earlier version inside a diff3 base region, is
@@ -148,7 +172,8 @@ public:
     // recognized block or orphan marker is one stop, in result byte order.
     // Markerless drafts retain their decisions without inventing conflicts.
     [[nodiscard]] std::vector<ByteRange> conflictRegions() const;
-    [[nodiscard]] std::size_t conflictCount() const noexcept {
+    [[nodiscard]] std::size_t conflictCount() const noexcept
+    {
         return support_ == Support::Supported ? current().draft.unresolvedMarkers : 0;
     }
     // Blocks in the current result tied to the choice sections they enclose,
@@ -164,7 +189,10 @@ public:
     [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return reviewed_; }
     [[nodiscard]] const std::optional<Revision> &written() const noexcept { return written_; }
     [[nodiscard]] const std::optional<StagedResult> &staged() const noexcept { return staged_; }
-    [[nodiscard]] const std::optional<OperationOutcome> &checkpointOutcome() const noexcept { return checkpointOutcome_; }
+    [[nodiscard]] const std::optional<OperationOutcome> &checkpointOutcome() const noexcept
+    {
+        return checkpointOutcome_;
+    }
     [[nodiscard]] const std::optional<OperationOutcome> &writeOutcome() const noexcept { return writeOutcome_; }
     [[nodiscard]] const std::optional<OperationOutcome> &stageOutcome() const noexcept { return stageOutcome_; }
     [[nodiscard]] bool canUndo() const noexcept { return cursor_ > 0; }
@@ -185,9 +213,8 @@ public:
     Transition applyCommand(const EditingCommand &command, bool confirmReplacement = false);
     // A preview uses this exact anchor and revision. Passing confirmation after
     // either changes cannot authorize a different replacement.
-    Transition replaceMapped(RevisionId expected, const ResultAnchor &anchor,
-                             std::string replacement, std::optional<Decision> decision = {},
-                             bool confirmManual = false);
+    Transition replaceMapped(RevisionId expected, const ResultAnchor &anchor, std::string replacement,
+                             std::optional<Decision> decision = {}, bool confirmManual = false);
     Transition undo(RevisionId expected);
     Transition redo(RevisionId expected);
     Transition discardToCheckpoint(RevisionId expected);
@@ -200,8 +227,7 @@ public:
     Transition beginMarkResolved(RevisionId expected, bool confirmUndecided = false);
     Transition recordCheckpoint(RevisionId revision, Outcome outcome, std::string detail = {});
     Transition recordWrite(RevisionId revision, Outcome outcome, std::string detail = {});
-    Transition recordStage(RevisionId revision, Outcome outcome,
-                           std::string objectId = {}, std::string mode = {},
+    Transition recordStage(RevisionId revision, Outcome outcome, std::string objectId = {}, std::string mode = {},
                            std::string detail = {});
     Transition setSupport(Support support, std::string detail = {});
     // Opens a LargeFile session as it would have opened below the line
@@ -210,8 +236,7 @@ public:
 
 private:
     void open(RevisionId id, Draft initial, bool correspond, bool initializeChoices);
-    RevisionId advance(const Draft &draft,
-                       std::shared_ptr<const CorrespondenceMap> correspondence = {});
+    RevisionId advance(const Draft &draft, std::shared_ptr<const CorrespondenceMap> correspondence = {});
     RevisionId restore(const Revision &revision);
     void appendHistory(RevisionId revision);
     [[nodiscard]] std::vector<MarkerSection> markerSections(const std::string &text,
@@ -223,9 +248,8 @@ private:
         std::string anchor;
         std::optional<std::vector<KeptSpan>> rebuilt;
     };
-    [[nodiscard]] std::vector<MarkerEdit> markerEdits(
-        const Draft &draft, const CorrespondenceMap &mapping,
-        const std::map<std::string, Decision> &decided) const;
+    [[nodiscard]] std::vector<MarkerEdit> markerEdits(const Draft &draft, const CorrespondenceMap &mapping,
+                                                      const std::map<std::string, Decision> &decided) const;
     std::string id_;
     std::string path_;
     Support support_;

@@ -55,8 +55,8 @@ void installThemedApplicationIcon(const QString &dataHome)
 // because the app's fallback theme and the action icons depend on it.
 void isolateIconThemes(const QString &dataDirs)
 {
-    const auto breeze = QStandardPaths::locate(QStandardPaths::GenericDataLocation, "icons/breeze",
-                                               QStandardPaths::LocateDirectory);
+    const auto breeze =
+        QStandardPaths::locate(QStandardPaths::GenericDataLocation, "icons/breeze", QStandardPaths::LocateDirectory);
     CHECK(!breeze.isEmpty());
     CHECK(QDir().mkpath(dataDirs + "/icons"));
     CHECK(QFile::link(breeze, dataDirs + "/icons/breeze"));
@@ -100,7 +100,10 @@ public:
         QByteArray record;
         int records = 0;
         for (const auto &line : process.readAllStandardOutput().split('\n')) {
-            if (line.startsWith("BRANCH_TRUCE_APPEARANCE=")) { record = line.mid(24); ++records; }
+            if (line.startsWith("BRANCH_TRUCE_APPEARANCE=")) {
+                record = line.mid(24);
+                ++records;
+            }
         }
         CHECK(records == 1);
         QJsonParseError error;
@@ -130,10 +133,14 @@ public:
         binary = directory.path() + "/branch-truce";
         CHECK(QFile::copy(application, binary));
         const std::pair<const char *, QLibraryInfo::LibraryPath> paths[] = {
-            {"Prefix", QLibraryInfo::PrefixPath}, {"Libraries", QLibraryInfo::LibrariesPath},
-            {"LibraryExecutables", QLibraryInfo::LibraryExecutablesPath}, {"Binaries", QLibraryInfo::BinariesPath},
-            {"Plugins", QLibraryInfo::PluginsPath}, {"ArchData", QLibraryInfo::ArchDataPath},
-            {"Data", QLibraryInfo::DataPath}, {"Translations", QLibraryInfo::TranslationsPath}};
+            {"Prefix", QLibraryInfo::PrefixPath},
+            {"Libraries", QLibraryInfo::LibrariesPath},
+            {"LibraryExecutables", QLibraryInfo::LibraryExecutablesPath},
+            {"Binaries", QLibraryInfo::BinariesPath},
+            {"Plugins", QLibraryInfo::PluginsPath},
+            {"ArchData", QLibraryInfo::ArchDataPath},
+            {"Data", QLibraryInfo::DataPath},
+            {"Translations", QLibraryInfo::TranslationsPath}};
         QByteArray conf = "[Paths]\n";
         for (const auto &[key, path] : paths) conf += QByteArray(key) + '=' + QLibraryInfo::path(path).toUtf8() + '\n';
         conf += "QmlImports=" + (directory.path() + "/qml").toUtf8() + '\n';

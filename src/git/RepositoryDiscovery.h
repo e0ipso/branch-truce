@@ -14,11 +14,30 @@ public:
     [[nodiscard]] QList<QByteArray> arguments() const;
     // false means the structured result is complete, including a rejection.
     bool consume(const QByteArray &output, int exitCode);
+
 private:
-    enum class Step { GitDirectory, Index, Head, Commit, MergeBase, ReplayAncestor,
-                      OntoAncestor, Tree, SourceTree, FinalIndex, FinalHead, Names, Done };
-    struct Commit { QList<QByteArray> parents; };
-    struct TreeEntry { QByteArray mode; QByteArray objectId; };
+    enum class Step {
+        GitDirectory,
+        Index,
+        Head,
+        Commit,
+        MergeBase,
+        ReplayAncestor,
+        OntoAncestor,
+        Tree,
+        SourceTree,
+        FinalIndex,
+        FinalHead,
+        Names,
+        Done
+    };
+    struct Commit {
+        QList<QByteArray> parents;
+    };
+    struct TreeEntry {
+        QByteArray mode;
+        QByteArray objectId;
+    };
     bool captureMetadata(QMap<QString, QByteArray> &snapshot);
     bool identifyOperation();
     bool readId(const QString &name, QByteArray &value, bool required = true);

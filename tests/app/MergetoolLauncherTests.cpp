@@ -1,10 +1,10 @@
+#include "TestHarness.h"
 #include "app/ApplicationController.h"
 #include "fixtures/GitOnPath.h"
+#include "fixtures/mergetool/GitGate.h"
 #include "mergetool/MergetoolLauncher.h"
 #include "mergetool/MergetoolProtocol.h"
 #include "recovery/RecoveryRestore.h"
-#include "fixtures/mergetool/GitGate.h"
-#include "TestHarness.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -47,8 +47,8 @@ extern "C" int __real_getsockopt(int descriptor, int level, int name, void *valu
 extern "C" int __wrap_getsockopt(int descriptor, int level, int name, void *value, socklen_t *size)
 {
     const int result = __real_getsockopt(descriptor, level, name, value, size);
-    if (result == 0 && peer_credentials::foreign && level == SOL_SOCKET && name == SO_PEERCRED
-        && value != nullptr && size != nullptr && *size == sizeof(ucred))
+    if (result == 0 && peer_credentials::foreign && level == SOL_SOCKET && name == SO_PEERCRED && value != nullptr
+        && size != nullptr && *size == sizeof(ucred))
         static_cast<ucred *>(value)->uid = ::geteuid() + 1;
     return result;
 }
@@ -158,23 +158,28 @@ class ScopedEnvironment {
 public:
     explicit ScopedEnvironment(const QProcessEnvironment &environment)
     {
-        for (const auto name : {"HOME", "PATH", "LC_ALL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
-                                "XDG_RUNTIME_DIR", "TMPDIR", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
-                                "GIT_TERMINAL_PROMPT"}) {
-            previous.insert(name, qEnvironmentVariableIsSet(name)
-                ? std::optional<QByteArray>(qgetenv(name)) : std::nullopt);
+        for (const auto name :
+             {"HOME", "PATH", "LC_ALL", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR",
+              "TMPDIR", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_TERMINAL_PROMPT"}) {
+            previous.insert(name,
+                            qEnvironmentVariableIsSet(name) ? std::optional<QByteArray>(qgetenv(name)) : std::nullopt);
             const auto key = QString::fromLatin1(name);
-            if (environment.contains(key)) qputenv(name, environment.value(key).toUtf8());
-            else qunsetenv(name);
+            if (environment.contains(key))
+                qputenv(name, environment.value(key).toUtf8());
+            else
+                qunsetenv(name);
         }
     }
     ~ScopedEnvironment()
     {
         for (auto entry = previous.cbegin(); entry != previous.cend(); ++entry) {
-            if (entry.value()) qputenv(entry.key().constData(), *entry.value());
-            else qunsetenv(entry.key().constData());
+            if (entry.value())
+                qputenv(entry.key().constData(), *entry.value());
+            else
+                qunsetenv(entry.key().constData());
         }
     }
+
 private:
     QMap<QByteArray, std::optional<QByteArray>> previous;
 };
@@ -255,8 +260,10 @@ std::unique_ptr<QProcess> startMergetool(const Repository &repo, const QStringLi
     auto process = std::make_unique<QProcess>();
     process->setProcessEnvironment(repo.environment);
     process->setWorkingDirectory(repo.root);
-    process->start("/usr/bin/git", QStringList{"--no-pager", "--literal-pathspecs", "mergetool", "--no-prompt",
-                                               "--tool=truce-launcher", "--"} + paths);
+    process->start(
+        "/usr/bin/git",
+        QStringList{"--no-pager", "--literal-pathspecs", "mergetool", "--no-prompt", "--tool=truce-launcher", "--"}
+            + paths);
     CHECK(process->waitForStarted(5000));
     return process;
 }
@@ -268,13 +275,11 @@ void waitFinished(QProcess &process, int expected, ApplicationController &contro
     CHECK(process.exitStatus() == QProcess::NormalExit);
     if (process.exitCode() != expected)
         throw std::runtime_error("mergetool exit " + std::to_string(process.exitCode()) + "\n"
-            + process.readAllStandardError().toStdString() + process.readAllStandardOutput().toStdString());
+                                 + process.readAllStandardError().toStdString()
+                                 + process.readAllStandardOutput().toStdString());
 }
 
-QString revisionOf(const FileSession &file)
-{
-    return QString::number(static_cast<qulonglong>(file.current().id));
-}
+QString revisionOf(const FileSession &file) { return QString::number(static_cast<qulonglong>(file.current().id)); }
 
 QString recoveryError(ApplicationController &controller, const QByteArray &path)
 {
@@ -318,14 +323,15 @@ void storeBeforeCopiedLaunch(const Repository &repo)
         ApplicationController before(gitOnPath());
         openController(before, repo);
         CHECK(before.files()->editResult(QByteArray("tracked.txt").toHex().toStdString(),
-            opened(before, "tracked.txt").current().id, {{0, 0}, "recovered edit\n"}) == Transition::Applied);
+                                         opened(before, "tracked.txt").current().id, {{0, 0}, "recovered edit\n"})
+              == Transition::Applied);
     }
     copyInPlace(repo.path("tracked.txt"));
 }
 
 // Starts a launcher on tracked.txt after the window loaded and waits for its attach.
 void attachLauncher(QProcess &launcher, const Repository &repo, const QTemporaryDir &sides,
-    ApplicationController &controller)
+                    ApplicationController &controller)
 {
     launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
     launcher.setWorkingDirectory(repo.root);
@@ -349,7 +355,7 @@ void holdFor(int milliseconds, const std::function<bool()> &holds, const QString
 // written over the current bytes. Leave fails the launcher, which puts back
 // the MERGED bytes it saw when it attached.
 void checkCopiedLaunchRefused(ApplicationController &controller, QProcess &launcher, const QString &target,
-    const QByteArray &current, const QByteArray &attached)
+                              const QByteArray &current, const QByteArray &attached)
 {
     const auto fileId = QString::fromLatin1(QByteArray("tracked.txt").toHex());
     select(controller, "tracked.txt");
@@ -407,19 +413,23 @@ public:
         CHECK(QFile::copy(launcherBinary, binary));
         makeExecutable(binary);
         const auto git = stage.filePath(QStringLiteral("bin/git"));
-        writeFile(git, "#!/bin/sh\nwhile [ ! -e '" + gate.toUtf8() + "' ]; do sleep 0.02; done\n"
-                       "exec /usr/bin/git \"$@\"\n");
+        writeFile(git,
+                  "#!/bin/sh\nwhile [ ! -e '" + gate.toUtf8()
+                      + "' ]; do sleep 0.02; done\n"
+                        "exec /usr/bin/git \"$@\"\n");
         makeExecutable(git);
         // The stub records its arguments, one per line, and where its standard streams point.
         // Command substitution runs in a child, so /proc/$$ still shows the stub's own streams.
-        writeFile(stub, "#!/bin/sh\nstreams=$(for fd in 0 1 2; do readlink /proc/$$/fd/$fd; done)\n"
-                        "printf '%s\\n' \"$streams\" > '" + marker.toUtf8()
-                        + ".streams'\nprintf '%s\\n' \"$@\" > '" + marker.toUtf8() + ".part' && mv '"
-                        + marker.toUtf8() + ".part' '" + marker.toUtf8() + "'\n");
+        writeFile(stub,
+                  "#!/bin/sh\nstreams=$(for fd in 0 1 2; do readlink /proc/$$/fd/$fd; done)\n"
+                  "printf '%s\\n' \"$streams\" > '"
+                      + marker.toUtf8() + ".streams'\nprintf '%s\\n' \"$@\" > '" + marker.toUtf8() + ".part' && mv '"
+                      + marker.toUtf8() + ".part' '" + marker.toUtf8() + "'\n");
         makeExecutable(stub);
         auto environment = directLauncherEnvironment(repo, sides);
         environment.remove(QStringLiteral("BRANCH_TRUCE_MERGETOOL_NO_SPAWN"));
-        environment.insert(QStringLiteral("PATH"), stage.filePath(QStringLiteral("bin")) + QStringLiteral(":/usr/bin:/bin"));
+        environment.insert(QStringLiteral("PATH"),
+                           stage.filePath(QStringLiteral("bin")) + QStringLiteral(":/usr/bin:/bin"));
         process.setProcessEnvironment(environment);
         process.setWorkingDirectory(repo.root);
     }
@@ -444,8 +454,8 @@ public:
         const auto streams = readFile(marker + QStringLiteral(".streams"));
         if (arguments.split('\n') != QList<QByteArray>{"--mergetool-path", launched, repo.root.toUtf8(), ""}
             || streams != "/dev/null\n/dev/null\n/dev/null\n")
-            throw std::runtime_error("spawned GUI arguments:\n" + arguments.toStdString()
-                                     + "streams:\n" + streams.toStdString());
+            throw std::runtime_error("spawned GUI arguments:\n" + arguments.toStdString() + "streams:\n"
+                                     + streams.toStdString());
         return QString::fromLatin1(launched);
     }
     void finish(int expected)
@@ -455,7 +465,8 @@ public:
         CHECK(process.exitStatus() == QProcess::NormalExit);
         errors = process.readAllStandardError();
         if (process.exitCode() != expected)
-            throw std::runtime_error("launcher exit " + std::to_string(process.exitCode()) + ": " + errors.toStdString());
+            throw std::runtime_error("launcher exit " + std::to_string(process.exitCode()) + ": "
+                                     + errors.toStdString());
     }
 
     const Repository &repo;
@@ -487,8 +498,9 @@ public:
         ::setrlimit(RLIMIT_FSIZE, &previous);
         std::signal(SIGXFSZ, previousHandler);
     }
+
 private:
-    struct rlimit previous {};
+    struct rlimit previous{};
     void (*previousHandler)(int) = nullptr;
 };
 }
@@ -509,56 +521,58 @@ int main(int argc, char **argv)
     }
     launcherBinary = QString::fromLocal8Bit(argv[1]);
     test_support::Suite suite("MergetoolLauncherTests");
-    suite.run("installed Git stages only after an explicit resolution and a repeated launch keeps the first inputs", [] {
-        Repository repo("resolved from the app\n", "excluded stays conflicted\n");
-        ScopedEnvironment environment(repo.environment);
-        ApplicationController controller(gitOnPath());
-        openController(controller, repo);
-        auto parent = startMergetool(repo, {"tracked.txt"});
-        pump([&] { return controller.mergetool()->waitingPath() == "tracked.txt"; }, controller.commandMessage());
-        CHECK(controller.mergetool()->intakes().size() == 1);
-        const auto firstIntake = controller.mergetool()->intakes().front();
-        const auto firstMerged = readFile(firstIntake + "/merged");
-        CHECK(firstMerged == repo.tracked);
-        CHECK(QFile::exists(firstIntake + "/base") && QFile::exists(firstIntake + "/local") && QFile::exists(firstIntake + "/remote"));
-        const auto id = select(controller, "tracked.txt");
-        CHECK(controller.saveDraft(id, revisionOf(opened(controller, "tracked.txt"))));
-        CHECK(controller.commandMessage().contains(QStringLiteral("repository file unchanged")));
-        CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-        CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
-        CHECK(parent->state() == QProcess::Running);
-        rejectDuplicate(repo, controller, *parent);
-        CHECK(controller.mergetool()->intakes().size() == 1);
-        CHECK(readFile(firstIntake + "/merged") == firstMerged);
-        CHECK(controller.markResolved(id, revisionOf(opened(controller, "tracked.txt")), true));
-        CHECK(parent->state() == QProcess::Running);
-        CHECK(unmerged(repo, "tracked.txt"));
-        waitFinished(*parent, 0, controller);
-        CHECK(!unmerged(repo, "tracked.txt"));
-        pump([&] { return opened(controller, "tracked.txt").facts().resolved; }, controller.commandMessage());
-        CHECK(repo.git({"show", ":tracked.txt"}) == repo.tracked);
-        CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-        CHECK(unmerged(repo, "excluded.txt"));
-        CHECK(repo.git({"rev-parse", ":notes.txt"}).trimmed() == repo.notesObject);
-        CHECK(QFile::exists(firstIntake + "/merged"));
+    suite.run(
+        "installed Git stages only after an explicit resolution and a repeated launch keeps the first inputs", [] {
+            Repository repo("resolved from the app\n", "excluded stays conflicted\n");
+            ScopedEnvironment environment(repo.environment);
+            ApplicationController controller(gitOnPath());
+            openController(controller, repo);
+            auto parent = startMergetool(repo, {"tracked.txt"});
+            pump([&] { return controller.mergetool()->waitingPath() == "tracked.txt"; }, controller.commandMessage());
+            CHECK(controller.mergetool()->intakes().size() == 1);
+            const auto firstIntake = controller.mergetool()->intakes().front();
+            const auto firstMerged = readFile(firstIntake + "/merged");
+            CHECK(firstMerged == repo.tracked);
+            CHECK(QFile::exists(firstIntake + "/base") && QFile::exists(firstIntake + "/local")
+                  && QFile::exists(firstIntake + "/remote"));
+            const auto id = select(controller, "tracked.txt");
+            CHECK(controller.saveDraft(id, revisionOf(opened(controller, "tracked.txt"))));
+            CHECK(controller.commandMessage().contains(QStringLiteral("repository file unchanged")));
+            CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+            CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
+            CHECK(parent->state() == QProcess::Running);
+            rejectDuplicate(repo, controller, *parent);
+            CHECK(controller.mergetool()->intakes().size() == 1);
+            CHECK(readFile(firstIntake + "/merged") == firstMerged);
+            CHECK(controller.markResolved(id, revisionOf(opened(controller, "tracked.txt")), true));
+            CHECK(parent->state() == QProcess::Running);
+            CHECK(unmerged(repo, "tracked.txt"));
+            waitFinished(*parent, 0, controller);
+            CHECK(!unmerged(repo, "tracked.txt"));
+            pump([&] { return opened(controller, "tracked.txt").facts().resolved; }, controller.commandMessage());
+            CHECK(repo.git({"show", ":tracked.txt"}) == repo.tracked);
+            CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+            CHECK(unmerged(repo, "excluded.txt"));
+            CHECK(repo.git({"rev-parse", ":notes.txt"}).trimmed() == repo.notesObject);
+            CHECK(QFile::exists(firstIntake + "/merged"));
 
-        auto again = startMergetool(repo, {"excluded.txt"});
-        pump([&] { return controller.mergetool()->waitingPath() == "excluded.txt"; }, controller.commandMessage());
-        CHECK(controller.mergetool()->intakes().size() == 2);
-        CHECK(readFile(firstIntake + "/merged") == firstMerged);
-        CHECK(controller.mergetool()->intakes().at(1) != firstIntake);
-        const auto other = select(controller, "excluded.txt");
-        CHECK(controller.saveDraft(other, revisionOf(opened(controller, "excluded.txt"))));
-        CHECK(readFile(repo.path("excluded.txt")) == repo.excluded);
-        CHECK(controller.leaveMergetool());
-        waitFinished(*again, 1, controller);
-        CHECK(readFile(repo.path("excluded.txt")) == repo.excluded);
-        CHECK(unmerged(repo, "excluded.txt"));
-        CHECK(opened(controller, "excluded.txt").checkpoint());
-        CHECK(!opened(controller, "excluded.txt").facts().resolved);
-        CHECK(readFile(firstIntake + "/merged") == firstMerged);
-        CHECK(repo.git({"rev-parse", ":notes.txt"}).trimmed() == repo.notesObject);
-    });
+            auto again = startMergetool(repo, {"excluded.txt"});
+            pump([&] { return controller.mergetool()->waitingPath() == "excluded.txt"; }, controller.commandMessage());
+            CHECK(controller.mergetool()->intakes().size() == 2);
+            CHECK(readFile(firstIntake + "/merged") == firstMerged);
+            CHECK(controller.mergetool()->intakes().at(1) != firstIntake);
+            const auto other = select(controller, "excluded.txt");
+            CHECK(controller.saveDraft(other, revisionOf(opened(controller, "excluded.txt"))));
+            CHECK(readFile(repo.path("excluded.txt")) == repo.excluded);
+            CHECK(controller.leaveMergetool());
+            waitFinished(*again, 1, controller);
+            CHECK(readFile(repo.path("excluded.txt")) == repo.excluded);
+            CHECK(unmerged(repo, "excluded.txt"));
+            CHECK(opened(controller, "excluded.txt").checkpoint());
+            CHECK(!opened(controller, "excluded.txt").facts().resolved);
+            CHECK(readFile(firstIntake + "/merged") == firstMerged);
+            CHECK(repo.git({"rev-parse", ":notes.txt"}).trimmed() == repo.notesObject);
+        });
     suite.run("cancel restores the parent-visible file and keeps the app checkpoint", [] {
         Repository repo("cancel keeps this draft\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
@@ -584,10 +598,12 @@ int main(int argc, char **argv)
         ApplicationController controller(gitOnPath());
         openController(controller, repo);
         auto parent = startMergetool(repo, {});
-        pump([&] {
-            const auto path = controller.mergetool()->waitingPath();
-            return path == "tracked.txt" || path == "excluded.txt";
-        }, controller.commandMessage());
+        pump(
+            [&] {
+                const auto path = controller.mergetool()->waitingPath();
+                return path == "tracked.txt" || path == "excluded.txt";
+            },
+            controller.commandMessage());
         const auto first = controller.mergetool()->waitingPath();
         const auto second = first == "tracked.txt" ? QByteArray("excluded.txt") : QByteArray("tracked.txt");
         const auto firstText = first == "tracked.txt" ? repo.tracked : repo.excluded;
@@ -602,10 +618,12 @@ int main(int argc, char **argv)
         CHECK(controller.saveDraft(firstId, revisionOf(opened(controller, first))));
         CHECK(readFile(repo.path(QString::fromLatin1(first))) == firstText);
         CHECK(controller.markResolved(firstId, revisionOf(opened(controller, first)), true));
-        pump([&] {
-            return opened(controller, first).facts().resolved && controller.mergetool()->waitingPath() == second
-                && parent->state() == QProcess::Running;
-        }, controller.commandMessage() + " | waiting=" + QString::fromLatin1(controller.mergetool()->waitingPath()));
+        pump(
+            [&] {
+                return opened(controller, first).facts().resolved && controller.mergetool()->waitingPath() == second
+                    && parent->state() == QProcess::Running;
+            },
+            controller.commandMessage() + " | waiting=" + QString::fromLatin1(controller.mergetool()->waitingPath()));
         CHECK(controller.mergetool()->intakes().size() == 2);
         CHECK(readFile(controller.mergetool()->intakes().front() + "/merged") == firstText);
         CHECK(readFile(controller.mergetool()->intakes().at(1) + "/merged") == secondText);
@@ -636,9 +654,8 @@ int main(int argc, char **argv)
             QString staging;
         };
         QList<Observed> seen;
-        QObject::connect(&controller, &ApplicationController::mergetoolChanged, &controller, [&] {
-            seen.append({controller.mergetoolWaiting(), controller.parentStagingPath()});
-        });
+        QObject::connect(&controller, &ApplicationController::mergetoolChanged, &controller,
+                         [&] { seen.append({controller.mergetoolWaiting(), controller.parentStagingPath()}); });
         const auto other = select(controller, "excluded.txt");
         // A direct launcher has no Git parent, so the written offer stays unstaged.
         QTemporaryDir sides;
@@ -685,7 +702,8 @@ int main(int argc, char **argv)
             for (auto *controller : {&one, &two}) {
                 const auto revision = opened(*controller, "tracked.txt").current().id;
                 CHECK(controller->files()->editResult(QByteArray("tracked.txt").toHex().toStdString(), revision,
-                    {{0, 0}, controller == &one ? "chosen\n" : "other\n"}) == Transition::Applied);
+                                                      {{0, 0}, controller == &one ? "chosen\n" : "other\n"})
+                      == Transition::Applied);
             }
             chosen = QFileInfo(one.files()->recoveryDirectory()).fileName();
         }
@@ -723,56 +741,60 @@ int main(int argc, char **argv)
     // with the same bytes, and the window restored it before the launcher
     // attached. The attach used to recheck only the file, so staging the path or
     // changing core.autocrlf in between still cleared the recovery error.
-    suite.run("a late launcher clears a copied launch path's recovery error only while its index and conversion policy match", [] {
-        for (const auto &change : {QStringLiteral("none"), QStringLiteral("staged"), QStringLiteral("autocrlf")}) {
-            Repository repo("launch bytes\n", "excluded stays conflicted\n");
-            ScopedEnvironment environment(repo.environment);
-            const auto fileId = QString::fromLatin1(QByteArray("tracked.txt").toHex());
-            {
-                ApplicationController before(gitOnPath());
-                openController(before, repo);
-                CHECK(before.files()->editResult(fileId.toStdString(), opened(before, "tracked.txt").current().id,
-                    {{0, 0}, "recovered edit\n"}) == Transition::Applied);
+    suite.run(
+        "a late launcher clears a copied launch path's recovery error only while its index and conversion policy match",
+        [] {
+            for (const auto &change : {QStringLiteral("none"), QStringLiteral("staged"), QStringLiteral("autocrlf")}) {
+                Repository repo("launch bytes\n", "excluded stays conflicted\n");
+                ScopedEnvironment environment(repo.environment);
+                const auto fileId = QString::fromLatin1(QByteArray("tracked.txt").toHex());
+                {
+                    ApplicationController before(gitOnPath());
+                    openController(before, repo);
+                    CHECK(before.files()->editResult(fileId.toStdString(), opened(before, "tracked.txt").current().id,
+                                                     {{0, 0}, "recovered edit\n"})
+                          == Transition::Applied);
+                }
+                const auto target = repo.path("tracked.txt");
+                CHECK(QFile::rename(target, target + ".moved") && QFile::copy(target + ".moved", target));
+                CHECK(QFile::remove(target + ".moved"));
+                ApplicationController controller(gitOnPath());
+                openController(controller, repo);
+                CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
+                if (change == QStringLiteral("staged")) repo.git({"add", "--", "tracked.txt"});
+                if (change == QStringLiteral("autocrlf")) repo.git({"config", "core.autocrlf", "true"});
+                QTemporaryDir sides;
+                QProcess launcher;
+                launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
+                launcher.setWorkingDirectory(repo.root);
+                launcher.start(launcherBinary, {"--mergetool"});
+                CHECK(launcher.waitForStarted(5000));
+                pump([&] { return controller.mergetool()->waitingPath() == "tracked.txt"; },
+                     controller.commandMessage());
+                pump([&] { return recoveryError(controller, "tracked.txt") != copiedLaunchFailure(); },
+                     change + QStringLiteral(": the attach did not settle the copied launch"));
+                select(controller, "tracked.txt");
+                const auto revision = revisionOf(opened(controller, "tracked.txt"));
+                if (change == QStringLiteral("none")) {
+                    CHECK(!controller.files()->hasRecoveryFailure(fileId.toStdString()));
+                    CHECK(controller.editResult(fileId, revision, 0, 0, QStringLiteral("reviewed after the attach\n")));
+                    const auto expected = opened(controller, "tracked.txt").current().draft.text;
+                    CHECK(controller.markResolved(fileId, revisionOf(opened(controller, "tracked.txt")), true));
+                    waitFinished(launcher, 0, controller);
+                    CHECK(readFile(target) == QByteArray::fromStdString(expected));
+                    CHECK(unmerged(repo, "tracked.txt"));
+                    continue;
+                }
+                CHECK(controller.files()->hasRecoveryFailure(fileId.toStdString()));
+                CHECK(!controller.editResult(fileId, revision, 0, 0, QStringLiteral("edited after the attach\n")));
+                CHECK(!controller.markResolved(fileId, revision, true));
+                CHECK(readFile(target) == "launch bytes\n");
+                CHECK(controller.leaveMergetool());
+                waitFinished(launcher, 1, controller);
+                CHECK(readFile(target) == "launch bytes\n");
+                CHECK(controller.files()->hasRecoveryFailure(fileId.toStdString()));
             }
-            const auto target = repo.path("tracked.txt");
-            CHECK(QFile::rename(target, target + ".moved") && QFile::copy(target + ".moved", target));
-            CHECK(QFile::remove(target + ".moved"));
-            ApplicationController controller(gitOnPath());
-            openController(controller, repo);
-            CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
-            if (change == QStringLiteral("staged")) repo.git({"add", "--", "tracked.txt"});
-            if (change == QStringLiteral("autocrlf")) repo.git({"config", "core.autocrlf", "true"});
-            QTemporaryDir sides;
-            QProcess launcher;
-            launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
-            launcher.setWorkingDirectory(repo.root);
-            launcher.start(launcherBinary, {"--mergetool"});
-            CHECK(launcher.waitForStarted(5000));
-            pump([&] { return controller.mergetool()->waitingPath() == "tracked.txt"; }, controller.commandMessage());
-            pump([&] { return recoveryError(controller, "tracked.txt") != copiedLaunchFailure(); },
-                 change + QStringLiteral(": the attach did not settle the copied launch"));
-            select(controller, "tracked.txt");
-            const auto revision = revisionOf(opened(controller, "tracked.txt"));
-            if (change == QStringLiteral("none")) {
-                CHECK(!controller.files()->hasRecoveryFailure(fileId.toStdString()));
-                CHECK(controller.editResult(fileId, revision, 0, 0, QStringLiteral("reviewed after the attach\n")));
-                const auto expected = opened(controller, "tracked.txt").current().draft.text;
-                CHECK(controller.markResolved(fileId, revisionOf(opened(controller, "tracked.txt")), true));
-                waitFinished(launcher, 0, controller);
-                CHECK(readFile(target) == QByteArray::fromStdString(expected));
-                CHECK(unmerged(repo, "tracked.txt"));
-                continue;
-            }
-            CHECK(controller.files()->hasRecoveryFailure(fileId.toStdString()));
-            CHECK(!controller.editResult(fileId, revision, 0, 0, QStringLiteral("edited after the attach\n")));
-            CHECK(!controller.markResolved(fileId, revision, true));
-            CHECK(readFile(target) == "launch bytes\n");
-            CHECK(controller.leaveMergetool());
-            waitFinished(launcher, 1, controller);
-            CHECK(readFile(target) == "launch bytes\n");
-            CHECK(controller.files()->hasRecoveryFailure(fileId.toStdString()));
-        }
-    });
+        });
     // a launcher that finds no window starts one on the path Git
     // launched. That window restores through the same restoreRecovery call and
     // must reach the same adoption when the waiting launcher attaches.
@@ -797,7 +819,7 @@ int main(int argc, char **argv)
              QStringLiteral("the launcher-started window kept the copied launch error: ")
                  + recoveryError(controller, "tracked.txt"));
         CHECK(controller.editResult(launched, revisionOf(opened(controller, "tracked.txt")), 0, 0,
-            QStringLiteral("reviewed in the started window\n")));
+                                    QStringLiteral("reviewed in the started window\n")));
         const auto expected = opened(controller, "tracked.txt").current().draft.text;
         CHECK(expected.starts_with("reviewed in the started window\nrecovered edit\n"));
         CHECK(controller.markResolved(launched, revisionOf(opened(controller, "tracked.txt")), true));
@@ -818,8 +840,10 @@ int main(int argc, char **argv)
             ApplicationController controller(gitOnPath());
             openController(controller, repo);
             CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
-            if (change == QStringLiteral("copied")) copyInPlace(target);
-            else writeFile(target, "written by another editor\n");
+            if (change == QStringLiteral("copied"))
+                copyInPlace(target);
+            else
+                writeFile(target, "written by another editor\n");
             const auto expected = readFile(target);
             QTemporaryDir sides;
             QProcess launcher;
@@ -827,11 +851,13 @@ int main(int argc, char **argv)
             if (change == QStringLiteral("copied")) {
                 pump([&] { return recoveryError(controller, "tracked.txt") != copiedLaunchFailure(); },
                      change + QStringLiteral(": the attach did not settle the copied launch"));
-                CHECK(recoveryError(controller, "tracked.txt").contains(QStringLiteral("changed after recovery validation")));
+                CHECK(recoveryError(controller, "tracked.txt")
+                          .contains(QStringLiteral("changed after recovery validation")));
             } else {
                 // The launcher's MERGED digest is not the launch bytes, so nothing is checked.
-                holdFor(800, [&] { return recoveryError(controller, "tracked.txt") == copiedLaunchFailure(); },
-                        change + QStringLiteral(": the recovery error changed"));
+                holdFor(
+                    800, [&] { return recoveryError(controller, "tracked.txt") == copiedLaunchFailure(); },
+                    change + QStringLiteral(": the recovery error changed"));
             }
             checkCopiedLaunchRefused(controller, launcher, target, expected, expected);
         }
@@ -851,14 +877,18 @@ int main(int argc, char **argv)
             mergetool_fixture::GitGate gate("tracked.txt");
             ApplicationController controller(gate.executable());
             // Runs before the controller goes, so its tasks never wait on a held call.
-            const auto releaseGate = qScopeGuard([&gate] { gate.open(); gate.releaseAll(); });
+            const auto releaseGate = qScopeGuard([&gate] {
+                gate.open();
+                gate.releaseAll();
+            });
             openController(controller, repo);
             CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
             gate.close(QStringLiteral("ls-files"));
             QTemporaryDir sides;
             QProcess launcher;
             attachLauncher(launcher, repo, sides, controller);
-            pump([&] { return !gate.held().isEmpty(); }, change + QStringLiteral(": the revalidation did not inspect the index"));
+            pump([&] { return !gate.held().isEmpty(); },
+                 change + QStringLiteral(": the revalidation did not inspect the index"));
             const auto held = gate.held();
             CHECK(held.size() == 1);
             CHECK(gate.arguments(held.front()).contains("ls-files --stage -z -- tracked.txt"));
@@ -1016,7 +1046,8 @@ int main(int argc, char **argv)
         QTemporaryDir temporaries;
         CHECK(temporaries.isValid());
         const auto guiTemporary = temporaries.path() + QStringLiteral("/gui-") + QString(60, QLatin1Char('g'));
-        const auto launcherTemporary = temporaries.path() + QStringLiteral("/launcher-") + QString(60, QLatin1Char('l'));
+        const auto launcherTemporary =
+            temporaries.path() + QStringLiteral("/launcher-") + QString(60, QLatin1Char('l'));
         CHECK(QDir().mkpath(guiTemporary) && QDir().mkpath(launcherTemporary));
         repo.environment.insert("XDG_RUNTIME_DIR", runtime);
         auto guiEnvironment = repo.environment;
@@ -1025,8 +1056,8 @@ int main(int argc, char **argv)
         CHECK(QDir::tempPath() == guiTemporary);
         ApplicationController controller(gitOnPath());
         openController(controller, repo);
-        const auto sockets = QDir(runtime + QStringLiteral("/branch-truce"))
-            .entryInfoList({QStringLiteral("bt-mt-*")}, QDir::System);
+        const auto sockets =
+            QDir(runtime + QStringLiteral("/branch-truce")).entryInfoList({QStringLiteral("bt-mt-*")}, QDir::System);
         CHECK(sockets.size() == 1 && QFile::encodeName(sockets.front().filePath()).size() == 106);
         CHECK(QDir(guiTemporary).entryList({QStringLiteral("bt-mt-*")}, QDir::System).isEmpty());
         QTemporaryDir sides;
@@ -1057,8 +1088,9 @@ int main(int argc, char **argv)
         ApplicationController controller(gitOnPath());
         startController(controller, repo);
         CHECK(controller.loader()->startupState() == QStringLiteral("ready-without-mergetool"));
-        CHECK(controller.loader()->detail().startsWith(QStringLiteral("Mergetool attach is unavailable: The mergetool socket directory ")
-                                             + runtime.path() + QStringLiteral("/branch-truce is not a directory.")));
+        CHECK(controller.loader()->detail().startsWith(
+            QStringLiteral("Mergetool attach is unavailable: The mergetool socket directory ") + runtime.path()
+            + QStringLiteral("/branch-truce is not a directory.")));
         CHECK(!controller.mergetool()->listening());
         CHECK(controller.files()->totalFiles() == 2);
         QTemporaryDir sides;

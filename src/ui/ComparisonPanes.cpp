@@ -14,8 +14,7 @@ const QString resultName = QStringLiteral("result");
 const QString rightName = QStringLiteral("stage3");
 const QString earlierName = QStringLiteral("earlier");
 
-template<typename Type>
-Type *partOf(QQuickItem *pane, const char *name)
+template <typename Type> Type *partOf(QQuickItem *pane, const char *name)
 {
     return qobject_cast<Type *>(pane->property(name).value<QObject *>());
 }
@@ -51,9 +50,9 @@ void ComparisonPanes::setPassages(const QVariantList &passages)
         const auto side = passage.value(QStringLiteral("side")).toString();
         if (side != leftName && side != rightName && side != earlierName) continue;
         spans_[side].append({passage.value(QStringLiteral("sourceLineBegin")).toReal(),
-            passage.value(QStringLiteral("sourceLineEnd")).toReal(),
-            passage.value(QStringLiteral("resultLineBegin")).toReal(),
-            passage.value(QStringLiteral("resultLineEnd")).toReal()});
+                             passage.value(QStringLiteral("sourceLineEnd")).toReal(),
+                             passage.value(QStringLiteral("resultLineBegin")).toReal(),
+                             passage.value(QStringLiteral("resultLineEnd")).toReal()});
     }
     Q_EMIT passagesChanged();
 }
@@ -76,11 +75,11 @@ qreal ComparisonPanes::mapLine(const QList<Span> &spans, qreal line, bool toResu
     const auto toEnd = [toResult](const Span &span) { return toResult ? span.resultEnd : span.sourceEnd; };
     // The first passage that ends below the line.
     const auto found = std::upper_bound(spans.cbegin(), spans.cend(), line,
-        [&](qreal value, const Span &span) { return value < fromEnd(span); });
+                                        [&](qreal value, const Span &span) { return value < fromEnd(span); });
     if (found == spans.cend()) return toEnd(spans.last()) + line - fromEnd(spans.last());
     if (line <= fromBegin(*found)) return toBegin(*found);
-    return toBegin(*found) + (line - fromBegin(*found)) * (toEnd(*found) - toBegin(*found))
-        / (fromEnd(*found) - fromBegin(*found));
+    return toBegin(*found)
+        + (line - fromBegin(*found)) * (toEnd(*found) - toBegin(*found)) / (fromEnd(*found) - fromBegin(*found));
 }
 
 qreal ComparisonPanes::toResult(const QString &side, qreal line, int sideLines, int resultLines) const
@@ -93,8 +92,8 @@ qreal ComparisonPanes::fromResult(const QString &side, qreal line, int resultLin
     return side == resultName ? line : mapLine(spans_.value(side), line, false, resultLines, sideLines);
 }
 
-qreal ComparisonPanes::mapBetween(const QString &from, const QString &to, qreal line, int fromLines,
-                                  int resultLines, int toLines) const
+qreal ComparisonPanes::mapBetween(const QString &from, const QString &to, qreal line, int fromLines, int resultLines,
+                                  int toLines) const
 {
     return fromResult(to, toResult(from, line, fromLines, resultLines), resultLines, toLines);
 }
@@ -117,7 +116,7 @@ std::optional<ComparisonPanes::Pane> ComparisonPanes::partsOf(const QString &nam
 {
     if (!pane) return std::nullopt;
     Pane parts{name, partOf<QQuickItem>(pane, "viewport"), partOf<QQuickItem>(pane, "editor"),
-        partOf<TextBlocks>(pane, "blocks")};
+               partOf<TextBlocks>(pane, "blocks")};
     if (!parts.viewport || !parts.editor || !parts.blocks) return std::nullopt;
     return parts;
 }
@@ -181,7 +180,8 @@ void ComparisonPanes::follow(const QString &leader, const QString &only)
     if (following_) return;
     const auto panes = shownPanes();
     const auto lead = std::find_if(panes.cbegin(), panes.cend(), [&](const Pane &pane) { return pane.name == leader; });
-    const auto resultPane = std::find_if(panes.cbegin(), panes.cend(), [](const Pane &pane) { return pane.name == resultName; });
+    const auto resultPane =
+        std::find_if(panes.cbegin(), panes.cend(), [](const Pane &pane) { return pane.name == resultName; });
     if (lead == panes.cend() || resultPane == panes.cend()) return;
     const auto row = referenceRow(panes);
     const int resultLines = resultPane->blocks->blockCount();
@@ -203,7 +203,8 @@ void ComparisonPanes::place(const QString &lead, qreal line)
     if (following_) return;
     const auto panes = shownPanes();
     const auto leader = std::find_if(panes.cbegin(), panes.cend(), [&](const Pane &pane) { return pane.name == lead; });
-    const auto resultPane = std::find_if(panes.cbegin(), panes.cend(), [](const Pane &pane) { return pane.name == resultName; });
+    const auto resultPane =
+        std::find_if(panes.cbegin(), panes.cend(), [](const Pane &pane) { return pane.name == resultName; });
     if (leader == panes.cend() || resultPane == panes.cend()) return;
     QScopedValueRollback guard(following_, true);
     for (const auto &pane : panes) pane.blocks->flushSpacing();
@@ -212,8 +213,8 @@ void ComparisonPanes::place(const QString &lead, qreal line)
     const auto resultLine = toResult(lead, line, leader->blocks->blockCount(), resultLines);
     QList<qreal> targets;
     for (const auto &pane : panes) {
-        const auto target = pane.name == lead ? line
-            : fromResult(pane.name, resultLine, resultLines, pane.blocks->blockCount());
+        const auto target =
+            pane.name == lead ? line : fromResult(pane.name, resultLine, resultLines, pane.blocks->blockCount());
         targets.append(target);
         // Native TextArea cursor visibility can scroll its Flickable. Do it
         // before assigning any final viewport, without making a pane lead.

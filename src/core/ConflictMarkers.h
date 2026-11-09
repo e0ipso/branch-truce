@@ -69,8 +69,7 @@ struct RegionSources {
 // exactly one such line the rule above applies. Blocks are assembled from the
 // remaining marker lines.
 [[nodiscard]] MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content = {},
-                                     std::vector<ByteRange> baseContent = {},
-                                     std::vector<ByteRange> baseUncertain = {},
+                                     std::vector<ByteRange> baseContent = {}, std::vector<ByteRange> baseUncertain = {},
                                      std::vector<ByteRange> rightContent = {},
                                      std::optional<RegionSources> sources = {});
 

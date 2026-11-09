@@ -1,19 +1,19 @@
 // Unit tests for TextBlocks: where the cursor goes around folded lines and where the whitespace markers lie.
 #include "TestHarness.h"
-#include "ui/TextBlocks.h"
-#include "ui/PaneMarks.h"
 #include "ui/ConnectorBands.h"
+#include "ui/PaneMarks.h"
+#include "ui/TextBlocks.h"
 #include <QAbstractTextDocumentLayout>
-#include <QGuiApplication>
 #include <QFont>
+#include <QGuiApplication>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickTextDocument>
-#include <QSignalSpy>
 #include <QRectF>
-#include <QTextDocument>
+#include <QSignalSpy>
 #include <QTextCursor>
+#include <QTextDocument>
 #include <QTextLayout>
 #include <cmath>
 #include <memory>
@@ -28,7 +28,7 @@ public:
     {
         QQmlComponent component(&engine);
         component.setData("import QtQuick\nTextEdit { width: 400; tabStopDistance: 40 }",
-            QUrl(QStringLiteral("qrc:/TextBlocksTests/Pane.qml")));
+                          QUrl(QStringLiteral("qrc:/TextBlocksTests/Pane.qml")));
         editor.reset(qobject_cast<QQuickItem *>(component.create()));
         if (!editor) throw std::runtime_error(component.errorString().toStdString());
         CHECK(editor->setProperty("text", text));
@@ -50,7 +50,7 @@ public:
     {
         QRectF rect;
         CHECK(QMetaObject::invokeMethod(editor.get(), "positionToRectangle", Q_RETURN_ARG(QRectF, rect),
-            Q_ARG(int, position)));
+                                        Q_ARG(int, position)));
         return rect;
     }
 
@@ -59,10 +59,7 @@ public:
     TextBlocks blocks;
 };
 
-bool near(qreal value, qreal expected)
-{
-    return std::abs(value - expected) < 1e-3;
-}
+bool near(qreal value, qreal expected) { return std::abs(value - expected) < 1e-3; }
 
 // The marker covers the character at position, seen from area's top left.
 bool covers(const Pane &pane, const QVariant &marker, int position, bool tab, QPointF area = {})
@@ -108,7 +105,7 @@ int main(int argc, char **argv)
         CHECK(changes.count() > 0 && doc->revision() > documentRevision);
         CHECK(doc->toRawText() == raw && !doc->isModified());
         CHECK(pane.editor->property("selectionStart").toInt() == selectionStart
-            && pane.editor->property("selectionEnd").toInt() == selectionEnd);
+              && pane.editor->property("selectionEnd").toInt() == selectionEnd);
         CHECK(!doc->isUndoRedoEnabled() && doc->availableUndoSteps() == 0);
         auto block = doc->begin();
         (void)doc->documentLayout()->blockBoundingRect(block);
@@ -122,12 +119,13 @@ int main(int argc, char **argv)
             const auto next = block.layout()->lineAt(row);
             CHECK(near(next.y() - previous.y(), baseStep + 6));
             CHECK(near(pane.cursorAt(block.position() + next.textStart()).y()
-                - pane.cursorAt(block.position() + previous.textStart()).y(), baseStep + 6));
+                           - pane.cursorAt(block.position() + previous.textStart()).y(),
+                       baseStep + 6));
         }
         const auto second = doc->begin().next();
         CHECK(near(pane.cursorAt(second.position()).y() - pane.cursorAt(second.position() - 1).y(), baseStep + 6));
-        CHECK(near(pane.blocks.yAtLine(2) - pane.blocks.yAtLine(1), baseStep * block.layout()->lineCount()
-            + 6 * block.layout()->lineCount()));
+        CHECK(near(pane.blocks.yAtLine(2) - pane.blocks.yAtLine(1),
+                   baseStep * block.layout()->lineCount() + 6 * block.layout()->lineCount()));
         const auto middleOfGap = pane.cursorAt(second.position()).y() - 3;
         CHECK(pane.blocks.lineAtY(middleOfGap) < 2 && pane.blocks.lineAtY(middleOfGap) > 1);
         const auto gap = pane.blocks.between(middleOfGap, middleOfGap + 1);
@@ -153,7 +151,7 @@ int main(int argc, char **argv)
         CHECK(doc->isModified() && doc->availableUndoSteps() == 0);
         for (auto line = doc->begin(); line.isValid(); line = line.next())
             CHECK(line.blockFormat().lineHeightType() == QTextBlockFormat::LineDistanceHeight
-                && near(line.blockFormat().lineHeight(), 6));
+                  && near(line.blockFormat().lineHeight(), 6));
         doc->setPlainText(QStringLiteral("first\nsecond\nthird"));
         QCoreApplication::processEvents();
         for (auto line = doc->begin(); line.isValid(); line = line.next())
@@ -164,8 +162,8 @@ int main(int argc, char **argv)
         CHECK(pane.blocks.yAtLine(3) > pane.blocks.yAtLine(2));
         pane.blocks.setRowSpacing(0);
         CHECK(!doc->begin().blockFormat().hasProperty(QTextFormat::LineHeight));
-        CHECK(near(pane.cursorAt(doc->begin().next().position()).y() - pane.cursorAt(0).y(),
-            pane.cursorAt(0).height()));
+        CHECK(
+            near(pane.cursorAt(doc->begin().next().position()).y() - pane.cursorAt(0).y(), pane.cursorAt(0).height()));
         CHECK(doc->toRawText() == QStringLiteral("first\u2029second\u2029third"));
     });
     suite.run("row spacing moves between documents and clears only its format", [] {
@@ -188,13 +186,26 @@ int main(int argc, char **argv)
     });
     suite.run("pane marks rank passages, regions and marker blocks", [] {
         branch_truce::PaneMarks marks;
-        const QVariantList passages{QVariantMap{{"side", "stage2"}, {"kind", "changed"},
-            {"resultLineBegin", 1}, {"resultLineEnd", 5}, {"sourceLineBegin", 1}, {"sourceLineEnd", 5}}};
-        const QVariantList regions{QVariantMap{{"side", "stage2"}, {"state", "undecided"}, {"mapped", true}, {"markersRemain", true},
-            {"resultLineBegin", 2}, {"resultLineEnd", 4}, {"sourceLineBegin", 2}, {"sourceLineEnd", 4}}};
-        const QVariantList blocks{QVariantMap{{"resultLineBegin", 3}, {"resultLineEnd", 4}, {"folded", true},
-            {"markerLines", QVariantList{QVariantMap{{"line", 3}, {"text", "<<<<<<<"}},
-                                          QVariantMap{{"line", 4}, {"text", ">>>>>>>"}}}}}};
+        const QVariantList passages{QVariantMap{{"side", "stage2"},
+                                                {"kind", "changed"},
+                                                {"resultLineBegin", 1},
+                                                {"resultLineEnd", 5},
+                                                {"sourceLineBegin", 1},
+                                                {"sourceLineEnd", 5}}};
+        const QVariantList regions{QVariantMap{{"side", "stage2"},
+                                               {"state", "undecided"},
+                                               {"mapped", true},
+                                               {"markersRemain", true},
+                                               {"resultLineBegin", 2},
+                                               {"resultLineEnd", 4},
+                                               {"sourceLineBegin", 2},
+                                               {"sourceLineEnd", 4}}};
+        const QVariantList blocks{QVariantMap{{"resultLineBegin", 3},
+                                              {"resultLineEnd", 4},
+                                              {"folded", true},
+                                              {"markerLines",
+                                               QVariantList{QVariantMap{{"line", 3}, {"text", "<<<<<<<"}},
+                                                            QVariantMap{{"line", 4}, {"text", ">>>>>>>"}}}}}};
         const auto result = marks.marks("result", passages, regions, {}, blocks, {});
         const auto lines = result.value("lines").toMap();
         CHECK(lines.value("1").toString() == "changed");
@@ -213,12 +224,22 @@ int main(int argc, char **argv)
     });
     suite.run("an undecided nonconflicting contribution retains its passage kind", [] {
         branch_truce::PaneMarks marks;
-        const QVariantList passages{QVariantMap{{"side", "stage2"}, {"kind", "changed"},
-            {"resultLineBegin", 2}, {"resultLineEnd", 3}, {"sourceLineBegin", 2}, {"sourceLineEnd", 3}}};
-        const QVariantList regions{QVariantMap{{"side", "stage2"}, {"state", "undecided"}, {"mapped", true},
-            {"resultLineBegin", 2}, {"resultLineEnd", 3}, {"sourceLineBegin", 2}, {"sourceLineEnd", 3}}};
+        const QVariantList passages{QVariantMap{{"side", "stage2"},
+                                                {"kind", "changed"},
+                                                {"resultLineBegin", 2},
+                                                {"resultLineEnd", 3},
+                                                {"sourceLineBegin", 2},
+                                                {"sourceLineEnd", 3}}};
+        const QVariantList regions{QVariantMap{{"side", "stage2"},
+                                               {"state", "undecided"},
+                                               {"mapped", true},
+                                               {"resultLineBegin", 2},
+                                               {"resultLineEnd", 3},
+                                               {"sourceLineBegin", 2},
+                                               {"sourceLineEnd", 3}}};
         for (const auto &pane : {QStringLiteral("stage2"), QStringLiteral("result")})
-            CHECK(marks.marks(pane, passages, regions, {}, {}, {}).value("lines").toMap().value("2").toString() == "changed");
+            CHECK(marks.marks(pane, passages, regions, {}, {}, {}).value("lines").toMap().value("2").toString()
+                  == "changed");
         CHECK(regions.first().toMap().value("state").toString() == "undecided");
     });
     suite.run("connector bands clip offscreen and follow layout", [] {
@@ -229,12 +250,20 @@ int main(int argc, char **argv)
         bands.setSourceBlocks(&source.blocks);
         bands.setResultBlocks(&result.blocks);
         bands.setViewportHeight(source.blocks.yAtLine(4));
-        bands.setPassages({QVariantMap{{"side", "stage2"}, {"kind", "changed"},
-            {"sourceLineBegin", 2}, {"sourceLineEnd", 3}, {"resultLineBegin", 2}, {"resultLineEnd", 3}},
-            QVariantMap{{"side", "stage2"}, {"kind", "changed"},
-            {"sourceLineBegin", 9}, {"sourceLineEnd", 10}, {"resultLineBegin", 9}, {"resultLineEnd", 10}}});
-        bands.setRegions({QVariantMap{{"side", "stage2"}, {"state", "accepted"},
-            {"sourceLineBegin", 2}, {"sourceLineEnd", 3}}});
+        bands.setPassages({QVariantMap{{"side", "stage2"},
+                                       {"kind", "changed"},
+                                       {"sourceLineBegin", 2},
+                                       {"sourceLineEnd", 3},
+                                       {"resultLineBegin", 2},
+                                       {"resultLineEnd", 3}},
+                           QVariantMap{{"side", "stage2"},
+                                       {"kind", "changed"},
+                                       {"sourceLineBegin", 9},
+                                       {"sourceLineEnd", 10},
+                                       {"resultLineBegin", 9},
+                                       {"resultLineEnd", 10}}});
+        bands.setRegions(
+            {QVariantMap{{"side", "stage2"}, {"state", "accepted"}, {"sourceLineBegin", 2}, {"sourceLineEnd", 3}}});
         CHECK(bands.bands().size() == 2);
         CHECK(bands.visibleBands().size() == 1);
         CHECK(bands.visibleBands().first().toMap().value("kind").toString() == "accepted");
@@ -266,8 +295,12 @@ int main(int argc, char **argv)
         bands.setSourceBlocks(&source.blocks);
         bands.setResultBlocks(&result.blocks);
         bands.setViewportHeight(result.blocks.yAtLine(10));
-        bands.setPassages({QVariantMap{{"side", "stage2"}, {"kind", "changed"},
-            {"sourceLineBegin", 2}, {"sourceLineEnd", 4}, {"resultLineBegin", 7}, {"resultLineEnd", 8}}});
+        bands.setPassages({QVariantMap{{"side", "stage2"},
+                                       {"kind", "changed"},
+                                       {"sourceLineBegin", 2},
+                                       {"sourceLineEnd", 4},
+                                       {"resultLineBegin", 7},
+                                       {"resultLineEnd", 8}}});
         CHECK(bands.visibleBands().size() == 1);
         const auto band = bands.visibleBands().first().toMap();
         const auto st = band.value("sourceTop").toReal(), sb = band.value("sourceBottom").toReal();

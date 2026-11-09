@@ -1,5 +1,5 @@
-#include "core/WordDifferences.h"
 #include "TestHarness.h"
+#include "core/WordDifferences.h"
 #include "fixtures/ChoiceFile.h"
 
 #include <string>
@@ -95,14 +95,16 @@ int main()
     suite.run("undecided competing sections pair with each other in the sources and the result", [] {
         const auto marked = test_support::markedText();
         auto file = test_support::choiceFile("header\nleft first\nleft second\nbridge\nleft later\ntail\n",
-            "header\nright first\nright second\nbridge\nright later\ntail\n", marked);
+                                             "header\nright first\nright second\nbridge\nright later\ntail\n", marked);
         const auto found = fileWordDifferences(file);
         const auto &left = file.snapshots()->stage2->worktree.utf8;
         const auto &right = file.snapshots()->stage3->worktree.utf8;
-        CHECK(words(left, sourceRanges(found, SourceSide::Stage2)) == (std::vector<std::string>{"left", "left", "left"}));
-        CHECK(words(right, sourceRanges(found, SourceSide::Stage3)) == (std::vector<std::string>{"right", "right", "right"}));
+        CHECK(words(left, sourceRanges(found, SourceSide::Stage2))
+              == (std::vector<std::string>{"left", "left", "left"}));
+        CHECK(words(right, sourceRanges(found, SourceSide::Stage3))
+              == (std::vector<std::string>{"right", "right", "right"}));
         CHECK(words(file.correspondence()->text(), found.result)
-            == (std::vector<std::string>{"left", "left", "right", "right", "left", "right"}));
+              == (std::vector<std::string>{"left", "left", "right", "right", "left", "right"}));
         CHECK(!found.sources.contains(SourceSide::Earlier));
     });
 

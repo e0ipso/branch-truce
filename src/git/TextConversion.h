@@ -51,6 +51,7 @@ public:
     [[nodiscard]] bool busy() const;
 Q_SIGNALS:
     void finished(const branch_truce::git::TextConversionResult &result);
+
 private:
     class State;
     std::unique_ptr<State> d;

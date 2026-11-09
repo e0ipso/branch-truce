@@ -1,5 +1,5 @@
-#include "storage/TextFormat.h"
 #include "TestHarness.h"
+#include "storage/TextFormat.h"
 #include <array>
 
 using namespace branch_truce::storage;
@@ -16,21 +16,31 @@ struct EncodingCase {
     QByteArray tab;
 };
 
-const std::array<EncodingCase, 6> encodings{{
-    {TextEncoding::Utf8, false, {}, {}, QByteArray::fromHex("41c3a9f09f9982"), "\n", "\r", "\t"},
-    {TextEncoding::Utf8, true, "uTf8", QByteArray::fromHex("efbbbf"),
-        QByteArray::fromHex("41c3a9f09f9982"), "\n", "\r", "\t"},
-    {TextEncoding::Utf16LittleEndian, false, "utf16le", {}, QByteArray::fromHex("4100e9003dd842de"),
-        QByteArray::fromHex("0a00"), QByteArray::fromHex("0d00"), QByteArray::fromHex("0900")},
-    {TextEncoding::Utf16BigEndian, false, "uTf-16be", {}, QByteArray::fromHex("004100e9d83dde42"),
-        QByteArray::fromHex("000a"), QByteArray::fromHex("000d"), QByteArray::fromHex("0009")},
-    {TextEncoding::Utf16LittleEndian, true, "UTF-16", QByteArray::fromHex("fffe"),
-        QByteArray::fromHex("4100e9003dd842de"), QByteArray::fromHex("0a00"),
-        QByteArray::fromHex("0d00"), QByteArray::fromHex("0900")},
-    {TextEncoding::Utf16BigEndian, true, "UTF16", QByteArray::fromHex("feff"),
-        QByteArray::fromHex("004100e9d83dde42"), QByteArray::fromHex("000a"),
-        QByteArray::fromHex("000d"), QByteArray::fromHex("0009")}
-}};
+const std::array<EncodingCase, 6> encodings{
+    {{TextEncoding::Utf8, false, {}, {}, QByteArray::fromHex("41c3a9f09f9982"), "\n", "\r", "\t"},
+     {TextEncoding::Utf8, true, "uTf8", QByteArray::fromHex("efbbbf"), QByteArray::fromHex("41c3a9f09f9982"), "\n",
+      "\r", "\t"},
+     {TextEncoding::Utf16LittleEndian,
+      false,
+      "utf16le",
+      {},
+      QByteArray::fromHex("4100e9003dd842de"),
+      QByteArray::fromHex("0a00"),
+      QByteArray::fromHex("0d00"),
+      QByteArray::fromHex("0900")},
+     {TextEncoding::Utf16BigEndian,
+      false,
+      "uTf-16be",
+      {},
+      QByteArray::fromHex("004100e9d83dde42"),
+      QByteArray::fromHex("000a"),
+      QByteArray::fromHex("000d"),
+      QByteArray::fromHex("0009")},
+     {TextEncoding::Utf16LittleEndian, true, "UTF-16", QByteArray::fromHex("fffe"),
+      QByteArray::fromHex("4100e9003dd842de"), QByteArray::fromHex("0a00"), QByteArray::fromHex("0d00"),
+      QByteArray::fromHex("0900")},
+     {TextEncoding::Utf16BigEndian, true, "UTF16", QByteArray::fromHex("feff"), QByteArray::fromHex("004100e9d83dde42"),
+      QByteArray::fromHex("000a"), QByteArray::fromHex("000d"), QByteArray::fromHex("0009")}}};
 }
 
 class TextFormatTests {
@@ -69,8 +79,8 @@ public:
                     CHECK(decoded.document && decoded.document->utf8 == editable);
                     CHECK(!decoded.document->format.finalNewline && decoded.document->originalBytes == bytes);
                     // Stale launch metadata cannot add a newline to an edited buffer.
-                    const auto serialized = serializeText(editable,
-                        {encoding.encoding, encoding.bom, Newline::CrLf, true});
+                    const auto serialized =
+                        serializeText(editable, {encoding.encoding, encoding.bom, Newline::CrLf, true});
                     CHECK(serialized.document && serialized.document->originalBytes == bytes);
                     CHECK(!serialized.document->format.finalNewline);
                     CHECK(serialized.document->format.newline == Newline::CrLf);
@@ -78,29 +88,35 @@ public:
             }
         });
         suite.run("invalid encodings, controls and ambiguous newlines have explicit rejection reasons", [] {
-            struct Invalid { QByteArray bytes; QByteArray encoding; };
-            const Invalid cases[]{
-                {QByteArray::fromHex("ff"), {}}, {QByteArray::fromHex("c0af"), {}},
-                {QByteArray::fromHex("e282"), {}}, {QByteArray::fromHex("eda080"), {}},
-                {QByteArray::fromHex("410042"), {}}, {QByteArray::fromHex("01"), {}},
-                {QByteArray::fromHex("7f"), {}}, {"a\rb", {}}, {"a\r\nb\n", {}},
-                {QByteArray::fromHex("4100"), "UTF-16"},
-                {QByteArray::fromHex("fffe41"), "UTF-16"},
-                {QByteArray::fromHex("00d8"), "UTF-16LE"},
-                {QByteArray::fromHex("00dc"), "UTF-16LE"},
-                {QByteArray::fromHex("00d84100"), "UTF-16LE"},
-                {QByteArray::fromHex("feff0041"), "UTF-16LE"},
-                {QByteArray::fromHex("fffe4100"), "UTF-16BE"},
-                {"plain", "ISO-8859-1"}
+            struct Invalid {
+                QByteArray bytes;
+                QByteArray encoding;
             };
+            const Invalid cases[]{{QByteArray::fromHex("ff"), {}},
+                                  {QByteArray::fromHex("c0af"), {}},
+                                  {QByteArray::fromHex("e282"), {}},
+                                  {QByteArray::fromHex("eda080"), {}},
+                                  {QByteArray::fromHex("410042"), {}},
+                                  {QByteArray::fromHex("01"), {}},
+                                  {QByteArray::fromHex("7f"), {}},
+                                  {"a\rb", {}},
+                                  {"a\r\nb\n", {}},
+                                  {QByteArray::fromHex("4100"), "UTF-16"},
+                                  {QByteArray::fromHex("fffe41"), "UTF-16"},
+                                  {QByteArray::fromHex("00d8"), "UTF-16LE"},
+                                  {QByteArray::fromHex("00dc"), "UTF-16LE"},
+                                  {QByteArray::fromHex("00d84100"), "UTF-16LE"},
+                                  {QByteArray::fromHex("feff0041"), "UTF-16LE"},
+                                  {QByteArray::fromHex("fffe4100"), "UTF-16BE"},
+                                  {"plain", "ISO-8859-1"}};
             for (const auto &invalid : cases) {
                 const auto decoded = decodeText(invalid.bytes, invalid.encoding);
                 CHECK(!decoded.document && !decoded.diagnostic.isEmpty());
             }
         });
         suite.run("serialization accepts only editable UTF-8 and takes final newline from the buffer", [] {
-            for (const auto &invalid : {QByteArray::fromHex("ff"), QByteArray::fromHex("610062"),
-                    QByteArray("a\rb"), QByteArray("a\r\n"), QByteArray::fromHex("efbbbf61")}) {
+            for (const auto &invalid : {QByteArray::fromHex("ff"), QByteArray::fromHex("610062"), QByteArray("a\rb"),
+                                        QByteArray("a\r\n"), QByteArray::fromHex("efbbbf61")}) {
                 const auto result = serializeText(invalid, {});
                 CHECK(!result.document && !result.diagnostic.isEmpty());
             }
@@ -113,14 +129,17 @@ public:
         });
         suite.run("explicit encoding and EOL override launch format with deterministic BOM rules", [] {
             const TextFormat launch{TextEncoding::Utf16BigEndian, true, Newline::CrLf, true};
-            struct Selection { QByteArray encoding; QByteArray eol; TextFormat expected; };
-            const Selection cases[]{
-                {{}, {}, launch}, {"unset", "unspecified", launch},
-                {"UTF8", "lf", {TextEncoding::Utf8, false, Newline::Lf, true}},
-                {"UTF-16", {}, launch},
-                {"utf16le", "lf", {TextEncoding::Utf16LittleEndian, false, Newline::Lf, true}},
-                {"utf-16be", "crlf", {TextEncoding::Utf16BigEndian, false, Newline::CrLf, true}}
+            struct Selection {
+                QByteArray encoding;
+                QByteArray eol;
+                TextFormat expected;
             };
+            const Selection cases[]{{{}, {}, launch},
+                                    {"unset", "unspecified", launch},
+                                    {"UTF8", "lf", {TextEncoding::Utf8, false, Newline::Lf, true}},
+                                    {"UTF-16", {}, launch},
+                                    {"utf16le", "lf", {TextEncoding::Utf16LittleEndian, false, Newline::Lf, true}},
+                                    {"utf-16be", "crlf", {TextEncoding::Utf16BigEndian, false, Newline::CrLf, true}}};
             for (const auto &selection : cases) {
                 QString diagnostic;
                 const auto format = resultFormat(launch, selection.encoding, selection.eol, diagnostic);
@@ -140,7 +159,4 @@ public:
     }
 };
 
-int main()
-{
-    return TextFormatTests{}.runTests();
-}
+int main() { return TextFormatTests{}.runTests(); }

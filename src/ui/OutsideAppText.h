@@ -46,7 +46,8 @@ public:
         // and control characters to another tool rather than present a different path.
         for (const auto value : text)
             if (value.category() == QChar::Other_Control || value.category() == QChar::Other_Format
-                || value == QChar::LineSeparator || value == QChar::ParagraphSeparator) return {};
+                || value == QChar::LineSeparator || value == QChar::ParagraphSeparator)
+                return {};
         static const QRegularExpression simplePath(QStringLiteral("\\A[A-Za-z0-9_./][A-Za-z0-9_./-]*\\z"));
         if (simplePath.match(text).hasMatch()) return QStringLiteral("git add ") + text;
         auto quoted = text;

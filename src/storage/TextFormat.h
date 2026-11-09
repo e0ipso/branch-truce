@@ -29,6 +29,6 @@ struct TextResult {
 // Unattributed text must be UTF-8. UTF-16 requires an explicit Git encoding.
 [[nodiscard]] TextResult decodeText(const QByteArray &bytes, const QByteArray &workingTreeEncoding = {});
 [[nodiscard]] TextResult serializeText(const QByteArray &utf8, const TextFormat &format);
-[[nodiscard]] std::optional<TextFormat> resultFormat(const TextFormat &launch,
-    const QByteArray &workingTreeEncoding, const QByteArray &eol, QString &diagnostic);
+[[nodiscard]] std::optional<TextFormat> resultFormat(const TextFormat &launch, const QByteArray &workingTreeEncoding,
+                                                     const QByteArray &eol, QString &diagnostic);
 } // namespace branch_truce::storage

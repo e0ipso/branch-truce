@@ -28,19 +28,20 @@ public:
         QJsonArray decisions;
         for (const auto &[id, decision] : value.decisions) {
             QJsonObject entry{{QStringLiteral("id"), bytes(id)},
-                {QStringLiteral("value"), static_cast<int>(decision.value)}};
+                              {QStringLiteral("value"), static_cast<int>(decision.value)}};
             if (decision.order) entry.insert(QStringLiteral("order"), QString::number(*decision.order));
             decisions.push_back(entry);
         }
-        return {{QStringLiteral("text"), bytes(value.text)}, {QStringLiteral("decisions"), decisions},
-            {QStringLiteral("unresolvedMarkers"), QString::number(value.unresolvedMarkers)}};
+        return {{QStringLiteral("text"), bytes(value.text)},
+                {QStringLiteral("decisions"), decisions},
+                {QStringLiteral("unresolvedMarkers"), QString::number(value.unresolvedMarkers)}};
     }
     QJsonObject revision(const Revision &value)
     {
         QJsonObject result{{QStringLiteral("id"), QString::number(value.id)},
-            {QStringLiteral("result"), QString::number(value.result)},
-            {QStringLiteral("decisions"), QString::number(value.decisions)},
-            {QStringLiteral("draft"), draft(value.draft)}};
+                           {QStringLiteral("result"), QString::number(value.result)},
+                           {QStringLiteral("decisions"), QString::number(value.decisions)},
+                           {QStringLiteral("draft"), draft(value.draft)}};
         // Written only when present, so records without hand edits keep the
         // encoding they had before this field existed.
         QJsonArray handEdited;
@@ -52,7 +53,7 @@ public:
         if (value.correspondence)
             for (const auto &range : value.correspondence->handEditedRanges())
                 ranges.push_back(QJsonObject{{QStringLiteral("begin"), QString::number(range.begin)},
-                    {QStringLiteral("end"), QString::number(range.end)}});
+                                             {QStringLiteral("end"), QString::number(range.end)}});
         if (!ranges.isEmpty()) result.insert(QStringLiteral("handEditedRanges"), ranges);
         return result;
     }
@@ -60,23 +61,26 @@ public:
     {
         if (!value) return QJsonValue::Null;
         return QJsonObject{{QStringLiteral("revision"), QString::number(value->revision)},
-            {QStringLiteral("outcome"), static_cast<int>(value->outcome)},
-            {QStringLiteral("detail"), bytes(value->detail)}};
+                           {QStringLiteral("outcome"), static_cast<int>(value->outcome)},
+                           {QStringLiteral("detail"), bytes(value->detail)}};
     }
     QJsonObject text(const TextSnapshot &value)
     {
-        return {{QStringLiteral("utf8"), bytes(value.utf8)}, {QStringLiteral("bytes"), bytes(value.bytes)},
-            {QStringLiteral("format"), QJsonObject{
-                {QStringLiteral("encoding"), static_cast<int>(value.format.encoding)},
-                {QStringLiteral("bom"), value.format.bom},
-                {QStringLiteral("newline"), static_cast<int>(value.format.newline)},
-                {QStringLiteral("finalNewline"), value.format.finalNewline}}}};
+        return {{QStringLiteral("utf8"), bytes(value.utf8)},
+                {QStringLiteral("bytes"), bytes(value.bytes)},
+                {QStringLiteral("format"),
+                 QJsonObject{{QStringLiteral("encoding"), static_cast<int>(value.format.encoding)},
+                             {QStringLiteral("bom"), value.format.bom},
+                             {QStringLiteral("newline"), static_cast<int>(value.format.newline)},
+                             {QStringLiteral("finalNewline"), value.format.finalNewline}}}};
     }
     QJsonValue source(const std::optional<SourceSnapshot> &value)
     {
         if (!value) return QJsonValue::Null;
-        return QJsonObject{{QStringLiteral("objectId"), bytes(value->objectId)},
-            {QStringLiteral("mode"), bytes(value->mode)}, {QStringLiteral("rawBytes"), bytes(value->rawBytes)},
+        return QJsonObject{
+            {QStringLiteral("objectId"), bytes(value->objectId)},
+            {QStringLiteral("mode"), bytes(value->mode)},
+            {QStringLiteral("rawBytes"), bytes(value->rawBytes)},
             {QStringLiteral("worktree"), text(value->worktree)},
             {QStringLiteral("commitId"), value->commitId ? QJsonValue(bytes(*value->commitId)) : QJsonValue::Null},
             {QStringLiteral("label"), bytes(value->label)}};
@@ -93,45 +97,60 @@ public:
         if (!value) return QJsonValue::Null;
         const auto &p = value->provenance;
         const auto &i = value->launchResult.identity;
-        return QJsonObject{{QStringLiteral("path"), bytes(value->path)},
+        return QJsonObject{
+            {QStringLiteral("path"), bytes(value->path)},
             {QStringLiteral("resultMode"), bytes(value->resultMode)},
             {QStringLiteral("earlier"), source(value->earlier)},
-            {QStringLiteral("stage2"), source(value->stage2)}, {QStringLiteral("stage3"), source(value->stage3)},
-            {QStringLiteral("conversion"), QJsonObject{{QStringLiteral("attributes"), mapping(value->conversion.attributes)},
-                {QStringLiteral("configuration"), mapping(value->conversion.configuration)}}},
-            {QStringLiteral("provenance"), QJsonObject{{QStringLiteral("sessionId"), bytes(p.sessionId)},
-                {QStringLiteral("worktreeRoot"), bytes(p.worktreeRoot)}, {QStringLiteral("gitDirectory"), bytes(p.gitDirectory)},
-                {QStringLiteral("operation"), static_cast<int>(p.operation)},
-                {QStringLiteral("stage2CommitId"), bytes(p.stage2CommitId)},
-                {QStringLiteral("stage3CommitId"), bytes(p.stage3CommitId)},
-                {QStringLiteral("baseCommitId"), p.baseCommitId ? QJsonValue(bytes(*p.baseCommitId)) : QJsonValue::Null},
-                {QStringLiteral("headName"), bytes(p.headName)}, {QStringLiteral("originalHead"), bytes(p.originalHead)},
-                {QStringLiteral("onto"), bytes(p.onto)}}},
-            {QStringLiteral("launchResult"), QJsonObject{{QStringLiteral("text"), text(value->launchResult.text)},
-                {QStringLiteral("identity"), QJsonObject{
-                    {QStringLiteral("device"), QString::number(i.device)}, {QStringLiteral("inode"), QString::number(i.inode)},
-                    {QStringLiteral("mode"), QString::number(i.mode)}, {QStringLiteral("size"), QString::number(i.size)},
-                    {QStringLiteral("modifiedSeconds"), QString::number(i.modifiedSeconds)},
-                    {QStringLiteral("modifiedNanoseconds"), QString::number(i.modifiedNanoseconds)},
-                    {QStringLiteral("changedSeconds"), QString::number(i.changedSeconds)},
-                    {QStringLiteral("changedNanoseconds"), QString::number(i.changedNanoseconds)}}}}}};
+            {QStringLiteral("stage2"), source(value->stage2)},
+            {QStringLiteral("stage3"), source(value->stage3)},
+            {QStringLiteral("conversion"),
+             QJsonObject{{QStringLiteral("attributes"), mapping(value->conversion.attributes)},
+                         {QStringLiteral("configuration"), mapping(value->conversion.configuration)}}},
+            {QStringLiteral("provenance"),
+             QJsonObject{{QStringLiteral("sessionId"), bytes(p.sessionId)},
+                         {QStringLiteral("worktreeRoot"), bytes(p.worktreeRoot)},
+                         {QStringLiteral("gitDirectory"), bytes(p.gitDirectory)},
+                         {QStringLiteral("operation"), static_cast<int>(p.operation)},
+                         {QStringLiteral("stage2CommitId"), bytes(p.stage2CommitId)},
+                         {QStringLiteral("stage3CommitId"), bytes(p.stage3CommitId)},
+                         {QStringLiteral("baseCommitId"),
+                          p.baseCommitId ? QJsonValue(bytes(*p.baseCommitId)) : QJsonValue::Null},
+                         {QStringLiteral("headName"), bytes(p.headName)},
+                         {QStringLiteral("originalHead"), bytes(p.originalHead)},
+                         {QStringLiteral("onto"), bytes(p.onto)}}},
+            {QStringLiteral("launchResult"),
+             QJsonObject{
+                 {QStringLiteral("text"), text(value->launchResult.text)},
+                 {QStringLiteral("identity"),
+                  QJsonObject{{QStringLiteral("device"), QString::number(i.device)},
+                              {QStringLiteral("inode"), QString::number(i.inode)},
+                              {QStringLiteral("mode"), QString::number(i.mode)},
+                              {QStringLiteral("size"), QString::number(i.size)},
+                              {QStringLiteral("modifiedSeconds"), QString::number(i.modifiedSeconds)},
+                              {QStringLiteral("modifiedNanoseconds"), QString::number(i.modifiedNanoseconds)},
+                              {QStringLiteral("changedSeconds"), QString::number(i.changedSeconds)},
+                              {QStringLiteral("changedNanoseconds"), QString::number(i.changedNanoseconds)}}}}}};
     }
 };
 }
 
-storage::RecoveryTransaction recoveryTransaction(const FileSession &file,
-    const QString &action, const QString &transactionId)
+storage::RecoveryTransaction recoveryTransaction(const FileSession &file, const QString &action,
+                                                 const QString &transactionId)
 {
     Encoder encoder;
     auto &state = encoder.transaction.state;
-    state = {{QStringLiteral("schema"), 1}, {QStringLiteral("transactionId"), transactionId},
-        {QStringLiteral("action"), action}, {QStringLiteral("fileId"), encoder.bytes(file.id())},
+    state = {
+        {QStringLiteral("schema"), 1},
+        {QStringLiteral("transactionId"), transactionId},
+        {QStringLiteral("action"), action},
+        {QStringLiteral("fileId"), encoder.bytes(file.id())},
         {QStringLiteral("path"), encoder.bytes(file.path())},
         {QStringLiteral("support"), static_cast<int>(file.support())},
         {QStringLiteral("supportDetail"), encoder.bytes(file.supportDetail())},
         {QStringLiteral("snapshots"), encoder.snapshots(file.snapshots())},
         {QStringLiteral("current"), encoder.revision(file.current())},
-        {QStringLiteral("checkpoint"), file.checkpoint() ? QJsonValue(encoder.revision(*file.checkpoint())) : QJsonValue::Null},
+        {QStringLiteral("checkpoint"),
+         file.checkpoint() ? QJsonValue(encoder.revision(*file.checkpoint())) : QJsonValue::Null},
         {QStringLiteral("written"), file.written() ? QJsonValue(encoder.revision(*file.written())) : QJsonValue::Null},
         {QStringLiteral("checkpointOutcome"), encoder.outcome(file.checkpointOutcome())},
         {QStringLiteral("writeOutcome"), encoder.outcome(file.writeOutcome())},
@@ -140,14 +159,16 @@ storage::RecoveryTransaction recoveryTransaction(const FileSession &file,
         auto reviewed = encoder.revision(file.reviewed()->revision);
         reviewed.insert(QStringLiteral("confirmedUndecided"), file.reviewed()->confirmedUndecided);
         state.insert(QStringLiteral("reviewed"), reviewed);
-    } else state.insert(QStringLiteral("reviewed"), QJsonValue::Null);
+    } else
+        state.insert(QStringLiteral("reviewed"), QJsonValue::Null);
     if (file.staged()) {
         auto staged = encoder.revision(file.staged()->revision);
         staged.insert(QStringLiteral("objectId"), encoder.bytes(file.staged()->objectId));
         staged.insert(QStringLiteral("mode"), encoder.bytes(file.staged()->mode));
         staged.insert(QStringLiteral("confirmedUndecided"), file.staged()->confirmedUndecided);
         state.insert(QStringLiteral("staged"), staged);
-    } else state.insert(QStringLiteral("staged"), QJsonValue::Null);
+    } else
+        state.insert(QStringLiteral("staged"), QJsonValue::Null);
     return std::move(encoder.transaction);
 }
 
@@ -219,7 +240,7 @@ std::vector<ByteRange> RecoveryRecordDecoder::handEditedRanges(const QJsonValue 
         require(entry.isObject(), "Invalid recovered hand-edited range.");
         const auto range = entry.toObject();
         const ByteRange decoded{static_cast<std::size_t>(number(range.value("begin"))),
-            static_cast<std::size_t>(number(range.value("end")))};
+                                static_cast<std::size_t>(number(range.value("end")))};
         require(decoded.begin <= decoded.end, "Invalid recovered hand-edited range.");
         result.push_back(decoded);
     }
@@ -230,21 +251,23 @@ TextSnapshot RecoveryRecordDecoder::text(const QJsonValue &value) const
 {
     const auto object = value.toObject();
     const auto format = object.value("format").toObject();
-    TextSnapshot result{bytes(object.value("utf8")), bytes(object.value("bytes")),
-        {enumeration<SnapshotFormat::Encoding>(format.value("encoding"), 2),
-         boolean(format.value("bom")), enumeration<SnapshotFormat::Newline>(format.value("newline"), 1),
-         boolean(format.value("finalNewline"))}};
+    TextSnapshot result{bytes(object.value("utf8")),
+                        bytes(object.value("bytes")),
+                        {enumeration<SnapshotFormat::Encoding>(format.value("encoding"), 2),
+                         boolean(format.value("bom")), enumeration<SnapshotFormat::Newline>(format.value("newline"), 1),
+                         boolean(format.value("finalNewline"))}};
     require(validUtf8(result.utf8), "Invalid recovered text encoding.");
     const auto encoding = result.format.encoding == SnapshotFormat::Encoding::Utf8 ? QByteArray{}
-        : result.format.encoding == SnapshotFormat::Encoding::Utf16LittleEndian ? QByteArray("UTF-16LE") : QByteArray("UTF-16BE");
+        : result.format.encoding == SnapshotFormat::Encoding::Utf16LittleEndian    ? QByteArray("UTF-16LE")
+                                                                                   : QByteArray("UTF-16BE");
     const auto decoded = storage::decodeText(QByteArray::fromStdString(result.bytes), encoding);
     require(decoded.document && decoded.document->utf8.toStdString() == result.utf8,
             "Recovered text bytes and editable representation disagree.");
     require(static_cast<int>(decoded.document->format.encoding) == static_cast<int>(result.format.encoding)
-        && decoded.document->format.bom == result.format.bom
-        && static_cast<int>(decoded.document->format.newline) == static_cast<int>(result.format.newline)
-        && decoded.document->format.finalNewline == result.format.finalNewline,
-        "Recovered text format does not describe its bytes.");
+                && decoded.document->format.bom == result.format.bom
+                && static_cast<int>(decoded.document->format.newline) == static_cast<int>(result.format.newline)
+                && decoded.document->format.finalNewline == result.format.finalNewline,
+            "Recovered text format does not describe its bytes.");
     return result;
 }
 
@@ -252,8 +275,12 @@ std::optional<SourceSnapshot> RecoveryRecordDecoder::source(const QJsonValue &va
 {
     if (value.isNull()) return {};
     const auto object = value.toObject();
-    SourceSnapshot result{bytes(object.value("objectId")), bytes(object.value("mode")),
-        bytes(object.value("rawBytes")), text(object.value("worktree")), {}, bytes(object.value("label"))};
+    SourceSnapshot result{bytes(object.value("objectId")),
+                          bytes(object.value("mode")),
+                          bytes(object.value("rawBytes")),
+                          text(object.value("worktree")),
+                          {},
+                          bytes(object.value("label"))};
     if (!object.value("commitId").isNull()) result.commitId = bytes(object.value("commitId"));
     require(!result.objectId.empty() && (result.mode == "100644" || result.mode == "100755"),
             "Invalid recovered source identity.");
@@ -300,10 +327,12 @@ std::optional<FileSnapshots> RecoveryRecordDecoder::snapshots(const QJsonValue &
     provenance.onto = bytes(p.value("onto"));
     require(!QUuid(QString::fromStdString(provenance.sessionId)).isNull(), "Invalid recovery session identity.");
     require(result.stage2 && result.stage3 && result.stage2->mode == result.resultMode
-                && result.stage3->mode == result.resultMode, "Incomplete recovered source captures.");
+                && result.stage3->mode == result.resultMode,
+            "Incomplete recovered source captures.");
     const auto mode = number(identity.value("mode"));
     require(mode <= std::numeric_limits<std::uint32_t>::max(), "Invalid recovery file mode.");
-    result.launchResult = {text(launch.value("text")),
+    result.launchResult = {
+        text(launch.value("text")),
         {number(identity.value("device")), number(identity.value("inode")), static_cast<std::uint32_t>(mode),
          signedNumber(identity.value("size")), signedNumber(identity.value("modifiedSeconds")),
          signedNumber(identity.value("modifiedNanoseconds")), signedNumber(identity.value("changedSeconds")),
@@ -314,6 +343,7 @@ std::optional<FileSnapshots> RecoveryRecordDecoder::snapshots(const QJsonValue &
 OperationOutcome RecoveryRecordDecoder::outcome(const QJsonValue &value) const
 {
     const auto object = value.toObject();
-    return {number(object.value("revision")), enumeration<Outcome>(object.value("outcome"), 2), bytes(object.value("detail"))};
+    return {number(object.value("revision")), enumeration<Outcome>(object.value("outcome"), 2),
+            bytes(object.value("detail"))};
 }
 }

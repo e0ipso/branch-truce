@@ -51,8 +51,10 @@ std::vector<ByteRange> disjoint(std::vector<ByteRange> ranges)
     std::sort(ranges.begin(), ranges.end(), [](const auto &a, const auto &b) { return a.begin < b.begin; });
     std::vector<ByteRange> result;
     for (const auto &range : ranges) {
-        if (!result.empty() && range.begin <= result.back().end) result.back().end = std::max(result.back().end, range.end);
-        else result.push_back(range);
+        if (!result.empty() && range.begin <= result.back().end)
+            result.back().end = std::max(result.back().end, range.end);
+        else
+            result.push_back(range);
     }
     return result;
 }
@@ -111,8 +113,9 @@ MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content, st
     // right-side text or the end marker. Otherwise the first one closes the base.
     const auto baseEnd = [&](ByteRange line) {
         auto last = line;
-        for (auto next = lineAt(last.end); last.end < text.size() && covers(uncertain, last)
-             && markerAt(next, true) == MarkerKind::Separator; next = lineAt(last.end))
+        for (auto next = lineAt(last.end);
+             last.end < text.size() && covers(uncertain, last) && markerAt(next, true) == MarkerKind::Separator;
+             next = lineAt(last.end))
             last = next;
         if (last == line || last.end == text.size()) return line.begin;
         const auto after = lineAt(last.end);
@@ -135,7 +138,8 @@ MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content, st
             const auto region = text.substr(base.begin, lines[i].begin - base.begin);
             if (std::find(sources->bases.begin(), sources->bases.end(), region) == sources->bases.end()
                 && (!wholeLines(sources->earlier, text.substr(base.end, lines[i].begin - base.end))
-                    || !wholeLines(sources->right, text.substr(lines[i].end, *end - lines[i].end)))) continue;
+                    || !wholeLines(sources->right, text.substr(lines[i].end, *end - lines[i].end))))
+                continue;
             if (found) return std::optional<std::size_t>{};
             found = i;
         }
@@ -145,8 +149,8 @@ MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content, st
     // first separator line in the base region after the ||||||| line `base`.
     const auto separatorLines = [&](ByteRange base, ByteRange line) {
         std::vector<ByteRange> lines{line};
-        for (auto next = lineAt(line.end); lines.back().end < text.size()
-             && markerAt(next, true) == MarkerKind::Separator; next = lineAt(next.end))
+        for (auto next = lineAt(line.end);
+             lines.back().end < text.size() && markerAt(next, true) == MarkerKind::Separator; next = lineAt(next.end))
             lines.push_back(next);
         if (const auto git = copiedAround(base, lines)) return ByteRange{lines[*git].begin, lines.back().end};
         const auto begin = baseEnd(line);
@@ -176,12 +180,16 @@ MarkerScan scanMarkers(std::string_view text, std::vector<ByteRange> content, st
                 open = OpenBlock{marker, {}, {}, {}};
                 break;
             case MarkerKind::Base:
-                if (open && !open->base && !open->separator) open->base = marker;
-                else result.orphans.push_back(marker);
+                if (open && !open->base && !open->separator)
+                    open->base = marker;
+                else
+                    result.orphans.push_back(marker);
                 break;
             case MarkerKind::Separator:
-                if (open && !open->separator) open->separator = marker;
-                else result.orphans.push_back(marker);
+                if (open && !open->separator)
+                    open->separator = marker;
+                else
+                    result.orphans.push_back(marker);
                 break;
             case MarkerKind::End:
                 if (open && open->separator) {

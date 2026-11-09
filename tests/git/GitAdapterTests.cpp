@@ -1,9 +1,9 @@
+#include "TestHarness.h"
+#include "core/ResourceLimits.h"
+#include "fixtures/conversions/ConversionCases.h"
+#include "git/ConflictClassifier.h"
 #include "git/GitAdapter.h"
 #include "git/TextConversion.h"
-#include "git/ConflictClassifier.h"
-#include "core/ResourceLimits.h"
-#include "TestHarness.h"
-#include "fixtures/conversions/ConversionCases.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -28,9 +28,17 @@ constexpr auto gitExecutable = "/usr/bin/git";
 
 QList<QByteArray> oddPaths()
 {
-    return {":leading.txt", ":(glob)*", ":!tracked.txt", "[ab].txt", "--all", "-",
-            " space name\twith\nnewline ", "quote\"and\\backslash", QByteArray::fromHex("636166c3a92e747874"),
-            QByteArray("odd-") + char(0xff) + ".txt", QByteArray("odd-") + char(0xfe) + ".txt",
+    return {":leading.txt",
+            ":(glob)*",
+            ":!tracked.txt",
+            "[ab].txt",
+            "--all",
+            "-",
+            " space name\twith\nnewline ",
+            "quote\"and\\backslash",
+            QByteArray::fromHex("636166c3a92e747874"),
+            QByteArray("odd-") + char(0xff) + ".txt",
+            QByteArray("odd-") + char(0xfe) + ".txt",
             QByteArray("nested/odd-") + char(0xff) + ".txt"};
 }
 
@@ -40,7 +48,8 @@ void writeFile(const QString &path, const QByteArray &bytes, bool executable = f
     CHECK(file.open(QIODevice::WriteOnly));
     CHECK(file.write(bytes) == bytes.size());
     file.close();
-    if (executable) CHECK(file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    if (executable)
+        CHECK(file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
 }
 
 class Repository {
@@ -105,10 +114,11 @@ public:
     }
     // Scripted process outcomes exercise adapter boundaries. Literal path/index
     // correctness is covered separately against real Git in this temporary repo.
-    QString fakeGit(const QByteArray &operation,
-                    const QByteArray &inspection = "printf '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\\ttracked.txt\\0'\n",
-                    const QByteArray &configuration = {},
-                    const QByteArray &attributes = "printf 'tracked.txt\\0filter\\0unspecified\\0'\n") const
+    QString fakeGit(
+        const QByteArray &operation,
+        const QByteArray &inspection = "printf '100644 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 0\\ttracked.txt\\0'\n",
+        const QByteArray &configuration = {},
+        const QByteArray &attributes = "printf 'tracked.txt\\0filter\\0unspecified\\0'\n") const
     {
         QByteArray script = R"SH(#!/bin/sh
 printf '%s\0' "$@" >> .adapter-argv
@@ -192,6 +202,7 @@ public:
         return result;
     }
     std::vector<Result> results;
+
 private:
     GitAdapter &adapter_;
     QEventLoop loop_;
@@ -206,8 +217,8 @@ Result run(GitAdapter &adapter, const Request &request)
 
 QByteArray commitFixture(const Repository &repo, const QString &message)
 {
-    repo.git({"-c", "user.name=Branch Truce Tests", "-c", "user.email=tests@example.invalid",
-              "commit", "--quiet", "-am", message});
+    repo.git({"-c", "user.name=Branch Truce Tests", "-c", "user.email=tests@example.invalid", "commit", "--quiet",
+              "-am", message});
     return repo.git({"rev-parse", "HEAD"}).trimmed();
 }
 
@@ -218,7 +229,11 @@ QByteArray numberedText(const QByteArray &tenth)
     return bytes;
 }
 
-struct ConflictHistory { QByteArray base; QByteArray main; QByteArray side; };
+struct ConflictHistory {
+    QByteArray base;
+    QByteArray main;
+    QByteArray side;
+};
 
 struct ConflictContents {
     QByteArray base = "base\n";
@@ -273,7 +288,8 @@ void checkOperationIdentity(const Result &result, const ConflictHistory &history
     } else {
         CHECK(result.repository.stage2.label.startsWith("Current checkout"));
         CHECK(result.repository.stage3.label.startsWith("Merged commit"));
-        CHECK(result.repository.headName.isEmpty() && result.repository.originalHead.isEmpty() && result.repository.onto.isEmpty());
+        CHECK(result.repository.headName.isEmpty() && result.repository.originalHead.isEmpty()
+              && result.repository.onto.isEmpty());
     }
 }
 
@@ -295,8 +311,7 @@ QByteArray indexWithoutPath(const QByteArray &index, const QByteArray &path)
 {
     QByteArray otherEntries;
     for (const auto &record : index.split('\0')) {
-        if (!record.isEmpty() && record.mid(record.indexOf('\t') + 1) != path)
-            otherEntries += record + '\0';
+        if (!record.isEmpty() && record.mid(record.indexOf('\t') + 1) != path) otherEntries += record + '\0';
     }
     return otherEntries;
 }
@@ -367,13 +382,20 @@ ConflictClassificationResult run(ConflictClassifier &classifier, const ConflictC
 class EnvironmentValue {
 public:
     EnvironmentValue(QByteArray name, const QByteArray &value)
-        : name_(std::move(name)), previous_(qgetenv(name_.constData())), set_(qEnvironmentVariableIsSet(name_.constData()))
-    { CHECK(qputenv(name_.constData(), value)); }
+        : name_(std::move(name)),
+          previous_(qgetenv(name_.constData())),
+          set_(qEnvironmentVariableIsSet(name_.constData()))
+    {
+        CHECK(qputenv(name_.constData(), value));
+    }
     ~EnvironmentValue()
     {
-        if (set_) qputenv(name_.constData(), previous_);
-        else qunsetenv(name_.constData());
+        if (set_)
+            qputenv(name_.constData(), previous_);
+        else
+            qunsetenv(name_.constData());
     }
+
 private:
     QByteArray name_;
     QByteArray previous_;
@@ -387,10 +409,8 @@ void registerMergetool(Repository &repo, const QString &scenario)
     const auto theirs = repo.git({"hash-object", "-w", "--stdin"}, "theirs\n").trimmed();
     const auto nul = QByteArray(1, '\0');
     repo.git({"update-index", "-z", "--index-info"},
-        "0 " + QByteArray(40, '0') + "\ttracked.txt" + nul
-        + "100644 " + base + " 1\ttracked.txt" + nul
-        + "100644 " + ours + " 2\ttracked.txt" + nul
-        + "100644 " + theirs + " 3\ttracked.txt" + nul);
+             "0 " + QByteArray(40, '0') + "\ttracked.txt" + nul + "100644 " + base + " 1\ttracked.txt" + nul + "100644 "
+                 + ours + " 2\ttracked.txt" + nul + "100644 " + theirs + " 3\ttracked.txt" + nul);
     writeFile(repo.path("tracked.txt"), "<<<<<<< ours\nours\n=======\ntheirs\n>>>>>>> theirs\n");
     auto executable = QCoreApplication::applicationFilePath();
     executable.replace('\'', "'\\''");
@@ -426,8 +446,8 @@ int mergetoolFixture(const QString &scenario, const QString &merged)
         configure("remote.origin.promisor", "true");
     }
     GitAdapter adapter(gitExecutable);
-    const auto preflight = run(adapter, {Operation::CheckParentStaging, QDir::currentPath(),
-                                       QFile::encodeName(merged), {}, 71, 93});
+    const auto preflight =
+        run(adapter, {Operation::CheckParentStaging, QDir::currentPath(), QFile::encodeName(merged), {}, 71, 93});
     writeFile(".handoff-preflight", preflight.diagnostic.toUtf8());
     CHECK(preflight.mutation == Mutation::NotAttempted);
     if (preflight.outcome != Outcome::Success) {
@@ -446,23 +466,34 @@ public:
     {
         test_support::Suite suite("ConflictClassifierTests");
         for (const auto &[scenario, expected] : std::vector<std::pair<QByteArray, ConflictSupport>>{
-                 {"regular", ConflictSupport::SupportedText}, {"executable", ConflictSupport::SupportedText},
-                 {"missing-ours", ConflictSupport::MissingSide}, {"missing-theirs", ConflictSupport::MissingSide},
-                 {"mode-disagreement", ConflictSupport::ModeConflict}, {"symlink-source", ConflictSupport::UnsupportedType},
-                 {"submodule-source", ConflictSupport::UnsupportedType}, {"binary-source", ConflictSupport::UnsupportedText},
-                 {"symlink-base", ConflictSupport::UnsupportedType}, {"submodule-base", ConflictSupport::UnsupportedType},
-                 {"invalid-utf8-source", ConflictSupport::UnsupportedText}, {"mixed-newlines-source", ConflictSupport::UnsupportedText},
-                 {"invalid-result", ConflictSupport::UnsupportedText}, {"missing-result", ConflictSupport::LoadFailure},
-                 {"directory-result", ConflictSupport::TopologyConflict}, {"fifo-result", ConflictSupport::TopologyConflict},
-                 {"symlink-result", ConflictSupport::TopologyConflict}, {"excluded-attributes", ConflictSupport::UnsupportedConversion},
-                 {"filter", ConflictSupport::UnsupportedConversion}, {"unverified-source", ConflictSupport::UnverifiedSource}}) {
+                 {"regular", ConflictSupport::SupportedText},
+                 {"executable", ConflictSupport::SupportedText},
+                 {"missing-ours", ConflictSupport::MissingSide},
+                 {"missing-theirs", ConflictSupport::MissingSide},
+                 {"mode-disagreement", ConflictSupport::ModeConflict},
+                 {"symlink-source", ConflictSupport::UnsupportedType},
+                 {"submodule-source", ConflictSupport::UnsupportedType},
+                 {"binary-source", ConflictSupport::UnsupportedText},
+                 {"symlink-base", ConflictSupport::UnsupportedType},
+                 {"submodule-base", ConflictSupport::UnsupportedType},
+                 {"invalid-utf8-source", ConflictSupport::UnsupportedText},
+                 {"mixed-newlines-source", ConflictSupport::UnsupportedText},
+                 {"invalid-result", ConflictSupport::UnsupportedText},
+                 {"missing-result", ConflictSupport::LoadFailure},
+                 {"directory-result", ConflictSupport::TopologyConflict},
+                 {"fifo-result", ConflictSupport::TopologyConflict},
+                 {"symlink-result", ConflictSupport::TopologyConflict},
+                 {"excluded-attributes", ConflictSupport::UnsupportedConversion},
+                 {"filter", ConflictSupport::UnsupportedConversion},
+                 {"unverified-source", ConflictSupport::UnverifiedSource}}) {
             suite.run("complete-conflict classification matrix: " + scenario.toStdString(), [=] {
                 Repository repo;
                 ConflictContents contents;
                 if (scenario == "binary-source") contents.side = QByteArray("binary\0side\n", 12);
                 if (scenario == "invalid-utf8-source") contents.side = QByteArray("side-") + char(0xff) + '\n';
                 if (scenario == "mixed-newlines-source") contents.side = "side\r\nsecond\n";
-                if (scenario == "executable") CHECK(::chmod(QFile::encodeName(repo.path("tracked.txt")).constData(), 0755) == 0);
+                if (scenario == "executable")
+                    CHECK(::chmod(QFile::encodeName(repo.path("tracked.txt")).constData(), 0755) == 0);
                 const auto history = conflictHistory(repo, false, contents);
                 repo.git({"merge", "--no-edit", "side"}, {}, 1);
                 const QByteArray manual = "preserved manual UTF-8 \xc3\xa9\n";
@@ -472,9 +503,11 @@ public:
                 auto entries = run(adapter, repo.request(Operation::ListUnmerged)).indexEntries;
                 for (auto &entry : entries) {
                     if (entry.stage == 3 && scenario == "mode-disagreement") entry.mode = "100755";
-                    if ((entry.stage == 3 && scenario == "symlink-source") || (entry.stage == 1 && scenario == "symlink-base"))
+                    if ((entry.stage == 3 && scenario == "symlink-source")
+                        || (entry.stage == 1 && scenario == "symlink-base"))
                         entry.mode = "120000";
-                    if ((entry.stage == 3 && scenario == "submodule-source") || (entry.stage == 1 && scenario == "submodule-base")) {
+                    if ((entry.stage == 3 && scenario == "submodule-source")
+                        || (entry.stage == 1 && scenario == "submodule-base")) {
                         entry.mode = "160000";
                         entry.objectId = history.side;
                     }
@@ -483,21 +516,27 @@ public:
                 }
                 QByteArray index = "0 " + QByteArray(40, '0') + "\ttracked.txt" + QByteArray(1, '\0');
                 for (const auto &entry : entries) {
-                    if ((scenario == "missing-ours" && entry.stage == 2) || (scenario == "missing-theirs" && entry.stage == 3)) continue;
-                    index += entry.mode + ' ' + entry.objectId + ' ' + QByteArray::number(entry.stage) + "\ttracked.txt" + QByteArray(1, '\0');
+                    if ((scenario == "missing-ours" && entry.stage == 2)
+                        || (scenario == "missing-theirs" && entry.stage == 3))
+                        continue;
+                    index += entry.mode + ' ' + entry.objectId + ' ' + QByteArray::number(entry.stage) + "\ttracked.txt"
+                        + QByteArray(1, '\0');
                 }
                 repo.git({"update-index", "-z", "--index-info"}, index);
                 if (scenario == "invalid-result") writeFile(repo.path("tracked.txt"), QByteArray(1, char(0xff)));
-                if (scenario == "missing-result" || scenario == "directory-result" || scenario == "fifo-result" || scenario == "symlink-result") {
+                if (scenario == "missing-result" || scenario == "directory-result" || scenario == "fifo-result"
+                    || scenario == "symlink-result") {
                     CHECK(QFile::remove(repo.path("tracked.txt")));
                     if (scenario == "directory-result") CHECK(QDir(repo.root.path()).mkdir("tracked.txt"));
-                    if (scenario == "fifo-result") CHECK(::mkfifo(QFile::encodeName(repo.path("tracked.txt")).constData(), 0600) == 0);
+                    if (scenario == "fifo-result")
+                        CHECK(::mkfifo(QFile::encodeName(repo.path("tracked.txt")).constData(), 0600) == 0);
                     if (scenario == "symlink-result") {
                         writeFile(repo.path("outside.txt"), "do not follow\n");
                         CHECK(::symlink("outside.txt", QFile::encodeName(repo.path("tracked.txt")).constData()) == 0);
                     }
                 }
-                if (scenario == "excluded-attributes") writeFile(repo.path(".gitattributes"), "tracked.txt -text eol=crlf\n");
+                if (scenario == "excluded-attributes")
+                    writeFile(repo.path(".gitattributes"), "tracked.txt -text eol=crlf\n");
                 if (scenario == "filter") {
                     writeFile(repo.path(".gitattributes"), "tracked.txt filter=external\n");
                     repo.git({"config", "filter.external.clean", "touch .filter-ran; cat"});
@@ -506,7 +545,8 @@ public:
                 const auto objects = repo.git({"count-objects", "-v"});
                 ConflictClassifier classifier(gitExecutable);
                 const auto result = run(classifier, {repo.root.path(), 71, 93});
-                CHECK(result.outcome == Outcome::Success && result.repository.supported && result.conflicts.size() == 1);
+                CHECK(result.outcome == Outcome::Success && result.repository.supported
+                      && result.conflicts.size() == 1);
                 const auto &conflict = result.conflicts.front();
                 CHECK(conflict.path == "tracked.txt" && conflict.support == expected);
                 CHECK(conflict.editable() == (expected == ConflictSupport::SupportedText));
@@ -547,7 +587,8 @@ public:
             const auto result = run(classifier, {repo.root.path(), 71, 93});
             CHECK(result.outcome == Outcome::Success && result.conflicts.size() == 1);
             const auto &conflict = result.conflicts.front();
-            CHECK(conflict.editable() && conflict.stages.size() == 2 && conflict.sources.size() == 2 && conflict.result);
+            CHECK(conflict.editable() && conflict.stages.size() == 2 && conflict.sources.size() == 2
+                  && conflict.result);
             CHECK(conflict.stages[0].stage == 2 && conflict.stages[1].stage == 3);
             CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
         });
@@ -562,7 +603,8 @@ public:
             repo.git({"add", "--", "."});
             commitFixture(repo, "literal base");
             repo.git({"checkout", "--quiet", "-b", "side"});
-            for (const auto &name : names) repo.writePath(name, name == names.last() ? QByteArray(1, char(0xff)) : QByteArray("side\n"));
+            for (const auto &name : names)
+                repo.writePath(name, name == names.last() ? QByteArray(1, char(0xff)) : QByteArray("side\n"));
             commitFixture(repo, "literal side");
             repo.git({"checkout", "--quiet", "main"});
             for (const auto &name : names) repo.writePath(name, "main\n");
@@ -582,7 +624,8 @@ public:
                     CHECK(conflict.support == ConflictSupport::UnsupportedText && !conflict.editable());
                     CHECK(!conflict.reason.isEmpty() && conflict.sources.isEmpty() && !conflict.result);
                 } else {
-                    CHECK(conflict.editable() && conflict.reason.isEmpty() && conflict.result && conflict.sources.size() == 3);
+                    CHECK(conflict.editable() && conflict.reason.isEmpty() && conflict.result
+                          && conflict.sources.size() == 3);
                     CHECK(conflict.result->originalBytes == "manual UTF-8 \xc3\xa9\n");
                 }
             }
@@ -608,8 +651,10 @@ public:
                     QTemporaryDir linkedParent;
                     CHECK(linkedParent.isValid());
                     const auto directory = linked ? linkedParent.path() + "/checkout" : repo.root.path();
-                    if (linked) repo.git({"worktree", "add", "--quiet", directory, "side"});
-                    else repo.git({"checkout", "--quiet", "side"});
+                    if (linked)
+                        repo.git({"worktree", "add", "--quiet", directory, "side"});
+                    else
+                        repo.git({"checkout", "--quiet", "side"});
                     repo.git({"-C", directory, "rebase", backend, "main"}, {}, 1);
                     const auto currentHead = repo.git({"-C", directory, "rev-parse", "HEAD"}).trimmed();
                     CHECK(currentHead != history.main && currentHead != history.side);
@@ -623,12 +668,16 @@ public:
                     const auto result = run(adapter, request);
                     checkOperationIdentity(result, history, RepositoryOperation::Rebase, currentHead, earlier);
                     CHECK(result.indexEntries.size() == 3 && result.repository.worktreeRoot == directory);
-                    const auto gitDirectory = QString::fromUtf8(repo.git({"-C", directory, "rev-parse", "--absolute-git-dir"}).trimmed());
+                    const auto gitDirectory =
+                        QString::fromUtf8(repo.git({"-C", directory, "rev-parse", "--absolute-git-dir"}).trimmed());
                     CHECK(result.repository.gitDirectory == QFileInfo(gitDirectory).canonicalFilePath());
                     for (const auto &entry : result.indexEntries) {
-                        const auto sourceCommit = entry.stage == 1 ? earlier : entry.stage == 2 ? currentHead : history.side;
+                        const auto sourceCommit = entry.stage == 1 ? earlier
+                            : entry.stage == 2                     ? currentHead
+                                                                   : history.side;
                         CHECK(entry.path == "tracked.txt" && entry.mode == "100644");
-                        CHECK(entry.objectId == repo.git({"rev-parse", QString::fromLatin1(sourceCommit) + ":tracked.txt"}).trimmed());
+                        CHECK(entry.objectId
+                              == repo.git({"rev-parse", QString::fromLatin1(sourceCommit) + ":tracked.txt"}).trimmed());
                     }
                     ConflictClassifier classifier(gitExecutable);
                     const auto classified = run(classifier, {request.directory, 71, 93});
@@ -638,8 +687,10 @@ public:
                     if (linked) {
                         CHECK(result.repository.gitDirectory != repo.path(".git"));
                         const auto original = run(adapter, repo.request(Operation::DiscoverRepository));
-                        CHECK(original.outcome == Outcome::Success && original.repository.operation == RepositoryOperation::None);
-                        CHECK(original.indexEntries.isEmpty() && repo.git({"ls-files", "--stage", "-z"}) == originalIndex);
+                        CHECK(original.outcome == Outcome::Success
+                              && original.repository.operation == RepositoryOperation::None);
+                        CHECK(original.indexEntries.isEmpty()
+                              && repo.git({"ls-files", "--stage", "-z"}) == originalIndex);
                         CHECK(linkedParent.remove() && !QFileInfo::exists(directory));
                     }
                     checkConversionCleanup(repo);
@@ -654,15 +705,18 @@ public:
                 if (mailbox) {
                     const auto patch = repo.git({"format-patch", "--stdout", "-1", QString::fromLatin1(history.side)});
                     repo.git({"am", "--3way"}, patch, 128);
-                } else repo.git({operation, "--no-edit", QString::fromLatin1(history.side)}, {}, 1);
-                checkUnsupportedDiscovery(repo, mailbox ? "apply-mailbox" : "cherry-pick, revert and sequencer", Outcome::Success);
+                } else
+                    repo.git({operation, "--no-edit", QString::fromLatin1(history.side)}, {}, 1);
+                checkUnsupportedDiscovery(repo, mailbox ? "apply-mailbox" : "cherry-pick, revert and sequencer",
+                                          Outcome::Success);
                 const auto before = repo.git({"ls-files", "--stage", "-z"});
                 ConflictClassifier classifier(gitExecutable);
                 const auto result = run(classifier, {repo.root.path(), 71, 93});
                 CHECK(result.outcome == Outcome::Success && result.conflicts.size() == 1);
                 const auto &conflict = result.conflicts.front();
                 CHECK(conflict.path == "tracked.txt" && conflict.support == ConflictSupport::UnsupportedOperation);
-                CHECK(!conflict.editable() && !conflict.reason.isEmpty() && !conflict.result && conflict.sources.isEmpty());
+                CHECK(!conflict.editable() && !conflict.reason.isEmpty() && !conflict.result
+                      && conflict.sources.isEmpty());
                 CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
                 CHECK(repo.git({"rev-parse", "HEAD"}).trimmed() == history.main);
                 checkConversionCleanup(repo);
@@ -701,7 +755,8 @@ public:
                 const auto result = run(adapter, request);
                 checkOperationIdentity(result, history, RepositoryOperation::Merge);
                 CHECK(result.repository.worktreeRoot == directory && result.indexEntries.size() == 3);
-                const auto gitDirectory = QString::fromUtf8(repo.git({"-C", directory, "rev-parse", "--absolute-git-dir"}).trimmed());
+                const auto gitDirectory =
+                    QString::fromUtf8(repo.git({"-C", directory, "rev-parse", "--absolute-git-dir"}).trimmed());
                 CHECK(result.repository.gitDirectory == QFileInfo(gitDirectory).canonicalFilePath());
                 writeFile(directory + "/tracked.txt", "launch-time manual result\n");
                 ConflictClassifier classifier(gitExecutable);
@@ -715,7 +770,8 @@ public:
                 if (linked) {
                     CHECK(result.repository.gitDirectory != repo.path(".git"));
                     const auto original = run(adapter, repo.request(Operation::DiscoverRepository));
-                    CHECK(original.outcome == Outcome::Success && original.repository.operation == RepositoryOperation::None);
+                    CHECK(original.outcome == Outcome::Success
+                          && original.repository.operation == RepositoryOperation::None);
                     CHECK(!original.repository.supported && original.indexEntries.isEmpty());
                 }
             }
@@ -812,9 +868,11 @@ public:
             const auto history = conflictHistory(repo);
             const auto mergeCommit = [&](const QByteArray &first, const QByteArray &second) {
                 const auto tree = repo.git({"rev-parse", QString::fromLatin1(first) + "^{tree}"}).trimmed();
-                return repo.git({"-c", "user.name=Branch Truce Tests", "-c", "user.email=tests@example.invalid",
-                    "commit-tree", QString::fromLatin1(tree), "-p", QString::fromLatin1(first), "-p",
-                    QString::fromLatin1(second), "-m", "criss-cross"}).trimmed();
+                return repo
+                    .git({"-c", "user.name=Branch Truce Tests", "-c", "user.email=tests@example.invalid", "commit-tree",
+                          QString::fromLatin1(tree), "-p", QString::fromLatin1(first), "-p",
+                          QString::fromLatin1(second), "-m", "criss-cross"})
+                    .trimmed();
             };
             const auto left = mergeCommit(history.main, history.side);
             const auto right = mergeCommit(history.side, history.main);
@@ -844,14 +902,16 @@ public:
             ConflictClassifier classifier(gitExecutable);
             const auto classified = run(classifier, {repo.root.path(), 71, 93});
             CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == 2);
-            for (const auto &conflict : classified.conflicts) CHECK(conflict.editable() && conflict.sources.size() == 3);
+            for (const auto &conflict : classified.conflicts)
+                CHECK(conflict.editable() && conflict.sources.size() == 3);
             CHECK(repo.git({"ls-tree", QString::fromLatin1(history.base), "--", "b.txt"}).isEmpty());
             CHECK(repo.git({"ls-tree", QString::fromLatin1(history.side), "--", "b.txt"}).isEmpty());
             for (const auto &entry : discovered.indexEntries) {
                 if (entry.path != "b.txt") continue;
                 const auto commit = entry.stage == 1 ? history.base : entry.stage == 2 ? history.main : history.side;
                 const auto sourcePath = entry.stage == 2 ? "b.txt" : "a.txt";
-                CHECK(entry.objectId == repo.git({"rev-parse", QString::fromLatin1(commit) + ':' + sourcePath}).trimmed());
+                CHECK(entry.objectId
+                      == repo.git({"rev-parse", QString::fromLatin1(commit) + ':' + sourcePath}).trimmed());
                 CHECK(entry.mode == "100644");
             }
             const auto unrelated = repo.git({"hash-object", "-w", "--stdin"}, "unrelated\n").trimmed();
@@ -865,22 +925,27 @@ public:
                     }
                     CHECK(!object.isEmpty());
                     repo.git({"update-index", "-z", "--index-info"},
-                        (wrongMode ? QByteArray("100755 ") : QByteArray("100644 "))
-                        + (wrongMode ? object : unrelated) + " 3\t" + path + nul);
+                             (wrongMode ? QByteArray("100755 ") : QByteArray("100644 "))
+                                 + (wrongMode ? object : unrelated) + " 3\t" + path + nul);
                     const auto index = repo.git({"ls-files", "--unmerged", "-z"});
                     const auto result = run(adapter, repo.request(Operation::DiscoverRepository));
                     CHECK(result.outcome == Outcome::Success && result.repository.supported);
                     CHECK(result.repository.operation == RepositoryOperation::Merge && result.indexEntries.size() == 6);
-                    CHECK(result.repository.unsupportedPaths.size() == 1 && result.repository.unsupportedPaths.contains(path));
+                    CHECK(result.repository.unsupportedPaths.size() == 1
+                          && result.repository.unsupportedPaths.contains(path));
                     CHECK(result.repository.unsupportedPaths.value(path).contains("stage 3 provenance"));
-                    CHECK(result.repository.stage2.commitId == history.main && result.repository.stage3.commitId == history.side);
+                    CHECK(result.repository.stage2.commitId == history.main
+                          && result.repository.stage3.commitId == history.side);
                     const auto classifiedInvalid = run(classifier, {repo.root.path(), 71, 93});
                     CHECK(classifiedInvalid.outcome == Outcome::Success && classifiedInvalid.conflicts.size() == 2);
                     for (const auto &conflict : classifiedInvalid.conflicts) {
                         if (conflict.path == path) {
-                            CHECK(!conflict.editable() && !conflict.reason.isEmpty() && !conflict.result && conflict.sources.isEmpty());
-                            CHECK(conflict.support == (wrongMode ? ConflictSupport::ModeConflict : ConflictSupport::UnverifiedSource));
-                        } else CHECK(conflict.editable());
+                            CHECK(!conflict.editable() && !conflict.reason.isEmpty() && !conflict.result
+                                  && conflict.sources.isEmpty());
+                            CHECK(conflict.support
+                                  == (wrongMode ? ConflictSupport::ModeConflict : ConflictSupport::UnverifiedSource));
+                        } else
+                            CHECK(conflict.editable());
                     }
                     CHECK(repo.git({"ls-files", "--unmerged", "-z"}) == index);
                 }
@@ -890,14 +955,15 @@ public:
             for (const auto &format : conversion_fixtures::accepted) {
                 std::cout << "FORMAT " << format.name << '\n';
                 Repository repo;
-                if (!format.attributes.isEmpty()) writeFile(repo.path(".gitattributes"), "tracked.txt " + format.attributes + '\n');
-                if (!format.configuration.isEmpty()) repo.git({"config", format.configuration[0], format.configuration[1]});
+                if (!format.attributes.isEmpty())
+                    writeFile(repo.path(".gitattributes"), "tracked.txt " + format.attributes + '\n');
+                if (!format.configuration.isEmpty())
+                    repo.git({"config", format.configuration[0], format.configuration[1]});
                 const auto object = repo.git({"hash-object", "-w", "--stdin"}, format.canonicalSource).trimmed();
                 const auto nul = QByteArray(1, '\0');
                 repo.git({"update-index", "-z", "--index-info"},
-                    "0 " + QByteArray(40, '0') + "\ttracked.txt" + nul
-                    + format.mode + ' ' + object + " 2\ttracked.txt" + nul
-                    + format.mode + ' ' + object + " 3\ttracked.txt" + nul);
+                         "0 " + QByteArray(40, '0') + "\ttracked.txt" + nul + format.mode + ' ' + object
+                             + " 2\ttracked.txt" + nul + format.mode + ' ' + object + " 3\ttracked.txt" + nul);
                 GitAdapter adapter(gitExecutable);
                 const auto captured = run(adapter, repo.request(Operation::InspectIndex, "tracked.txt"));
                 CHECK(captured.outcome == Outcome::Success && captured.indexEntries.size() == 2);
@@ -906,12 +972,14 @@ public:
                 TextConversion conversion(gitExecutable);
                 const auto source = run(conversion, sourceRequest);
                 CHECK(source.outcome == Outcome::Success && source.text);
-                CHECK(source.text->canonicalBytes == format.canonicalSource && source.text->canonicalObjectId == object);
+                CHECK(source.text->canonicalBytes == format.canonicalSource
+                      && source.text->canonicalObjectId == object);
                 CHECK(source.text->document.originalBytes == format.checkoutSource);
                 CHECK(source.text->document.utf8 == format.displayedSource);
                 CHECK(source.text->mode == format.mode && source.text->sourceMode == format.mode);
                 if (!format.configuration.isEmpty()) {
-                    CHECK(source.text->policy.configuration.value(format.configuration[0].toLatin1()) == format.configuration[1].toLatin1());
+                    CHECK(source.text->policy.configuration.value(format.configuration[0].toLatin1())
+                          == format.configuration[1].toLatin1());
                 }
                 const auto before = repo.git({"ls-files", "--stage", "-z"});
                 auto request = sourceRequest;
@@ -923,8 +991,10 @@ public:
                 CHECK(prepared.text->document.utf8 == format.editedUtf8);
                 CHECK(prepared.text->document.format == format.resultFormat && prepared.text->mode == format.mode);
                 CHECK(prepared.text->document.originalBytes == format.checkoutResult);
-                CHECK(prepared.text->canonicalBytes == format.canonicalResult && prepared.text->policy == source.text->policy);
-                const auto expectedObject = repo.git({"hash-object", "--no-filters", "--stdin"}, format.canonicalResult).trimmed();
+                CHECK(prepared.text->canonicalBytes == format.canonicalResult
+                      && prepared.text->policy == source.text->policy);
+                const auto expectedObject =
+                    repo.git({"hash-object", "--no-filters", "--stdin"}, format.canonicalResult).trimmed();
                 CHECK(prepared.text->canonicalObjectId == expectedObject);
                 CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
                 QFile untouched(repo.path("tracked.txt"));
@@ -942,8 +1012,10 @@ public:
                 verify.expected = prepared.text;
                 const auto published = run(conversion, verify);
                 CHECK(published.outcome == Outcome::Success && published.text);
-                CHECK(published.text->canonicalBytes == format.canonicalResult && published.text->canonicalObjectId == expectedObject);
-                CHECK(published.text->document.utf8 == format.editedUtf8 && published.text->document.originalBytes == format.checkoutResult);
+                CHECK(published.text->canonicalBytes == format.canonicalResult
+                      && published.text->canonicalObjectId == expectedObject);
+                CHECK(published.text->document.utf8 == format.editedUtf8
+                      && published.text->document.originalBytes == format.checkoutResult);
                 CHECK(published.text->document.format == format.resultFormat && published.text->mode == format.mode);
                 CHECK(repo.git({"show", ":tracked.txt"}) == format.canonicalResult);
                 QFile written(repo.path("tracked.txt"));
@@ -956,7 +1028,8 @@ public:
             for (const auto &invalid : conversion_fixtures::rejectedSources) {
                 std::cout << "REJECT SOURCE " << invalid.name << '\n';
                 Repository repo;
-                if (!invalid.attributes.isEmpty()) writeFile(repo.path(".gitattributes"), "tracked.txt " + invalid.attributes + '\n');
+                if (!invalid.attributes.isEmpty())
+                    writeFile(repo.path(".gitattributes"), "tracked.txt " + invalid.attributes + '\n');
                 const auto object = repo.git({"hash-object", "-w", "--stdin"}, invalid.canonical).trimmed();
                 const auto before = repo.git({"ls-files", "--stage", "-z"});
                 TextConversion conversion(gitExecutable);
@@ -1001,7 +1074,8 @@ public:
             for (const bool bigEndian : {false, true}) {
                 std::cout << "REJECT ROUNDTRIP " << (bigEndian ? "UTF-16 byte order" : "autocrlf changes LF") << '\n';
                 Repository repo;
-                if (bigEndian) writeFile(repo.path(".gitattributes"), "tracked.txt text eol=lf working-tree-encoding=UTF-16\n");
+                if (bigEndian)
+                    writeFile(repo.path(".gitattributes"), "tracked.txt text eol=lf working-tree-encoding=UTF-16\n");
                 else {
                     repo.git({"config", "core.autocrlf", "true"});
                     repo.git({"config", "core.safecrlf", "false"});
@@ -1127,8 +1201,8 @@ public:
             const auto wrongObject = run(conversion, verify);
             CHECK(wrongObject.outcome == Outcome::Rejected && !wrongObject.text);
             CHECK(wrongObject.diagnostic.contains("canonical identity"));
-            repo.git({"update-index", "--cacheinfo", "100644",
-                      QString::fromLatin1(prepared.text->canonicalObjectId), "tracked.txt"});
+            repo.git({"update-index", "--cacheinfo", "100644", QString::fromLatin1(prepared.text->canonicalObjectId),
+                      "tracked.txt"});
             writeFile(repo.path(".gitattributes"), "tracked.txt text eol=lf\n");
             const auto wrongPolicy = run(conversion, verify);
             CHECK(wrongPolicy.outcome == Outcome::Rejected && !wrongPolicy.text);
@@ -1147,8 +1221,9 @@ public:
         suite.run("named reads use real Git and preserve request identity", [] {
             Repository repo;
             GitAdapter adapter(gitExecutable);
-            for (const auto operation : {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::Status,
-                                         Operation::ReadConfiguration, Operation::InspectIndex, Operation::ReadAttributes}) {
+            for (const auto operation :
+                 {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::Status,
+                  Operation::ReadConfiguration, Operation::InspectIndex, Operation::ReadAttributes}) {
                 const bool needsPath = operation == Operation::InspectIndex || operation == Operation::ReadAttributes;
                 const auto result = run(adapter, repo.request(operation, needsPath ? "tracked.txt" : ""));
                 CHECK(result.outcome == Outcome::Success && result.exitCode == 0);
@@ -1161,7 +1236,8 @@ public:
                     CHECK(!result.repository.diagnostic.isEmpty() && result.indexEntries.isEmpty());
                 }
                 if (operation == Operation::ListUnmerged) CHECK(result.standardOutput.isEmpty());
-                if (operation == Operation::InspectIndex) CHECK(result.standardOutput.endsWith(QByteArray("\ttracked.txt\0", 13)));
+                if (operation == Operation::InspectIndex)
+                    CHECK(result.standardOutput.endsWith(QByteArray("\ttracked.txt\0", 13)));
             }
             const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
             for (const auto operation : {Operation::ReadObject, Operation::MaterializeSource}) {
@@ -1253,7 +1329,10 @@ public:
                     request.objectId = entry.objectId;
                     const auto source = run(adapter, request);
                     CHECK(source.outcome == Outcome::Success);
-                    CHECK(source.standardOutput == (entry.stage == 1 ? "base\n" : entry.stage == 2 ? "ours\n" : "theirs\n"));
+                    CHECK(source.standardOutput
+                          == (entry.stage == 1       ? "base\n"
+                                  : entry.stage == 2 ? "ours\n"
+                                                     : "theirs\n"));
                 }
                 CHECK(stages == 14);
                 repo.writePath(name, "resolved\n");
@@ -1269,7 +1348,8 @@ public:
             CHECK(repo.git({"ls-files", "--unmerged", "-z"}).isEmpty());
             CHECK(repo.git({"show", ":" + QString::fromUtf8(unrelated)}) == "staged content\n");
             QFile untouched(repo.path(QString::fromUtf8(unrelated)));
-            CHECK(untouched.open(QIODevice::ReadOnly) && untouched.readAll() == "unstaged content must remain unstaged\n");
+            CHECK(untouched.open(QIODevice::ReadOnly)
+                  && untouched.readAll() == "unstaged content must remain unstaged\n");
             untouched.close();
             for (const auto &file : repo.rawFiles) ::unlink(file.constData());
             checkConversionCleanup(repo);
@@ -1330,8 +1410,9 @@ public:
             Repository repo;
             GitAdapter adapter(gitExecutable);
             const auto before = repo.git({"ls-files", "--stage", "-z"});
-            const QList<QByteArray> paths{"", "/absolute", "../escape", "dir/../file", "./tracked.txt", "dir//file", "dir/",
-                                          QByteArray("a\0b", 3)};
+            const QList<QByteArray> paths{
+                "",          "/absolute", "../escape",          "dir/../file", "./tracked.txt",
+                "dir//file", "dir/",      QByteArray("a\0b", 3)};
             for (const auto &path : paths) {
                 const auto result = run(adapter, repo.request(Operation::StageFile, path));
                 CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
@@ -1387,8 +1468,9 @@ public:
             writeFile(inside, "#!/bin/sh\nprintf unsafe > .unsafe-executable\n", true);
             GitAdapter inRepository(inside);
             CHECK(run(inRepository, repo.request(Operation::Status)).outcome == Outcome::Rejected);
-            CHECK(QFile::setPermissions(selected, QFileDevice::ReadOwner | QFileDevice::WriteOwner
-                                       | QFileDevice::ExeOwner | QFileDevice::WriteGroup));
+            CHECK(QFile::setPermissions(selected,
+                                        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+                                            | QFileDevice::WriteGroup));
             GitAdapter writable(selected);
             CHECK(run(writable, repo.request(Operation::Status)).outcome == Outcome::Rejected);
             CHECK(!QFile::exists(repo.path(".unsafe-executable")));
@@ -1424,12 +1506,14 @@ public:
                               QByteArray(kind) == "required" ? "true" : "touch .helper-ran; cat"});
                     GitAdapter adapter(gitExecutable);
                     // Policy inspection and raw identity reads never invoke filters.
-                    CHECK(run(adapter, repo.request(Operation::ReadAttributes, "tracked.txt")).outcome == Outcome::Success);
+                    CHECK(run(adapter, repo.request(Operation::ReadAttributes, "tracked.txt")).outcome
+                          == Outcome::Success);
                     auto raw = repo.request(Operation::ReadObject);
                     raw.objectId = blob;
                     CHECK(run(adapter, raw).standardOutput == "before\n");
-                    for (const auto operation : {Operation::Status, Operation::MaterializeSource, Operation::CanonicalizeText,
-                                                 Operation::CheckParentStaging, Operation::StageFile}) {
+                    for (const auto operation :
+                         {Operation::Status, Operation::MaterializeSource, Operation::CanonicalizeText,
+                          Operation::CheckParentStaging, Operation::StageFile}) {
                         auto request = repo.request(operation, operation == Operation::Status ? "" : "tracked.txt");
                         if (operation == Operation::MaterializeSource) request.objectId = blob;
                         if (operation == Operation::CanonicalizeText) request.input = "reviewed\n";
@@ -1442,7 +1526,8 @@ public:
                         auto request = textRequest(repo, operation, blob);
                         request.editedUtf8 = "reviewed\n";
                         const auto result = run(conversion, request);
-                        CHECK(result.outcome == Outcome::Rejected && !result.text && result.diagnostic.contains("filter"));
+                        CHECK(result.outcome == Outcome::Rejected && !result.text
+                              && result.diagnostic.contains("filter"));
                     }
                     CHECK(!QFile::exists(repo.path(".helper-ran")));
                     repo.git({"config", "--unset", QString::fromLatin1(key)});
@@ -1463,16 +1548,19 @@ public:
                 TextConversion conversion(gitExecutable);
                 const auto decoded = run(conversion, textRequest(repo, TextOperation::ReadSource, blob));
                 CHECK(decoded.outcome == Outcome::Success && decoded.text);
-                CHECK(decoded.text->document.utf8 == "before\n" && decoded.text->document.originalBytes == "before\r\n");
+                CHECK(decoded.text->document.utf8 == "before\n"
+                      && decoded.text->document.originalBytes == "before\r\n");
                 CHECK(decoded.text->policy.attributes.value("eol") == "crlf");
                 CHECK(decoded.text->policy.configuration.value("filter.unused.clean") == "touch .helper-ran; cat");
                 auto prepare = textRequest(repo, TextOperation::PrepareResult, blob);
                 prepare.editedUtf8 = "after\n";
                 const auto prepared = run(conversion, prepare);
                 CHECK(prepared.outcome == Outcome::Success && prepared.text);
-                CHECK(prepared.text->document.originalBytes == "after\r\n" && prepared.text->canonicalBytes == "after\n");
+                CHECK(prepared.text->document.originalBytes == "after\r\n"
+                      && prepared.text->canonicalBytes == "after\n");
                 CHECK(run(adapter, repo.request(Operation::Status)).outcome == Outcome::Success);
-                CHECK(run(adapter, repo.request(Operation::CheckParentStaging, "tracked.txt")).outcome == Outcome::Success);
+                CHECK(run(adapter, repo.request(Operation::CheckParentStaging, "tracked.txt")).outcome
+                      == Outcome::Success);
                 writeFile(repo.path("tracked.txt"), "after\r\n");
                 CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
                 CHECK(repo.git({"show", ":tracked.txt"}) == "after\n");
@@ -1525,7 +1613,8 @@ public:
                 CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
                 CHECK(!QFile::exists(repo.path(".hook-ran")));
                 CHECK(QFile::setPermissions(hook, QFileDevice::ReadOwner | QFileDevice::WriteOwner));
-                CHECK(run(adapter, repo.request(Operation::CheckParentStaging, "tracked.txt")).outcome == Outcome::Success);
+                CHECK(run(adapter, repo.request(Operation::CheckParentStaging, "tracked.txt")).outcome
+                      == Outcome::Success);
                 repo.git({"config", "core.hooksPath", "/dev/null"});
                 CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Success);
             }
@@ -1535,13 +1624,16 @@ public:
                 const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
                 const auto before = repo.git({"ls-files", "--stage", "-z"});
                 repo.git({"config", "core.fsmonitor", "touch .monitor-ran"});
-                for (const auto operation : {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::InspectIndex,
-                                             Operation::ReadObject, Operation::ReadAttributes, Operation::Status,
-                                             Operation::MaterializeSource, Operation::CanonicalizeText}) {
-                    const bool noPath = operation == Operation::DiscoverRepository || operation == Operation::ListUnmerged
-                        || operation == Operation::ReadObject || operation == Operation::Status;
+                for (const auto operation :
+                     {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::InspectIndex,
+                      Operation::ReadObject, Operation::ReadAttributes, Operation::Status, Operation::MaterializeSource,
+                      Operation::CanonicalizeText}) {
+                    const bool noPath = operation == Operation::DiscoverRepository
+                        || operation == Operation::ListUnmerged || operation == Operation::ReadObject
+                        || operation == Operation::Status;
                     auto request = repo.request(operation, noPath ? "" : "tracked.txt");
-                    if (operation == Operation::ReadObject || operation == Operation::MaterializeSource) request.objectId = blob;
+                    if (operation == Operation::ReadObject || operation == Operation::MaterializeSource)
+                        request.objectId = blob;
                     if (operation == Operation::CanonicalizeText) request.input = "before\n";
                     CHECK(run(adapter, request).outcome == Outcome::Success);
                 }
@@ -1557,8 +1649,8 @@ public:
             }
             {
                 Repository repo;
-                repo.git({"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
-                          "commit", "--quiet", "-m", "base"});
+                repo.git({"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet",
+                          "-m", "base"});
                 QTemporaryDir shared;
                 CHECK(shared.isValid());
                 const auto clone = shared.path() + "/shared";
@@ -1571,19 +1663,20 @@ public:
                 CHECK(run(adapter, request).outcome == Outcome::Success);
                 writeFile(alternates, "# shared with base\n" + alternatePath);
                 CHECK(repo.git({"-C", clone, "cat-file", "-t", "HEAD"}) == "commit\n");
-                CHECK(repo.git({"-C", clone, "ls-files", "--stage", "-z"})
-                      == repo.git({"ls-files", "--stage", "-z"}));
+                CHECK(repo.git({"-C", clone, "ls-files", "--stage", "-z"}) == repo.git({"ls-files", "--stage", "-z"}));
                 const auto blob = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
-                for (const auto operation : {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::InspectIndex,
-                                             Operation::ReadObject, Operation::ReadAttributes, Operation::Status,
-                                             Operation::MaterializeSource, Operation::CanonicalizeText,
-                                             Operation::CheckParentStaging, Operation::StageFile}) {
-                    const bool noPath = operation == Operation::DiscoverRepository || operation == Operation::ListUnmerged
-                        || operation == Operation::ReadObject || operation == Operation::Status;
+                for (const auto operation :
+                     {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::InspectIndex,
+                      Operation::ReadObject, Operation::ReadAttributes, Operation::Status, Operation::MaterializeSource,
+                      Operation::CanonicalizeText, Operation::CheckParentStaging, Operation::StageFile}) {
+                    const bool noPath = operation == Operation::DiscoverRepository
+                        || operation == Operation::ListUnmerged || operation == Operation::ReadObject
+                        || operation == Operation::Status;
                     request.operation = operation;
                     request.path = noPath ? "" : "tracked.txt";
                     request.objectId = operation == Operation::ReadObject || operation == Operation::MaterializeSource
-                        ? blob : QByteArray{};
+                        ? blob
+                        : QByteArray{};
                     request.input = operation == Operation::CanonicalizeText ? "before\n" : "";
                     const auto result = run(adapter, request);
                     CHECK(result.outcome == Outcome::Success && result.exitCode == 0);
@@ -1595,8 +1688,9 @@ public:
                     }
                 }
                 // Comments cannot hide a real alternate that cannot be inspected.
-                writeFile(alternates, "# shared with base\n" + alternatePath
-                          + QFile::encodeName(shared.path() + "/missing-objects") + '\n');
+                writeFile(alternates,
+                          "# shared with base\n" + alternatePath + QFile::encodeName(shared.path() + "/missing-objects")
+                              + '\n');
                 request = repo.request(Operation::InspectIndex, "tracked.txt");
                 request.directory = clone;
                 const auto denied = run(adapter, request);
@@ -1613,20 +1707,22 @@ public:
                 if (scenario == 2) writeFile(repo.path(".git/objects/pack/pack-fixture.promisor"), "");
                 if (scenario == 3) {
                     writeFile(alternate.path(".git/objects/pack/pack-fixture.promisor"), "");
-                    writeFile(repo.path(".git/objects/info/alternates"), "# shared with base\n"
-                              + alternate.path(".git/objects").toUtf8() + '\n');
+                    writeFile(repo.path(".git/objects/info/alternates"),
+                              "# shared with base\n" + alternate.path(".git/objects").toUtf8() + '\n');
                 }
                 repo.git({"config", "remote.origin.url", repo.root.path()});
                 repo.git({"config", "remote.origin.uploadpack", "touch .fetch-ran"});
                 GitAdapter adapter(gitExecutable);
-                for (const auto operation : {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::InspectIndex,
-                                             Operation::ReadObject, Operation::ReadAttributes, Operation::Status,
-                                             Operation::MaterializeSource, Operation::CanonicalizeText,
-                                             Operation::CheckParentStaging, Operation::StageFile}) {
-                    const bool noPath = operation == Operation::DiscoverRepository || operation == Operation::ListUnmerged
-                        || operation == Operation::ReadObject || operation == Operation::Status;
+                for (const auto operation :
+                     {Operation::DiscoverRepository, Operation::ListUnmerged, Operation::InspectIndex,
+                      Operation::ReadObject, Operation::ReadAttributes, Operation::Status, Operation::MaterializeSource,
+                      Operation::CanonicalizeText, Operation::CheckParentStaging, Operation::StageFile}) {
+                    const bool noPath = operation == Operation::DiscoverRepository
+                        || operation == Operation::ListUnmerged || operation == Operation::ReadObject
+                        || operation == Operation::Status;
                     auto request = repo.request(operation, noPath ? "" : "tracked.txt");
-                    if (operation == Operation::ReadObject || operation == Operation::MaterializeSource) request.objectId = blob;
+                    if (operation == Operation::ReadObject || operation == Operation::MaterializeSource)
+                        request.objectId = blob;
                     if (operation == Operation::CanonicalizeText) request.input = "reviewed\n";
                     const auto result = run(adapter, request);
                     CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
@@ -1657,7 +1753,8 @@ public:
         suite.run("a registered mergetool parent stages only after a successful release preflight", [] {
             for (const auto &scenario : {"plain", "crlf"}) {
                 Repository repo;
-                if (QByteArray(scenario) == "crlf") writeFile(repo.path(".gitattributes"), "/tracked.txt text eol=crlf\n");
+                if (QByteArray(scenario) == "crlf")
+                    writeFile(repo.path(".gitattributes"), "/tracked.txt text eol=crlf\n");
                 registerMergetool(repo, scenario);
                 CHECK(repo.git({"ls-files", "--unmerged", "-z"}).count('\0') == 3);
                 repo.git({"mergetool", "--no-prompt", "--tool=truce-coverage", "--", "tracked.txt"});
@@ -1668,30 +1765,34 @@ public:
                 const auto acknowledged = run(adapter, repo.request(Operation::InspectIndex, "tracked.txt"));
                 CHECK(acknowledged.outcome == Outcome::Success && acknowledged.indexEntries.size() == 1);
                 CHECK(acknowledged.indexEntries.first().stage == 0);
-                CHECK(acknowledged.indexEntries.first().objectId == repo.git({"hash-object", "--stdin"}, "resolved\n").trimmed());
+                CHECK(acknowledged.indexEntries.first().objectId
+                      == repo.git({"hash-object", "--stdin"}, "resolved\n").trimmed());
             }
         });
-        suite.run("a registered mergetool parent retains conflicts when helper or offline preflight rejects release", [] {
-            for (const auto &scenario : {"filter", "hook", "custom-hook", "monitor", "promisor"}) {
-                Repository repo;
-                registerMergetool(repo, scenario);
-                const auto before = repo.git({"ls-files", "--stage", "-z"});
-                repo.git({"mergetool", "--no-prompt", "--tool=truce-coverage", "--", "tracked.txt"}, {}, 1);
-                CHECK(QFile::exists(repo.path(".handoff-rejected")) && !QFile::exists(repo.path(".handoff-released")));
-                CHECK(!QFile::exists(repo.path(".handoff-helper-ran")));
-                QFile diagnostic(repo.path(".handoff-preflight"));
-                CHECK(diagnostic.open(QIODevice::ReadOnly) && diagnostic.readAll().contains("Outside app"));
-                // Disable the monitor before the fixture itself reads the index.
-                if (QByteArray(scenario) == "monitor") repo.git({"config", "--unset", "core.fsmonitor"});
-                CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
-                CHECK(repo.git({"ls-files", "--unmerged", "-z"}).count('\0') == 3);
-                QFile merged(repo.path("tracked.txt"));
-                CHECK(merged.open(QIODevice::ReadOnly) && merged.readAll().startsWith("<<<<<<< ours\n"));
-            }
-        });
+        suite.run("a registered mergetool parent retains conflicts when helper or offline preflight rejects release",
+                  [] {
+                      for (const auto &scenario : {"filter", "hook", "custom-hook", "monitor", "promisor"}) {
+                          Repository repo;
+                          registerMergetool(repo, scenario);
+                          const auto before = repo.git({"ls-files", "--stage", "-z"});
+                          repo.git({"mergetool", "--no-prompt", "--tool=truce-coverage", "--", "tracked.txt"}, {}, 1);
+                          CHECK(QFile::exists(repo.path(".handoff-rejected"))
+                                && !QFile::exists(repo.path(".handoff-released")));
+                          CHECK(!QFile::exists(repo.path(".handoff-helper-ran")));
+                          QFile diagnostic(repo.path(".handoff-preflight"));
+                          CHECK(diagnostic.open(QIODevice::ReadOnly) && diagnostic.readAll().contains("Outside app"));
+                          // Disable the monitor before the fixture itself reads the index.
+                          if (QByteArray(scenario) == "monitor") repo.git({"config", "--unset", "core.fsmonitor"});
+                          CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                          CHECK(repo.git({"ls-files", "--unmerged", "-z"}).count('\0') == 3);
+                          QFile merged(repo.path("tracked.txt"));
+                          CHECK(merged.open(QIODevice::ReadOnly) && merged.readAll().startsWith("<<<<<<< ours\n"));
+                      }
+                  });
         suite.run("failed preflight and failed launch retain diagnostics", [] {
             Repository repo;
-            const auto preflight = repo.executable("#!/bin/sh\nprintf 'preflight stdout'\nprintf 'preflight stderr' >&2\nexit 17\n");
+            const auto preflight =
+                repo.executable("#!/bin/sh\nprintf 'preflight stdout'\nprintf 'preflight stderr' >&2\nexit 17\n");
             GitAdapter failing(preflight);
             const auto result = run(failing, repo.request(Operation::Status));
             CHECK(result.outcome == Outcome::ExitFailure && result.exitCode == -1);
@@ -1728,7 +1829,8 @@ public:
         });
         suite.run("failed mutation retains operation output, stderr and exit through reinspection", [] {
             Repository repo;
-            const auto fake = repo.fakeGit(": > .after-add\nprintf 'operation stdout'\nprintf 'operation stderr' >&2\nexit 23\n");
+            const auto fake =
+                repo.fakeGit(": > .after-add\nprintf 'operation stdout'\nprintf 'operation stderr' >&2\nexit 23\n");
             GitAdapter adapter(fake);
             const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
             CHECK(result.outcome == Outcome::ExitFailure && result.exitCode == 23);
@@ -1738,20 +1840,22 @@ public:
         });
         suite.run("failed reinspection retains the original failed operation diagnostics", [] {
             Repository repo;
-            const auto fake = repo.fakeGit(": > .after-add\nprintf 'original stdout'\nprintf 'original stderr' >&2\nexit 23\n",
-                                           "printf 'inspection stdout'\nprintf 'inspection stderr' >&2\nexit 29\n");
+            const auto fake =
+                repo.fakeGit(": > .after-add\nprintf 'original stdout'\nprintf 'original stderr' >&2\nexit 23\n",
+                             "printf 'inspection stdout'\nprintf 'inspection stderr' >&2\nexit 29\n");
             GitAdapter adapter(fake);
             const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
             CHECK(result.outcome == Outcome::ExitFailure && result.exitCode == 23);
             CHECK(result.mutation == Mutation::Uncertain && result.standardOutput == "original stdout");
-            CHECK(result.standardError.contains("original stderr") && result.standardError.contains("inspection stderr"));
+            CHECK(result.standardError.contains("original stderr")
+                  && result.standardError.contains("inspection stderr"));
             CHECK(result.indexAfter == "inspection stdout");
             CHECK(result.diagnostic.contains("23") && result.diagnostic.contains("reinspection failed"));
         });
         suite.run("successful child exit cannot claim staging when index inspection fails", [] {
             Repository repo;
-            const auto fake = repo.fakeGit(": > .after-add\nprintf 'successful add stdout'\n",
-                                           "printf 'bad index'\nexit 29\n");
+            const auto fake =
+                repo.fakeGit(": > .after-add\nprintf 'successful add stdout'\n", "printf 'bad index'\nexit 29\n");
             GitAdapter adapter(fake);
             const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
             CHECK(result.outcome == Outcome::InspectionFailure && result.exitCode == 0);
@@ -1769,7 +1873,8 @@ public:
                 GitAdapter adapter(fake);
                 const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
                 CHECK(result.outcome == Outcome::InspectionFailure && result.exitCode == 0);
-                CHECK(result.mutation == (entry.isEmpty() || entry.contains(" 2\t") ? Mutation::ObservedChanged : Mutation::Uncertain));
+                CHECK(result.mutation
+                      == (entry.isEmpty() || entry.contains(" 2\t") ? Mutation::ObservedChanged : Mutation::Uncertain));
             }
         });
         suite.run("cancellation before queued launch completes once without mutation", [] {
@@ -1819,14 +1924,17 @@ public:
                 cancel.start(5);
                 const auto result = completion.run(repo.request(Operation::StageFile, "tracked.txt"));
                 const auto expected = !finished ? Outcome::Cancelled
-                    : exitCode == 0 ? Outcome::Success : Outcome::ExitFailure;
+                    : exitCode == 0             ? Outcome::Success
+                                                : Outcome::ExitFailure;
                 CHECK(result.outcome == expected && result.cancellationRequested);
                 CHECK(result.mutation == Mutation::ObservedChanged);
                 CHECK(result.standardOutput == "before cancellation" && !result.indexAfter.isEmpty());
                 if (finished) {
                     CHECK(result.exitCode == exitCode);
-                    CHECK(result.diagnostic == (exitCode == 0 ? QString{} : QStringLiteral("Git exited with code 128")));
-                    CHECK(result.standardError == (exitCode == 0 ? QByteArray{} : QByteArray("fatal: index.lock exists")));
+                    CHECK(result.diagnostic
+                          == (exitCode == 0 ? QString{} : QStringLiteral("Git exited with code 128")));
+                    CHECK(result.standardError
+                          == (exitCode == 0 ? QByteArray{} : QByteArray("fatal: index.lock exists")));
                 }
                 adapter.cancel();
                 const auto next = run(adapter, repo.request(Operation::InspectIndex, "tracked.txt"));
@@ -1835,7 +1943,8 @@ public:
         });
         suite.run("concurrent app mutations reject one owner and release ownership after completion", [] {
             Repository repo;
-            const auto fake = repo.fakeGit(": > .after-add\n: > .operation-started\nwhile [ ! -e .release ]; do sleep 0.01; done\n");
+            const auto fake =
+                repo.fakeGit(": > .after-add\n: > .operation-started\nwhile [ ! -e .release ]; do sleep 0.01; done\n");
             GitAdapter first(fake);
             GitAdapter second(fake);
             Completion firstDone(first);
@@ -1847,9 +1956,8 @@ public:
                     CHECK(second.start(repo.request(Operation::StageFile, "tracked.txt")));
                 }
             });
-            QObject::connect(&second, &GitAdapter::finished, &startSecond, [&](const Result &) {
-                writeFile(repo.path(".release"), "release\n");
-            });
+            QObject::connect(&second, &GitAdapter::finished, &startSecond,
+                             [&](const Result &) { writeFile(repo.path(".release"), "release\n"); });
             startSecond.start(5);
             CHECK(first.start(repo.request(Operation::StageFile, "tracked.txt")));
             CHECK(firstDone.wait().outcome == Outcome::Success);
@@ -1860,7 +1968,8 @@ public:
         });
         suite.run("output limit keeps a bounded incomplete prefix and a separate inspection budget", [] {
             Repository repo;
-            const auto fake = repo.fakeGit(": > .after-add\nprintf 'operation prefix'\n/usr/bin/head -c 9000000 /dev/zero\n");
+            const auto fake =
+                repo.fakeGit(": > .after-add\nprintf 'operation prefix'\n/usr/bin/head -c 9000000 /dev/zero\n");
             GitAdapter adapter(fake);
             const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
             CHECK(result.outcome == Outcome::OutputLimit && result.outputIncomplete);
@@ -1875,7 +1984,7 @@ public:
                                           static_cast<qsizetype>(branch_truce::kMaxGitReadBytes) + 1}) {
                 Repository repo;
                 const auto fake = repo.fakeGit(QByteArray(": > .after-add\n/usr/bin/head -c ")
-                    + QByteArray::number(bytes) + " /dev/zero\n");
+                                               + QByteArray::number(bytes) + " /dev/zero\n");
                 GitAdapter adapter(fake);
                 const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
                 if (bytes <= static_cast<qsizetype>(branch_truce::kMaxGitReadBytes)) {
@@ -1884,7 +1993,8 @@ public:
                 } else {
                     CHECK(result.outcome == Outcome::OutputLimit && result.outputIncomplete);
                     CHECK(result.standardOutput.size() == static_cast<qsizetype>(branch_truce::kMaxGitReadBytes));
-                    CHECK(result.diagnostic.contains(QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))));
+                    CHECK(result.diagnostic.contains(
+                        QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))));
                     CHECK(result.mutation == Mutation::ObservedChanged);
                 }
             }
@@ -1893,7 +2003,7 @@ public:
             {
                 Repository repo;
                 const auto fake = repo.fakeGit(": > .status-ran\n", ":\n", {},
-                    ": > .attributes-ran\n/usr/bin/head -c 9000000 /dev/zero\n");
+                                               ": > .attributes-ran\n/usr/bin/head -c 9000000 /dev/zero\n");
                 GitAdapter adapter(fake);
                 const auto result = run(adapter, repo.request(Operation::Status));
                 CHECK(result.outcome == Outcome::Success && result.standardOutput.isEmpty());
@@ -1909,15 +2019,17 @@ public:
 )SH";
                 if (scenario == 1) attributes += "printf 'tracked.txt\\0filter\\0unused\\0'\n";
                 if (scenario == 2) attributes += "printf 'tracked.txt\\0filter\\0unused'\n";
-                const auto fake = repo.fakeGit(": > .status-ran\n", ":\n",
-                    "printf 'filter.unused.clean\\ncat\\0'\n", attributes);
+                const auto fake =
+                    repo.fakeGit(": > .status-ran\n", ":\n", "printf 'filter.unused.clean\\ncat\\0'\n", attributes);
                 GitAdapter adapter(fake);
                 const auto result = run(adapter, repo.request(Operation::Status));
                 CHECK(result.outcome == (scenario == 0 ? Outcome::Success : Outcome::Rejected));
                 CHECK(!result.outputIncomplete && result.mutation == Mutation::NotAttempted);
                 CHECK(QFile::exists(repo.path(".status-ran")) == (scenario == 0));
-                if (scenario == 0) CHECK(result.standardOutput.isEmpty());
-                else CHECK(result.diagnostic.contains(scenario == 1 ? "custom filter 'unused'" : "invalid filter"));
+                if (scenario == 0)
+                    CHECK(result.standardOutput.isEmpty());
+                else
+                    CHECK(result.diagnostic.contains(scenario == 1 ? "custom filter 'unused'" : "invalid filter"));
             }
         });
         suite.run("the operation deadline cancels the process without reporting success", [] {
@@ -1950,13 +2062,16 @@ public:
                     const auto expected = canonicalBlock.repeated(inputSize / inputBlock.size());
                     CHECK(result.outcome == Outcome::Success);
                     CHECK(result.standardOutput == request.input && result.canonicalBytes == expected);
-                    CHECK(result.canonicalObjectId == repo.git({"hash-object", "--no-filters", "--stdin"}, expected).trimmed());
+                    CHECK(result.canonicalObjectId
+                          == repo.git({"hash-object", "--no-filters", "--stdin"}, expected).trimmed());
                 } else if (inputSize == 3000000) {
                     CHECK(result.outcome == Outcome::Rejected && result.canonicalBytes.isEmpty());
-                    CHECK(result.diagnostic.contains("4425000 bytes") && result.diagnostic.contains("4194304 byte output limit"));
+                    CHECK(result.diagnostic.contains("4425000 bytes")
+                          && result.diagnostic.contains("4194304 byte output limit"));
                 } else {
                     CHECK(result.outcome == Outcome::Rejected && result.canonicalBytes.isEmpty());
-                    CHECK(result.diagnostic.contains("6000000 bytes") && result.diagnostic.contains("4194304 byte input limit"));
+                    CHECK(result.diagnostic.contains("6000000 bytes")
+                          && result.diagnostic.contains("4194304 byte input limit"));
                 }
                 CHECK(repo.git({"count-objects", "-v"}) == objects);
                 CHECK(repo.git({"ls-files", "--stage", "-z"}) == index);

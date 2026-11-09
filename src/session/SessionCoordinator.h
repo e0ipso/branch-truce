@@ -52,6 +52,7 @@ class TaskControl {
 public:
     [[nodiscard]] bool cancellationRequested() const;
     [[nodiscard]] bool beginMutation() const;
+
 private:
     struct State;
     explicit TaskControl(bool mutation);
@@ -93,10 +94,9 @@ public:
     // asynchronously. Work owns expensive computation/serialization only;
     // use submitMutation for any app-owned filesystem/index side effect.
     TaskId submit(const std::string &fileId, RevisionId expected, Work work, Completion completion = {});
-    TaskId submitMutation(const std::string &fileId, RevisionId expected, Work work,
-                          Inspect inspect, Completion completion = {});
-    TaskId submitGit(const std::string &fileId, RevisionId expected, git::Request request,
-                     Completion completion = {});
+    TaskId submitMutation(const std::string &fileId, RevisionId expected, Work work, Inspect inspect,
+                          Completion completion = {});
+    TaskId submitGit(const std::string &fileId, RevisionId expected, git::Request request, Completion completion = {});
     bool cancel(TaskId id);
     void cancelAll();
     // Retains outcomes for original worktrees/revisions, including discarded
@@ -111,8 +111,8 @@ Q_SIGNALS:
     void taskFinished(const branch_truce::TaskCompletion &completion);
 
 private:
-    bool replaceSession(const QString &worktree, const QString &operation,
-                        std::vector<FileSession> files, bool completingLoad, RecoveryRestore *restore = nullptr);
+    bool replaceSession(const QString &worktree, const QString &operation, std::vector<FileSession> files,
+                        bool completingLoad, RecoveryRestore *restore = nullptr);
     class State;
     std::unique_ptr<State> d;
 };

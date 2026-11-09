@@ -6,8 +6,5 @@
 #endif
 
 namespace branch_truce {
-std::string_view version() noexcept
-{
-    return BRANCH_TRUCE_VERSION_STRING;
-}
+std::string_view version() noexcept { return BRANCH_TRUCE_VERSION_STRING; }
 }

@@ -1,5 +1,5 @@
-#include "session/ConflictCapture.h"
 #include "TestHarness.h"
+#include "session/ConflictCapture.h"
 #include <functional>
 
 using namespace branch_truce;
@@ -90,7 +90,8 @@ void checkSources(const FileSnapshots &captured, const git::RepositoryContext &c
 void checkShared(const FileSnapshots &captured, const git::RepositoryContext &context)
 {
     CHECK(captured.path == "dir/file.txt" && captured.resultMode == "100644");
-    CHECK(captured.launchResult.text.utf8 == "manual result\n" && captured.launchResult.text.bytes == "manual result\n");
+    CHECK(captured.launchResult.text.utf8 == "manual result\n"
+          && captured.launchResult.text.bytes == "manual result\n");
     CHECK(captured.launchResult.identity == (SnapshotFileIdentity{1, 2, 0100644, 14, 3, 4, 5, 6}));
     CHECK(captured.provenance.sessionId == "session" && captured.provenance.worktreeRoot == root.toStdString());
     CHECK(captured.provenance.gitDirectory == context.gitDirectory.toStdString());
@@ -153,7 +154,8 @@ int main()
         for (const auto &[name, change] : changes) {
             auto file = conflict({1, 2, 3});
             change(file);
-            if (captureFile(file, context, "session")) throw std::runtime_error(std::string("captured despite ") + name);
+            if (captureFile(file, context, "session"))
+                throw std::runtime_error(std::string("captured despite ") + name);
         }
         CHECK(captureFile(conflict({1, 2, 3}), context, "session").has_value());
     });
@@ -183,7 +185,9 @@ int main()
         utf16.encoding = storage::TextEncoding::Utf16LittleEndian;
         utf16.bom = true;
         utf16.finalNewline = true;
-        const QByteArray utf16Bytes("\xff\xfe" "a\0\n\0", 6);
+        const QByteArray utf16Bytes("\xff\xfe"
+                                    "a\0\n\0",
+                                    6);
         storage::TextFormat crlf;
         crlf.newline = storage::Newline::CrLf;
         crlf.finalNewline = true;
@@ -218,8 +222,9 @@ int main()
             file.support = support;
             CHECK(supportFor(file) == Support::Unreadable);
         }
-        for (const auto support : {git::ConflictSupport::MissingSide, git::ConflictSupport::UnsupportedText,
-                 git::ConflictSupport::UnverifiedSource, git::ConflictSupport::UnsupportedOperation}) {
+        for (const auto support :
+             {git::ConflictSupport::MissingSide, git::ConflictSupport::UnsupportedText,
+              git::ConflictSupport::UnverifiedSource, git::ConflictSupport::UnsupportedOperation}) {
             file.support = support;
             CHECK(supportFor(file) == Support::OutsideApp);
         }

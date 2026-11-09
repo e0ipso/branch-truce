@@ -40,8 +40,8 @@ void SyntaxHighlighting::setFileName(const QString &fileName)
 {
     if (fileName == d_->fileName) return;
     d_->fileName = fileName;
-    d_->definition = fileName.isEmpty() ? KSyntaxHighlighting::Definition{}
-                                        : d_->repository.definitionForFileName(fileName);
+    d_->definition =
+        fileName.isEmpty() ? KSyntaxHighlighting::Definition{} : d_->repository.definitionForFileName(fileName);
     d_->apply();
 }
 

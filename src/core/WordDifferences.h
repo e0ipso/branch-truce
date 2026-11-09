@@ -40,8 +40,7 @@ struct WordDifferences {
 // range. When the pair needs more comparisons than budget or
 // kMaxWordDifferencePairCells allow, both lists are empty and budget is
 // unchanged; otherwise the comparisons used are taken from budget.
-[[nodiscard]] WordDifferences wordDifferences(std::string_view left, std::string_view right,
-                                              std::size_t &budget);
+[[nodiscard]] WordDifferences wordDifferences(std::string_view left, std::string_view right, std::size_t &budget);
 
 // Word ranges for the current revision of a file, as byte ranges into each
 // source's worktree text and into the correspondence result text.

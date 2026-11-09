@@ -1,10 +1,10 @@
+#include "TestHarness.h"
 #include "app/ApplicationController.h"
+#include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
+#include "fixtures/QuickScene.h"
 #include "highlighting/PaneHighlighter.h"
 #include "storage/RecoveryStore.h"
-#include "TestHarness.h"
-#include "fixtures/ChoiceFile.h"
-#include "fixtures/QuickScene.h"
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QColor>
@@ -38,10 +38,12 @@ FileSession pythonFile(const std::string &id, const std::string &path)
 {
     const std::string earlier = "# Greeting\ndef greet(name):\n    return 'hello ' + name\n";
     auto sources = *test_support::choiceFile("# Left greeting\ndef greet(name):\n    return 'hi ' + name\n",
-        "# Right greeting\ndef greet(name):\n    return 'hey ' + name\n", earlier).snapshots();
+                                             "# Right greeting\ndef greet(name):\n    return 'hey ' + name\n", earlier)
+                        .snapshots();
     sources.path = path;
-    sources.earlier = SourceSnapshot{"earlier-object", "100644", earlier,
-        test_support::choiceText(earlier), "earlier-commit", "Common earlier version"};
+    sources.earlier =
+        SourceSnapshot{"earlier-object",        "100644", earlier, test_support::choiceText(earlier), "earlier-commit",
+                       "Common earlier version"};
     return FileSession(id, path, {earlier, {}, 0}, Support::Supported, {}, std::move(sources), true);
 }
 
@@ -240,11 +242,13 @@ public:
             auto *comparison = fixture.item("comparisonPanes")->parentItem()->parentItem();
             CHECK(comparison && comparison->property("schemeBackground").isValid());
             QQmlExpression dark(qmlContext(comparison), comparison,
-                QStringLiteral("Kirigami.Theme.backgroundColor = \"#202326\""));
+                                QStringLiteral("Kirigami.Theme.backgroundColor = \"#202326\""));
             dark.evaluate();
             if (dark.hasError()) throw std::runtime_error(dark.error().toString().toStdString());
             CHECK(comparison->property("schemeBackground").value<QColor>() == QColor(QStringLiteral("#202326")));
-            settleFor("dark syntax theme", [&] { return fixture.highlighter("resultText")->theme().name() == QStringLiteral("Breeze Dark"); });
+            settleFor("dark syntax theme", [&] {
+                return fixture.highlighter("resultText")->theme().name() == QStringLiteral("Breeze Dark");
+            });
             for (const auto *pane : panes) {
                 CHECK(fixture.highlighter(pane)->theme().name() == QStringLiteral("Breeze Dark"));
                 checkPythonColours(fixture.document(pane));
@@ -347,8 +351,8 @@ public:
             selection.setPosition(3);
             selection.setPosition(8, QTextCursor::KeepAnchor);
             int notifications = 0;
-            const auto connection = QObject::connect(&document, &QTextDocument::contentsChanged,
-                &document, [&] { ++notifications; });
+            const auto connection =
+                QObject::connect(&document, &QTextDocument::contentsChanged, &document, [&] { ++notifications; });
             QList<QTextLayout::FormatRange> ranges;
             for (const int line : {2, 7, 12}) {
                 QTextLayout::FormatRange range;
@@ -368,8 +372,7 @@ public:
             notifications = 0;
             highlighter.setDecorations({});
             CHECK(notifications == 1);
-            for (const auto &range : ranges)
-                CHECK(document.findBlock(range.start).layout()->formats().isEmpty());
+            for (const auto &range : ranges) CHECK(document.findBlock(range.start).layout()->formats().isEmpty());
             CHECK(document.toPlainText() == text);
             CHECK(!document.isModified());
             CHECK(document.isUndoAvailable() == undo && document.isRedoAvailable() == redo);
@@ -416,7 +419,7 @@ public:
             highlighter.attach();
             QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
             const QList<QTextBlock> decorated{document.findBlockByNumber(4), document.findBlockByNumber(9),
-                                             document.findBlockByNumber(14)};
+                                              document.findBlockByNumber(14)};
             const auto ranges = [&] {
                 QList<QTextLayout::FormatRange> found;
                 for (const auto &block : decorated) {
@@ -434,20 +437,23 @@ public:
             selection.setPosition(selection.position() + 3, QTextCursor::KeepAnchor);
             int notifications = 0;
             int updates = 0;
-            const auto changed = QObject::connect(&document, &QTextDocument::contentsChanged,
-                &document, [&] { ++notifications; });
+            const auto changed =
+                QObject::connect(&document, &QTextDocument::contentsChanged, &document, [&] { ++notifications; });
             const auto laidOut = QObject::connect(document.documentLayout(), &QAbstractTextDocumentLayout::update,
-                &document, [&](const QRectF &) { ++updates; });
+                                                  &document, [&](const QRectF &) { ++updates; });
             const auto formatState = [](const QList<QTextLayout::FormatRange> &formats) {
                 QJsonArray state;
                 for (const auto &range : formats) {
                     QJsonArray properties;
                     const auto values = range.format.properties();
                     for (auto it = values.cbegin(); it != values.cend(); ++it)
-                        properties.append(QJsonObject{{"property", it.key()}, {"value", QJsonValue::fromVariant(it.value())}});
-                    state.append(QJsonObject{{"start", range.start}, {"length", range.length},
-                        {"underline", range.format.fontUnderline()}, {"underlineStyle", static_cast<int>(range.format.underlineStyle())},
-                        {"properties", properties}});
+                        properties.append(
+                            QJsonObject{{"property", it.key()}, {"value", QJsonValue::fromVariant(it.value())}});
+                    state.append(QJsonObject{{"start", range.start},
+                                             {"length", range.length},
+                                             {"underline", range.format.fontUnderline()},
+                                             {"underlineStyle", static_cast<int>(range.format.underlineStyle())},
+                                             {"properties", properties}});
                 }
                 return state;
             };
@@ -458,10 +464,14 @@ public:
                         state.append(QJsonObject{{"valid", false}});
                         continue;
                     }
-                    state.append(QJsonObject{{"valid", block.isValid()}, {"number", block.blockNumber()},
-                        {"position", block.position()}, {"revision", block.revision()}, {"text", block.text()},
-                        {"currentIdentity", document.findBlockByNumber(block.blockNumber()) == block},
-                        {"formats", formatState(block.layout()->formats())}});
+                    state.append(
+                        QJsonObject{{"valid", block.isValid()},
+                                    {"number", block.blockNumber()},
+                                    {"position", block.position()},
+                                    {"revision", block.revision()},
+                                    {"text", block.text()},
+                                    {"currentIdentity", document.findBlockByNumber(block.blockNumber()) == block},
+                                    {"formats", formatState(block.layout()->formats())}});
                 }
                 return state;
             };
@@ -481,12 +491,19 @@ public:
                 notifications = updates = 0;
                 highlighter.setDecorations(wanted);
                 if (notifications != 0 || updates != 0) {
-                    const QJsonObject diagnostic{{"qt", qVersion()}, {"prefix", prefix},
-                        {"notifications", notifications}, {"layoutUpdates", updates},
-                        {"notificationsBeforeRangeUpdate", nativeNotifications}, {"layoutUpdatesBeforeRangeUpdate", nativeUpdates},
-                        {"documentRevisionBeforeRangeUpdate", revision}, {"documentRevisionAfterRangeUpdate", document.revision()},
-                        {"beforeEdit", beforeEdit}, {"afterEdit", afterEdit}, {"afterRangeUpdate", blockState()},
-                        {"previousRanges", previousRanges}, {"wantedRanges", formatState(wanted)}};
+                    const QJsonObject diagnostic{{"qt", qVersion()},
+                                                 {"prefix", prefix},
+                                                 {"notifications", notifications},
+                                                 {"layoutUpdates", updates},
+                                                 {"notificationsBeforeRangeUpdate", nativeNotifications},
+                                                 {"layoutUpdatesBeforeRangeUpdate", nativeUpdates},
+                                                 {"documentRevisionBeforeRangeUpdate", revision},
+                                                 {"documentRevisionAfterRangeUpdate", document.revision()},
+                                                 {"beforeEdit", beforeEdit},
+                                                 {"afterEdit", afterEdit},
+                                                 {"afterRangeUpdate", blockState()},
+                                                 {"previousRanges", previousRanges},
+                                                 {"wantedRanges", formatState(wanted)}};
                     std::cerr << "DECORATION_SHIFT_DIAGNOSTIC="
                               << QJsonDocument(diagnostic).toJson(QJsonDocument::Compact).constData() << '\n';
                 }

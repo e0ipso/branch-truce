@@ -1,5 +1,5 @@
-#include "storage/DestinationWriter.h"
 #include "TestHarness.h"
+#include "storage/DestinationWriter.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -21,7 +21,11 @@ struct Interception;
 Interception *active = nullptr;
 
 struct Interception {
-    Interception() { CHECK(!active); active = this; }
+    Interception()
+    {
+        CHECK(!active);
+        active = this;
+    }
     ~Interception() { active = nullptr; }
     Interception(const Interception &) = delete;
     Interception &operator=(const Interception &) = delete;
@@ -113,16 +117,25 @@ ssize_t __wrap_write(int fd, const void *bytes, size_t size)
 {
     if (active) {
         ++active->writes;
-        if (active->interruptWrite && active->writes == 1) { errno = EINTR; return -1; }
+        if (active->interruptWrite && active->writes == 1) {
+            errno = EINTR;
+            return -1;
+        }
         if (active->zeroWrite) return 0;
-        if (active->fullDisk) { errno = ENOSPC; return -1; }
+        if (active->fullDisk) {
+            errno = ENOSPC;
+            return -1;
+        }
         if (active->shortWrites) size = std::min(size, size_t{3});
     }
     return __real_write(fd, bytes, size);
 }
 int __wrap_fsync(int fd)
 {
-    if (active && ++active->syncs == active->failSync) { errno = EIO; return -1; }
+    if (active && ++active->syncs == active->failSync) {
+        errno = EIO;
+        return -1;
+    }
     return __real_fsync(fd);
 }
 int __wrap_renameat2(int source, const char *from, int destination, const char *to, unsigned int flags)
@@ -131,18 +144,27 @@ int __wrap_renameat2(int source, const char *from, int destination, const char *
         ++active->exchanges;
         CHECK(flags == RENAME_EXCHANGE);
         if (active->beforeExchange) active->beforeExchange();
-        if (active->exchangeError && !active->exchangeBeforeError) { errno = active->exchangeError; return -1; }
+        if (active->exchangeError && !active->exchangeBeforeError) {
+            errno = active->exchangeError;
+            return -1;
+        }
     }
     const auto result = __real_renameat2(source, from, destination, to, flags);
     if (active && result == 0) {
         if (active->afterExchange) active->afterExchange();
-        if (active->exchangeError) { errno = active->exchangeError; return -1; }
+        if (active->exchangeError) {
+            errno = active->exchangeError;
+            return -1;
+        }
     }
     return result;
 }
 int __wrap_unlinkat(int fd, const char *name, int flags)
 {
-    if (active && active->failUnlink) { errno = EACCES; return -1; }
+    if (active && active->failUnlink) {
+        errno = EACCES;
+        return -1;
+    }
     return __real_unlinkat(fd, name, flags);
 }
 uid_t __wrap_geteuid()
@@ -164,23 +186,29 @@ public:
                 const auto baseline = fixture.capture();
                 const auto mode = executable ? "100755" : "100644";
                 int admissions = 0;
-                const auto result = publishDestination(baseline, fixture.edited, mode, [&] { ++admissions; return true; });
+                const auto result = publishDestination(baseline, fixture.edited, mode, [&] {
+                    ++admissions;
+                    return true;
+                });
                 CHECK(admissions == 1 && result.state == PublicationState::Published);
-                CHECK(result.failure == DestinationFailure::None && result.destination && result.retainedPath.isEmpty());
+                CHECK(result.failure == DestinationFailure::None && result.destination
+                      && result.retainedPath.isEmpty());
                 CHECK(result.destination->bytes() == fixture.edited && baseline.bytes() == fixture.original);
                 CHECK(readFile(fixture.path()) == fixture.edited);
-                struct stat metadata {};
+                struct stat metadata{};
                 CHECK(::stat(fixture.native().constData(), &metadata) == 0);
                 CHECK((metadata.st_mode & 0777) == (executable ? 0750 : 0640));
                 const auto next = publishDestination(*result.destination, {}, mode, [] { return true; });
-                CHECK(next.state == PublicationState::Published && next.destination && next.destination->bytes().isEmpty());
+                CHECK(next.state == PublicationState::Published && next.destination
+                      && next.destination->bytes().isEmpty());
                 CHECK(readFile(fixture.path()).isEmpty());
                 fixture.clean();
             }
         });
         suite.run("unsafe paths and symlinks are rejected before capture", [] {
             Fixture fixture;
-            for (const auto &path : QList<QByteArray>{"", "/result.txt", "../result.txt", "./result.txt", "a//b", ".git/config", QByteArray("a\0b", 3)}) {
+            for (const auto &path : QList<QByteArray>{"", "/result.txt", "../result.txt", "./result.txt", "a//b",
+                                                      ".git/config", QByteArray("a\0b", 3)}) {
                 const auto result = captureDestination(fixture.root, path);
                 CHECK(!result.destination && result.failure == DestinationFailure::InvalidPath);
             }
@@ -199,10 +227,14 @@ public:
         suite.run("admission cancellation and mode disagreement create no publication files", [] {
             Fixture fixture;
             const auto baseline = fixture.capture();
-            unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", {}), DestinationFailure::InvalidPath);
-            unchanged(fixture, publishDestination(baseline, fixture.edited, "100755", [] { return true; }), DestinationFailure::InvalidPath);
-            unchanged(fixture, publishDestination(baseline, fixture.edited, "120000", [] { return true; }), DestinationFailure::InvalidPath);
-            unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return false; }), DestinationFailure::Cancelled);
+            unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", {}),
+                      DestinationFailure::InvalidPath);
+            unchanged(fixture, publishDestination(baseline, fixture.edited, "100755", [] { return true; }),
+                      DestinationFailure::InvalidPath);
+            unchanged(fixture, publishDestination(baseline, fixture.edited, "120000", [] { return true; }),
+                      DestinationFailure::InvalidPath);
+            unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return false; }),
+                      DestinationFailure::Cancelled);
         });
         suite.run("publication keeps literal non-UTF-8 filename bytes", [] {
             Fixture fixture;
@@ -216,7 +248,8 @@ public:
             const auto capture = captureDestination(fixture.root, name);
             CHECK(capture.destination && capture.destination->path() == name);
             const auto result = publishDestination(*capture.destination, fixture.edited, "100644", [] { return true; });
-            CHECK(result.state == PublicationState::Published && result.destination && result.destination->path() == name);
+            CHECK(result.state == PublicationState::Published && result.destination
+                  && result.destination->path() == name);
             const int read = ::open(native.constData(), O_RDONLY | O_CLOEXEC);
             CHECK(read >= 0);
             QFile file;
@@ -232,9 +265,13 @@ public:
                 if (replacement) CHECK(QFile::rename(fixture.path(), fixture.root + "/previous.txt"));
                 writeFile(fixture.path(), "external\n");
                 int admissions = 0;
-                const auto result = publishDestination(baseline, fixture.edited, "100644", [&] { ++admissions; return true; });
+                const auto result = publishDestination(baseline, fixture.edited, "100644", [&] {
+                    ++admissions;
+                    return true;
+                });
                 CHECK(result.state == PublicationState::Unchanged && admissions == 0);
-                CHECK(result.failure == (replacement ? DestinationFailure::PathChanged : DestinationFailure::ContentChanged));
+                CHECK(result.failure
+                      == (replacement ? DestinationFailure::PathChanged : DestinationFailure::ContentChanged));
                 CHECK(!result.destination && readFile(fixture.path()) == "external\n");
                 CHECK(baseline.bytes() == fixture.original);
                 fixture.clean();
@@ -255,7 +292,8 @@ public:
                 });
                 CHECK(result.state == PublicationState::Unchanged && !result.destination);
                 CHECK(interception.exchanges == 0 && readFile(fixture.path()) == "external\n");
-                CHECK(result.failure == (ancestor ? DestinationFailure::PathChanged : DestinationFailure::ContentChanged));
+                CHECK(result.failure
+                      == (ancestor ? DestinationFailure::PathChanged : DestinationFailure::ContentChanged));
                 if (ancestor) {
                     CHECK(readFile(fixture.root + "-moved/result.txt") == fixture.original);
                     CHECK(QDir(fixture.root + "-moved").removeRecursively());
@@ -268,22 +306,27 @@ public:
                 std::cout << "METADATA " << scenario << '\n';
                 Fixture fixture;
                 if (QByteArray(scenario) == "hardlink")
-                    CHECK(::link(fixture.native().constData(), QFile::encodeName(fixture.root + "/alias").constData()) == 0);
+                    CHECK(::link(fixture.native().constData(), QFile::encodeName(fixture.root + "/alias").constData())
+                          == 0);
                 if (QByteArray(scenario) == "special-bits") CHECK(::chmod(fixture.native().constData(), 04644) == 0);
-                if (QByteArray(scenario) == "xattr") CHECK(::setxattr(fixture.native().constData(), "user.truce-test", "value", 5, 0) == 0);
+                if (QByteArray(scenario) == "xattr")
+                    CHECK(::setxattr(fixture.native().constData(), "user.truce-test", "value", 5, 0) == 0);
                 if (QByteArray(scenario) == "acl") {
                     // A real named-user POSIX ACL, independent of the setfacl executable.
                     auto acl = QByteArray::fromHex("0200000001000600ffffffff02000400");
                     const auto otherUser = qToLittleEndian(static_cast<quint32>(::geteuid() + 1));
                     acl.append(reinterpret_cast<const char *>(&otherUser), sizeof(otherUser));
                     acl += QByteArray::fromHex("04000400ffffffff10000400ffffffff20000400ffffffff");
-                    CHECK(::setxattr(fixture.native().constData(), "system.posix_acl_access", acl.constData(), static_cast<size_t>(acl.size()), 0) == 0);
+                    CHECK(::setxattr(fixture.native().constData(), "system.posix_acl_access", acl.constData(),
+                                     static_cast<size_t>(acl.size()), 0)
+                          == 0);
                 }
                 const auto baseline = fixture.capture();
                 Interception interception;
                 // Inject the effective identity mismatch; no chown privilege is required.
                 interception.foreignIdentity = QByteArray(scenario) == "foreign-owner";
-                unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return true; }), DestinationFailure::UnsupportedMetadata);
+                unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return true; }),
+                          DestinationFailure::UnsupportedMetadata);
                 CHECK(interception.writes == 0 && interception.exchanges == 0);
             }
         });
@@ -296,9 +339,11 @@ public:
                 CHECK(::chmod(target.constData(), directory ? 0500 : 0444) == 0);
                 const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
                 CHECK(::chmod(target.constData(), directory ? 0700 : 0644) == 0);
-                CHECK(result.state == PublicationState::Unchanged && !result.destination && !result.diagnostic.isEmpty());
+                CHECK(result.state == PublicationState::Unchanged && !result.destination
+                      && !result.diagnostic.isEmpty());
                 // A changed permission baseline may be rejected before the write access probe.
-                CHECK(result.failure == DestinationFailure::PathChanged || result.failure == DestinationFailure::ContentChanged
+                CHECK(result.failure == DestinationFailure::PathChanged
+                      || result.failure == DestinationFailure::ContentChanged
                       || result.failure == DestinationFailure::PermissionDenied);
                 CHECK(readFile(fixture.path()) == fixture.original);
                 fixture.clean();
@@ -322,7 +367,8 @@ public:
                 Interception interception;
                 interception.fullDisk = full;
                 interception.zeroWrite = !full;
-                unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return true; }), DestinationFailure::IoError);
+                unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return true; }),
+                          DestinationFailure::IoError);
                 CHECK(interception.exchanges == 0);
             }
         });
@@ -334,8 +380,10 @@ public:
                 interception.failSync = failSync;
                 const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
                 CHECK(interception.syncs == failSync && result.failure == DestinationFailure::IoError);
-                if (failSync <= 2) unchanged(fixture, result, DestinationFailure::IoError);
-                else retained(fixture, result, fixture.original);
+                if (failSync <= 2)
+                    unchanged(fixture, result, DestinationFailure::IoError);
+                else
+                    retained(fixture, result, fixture.original);
                 CHECK(interception.exchanges == (failSync <= 2 ? 0 : 1));
             }
         });
@@ -346,7 +394,8 @@ public:
                 Interception interception;
                 interception.exchangeError = error;
                 unchanged(fixture, publishDestination(baseline, fixture.edited, "100644", [] { return true; }),
-                          error == EACCES ? DestinationFailure::PermissionDenied : DestinationFailure::UnsupportedFilesystem);
+                          error == EACCES ? DestinationFailure::PermissionDenied
+                                          : DestinationFailure::UnsupportedFilesystem);
                 CHECK(interception.exchanges == 1);
             }
         });
@@ -362,7 +411,8 @@ public:
                     CHECK(result.state == PublicationState::Uncertain && result.failure == DestinationFailure::IoError);
                     CHECK(!result.destination && !result.retainedPath.isEmpty() && interception.exchanges == 1);
                     CHECK(readFile(fixture.path()) == (committed ? fixture.edited : fixture.original));
-                    CHECK(readFile(QFile::decodeName(result.retainedPath)) == (committed ? fixture.original : fixture.edited));
+                    CHECK(readFile(QFile::decodeName(result.retainedPath))
+                          == (committed ? fixture.original : fixture.edited));
                 }
             }
         });
@@ -378,7 +428,8 @@ public:
                 const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
                 retained(fixture, result, "external late edit\n");
                 CHECK(interception.exchanges == 1);
-                CHECK(result.failure == (replacement ? DestinationFailure::PathChanged : DestinationFailure::ContentChanged));
+                CHECK(result.failure
+                      == (replacement ? DestinationFailure::PathChanged : DestinationFailure::ContentChanged));
                 CHECK(baseline.bytes() == fixture.original);
                 if (replacement) CHECK(readFile(fixture.root + "/saved-original") == fixture.original);
             }
@@ -406,7 +457,7 @@ public:
             const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
             CHECK(result.state == PublicationState::Uncertain && result.failure == DestinationFailure::Symlink);
             CHECK(!result.destination && interception.exchanges == 1 && !result.retainedPath.isEmpty());
-            struct stat metadata {};
+            struct stat metadata{};
             CHECK(::lstat(result.retainedPath.constData(), &metadata) == 0 && S_ISLNK(metadata.st_mode));
             CHECK(readFile(fixture.path()) == fixture.edited);
             CHECK(readFile(fixture.root + "/outside.txt") == "external target\n");
@@ -442,9 +493,11 @@ public:
                 if (!exchanged) interception.exchangeError = EOPNOTSUPP;
                 const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
                 CHECK(result.state == (exchanged ? PublicationState::Published : PublicationState::Unchanged));
-                CHECK(result.failure == DestinationFailure::CleanupFailure && !result.destination && !result.retainedPath.isEmpty());
+                CHECK(result.failure == DestinationFailure::CleanupFailure && !result.destination
+                      && !result.retainedPath.isEmpty());
                 CHECK(readFile(fixture.path()) == (exchanged ? fixture.edited : fixture.original));
-                CHECK(readFile(QFile::decodeName(result.retainedPath)) == (exchanged ? fixture.original : fixture.edited));
+                CHECK(readFile(QFile::decodeName(result.retainedPath))
+                      == (exchanged ? fixture.original : fixture.edited));
                 CHECK(interception.exchanges == 1);
             }
         });

@@ -54,8 +54,8 @@ struct MergetoolSources {
 [[nodiscard]] bool writeMergetoolIntake(const QString &directory, const QString &invocation,
                                         const MergetoolSources &sources, QString *error);
 // Re-reads that directory and checks it still sits under the session key.
-[[nodiscard]] std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory,
-                                                                  const QByteArray &sessionKey, QString *error);
+[[nodiscard]] std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, const QByteArray &sessionKey,
+                                                                 QString *error);
 
 enum class MergetoolFrame { NeedMore, Ready, Invalid };
 [[nodiscard]] MergetoolFrame takeMergetoolFrame(QByteArray *buffer, QJsonObject *object, QString *error);

@@ -110,6 +110,7 @@ Q_SIGNALS:
     void markerBlocksChanged();
     void markerOrphansChanged();
     void statusChanged();
+
 private:
     struct Projection {
         QVariantList passages;
@@ -123,11 +124,11 @@ private:
     [[nodiscard]] QVariant role(int role) const;
     void project(const FileSession *file);
     void publishProjection(Projection projection);
-    template<typename T> void update(T &stored, const T &next, void (SelectedFile::*changed)())
+    template <typename T> void update(T &stored, const T &next, void (SelectedFile::*changed)())
     {
         if (stored == next) return;
         stored = next;
-        Q_EMIT (this->*changed)();
+        Q_EMIT(this->*changed)();
     }
     SessionModel &files_;
     const FileSnapshots *sourceIdentity_ = nullptr;

@@ -44,6 +44,7 @@ public:
     [[nodiscard]] RecoveryCommit commit(const RecoveryTransaction &transaction);
     [[nodiscard]] QByteArray payload(const QByteArray &digest, QString *error = nullptr) const;
     [[nodiscard]] static QByteArray digest(const QByteArray &bytes);
+
 private:
     // The journal through its last complete record, as this store last
     // verified or wrote it, and what the next append needs from it.

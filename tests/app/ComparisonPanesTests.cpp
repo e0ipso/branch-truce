@@ -19,16 +19,15 @@ using branch_truce::ComparisonPanes;
 using branch_truce::TextBlocks;
 
 namespace {
-bool near(qreal value, qreal expected)
-{
-    return std::abs(value - expected) < 1e-3;
-}
+bool near(qreal value, qreal expected) { return std::abs(value - expected) < 1e-3; }
 
 QVariantMap passage(const QString &side, int sourceBegin, int sourceEnd, int resultBegin, int resultEnd)
 {
-    return {{QStringLiteral("side"), side}, {QStringLiteral("sourceLineBegin"), sourceBegin},
-        {QStringLiteral("sourceLineEnd"), sourceEnd}, {QStringLiteral("resultLineBegin"), resultBegin},
-        {QStringLiteral("resultLineEnd"), resultEnd}};
+    return {{QStringLiteral("side"), side},
+            {QStringLiteral("sourceLineBegin"), sourceBegin},
+            {QStringLiteral("sourceLineEnd"), sourceEnd},
+            {QStringLiteral("resultLineBegin"), resultBegin},
+            {QStringLiteral("resultLineEnd"), resultEnd}};
 }
 
 QString numberedLines(int count)
@@ -44,7 +43,7 @@ QString numberedLines(int count)
 QVariantList unequalPassages()
 {
     return {passage(QStringLiteral("stage2"), 1, 11, 1, 11), passage(QStringLiteral("stage2"), 11, 21, 11, 41),
-        passage(QStringLiteral("stage2"), 21, 41, 41, 61), passage(QStringLiteral("earlier"), 1, 61, 1, 61)};
+            passage(QStringLiteral("stage2"), 21, 41, 41, 61), passage(QStringLiteral("earlier"), 1, 61, 1, 61)};
 }
 
 // The panes are declared in the reverse of their order on screen, so only their roles tie
@@ -212,10 +211,13 @@ void renderedFrame(QQuickWindow &window)
     QTimer deadline;
     deadline.setSingleShot(true);
     bool rendered = false;
-    QObject::connect(&window, &QQuickWindow::frameSwapped, &loop, [&] {
-        rendered = true;
-        loop.quit();
-    }, Qt::QueuedConnection);
+    QObject::connect(
+        &window, &QQuickWindow::frameSwapped, &loop,
+        [&] {
+            rendered = true;
+            loop.quit();
+        },
+        Qt::QueuedConnection);
     QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
     deadline.start(5000);
     window.update();
@@ -232,16 +234,25 @@ void wholeLineInView(QQuickItem *pane, int line, const char *role)
     CHECK(!rows.isEmpty());
     const auto block = rows.first().toMap();
     CHECK(block.value(QStringLiteral("number")).toInt() == line);
-    const auto top = editor->y() + editor->property("topPadding").toReal()
-        + block.value(QStringLiteral("top")).toReal() - view->property("contentY").toReal();
+    const auto top = editor->y() + editor->property("topPadding").toReal() + block.value(QStringLiteral("top")).toReal()
+        - view->property("contentY").toReal();
     const auto bottom = top + block.value(QStringLiteral("height")).toReal();
     if (top < -0.01 || bottom > view->height() + 0.01)
         throw std::runtime_error(QStringLiteral("%1 line %2: full block [%3, %4], viewport %5x%6, contentY %7, "
                                                 "editorY %8, padding %9, rowHeight %10, cursor %11, wrapMode %12")
-            .arg(QString::fromLatin1(role)).arg(line).arg(top).arg(bottom).arg(view->width()).arg(view->height())
-            .arg(view->property("contentY").toReal()).arg(editor->y()).arg(editor->property("topPadding").toReal())
-            .arg(blocks->rowHeight()).arg(editor->property("cursorPosition").toInt())
-            .arg(editor->property("wrapMode").toInt()).toStdString());
+                                     .arg(QString::fromLatin1(role))
+                                     .arg(line)
+                                     .arg(top)
+                                     .arg(bottom)
+                                     .arg(view->width())
+                                     .arg(view->height())
+                                     .arg(view->property("contentY").toReal())
+                                     .arg(editor->y())
+                                     .arg(editor->property("topPadding").toReal())
+                                     .arg(blocks->rowHeight())
+                                     .arg(editor->property("cursorPosition").toInt())
+                                     .arg(editor->property("wrapMode").toInt())
+                                     .toStdString());
 }
 }
 
@@ -302,8 +313,7 @@ int main(int argc, char **argv)
     });
     suite.run("the registry finds editors by role", [] {
         Scene scene;
-        for (const char *role : {"left", "result", "right", "earlier"})
-            CHECK(scene.pane(role) != nullptr);
+        for (const char *role : {"left", "result", "right", "earlier"}) CHECK(scene.pane(role) != nullptr);
         CHECK(scene.panes->editor("stage2") == scene.pane("left")->property("editor").value<QQuickItem *>());
         CHECK(scene.panes->editor("stage3") == scene.pane("right")->property("editor").value<QQuickItem *>());
         CHECK(scene.panes->editor("earlier") == scene.pane("earlier")->property("editor").value<QQuickItem *>());
@@ -375,11 +385,15 @@ int main(int argc, char **argv)
         const auto after = numberedLines(80);
         const auto leftText = before + QStringLiteral("left value\n") + after;
         const auto rightText = before + QStringLiteral("right value\n") + after;
-        const auto resultText = before + QStringLiteral("<<<<<<< left\nleft value\n||||||| base\nbase value\n"
-                                                        "=======\nright value\n>>>>>>> right\n") + after;
+        const auto resultText = before
+            + QStringLiteral("<<<<<<< left\nleft value\n||||||| base\nbase value\n"
+                             "=======\nright value\n>>>>>>> right\n")
+            + after;
         auto *resultBlocks = Scene::blocks(scene.pane("result"));
-        const QVariantList folds{QVariantMap{{QStringLiteral("line"), 121}, {QStringLiteral("text"), "<<<<<<< left"},
-            {QStringLiteral("last"), 127}, {QStringLiteral("lastText"), ">>>>>>> right"}}};
+        const QVariantList folds{QVariantMap{{QStringLiteral("line"), 121},
+                                             {QStringLiteral("text"), "<<<<<<< left"},
+                                             {QStringLiteral("last"), 127},
+                                             {QStringLiteral("lastText"), ">>>>>>> right"}}};
         QVariantList passages;
         for (const auto &side : {QStringLiteral("stage2"), QStringLiteral("stage3")}) {
             passages.append(passage(side, 1, 121, 1, 121));
@@ -393,8 +407,8 @@ int main(int argc, char **argv)
             // file restores its text and queues formatting/fold/cursor work.
             for (const auto &text : {QStringLiteral("short\n"), leftText}) {
                 CHECK(scene.root->setProperty("leftSource", QVariantMap{{QStringLiteral("text"), text}}));
-                CHECK(scene.root->setProperty("rightSource", QVariantMap{{QStringLiteral("text"),
-                    text == leftText ? rightText : text}}));
+                CHECK(scene.root->setProperty(
+                    "rightSource", QVariantMap{{QStringLiteral("text"), text == leftText ? rightText : text}}));
                 CHECK(scene.root->setProperty("resultText", text == leftText ? resultText : text));
                 resultBlocks->setHidden(text == leftText ? folds : QVariantList{});
                 if (text != leftText) renderedFrame(window);
@@ -454,7 +468,8 @@ int main(int argc, char **argv)
         CHECK(!near(Scene::viewport(left)->property("contentY").toReal(),
                     Scene::viewport(scene.pane("right"))->property("contentY").toReal()));
         const auto selected = blocks->positionOf(121) + 2;
-        CHECK(QMetaObject::invokeMethod(scene.panes->editor("stage2"), "select", Q_ARG(int, selected), Q_ARG(int, selected + 3)));
+        CHECK(QMetaObject::invokeMethod(scene.panes->editor("stage2"), "select", Q_ARG(int, selected),
+                                        Q_ARG(int, selected + 3)));
         scene.panes->place("result", 121);
         CHECK(scene.panes->editor("stage2")->property("selectionStart").toInt() == selected);
         CHECK(scene.panes->editor("stage2")->property("selectionEnd").toInt() == selected + 3);

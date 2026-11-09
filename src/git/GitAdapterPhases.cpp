@@ -27,7 +27,7 @@ bool regularFile(const QString &directory, const QByteArray &path)
     const auto parts = path.split('/');
     for (qsizetype i = 0; i < parts.size(); ++i) {
         current += '/' + parts[i];
-        struct stat info {};
+        struct stat info{};
         if (::lstat(current.constData(), &info) != 0
             || (i + 1 == parts.size() ? !S_ISREG(info.st_mode) : !S_ISDIR(info.st_mode))) {
             return false;
@@ -40,8 +40,8 @@ std::optional<QString> responsePath(const QByteArray &output)
     if (!output.endsWith('\n')) return std::nullopt;
     const auto bytes = output.first(output.size() - 1);
     const auto path = QFile::decodeName(bytes);
-    if (bytes.isEmpty() || bytes.contains('\0') || QFile::encodeName(path) != bytes
-        || !QDir::isAbsolutePath(path)) return std::nullopt;
+    if (bytes.isEmpty() || bytes.contains('\0') || QFile::encodeName(path) != bytes || !QDir::isAbsolutePath(path))
+        return std::nullopt;
     return path;
 }
 bool localObjectStores(const QString &objects, QString &diagnostic)
@@ -71,8 +71,9 @@ bool localObjectStores(const QString &objects, QString &diagnostic)
                 diagnostic = QStringLiteral("Outside app: object packs cannot be inspected offline");
                 return false;
             }
-            if (!QDir(packPath).entryList({QStringLiteral("*.promisor")},
-                                         QDir::Files | QDir::Hidden | QDir::System).isEmpty()) {
+            if (!QDir(packPath)
+                     .entryList({QStringLiteral("*.promisor")}, QDir::Files | QDir::Hidden | QDir::System)
+                     .isEmpty()) {
                 diagnostic = QStringLiteral("Outside app: promisor object packs require unsupported lazy fetching");
                 return false;
             }
@@ -130,8 +131,8 @@ void GitAdapter::State::afterProcess(bool normal, int code)
     if (!stopping && (!normal || code != 0)) {
         if (result.outcome != Outcome::LaunchFailure) {
             result.outcome = normal ? Outcome::ExitFailure : Outcome::ProcessFailure;
-            result.diagnostic = normal ? QStringLiteral("Git exited with code %1").arg(code)
-                                       : QStringLiteral("Git process crashed");
+            result.diagnostic =
+                normal ? QStringLiteral("Git exited with code %1").arg(code) : QStringLiteral("Git process crashed");
         }
         stopping = true;
     }
@@ -238,8 +239,10 @@ void GitAdapter::State::handleObjectDirectory()
     } else {
         originalObjectDirectory = *objects;
         if (result.request.operation == Operation::Status) {
-            if (hasFilterConfiguration()) launch(Phase::TrackedPaths, {"ls-files", "--cached", "-z"});
-            else afterPolicy();
+            if (hasFilterConfiguration())
+                launch(Phase::TrackedPaths, {"ls-files", "--cached", "-z"});
+            else
+                afterPolicy();
         } else if (filterPolicy()) {
             launch(Phase::Attributes, {"check-attr", "-z", "--all", "--", result.request.path});
         } else {
@@ -261,8 +264,10 @@ void GitAdapter::State::handleTrackedPaths()
 }
 void GitAdapter::State::handleAttributes()
 {
-    if (!checkFilters()) reject(result.diagnostic);
-    else afterPolicy();
+    if (!checkFilters())
+        reject(result.diagnostic);
+    else
+        afterPolicy();
 }
 void GitAdapter::State::handleGitDirectory()
 {
@@ -381,8 +386,8 @@ void GitAdapter::State::handleInspection(bool normal, int code)
 {
     result.indexAfter = phaseOutput;
     if (!stopping && normal && code == 0 && validIndex(phaseOutput, false)) {
-        result.mutation = result.indexBefore == result.indexAfter
-            ? Mutation::ObservedUnchanged : Mutation::ObservedChanged;
+        result.mutation =
+            result.indexBefore == result.indexAfter ? Mutation::ObservedUnchanged : Mutation::ObservedChanged;
         if (result.outcome == Outcome::Success && !validIndex(phaseOutput, true)) {
             result.outcome = Outcome::InspectionFailure;
             result.diagnostic = QStringLiteral("Staging exited successfully without a single regular stage-zero entry");
@@ -399,7 +404,9 @@ void GitAdapter::State::handleCanonicalSize()
     if (!valid || QByteArray::number(size) + '\n' != phaseOutput) {
         reject(QStringLiteral("Invalid canonical object size response"));
     } else if (size > static_cast<qulonglong>(outputLimit)) {
-        reject(QStringLiteral("Canonical text size %1 bytes after clean conversion exceeds the %2 byte output limit").arg(size).arg(outputLimit));
+        reject(QStringLiteral("Canonical text size %1 bytes after clean conversion exceeds the %2 byte output limit")
+                   .arg(size)
+                   .arg(outputLimit));
     } else {
         launch(Phase::CanonicalObject, {"cat-file", "blob", result.canonicalObjectId});
     }
@@ -407,7 +414,8 @@ void GitAdapter::State::handleCanonicalSize()
 void GitAdapter::State::handleCanonicalObject()
 {
     result.canonicalBytes = phaseOutput;
-    launch(Phase::CanonicalCheckout, {"cat-file", "--filters", "--path=" + result.request.path, result.canonicalObjectId});
+    launch(Phase::CanonicalCheckout,
+           {"cat-file", "--filters", "--path=" + result.request.path, result.canonicalObjectId});
 }
 void GitAdapter::State::handleCanonicalCheckout()
 {

@@ -5,30 +5,30 @@
 #include <QFile>
 #include <QFont>
 #include <QFontInfo>
-#include <QIcon>
 #include <QGuiApplication>
+#include <QIcon>
 #include <QImage>
+#include <QJSValue>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJSValue>
 #include <QLocalSocket>
+#include <QPalette>
 #include <QPointer>
-#include <QQuickItem>
-#include <QQuickWindow>
-#include <QQuickStyle>
-#include <QQuickTextDocument>
 #include <QQmlComponent>
 #include <QQmlEngine>
-#include <QPalette>
-#include <QSettings>
+#include <QQuickItem>
+#include <QQuickStyle>
+#include <QQuickTextDocument>
+#include <QQuickWindow>
+#include <QRegularExpression>
 #include <QScreen>
+#include <QSettings>
 #include <QStringList>
+#include <QTest>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
-#include <QRegularExpression>
-#include <QTest>
 #include <QTimer>
 
 namespace {
@@ -44,37 +44,44 @@ bool clicked = false;
 bool overflowOpened = false;
 bool sourcePositioned = false;
 
-QJsonValue value(const QVariant &variant) {
+QJsonValue value(const QVariant &variant)
+{
     if (variant.metaType() == QMetaType::fromType<QJSValue>())
         return QJsonValue::fromVariant(variant.value<QJSValue>().toVariant());
     return QJsonValue::fromVariant(variant);
 }
 QObject *controller() { return window ? window->property("controller").value<QObject *>() : nullptr; }
-QObject *selected() {
+QObject *selected()
+{
     auto *owner = controller();
     return owner ? owner->property("selectedFile").value<QObject *>() : nullptr;
 }
-bool reachable(QQuickItem *item) {
+bool reachable(QQuickItem *item)
+{
     if (!item || !item->isVisible() || item->width() <= 0 || item->height() <= 0) return false;
-    const auto point = item->mapToScene(QPointF(item->width()/2, item->height()/2));
+    const auto point = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
     const auto rect = item->mapRectToScene(item->boundingRect());
     const bool button = item->inherits("QQuickAbstractButton");
     if (!QRectF(0, 0, window->width(), window->height()).contains(point)) return false;
     if (button && !QRectF(0, 0, window->width(), window->height()).contains(rect)) return false;
     for (auto *parent = item->parentItem(); parent; parent = parent->parentItem())
-        if (parent->clip() && (!parent->contains(parent->mapFromScene(point))
-            || (button && !parent->mapRectToScene(parent->boundingRect()).contains(rect)))) return false;
+        if (parent->clip()
+            && (!parent->contains(parent->mapFromScene(point))
+                || (button && !parent->mapRectToScene(parent->boundingRect()).contains(rect))))
+            return false;
     return true;
 }
-QQuickItem *find(QQuickItem *item, const QString &target, bool path = false) {
+QQuickItem *find(QQuickItem *item, const QString &target, bool path = false)
+{
     if (!item || !item->isVisible()) return nullptr;
-    if ((path ? item->property("path").toString() == target : item->objectName() == target)
-        && reachable(item)) return item;
+    if ((path ? item->property("path").toString() == target : item->objectName() == target) && reachable(item))
+        return item;
     for (auto *child : item->childItems())
         if (auto *found = find(child, target, path)) return found;
     return nullptr;
 }
-QQuickItem *accessibleButton(QQuickItem *item, const QString &target) {
+QQuickItem *accessibleButton(QQuickItem *item, const QString &target)
+{
     if (!item || !item->isVisible()) return nullptr;
     if (item->inherits("QQuickAbstractButton") && reachable(item)) {
         auto *accessible = QAccessible::queryAccessibleInterface(item);
@@ -85,13 +92,17 @@ QQuickItem *accessibleButton(QQuickItem *item, const QString &target) {
         if (auto *found = accessibleButton(child, target)) return found;
     return nullptr;
 }
-QJsonObject fontInfo(const QFont &font) {
+QJsonObject fontInfo(const QFont &font)
+{
     const QFontInfo resolved(font);
-    return {{"requestedFamily", font.family()}, {"resolvedFamily", resolved.family()},
-            {"pointSize", font.pointSizeF()}, {"pixelSize", resolved.pixelSize()},
+    return {{"requestedFamily", font.family()},
+            {"resolvedFamily", resolved.family()},
+            {"pointSize", font.pointSizeF()},
+            {"pixelSize", resolved.pixelSize()},
             {"exactMatch", resolved.exactMatch()}};
 }
-QJsonObject profile() {
+QJsonObject profile()
+{
     // Probe theme roles in the application's engine, without changing its scene.
     static QPointer<QObject> probe;
     if (!probe) {
@@ -110,7 +121,8 @@ Item {
                                    mediumSpacing: K.Units.mediumSpacing, largeSpacing: K.Units.largeSpacing})
 
 }
-)QML", QUrl("native-calibration.qml"));
+)QML",
+                          QUrl("native-calibration.qml"));
         probe = component.create();
         if (!probe) qFatal("Cannot observe Kirigami profile: %s", qPrintable(component.errorString()));
         probe->setParent(engine);
@@ -118,40 +130,54 @@ Item {
     }
     QJsonObject fonts;
     for (const auto *key : {"normal", "small", "fixed"})
-        fonts[key] = fontInfo(probe->property((QByteArray(key)+"Font").constData()).value<QFont>());
-    QSettings settings(qEnvironmentVariable("XDG_CONFIG_HOME")+"/kdeglobals", QSettings::IniFormat);
+        fonts[key] = fontInfo(probe->property((QByteArray(key) + "Font").constData()).value<QFont>());
+    QSettings settings(qEnvironmentVariable("XDG_CONFIG_HOME") + "/kdeglobals", QSettings::IniFormat);
     const auto actualPalette = QGuiApplication::palette();
     const QJsonObject palette{{"window", actualPalette.color(QPalette::Window).name()},
-        {"viewBase", actualPalette.color(QPalette::Base).name()},
-        {"viewAlternateBase", actualPalette.color(QPalette::AlternateBase).name()},
-        {"text", actualPalette.color(QPalette::Text).name()},
-        {"disabledText", actualPalette.color(QPalette::Disabled, QPalette::Text).name()},
-        {"highlight", actualPalette.color(QPalette::Highlight).name()}};
+                              {"viewBase", actualPalette.color(QPalette::Base).name()},
+                              {"viewAlternateBase", actualPalette.color(QPalette::AlternateBase).name()},
+                              {"text", actualPalette.color(QPalette::Text).name()},
+                              {"disabledText", actualPalette.color(QPalette::Disabled, QPalette::Text).name()},
+                              {"highlight", actualPalette.color(QPalette::Highlight).name()}};
     auto *screen = window->screen();
-    return {{"qtVersion", qVersion()}, {"configuredColourScheme", settings.value("ColorScheme").toString()}, {"platform", QGuiApplication::platformName()},
-            {"quickControlsStyle", QQuickStyle::name()}, {"iconTheme", QIcon::themeName()},
-            {"fallbackIconTheme", QIcon::fallbackThemeName()}, {"fonts", fonts},
-            {"units", value(probe->property("units"))}, {"palette", palette},
+    return {{"qtVersion", qVersion()},
+            {"configuredColourScheme", settings.value("ColorScheme").toString()},
+            {"platform", QGuiApplication::platformName()},
+            {"quickControlsStyle", QQuickStyle::name()},
+            {"iconTheme", QIcon::themeName()},
+            {"fallbackIconTheme", QIcon::fallbackThemeName()},
+            {"fonts", fonts},
+            {"units", value(probe->property("units"))},
+            {"palette", palette},
             {"devicePixelRatio", window->devicePixelRatio()},
-            {"logicalDpi", screen->logicalDotsPerInch()}, {"physicalDpi", screen->physicalDotsPerInch()},
-            {"screenName", screen->name()}, {"physicalDesktop", false}};
+            {"logicalDpi", screen->logicalDotsPerInch()},
+            {"physicalDpi", screen->physicalDotsPerInch()},
+            {"screenName", screen->name()},
+            {"physicalDesktop", false}};
 }
-QJsonObject snapshot() {
+QJsonObject snapshot()
+{
     QJsonObject state;
     QJsonArray items, details;
     auto walk = [&](auto &&self, QQuickItem *item) -> void {
         if (!item->isVisible()) return;
-        if (!item->objectName().isEmpty() || item->property("line").isValid()
-            || item->property("text").isValid() || item->property("color").isValid()) {
+        if (!item->objectName().isEmpty() || item->property("line").isValid() || item->property("text").isValid()
+            || item->property("color").isValid()) {
             const auto pos = item->mapToScene(QPointF());
             bool painted = true;
             for (auto *ancestor = item; ancestor; ancestor = ancestor->parentItem())
                 painted = painted && ancestor->isVisible() && ancestor->opacity() > 0;
-            QJsonObject row{{"name", item->objectName()}, {"x", pos.x()}, {"y", pos.y()},
-                {"width", item->width()}, {"height", item->height()}, {"enabled", item->isEnabled()},
-                {"activeFocus", item->hasActiveFocus()}, {"opacity", item->opacity()},
-                {"onScreen", reachable(item) && painted}, {"clip", item->clip()},
-                {"className", item->metaObject()->className()}};
+            QJsonObject row{{"name", item->objectName()},
+                            {"x", pos.x()},
+                            {"y", pos.y()},
+                            {"width", item->width()},
+                            {"height", item->height()},
+                            {"enabled", item->isEnabled()},
+                            {"activeFocus", item->hasActiveFocus()},
+                            {"opacity", item->opacity()},
+                            {"onScreen", reachable(item) && painted},
+                            {"clip", item->clip()},
+                            {"className", item->metaObject()->className()}};
             QStringList ancestors;
             for (auto *parent = item->parentItem(); parent; parent = parent->parentItem())
                 if (!parent->objectName().isEmpty()) ancestors.append(parent->objectName());
@@ -160,12 +186,22 @@ QJsonObject snapshot() {
                 row["accessibleName"] = accessible->text(QAccessible::Name);
                 row["accessibleDescription"] = accessible->text(QAccessible::Description);
             }
-            for (const auto *key : {"text", "path", "fileId", "contentY", "cursorPosition", "checked", "rows", "folds",
-                                   "rowHeight", "lineSpacing", "color", "schemeBackground", "line", "kind",
-                                   "truncated", "explanation", "implicitWidth", "baselineOffset", "textFormat", "readOnly",
-                                   "selectByMouse", "selectByKeyboard",
-                                   "sourceTop", "sourceBottom", "resultTop", "resultBottom",
-                                   "sourceX", "resultX", "middleX", "radius", "orientation"}) {
+            for (const auto *key : {"text",           "path",
+                                    "fileId",         "contentY",
+                                    "cursorPosition", "checked",
+                                    "rows",           "folds",
+                                    "rowHeight",      "lineSpacing",
+                                    "color",          "schemeBackground",
+                                    "line",           "kind",
+                                    "truncated",      "explanation",
+                                    "implicitWidth",  "baselineOffset",
+                                    "textFormat",     "readOnly",
+                                    "selectByMouse",  "selectByKeyboard",
+                                    "sourceTop",      "sourceBottom",
+                                    "resultTop",      "resultBottom",
+                                    "sourceX",        "resultX",
+                                    "middleX",        "radius",
+                                    "orientation"}) {
                 const auto property = item->property(key);
                 if (property.isValid()) row[key] = value(property);
             }
@@ -188,16 +224,21 @@ QJsonObject snapshot() {
                 || item->objectName() == "resultText") {
                 auto *quick = item->property("textDocument").value<QQuickTextDocument *>();
                 QJsonArray formats;
-                if (quick) for (auto block = quick->textDocument()->begin(); block.isValid(); block = block.next()) {
-                    for (const auto &range : block.layout()->formats())
-                        formats.append(QJsonObject{{"line", block.blockNumber()+1}, {"start", range.start},
-                            {"length", range.length}, {"foreground", range.format.foreground().color().name()},
-                            {"weight", range.format.fontWeight()}});
-                }
+                if (quick)
+                    for (auto block = quick->textDocument()->begin(); block.isValid(); block = block.next()) {
+                        for (const auto &range : block.layout()->formats())
+                            formats.append(QJsonObject{{"line", block.blockNumber() + 1},
+                                                       {"start", range.start},
+                                                       {"length", range.length},
+                                                       {"foreground", range.format.foreground().color().name()},
+                                                       {"weight", range.format.fontWeight()}});
+                    }
                 row["syntaxFormats"] = formats;
             }
-            if (!item->objectName().isEmpty()) items.append(row);
-            else details.append(row);
+            if (!item->objectName().isEmpty())
+                items.append(row);
+            else
+                details.append(row);
         }
         for (auto *child : item->childItems()) self(self, child);
     };
@@ -208,81 +249,104 @@ QJsonObject snapshot() {
     state["height"] = window->height();
     state["profile"] = profile();
     if (auto *file = selected())
-        for (const auto *key : {"path", "status", "unsaved", "undecided", "progress", "regions", "choices", "decisions",
-                               "resultText", "passages", "markerBlocks", "pendingInput", "recoveryState", "supportDetail"})
+        for (const auto *key :
+             {"path", "status", "unsaved", "undecided", "progress", "regions", "choices", "decisions", "resultText",
+              "passages", "markerBlocks", "pendingInput", "recoveryState", "supportDetail"})
             state[key] = value(file->property(key));
     return state;
 }
-void reply(const QString &error = {}) {
+void reply(const QString &error = {})
+{
     QJsonObject result{{"error", error}};
     if (window) result["state"] = snapshot();
     channel->write(QJsonDocument(result).toJson(QJsonDocument::Compact) + '\n');
     channel->flush();
     pending = false;
 }
-bool loaded() {
+bool loaded()
+{
     auto *owner = controller();
     auto *file = selected();
     if (!owner || !file || file->property("path").toString().isEmpty()) return false;
     auto *loader = owner->property("loader").value<QObject *>();
-    return loader && !loader->property("opening").toBool()
-        && !owner->property("resolutionBusy").toBool()
-        && !file->property("pendingInput").toBool()
-        && file->property("recoveryState").toString() == "durable";
+    return loader && !loader->property("opening").toBool() && !owner->property("resolutionBusy").toBool()
+        && !file->property("pendingInput").toBool() && file->property("recoveryState").toString() == "durable";
 }
-void tick() {
+void tick()
+{
     if (!pending) return;
     if (deadline.elapsed() > request.value("timeoutMs").toInt(30000)) {
-        reply("Readiness/layout deadline exceeded: " + request.value("action").toString()
-              + " " + request.value("target").toString());
+        reply("Readiness/layout deadline exceeded: " + request.value("action").toString() + " "
+              + request.value("target").toString());
         return;
     }
     if (!window) {
         for (auto *candidate : QGuiApplication::topLevelWindows()) {
             auto *quick = qobject_cast<QQuickWindow *>(candidate);
-            if (quick && quick->property("controller").isValid()) { window = quick; break; }
+            if (quick && quick->property("controller").isValid()) {
+                window = quick;
+                break;
+            }
         }
     }
-    if (!window || !window->isExposed() || !loaded()) { stable.restart(); return; }
+    if (!window || !window->isExposed() || !loaded()) {
+        stable.restart();
+        return;
+    }
     const auto path = request.value("path").toString();
-    if (!path.isEmpty() && selected()->property("path").toString() != path) { stable.restart(); return; }
+    if (!path.isEmpty() && selected()->property("path").toString() != path) {
+        stable.restart();
+        return;
+    }
     const auto action = request.value("action").toString();
     const auto target = request.value("target").toString();
     QQuickItem *item = nullptr;
     if (!target.isEmpty() && !clicked) {
         item = action == "click-accessible" ? accessibleButton(window->contentItem(), target)
-            : find(window->contentItem(), target, action == "click-path");
+                                            : find(window->contentItem(), target, action == "click-path");
         if (!item && action == "toolbar-click" && !overflowOpened) {
             auto *more = accessibleButton(find(window->contentItem(), "fileToolBar"), "More Actions");
             if (more && more->isEnabled()) {
-                const auto point = more->mapToScene(QPointF(more->width()/2, more->height()/2)).toPoint();
+                const auto point = more->mapToScene(QPointF(more->width() / 2, more->height() / 2)).toPoint();
                 QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, point);
                 overflowOpened = true;
-                previous.clear(); stable.restart();
+                previous.clear();
+                stable.restart();
             }
             return;
         }
-        if (!item || !item->isEnabled()) { stable.restart(); return; }
+        if (!item || !item->isEnabled()) {
+            stable.restart();
+            return;
+        }
         if (target.startsWith("choiceAccept-") || target.startsWith("choiceIgnore-")
             || target.startsWith("choiceMenu-")) {
             bool painted = true;
             for (auto *ancestor = item; ancestor; ancestor = ancestor->parentItem())
                 painted = painted && ancestor->isVisible() && ancestor->opacity() > 0;
             if (!painted) {
-                const auto point = item->mapToScene(QPointF(item->width()/2, item->height()/2)).toPoint();
+                const auto point = item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint();
                 QTest::mouseMove(window, point);
-                previous.clear(); stable.restart(); return;
+                previous.clear();
+                stable.restart();
+                return;
             }
         }
         if (request.contains("text") && item->property("text").toString() != request.value("text").toString()) {
-            stable.restart(); return;
+            stable.restart();
+            return;
         }
     }
     const auto current = QJsonDocument(snapshot()).toJson(QJsonDocument::Compact);
-    if (current != previous) { previous = current; stable.restart(); return; }
+    if (current != previous) {
+        previous = current;
+        stable.restart();
+        return;
+    }
     if (stable.elapsed() < 350) return;
-    if ((action == "click" || action == "click-path" || action == "toolbar-click" || action == "click-accessible") && !clicked) {
-        const auto point = item->mapToScene(QPointF(item->width()/2, item->height()/2)).toPoint();
+    if ((action == "click" || action == "click-path" || action == "toolbar-click" || action == "click-accessible")
+        && !clicked) {
+        const auto point = item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint();
         QTest::mouseMove(window, point);
         QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, point);
         clicked = true;
@@ -294,7 +358,8 @@ void tick() {
         auto *quick = item ? item->property("textDocument").value<QQuickTextDocument *>() : nullptr;
         const int line = request.value("line").toInt();
         if (!quick || line < 1 || line > quick->textDocument()->blockCount()) {
-            reply("Source menu line unavailable"); return;
+            reply("Source menu line unavailable");
+            return;
         }
         if (!sourcePositioned) {
             // Native cursor keys reveal the requested line; wait for layout and
@@ -302,48 +367,74 @@ void tick() {
             item->forceActiveFocus();
             QTest::keyClick(window, Qt::Key_Home, Qt::ControlModifier);
             for (int at = 1; at < line; ++at) QTest::keyClick(window, Qt::Key_Down);
-            sourcePositioned = true; previous.clear(); stable.restart(); return;
+            sourcePositioned = true;
+            previous.clear();
+            stable.restart();
+            return;
         }
         const auto cursor = item->property("cursorPosition").toInt();
         if (quick->textDocument()->findBlock(cursor).blockNumber() + 1 != line) {
-            reply("Native source cursor did not reach requested logical line"); return;
+            reply("Native source cursor did not reach requested logical line");
+            return;
         }
         const auto gesture = request.value("gesture").toString("right-click");
-        if (gesture == "Menu") QTest::keyClick(window, Qt::Key_Menu);
-        else if (gesture == "Shift+F10") QTest::keyClick(window, Qt::Key_F10, Qt::ShiftModifier);
+        if (gesture == "Menu")
+            QTest::keyClick(window, Qt::Key_Menu);
+        else if (gesture == "Shift+F10")
+            QTest::keyClick(window, Qt::Key_F10, Qt::ShiftModifier);
         else if (gesture == "right-click") {
             QRectF rect;
             const int position = item->property("cursorPosition").toInt();
             if (!QMetaObject::invokeMethod(item, "positionToRectangle", Q_RETURN_ARG(QRectF, rect),
                                            Q_ARG(int, position))) {
-                reply("Source cursor rectangle unavailable"); return;
+                reply("Source cursor rectangle unavailable");
+                return;
             }
             QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, item->mapToScene(rect.center()).toPoint());
-        } else { reply("Unknown source menu gesture: " + gesture); return; }
-        clicked = true; previous.clear(); stable.restart(); return;
+        } else {
+            reply("Unknown source menu gesture: " + gesture);
+            return;
+        }
+        clicked = true;
+        previous.clear();
+        stable.restart();
+        return;
     }
     if (action == "escape" && !clicked) {
         QTest::keyClick(window, Qt::Key_Escape);
-        clicked = true; previous.clear(); stable.restart(); return;
+        clicked = true;
+        previous.clear();
+        stable.restart();
+        return;
     }
     if (action == "resize" && !clicked) {
         window->resize(request["width"].toInt(), request["height"].toInt());
-        clicked = true; stable.restart(); return;
+        clicked = true;
+        stable.restart();
+        return;
     }
     if (action == "neutral" && !clicked) {
-        QTest::mouseMove(window, QPoint(window->width()-5, window->height()-40));
-        clicked = true; stable.restart(); return;
+        QTest::mouseMove(window, QPoint(window->width() - 5, window->height() - 40));
+        clicked = true;
+        stable.restart();
+        return;
     }
     if (action == "capture-ready") {
         // Anonymous icon/colour transitions can keep painting after named geometry
         // settles. Observe real decoded frames before asking the compositor to shoot.
         const auto frame = window->grabWindow();
-        if (frame.isNull()) { reply("Native window frame unavailable"); return; }
+        if (frame.isNull()) {
+            reply("Native window frame unavailable");
+            return;
+        }
         if (frame != previousFrame) {
-            previousFrame = frame; paintStable.restart(); return;
+            previousFrame = frame;
+            paintStable.restart();
+            return;
         }
         if (paintStable.elapsed() < 700) return;
-        reply(); return;
+        reply();
+        return;
     }
     if (action == "quit") {
         reply();
@@ -352,11 +443,13 @@ void tick() {
     }
     if (action != "wait" && action != "click" && action != "click-path" && action != "resize" && action != "neutral"
         && action != "toolbar-click" && action != "click-accessible" && action != "source-menu" && action != "escape") {
-        reply("Unknown action: " + action); return;
+        reply("Unknown action: " + action);
+        return;
     }
     reply();
 }
-void begin() {
+void begin()
+{
     bool ok = false;
     const auto fd = qEnvironmentVariableIntValue("BRANCH_TRUCE_REPLAY_FD", &ok);
     if (!ok) return;
@@ -369,12 +462,18 @@ void begin() {
         if (pending) qFatal("Native replay commands must be serialized");
         QJsonParseError error;
         const auto document = QJsonDocument::fromJson(buffer.left(newline), &error);
-        buffer.remove(0, newline+1);
+        buffer.remove(0, newline + 1);
         if (error.error != QJsonParseError::NoError || !document.isObject()) qFatal("Invalid replay command");
         request = document.object();
-        pending = true; clicked = false; overflowOpened = false; sourcePositioned = false;
-        previous.clear(); previousFrame = QImage();
-        deadline.start(); stable.start(); paintStable.start();
+        pending = true;
+        clicked = false;
+        overflowOpened = false;
+        sourcePositioned = false;
+        previous.clear();
+        previousFrame = QImage();
+        deadline.start();
+        stable.start();
+        paintStable.start();
     });
     auto *timer = new QTimer(channel);
     QObject::connect(timer, &QTimer::timeout, tick);

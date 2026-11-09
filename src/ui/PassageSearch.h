@@ -64,8 +64,8 @@ public:
     // starts before the selection's start; without such a selection they take
     // the first and the last match. Either wraps around to the other end of
     // the text when no match lies that way.
-    static Match search(const QString &text, const QString &query, int selectionStart, int selectionEnd,
-                        bool forward, Qt::CaseSensitivity sensitivity = Qt::CaseSensitive);
+    static Match search(const QString &text, const QString &query, int selectionStart, int selectionEnd, bool forward,
+                        Qt::CaseSensitivity sensitivity = Qt::CaseSensitive);
     // Finds query in the text of the pane named scope, going on from its
     // selection when the selection holds the query, and sets the status. The
     // result has begin and end, the match range, with begin -1 without a

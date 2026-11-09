@@ -14,8 +14,8 @@
 namespace branch_truce {
 // Complete state at one acknowledgment boundary. Original sources and exact
 // byte strings use content-addressed payloads, including non-UTF-8 path bytes.
-[[nodiscard]] storage::RecoveryTransaction recoveryTransaction(
-    const FileSession &file, const QString &action, const QString &transactionId);
+[[nodiscard]] storage::RecoveryTransaction recoveryTransaction(const FileSession &file, const QString &action,
+                                                               const QString &transactionId);
 
 // Reads the fields of a state recoveryTransaction wrote, resolving payload
 // references through the store. Every method throws std::runtime_error with
@@ -25,7 +25,7 @@ public:
     explicit RecoveryRecordDecoder(const storage::RecoveryStore &store) : store_(store) {}
     [[nodiscard]] std::string bytes(const QJsonValue &value) const;
     [[nodiscard]] bool boolean(const QJsonValue &value) const;
-    template<typename Enum> [[nodiscard]] Enum enumeration(const QJsonValue &value, int maximum) const
+    template <typename Enum> [[nodiscard]] Enum enumeration(const QJsonValue &value, int maximum) const
     {
         const auto integer = value.toInt(-1);
         if (!value.isDouble() || value.toDouble() != integer || integer < 0 || integer > maximum)

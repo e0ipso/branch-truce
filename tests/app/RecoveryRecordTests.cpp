@@ -1,9 +1,9 @@
-#include "recovery/RecoveryRecord.h"
-#include "recovery/RecoveryRestore.h"
-#include "core/EditingCommands.h"
 #include "TestHarness.h"
+#include "core/EditingCommands.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/RecoveryJournal.h"
+#include "recovery/RecoveryRecord.h"
+#include "recovery/RecoveryRestore.h"
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -21,7 +21,8 @@ FileSession capturedFile()
     auto captured = *test_support::choiceFile().snapshots();
     captured.path = std::string("choices\t") + static_cast<char>(0xff) + ".txt";
     const std::string base = "header\nbase first\nbase second\nbridge\nbase later\ntail\n";
-    captured.earlier = SourceSnapshot{"base-object", "100644", base, test_support::choiceText(base), {}, "Common ancestor"};
+    captured.earlier =
+        SourceSnapshot{"base-object", "100644", base, test_support::choiceText(base), {}, "Common ancestor"};
     captured.conversion.attributes = {{"text", "set"}, {"eol", "lf"}};
     captured.conversion.configuration = {{"core.autocrlf", "false"}};
     captured.provenance.operation = SnapshotProvenance::Operation::Rebase;
@@ -32,8 +33,8 @@ FileSession capturedFile()
     captured.launchResult.identity = {11, 22, 0100644, 64, 33, 44, 55, 66};
     const auto text = captured.launchResult.text.utf8;
     const auto path = captured.path;
-    return FileSession("choices", path, {text, {}, 0}, Support::Supported, "captured at launch",
-        std::move(captured), true);
+    return FileSession("choices", path, {text, {}, 0}, Support::Supported, "captured at launch", std::move(captured),
+                       true);
 }
 
 void choose(FileSession &file, SourceSide side, ChoiceScope scope, std::size_t occurrence, ChoiceAction action)
@@ -105,9 +106,9 @@ int main()
         CHECK(file.checkpoint() && file.checkpoint()->id != current.id && file.checkpointOutcome());
         CHECK(current.correspondence && !current.correspondence->handEditedAnchors().empty());
         CHECK(std::any_of(current.draft.decisions.begin(), current.draft.decisions.end(),
-            [](const auto &entry) { return entry.second.order.has_value(); }));
+                          [](const auto &entry) { return entry.second.order.has_value(); }));
         CHECK(std::any_of(current.draft.decisions.begin(), current.draft.decisions.end(),
-            [](const auto &entry) { return entry.second.value == DecisionValue::Ignored; }));
+                          [](const auto &entry) { return entry.second.value == DecisionValue::Ignored; }));
         // Draft::unresolvedMarkers is not decoded; this file has no markers.
         CHECK(current.draft.unresolvedMarkers == 0 && file.checkpoint()->draft.unresolvedMarkers == 0);
 
@@ -119,7 +120,7 @@ int main()
         const auto state = committedState(store, transaction);
         CHECK(state == transaction.state);
         CHECK(state.value("schema").toInt() == 1 && state.value("transactionId").toString() == transactionId
-            && state.value("action").toString() == "manual-save");
+              && state.value("action").toString() == "manual-save");
 
         const RecoveryRecordDecoder decoder(store);
         CHECK(decoder.bytes(state.value("fileId")) == file.id());
@@ -135,20 +136,20 @@ int main()
         CHECK(decoder.handEdited(encodedCurrent.value("handEdited")) == current.correspondence->handEditedAnchors());
         CHECK(!current.correspondence->handEditedRanges().empty());
         CHECK(decoder.handEditedRanges(encodedCurrent.value("handEditedRanges"))
-            == current.correspondence->handEditedRanges());
+              == current.correspondence->handEditedRanges());
         CHECK(encodedCurrent.value("id").toString() == QString::number(current.id));
 
         const auto encodedCheckpoint = state.value("checkpoint").toObject();
         CHECK(decoder.draft(encodedCheckpoint.value("draft")) == file.checkpoint()->draft);
         CHECK(decoder.handEdited(encodedCheckpoint.value("handEdited"))
-            == file.checkpoint()->correspondence->handEditedAnchors());
+              == file.checkpoint()->correspondence->handEditedAnchors());
         CHECK(decoder.handEditedRanges(encodedCheckpoint.value("handEditedRanges"))
-            == file.checkpoint()->correspondence->handEditedRanges());
+              == file.checkpoint()->correspondence->handEditedRanges());
         CHECK(encodedCheckpoint.value("id").toString() == QString::number(file.checkpoint()->id));
         const auto checkpointOutcome = decoder.outcome(state.value("checkpointOutcome"));
         CHECK(checkpointOutcome.revision == file.checkpointOutcome()->revision
-            && checkpointOutcome.outcome == file.checkpointOutcome()->outcome
-            && checkpointOutcome.detail == file.checkpointOutcome()->detail);
+              && checkpointOutcome.outcome == file.checkpointOutcome()->outcome
+              && checkpointOutcome.detail == file.checkpointOutcome()->detail);
         for (const auto *absent : {"written", "reviewed", "staged", "writeOutcome", "stageOutcome"})
             CHECK(state.value(absent).isNull());
 
@@ -171,8 +172,7 @@ int main()
         const auto state = committedState(store, recoveryTransaction(file, "replace-draft", transactionId));
         const auto encoded = state.value("current").toObject();
         CHECK(!encoded.contains("handEdited"));
-        CHECK((encoded.value("handEditedRanges").toArray()
-            == QJsonArray{QJsonObject{{"begin", "0"}, {"end", "6"}}}));
+        CHECK((encoded.value("handEditedRanges").toArray() == QJsonArray{QJsonObject{{"begin", "0"}, {"end", "6"}}}));
         const RecoveryRecordDecoder decoder(store);
         const auto ranges = decoder.handEditedRanges(encoded.value("handEditedRanges"));
         CHECK(ranges == current.correspondence->handEditedRanges());
@@ -180,7 +180,8 @@ int main()
         // Replay restores them, so the replayed revision encodes the same record.
         auto replayed = test_support::choiceFile();
         CHECK(replayed.replaceDraft(1, decoder.draft(encoded.value("draft")),
-            decoder.handEdited(encoded.value("handEdited")), ranges) == Transition::Applied);
+                                    decoder.handEdited(encoded.value("handEdited")), ranges)
+              == Transition::Applied);
         CHECK(replayed.correspondence()->handEditedRanges() == ranges);
         CHECK(recoveryTransaction(replayed, "replace-draft", transactionId).state == state);
 
@@ -190,10 +191,13 @@ int main()
         CHECK(absent.isUndefined() && decoder.handEditedRanges(absent).empty());
         auto older = test_support::choiceFile();
         CHECK(older.replaceDraft(1, decoder.draft(encoded.value("draft")), std::set<std::string>{},
-            decoder.handEditedRanges(absent)) == Transition::Applied);
+                                 decoder.handEditedRanges(absent))
+              == Transition::Applied);
         CHECK(older.correspondence()->handEditedRanges().empty());
-        CHECK(!recoveryTransaction(older, "replace-draft", transactionId).state.value("current").toObject()
-            .contains("handEditedRanges"));
+        CHECK(!recoveryTransaction(older, "replace-draft", transactionId)
+                   .state.value("current")
+                   .toObject()
+                   .contains("handEditedRanges"));
 
         // Malformed ranges are refused before replay.
         const auto refused = [&](const QJsonValue &value) {
@@ -238,7 +242,7 @@ int main()
         CHECK(file.current().id == 4 && file.current().draft.text == launch.current().draft.text);
         CHECK(file.current().draft.text == chosen.text && file.current().draft.decisions == chosen.decisions);
         CHECK(std::any_of(chosen.decisions.begin(), chosen.decisions.end(),
-            [](const auto &entry) { return entry.second.value == DecisionValue::Accepted; }));
+                          [](const auto &entry) { return entry.second.value == DecisionValue::Accepted; }));
         // This build counts the one block, not the underline as another marker.
         CHECK(file.current().draft.unresolvedMarkers == 1 && file.markers() == launch.markers());
         CHECK(file.redo(file.current().id) == Transition::Applied);
@@ -268,33 +272,45 @@ int main()
         };
         const QString mismatch = "does not match the acknowledged record";
         // Other text than the undo restores, here an existing payload.
-        rejected([&](QJsonObject &state) {
-            withDraft(state, [&](QJsonObject &draft, QJsonObject &) { draft.insert("text", state.value("path")); });
-        }, mismatch);
+        rejected(
+            [&](QJsonObject &state) {
+                withDraft(state, [&](QJsonObject &draft, QJsonObject &) { draft.insert("text", state.value("path")); });
+            },
+            mismatch);
         // Another value for one recorded decision.
-        rejected([&](QJsonObject &state) {
-            withDraft(state, [](QJsonObject &draft, QJsonObject &) {
-                auto decisions = draft.value("decisions").toArray();
-                auto entry = decisions.first().toObject();
-                entry.insert("value", (entry.value("value").toInt() + 1) % 3);
-                decisions.replace(0, entry);
-                draft.insert("decisions", decisions);
-            });
-        }, mismatch);
+        rejected(
+            [&](QJsonObject &state) {
+                withDraft(state, [](QJsonObject &draft, QJsonObject &) {
+                    auto decisions = draft.value("decisions").toArray();
+                    auto entry = decisions.first().toObject();
+                    entry.insert("value", (entry.value("value").toInt() + 1) % 3);
+                    decisions.replace(0, entry);
+                    draft.insert("decisions", decisions);
+                });
+            },
+            mismatch);
         // Another revision identity.
-        rejected([&](QJsonObject &state) {
-            withDraft(state, [](QJsonObject &, QJsonObject &current) { current.insert("id", "5"); });
-        }, mismatch);
+        rejected(
+            [&](QJsonObject &state) {
+                withDraft(state, [](QJsonObject &, QJsonObject &current) { current.insert("id", "5"); });
+            },
+            mismatch);
         // Derived values keep their recorded format.
-        rejected([&](QJsonObject &state) {
-            withDraft(state, [](QJsonObject &draft, QJsonObject &) { draft.insert("unresolvedMarkers", "02"); });
-        }, "Invalid recovery integer");
-        rejected([&](QJsonObject &state) {
-            withDraft(state, [](QJsonObject &draft, QJsonObject &) { draft.remove("unresolvedMarkers"); });
-        }, "Invalid recovery integer");
-        rejected([&](QJsonObject &state) {
-            withDraft(state, [](QJsonObject &, QJsonObject &current) { current.insert("decisions", "5"); });
-        }, "Invalid recovery decision revision");
+        rejected(
+            [&](QJsonObject &state) {
+                withDraft(state, [](QJsonObject &draft, QJsonObject &) { draft.insert("unresolvedMarkers", "02"); });
+            },
+            "Invalid recovery integer");
+        rejected(
+            [&](QJsonObject &state) {
+                withDraft(state, [](QJsonObject &draft, QJsonObject &) { draft.remove("unresolvedMarkers"); });
+            },
+            "Invalid recovery integer");
+        rejected(
+            [&](QJsonObject &state) {
+                withDraft(state, [](QJsonObject &, QJsonObject &current) { current.insert("decisions", "5"); });
+            },
+            "Invalid recovery decision revision");
     });
     return suite.report();
 }

@@ -1,14 +1,14 @@
 // The result editor adapter journals text edits and connects native editing actions to file history.
 #pragma once
-#include <QtQml/qqmlregistration.h>
-#include "highlighting/SyntaxHighlighting.h"
 #include "WordDifferenceDecorations.h"
+#include "highlighting/SyntaxHighlighting.h"
 #include <QColor>
 #include <QMetaObject>
 #include <QObject>
 #include <QPointer>
 #include <QString>
 #include <QVariantMap>
+#include <QtQml/qqmlregistration.h>
 #include <functional>
 #include <vector>
 

@@ -1,8 +1,8 @@
 // Recovery restore rebuilds saved sessions and reconciles interrupted repository mutations before editing resumes.
 #pragma once
 
-#include "recovery/RecoveryRecord.h"
 #include "git/GitAdapter.h"
+#include "recovery/RecoveryRecord.h"
 #include <QLockFile>
 #include <memory>
 #include <set>
@@ -33,9 +33,9 @@ struct RecoveryReplay {
 // Replays existing domain transitions and compares every complete state with
 // its canonical encoding. No repository I/O or acknowledgment happens here.
 [[nodiscard]] RecoveryReplay replayRecovery(const storage::RecoveryStore &store);
-[[nodiscard]] storage::RecoveryTransaction mutationRecoveryTransaction(
-    const FileSession &file, const QString &kind, const QString &id,
-    const QString &observation = {});
+[[nodiscard]] storage::RecoveryTransaction mutationRecoveryTransaction(const FileSession &file, const QString &kind,
+                                                                       const QString &id,
+                                                                       const QString &observation = {});
 
 // One matching store with app edits when restoration is blocked. The user
 // picks one of these; paths are the exact path bytes of the files it edited.
@@ -75,7 +75,7 @@ struct RecoveryRestore {
 // the launch bytes, and its index entries and conversion policy still match
 // the capture. Otherwise the error that replaces copiedLaunchFailure.
 [[nodiscard]] QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
-    const git::RepositoryContext &repository, const QString &gitExecutable);
+                                             const git::RepositoryContext &repository, const QString &gitExecutable);
 
 // Worker-only, read-only repository inspection. Ambiguous inventories and
 // mismatched identities fail closed; no worktree/index mutation is retried.
@@ -85,8 +85,8 @@ struct RecoveryRestore {
 // If the named store is not adopted, no store with app edits is adopted in its
 // place: the edited stores stay unmarked and are listed as choices.
 // Setting aside writes a marker inside the store and never deletes it.
-[[nodiscard]] RecoveryRestore restoreRecovery(const QString &inventory,
-    const QString &exclude, const git::RepositoryContext &repository,
-    const std::vector<FileSession> &observed, const QString &gitExecutable,
-    const QString &chosenSession = {});
+[[nodiscard]] RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude,
+                                              const git::RepositoryContext &repository,
+                                              const std::vector<FileSession> &observed, const QString &gitExecutable,
+                                              const QString &chosenSession = {});
 }

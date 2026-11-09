@@ -32,5 +32,7 @@ enum class CommandCheck {
 // input is pending, the file has a recovery error, an input method is
 // composing or, for CurrentSupported, the file is not supported.
 [[nodiscard]] std::variant<CommandTarget, Transition> checkCommand(const SessionModel &files,
-    const QString &selectedFileId, bool composing, const QString &fileId, const QString &revision, CommandCheck check);
+                                                                   const QString &selectedFileId, bool composing,
+                                                                   const QString &fileId, const QString &revision,
+                                                                   CommandCheck check);
 }

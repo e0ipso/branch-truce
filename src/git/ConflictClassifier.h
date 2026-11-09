@@ -6,9 +6,17 @@
 
 namespace branch_truce::git {
 enum class ConflictSupport {
-    SupportedText, MissingSide, ModeConflict, UnsupportedType, TopologyConflict,
-    UnsupportedText, UnsupportedConversion, UnverifiedSource, UnsupportedOperation,
-    InspectionFailure, LoadFailure
+    SupportedText,
+    MissingSide,
+    ModeConflict,
+    UnsupportedType,
+    TopologyConflict,
+    UnsupportedText,
+    UnsupportedConversion,
+    UnverifiedSource,
+    UnsupportedOperation,
+    InspectionFailure,
+    LoadFailure
 };
 struct Conflict {
     QByteArray path; // Exact repository filename bytes, including unsupported paths.
@@ -50,6 +58,7 @@ public:
     [[nodiscard]] bool busy() const;
 Q_SIGNALS:
     void finished(const branch_truce::git::ConflictClassificationResult &result);
+
 private:
     class State;
     std::unique_ptr<State> d;

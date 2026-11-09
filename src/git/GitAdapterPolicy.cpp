@@ -24,16 +24,14 @@ bool GitAdapter::State::stagingPolicy() const
 bool GitAdapter::State::objectPolicy() const
 {
     const auto operation = result.request.operation;
-    return operation == Operation::DiscoverRepository
-        || operation == Operation::ReadObject || operation == Operation::ReadAttributes
-        || operation == Operation::ListUnmerged || operation == Operation::InspectIndex
-        || operation == Operation::Status || operation == Operation::MaterializeSource
-        || operation == Operation::CanonicalizeText || stagingPolicy();
+    return operation == Operation::DiscoverRepository || operation == Operation::ReadObject
+        || operation == Operation::ReadAttributes || operation == Operation::ListUnmerged
+        || operation == Operation::InspectIndex || operation == Operation::Status
+        || operation == Operation::MaterializeSource || operation == Operation::CanonicalizeText || stagingPolicy();
 }
 bool GitAdapter::State::filterPolicy() const
 {
-    return result.request.operation == Operation::Status
-        || result.request.operation == Operation::MaterializeSource
+    return result.request.operation == Operation::Status || result.request.operation == Operation::MaterializeSource
         || result.request.operation == Operation::CanonicalizeText || stagingPolicy();
 }
 QList<QByteArray> GitAdapter::State::indexArguments() const
@@ -46,26 +44,17 @@ QList<QByteArray> GitAdapter::State::operationArguments() const
     switch (r.operation) {
     case Operation::DiscoverRepository:
         return {"rev-parse", "--path-format=absolute", "--show-toplevel", "--absolute-git-dir"};
-    case Operation::ListUnmerged:
-        return {"ls-files", "--unmerged", "-z"};
+    case Operation::ListUnmerged: return {"ls-files", "--unmerged", "-z"};
     case Operation::Status:
         return {"status", "--porcelain=v2", "-z", "--untracked-files=no", "--ignore-submodules=all"};
-    case Operation::InspectIndex:
-        return indexArguments();
-    case Operation::ReadObject:
-        return {"cat-file", "blob", r.objectId};
-    case Operation::ReadConfiguration:
-        return {"config", "--null", "--list", "--includes"};
-    case Operation::ReadAttributes:
-        return {"check-attr", "-z", "--all", "--", r.path};
-    case Operation::MaterializeSource:
-        return {"cat-file", "--filters", "--path=" + r.path, r.objectId};
-    case Operation::StageFile:
-        return {"add", "--", r.path};
-    case Operation::CheckParentStaging:
-        return {"check-attr", "-z", "--all", "--", r.path};
-    case Operation::CanonicalizeText:
-        return {"hash-object", "-w", "--path=" + r.path, "--stdin"};
+    case Operation::InspectIndex: return indexArguments();
+    case Operation::ReadObject: return {"cat-file", "blob", r.objectId};
+    case Operation::ReadConfiguration: return {"config", "--null", "--list", "--includes"};
+    case Operation::ReadAttributes: return {"check-attr", "-z", "--all", "--", r.path};
+    case Operation::MaterializeSource: return {"cat-file", "--filters", "--path=" + r.path, r.objectId};
+    case Operation::StageFile: return {"add", "--", r.path};
+    case Operation::CheckParentStaging: return {"check-attr", "-z", "--all", "--", r.path};
+    case Operation::CanonicalizeText: return {"hash-object", "-w", "--path=" + r.path, "--stdin"};
     }
     return {};
 }
@@ -74,8 +63,8 @@ bool GitAdapter::State::validIndex(const QByteArray &bytes, bool resolved) const
     const auto entries = parseIndex(bytes);
     if (!entries) return false;
     for (const auto &entry : *entries) {
-        if ((entry.mode != "100644" && entry.mode != "100755")
-            || (resolved && entry.stage != 0) || entry.path != result.request.path) {
+        if ((entry.mode != "100644" && entry.mode != "100755") || (resolved && entry.stage != 0)
+            || entry.path != result.request.path) {
             return false;
         }
     }
@@ -100,14 +89,17 @@ bool GitAdapter::State::checkConfiguration()
         const auto &value = entry.value();
         if (key == "core.autocrlf" || key == "core.eol" || key == "core.safecrlf"
             || key == "core.checkroundtripencoding" || key == "core.filemode" || key == "core.attributesfile"
-            || (key.startsWith("filter.") && (key.endsWith(".clean") || key.endsWith(".smudge")
-                || key.endsWith(".process") || key.endsWith(".required")))) {
+            || (key.startsWith("filter.")
+                && (key.endsWith(".clean") || key.endsWith(".smudge") || key.endsWith(".process")
+                    || key.endsWith(".required")))) {
             result.conversionPolicy.configuration.insert(key, value);
         }
-        if ((objectPolicy() && (key == "extensions.partialclone"
-                         || (key.startsWith("remote.") && key.endsWith(".promisor") && !falseValue(value))))
+        if ((objectPolicy()
+             && (key == "extensions.partialclone"
+                 || (key.startsWith("remote.") && key.endsWith(".promisor") && !falseValue(value))))
             || (stagingPolicy() && key == "core.fsmonitor" && !falseValue(value))) {
-            result.diagnostic = QStringLiteral("Outside app: unsupported partial repository or filesystem monitor setting: ")
+            result.diagnostic =
+                QStringLiteral("Outside app: unsupported partial repository or filesystem monitor setting: ")
                 + QString::fromUtf8(key);
             return false;
         }
@@ -126,12 +118,11 @@ bool GitAdapter::State::checkFilter(const QByteArray &path, const QByteArray &dr
 {
     // set/unset can be literal driver values, so a matching helper is denied.
     const auto prefix = "filter." + driver;
-    if (!configuration.value(prefix + ".clean").isEmpty()
-        || !configuration.value(prefix + ".smudge").isEmpty()
+    if (!configuration.value(prefix + ".clean").isEmpty() || !configuration.value(prefix + ".smudge").isEmpty()
         || !configuration.value(prefix + ".process").isEmpty()
         || (configuration.contains(prefix + ".required") && !falseValue(configuration.value(prefix + ".required")))) {
         result.diagnostic = QStringLiteral("Outside app: custom filter '%1' is unsupported for %2")
-            .arg(displayPath(driver), displayPath(path));
+                                .arg(displayPath(driver), displayPath(path));
         return false;
     }
     return true;

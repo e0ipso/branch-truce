@@ -1,6 +1,6 @@
 // The plain-text build retains comparison decorations while leaving syntax colours disabled.
-#include "highlighting/SyntaxHighlighting.h"
 #include "highlighting/PaneHighlighter.h"
+#include "highlighting/SyntaxHighlighting.h"
 #include <QList>
 #include <QPointer>
 #include <QTextDocument>

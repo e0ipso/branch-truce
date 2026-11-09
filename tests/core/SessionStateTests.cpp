@@ -1,6 +1,6 @@
+#include "TestHarness.h"
 #include "core/ResourceLimits.h"
 #include "core/SessionState.h"
-#include "TestHarness.h"
 #include "fixtures/ChoiceFile.h"
 #include <algorithm>
 #include <array>
@@ -11,7 +11,11 @@ inline bool bounded = false;
 inline std::size_t largest = 0;
 constexpr std::size_t ceiling = 1024 * 1024;
 struct Bound {
-    Bound() { largest = 0; bounded = true; }
+    Bound()
+    {
+        largest = 0;
+        bounded = true;
+    }
     ~Bound() { bounded = false; }
 };
 }
@@ -31,32 +35,52 @@ using namespace branch_truce;
 namespace {
 Draft draft(std::string text = "result\n")
 {
-    return {std::move(text), {{"left", {DecisionValue::Accepted, 1}},
-                             {"right", {DecisionValue::Ignored, {}}}}, 0};
+    return {std::move(text), {{"left", {DecisionValue::Accepted, 1}}, {"right", {DecisionValue::Ignored, {}}}}, 0};
 }
 FileSnapshots capturedSources()
 {
     FileSnapshots captured;
     captured.path = ":literal\tfile.txt";
-    captured.provenance = {"session", "/worktree", "/git/worktrees/session",
-        SnapshotProvenance::Operation::Rebase, std::string(64, '2'), std::string(64, '3'),
-        std::string(64, '1'), "refs/heads/topic", "original-head", "onto"};
+    captured.provenance = {"session",
+                           "/worktree",
+                           "/git/worktrees/session",
+                           SnapshotProvenance::Operation::Rebase,
+                           std::string(64, '2'),
+                           std::string(64, '3'),
+                           std::string(64, '1'),
+                           "refs/heads/topic",
+                           "original-head",
+                           "onto"};
     captured.conversion.attributes = {{"text", "set"}, {"eol", "crlf"}};
     captured.conversion.configuration = {{"core.autocrlf", "false"}, {"core.eol", "crlf"}};
     captured.resultMode = "100755";
-    captured.earlier = SourceSnapshot{"base-blob", "100644", "base\n",
+    captured.earlier = SourceSnapshot{
+        "base-blob",
+        "100644",
+        "base\n",
         {"base\n", "base\r\n", {SnapshotFormat::Encoding::Utf8, false, SnapshotFormat::Newline::CrLf, true}},
-        "base-commit", "Common earlier version"};
-    captured.stage2 = SourceSnapshot{"left-blob", "100755", "main\n",
+        "base-commit",
+        "Common earlier version"};
+    captured.stage2 = SourceSnapshot{
+        "left-blob",
+        "100755",
+        "main\n",
         {"main\n", "\xef\xbb\xbfmain\r\n", {SnapshotFormat::Encoding::Utf8, true, SnapshotFormat::Newline::CrLf, true}},
-        "left-commit", "Current rebased state"};
-    captured.stage3 = SourceSnapshot{"right-blob", "100755", "side\n",
-        {"side\n", std::string("\0s\0i\0d\0e\0\r\0\n", 12),
-            {SnapshotFormat::Encoding::Utf16BigEndian, false, SnapshotFormat::Newline::CrLf, true}},
-        "right-commit", "Commit being replayed"};
-    captured.launchResult = {{"manual\nkept", "\xef\xbb\xbfmanual\r\nkept",
-        {SnapshotFormat::Encoding::Utf8, true, SnapshotFormat::Newline::CrLf, false}},
-        {11, 22, 0100755, 15, 33, 44, 55, 66}};
+        "left-commit",
+        "Current rebased state"};
+    captured.stage3 =
+        SourceSnapshot{"right-blob",
+                       "100755",
+                       "side\n",
+                       {"side\n",
+                        std::string("\0s\0i\0d\0e\0\r\0\n", 12),
+                        {SnapshotFormat::Encoding::Utf16BigEndian, false, SnapshotFormat::Newline::CrLf, true}},
+                       "right-commit",
+                       "Commit being replayed"};
+    captured.launchResult = {{"manual\nkept",
+                              "\xef\xbb\xbfmanual\r\nkept",
+                              {SnapshotFormat::Encoding::Utf8, true, SnapshotFormat::Newline::CrLf, false}},
+                             {11, 22, 0100755, 15, 33, 44, 55, 66}};
     return captured;
 }
 FileSession mappedFile(std::string source, std::string result)
@@ -64,11 +88,10 @@ FileSession mappedFile(std::string source, std::string result)
     FileSnapshots captured;
     captured.path = "mapped.txt";
     captured.provenance.sessionId = "anchor-session";
-    captured.stage2 = SourceSnapshot{"source-object", "100644", source,
-        {source, source, {}}, "source-commit", "Source"};
+    captured.stage2 =
+        SourceSnapshot{"source-object", "100644", source, {source, source, {}}, "source-commit", "Source"};
     captured.launchResult.text = {result, result, {}};
-    return FileSession("mapped", captured.path, {result, {{"choice", {}}}, 0},
-        Support::Supported, {}, captured);
+    return FileSession("mapped", captured.path, {result, {{"choice", {}}}, 0}, Support::Supported, {}, captured);
 }
 ResultAnchor anchor(const FileSession &file, const std::string &id = "choice")
 {
@@ -80,8 +103,8 @@ bool has(const FileSession &file, Blocker blocker)
     const auto blockers = file.facts().blockers;
     return std::find(blockers.begin(), blockers.end(), blocker) != blockers.end();
 }
-Transition choose(FileSession &file, SourceSide side, ChoiceAction action,
-                  ChoiceScope scope = ChoiceScope::Section, std::size_t occurrence = 0)
+Transition choose(FileSession &file, SourceSide side, ChoiceAction action, ChoiceScope scope = ChoiceScope::Section,
+                  std::size_t occurrence = 0)
 {
     const auto &target = test_support::choiceTarget(file, side, scope, occurrence);
     return applyChoice(file, previewChoice(file, file.current().id, target.source.contributionId, action), true);
@@ -143,58 +166,63 @@ public:
         test_support::Suite suite("SessionStateTests");
         for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
             for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst}) {
-                suite.run("confirmed ordered scopes preserve unrelated text and decisions "
-                    + std::to_string(static_cast<int>(scope)) + "/" + std::to_string(static_cast<int>(action)), [=] {
-                    auto file = test_support::combinationFile(scope);
-                    const auto target = test_support::choiceTarget(file, SourceSide::Stage2, scope);
-                    CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
-                    const auto before = file.current();
-                    const auto preview = previewChoice(file, before.id, target.source.contributionId, action);
-                    const bool leftFirst = action == ChoiceAction::CombineLeftFirst;
-                    const auto left = scope == ChoiceScope::Line ? "left first\n" : "left first\nleft second\n";
-                    const auto right = scope == ChoiceScope::Line ? "right first\n" : "right first\nright second\n";
-                    const auto expected = leftFirst ? std::string(left) + right : std::string(right) + left;
-                    CHECK(preview.state == Transition::ConfirmationRequired && preview.replacement == expected);
-                    CHECK(preview.sourceOrder.size() == 2 && preview.affectedRange);
-                    CHECK(preview.sourceOrder[0].side == (leftFirst ? SourceSide::Stage2 : SourceSide::Stage3));
-                    CHECK(preview.sourceOrder[1].side != preview.sourceOrder[0].side);
-                    CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired);
-                    CHECK(file.current().id == before.id && file.current().draft == before.draft);
-                    CHECK(applyChoice(file, preview, true) == Transition::Applied);
-                    auto text = before.draft.text;
-                    text.replace(preview.affectedRange->begin,
-                        preview.affectedRange->end - preview.affectedRange->begin, expected);
-                    const auto chosen = file.current().draft;
-                    CHECK(chosen.text == text && chosen.text.starts_with("manual prefix\nheader\n"));
-                    CHECK(chosen.text.ends_with("bridge\nleft later\ntail\n"));
-                    for (const auto &[id, value] : chosen.decisions) {
-                        const auto expectedDecision = preview.command.decisions.find(id);
-                        CHECK(value == (expectedDecision == preview.command.decisions.end()
-                            ? before.draft.decisions.at(id) : expectedDecision->second));
-                    }
-                    for (std::size_t order = 0; order < preview.sourceOrder.size(); ++order) {
-                        const auto &source = preview.sourceOrder[order];
-                        for (const auto &choice : file.choices()) {
-                            if (choice.source == source)
-                                for (const auto &id : choice.decisions)
-                                    CHECK(chosen.decisions.at(id) == Decision{DecisionValue::Accepted, order + 1});
+                suite.run(
+                    "confirmed ordered scopes preserve unrelated text and decisions "
+                        + std::to_string(static_cast<int>(scope)) + "/" + std::to_string(static_cast<int>(action)),
+                    [=] {
+                        auto file = test_support::combinationFile(scope);
+                        const auto target = test_support::choiceTarget(file, SourceSide::Stage2, scope);
+                        CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                        const auto before = file.current();
+                        const auto preview = previewChoice(file, before.id, target.source.contributionId, action);
+                        const bool leftFirst = action == ChoiceAction::CombineLeftFirst;
+                        const auto left = scope == ChoiceScope::Line ? "left first\n" : "left first\nleft second\n";
+                        const auto right = scope == ChoiceScope::Line ? "right first\n" : "right first\nright second\n";
+                        const auto expected = leftFirst ? std::string(left) + right : std::string(right) + left;
+                        CHECK(preview.state == Transition::ConfirmationRequired && preview.replacement == expected);
+                        CHECK(preview.sourceOrder.size() == 2 && preview.affectedRange);
+                        CHECK(preview.sourceOrder[0].side == (leftFirst ? SourceSide::Stage2 : SourceSide::Stage3));
+                        CHECK(preview.sourceOrder[1].side != preview.sourceOrder[0].side);
+                        CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired);
+                        CHECK(file.current().id == before.id && file.current().draft == before.draft);
+                        CHECK(applyChoice(file, preview, true) == Transition::Applied);
+                        auto text = before.draft.text;
+                        text.replace(preview.affectedRange->begin,
+                                     preview.affectedRange->end - preview.affectedRange->begin, expected);
+                        const auto chosen = file.current().draft;
+                        CHECK(chosen.text == text && chosen.text.starts_with("manual prefix\nheader\n"));
+                        CHECK(chosen.text.ends_with("bridge\nleft later\ntail\n"));
+                        for (const auto &[id, value] : chosen.decisions) {
+                            const auto expectedDecision = preview.command.decisions.find(id);
+                            CHECK(value
+                                  == (expectedDecision == preview.command.decisions.end()
+                                          ? before.draft.decisions.at(id)
+                                          : expectedDecision->second));
                         }
-                    }
-                    CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before.draft);
-                    CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
-                });
+                        for (std::size_t order = 0; order < preview.sourceOrder.size(); ++order) {
+                            const auto &source = preview.sourceOrder[order];
+                            for (const auto &choice : file.choices()) {
+                                if (choice.source == source)
+                                    for (const auto &id : choice.decisions)
+                                        CHECK(chosen.decisions.at(id) == Decision{DecisionValue::Accepted, order + 1});
+                            }
+                        }
+                        CHECK(file.undo(file.current().id) == Transition::Applied
+                              && file.current().draft == before.draft);
+                        CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+                    });
             }
         }
         suite.run("partial combinations can be reordered repeatedly without duplicating another section", [] {
             auto file = test_support::choiceFile();
             const auto target = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section, 1);
-            for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst,
-                     ChoiceAction::CombineLeftFirst}) {
+            for (const auto action :
+                 {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst, ChoiceAction::CombineLeftFirst}) {
                 const auto preview = previewChoice(file, file.current().id, target.source.contributionId, action);
                 CHECK(preview.state == Transition::ConfirmationRequired);
                 CHECK(applyChoice(file, preview, true) == Transition::Applied);
-                const auto suffix = action == ChoiceAction::CombineLeftFirst
-                    ? "left later\nright later\ntail\n" : "right later\nleft later\ntail\n";
+                const auto suffix = action == ChoiceAction::CombineLeftFirst ? "left later\nright later\ntail\n"
+                                                                             : "right later\nleft later\ntail\n";
                 CHECK(file.current().draft.text == std::string("header\nleft first\nleft second\nbridge\n") + suffix);
             }
         });
@@ -203,7 +231,8 @@ public:
             const auto target = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Line);
             CHECK(file.editResult(1, {{7, 18}, "manual first\n"}) == Transition::Applied);
             const auto before = file.current();
-            const auto preview = previewChoice(file, before.id, target.source.contributionId, ChoiceAction::CombineRightFirst);
+            const auto preview =
+                previewChoice(file, before.id, target.source.contributionId, ChoiceAction::CombineRightFirst);
             CHECK(preview.state == Transition::ConfirmationRequired && preview.replacesManual);
             CHECK(preview.before == "manual first\n" && preview.replacement == "right first\nleft first\n");
             CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired);
@@ -215,49 +244,60 @@ public:
             const auto newer = file.current();
             CHECK(applyChoice(file, preview, true) == Transition::StaleRevision);
             CHECK(file.current().id == newer.id && file.current().draft == newer.draft);
-            const auto fresh = previewChoice(file, newer.id, target.source.contributionId, ChoiceAction::CombineRightFirst);
+            const auto fresh =
+                previewChoice(file, newer.id, target.source.contributionId, ChoiceAction::CombineRightFirst);
             CHECK(applyChoice(file, fresh, true) == Transition::Applied);
-            CHECK(file.current().draft.text == "newer edit\nheader\nright first\nleft first\nbridge\nleft later\ntail\n");
+            CHECK(file.current().draft.text
+                  == "newer edit\nheader\nright first\nleft first\nbridge\nleft later\ntail\n");
             CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == newer.draft);
         });
         for (const auto scope : {NonConflictingScope::Left, NonConflictingScope::Right, NonConflictingScope::Both}) {
             suite.run("file batches apply only eligible contributions after confirmation "
-                + std::to_string(static_cast<int>(scope)), [=] {
-                auto file = test_support::batchFile();
-                CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
-                const auto before = file.current();
-                const auto preview = previewNonConflicting(file, before.id, scope);
-                CHECK(preview.state == Transition::ConfirmationRequired && preview.scope == scope && preview.path == file.path());
-                CHECK(preview.detail.find("in this file") != std::string::npos);
-                CHECK(preview.changes.size() == (scope == NonConflictingScope::Both ? 2 : 1));
-                CHECK(applyNonConflicting(file, preview) == Transition::ConfirmationRequired);
-                CHECK(file.current().id == before.id && file.current().draft == before.draft);
-                CHECK(applyNonConflicting(file, preview, true) == Transition::Applied);
-                const auto chosen = file.current().draft;
-                const auto left = scope == NonConflictingScope::Right ? "base left\n" : "left only\n";
-                const auto right = scope == NonConflictingScope::Left ? "base right\n" : "right only\n";
-                CHECK(chosen.text == std::string("manual prefix\nheader\n") + left + "bridge one\n" + right
-                    + "bridge two\nbase conflict\ntail\n");
-                CHECK(!preview.command.decisions.empty());
-                for (const auto &[id, value] : chosen.decisions)
-                    CHECK(value == (preview.command.decisions.contains(id)
-                        ? Decision{DecisionValue::Accepted, {}} : before.draft.decisions.at(id)));
-                const auto competing = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section, 2);
-                for (const auto &id : competing.decisions) CHECK(chosen.decisions.at(id).value == DecisionValue::Undecided);
-                CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before.draft);
-                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
-                CHECK(previewNonConflicting(file, file.current().id, scope).state == Transition::NoChange);
-            });
+                          + std::to_string(static_cast<int>(scope)),
+                      [=] {
+                          auto file = test_support::batchFile();
+                          CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                          const auto before = file.current();
+                          const auto preview = previewNonConflicting(file, before.id, scope);
+                          CHECK(preview.state == Transition::ConfirmationRequired && preview.scope == scope
+                                && preview.path == file.path());
+                          CHECK(preview.detail.find("in this file") != std::string::npos);
+                          CHECK(preview.changes.size() == (scope == NonConflictingScope::Both ? 2 : 1));
+                          CHECK(applyNonConflicting(file, preview) == Transition::ConfirmationRequired);
+                          CHECK(file.current().id == before.id && file.current().draft == before.draft);
+                          CHECK(applyNonConflicting(file, preview, true) == Transition::Applied);
+                          const auto chosen = file.current().draft;
+                          const auto left = scope == NonConflictingScope::Right ? "base left\n" : "left only\n";
+                          const auto right = scope == NonConflictingScope::Left ? "base right\n" : "right only\n";
+                          CHECK(chosen.text
+                                == std::string("manual prefix\nheader\n") + left + "bridge one\n" + right
+                                    + "bridge two\nbase conflict\ntail\n");
+                          CHECK(!preview.command.decisions.empty());
+                          for (const auto &[id, value] : chosen.decisions)
+                              CHECK(value
+                                    == (preview.command.decisions.contains(id) ? Decision{DecisionValue::Accepted, {}}
+                                                                               : before.draft.decisions.at(id)));
+                          const auto competing =
+                              test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section, 2);
+                          for (const auto &id : competing.decisions)
+                              CHECK(chosen.decisions.at(id).value == DecisionValue::Undecided);
+                          CHECK(file.undo(file.current().id) == Transition::Applied
+                                && file.current().draft == before.draft);
+                          CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+                          CHECK(previewNonConflicting(file, file.current().id, scope).state == Transition::NoChange);
+                      });
         }
         suite.run("manual overlap and existing decisions are excluded while unrelated edits survive", [] {
             auto file = test_support::batchFile();
             const auto position = file.current().draft.text.find("base right\n");
             CHECK(file.editResult(1, {{position, position + 11}, "manual right\n"}) == Transition::Applied);
             const auto preview = previewNonConflicting(file, file.current().id);
-            CHECK(preview.state == Transition::ConfirmationRequired && preview.changes.size() == 1 && preview.skipped > 0);
+            CHECK(preview.state == Transition::ConfirmationRequired && preview.changes.size() == 1
+                  && preview.skipped > 0);
             CHECK(preview.changes.front().replacement == "left only\n");
             CHECK(applyNonConflicting(file, preview, true) == Transition::Applied);
-            CHECK(file.current().draft.text == "header\nleft only\nbridge one\nmanual right\nbridge two\nbase conflict\ntail\n");
+            CHECK(file.current().draft.text
+                  == "header\nleft only\nbridge one\nmanual right\nbridge two\nbase conflict\ntail\n");
             const auto chosen = file.current().draft;
             CHECK(previewNonConflicting(file, file.current().id).state == Transition::NoChange);
             CHECK(file.current().draft == chosen);
@@ -269,10 +309,12 @@ public:
             CHECK(applyChoice(file, ignore) == Transition::Applied);
             const auto before = file.current().draft;
             const auto preview = previewNonConflicting(file, file.current().id);
-            CHECK(preview.state == Transition::ConfirmationRequired && preview.changes.size() == 1 && preview.skipped > 0);
+            CHECK(preview.state == Transition::ConfirmationRequired && preview.changes.size() == 1
+                  && preview.skipped > 0);
             CHECK(preview.changes.front().replacement == "right only\n");
             CHECK(applyNonConflicting(file, preview, true) == Transition::Applied);
-            CHECK(file.current().draft.text == "header\nbase left\nbridge one\nright only\nbridge two\nbase conflict\ntail\n");
+            CHECK(file.current().draft.text
+                  == "header\nbase left\nbridge one\nright only\nbridge two\nbase conflict\ntail\n");
             for (const auto &id : target.decisions) {
                 CHECK(before.decisions.at(id).value == DecisionValue::Ignored);
                 CHECK(file.current().draft.decisions.at(id) == before.decisions.at(id));
@@ -281,7 +323,8 @@ public:
         suite.run("absent earlier context stale and altered batches never apply", [] {
             auto missing = test_support::choiceFile();
             const auto blocked = previewNonConflicting(missing, 1);
-            CHECK(blocked.state == Transition::Blocked && blocked.detail.find("earlier version is unavailable") != std::string::npos);
+            CHECK(blocked.state == Transition::Blocked
+                  && blocked.detail.find("earlier version is unavailable") != std::string::npos);
             CHECK(applyNonConflicting(missing, blocked, true) == Transition::Blocked && missing.current().id == 1);
             auto file = test_support::batchFile();
             const auto preview = previewNonConflicting(file, 1);
@@ -294,9 +337,11 @@ public:
             CHECK(file.current().id == current.id && file.current().draft == current.draft);
         });
         suite.run("insertions touching a competing changed range stay outstanding", [] {
-            auto captured = *test_support::choiceFile("head\ninserted\nbase\ntail\n", "head\nchanged\ntail\n").snapshots();
+            auto captured =
+                *test_support::choiceFile("head\ninserted\nbase\ntail\n", "head\nchanged\ntail\n").snapshots();
             const std::string earlier = "head\nbase\ntail\n";
-            captured.earlier = SourceSnapshot{"base", "100644", earlier, test_support::choiceText(earlier), "base", "Earlier"};
+            captured.earlier =
+                SourceSnapshot{"base", "100644", earlier, test_support::choiceText(earlier), "base", "Earlier"};
             captured.launchResult.text = test_support::choiceText(earlier);
             FileSession file("choices", captured.path, {earlier, {}, 0}, Support::Supported, {}, captured, true);
             CHECK(file.nonConflictingTargets().empty());
@@ -305,15 +350,18 @@ public:
             CHECK(preview.state == Transition::NoChange && preview.changes.empty());
             CHECK(applyNonConflicting(file, preview, true) == Transition::NoChange);
             CHECK(file.current().id == 1 && file.current().draft == before);
-            for (const auto &[id, value] : before.decisions) { (void)id; CHECK(value.value == DecisionValue::Undecided); }
+            for (const auto &[id, value] : before.decisions) {
+                (void)id;
+                CHECK(value.value == DecisionValue::Undecided);
+            }
         });
         suite.run("ambiguous repeated result passages stay outstanding", [] {
             const auto source = test_support::batchFile();
             const auto earlier = source.snapshots()->earlier->worktree.utf8;
             auto captured = *source.snapshots();
             captured.launchResult.text = test_support::choiceText(earlier + earlier);
-            FileSession file("choices", source.path(), {earlier + earlier, {}, 0},
-                Support::Supported, {}, captured, true);
+            FileSession file("choices", source.path(), {earlier + earlier, {}, 0}, Support::Supported, {}, captured,
+                             true);
             const auto before = file.current().draft;
             const auto preview = previewNonConflicting(file, 1);
             CHECK(preview.state == Transition::NoChange && preview.changes.empty() && preview.skipped > 0);
@@ -321,35 +369,44 @@ public:
             CHECK(file.current().id == 1 && file.current().draft == before);
         });
         for (const auto side : {SourceSide::Stage2, SourceSide::Stage3}) {
-            suite.run("whole-file previews describe and replace exactly the selected source "
-                + std::to_string(static_cast<int>(side)), [=] {
-                auto file = test_support::choiceFile();
-                CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
-                const auto before = file.current();
-                const auto preview = previewWholeFile(file, before.id, side);
-                const auto &source = side == SourceSide::Stage2 ? file.snapshots()->stage2 : file.snapshots()->stage3;
-                CHECK(preview.state == Transition::ConfirmationRequired && preview.before == before.draft.text);
-                CHECK(preview.replacement == source->worktree.utf8 && preview.fileId == file.id());
-                CHECK(preview.origin.sourceObjectId == source->objectId && !preview.contributions.empty() && !preview.differences.empty());
-                CHECK(preview.detail.find("manual edits") != std::string::npos && preview.retainedDecisions == 0);
-                CHECK(std::any_of(preview.differences.begin(), preview.differences.end(), [](const auto &difference) {
-                    return difference.result.begin == 0 && difference.result.end >= std::string("manual prefix\n").size();
-                }));
-                CHECK(applyWholeFile(file, preview) == Transition::ConfirmationRequired);
-                CHECK(file.current().id == before.id && file.current().draft == before.draft);
-                CHECK(applyWholeFile(file, preview, true) == Transition::Applied);
-                const auto chosen = file.current().draft;
-                CHECK(chosen.text == preview.replacement && preview.contributions.size() == chosen.decisions.size());
-                for (const auto &contribution : preview.contributions) {
-                    CHECK(contribution.before == before.draft.decisions.at(contribution.source.contributionId));
-                    CHECK(chosen.decisions.at(contribution.source.contributionId) == contribution.after);
-                    CHECK(contribution.after == Decision{contribution.source.side == side
-                        ? DecisionValue::Accepted : DecisionValue::Ignored, {}});
-                }
-                CHECK(!file.reviewed() && !file.written() && !file.staged());
-                CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before.draft);
-                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
-            });
+            suite.run(
+                "whole-file previews describe and replace exactly the selected source "
+                    + std::to_string(static_cast<int>(side)),
+                [=] {
+                    auto file = test_support::choiceFile();
+                    CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                    const auto before = file.current();
+                    const auto preview = previewWholeFile(file, before.id, side);
+                    const auto &source =
+                        side == SourceSide::Stage2 ? file.snapshots()->stage2 : file.snapshots()->stage3;
+                    CHECK(preview.state == Transition::ConfirmationRequired && preview.before == before.draft.text);
+                    CHECK(preview.replacement == source->worktree.utf8 && preview.fileId == file.id());
+                    CHECK(preview.origin.sourceObjectId == source->objectId && !preview.contributions.empty()
+                          && !preview.differences.empty());
+                    CHECK(preview.detail.find("manual edits") != std::string::npos && preview.retainedDecisions == 0);
+                    CHECK(
+                        std::any_of(preview.differences.begin(), preview.differences.end(), [](const auto &difference) {
+                            return difference.result.begin == 0
+                                && difference.result.end >= std::string("manual prefix\n").size();
+                        }));
+                    CHECK(applyWholeFile(file, preview) == Transition::ConfirmationRequired);
+                    CHECK(file.current().id == before.id && file.current().draft == before.draft);
+                    CHECK(applyWholeFile(file, preview, true) == Transition::Applied);
+                    const auto chosen = file.current().draft;
+                    CHECK(chosen.text == preview.replacement
+                          && preview.contributions.size() == chosen.decisions.size());
+                    for (const auto &contribution : preview.contributions) {
+                        CHECK(contribution.before == before.draft.decisions.at(contribution.source.contributionId));
+                        CHECK(chosen.decisions.at(contribution.source.contributionId) == contribution.after);
+                        CHECK(contribution.after
+                              == Decision{contribution.source.side == side ? DecisionValue::Accepted
+                                                                           : DecisionValue::Ignored,
+                                          {}});
+                    }
+                    CHECK(!file.reviewed() && !file.written() && !file.staged());
+                    CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before.draft);
+                    CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+                });
         }
         suite.run("altered or stale whole-file confirmation cannot change the draft", [] {
             auto file = test_support::choiceFile();
@@ -371,13 +428,16 @@ public:
         });
         suite.run("whole-file replacement retains recovered decisions without source scopes", [] {
             const auto source = test_support::choiceFile();
-            const Draft legacy{"legacy manual result\n", {{"legacy-left", {DecisionValue::Accepted, 3}},
-                {"legacy-right", {DecisionValue::Ignored, {}}}}, 0};
+            const Draft legacy{
+                "legacy manual result\n",
+                {{"legacy-left", {DecisionValue::Accepted, 3}}, {"legacy-right", {DecisionValue::Ignored, {}}}},
+                0};
             auto captured = *source.snapshots();
             captured.launchResult.text = test_support::choiceText(legacy.text);
             FileSession file(source.id(), source.path(), legacy, Support::Supported, {}, captured);
             const auto preview = previewWholeFile(file, 1, SourceSide::Stage3);
-            CHECK(preview.state == Transition::ConfirmationRequired && preview.retainedDecisions == legacy.decisions.size());
+            CHECK(preview.state == Transition::ConfirmationRequired
+                  && preview.retainedDecisions == legacy.decisions.size());
             CHECK(preview.contributions.empty() && preview.command.decisions.empty());
             CHECK(applyWholeFile(file, preview, true) == Transition::Applied);
             CHECK(file.current().draft.text == source.snapshots()->stage3->worktree.utf8);
@@ -385,72 +445,93 @@ public:
             CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == legacy);
         });
         for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
-            suite.run("scoped Accept preserves unrelated edits and restores atomic history "
-                + std::to_string(static_cast<int>(scope)), [=] {
-                auto file = test_support::choiceFile();
-                const auto target = test_support::choiceTarget(file, SourceSide::Stage2, scope);
-                const auto original = file.current().draft.text;
-                CHECK(file.editResult(file.current().id, {{7, 18}, "manual first\n"}) == Transition::Applied);
-                const auto second = file.current().draft.text.find("left second\n");
-                CHECK(second != std::string::npos);
-                CHECK(file.editResult(file.current().id, {{second, second + 12}, "manual second\n"}) == Transition::Applied);
-                CHECK(file.editResult(file.current().id, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
-                const auto end = file.current().draft.text.size();
-                CHECK(file.editResult(file.current().id, {{end, end}, "manual suffix\n"}) == Transition::Applied);
-                const auto before = file.current().draft;
-                const auto preview = previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::Accept);
-                CHECK(preview.state == Transition::ConfirmationRequired);
-                CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired);
-                CHECK(file.current().draft == before);
-                CHECK(applyChoice(file, preview, true) == Transition::Applied);
-                const auto accepted = file.current().draft;
-                CHECK(accepted.text == "manual prefix\n" + (scope == ChoiceScope::Section ? original
-                    : "header\nleft first\nmanual second\nbridge\nleft later\ntail\n") + "manual suffix\n");
-                for (const auto &[id, decision] : accepted.decisions) {
-                    const bool selected = std::find(target.decisions.begin(), target.decisions.end(), id) != target.decisions.end();
-                    CHECK(decision.value == (selected ? DecisionValue::Accepted : DecisionValue::Undecided));
-                }
-                CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
-                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == accepted);
-                CHECK(applyChoice(file, preview, true) == Transition::StaleRevision);
-                CHECK(file.current().draft == accepted);
-            });
+            suite.run(
+                "scoped Accept preserves unrelated edits and restores atomic history "
+                    + std::to_string(static_cast<int>(scope)),
+                [=] {
+                    auto file = test_support::choiceFile();
+                    const auto target = test_support::choiceTarget(file, SourceSide::Stage2, scope);
+                    const auto original = file.current().draft.text;
+                    CHECK(file.editResult(file.current().id, {{7, 18}, "manual first\n"}) == Transition::Applied);
+                    const auto second = file.current().draft.text.find("left second\n");
+                    CHECK(second != std::string::npos);
+                    CHECK(file.editResult(file.current().id, {{second, second + 12}, "manual second\n"})
+                          == Transition::Applied);
+                    CHECK(file.editResult(file.current().id, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
+                    const auto end = file.current().draft.text.size();
+                    CHECK(file.editResult(file.current().id, {{end, end}, "manual suffix\n"}) == Transition::Applied);
+                    const auto before = file.current().draft;
+                    const auto preview =
+                        previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::Accept);
+                    CHECK(preview.state == Transition::ConfirmationRequired);
+                    CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired);
+                    CHECK(file.current().draft == before);
+                    CHECK(applyChoice(file, preview, true) == Transition::Applied);
+                    const auto accepted = file.current().draft;
+                    CHECK(accepted.text
+                          == "manual prefix\n"
+                              + (scope == ChoiceScope::Section
+                                     ? original
+                                     : "header\nleft first\nmanual second\nbridge\nleft later\ntail\n")
+                              + "manual suffix\n");
+                    for (const auto &[id, decision] : accepted.decisions) {
+                        const bool selected =
+                            std::find(target.decisions.begin(), target.decisions.end(), id) != target.decisions.end();
+                        CHECK(decision.value == (selected ? DecisionValue::Accepted : DecisionValue::Undecided));
+                    }
+                    CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
+                    CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == accepted);
+                    CHECK(applyChoice(file, preview, true) == Transition::StaleRevision);
+                    CHECK(file.current().draft == accepted);
+                });
         }
         for (const auto scope : {ChoiceScope::Line, ChoiceScope::Section}) {
-            suite.run("Ignore preserves manual text and competing decisions through undo and redo "
-                + std::to_string(static_cast<int>(scope)), [=] {
-                auto file = test_support::choiceFile();
-                CHECK(file.editResult(1, {{7, 18}, "manual target\n"}) == Transition::Applied);
-                const auto before = file.current().draft;
-                const auto target = test_support::choiceTarget(file, SourceSide::Stage2, scope);
-                const auto preview = previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::Ignore);
-                CHECK(preview.state == Transition::Applied);
-                CHECK(applyChoice(file, preview) == Transition::Applied);
-                const auto ignored = file.current().draft;
-                CHECK(ignored.text == before.text);
-                for (const auto &[id, decision] : ignored.decisions) {
-                    const bool selected = std::find(target.decisions.begin(), target.decisions.end(), id) != target.decisions.end();
-                    CHECK(decision.value == (selected ? DecisionValue::Ignored : DecisionValue::Undecided));
-                }
-                CHECK(previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::Accept).state == Transition::Blocked);
-                CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
-                CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == ignored);
-            });
+            suite.run(
+                "Ignore preserves manual text and competing decisions through undo and redo "
+                    + std::to_string(static_cast<int>(scope)),
+                [=] {
+                    auto file = test_support::choiceFile();
+                    CHECK(file.editResult(1, {{7, 18}, "manual target\n"}) == Transition::Applied);
+                    const auto before = file.current().draft;
+                    const auto target = test_support::choiceTarget(file, SourceSide::Stage2, scope);
+                    const auto preview =
+                        previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::Ignore);
+                    CHECK(preview.state == Transition::Applied);
+                    CHECK(applyChoice(file, preview) == Transition::Applied);
+                    const auto ignored = file.current().draft;
+                    CHECK(ignored.text == before.text);
+                    for (const auto &[id, decision] : ignored.decisions) {
+                        const bool selected =
+                            std::find(target.decisions.begin(), target.decisions.end(), id) != target.decisions.end();
+                        CHECK(decision.value == (selected ? DecisionValue::Ignored : DecisionValue::Undecided));
+                    }
+                    CHECK(
+                        previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::Accept).state
+                        == Transition::Blocked);
+                    CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
+                    CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == ignored);
+                });
         }
         suite.run("resolve using one side decides only its section and its competitors", [] {
             auto file = test_support::choiceFile();
             CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
             const auto before = file.current().draft;
             const auto target = test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Section);
-            const auto preview = previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::ResolveUsingSide);
+            const auto preview =
+                previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::ResolveUsingSide);
             CHECK(preview.state == Transition::Applied || preview.state == Transition::ConfirmationRequired);
             CHECK(applyChoice(file, preview, true) == Transition::Applied);
             const auto resolved = file.current().draft;
             CHECK(resolved.text == "manual prefix\nheader\nright first\nright second\nbridge\nleft later\ntail\n");
             for (const auto &[id, decision] : resolved.decisions) {
-                const bool own = std::find(target.decisions.begin(), target.decisions.end(), id) != target.decisions.end();
-                const bool competitor = std::find(target.competitors.begin(), target.competitors.end(), id) != target.competitors.end();
-                CHECK(decision.value == (own ? DecisionValue::Accepted : competitor ? DecisionValue::Ignored : DecisionValue::Undecided));
+                const bool own =
+                    std::find(target.decisions.begin(), target.decisions.end(), id) != target.decisions.end();
+                const bool competitor =
+                    std::find(target.competitors.begin(), target.competitors.end(), id) != target.competitors.end();
+                CHECK(decision.value
+                      == (own ? DecisionValue::Accepted
+                              : competitor ? DecisionValue::Ignored
+                                           : DecisionValue::Undecided));
             }
             CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
             CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == resolved);
@@ -463,8 +544,8 @@ public:
             const auto before = file.current();
             CHECK(applyChoice(file, preview, true) == Transition::StaleRevision);
             CHECK(file.current().id == before.id && file.current().draft == before.draft && !file.canRedo());
-            auto ambiguous = test_support::choiceFile("head\nrepeat\nrepeat\ntail\n",
-                "head\nchanged\nrepeat\ntail\n", "head\nrepeat\ntail\n");
+            auto ambiguous = test_support::choiceFile("head\nrepeat\nrepeat\ntail\n", "head\nchanged\nrepeat\ntail\n",
+                                                      "head\nrepeat\ntail\n");
             const auto repeated = test_support::choiceTarget(ambiguous, SourceSide::Stage2, ChoiceScope::Line);
             const auto rejected = previewChoice(ambiguous, 1, repeated.source.contributionId, ChoiceAction::Accept);
             CHECK(rejected.state == Transition::AmbiguousTarget);
@@ -474,12 +555,13 @@ public:
         });
         suite.run("resolve using one line leaves the other section and manual edits unchanged", [] {
             auto file = test_support::choiceFile("header\nleft\nbridge\nleft later\ntail\n",
-                "header\nright\nbridge\nright later\ntail\n");
+                                                 "header\nright\nbridge\nright later\ntail\n");
             CHECK(file.editResult(1, {{0, 0}, "manual prefix\n"}) == Transition::Applied);
             const auto before = file.current().draft;
             const auto target = test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Line);
             const auto competitor = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Line);
-            const auto preview = previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::ResolveUsingSide);
+            const auto preview =
+                previewChoice(file, file.current().id, target.source.contributionId, ChoiceAction::ResolveUsingSide);
             CHECK(preview.state == Transition::Applied || preview.state == Transition::ConfirmationRequired);
             CHECK(applyChoice(file, preview, true) == Transition::Applied);
             const auto chosen = file.current().draft;
@@ -505,12 +587,15 @@ public:
                         if (marked && action == ChoiceAction::Accept) {
                             CHECK(chosen.text == before.text && chosen.unresolvedMarkers == 1);
                         } else {
-                            CHECK(chosen.text == (first == SourceSide::Stage2 ? "header\nleft first\nleft second\nbridge\n"
-                                : "header\nright first\nright second\nbridge\n") + std::string(later) + "tail\n");
+                            CHECK(chosen.text
+                                  == (first == SourceSide::Stage2 ? "header\nleft first\nleft second\nbridge\n"
+                                                                  : "header\nright first\nright second\nbridge\n")
+                                      + std::string(later) + "tail\n");
                             CHECK(chosen.unresolvedMarkers == 0);
                         }
                         const auto &picked = test_support::choiceTarget(file, second, ChoiceScope::Section, 1);
-                        for (const auto &id : picked.decisions) CHECK(chosen.decisions.at(id).value == DecisionValue::Accepted);
+                        for (const auto &id : picked.decisions)
+                            CHECK(chosen.decisions.at(id).value == DecisionValue::Accepted);
                         CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before);
                     }
                 }
@@ -522,7 +607,8 @@ public:
             CHECK(choose(same, SourceSide::Stage2, ChoiceAction::Accept) == Transition::Applied);
             for (const auto action : {ChoiceAction::Accept, ChoiceAction::ResolveUsingSide}) {
                 const auto &right = test_support::choiceTarget(same, SourceSide::Stage3, ChoiceScope::Section);
-                CHECK(previewChoice(same, same.current().id, right.source.contributionId, action).state == Transition::Blocked);
+                CHECK(previewChoice(same, same.current().id, right.source.contributionId, action).state
+                      == Transition::Blocked);
             }
             // Typing across the start of the accepted section leaves neither
             // its lines nor the section locatable.
@@ -531,20 +617,19 @@ public:
             const auto at = typed.current().draft.text.find("\nleft first");
             CHECK(typed.editResult(typed.current().id, {{at, at + 2}, "\nL"}) == Transition::Applied);
             const auto &later = test_support::choiceTarget(typed, SourceSide::Stage3, ChoiceScope::Section, 1);
-            const auto refused = previewChoice(typed, typed.current().id, later.source.contributionId, ChoiceAction::Accept);
+            const auto refused =
+                previewChoice(typed, typed.current().id, later.source.contributionId, ChoiceAction::Accept);
             CHECK(refused.state == Transition::Blocked);
-            CHECK(refused.detail == "Accepted text may overlap this choice. Preview an ordered combination or undo its acceptance.");
+            CHECK(refused.detail
+                  == "Accepted text may overlap this choice. Preview an ordered combination or undo its acceptance.");
         });
         suite.run("correspondence is deterministic and partitions repeated inserted deleted and changed text", [] {
             const std::array cases{
-                std::pair{"repeat\nrepeat\n", "repeat\nrepeat\n"},
-                std::pair{"head\nold\nend\n", "head\nnew\nend\n"},
-                std::pair{"head\nend\n", "head\ninserted\nend\n"},
-                std::pair{"head\ndeleted\nend\n", "head\nend\n"},
-                std::pair{"head\nrepeat\nrepeat\nend\n", "head\nrepeat\nend\n"}
-            };
-            const std::array expected{PassageKind::Equal, PassageKind::Changed,
-                PassageKind::ResultOnly, PassageKind::SourceOnly, PassageKind::Ambiguous};
+                std::pair{"repeat\nrepeat\n", "repeat\nrepeat\n"}, std::pair{"head\nold\nend\n", "head\nnew\nend\n"},
+                std::pair{"head\nend\n", "head\ninserted\nend\n"}, std::pair{"head\ndeleted\nend\n", "head\nend\n"},
+                std::pair{"head\nrepeat\nrepeat\nend\n", "head\nrepeat\nend\n"}};
+            const std::array expected{PassageKind::Equal, PassageKind::Changed, PassageKind::ResultOnly,
+                                      PassageKind::SourceOnly, PassageKind::Ambiguous};
             ExactLineCorrespondence algorithm;
             for (std::size_t i = 0; i < cases.size(); ++i) {
                 const std::string_view source = cases[i].first;
@@ -559,7 +644,7 @@ public:
                     CHECK(validByteRange(source, passage.source) && validByteRange(result, passage.result));
                     if (passage.kind == PassageKind::Equal)
                         CHECK(source.substr(passage.source.begin, passage.source.end - passage.source.begin)
-                            == result.substr(passage.result.begin, passage.result.end - passage.result.begin));
+                              == result.substr(passage.result.begin, passage.result.end - passage.result.begin));
                     sawKind = sawKind || passage.kind == expected[i];
                     sourceEnd = passage.source.end;
                     resultEnd = passage.result.end;
@@ -570,14 +655,14 @@ public:
         });
         suite.run("ambiguous repeated and reordered passages reject choices atomically", [] {
             for (const auto &texts : {std::pair{"head\nrepeat\nrepeat\nend\n", "head\nrepeat\nend\n"},
-                                     std::pair{"head\none\ntwo\nend\n", "head\ntwo\none\nend\n"}}) {
+                                      std::pair{"head\none\ntwo\nend\n", "head\ntwo\none\nend\n"}}) {
                 auto file = mappedFile(texts.first, texts.second);
                 CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 12}}) == Transition::Applied);
                 const auto issued = anchor(file);
                 CHECK(issued.state == AnchorState::Ambiguous && !issued.result);
                 const auto before = file.current();
                 CHECK(file.replaceMapped(1, issued, "unsafe replacement\n", Decision{DecisionValue::Accepted, 1}, true)
-                    == Transition::AmbiguousTarget);
+                      == Transition::AmbiguousTarget);
                 CHECK(file.current().id == before.id && file.current().draft == before.draft && !file.canUndo());
             }
         });
@@ -586,21 +671,24 @@ public:
             CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {14, 21}}) == Transition::Applied);
             const auto issued = anchor(file);
             CHECK(issued.state == AnchorState::Mapped && issued.result == ByteRange{28, 35});
-            CHECK(file.replaceMapped(1, issued, "selected\n", Decision{DecisionValue::Accepted, 1}) == Transition::Applied);
+            CHECK(file.replaceMapped(1, issued, "selected\n", Decision{DecisionValue::Accepted, 1})
+                  == Transition::Applied);
             CHECK(file.current().draft.text == "manual prefix\nrepeat\nmiddle\nselected\n");
             CHECK(file.current().draft.decisions.at("choice") == Decision{DecisionValue::Accepted, 1});
         });
         suite.run("UTF-8 boundaries and forged anchor identities cannot mutate a transaction", [] {
             const std::string text = "start\n\xc3\xa9\xf0\x9f\x98\x80\nend\n";
             auto file = mappedFile(text, text);
-            CHECK(file.bindSourceAnchor(1, {"inside-codepoint", SourceSide::Stage2, {7, 13}}) == Transition::InvalidAnchor);
+            CHECK(file.bindSourceAnchor(1, {"inside-codepoint", SourceSide::Stage2, {7, 13}})
+                  == Transition::InvalidAnchor);
             CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {6, 13}}) == Transition::Applied);
             const auto issued = anchor(file);
             const auto before = file.current().draft;
             CHECK(file.replaceMapped(0, issued, "stale command", Decision{DecisionValue::Accepted, 1}, true)
-                == Transition::StaleRevision);
+                  == Transition::StaleRevision);
             CHECK(file.editResult(1, {{7, 8}, "x"}) == Transition::InvalidAnchor);
-            CHECK(file.replaceMapped(1, issued, "\x80", Decision{DecisionValue::Accepted, 1}) == Transition::InvalidAnchor);
+            CHECK(file.replaceMapped(1, issued, "\x80", Decision{DecisionValue::Accepted, 1})
+                  == Transition::InvalidAnchor);
             for (int field = 0; field < 5; ++field) {
                 auto forged = issued;
                 if (field == 0) forged.origin.sessionId = "other session";
@@ -608,10 +696,12 @@ public:
                 if (field == 2) forged.origin.sourceObjectId = "other object";
                 if (field == 3) forged.source.range.begin = 0;
                 if (field == 4) forged.result = ByteRange{0, 5};
-                CHECK(file.replaceMapped(1, forged, "wrong", Decision{DecisionValue::Accepted, 1}) == Transition::InvalidAnchor);
+                CHECK(file.replaceMapped(1, forged, "wrong", Decision{DecisionValue::Accepted, 1})
+                      == Transition::InvalidAnchor);
                 CHECK(file.current().id == 1 && file.current().draft == before && !file.canUndo());
             }
-            CHECK(file.replaceMapped(1, issued, "valid\n", Decision{DecisionValue::Accepted, 1}) == Transition::Applied);
+            CHECK(file.replaceMapped(1, issued, "valid\n", Decision{DecisionValue::Accepted, 1})
+                  == Transition::Applied);
             CHECK(file.current().draft.text == "start\nvalid\nend\n");
         });
         suite.run("source-only anchors use the deletion site and preserve inserted result passages", [] {
@@ -621,7 +711,7 @@ public:
             CHECK(deleted.state == AnchorState::Mapped && deleted.result == ByteRange{19, 19});
             CHECK(!deleted.manualOverlap);
             CHECK(file.replaceMapped(1, deleted, "restored\n", Decision{DecisionValue::Accepted, 1})
-                == Transition::Applied);
+                  == Transition::Applied);
             CHECK(file.current().draft.text == "manual prefix\nhead\nrestored\ntail\nmanual suffix\n");
         });
         suite.run("anchors transform around manual insertions and deletions without losing unrelated edits", [] {
@@ -638,10 +728,10 @@ public:
             CHECK(current.result == ByteRange{prefix.size(), prefix.size() + 5} && !current.manualOverlap);
             const auto before = file.current().draft;
             CHECK(file.replaceMapped(file.current().id, stale, "stale", Decision{DecisionValue::Accepted, 1}, true)
-                == Transition::StaleRevision);
+                  == Transition::StaleRevision);
             CHECK(file.current().draft == before);
             CHECK(file.replaceMapped(file.current().id, current, "accepted\n", Decision{DecisionValue::Accepted, 1})
-                == Transition::Applied);
+                  == Transition::Applied);
             CHECK(file.current().draft.text == prefix + "accepted\nright\nend\n" + suffix);
         });
         suite.run("changed manual passages require confirmation bound to the current preview", [] {
@@ -651,14 +741,16 @@ public:
             CHECK(preview.manualOverlap && preview.result == ByteRange{5, 12});
             const auto before = file.current().draft;
             CHECK(file.replaceMapped(1, preview, "accepted\n", Decision{DecisionValue::Accepted, 1})
-                == Transition::ConfirmationRequired);
+                  == Transition::ConfirmationRequired);
             CHECK(file.current().draft == before && !file.canUndo());
             CHECK(file.editResult(1, {{6, 7}, "X"}) == Transition::Applied);
-            CHECK(file.replaceMapped(file.current().id, preview, "accepted\n", Decision{DecisionValue::Accepted, 1}, true)
+            CHECK(
+                file.replaceMapped(file.current().id, preview, "accepted\n", Decision{DecisionValue::Accepted, 1}, true)
                 == Transition::StaleRevision);
             CHECK(file.current().draft.decisions == before.decisions);
-            CHECK(file.replaceMapped(file.current().id, anchor(file), "accepted\n", Decision{DecisionValue::Accepted, 1}, true)
-                == Transition::Applied);
+            CHECK(file.replaceMapped(file.current().id, anchor(file), "accepted\n",
+                                     Decision{DecisionValue::Accepted, 1}, true)
+                  == Transition::Applied);
             CHECK(file.current().draft.text == "head\naccepted\nend\n");
         });
         suite.run("deleted anchors and ambiguous whole-buffer edits never reattach to another repeat", [] {
@@ -667,8 +759,9 @@ public:
             CHECK(file.editResult(1, {{12, 19}, {}}) == Transition::Applied);
             CHECK(anchor(file).state == AnchorState::Invalidated && !anchor(file).result);
             auto before = file.current().draft;
-            CHECK(file.replaceMapped(file.current().id, anchor(file), "wrong\n", Decision{DecisionValue::Accepted, 1}, true)
-                == Transition::InvalidAnchor);
+            CHECK(file.replaceMapped(file.current().id, anchor(file), "wrong\n", Decision{DecisionValue::Accepted, 1},
+                                     true)
+                  == Transition::InvalidAnchor);
             CHECK(file.current().draft == before);
             CHECK(file.undo(file.current().id) == Transition::Applied);
             CHECK(anchor(file).state == AnchorState::Mapped);
@@ -676,21 +769,24 @@ public:
             before.text = "head\nrepeat\nend\n";
             CHECK(file.replaceDraft(file.current().id, before) == Transition::Applied);
             CHECK(anchor(file).state == AnchorState::Ambiguous && !anchor(file).result);
-            CHECK(file.replaceMapped(file.current().id, anchor(file), "wrong\n", Decision{DecisionValue::Accepted, 1}, true)
-                == Transition::AmbiguousTarget);
+            CHECK(file.replaceMapped(file.current().id, anchor(file), "wrong\n", Decision{DecisionValue::Accepted, 1},
+                                     true)
+                  == Transition::AmbiguousTarget);
             CHECK(file.current().draft == before);
         });
         suite.run("insertion anchors respect affinity and history restores text decisions and mappings", [] {
             auto file = mappedFile("head\ntail\n", "head\ntail\n");
-            CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 5}, InsertionAffinity::Before}) == Transition::Applied);
-            CHECK(file.bindSourceAnchor(1, {"after", SourceSide::Stage2, {5, 5}, InsertionAffinity::After}) == Transition::Applied);
+            CHECK(file.bindSourceAnchor(1, {"choice", SourceSide::Stage2, {5, 5}, InsertionAffinity::Before})
+                  == Transition::Applied);
+            CHECK(file.bindSourceAnchor(1, {"after", SourceSide::Stage2, {5, 5}, InsertionAffinity::After})
+                  == Transition::Applied);
             const auto original = anchor(file);
             CHECK(file.editResult(1, {{5, 5}, "manual\n"}) == Transition::Applied);
             const auto edited = file.current().draft;
             CHECK(anchor(file).result == ByteRange{5, 5});
             CHECK(anchor(file, "after").result == ByteRange{12, 12});
             CHECK(file.replaceMapped(file.current().id, anchor(file), "choice\n", Decision{DecisionValue::Accepted, 1})
-                == Transition::Applied);
+                  == Transition::Applied);
             const auto chosen = file.current().draft;
             CHECK(chosen.text == "head\nchoice\nmanual\ntail\n");
             const auto chosenRange = anchor(file).result;
@@ -710,17 +806,17 @@ public:
             // Even a one-byte 3500 x 3502 matrix exceeds this allocation budget.
             allocation_fixture::Bound budget;
             const auto passages = ExactLineCorrespondence{}.compare(source, result);
-            CHECK(passages == std::vector<Passage>{
-                {{0, 0}, {0, 14}, PassageKind::ResultOnly},
-                {{0, source.size()}, {14, 14 + source.size()}, PassageKind::Equal},
-                {{source.size(), source.size()}, {14 + source.size(), result.size()}, PassageKind::ResultOnly}});
+            CHECK(passages
+                  == std::vector<Passage>{
+                      {{0, 0}, {0, 14}, PassageKind::ResultOnly},
+                      {{0, source.size()}, {14, 14 + source.size()}, PassageKind::Equal},
+                      {{source.size(), source.size()}, {14 + source.size(), result.size()}, PassageKind::ResultOnly}});
             CHECK(allocation_fixture::largest > 0 && allocation_fixture::largest < allocation_fixture::ceiling);
         });
         suite.run("source captures survive edits history checkpoints and staged discards", [] {
             auto input = capturedSources();
             const auto expected = input;
-            FileSession file("id", input.path, draft(input.launchResult.text.utf8),
-                             Support::Supported, {}, input);
+            FileSession file("id", input.path, draft(input.launchResult.text.utf8), Support::Supported, {}, input);
             const auto *capture = file.snapshots();
             const auto unchanged = [&] {
                 CHECK(capture != nullptr && file.snapshots() == capture);
@@ -765,14 +861,15 @@ public:
         suite.run("an unavailable earlier source remains distinct from a captured empty source", [] {
             for (const bool missing : {false, true}) {
                 auto captured = capturedSources();
-                if (missing) captured.earlier.reset();
+                if (missing)
+                    captured.earlier.reset();
                 else {
                     captured.earlier->rawBytes.clear();
                     captured.earlier->worktree = {};
                 }
                 const auto expected = captured;
-                FileSession file("id", captured.path, draft(captured.launchResult.text.utf8),
-                                 Support::Supported, {}, captured);
+                FileSession file("id", captured.path, draft(captured.launchResult.text.utf8), Support::Supported, {},
+                                 captured);
                 CHECK(file.snapshots() && file.snapshots()->earlier.has_value() == !missing);
                 if (!missing) {
                     CHECK(file.snapshots()->earlier->rawBytes.empty());
@@ -793,17 +890,22 @@ public:
                 bool rejected = false;
                 try {
                     FileSession invalid("id", wrongPath ? "another path" : captured.path,
-                        draft(wrongPath ? captured.launchResult.text.utf8 : "regenerated source"),
-                        Support::Supported, {}, captured);
-                } catch (const std::invalid_argument &) { rejected = true; }
+                                        draft(wrongPath ? captured.launchResult.text.utf8 : "regenerated source"),
+                                        Support::Supported, {}, captured);
+                } catch (const std::invalid_argument &) {
+                    rejected = true;
+                }
                 CHECK(rejected);
             }
         });
         suite.run("identity and initial blockers", [] {
             for (const bool emptyId : {false, true}) {
                 bool rejected = false;
-                try { FileSession invalid(emptyId ? "" : "id", emptyId ? "path" : "", draft()); }
-                catch (const std::invalid_argument &) { rejected = true; }
+                try {
+                    FileSession invalid(emptyId ? "" : "id", emptyId ? "path" : "", draft());
+                } catch (const std::invalid_argument &) {
+                    rejected = true;
+                }
                 CHECK(rejected);
             }
             FileSession file("id", ":literal", draft());
@@ -864,7 +966,8 @@ public:
             CHECK(file.current().draft == draft() && file.facts().needsReview && !file.facts().resolved);
             CHECK(file.redo(file.current().id) == Transition::Applied);
             CHECK(file.current().draft == combined && file.current().id != combinedRevision.id);
-            CHECK(file.current().result == combinedRevision.result && file.current().decisions == combinedRevision.decisions);
+            CHECK(file.current().result == combinedRevision.result
+                  && file.current().decisions == combinedRevision.decisions);
             CHECK(file.facts().earlierStaged && !file.facts().resolved);
             CHECK(file.undo(file.current().id) == Transition::Applied);
             CHECK(file.replaceDraft(file.current().id, draft("branch")) == Transition::Applied);
@@ -896,7 +999,8 @@ public:
                 // no app draft blockers for a file the app cannot edit.
                 const auto expected = support == Support::OutsideApp ? Blocker::OutsideApp : Blocker::Unreadable;
                 CHECK(file.facts().blockers == std::vector<Blocker>{expected});
-                CHECK(file.facts().status == (support == Support::OutsideApp ? FileStatus::OutsideApp : FileStatus::Unreadable));
+                CHECK(file.facts().status
+                      == (support == Support::OutsideApp ? FileStatus::OutsideApp : FileStatus::Unreadable));
             }
         });
         suite.run("a complete block is one typed range with line and byte bounds", [] {
@@ -908,7 +1012,8 @@ public:
             CHECK(!block.base);
             CHECK(block.separator == (MarkerLine{MarkerKind::Separator, 3, {20, 28}}));
             CHECK(block.end == (MarkerLine{MarkerKind::End, 5, {34, 49}}));
-            CHECK(text.substr(block.end.bytes.begin, block.end.bytes.end - block.end.bytes.begin) == ">>>>>>> theirs\n");
+            CHECK(text.substr(block.end.bytes.begin, block.end.bytes.end - block.end.bytes.begin)
+                  == ">>>>>>> theirs\n");
             CHECK(scan.first() == block.begin);
         });
         suite.run("a block with a base section keeps the base line", [] {
@@ -922,9 +1027,10 @@ public:
             CHECK(block.end.bytes == (ByteRange{50, text.size()}));
         });
         suite.run("each marker line alone is an orphan", [] {
-            const std::array<std::pair<std::string, MarkerKind>, 4> lines{{
-                {"<<<<<<< ours", MarkerKind::Begin}, {"||||||| base", MarkerKind::Base},
-                {"=======", MarkerKind::Separator}, {">>>>>>> theirs", MarkerKind::End}}};
+            const std::array<std::pair<std::string, MarkerKind>, 4> lines{{{"<<<<<<< ours", MarkerKind::Begin},
+                                                                           {"||||||| base", MarkerKind::Base},
+                                                                           {"=======", MarkerKind::Separator},
+                                                                           {">>>>>>> theirs", MarkerKind::End}}};
             for (const auto &[line, kind] : lines) {
                 const auto text = "before\n" + line + "\nafter\n";
                 const auto scan = scanMarkers(text);
@@ -982,7 +1088,15 @@ public:
             CHECK(cleared.beginMarkResolved(cleared.current().id) == Transition::Applied);
         });
         suite.run("each full decision removes its section's marker lines in one undoable step", [] {
-            enum class Path { ResolveLeft, ResolveRight, AcceptThenIgnore, IgnoreThenAccept, LeftFirst, RightFirst, Lines };
+            enum class Path {
+                ResolveLeft,
+                ResolveRight,
+                AcceptThenIgnore,
+                IgnoreThenAccept,
+                LeftFirst,
+                RightFirst,
+                Lines
+            };
             for (const bool base : {false, true}) {
                 const auto launch = test_support::markedText(base);
                 // The second block is still open, so its marker lines stay.
@@ -1022,11 +1136,15 @@ public:
                         first = "right first\nright second\nleft first\nleft second\n";
                         break;
                     case Path::Lines:
-                        CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept, ChoiceScope::Line, 0) == Transition::Applied);
-                        CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Ignore, ChoiceScope::Line, 1) == Transition::Applied);
-                        CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Line, 0) == Transition::Applied);
+                        CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept, ChoiceScope::Line, 0)
+                              == Transition::Applied);
+                        CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Ignore, ChoiceScope::Line, 1)
+                              == Transition::Applied);
+                        CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Line, 0)
+                              == Transition::Applied);
                         CHECK(file.current().draft.text == launch);
-                        CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Accept, ChoiceScope::Line, 1) == Transition::Applied);
+                        CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Accept, ChoiceScope::Line, 1)
+                              == Transition::Applied);
                         first = "left first\nright second\n";
                         break;
                     }
@@ -1042,7 +1160,8 @@ public:
             }
             auto file = test_support::markedFile();
             CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
-            CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
+            CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1)
+                  == Transition::Applied);
             CHECK(file.current().draft.text == "header\nleft first\nleft second\nbridge\nright later\ntail\n");
             CHECK(file.current().draft.unresolvedMarkers == 0 && file.markerSections().empty());
             CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
@@ -1056,8 +1175,11 @@ public:
             CHECK(file.current().draft.text == test_support::markedText());
             CHECK(file.current().draft.unresolvedMarkers == 2 && file.markerSections().size() == 2);
             const auto &right = test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Section);
-            const auto ignore = previewChoice(file, file.current().id, right.source.contributionId, ChoiceAction::Ignore);
-            CHECK(ignore.detail == "This decides the last open side of the conflict, so its marker lines and ignored text are removed.");
+            const auto ignore =
+                previewChoice(file, file.current().id, right.source.contributionId, ChoiceAction::Ignore);
+            CHECK(ignore.detail
+                  == "This decides the last open side of the conflict, so its marker lines and ignored text are "
+                     "removed.");
             auto ignored = test_support::markedFile();
             CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::Ignore) == Transition::Applied);
             CHECK(choose(ignored, SourceSide::Stage3, ChoiceAction::Ignore) == Transition::Applied);
@@ -1070,11 +1192,13 @@ public:
             CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
             // The second block is still open.
             CHECK(!file.facts().settled && file.facts().status == FileStatus::Undecided);
-            CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
+            CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1)
+                  == Transition::Applied);
             CHECK(file.facts().undecided == 0 && file.current().draft.unresolvedMarkers == 0);
             CHECK(file.facts().settled && file.facts().status == FileStatus::ReviewNeeded && !file.facts().resolved);
             // Settling is not review: Mark resolved is still required.
-            CHECK(has(file, Blocker::ReviewNeeded) && has(file, Blocker::WriteRequired) && has(file, Blocker::StageRequired));
+            CHECK(has(file, Blocker::ReviewNeeded) && has(file, Blocker::WriteRequired)
+                  && has(file, Blocker::StageRequired));
             CHECK(file.undo(file.current().id) == Transition::Applied);
             CHECK(!file.facts().settled && file.facts().undecided != 0);
             CHECK(file.redo(file.current().id) == Transition::Applied);
@@ -1088,8 +1212,10 @@ public:
             // Every contribution decided while marker lines stay is not settled.
             auto ignored = test_support::markedFile();
             for (const std::size_t section : {0U, 1U}) {
-                CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::Ignore, ChoiceScope::Section, section) == Transition::Applied);
-                CHECK(choose(ignored, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Section, section) == Transition::Applied);
+                CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::Ignore, ChoiceScope::Section, section)
+                      == Transition::Applied);
+                CHECK(choose(ignored, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Section, section)
+                      == Transition::Applied);
             }
             CHECK(ignored.facts().undecided == 0 && ignored.current().draft.unresolvedMarkers != 0);
             CHECK(!ignored.facts().settled);
@@ -1116,7 +1242,8 @@ public:
             const auto at = typed.current().draft.text.find("right first") + 5;
             CHECK(typed.editResult(1, {{at, at}, " typed"}) == Transition::Applied);
             CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
-            CHECK(typed.current().draft.text.find("<<<<<<< ours\nleft first\nleft second\n=======\nright typed first\n") != std::string::npos);
+            CHECK(typed.current().draft.text.find("<<<<<<< ours\nleft first\nleft second\n=======\nright typed first\n")
+                  != std::string::npos);
             CHECK(typed.current().draft.unresolvedMarkers == 2);
         });
         suite.run("a block around two sections split by a shared line resolves when all are decided", [] {
@@ -1138,27 +1265,40 @@ public:
                 std::optional<ChoicePreview> last;
                 switch (path) {
                 case Path::AcceptThenIgnore:
-                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept, ChoiceScope::Section, 0) == Transition::Applied);
-                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept, ChoiceScope::Section, 1) == Transition::Applied);
-                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Section, 0) == Transition::Applied);
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept, ChoiceScope::Section, 0)
+                          == Transition::Applied);
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::Accept, ChoiceScope::Section, 1)
+                          == Transition::Applied);
+                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Section, 0)
+                          == Transition::Applied);
                     partly();
-                    last = previewChoice(file, file.current().id, test_support::choiceTarget(
-                        file, SourceSide::Stage3, ChoiceScope::Section, 1).source.contributionId, ChoiceAction::Ignore);
-                    CHECK(last->detail == "This decides the last open side of the conflict, so its marker lines and ignored text are removed.");
+                    last = previewChoice(file, file.current().id,
+                                         test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Section, 1)
+                                             .source.contributionId,
+                                         ChoiceAction::Ignore);
+                    CHECK(last->detail
+                          == "This decides the last open side of the conflict, so its marker lines and ignored text "
+                             "are removed.");
                     expected = "header\nleft one\nshared\nleft two\ntail\n";
                     break;
                 case Path::ResolveRight:
-                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
+                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1)
+                          == Transition::Applied);
                     partly();
-                    last = previewChoice(file, file.current().id, test_support::choiceTarget(
-                        file, SourceSide::Stage3, ChoiceScope::Section, 0).source.contributionId, ChoiceAction::ResolveUsingSide);
+                    last = previewChoice(file, file.current().id,
+                                         test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Section, 0)
+                                             .source.contributionId,
+                                         ChoiceAction::ResolveUsingSide);
                     expected = "header\nright one\nshared\nright two\ntail\n";
                     break;
                 case Path::LeftThenRight:
-                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0)
+                          == Transition::Applied);
                     partly();
-                    last = previewChoice(file, file.current().id, test_support::choiceTarget(
-                        file, SourceSide::Stage3, ChoiceScope::Section, 1).source.contributionId, ChoiceAction::ResolveUsingSide);
+                    last = previewChoice(file, file.current().id,
+                                         test_support::choiceTarget(file, SourceSide::Stage3, ChoiceScope::Section, 1)
+                                             .source.contributionId,
+                                         ChoiceAction::ResolveUsingSide);
                     expected = "header\nleft one\nshared\nright two\ntail\n";
                     break;
                 }
@@ -1179,11 +1319,14 @@ public:
             // The first section keeps the right line and the second the left one, so
             // deleting cannot put them in order and the block is rebuilt.
             auto crossed = test_support::splitFile();
-            CHECK(choose(crossed, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);
+            CHECK(choose(crossed, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0)
+                  == Transition::Applied);
             const auto partly = crossed.current();
             CHECK(partly.draft.text == launch && partly.draft.unresolvedMarkers == 1);
-            const auto last = previewChoice(crossed, crossed.current().id, test_support::choiceTarget(
-                crossed, SourceSide::Stage2, ChoiceScope::Section, 1).source.contributionId, ChoiceAction::ResolveUsingSide);
+            const auto last = previewChoice(
+                crossed, crossed.current().id,
+                test_support::choiceTarget(crossed, SourceSide::Stage2, ChoiceScope::Section, 1).source.contributionId,
+                ChoiceAction::ResolveUsingSide);
             CHECK(last.detail.find("removes the conflict's marker lines") != std::string::npos);
             CHECK(applyChoice(crossed, last) == Transition::Applied);
             const auto chosen = crossed.current().draft;
@@ -1193,11 +1336,14 @@ public:
             // Each section's scopes are bound in the rebuilt text: the kept one to its
             // line, the ignored one empty beside it, left before right.
             const auto range = [&](SourceSide side, std::size_t at) {
-                return crossed.correspondence()->anchor(test_support::choiceTarget(
-                    crossed, side, ChoiceScope::Section, at).source.contributionId)->result;
+                return crossed.correspondence()
+                    ->anchor(test_support::choiceTarget(crossed, side, ChoiceScope::Section, at).source.contributionId)
+                    ->result;
             };
-            CHECK((range(SourceSide::Stage3, 0) == ByteRange{7, 17} && range(SourceSide::Stage2, 0) == ByteRange{7, 7}));
-            CHECK((range(SourceSide::Stage2, 1) == ByteRange{24, 33} && range(SourceSide::Stage3, 1) == ByteRange{33, 33}));
+            CHECK(
+                (range(SourceSide::Stage3, 0) == ByteRange{7, 17} && range(SourceSide::Stage2, 0) == ByteRange{7, 7}));
+            CHECK((range(SourceSide::Stage2, 1) == ByteRange{24, 33}
+                   && range(SourceSide::Stage3, 1) == ByteRange{33, 33}));
             CHECK(crossed.correspondence()->handEditedAnchors().empty());
             // One undo brings back the block and the first section's decisions.
             CHECK(crossed.undo(crossed.current().id) == Transition::Applied);
@@ -1216,9 +1362,12 @@ public:
             const auto launch = test_support::splitText();
             // Ignoring both sides of one section keeps the markers, as for a single section.
             auto ignored = test_support::splitFile();
-            CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);
-            CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::Ignore, ChoiceScope::Section, 1) == Transition::Applied);
-            CHECK(choose(ignored, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Section, 1) == Transition::Applied);
+            CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0)
+                  == Transition::Applied);
+            CHECK(choose(ignored, SourceSide::Stage2, ChoiceAction::Ignore, ChoiceScope::Section, 1)
+                  == Transition::Applied);
+            CHECK(choose(ignored, SourceSide::Stage3, ChoiceAction::Ignore, ChoiceScope::Section, 1)
+                  == Transition::Applied);
             CHECK(ignored.current().draft.text == launch && ignored.current().draft.unresolvedMarkers == 1);
             // Typing in one copy of the shared line unties the block, and that work stays.
             auto typed = test_support::splitFile();
@@ -1226,8 +1375,10 @@ public:
             CHECK(typed.editResult(1, {{at, at}, " typed"}) == Transition::Applied);
             const auto edited = typed.current().draft.text;
             CHECK(typed.markers().blocks.size() == 1 && typed.markerSections().empty());
-            CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0) == Transition::Applied);
-            CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1) == Transition::Applied);
+            CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 0)
+                  == Transition::Applied);
+            CHECK(choose(typed, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, 1)
+                  == Transition::Applied);
             CHECK(typed.current().draft.text == edited && typed.current().draft.unresolvedMarkers == 1);
             // Take both on a section works (see below), but a single line of one half
             // still cannot be joined to a line of the other half, so that stays refused and the
@@ -1237,8 +1388,10 @@ public:
             for (const auto side : {SourceSide::Stage2, SourceSide::Stage3})
                 for (const std::size_t at : {0u, 1u})
                     for (const auto action : {ChoiceAction::CombineLeftFirst, ChoiceAction::CombineRightFirst}) {
-                        const auto preview = previewChoice(both, both.current().id, test_support::choiceTarget(
-                            both, side, ChoiceScope::Line, at).source.contributionId, action);
+                        const auto preview = previewChoice(
+                            both, both.current().id,
+                            test_support::choiceTarget(both, side, ChoiceScope::Line, at).source.contributionId,
+                            action);
                         CHECK(preview.state == Transition::AmbiguousTarget && preview.command.edits.empty());
                         CHECK(applyChoice(both, preview, true) != Transition::Applied);
                     }
@@ -1252,22 +1405,27 @@ public:
             const auto decide = [&](FileSession &file, Other other, std::size_t at) {
                 switch (other) {
                 case Other::Left:
-                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, at) == Transition::Applied);
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, at)
+                          == Transition::Applied);
                     return left[at];
                 case Other::Right:
-                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, at) == Transition::Applied);
+                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::ResolveUsingSide, ChoiceScope::Section, at)
+                          == Transition::Applied);
                     return right[at];
                 case Other::LeftFirst:
-                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::CombineLeftFirst, ChoiceScope::Section, at) == Transition::Applied);
+                    CHECK(choose(file, SourceSide::Stage3, ChoiceAction::CombineLeftFirst, ChoiceScope::Section, at)
+                          == Transition::Applied);
                     return left[at] + right[at];
                 case Other::RightFirst:
-                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::CombineRightFirst, ChoiceScope::Section, at) == Transition::Applied);
+                    CHECK(choose(file, SourceSide::Stage2, ChoiceAction::CombineRightFirst, ChoiceScope::Section, at)
+                          == Transition::Applied);
                     return right[at] + left[at];
                 }
                 return std::string{};
             };
             // Take both on the `side` target of section `at`, before or after the other section is decided.
-            const auto check = [&](bool combineFirst, std::size_t at, SourceSide side, ChoiceAction action, Other other) {
+            const auto check = [&](bool combineFirst, std::size_t at, SourceSide side, ChoiceAction action,
+                                   Other other) {
                 const bool leftFirst = action == ChoiceAction::CombineLeftFirst;
                 const auto rest = std::size_t{1} - at;
                 auto file = test_support::splitFile();
@@ -1276,24 +1434,28 @@ public:
                 if (!combineFirst) kept[rest] = decide(file, other, rest);
                 const auto earlier = file.current();
                 CHECK(earlier.draft.text == launch && file.markerSections() == sections);
-                const auto preview = previewChoice(file, earlier.id, test_support::choiceTarget(
-                    file, side, ChoiceScope::Section, at).source.contributionId, action);
+                const auto preview = previewChoice(
+                    file, earlier.id,
+                    test_support::choiceTarget(file, side, ChoiceScope::Section, at).source.contributionId, action);
                 kept[at] = leftFirst ? left[at] + right[at] : right[at] + left[at];
                 CHECK(preview.state == Transition::ConfirmationRequired && preview.replacement == kept[at]);
                 CHECK(preview.detail.find(combineFirst ? "keeps its marker lines until" : "marker lines are removed")
-                    != std::string::npos);
+                      != std::string::npos);
                 // Only this section's two scopes are edited, each with its own side's text,
                 // so the shared line and the other section's lines are outside every edit.
                 CHECK(preview.command.edits.size() == 2);
                 for (const auto &edit : preview.command.edits) {
-                    CHECK(earlier.draft.text.substr(edit.range.begin, edit.range.end - edit.range.begin) == edit.replacement);
+                    CHECK(earlier.draft.text.substr(edit.range.begin, edit.range.end - edit.range.begin)
+                          == edit.replacement);
                     CHECK((edit.replacement == left[at] || edit.replacement == right[at]));
                 }
-                CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired && file.current().id == earlier.id);
+                CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired
+                      && file.current().id == earlier.id);
                 CHECK(applyChoice(file, preview, true) == Transition::Applied);
                 for (const auto &[combined, order] : {std::pair{SourceSide::Stage2, leftFirst ? 1u : 2u},
                                                       std::pair{SourceSide::Stage3, leftFirst ? 2u : 1u}})
-                    for (const auto &id : test_support::choiceTarget(file, combined, ChoiceScope::Section, at).decisions)
+                    for (const auto &id :
+                         test_support::choiceTarget(file, combined, ChoiceScope::Section, at).decisions)
                         CHECK((file.current().draft.decisions.at(id) == Decision{DecisionValue::Accepted, order}));
                 if (combineFirst) {
                     // The block keeps its markers and text until the other section is decided.
@@ -1321,9 +1483,16 @@ public:
                 // A draft recovered between the two decisions finishes the same way.
                 auto resumed = test_support::splitFile();
                 CHECK(resumed.replaceDraft(1, partly, std::set<std::string>{}) == Transition::Applied);
-                if (combineFirst) CHECK(decide(resumed, other, rest) == kept[rest]);
-                else CHECK(applyChoice(resumed, previewChoice(resumed, resumed.current().id, test_support::choiceTarget(
-                    resumed, side, ChoiceScope::Section, at).source.contributionId, action), true) == Transition::Applied);
+                if (combineFirst)
+                    CHECK(decide(resumed, other, rest) == kept[rest]);
+                else
+                    CHECK(applyChoice(resumed,
+                                      previewChoice(resumed, resumed.current().id,
+                                                    test_support::choiceTarget(resumed, side, ChoiceScope::Section, at)
+                                                        .source.contributionId,
+                                                    action),
+                                      true)
+                          == Transition::Applied);
                 CHECK(resumed.current().draft == chosen);
             };
             for (const bool combineFirst : {true, false})
@@ -1336,11 +1505,14 @@ public:
             // the right side's second line maps onto the left line its first line also maps to.
             auto overlapping = test_support::choiceFile("header\nleft\ntail\n", "header\nright one\nright two\ntail\n");
             const auto before = overlapping.current();
-            const auto refused = previewChoice(overlapping, before.id, test_support::choiceTarget(
-                overlapping, SourceSide::Stage3, ChoiceScope::Line, 1).source.contributionId, ChoiceAction::CombineLeftFirst);
+            const auto refused = previewChoice(
+                overlapping, before.id,
+                test_support::choiceTarget(overlapping, SourceSide::Stage3, ChoiceScope::Line, 1).source.contributionId,
+                ChoiceAction::CombineLeftFirst);
             CHECK(refused.state == Transition::AmbiguousTarget && refused.command.edits.empty());
             CHECK(refused.detail.find("would replace an unselected contribution") != std::string::npos);
-            CHECK(applyChoice(overlapping, refused, true) != Transition::Applied && overlapping.current().draft == before.draft);
+            CHECK(applyChoice(overlapping, refused, true) != Transition::Applied
+                  && overlapping.current().draft == before.draft);
         });
         suite.run("the deleting side of a marker section can be accepted and resolved", [] {
             const auto launch = test_support::deletionFile().current().draft.text;
@@ -1354,8 +1526,10 @@ public:
                 std::string before = launch;
                 switch (path) {
                 case Path::Resolve: {
-                    const auto preview = previewChoice(file, 1, left.source.contributionId, ChoiceAction::ResolveUsingSide);
-                    CHECK(preview.state == Transition::Applied && preview.before == "right first\n" && preview.replacement.empty());
+                    const auto preview =
+                        previewChoice(file, 1, left.source.contributionId, ChoiceAction::ResolveUsingSide);
+                    CHECK(preview.state == Transition::Applied && preview.before == "right first\n"
+                          && preview.replacement.empty());
                     CHECK(applyChoice(file, preview) == Transition::Applied);
                     break;
                 }
@@ -1412,7 +1586,8 @@ public:
             const std::string inside = "<<<<<<< ours\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
             CHECK(scanMarkers(inside).orphans.size() == 1 && scanMarkers(inside).blocks.front().separator.line == 2);
             const auto assembled = scanMarkers(inside, {{13, 27}});
-            CHECK(assembled.orphans.empty() && assembled.blocks.size() == 1 && assembled.blocks.front().separator.line == 3);
+            CHECK(assembled.orphans.empty() && assembled.blocks.size() == 1
+                  && assembled.blocks.front().separator.line == 3);
         });
         suite.run("a heading underline both sides keep does not block Mark resolved", [] {
             auto chosen = test_support::headingFile();
@@ -1440,7 +1615,8 @@ public:
                 auto file = test_support::headingFile();
                 const auto block = file.markers().blocks.front();
                 const auto line = kind == MarkerKind::Begin ? block.begin
-                    : kind == MarkerKind::Separator ? block.separator : block.end;
+                    : kind == MarkerKind::Separator         ? block.separator
+                                                            : block.end;
                 CHECK(file.editResult(1, {line.bytes, ""}) == Transition::Applied);
                 const auto remaining = file.markers();
                 CHECK(remaining.blocks.empty() && remaining.orphans.size() == 2);
@@ -1452,9 +1628,11 @@ public:
             }
         });
         suite.run("scanMarkers counts earlier text as content only inside a base region", [] {
-            const std::string text = "<<<<<<< ours\nleft\n||||||| base\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
+            const std::string text =
+                "<<<<<<< ours\nleft\n||||||| base\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
             const auto plain = scanMarkers(text);
-            CHECK(plain.blocks.front().separator.line == 4 && plain.orphans.size() == 1 && plain.orphans.front().line == 5);
+            CHECK(plain.blocks.front().separator.line == 4 && plain.orphans.size() == 1
+                  && plain.orphans.front().line == 5);
             // The underline lies in the earlier text, so the next separator closes the base.
             const auto assembled = scanMarkers(text, {}, {{31, 45}});
             CHECK(assembled.orphans.empty() && assembled.blocks.size() == 1);
@@ -1493,9 +1671,11 @@ public:
         });
         suite.run("a diff3 block without marker-like base text is assembled as before", [] {
             const std::string left = "intro\nleft line\ntail\n";
-            const std::string launch = "intro\n<<<<<<< ours\nleft line\n||||||| base\nbase line\n=======\nright line\n>>>>>>> theirs\ntail\n";
+            const std::string launch =
+                "intro\n<<<<<<< ours\nleft line\n||||||| base\nbase line\n=======\nright line\n>>>>>>> theirs\ntail\n";
             auto file = test_support::diff3File(left, "intro\nright line\ntail\n", "intro\nbase line\ntail\n", launch);
-            auto plain = test_support::diff3File(left, "intro\nright line\ntail\n", "intro\nbase line\ntail\n", launch, false);
+            auto plain =
+                test_support::diff3File(left, "intro\nright line\ntail\n", "intro\nbase line\ntail\n", launch, false);
             CHECK(file.markers() == plain.markers() && file.markers() == scanMarkers(launch));
             CHECK(file.markerSections() == plain.markerSections() && file.markerSections().size() == 1);
             CHECK(choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide) == Transition::Applied);
@@ -1503,7 +1683,8 @@ public:
             CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
         });
         suite.run("scanMarkers closes a base ending in a separator line where right text follows", [] {
-            const std::string text = "<<<<<<< ours\nleft\n||||||| base\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
+            const std::string text =
+                "<<<<<<< ours\nleft\n||||||| base\nTitle\n=======\n=======\nright\n>>>>>>> theirs\n";
             const ByteRange title{31, 37}, lines{37, 53}, right{53, 59};
             // Without right-side text after the second line, the first one closes the base.
             CHECK(scanMarkers(text, {}, {title}, {lines}) == scanMarkers(text));
@@ -1554,8 +1735,9 @@ public:
             const std::string earlier = "intro\nTitle\n=======\ntail\n";
             const std::string right = "intro\n=======\nRight\ntail\n";
             const auto merged = test_support::gitDiff3(left, earlier, right);
-            CHECK(merged == "intro\n<<<<<<< ours\nLeft\n-----\n||||||| base\nTitle\n=======\n=======\n=======\nRight\n"
-                            ">>>>>>> theirs\ntail\n");
+            CHECK(merged
+                  == "intro\n<<<<<<< ours\nLeft\n-----\n||||||| base\nTitle\n=======\n=======\n=======\nRight\n"
+                     ">>>>>>> theirs\ntail\n");
             resolvesDiff3Block(left, earlier, right, merged, 7);
         });
         suite.run("Git's separator lies between a base ending in a separator line and left text", [] {
@@ -1566,8 +1748,9 @@ public:
             const std::string earlier = "intro\nTitle\n=======\ntail\n";
             const std::string right = "intro\nLeft\nRight\n-----\ntail\n";
             const auto merged = test_support::gitDiff3(left, earlier, right);
-            CHECK(merged == "intro\n<<<<<<< ours\nLeft\n-----\n||||||| base\nTitle\n=======\n=======\nLeft\nRight\n-----\n"
-                            ">>>>>>> theirs\ntail\n");
+            CHECK(merged
+                  == "intro\n<<<<<<< ours\nLeft\n-----\n||||||| base\nTitle\n=======\n=======\nLeft\nRight\n-----\n"
+                     ">>>>>>> theirs\ntail\n");
             resolvesDiff3Block(left, earlier, right, merged, 7);
         });
         suite.run("an outside-app file keeps its support blocker and recorded failures only", [] {
@@ -1613,22 +1796,30 @@ public:
         });
         for (const auto outcome : {Outcome::Failed, Outcome::Uncertain}) {
             for (int step = 0; step != 3; ++step) {
-                suite.run("failed or uncertain outcome retains snapshots " + std::to_string(step)
-                          + '/' + std::to_string(static_cast<int>(outcome)), [=] {
-                    FileSession file("id", "file", draft());
-                    resolve(file);
-                    const std::array failures{Blocker::CheckpointFailed, Blocker::WriteFailed, Blocker::StageFailed};
-                    if (step == 0) CHECK(file.recordCheckpoint(1, outcome, "diagnostic") == Transition::Applied);
-                    if (step == 1) CHECK(file.recordWrite(1, outcome, "diagnostic") == Transition::Applied);
-                    if (step == 2) CHECK(file.recordStage(1, outcome, {}, {}, "diagnostic") == Transition::Applied);
-                    CHECK(file.checkpoint()->id == 1 && file.written()->id == 1 && file.staged()->revision.id == 1);
-                    CHECK(!file.facts().resolved);
-                    CHECK(has(file, outcome == Outcome::Uncertain ? Blocker::UncertainOutcome
-                                                                : failures[static_cast<std::size_t>(step)]));
-                    const std::array statuses{FileStatus::CheckpointFailed, FileStatus::WriteFailed, FileStatus::StageFailed};
-                    CHECK(file.facts().status == (outcome == Outcome::Uncertain ? FileStatus::OutcomeUncertain
-                                                                : statuses[static_cast<std::size_t>(step)]));
-                });
+                suite.run("failed or uncertain outcome retains snapshots " + std::to_string(step) + '/'
+                              + std::to_string(static_cast<int>(outcome)),
+                          [=] {
+                              FileSession file("id", "file", draft());
+                              resolve(file);
+                              const std::array failures{Blocker::CheckpointFailed, Blocker::WriteFailed,
+                                                        Blocker::StageFailed};
+                              if (step == 0)
+                                  CHECK(file.recordCheckpoint(1, outcome, "diagnostic") == Transition::Applied);
+                              if (step == 1) CHECK(file.recordWrite(1, outcome, "diagnostic") == Transition::Applied);
+                              if (step == 2)
+                                  CHECK(file.recordStage(1, outcome, {}, {}, "diagnostic") == Transition::Applied);
+                              CHECK(file.checkpoint()->id == 1 && file.written()->id == 1
+                                    && file.staged()->revision.id == 1);
+                              CHECK(!file.facts().resolved);
+                              CHECK(has(file,
+                                        outcome == Outcome::Uncertain ? Blocker::UncertainOutcome
+                                                                      : failures[static_cast<std::size_t>(step)]));
+                              const std::array statuses{FileStatus::CheckpointFailed, FileStatus::WriteFailed,
+                                                        FileStatus::StageFailed};
+                              CHECK(file.facts().status
+                                    == (outcome == Outcome::Uncertain ? FileStatus::OutcomeUncertain
+                                                                      : statuses[static_cast<std::size_t>(step)]));
+                          });
             }
         }
         suite.run("checkpoint discard fences delayed callbacks even after undo", [] {
@@ -1672,45 +1863,52 @@ public:
         });
         for (const auto outcome : {Outcome::Succeeded, Outcome::Uncertain}) {
             suite.run("staged discard cannot pretend a newer write did not happen "
-                      + std::to_string(static_cast<int>(outcome)), [=] {
-                FileSession file("id", "file", draft());
-                resolve(file);
-                CHECK(file.replaceDraft(1, draft("new")) == Transition::Applied);
-                const auto newer = file.current().id;
-                CHECK(file.beginMarkResolved(newer) == Transition::Applied);
-                CHECK(file.recordCheckpoint(newer, Outcome::Succeeded) == Transition::Applied);
-                CHECK(file.recordWrite(newer, outcome) == Transition::Applied);
-                CHECK(file.discardToStaged(newer) == Transition::Blocked);
-                CHECK(file.current().id == newer && file.staged()->revision.id == 1);
-            });
+                          + std::to_string(static_cast<int>(outcome)),
+                      [=] {
+                          FileSession file("id", "file", draft());
+                          resolve(file);
+                          CHECK(file.replaceDraft(1, draft("new")) == Transition::Applied);
+                          const auto newer = file.current().id;
+                          CHECK(file.beginMarkResolved(newer) == Transition::Applied);
+                          CHECK(file.recordCheckpoint(newer, Outcome::Succeeded) == Transition::Applied);
+                          CHECK(file.recordWrite(newer, outcome) == Transition::Applied);
+                          CHECK(file.discardToStaged(newer) == Transition::Blocked);
+                          CHECK(file.current().id == newer && file.staged()->revision.id == 1);
+                      });
         }
         for (const auto outcome : {Outcome::Succeeded, Outcome::Failed, Outcome::Uncertain}) {
             for (const bool saveBeforeReview : {false, true}) {
-                suite.run("delayed latest-review write after newer Save "
-                          + std::to_string(static_cast<int>(outcome)) + '/' + std::to_string(saveBeforeReview), [=] {
-                    FileSession file("id", "file", draft());
-                    if (saveBeforeReview) CHECK(file.recordCheckpoint(1, Outcome::Succeeded) == Transition::Applied);
-                    CHECK(file.beginMarkResolved(1) == Transition::Applied);
-                    if (!saveBeforeReview) CHECK(file.recordCheckpoint(1, Outcome::Succeeded) == Transition::Applied);
-                    CHECK(file.replaceDraft(1, draft("new saved draft")) == Transition::Applied);
-                    const auto newer = file.current().id;
-                    CHECK(file.recordCheckpoint(newer, Outcome::Succeeded) == Transition::Applied);
-                    CHECK(file.recordWrite(1, outcome, "delayed write diagnostic") == Transition::Applied);
-                    CHECK(file.writeOutcome()->revision == 1 && file.writeOutcome()->outcome == outcome);
-                    CHECK(file.writeOutcome()->detail == "delayed write diagnostic");
-                    CHECK(file.checkpoint()->id == newer && file.current().id == newer);
-                    CHECK(!file.facts().unsaved && file.facts().needsReview && !file.facts().resolved);
-                    CHECK(file.reviewed()->revision.id == 1);
-                    if (outcome == Outcome::Succeeded) {
-                        CHECK(file.written()->id == 1 && file.written()->draft == draft());
-                        CHECK(file.facts().status == FileStatus::WrittenUnresolved);
-                        CHECK(file.recordStage(1, Outcome::Succeeded, "earlier", "100644") == Transition::Applied);
-                        CHECK(file.facts().earlierStaged && !file.facts().resolved);
-                    } else {
-                        CHECK(!file.written());
-                        CHECK(file.facts().status == (outcome == Outcome::Failed ? FileStatus::WriteFailed : FileStatus::OutcomeUncertain));
-                    }
-                });
+                suite.run("delayed latest-review write after newer Save " + std::to_string(static_cast<int>(outcome))
+                              + '/' + std::to_string(saveBeforeReview),
+                          [=] {
+                              FileSession file("id", "file", draft());
+                              if (saveBeforeReview)
+                                  CHECK(file.recordCheckpoint(1, Outcome::Succeeded) == Transition::Applied);
+                              CHECK(file.beginMarkResolved(1) == Transition::Applied);
+                              if (!saveBeforeReview)
+                                  CHECK(file.recordCheckpoint(1, Outcome::Succeeded) == Transition::Applied);
+                              CHECK(file.replaceDraft(1, draft("new saved draft")) == Transition::Applied);
+                              const auto newer = file.current().id;
+                              CHECK(file.recordCheckpoint(newer, Outcome::Succeeded) == Transition::Applied);
+                              CHECK(file.recordWrite(1, outcome, "delayed write diagnostic") == Transition::Applied);
+                              CHECK(file.writeOutcome()->revision == 1 && file.writeOutcome()->outcome == outcome);
+                              CHECK(file.writeOutcome()->detail == "delayed write diagnostic");
+                              CHECK(file.checkpoint()->id == newer && file.current().id == newer);
+                              CHECK(!file.facts().unsaved && file.facts().needsReview && !file.facts().resolved);
+                              CHECK(file.reviewed()->revision.id == 1);
+                              if (outcome == Outcome::Succeeded) {
+                                  CHECK(file.written()->id == 1 && file.written()->draft == draft());
+                                  CHECK(file.facts().status == FileStatus::WrittenUnresolved);
+                                  CHECK(file.recordStage(1, Outcome::Succeeded, "earlier", "100644")
+                                        == Transition::Applied);
+                                  CHECK(file.facts().earlierStaged && !file.facts().resolved);
+                              } else {
+                                  CHECK(!file.written());
+                                  CHECK(file.facts().status
+                                        == (outcome == Outcome::Failed ? FileStatus::WriteFailed
+                                                                       : FileStatus::OutcomeUncertain));
+                              }
+                          });
             }
         }
         suite.run("hand edits outside every region keep their ranges through undo, redo, choices and replay", [] {
@@ -1742,9 +1940,8 @@ public:
             CHECK(right != std::string::npos);
             const auto after = ranges(file);
             CHECK(after.size() == 2 && (after.front() == ByteRange{0, 6}));
-            CHECK(std::none_of(after.begin(), after.end(), [&](const auto &range) {
-                return range.begin < right + 25 && right < range.end;
-            }));
+            CHECK(std::none_of(after.begin(), after.end(),
+                               [&](const auto &range) { return range.begin < right + 25 && right < range.end; }));
             // A whole draft from the editor counts the lines it changed.
             auto whole = test_support::choiceFile();
             auto draft = whole.current().draft;
@@ -1752,24 +1949,24 @@ public:
             draft.text.replace(shared, 6, "BRIDGE");
             CHECK(whole.replaceDraft(1, draft) == Transition::Applied);
             CHECK(ranges(whole).size() == 1 && ranges(whole).front().begin <= shared
-                && shared + 6 <= ranges(whole).front().end);
+                  && shared + 6 <= ranges(whole).front().end);
             // Recovery replay restores the recorded ranges. A record without them,
             // as written before they were recorded, replays with none.
             auto replay = test_support::choiceFile();
             CHECK(replay.replaceDraft(1, typed.draft, std::set<std::string>{}, {{0, 6}}) == Transition::Applied);
             CHECK((ranges(replay) == Ranges{{0, 6}}));
             CHECK(replay.replaceDraft(replay.current().id, typed.draft, std::set<std::string>{}, {{0, 6}})
-                == Transition::NoChange);
+                  == Transition::NoChange);
             CHECK(replay.replaceDraft(replay.current().id, typed.draft, std::set<std::string>{}, {{0, 3}})
-                == Transition::Applied);
+                  == Transition::Applied);
             CHECK(replay.undo(replay.current().id) == Transition::Applied && (ranges(replay) == Ranges{{0, 6}}));
             auto older = test_support::choiceFile();
             CHECK(older.replaceDraft(1, typed.draft, std::set<std::string>{}) == Transition::Applied);
             CHECK(ranges(older).empty() && older.current().draft == typed.draft);
             // Ranges must be in order, apart and inside the text, and only replay supplies them.
             auto refused = test_support::choiceFile();
-            for (const auto &bad : std::vector<Ranges>{{{4, 2}}, {{0, 3}, {3, 6}}, {{3, 6}, {0, 2}},
-                     {{0, typed.draft.text.size() + 1}}})
+            for (const auto &bad :
+                 std::vector<Ranges>{{{4, 2}}, {{0, 3}, {3, 6}}, {{3, 6}, {0, 2}}, {{0, typed.draft.text.size() + 1}}})
                 CHECK(refused.replaceDraft(1, typed.draft, std::set<std::string>{}, bad) == Transition::InvalidAnchor);
             CHECK(refused.replaceDraft(1, typed.draft, std::nullopt, {{0, 6}}) == Transition::InvalidAnchor);
             CHECK(refused.current().id == 1 && ranges(refused).empty());
@@ -1807,8 +2004,8 @@ public:
                 FileSnapshots captured;
                 captured.path = "limit.txt";
                 captured.provenance.sessionId = "limits";
-                captured.stage2 = SourceSnapshot{"source-object", "100644", text,
-                    {text, text, {}}, "source-commit", "Source"};
+                captured.stage2 =
+                    SourceSnapshot{"source-object", "100644", text, {text, text, {}}, "source-commit", "Source"};
                 captured.launchResult.text = {text, text, {}};
                 return FileSession("limit", captured.path, {text, {}, 0}, Support::Supported, {}, captured);
             };
@@ -1847,11 +2044,11 @@ public:
             FileSnapshots largeSource;
             largeSource.path = "limit.txt";
             largeSource.provenance.sessionId = "limits";
-            largeSource.stage2 = SourceSnapshot{"source-object", "100644", lines(4001),
-                {lines(4001), lines(4001), {}}, "source-commit", "Source"};
+            largeSource.stage2 = SourceSnapshot{"source-object", "100644", lines(4001), {lines(4001), lines(4001), {}},
+                                                "source-commit", "Source"};
             largeSource.launchResult.text = {lines(10), lines(10), {}};
             CHECK(FileSession("limit", "limit.txt", {lines(10), {}, 0}, Support::Supported, {}, largeSource).support()
-                == Support::LargeFile);
+                  == Support::LargeFile);
             // Without captures there is no correspondence to build, so nothing waits.
             CHECK(FileSession("plain", "plain.txt", {lines(4001), {}, 0}).support() == Support::Supported);
             CHECK(admit(belowLine).support() == Support::Supported);
@@ -1876,7 +2073,7 @@ public:
             FileSession file("id", "file", {lines(4000), {}, 0});
             CHECK(file.support() == Support::Supported);
             CHECK(file.editResult(1, {{file.current().draft.text.size(), file.current().draft.text.size()}, "z\n"})
-                == Transition::Applied);
+                  == Transition::Applied);
             CHECK(file.current().draft.text == lines(4000) + "z\n");
             CHECK(file.editResult(file.current().id, {{0, 1}, "y"}) == Transition::Applied);
             CHECK(file.current().draft.text.starts_with("y"));

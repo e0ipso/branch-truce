@@ -36,16 +36,14 @@ struct Passage {
 class CorrespondenceAlgorithm {
 public:
     virtual ~CorrespondenceAlgorithm() = default;
-    [[nodiscard]] virtual std::vector<Passage> compare(
-        std::string_view source, std::string_view result) const = 0;
+    [[nodiscard]] virtual std::vector<Passage> compare(std::string_view source, std::string_view result) const = 0;
 };
 
 // Exact line LCS, retaining only matches shared by every optimal alignment.
 // See Correspondence.md for the cost, conservative range policy and evidence.
 class ExactLineCorrespondence final : public CorrespondenceAlgorithm {
 public:
-    [[nodiscard]] std::vector<Passage> compare(
-        std::string_view source, std::string_view result) const override;
+    [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override;
 };
 
 struct SourceAnchor {
@@ -121,20 +119,18 @@ public:
     // edge of dropped text stays ambiguous.
     void settle(SourceSide side, const std::vector<ByteRange> &dropped);
     [[nodiscard]] CorrespondenceMap atRevision(RevisionId revision) const;
-    [[nodiscard]] CorrespondenceMap edited(RevisionId revision, const ResultEdit &edit,
-                                         bool manual = true,
-                                         const std::string &selectedAnchor = {}) const;
+    [[nodiscard]] CorrespondenceMap edited(RevisionId revision, const ResultEdit &edit, bool manual = true,
+                                           const std::string &selectedAnchor = {}) const;
     // A choice that replaces `range` with the text its `spans` keep, in the
     // given order. An anchor inside a span keeps its place in that span's text,
     // and one on exactly a dropped range is left empty where that range was.
     // Any other anchor inside `range` or across its edges is invalidated.
     [[nodiscard]] CorrespondenceMap rebuilt(RevisionId revision, ByteRange range,
-                                          const std::vector<KeptSpan> &spans) const;
+                                            const std::vector<KeptSpan> &spans) const;
     // Whole-buffer editor updates lack an edit location. Transform only where
     // every optimal old-to-new alignment agrees, otherwise retain ambiguity.
     // A whole-file command passes manual false and clears every hand edit.
-    [[nodiscard]] CorrespondenceMap recomputed(RevisionId revision, std::string result,
-                                             bool manual = true) const;
+    [[nodiscard]] CorrespondenceMap recomputed(RevisionId revision, std::string result, bool manual = true) const;
     [[nodiscard]] std::set<std::string> handEditedAnchors() const;
     // Recovery replays whole drafts, which cannot tell typing from a choice,
     // so it restores the recorded flags. False if an anchor is unknown.

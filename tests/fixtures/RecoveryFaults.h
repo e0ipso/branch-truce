@@ -10,7 +10,11 @@ enum class Point { None, PayloadSync, JournalSync };
 inline Point next = Point::None;
 inline int failures = 0;
 struct Failure {
-    explicit Failure(Point point) { next = point; failures = 0; }
+    explicit Failure(Point point)
+    {
+        next = point;
+        failures = 0;
+    }
     ~Failure() { next = Point::None; }
 };
 }
@@ -26,7 +30,8 @@ extern "C" int __wrap_fsync(int descriptor)
         if (size >= 0) {
             const std::string_view target(path, static_cast<std::size_t>(size));
             const bool matches = recovery_faults::next == recovery_faults::Point::JournalSync
-                ? target.ends_with("/journal") : target.find("/payloads/") != std::string_view::npos;
+                ? target.ends_with("/journal")
+                : target.find("/payloads/") != std::string_view::npos;
             if (matches) {
                 recovery_faults::next = recovery_faults::Point::None;
                 ++recovery_faults::failures;

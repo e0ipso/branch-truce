@@ -10,8 +10,8 @@
 #include <QJsonDocument>
 #include <QLockFile>
 #include <QSaveFile>
-#include <utility>
 #include <unistd.h>
+#include <utility>
 
 namespace branch_truce::storage {
 namespace {
@@ -22,7 +22,8 @@ constexpr auto directoryPermissions = filePermissions | QFileDevice::ExeOwner;
 bool validDigest(const QByteArray &value)
 {
     if (value.size() != 64) return false;
-    for (const auto c : value) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+    for (const auto c : value)
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
     return true;
 }
 
@@ -39,8 +40,10 @@ bool regularPrivateFile(const QString &path)
 {
     const QFileInfo info(path);
     return !info.isSymLink() && info.isFile() && info.ownerId() == ::geteuid()
-        && (info.permissions() & (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup
-            | QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther)) == 0;
+        && (info.permissions()
+            & (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup | QFileDevice::ReadOther
+               | QFileDevice::WriteOther | QFileDevice::ExeOther))
+        == 0;
 }
 
 bool atomicFile(const QString &path, const QByteArray &bytes)
@@ -48,14 +51,11 @@ bool atomicFile(const QString &path, const QByteArray &bytes)
     if (QFileInfo::exists(path) || QFileInfo(path).isSymLink()) return false;
     QSaveFile file(path);
     file.setDirectWriteFallback(false);
-    return file.open(QIODevice::WriteOnly) && file.setPermissions(filePermissions)
-        && file.write(bytes) == bytes.size() && file.flush() && ::fsync(file.handle()) == 0 && file.commit();
+    return file.open(QIODevice::WriteOnly) && file.setPermissions(filePermissions) && file.write(bytes) == bytes.size()
+        && file.flush() && ::fsync(file.handle()) == 0 && file.commit();
 }
 
-bool synchronize(QFile &file)
-{
-    return file.flush() && ::fsync(file.handle()) == 0;
-}
+bool synchronize(QFile &file) { return file.flush() && ::fsync(file.handle()) == 0; }
 }
 
 RecoveryStore::RecoveryStore(QString directory) : directory_(std::move(directory)) {}
@@ -74,7 +74,10 @@ QByteArray RecoveryStore::payload(const QByteArray &hash, QString *error) const
         return {};
     }
     if (file.size() > static_cast<qint64>(branch_truce::kMaxRecoveryPayloadBytes)) {
-        if (error) *error = QStringLiteral("Recovery payload of %1 bytes exceeds the 8388608 byte limit; pending input is retained.").arg(file.size());
+        if (error)
+            *error = QStringLiteral(
+                         "Recovery payload of %1 bytes exceeds the 8388608 byte limit; pending input is retained.")
+                         .arg(file.size());
         return {};
     }
     const auto bytes = file.readAll();
@@ -96,8 +99,8 @@ bool RecoveryStore::openJournal(QFile &file, RecoveryRead &result) const
     const QFileInfo root(directory_);
     const QFileInfo payloads(directory_ + QStringLiteral("/payloads"));
     file.setFileName(path);
-    if (root.isSymLink() || !root.isDir() || payloads.isSymLink() || !payloads.isDir()
-        || !regularPrivateFile(path) || !file.open(QIODevice::ReadOnly)) {
+    if (root.isSymLink() || !root.isDir() || payloads.isSymLink() || !payloads.isDir() || !regularPrivateFile(path)
+        || !file.open(QIODevice::ReadOnly)) {
         result.error = QStringLiteral("Recovery journal is unavailable or unsafe.");
         return false;
     }
@@ -150,8 +153,7 @@ RecoveryRead RecoveryStore::parse(QIODevice &file) const
             || record.value(QStringLiteral("version")).toInt() != 1
             || record.value(QStringLiteral("sequence")).toString() != QString::number(sequence)
             || record.value(QStringLiteral("previous")).toString().toLatin1() != result.lastDigest
-            || !record.value(QStringLiteral("payloads")).isArray()
-            || state.value(QStringLiteral("schema")).toInt() != 1
+            || !record.value(QStringLiteral("payloads")).isArray() || state.value(QStringLiteral("schema")).toInt() != 1
             || state.value(QStringLiteral("transactionId")).toString().isEmpty()) {
             result.error = QStringLiteral("Recovery record schema or ordering is invalid.");
             return result;
@@ -206,7 +208,7 @@ const RecoveryStore::JournalEnd *RecoveryStore::refreshEnd(QString *error)
         return nullptr;
     }
     end_ = JournalEnd{bytes.left(current.validBytes), current.transactions.size(), current.lastDigest,
-        current.transactions.isEmpty() ? QJsonObject{} : current.transactions.back()};
+                      current.transactions.isEmpty() ? QJsonObject{} : current.transactions.back()};
     return &*end_;
 }
 
@@ -218,7 +220,8 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
         || transaction.state.value(QStringLiteral("transactionId")).toString().isEmpty())
         return {false, QStringLiteral("Invalid recovery transaction.")};
     if (!privateDirectory(directory_) || !privateDirectory(directory_ + QStringLiteral("/payloads")))
-        return {false, QStringLiteral("Could not create private recovery storage; retry after repairing its location.")};
+        return {false,
+                QStringLiteral("Could not create private recovery storage; retry after repairing its location.")};
     QLockFile lock(directory_ + QStringLiteral("/journal.lock"));
     if (!lock.tryLock(0)) return {false, QStringLiteral("Recovery storage is busy; retry the pending action.")};
     const auto journalPath = directory_ + QStringLiteral("/journal");
@@ -232,7 +235,10 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
         if (!validDigest(entry.key()) || digest(entry.value()) != entry.key())
             return {false, QStringLiteral("Invalid recovery payload identity.")};
         if (entry.value().size() > static_cast<qsizetype>(branch_truce::kMaxRecoveryPayloadBytes))
-            return {false, QStringLiteral("Recovery payload of %1 bytes exceeds the 8388608 byte limit; pending input is retained.").arg(entry.value().size())};
+            return {false,
+                    QStringLiteral(
+                        "Recovery payload of %1 bytes exceeds the 8388608 byte limit; pending input is retained.")
+                        .arg(entry.value().size())};
         const auto path = directory_ + QStringLiteral("/payloads/") + QString::fromLatin1(entry.key());
         if (!QFileInfo::exists(path) && !atomicFile(path, entry.value()))
             return {false, QStringLiteral("Could not commit a recovery payload; pending input is retained.")};
@@ -252,17 +258,21 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
             == transaction.state.value(QStringLiteral("transactionId"))) {
         if (current->lastState != transaction.state)
             return {false, QStringLiteral("Recovery transaction identity was reused for different work.")};
-        return synchronize(journal) ? RecoveryCommit{true, {}}
+        return synchronize(journal)
+            ? RecoveryCommit{true, {}}
             : RecoveryCommit{false, QStringLiteral("Could not flush the pending recovery transaction; retry.")};
     }
     const QJsonObject record{{QStringLiteral("version"), 1},
-        {QStringLiteral("sequence"), QString::number(current->records + 1)},
-        {QStringLiteral("previous"), QString::fromLatin1(current->lastDigest)},
-        {QStringLiteral("payloads"), references}, {QStringLiteral("state"), transaction.state}};
+                             {QStringLiteral("sequence"), QString::number(current->records + 1)},
+                             {QStringLiteral("previous"), QString::fromLatin1(current->lastDigest)},
+                             {QStringLiteral("payloads"), references},
+                             {QStringLiteral("state"), transaction.state}};
     const auto body = QJsonDocument(record).toJson(QJsonDocument::Compact);
     const auto bodyDigest = digest(body);
     const auto frame = QJsonDocument(QJsonObject{{QStringLiteral("record"), QString::fromLatin1(body.toBase64())},
-        {QStringLiteral("sha256"), QString::fromLatin1(bodyDigest)}}).toJson(QJsonDocument::Compact) + '\n';
+                                                 {QStringLiteral("sha256"), QString::fromLatin1(bodyDigest)}})
+                           .toJson(QJsonDocument::Compact)
+        + '\n';
     if (journal.write(frame) != frame.size() || !synchronize(journal))
         return {false, QStringLiteral("Recovery commit failed; pending input is retained for retry.")};
     if (end_) {

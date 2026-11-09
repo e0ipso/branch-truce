@@ -2,10 +2,6 @@
 #include "mergetool/MergetoolLauncher.h"
 #include "mergetool/MergetoolProtocol.h"
 
-#include <climits>
-#include <optional>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -18,6 +14,10 @@
 #include <QThread>
 #include <QTimer>
 #include <QUuid>
+#include <climits>
+#include <optional>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace branch_truce {
 namespace {
@@ -61,8 +61,8 @@ std::optional<QString> guiProgram(QString *error)
     if (length <= 0 || length >= link.size()) return QCoreApplication::applicationFilePath();
     link.truncate(length);
     // A file really named "... (deleted)" can still be the running image.
-    struct stat running {};
-    struct stat named {};
+    struct stat running{};
+    struct stat named{};
     if (::stat("/proc/self/exe", &running) == 0 && ::stat(link.constData(), &named) == 0
         && running.st_dev == named.st_dev && running.st_ino == named.st_ino)
         return QFile::decodeName(link);
@@ -72,7 +72,8 @@ std::optional<QString> guiProgram(QString *error)
     const auto installed = QFile::decodeName(link);
     const QFileInfo program(installed);
     if (program.isFile() && program.isExecutable()) return installed;
-    *error = QStringLiteral("%1 was removed after this launcher started, so it cannot start Branch Truce.").arg(installed);
+    *error =
+        QStringLiteral("%1 was removed after this launcher started, so it cannot start Branch Truce.").arg(installed);
     return std::nullopt;
 }
 
@@ -154,7 +155,8 @@ int runMergetoolLauncher(int argc, char **argv, const QString &gitExecutable)
     discovery.exec();
     if (!discovered || discovered->outcome != git::Outcome::Success || !discovered->repository.supported) {
         return fail(discovered && !discovered->diagnostic.isEmpty()
-            ? discovered->diagnostic : QStringLiteral("This repository operation cannot join a mergetool session."));
+                        ? discovered->diagnostic
+                        : QStringLiteral("This repository operation cannot join a mergetool session."));
     }
 
     MergetoolSources sources;
@@ -169,11 +171,13 @@ int runMergetoolLauncher(int argc, char **argv, const QString &gitExecutable)
     };
     if (!readSide("BASE", &sources.base, &sources.basePresent)
         || !readSide("LOCAL", &sources.local, &sources.localPresent)
-        || !readSide("REMOTE", &sources.remote, &sources.remotePresent)) return fail(error);
+        || !readSide("REMOTE", &sources.remote, &sources.remotePresent))
+        return fail(error);
 
     const auto key = mergetoolSessionKey(discovered->repository);
     const auto invocation = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const auto intake = mergetoolIntakeRoot() + QLatin1Char('/') + QString::fromLatin1(key) + QLatin1Char('/') + invocation;
+    const auto intake =
+        mergetoolIntakeRoot() + QLatin1Char('/') + QString::fromLatin1(key) + QLatin1Char('/') + invocation;
     if (key.isEmpty() || !writeMergetoolIntake(intake, invocation, sources, &error))
         return fail(error.isEmpty() ? QStringLiteral("The mergetool inputs could not be kept.") : error);
 
@@ -193,14 +197,15 @@ int runMergetoolLauncher(int argc, char **argv, const QString &gitExecutable)
     if (!mergetoolPeerIsCurrentUser(socket.socketDescriptor()))
         return fail(QStringLiteral("The session socket does not belong to this user."));
 
-    const QJsonObject attach{{QStringLiteral("v"), 1}, {QStringLiteral("kind"), QStringLiteral("attach")},
-        {QStringLiteral("invocation"), invocation}, {QStringLiteral("intake"), intake},
-        {QStringLiteral("path"), QString::fromLatin1(sources.path.toHex())}};
+    const QJsonObject attach{{QStringLiteral("v"), 1},
+                             {QStringLiteral("kind"), QStringLiteral("attach")},
+                             {QStringLiteral("invocation"), invocation},
+                             {QStringLiteral("intake"), intake},
+                             {QStringLiteral("path"), QString::fromLatin1(sources.path.toHex())}};
     if (!writeMergetoolFrame(&socket, attach, &error)) return fail(error);
     QByteArray buffer = socket.readAll();
     QJsonObject reply;
-    if (!readFrame(&socket, &buffer, &reply, false))
-        return fail(QStringLiteral("The session rejected this path."));
+    if (!readFrame(&socket, &buffer, &reply, false)) return fail(QStringLiteral("The session rejected this path."));
     const bool attached = reply.value(QStringLiteral("kind")).toString() == QLatin1String("attached")
         && reply.value(QStringLiteral("invocation")).toString() == invocation;
     if (!attached) {

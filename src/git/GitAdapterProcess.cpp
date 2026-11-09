@@ -33,10 +33,10 @@ using detail::secureExecutable;
 }
 bool sameExecutable(const struct stat &a, const struct stat &b)
 {
-    return a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_mode == b.st_mode
-        && a.st_uid == b.st_uid && a.st_gid == b.st_gid && a.st_size == b.st_size
-        && a.st_mtim.tv_sec == b.st_mtim.tv_sec && a.st_mtim.tv_nsec == b.st_mtim.tv_nsec
-        && a.st_ctim.tv_sec == b.st_ctim.tv_sec && a.st_ctim.tv_nsec == b.st_ctim.tv_nsec;
+    return a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_mode == b.st_mode && a.st_uid == b.st_uid
+        && a.st_gid == b.st_gid && a.st_size == b.st_size && a.st_mtim.tv_sec == b.st_mtim.tv_sec
+        && a.st_mtim.tv_nsec == b.st_mtim.tv_nsec && a.st_ctim.tv_sec == b.st_ctim.tv_sec
+        && a.st_ctim.tv_nsec == b.st_ctim.tv_nsec;
 }
 QProcessEnvironment environment()
 {
@@ -57,9 +57,8 @@ QProcessEnvironment environment()
 }
 QList<QByteArray> prefix()
 {
-    return {"--no-pager", "--literal-pathspecs", "-c", "core.fsmonitor=false",
-            "-c", "core.untrackedCache=false", "-c", "submodule.recurse=false",
-            "-c", "protocol.allow=never", "-c", "credential.helper="};
+    return {"--no-pager", "--literal-pathspecs",     "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
+            "-c",         "submodule.recurse=false", "-c", "protocol.allow=never", "-c", "credential.helper="};
 }
 QString quotedAlternate(const QString &path)
 {
@@ -69,7 +68,8 @@ QString quotedAlternate(const QString &path)
         const auto byte = static_cast<unsigned char>(value);
         if (byte == '"' || byte == '\\' || byte == ':' || byte < 0x20 || byte >= 0x7f) {
             quoted += '\\' + QByteArray::number(byte, 8).rightJustified(3, '0');
-        } else quoted += value;
+        } else
+            quoted += value;
     }
     return QString::fromLatin1(quoted + '"');
 }
@@ -81,15 +81,14 @@ bool detail::exactPath(const QString &path)
 }
 bool detail::secureExecutable(const QString &path, struct stat &identity)
 {
-    if (::stat(QFile::encodeName(path).constData(), &identity) != 0
-        || !S_ISREG(identity.st_mode) || (identity.st_mode & (S_IWGRP | S_IWOTH)) != 0
-        || (identity.st_uid != 0 && identity.st_uid != ::geteuid())
+    if (::stat(QFile::encodeName(path).constData(), &identity) != 0 || !S_ISREG(identity.st_mode)
+        || (identity.st_mode & (S_IWGRP | S_IWOTH)) != 0 || (identity.st_uid != 0 && identity.st_uid != ::geteuid())
         || ::access(QFile::encodeName(path).constData(), X_OK) != 0) {
         return false;
     }
     auto directory = QFileInfo(path).absolutePath();
     for (;;) {
-        struct stat parent {};
+        struct stat parent{};
         if (::stat(QFile::encodeName(directory).constData(), &parent) != 0
             || (parent.st_uid != 0 && parent.st_uid != ::geteuid())
             || ((parent.st_mode & (S_IWGRP | S_IWOTH)) != 0
@@ -146,13 +145,13 @@ GitAdapter::State::State(GitAdapter *owner, const QString &selected) : q(owner)
     });
     QObject::connect(&process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), q,
                      [this](int code, QProcess::ExitStatus status) {
-        drain(false);
-        drain(true);
-        escalation.stop();
-        signalGroup(SIGKILL); // Terminate descendants in our private session.
-        pid = 0;
-        afterProcess(status == QProcess::NormalExit, code);
-    });
+                         drain(false);
+                         drain(true);
+                         escalation.stop();
+                         signalGroup(SIGKILL); // Terminate descendants in our private session.
+                         pid = 0;
+                         afterProcess(status == QProcess::NormalExit, code);
+                     });
     QObject::connect(&deadline, &QTimer::timeout, q, [this] {
         if (phase == Phase::Inspection) {
             inspectionFailed(QStringLiteral("Index reinspection timed out"));
@@ -192,7 +191,9 @@ void GitAdapter::State::observeNativeLaunch()
     launchPipe[1] = -1;
     int error = 0;
     ssize_t count;
-    do { count = ::read(launchPipe[0], &error, sizeof(error)); } while (count < 0 && errno == EINTR);
+    do {
+        count = ::read(launchPipe[0], &error, sizeof(error));
+    } while (count < 0 && errno == EINTR);
     closeLaunchPipe();
     if (count == static_cast<ssize_t>(sizeof(error))) {
         nativeLaunchFailed = true;
@@ -213,7 +214,7 @@ void GitAdapter::State::launch(Phase next, const QList<QByteArray> &arguments, b
     phase = next;
     phaseOutput.clear();
     phaseInput = input;
-    struct stat current {};
+    struct stat current{};
     if (!secureExecutable(executable, current) || !sameExecutable(identity, current)) {
         if (next == Phase::Inspection) {
             inspectionFailed(QStringLiteral("Selected executable changed before reinspection"));
@@ -228,8 +229,9 @@ void GitAdapter::State::launch(Phase next, const QList<QByteArray> &arguments, b
     nativeArguments.append(configuration ? QList<QByteArray>{"--no-pager"} : prefix());
     nativeArguments.append(arguments);
     auto env = environment();
-    if (temporaryObjects && (next == Phase::Operation || next == Phase::CanonicalSize
-                             || next == Phase::CanonicalObject || next == Phase::CanonicalCheckout)) {
+    if (temporaryObjects
+        && (next == Phase::Operation || next == Phase::CanonicalSize || next == Phase::CanonicalObject
+            || next == Phase::CanonicalCheckout)) {
         env.insert(QStringLiteral("GIT_OBJECT_DIRECTORY"), temporaryObjects->path());
         env.insert(QStringLiteral("GIT_ALTERNATE_OBJECT_DIRECTORIES"), quotedAlternate(originalObjectDirectory));
     }
@@ -327,7 +329,8 @@ void GitAdapter::State::drain(bool error)
             if (phase == Phase::Inspection) {
                 inspectionFailed(QStringLiteral("Index reinspection exceeded 1 MiB"));
             } else {
-                stop(Outcome::OutputLimit, QStringLiteral("Git output exceeded %1 bytes; captured prefix is incomplete").arg(outputLimit));
+                stop(Outcome::OutputLimit,
+                     QStringLiteral("Git output exceeded %1 bytes; captured prefix is incomplete").arg(outputLimit));
             }
         }
     }

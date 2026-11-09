@@ -1,10 +1,10 @@
 // Choice previews show how a source action would change the result before the user confirms it.
 #pragma once
-#include <QtQml/qqmlregistration.h>
 #include "core/EditingCommands.h"
 #include <QObject>
 #include <QString>
 #include <QVariantMap>
+#include <QtQml/qqmlregistration.h>
 #include <functional>
 #include <optional>
 #include <variant>
@@ -46,8 +46,8 @@ public:
 
     // Replaces any pending preview. The option must match the scope, with target
     // the choice's contribution ID for Choice. False when nothing is left pending.
-    bool preview(Scope scope, const QString &fileId, const QString &revision,
-                 Option option, const QString &target = {});
+    bool preview(Scope scope, const QString &fileId, const QString &revision, Option option,
+                 const QString &target = {});
     // Applies the pending preview of scope to the selected file. confirm
     // allows a replacement the preview asked to confirm.
     bool apply(Scope scope, bool confirm);

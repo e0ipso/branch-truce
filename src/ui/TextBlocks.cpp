@@ -20,8 +20,8 @@ QTextBlock shown(QTextBlock block, bool forward)
 }
 
 // Appends the markers of one shown block whose layout starts at origin.
-void appendWhitespace(QVariantList &markers, const QTextBlock &block, QPointF origin, const QRectF &area,
-                      qreal stroke, qreal tabWidth)
+void appendWhitespace(QVariantList &markers, const QTextBlock &block, QPointF origin, const QRectF &area, qreal stroke,
+                      qreal tabWidth)
 {
     const auto *lines = block.layout();
     const auto text = block.text();
@@ -38,13 +38,15 @@ void appendWhitespace(QVariantList &markers, const QTextBlock &block, QPointF or
             const bool tab = text.at(at) == QLatin1Char('\t');
             if (!tab && text.at(at) != QLatin1Char(' ')) continue;
             const auto x = origin.x() + line.cursorToX(at);
-            auto width = lines->lineForTextPosition(at + 1).lineNumber() == row
-                ? origin.x() + line.cursorToX(at + 1) - x : 0;
+            auto width =
+                lines->lineForTextPosition(at + 1).lineNumber() == row ? origin.x() + line.cursorToX(at + 1) - x : 0;
             if (width < stroke) width = tab ? tabWidth : stroke;
             if (x >= area.right() || x + width <= area.left()) continue;
-            markers.append(QVariantMap{{QStringLiteral("x"), x - area.left()}, {QStringLiteral("y"), top - area.top()},
-                {QStringLiteral("w"), width}, {QStringLiteral("h"), std::max(line.height(), stroke)},
-                {QStringLiteral("tab"), tab}});
+            markers.append(QVariantMap{{QStringLiteral("x"), x - area.left()},
+                                       {QStringLiteral("y"), top - area.top()},
+                                       {QStringLiteral("w"), width},
+                                       {QStringLiteral("h"), std::max(line.height(), stroke)},
+                                       {QStringLiteral("tab"), tab}});
         }
     }
 }
@@ -63,8 +65,8 @@ void TextBlocks::setDocument(QQuickTextDocument *document)
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     // Qt 6.7 added replacement of the QTextDocument behind the wrapper.
     if (document_)
-        documentSwapConnection_ = connect(document_, &QQuickTextDocument::textDocumentChanged,
-            this, &TextBlocks::reconnectDocument);
+        documentSwapConnection_ =
+            connect(document_, &QQuickTextDocument::textDocumentChanged, this, &TextBlocks::reconnectDocument);
 #endif
     reconnectDocument();
     Q_EMIT documentChanged();
@@ -83,16 +85,15 @@ void TextBlocks::reconnectDocument()
     if (auto *text = text_.data()) {
         connections_.append(connect(text, &QTextDocument::contentsChanged, this, &TextBlocks::layoutChanged));
         connections_.append(connect(text, &QTextDocument::blockCountChanged, this, &TextBlocks::blockCountChanged));
-        connections_.append(connect(text, &QTextDocument::contentsChange, this,
-            [this](int position, int removed, int added) {
+        connections_.append(
+            connect(text, &QTextDocument::contentsChange, this, [this](int position, int removed, int added) {
                 scheduleHiding();
                 scheduleSpacing(position, removed, added);
             }));
         if (auto *layout = text->documentLayout())
-            connections_.append(connect(layout, &QAbstractTextDocumentLayout::documentSizeChanged,
-                this, &TextBlocks::layoutChanged));
-        for (auto block = text->begin(); block.isValid(); block = block.next())
-            hiddenCount_ += !block.isVisible();
+            connections_.append(
+                connect(layout, &QAbstractTextDocumentLayout::documentSizeChanged, this, &TextBlocks::layoutChanged));
+        for (auto block = text->begin(); block.isValid(); block = block.next()) hiddenCount_ += !block.isVisible();
         if (rowSpacing_ > 0) {
             // The result uses application history; sources are read-only. Block
             // formatting must never enter the native document undo stack.
@@ -135,10 +136,13 @@ void TextBlocks::scheduleSpacing(int position, int removed, int added)
     Q_UNUSED(removed);
     if (spacingQueued_) return;
     spacingQueued_ = true;
-    QMetaObject::invokeMethod(this, [this] {
-        spacingQueued_ = false;
-        flushSpacing();
-    }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(
+        this,
+        [this] {
+            spacingQueued_ = false;
+            flushSpacing();
+        },
+        Qt::QueuedConnection);
 }
 
 void TextBlocks::flushSpacing()
@@ -160,10 +164,12 @@ void TextBlocks::applySpacing(QTextDocument *text, qreal spacing, int from, int 
     for (; block.isValid() && block.position() <= to; block = block.next()) {
         auto format = block.blockFormat();
         const bool already = spacing > 0
-            ? format.lineHeightType() == QTextBlockFormat::LineDistanceHeight && qFuzzyCompare(format.lineHeight() + 1, spacing + 1)
+            ? format.lineHeightType() == QTextBlockFormat::LineDistanceHeight
+                && qFuzzyCompare(format.lineHeight() + 1, spacing + 1)
             : !format.hasProperty(QTextFormat::LineHeight) && !format.hasProperty(QTextFormat::LineHeightType);
         if (already) continue;
-        if (spacing > 0) format.setLineHeight(spacing, QTextBlockFormat::LineDistanceHeight);
+        if (spacing > 0)
+            format.setLineHeight(spacing, QTextBlockFormat::LineDistanceHeight);
         else {
             format.clearProperty(QTextFormat::LineHeight);
             format.clearProperty(QTextFormat::LineHeightType);
@@ -190,7 +196,7 @@ void TextBlocks::setHidden(const QVariantList &hidden)
     for (const auto &entry : hidden) {
         const auto map = entry.toMap();
         Fold fold{map.value(QStringLiteral("line")).toInt(), map.value(QStringLiteral("text")).toString(),
-            map.value(QStringLiteral("last")).toInt(), map.value(QStringLiteral("lastText")).toString()};
+                  map.value(QStringLiteral("last")).toInt(), map.value(QStringLiteral("lastText")).toString()};
         if (fold.line <= 0) continue;
         if (fold.last <= fold.line) fold.last = 0;
         folds.append(fold);
@@ -208,9 +214,12 @@ void TextBlocks::scheduleHiding()
 {
     if (applying_ || hidingQueued_ || (folds_.isEmpty() && hiddenCount_ == 0 && rows_.isEmpty())) return;
     hidingQueued_ = true;
-    QMetaObject::invokeMethod(this, [this] {
-        if (hidingQueued_) applyHidden();
-    }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(
+        this,
+        [this] {
+            if (hidingQueued_) applyHidden();
+        },
+        Qt::QueuedConnection);
 }
 
 void TextBlocks::applyHidden()
@@ -293,8 +302,7 @@ qreal TextBlocks::firstRowHeight(QAbstractTextDocumentLayout *layout, const QTex
     // continuations already include the document's line-distance format.
     const auto rect = extent(layout, block);
     const auto *lines = block.layout();
-    if (lines && lines->lineCount() > 1)
-        return lines->lineAt(1).y() - lines->lineAt(0).y();
+    if (lines && lines->lineCount() > 1) return lines->lineAt(1).y() - lines->lineAt(0).y();
     return rect.height();
 }
 
@@ -336,9 +344,10 @@ QVariantList TextBlocks::between(qreal top, qreal bottom) const
         if (rect.top() >= bottom) break;
         if (rect.bottom() <= top) continue;
         blocks.append(QVariantMap{{QStringLiteral("number"), block.blockNumber() + 1},
-            {QStringLiteral("position"), block.position()},
-            {QStringLiteral("top"), rect.top()}, {QStringLiteral("height"), rect.height()},
-            {QStringLiteral("rowHeight"), firstRowHeight(layout, block)}});
+                                  {QStringLiteral("position"), block.position()},
+                                  {QStringLiteral("top"), rect.top()},
+                                  {QStringLiteral("height"), rect.height()},
+                                  {QStringLiteral("rowHeight"), firstRowHeight(layout, block)}});
     }
     return blocks;
 }
@@ -370,7 +379,8 @@ qreal TextBlocks::lineAtY(qreal y) const
         block = previous;
         rect = extent(layout, block);
     }
-    for (auto next = shown(block.next(), true); y >= rect.bottom() && next.isValid(); next = shown(block.next(), true)) {
+    for (auto next = shown(block.next(), true); y >= rect.bottom() && next.isValid();
+         next = shown(block.next(), true)) {
         block = next;
         rect = extent(layout, block);
     }
@@ -464,10 +474,13 @@ void TextBlocks::queueCursorCheck()
 {
     if (cursorCheckQueued_) return;
     cursorCheckQueued_ = true;
-    QMetaObject::invokeMethod(this, [this] {
-        cursorCheckQueued_ = false;
-        Q_EMIT cursorCheckDue();
-    }, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(
+        this,
+        [this] {
+            cursorCheckQueued_ = false;
+            Q_EMIT cursorCheckDue();
+        },
+        Qt::QueuedConnection);
 }
 
 int TextBlocks::settledPosition(int position, int anchor)

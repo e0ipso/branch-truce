@@ -19,15 +19,12 @@ bool succeeded(const std::optional<OperationOutcome> &outcome, RevisionId revisi
 
 std::size_t undecidedCount(const Draft &draft)
 {
-    return static_cast<std::size_t>(std::count_if(
-        draft.decisions.begin(), draft.decisions.end(),
-        [](const auto &entry) { return entry.second.value == DecisionValue::Undecided; }));
+    return static_cast<std::size_t>(
+        std::count_if(draft.decisions.begin(), draft.decisions.end(),
+                      [](const auto &entry) { return entry.second.value == DecisionValue::Undecided; }));
 }
 
-bool exceedsEnvelope(const std::string &text)
-{
-    return !withinTextEnvelope(text);
-}
+bool exceedsEnvelope(const std::string &text) { return !withinTextEnvelope(text); }
 
 // Result passages equal to a captured side. Git copies both sides' text into
 // the result and adds only the marker lines, so marker-like lines here are
@@ -69,8 +66,7 @@ MarkerScan resultMarkers(std::string_view text, const CorrespondenceMap *mapping
     return scanMarkers(text, std::move(content), std::move(earlier), std::move(uncertain), std::move(right), sources);
 }
 
-Draft withMarkers(Draft draft, const CorrespondenceMap *mapping,
-                  const std::set<std::vector<std::string>> *launch)
+Draft withMarkers(Draft draft, const CorrespondenceMap *mapping, const std::set<std::vector<std::string>> *launch)
 {
     draft.unresolvedMarkers = resultMarkers(draft.text, mapping, launch).count();
     return draft;
@@ -85,7 +81,8 @@ std::string slice(std::string_view text, ByteRange range)
 // leaves a frame that no launch block has.
 std::vector<std::string> frame(const MarkerRange &block, std::string_view text)
 {
-    const auto base = block.base ? block.base->bytes : ByteRange{block.separator.bytes.begin, block.separator.bytes.begin};
+    const auto base =
+        block.base ? block.base->bytes : ByteRange{block.separator.bytes.begin, block.separator.bytes.begin};
     return {slice(text, block.begin.bytes), slice(text, {base.begin, block.separator.bytes.begin}),
             slice(text, block.separator.bytes), slice(text, block.end.bytes)};
 }
@@ -123,10 +120,7 @@ bool fills(const CorrespondenceMap &mapping, const ChoiceTarget &target, ByteRan
     return anchor && anchor->state == AnchorState::Mapped && anchor->result == region;
 }
 
-bool inside(ByteRange range, ByteRange region)
-{
-    return region.begin <= range.begin && range.end <= region.end;
-}
+bool inside(ByteRange range, ByteRange region) { return region.begin <= range.begin && range.end <= region.end; }
 
 // Ignored text is removed only where it is still exactly what the source put there.
 bool removable(const ResultAnchor *anchor, ByteRange region)
@@ -136,17 +130,19 @@ bool removable(const ResultAnchor *anchor, ByteRange region)
 }
 
 // The section whose two source scopes fill the block's side regions.
-std::optional<std::string> filledSection(const std::vector<ChoiceTarget> &choices,
-                                         const CorrespondenceMap &mapping, const MarkerRange &block)
+std::optional<std::string> filledSection(const std::vector<ChoiceTarget> &choices, const CorrespondenceMap &mapping,
+                                         const MarkerRange &block)
 {
     for (const auto &left : choices) {
         if (left.scope != ChoiceScope::Section || left.source.side != SourceSide::Stage2
-            || !fills(mapping, left, sideRegion(block, SourceSide::Stage2))) continue;
+            || !fills(mapping, left, sideRegion(block, SourceSide::Stage2)))
+            continue;
         const auto right = std::find_if(choices.begin(), choices.end(), [&](const auto &target) {
             return target.scope == ChoiceScope::Section && target.section == left.section
                 && target.source.side == SourceSide::Stage3;
         });
-        if (right != choices.end() && fills(mapping, *right, sideRegion(block, SourceSide::Stage3))) return left.section;
+        if (right != choices.end() && fills(mapping, *right, sideRegion(block, SourceSide::Stage3)))
+            return left.section;
     }
     return std::nullopt;
 }
@@ -196,7 +192,8 @@ std::vector<std::string> enclosedSections(const std::vector<ChoiceTarget> &choic
     std::array<std::vector<ByteRange>, 2> scopes;
     for (std::size_t i = 0; i < left.size(); ++i) {
         if (left[i].second != right[i].second) return {};
-        if (i && (left[i].first.begin < left[i - 1].first.end || right[i].first.begin < right[i - 1].first.end)) return {};
+        if (i && (left[i].first.begin < left[i - 1].first.end || right[i].first.begin < right[i - 1].first.end))
+            return {};
         sections.push_back(left[i].second);
         scopes[0].push_back(left[i].first);
         scopes[1].push_back(right[i].first);
@@ -209,11 +206,9 @@ std::vector<std::string> enclosedSections(const std::vector<ChoiceTarget> &choic
 }
 }
 
-FileSession::FileSession(std::string id, std::string path, Draft initial,
-                         Support support, std::string supportDetail,
+FileSession::FileSession(std::string id, std::string path, Draft initial, Support support, std::string supportDetail,
                          std::optional<FileSnapshots> snapshots, bool initializeChoices)
-    : id_(std::move(id)), path_(std::move(path)), support_(support),
-      supportDetail_(std::move(supportDetail))
+    : id_(std::move(id)), path_(std::move(path)), support_(support), supportDetail_(std::move(supportDetail))
 {
     if (id_.empty() || path_.empty()) {
         throw std::invalid_argument("A file session needs an identity and path");
@@ -237,8 +232,8 @@ FileSession::FileSession(std::string id, std::string path, Draft initial,
             if (*source) lines = std::max(lines, lineCount((*source)->worktree.utf8));
         if (lines > kLargeFileLines) {
             support_ = Support::LargeFile;
-            supportDetail_ = "File of " + std::to_string(lines) + " lines is over "
-                + std::to_string(kLargeFileLines) + " lines and was not loaded";
+            supportDetail_ = "File of " + std::to_string(lines) + " lines is over " + std::to_string(kLargeFileLines)
+                + " lines and was not loaded";
             open(1, std::move(initial), false, false);
             return;
         }
@@ -313,12 +308,10 @@ std::vector<ByteRange> FileSession::conflictRegions() const
     const auto scan = markers();
     std::vector<ByteRange> regions;
     regions.reserve(scan.count());
-    for (const auto &block : scan.blocks)
-        regions.push_back({block.begin.bytes.begin, block.end.bytes.end});
+    for (const auto &block : scan.blocks) regions.push_back({block.begin.bytes.begin, block.end.bytes.end});
     for (const auto &orphan : scan.orphans) regions.push_back(orphan.bytes);
-    std::sort(regions.begin(), regions.end(), [](const auto &left, const auto &right) {
-        return left.begin < right.begin;
-    });
+    std::sort(regions.begin(), regions.end(),
+              [](const auto &left, const auto &right) { return left.begin < right.begin; });
     return regions;
 }
 
@@ -328,14 +321,14 @@ std::vector<MarkerSection> FileSession::markerSections() const
     return mapping ? markerSections(current().draft.text, *mapping) : std::vector<MarkerSection>{};
 }
 
-std::vector<MarkerSection> FileSession::markerSections(const std::string &text,
-                                                       const CorrespondenceMap &mapping) const
+std::vector<MarkerSection> FileSession::markerSections(const std::string &text, const CorrespondenceMap &mapping) const
 {
     std::vector<MarkerSection> result;
     if (!launchBlocks_ || !choices_) return result;
     for (const auto &block : resultMarkers(text, &mapping, launchBlocks_.get()).blocks) {
         if (!launchBlocks_->contains(frame(block, text))) continue;
-        if (auto section = filledSection(*choices_, mapping, block)) result.push_back({block, {std::move(*section)}});
+        if (auto section = filledSection(*choices_, mapping, block))
+            result.push_back({block, {std::move(*section)}});
         else if (auto sections = enclosedSections(*choices_, mapping, block, text); !sections.empty())
             result.push_back({block, std::move(sections)});
     }
@@ -351,15 +344,15 @@ std::vector<MarkerSection> FileSession::markerSections(const std::string &text,
 // section a combination ordered right first, is rebuilt from that text and one
 // copy of the shared lines instead. A section whose ignored text holds other
 // work keeps all.
-std::vector<FileSession::MarkerEdit> FileSession::markerEdits(
-    const Draft &draft, const CorrespondenceMap &mapping,
-    const std::map<std::string, Decision> &decided) const
+std::vector<FileSession::MarkerEdit> FileSession::markerEdits(const Draft &draft, const CorrespondenceMap &mapping,
+                                                              const std::map<std::string, Decision> &decided) const
 {
     std::vector<MarkerEdit> result;
     for (const auto &found : markerSections(draft.text, mapping)) {
         const auto &block = found.block;
         const std::array regions{sideRegion(block, SourceSide::Stage2), sideRegion(block, SourceSide::Stage3)};
-        std::vector<MarkerEdit> removals{{block.begin.bytes, {}, {}},
+        std::vector<MarkerEdit> removals{
+            {block.begin.bytes, {}, {}},
             {{block.base ? block.base->bytes.begin : block.separator.bytes.begin, block.separator.bytes.end}, {}, {}},
             {block.end.bytes, {}, {}}};
         bool touched = false, complete = true, placed = true;
@@ -382,25 +375,30 @@ std::vector<FileSession::MarkerEdit> FileSession::markerEdits(
                 const auto region = regions[index];
                 const auto *anchor = mapping.anchor(side.source.contributionId);
                 // A deletion's insertion point lies outside the block.
-                if (anchor && anchor->result && inside(*anchor->result, region)) scopes[index].push_back(*anchor->result);
-                else placed = false;
+                if (anchor && anchor->result && inside(*anchor->result, region))
+                    scopes[index].push_back(*anchor->result);
+                else
+                    placed = false;
                 std::vector<std::string> ignored;
                 for (const auto &id : side.decisions) {
                     touched = touched || decided.contains(id);
                     const auto value = draft.decisions.find(id);
-                    if (value == draft.decisions.end() || value->second.value == DecisionValue::Undecided) complete = false;
+                    if (value == draft.decisions.end() || value->second.value == DecisionValue::Undecided)
+                        complete = false;
                     else if (value->second.value == DecisionValue::Accepted) {
                         accepted = true;
                         if (value->second.order && (!order[index] || *value->second.order < *order[index]))
                             order[index] = value->second.order;
-                    } else ignored.push_back(id);
+                    } else
+                        ignored.push_back(id);
                 }
                 sides[index] = ignored.size() == side.decisions.size();
                 if (sides[index]) ignored = {side.source.contributionId};
                 for (const auto &id : ignored) {
                     const auto *removed = mapping.anchor(id);
                     if (sides[index] && region.begin == region.end) continue;
-                    if (!removable(removed, region)) complete = false;
+                    if (!removable(removed, region))
+                        complete = false;
                     else {
                         removals.push_back({*removed->result, id, {}});
                         cut[index].push_back(*removed->result);
@@ -440,7 +438,8 @@ std::vector<FileSession::MarkerEdit> FileSession::markerEdits(
                     auto kept = cuts[i][index];
                     std::sort(kept.begin(), kept.end(), [](const auto &a, const auto &b) { return a.begin < b.begin; });
                     for (std::size_t at = 0; at < kept.size(); ++at)
-                        if (!inside(kept[at], scopes[index][i]) || (at && kept[at].begin < kept[at - 1].end)) complete = false;
+                        if (!inside(kept[at], scopes[index][i]) || (at && kept[at].begin < kept[at - 1].end))
+                            complete = false;
                     spans.push_back({scopes[index][i], std::move(kept)});
                 }
             }
@@ -468,8 +467,7 @@ bool FileSession::completesMarkers(const EditingCommand &command) const
     return !markerEdits(draft, *mapping, command.decisions).empty();
 }
 
-RevisionId FileSession::advance(const Draft &edited,
-                                std::shared_ptr<const CorrespondenceMap> correspondence)
+RevisionId FileSession::advance(const Draft &edited, std::shared_ptr<const CorrespondenceMap> correspondence)
 {
     if (next_ == std::numeric_limits<RevisionId>::max()) {
         throw std::overflow_error("Session revision space exhausted");
@@ -477,15 +475,16 @@ RevisionId FileSession::advance(const Draft &edited,
     const auto &previous = current();
     const auto id = next_;
     if (!correspondence && previous.correspondence) {
-        correspondence = std::make_shared<const CorrespondenceMap>(
-            previous.correspondence->recomputed(id, edited.text));
+        correspondence =
+            std::make_shared<const CorrespondenceMap>(previous.correspondence->recomputed(id, edited.text));
     }
     // Counted against this revision's own passages, so replay derives the same count.
     const auto draft = withMarkers(edited, correspondence.get(), launchBlocks_.get());
     const auto result = draft.text == previous.draft.text ? previous.result : id;
-    const auto decisions = draft.decisions == previous.draft.decisions
-            && draft.unresolvedMarkers == previous.draft.unresolvedMarkers
-        ? previous.decisions : id;
+    const auto decisions =
+        draft.decisions == previous.draft.decisions && draft.unresolvedMarkers == previous.draft.unresolvedMarkers
+        ? previous.decisions
+        : id;
     revisions_.emplace(id, Revision{id, result, decisions, draft, std::move(correspondence)});
     ++next_;
     current_ = id;
@@ -495,7 +494,8 @@ RevisionId FileSession::advance(const Draft &edited,
 RevisionId FileSession::restore(const Revision &revision)
 {
     auto correspondence = revision.correspondence
-        ? std::make_shared<const CorrespondenceMap>(revision.correspondence->atRevision(next_)) : nullptr;
+        ? std::make_shared<const CorrespondenceMap>(revision.correspondence->atRevision(next_))
+        : nullptr;
     const auto id = advance(revision.draft, std::move(correspondence));
     // Restored content can still be the manually saved content. The transaction
     // identity is fresh, so restoring it never restores review.
@@ -532,8 +532,10 @@ Transition FileSession::replaceDraft(RevisionId expected, Draft draft,
             && replayed.handEditedRanges() == correspondence()->handEditedRanges())
             return Transition::NoChange;
         mapping = std::make_shared<const CorrespondenceMap>(std::move(replayed));
-    } else if (unchanged) return Transition::NoChange;
-    else if (handEdited && (!handEdited->empty() || !handEditedRanges.empty())) return Transition::InvalidAnchor;
+    } else if (unchanged)
+        return Transition::NoChange;
+    else if (handEdited && (!handEdited->empty() || !handEditedRanges.empty()))
+        return Transition::InvalidAnchor;
     appendHistory(advance(draft, std::move(mapping)));
     return Transition::Applied;
 }
@@ -563,8 +565,8 @@ Transition FileSession::editResult(RevisionId expected, ResultEdit edit)
     draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
     if (exceedsEnvelope(draft.text)) return Transition::Blocked;
     if (draft == current().draft) return Transition::NoChange;
-    auto mapping = correspondence()
-        ? std::make_shared<const CorrespondenceMap>(correspondence()->edited(next_, edit)) : nullptr;
+    auto mapping =
+        correspondence() ? std::make_shared<const CorrespondenceMap>(correspondence()->edited(next_, edit)) : nullptr;
     appendHistory(advance(draft, std::move(mapping)));
     return Transition::Applied;
 }
@@ -581,7 +583,8 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
             || command.edits.front().range != ByteRange{0, current().draft.text.size()})
             return Transition::InvalidAnchor;
         if (!confirmReplacement) return Transition::ConfirmationRequired;
-    } else if (command.targets.empty()) return Transition::InvalidAnchor;
+    } else if (command.targets.empty())
+        return Transition::InvalidAnchor;
     for (const auto &target : command.targets) {
         if (target.revision != current_) return Transition::StaleRevision;
         const auto *bound = mapping->anchor(target.source.contributionId);
@@ -593,16 +596,18 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
     std::sort(edits.begin(), edits.end(), [](const auto &a, const auto &b) { return a.range.begin > b.range.begin; });
     for (std::size_t i = 0; i < edits.size(); ++i) {
         const auto &edit = edits[i];
-        if (!validByteRange(current().draft.text, edit.range) || !validUtf8(edit.replacement)) return Transition::InvalidAnchor;
+        if (!validByteRange(current().draft.text, edit.range) || !validUtf8(edit.replacement))
+            return Transition::InvalidAnchor;
         if (i && (edit.range.end > edits[i - 1].range.begin || edit.range.begin == edits[i - 1].range.begin))
             return Transition::AmbiguousTarget;
         if (wholeFile) continue;
         const auto target = std::find_if(command.targets.begin(), command.targets.end(),
-            [&](const auto &anchor) { return anchor.result == edit.range; });
+                                         [&](const auto &anchor) { return anchor.result == edit.range; });
         if (target == command.targets.end()) return Transition::InvalidAnchor;
         if (!confirmReplacement && std::any_of(command.targets.begin(), command.targets.end(), [&](const auto &anchor) {
-            return anchor.result == edit.range && anchor.manualOverlap;
-        })) return Transition::ConfirmationRequired;
+                return anchor.result == edit.range && anchor.manualOverlap;
+            }))
+            return Transition::ConfirmationRequired;
     }
     auto draft = current().draft;
     for (const auto &[id, value] : command.decisions) {
@@ -618,7 +623,7 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
             continue;
         }
         const auto target = std::find_if(command.targets.begin(), command.targets.end(),
-            [&](const auto &anchor) { return anchor.result == edit.range; });
+                                         [&](const auto &anchor) { return anchor.result == edit.range; });
         *updated = updated->edited(next_, edit, false, target->source.contributionId);
     }
     // Deciding a marker section's last contribution resolves its block in
@@ -626,7 +631,7 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
     if (!wholeFile) {
         for (const auto &edit : markerEdits(draft, *updated, command.decisions)) {
             *updated = edit.rebuilt ? updated->rebuilt(next_, edit.range, *edit.rebuilt)
-                : updated->edited(next_, {edit.range, {}}, false, edit.anchor);
+                                    : updated->edited(next_, {edit.range, {}}, false, edit.anchor);
             draft.text = updated->text();
         }
     }
@@ -638,9 +643,8 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
     return Transition::Applied;
 }
 
-Transition FileSession::replaceMapped(RevisionId expected, const ResultAnchor &anchor,
-                                      std::string replacement, std::optional<Decision> decision,
-                                      bool confirmManual)
+Transition FileSession::replaceMapped(RevisionId expected, const ResultAnchor &anchor, std::string replacement,
+                                      std::optional<Decision> decision, bool confirmManual)
 {
     if (expected != current_ || anchor.revision != current_) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
@@ -648,8 +652,8 @@ Transition FileSession::replaceMapped(RevisionId expected, const ResultAnchor &a
     const auto *bound = mapping ? mapping->anchor(anchor.source.contributionId) : nullptr;
     if (!bound || *bound != anchor) return Transition::InvalidAnchor;
     if (anchor.state == AnchorState::Ambiguous) return Transition::AmbiguousTarget;
-    if (anchor.state != AnchorState::Mapped || !anchor.result
-        || !validByteRange(current().draft.text, *anchor.result) || !validUtf8(replacement))
+    if (anchor.state != AnchorState::Mapped || !anchor.result || !validByteRange(current().draft.text, *anchor.result)
+        || !validUtf8(replacement))
         return Transition::InvalidAnchor;
     if (anchor.manualOverlap && !confirmManual) return Transition::ConfirmationRequired;
     auto draft = current().draft;
@@ -658,8 +662,8 @@ Transition FileSession::replaceMapped(RevisionId expected, const ResultAnchor &a
     if (decision) draft.decisions[anchor.source.contributionId] = *decision;
     if (draft == current().draft) return Transition::NoChange;
     const ResultEdit edit{*anchor.result, std::move(replacement)};
-    auto updated = std::make_shared<const CorrespondenceMap>(
-        mapping->edited(next_, edit, false, anchor.source.contributionId));
+    auto updated =
+        std::make_shared<const CorrespondenceMap>(mapping->edited(next_, edit, false, anchor.source.contributionId));
     appendHistory(advance(draft, std::move(updated)));
     return Transition::Applied;
 }
@@ -692,67 +696,58 @@ Transition FileSession::discardToCheckpoint(RevisionId expected)
     // Matching text after undo can still have pending Save callbacks from a
     // discarded revision. Only the checkpoint's own successful transaction is
     // a no-op; otherwise restore its identity and fence those callbacks below.
-    if (target.id == current_
-        && (!checkpointOutcome_ || succeeded(checkpointOutcome_, target.id)))
+    if (target.id == current_ && (!checkpointOutcome_ || succeeded(checkpointOutcome_, target.id)))
         return Transition::NoChange;
     appendHistory(restore(target));
     outcomeFloor_ = current_;
-    checkpointOutcome_ = checkpoint_
-        ? std::optional<OperationOutcome>{{checkpoint_->id, Outcome::Succeeded, {}}}
-        : std::nullopt;
+    checkpointOutcome_ =
+        checkpoint_ ? std::optional<OperationOutcome>{{checkpoint_->id, Outcome::Succeeded, {}}} : std::nullopt;
     return Transition::Applied;
 }
 
 Transition FileSession::beginMarkResolved(RevisionId expected, bool confirmUndecided)
 {
     if (expected != current_) return Transition::StaleRevision;
-    if (support_ != Support::Supported || current().draft.unresolvedMarkers != 0)
-        return Transition::Blocked;
-    if (undecidedCount(current().draft) != 0 && !confirmUndecided)
-        return Transition::ConfirmationRequired;
+    if (support_ != Support::Supported || current().draft.unresolvedMarkers != 0) return Transition::Blocked;
+    if (undecidedCount(current().draft) != 0 && !confirmUndecided) return Transition::ConfirmationRequired;
     reviewed_ = Review{current(), confirmUndecided};
-    reviewCheckpointSucceeded_ = checkpoint_ && checkpoint_->id == expected
-        && succeeded(checkpointOutcome_, expected);
+    reviewCheckpointSucceeded_ = checkpoint_ && checkpoint_->id == expected && succeeded(checkpointOutcome_, expected);
     return Transition::Applied;
 }
 
 Transition FileSession::recordCheckpoint(RevisionId revision, Outcome outcome, std::string detail)
 {
     const auto found = revisions_.find(revision);
-    if (found == revisions_.end()
-        || (revision < outcomeFloor_ && revision != current_)
+    if (found == revisions_.end() || (revision < outcomeFloor_ && revision != current_)
         || (checkpointOutcome_ && revision < checkpointOutcome_->revision))
         return Transition::StaleRevision;
     checkpointOutcome_ = OperationOutcome{revision, outcome, std::move(detail)};
     if (outcome == Outcome::Succeeded) checkpoint_ = found->second;
-    if (reviewed_ && reviewed_->revision.id == revision)
-        reviewCheckpointSucceeded_ = outcome == Outcome::Succeeded;
+    if (reviewed_ && reviewed_->revision.id == revision) reviewCheckpointSucceeded_ = outcome == Outcome::Succeeded;
     return Transition::Applied;
 }
 
 Transition FileSession::recordWrite(RevisionId revision, Outcome outcome, std::string detail)
 {
-    if (!reviewed_ || reviewed_->revision.id != revision
-        || (revision < outcomeFloor_ && revision != current_)) return Transition::StaleRevision;
+    if (!reviewed_ || reviewed_->revision.id != revision || (revision < outcomeFloor_ && revision != current_))
+        return Transition::StaleRevision;
     if (!reviewCheckpointSucceeded_) return Transition::InvalidOutcome;
     writeOutcome_ = OperationOutcome{revision, outcome, std::move(detail)};
     if (outcome == Outcome::Succeeded) written_ = reviewed_->revision;
     return Transition::Applied;
 }
 
-Transition FileSession::recordStage(RevisionId revision, Outcome outcome, std::string objectId,
-                                    std::string mode, std::string detail)
+Transition FileSession::recordStage(RevisionId revision, Outcome outcome, std::string objectId, std::string mode,
+                                    std::string detail)
 {
-    if (!reviewed_ || reviewed_->revision.id != revision
-        || (revision < outcomeFloor_ && revision != current_)) return Transition::StaleRevision;
-    if (!written_ || written_->id != revision || !succeeded(writeOutcome_, revision))
-        return Transition::InvalidOutcome;
-    if (outcome == Outcome::Succeeded && (objectId.empty() || mode.empty()))
-        return Transition::InvalidOutcome;
+    if (!reviewed_ || reviewed_->revision.id != revision || (revision < outcomeFloor_ && revision != current_))
+        return Transition::StaleRevision;
+    if (!written_ || written_->id != revision || !succeeded(writeOutcome_, revision)) return Transition::InvalidOutcome;
+    if (outcome == Outcome::Succeeded && (objectId.empty() || mode.empty())) return Transition::InvalidOutcome;
     stageOutcome_ = OperationOutcome{revision, outcome, std::move(detail)};
     if (outcome == Outcome::Succeeded) {
-        staged_ = StagedResult{reviewed_->revision, std::move(objectId), std::move(mode),
-                               reviewed_->confirmedUndecided};
+        staged_ =
+            StagedResult{reviewed_->revision, std::move(objectId), std::move(mode), reviewed_->confirmedUndecided};
     }
     return Transition::Applied;
 }
@@ -760,10 +755,8 @@ Transition FileSession::recordStage(RevisionId revision, Outcome outcome, std::s
 Transition FileSession::discardToStaged(RevisionId expected)
 {
     if (expected != current_) return Transition::StaleRevision;
-    if (support_ != Support::Supported || !staged_ || !written_
-        || written_->id != staged_->revision.id
-        || !succeeded(writeOutcome_, staged_->revision.id)
-        || !succeeded(stageOutcome_, staged_->revision.id))
+    if (support_ != Support::Supported || !staged_ || !written_ || written_->id != staged_->revision.id
+        || !succeeded(writeOutcome_, staged_->revision.id) || !succeeded(stageOutcome_, staged_->revision.id))
         return Transition::Blocked;
     if (current_ == staged_->revision.id) return Transition::NoChange;
     // Selecting this previously saved, verified state deliberately discards the
@@ -791,10 +784,10 @@ Transition FileSession::loadLargeFile()
     if (support_ != Support::LargeFile) return Transition::NoChange;
     // Every edit and outcome is blocked until the file loads, so the launch
     // revision is the only one. It never had choices or a correspondence.
-    if (!snapshots_ || current_ != 1 || history_.size() != 1 || checkpoint_ || reviewed_ || written_
-        || staged_ || checkpointOutcome_ || writeOutcome_ || stageOutcome_) return Transition::Blocked;
-    if (next_ == std::numeric_limits<RevisionId>::max())
-        throw std::overflow_error("Session revision space exhausted");
+    if (!snapshots_ || current_ != 1 || history_.size() != 1 || checkpoint_ || reviewed_ || written_ || staged_
+        || checkpointOutcome_ || writeOutcome_ || stageOutcome_)
+        return Transition::Blocked;
+    if (next_ == std::numeric_limits<RevisionId>::max()) throw std::overflow_error("Session revision space exhausted");
     Draft initial;
     initial.text = current().draft.text;
     initial.decisions = current().draft.decisions;
@@ -814,15 +807,16 @@ FileFacts FileSession::facts() const
 {
     const auto undecided = undecidedCount(current().draft);
     const bool reviewed = reviewed_ && reviewed_->revision.id == current_;
-    const bool checkpoint = checkpoint_
-        && checkpoint_->result == current().result
-        && checkpoint_->decisions == current().decisions;
+    const bool checkpoint =
+        checkpoint_ && checkpoint_->result == current().result && checkpoint_->decisions == current().decisions;
     const bool written = written_ && written_->id == current_ && succeeded(writeOutcome_, current_);
     const bool staged = staged_ && staged_->revision.id == current_ && succeeded(stageOutcome_, current_);
-    const bool resolved = support_ == Support::Supported && reviewed && checkpoint && written
-        && staged && succeeded(checkpointOutcome_, current_) && current().draft.unresolvedMarkers == 0;
-    FileFacts facts{undecided, !checkpoint, !reviewed, staged_ && staged_->revision.id != current_,
-                    resolved, FileStatus::ReviewNeeded, {}};
+    const bool resolved = support_ == Support::Supported && reviewed && checkpoint && written && staged
+        && succeeded(checkpointOutcome_, current_) && current().draft.unresolvedMarkers == 0;
+    FileFacts facts{undecided, !checkpoint,
+                    !reviewed, staged_ && staged_->revision.id != current_,
+                    resolved,  FileStatus::ReviewNeeded,
+                    {}};
     auto &blockers = facts.blockers;
     if (support_ == Support::OutsideApp) blockers.push_back(Blocker::OutsideApp);
     if (support_ == Support::Unreadable) blockers.push_back(Blocker::Unreadable);
@@ -832,8 +826,7 @@ FileFacts FileSession::facts() const
     // unresolved because resolution requires Support::Supported.
     if (support_ == Support::Supported) {
         if (current().draft.unresolvedMarkers != 0) blockers.push_back(Blocker::UnresolvedMarkers);
-        if (undecided != 0 && !(reviewed && reviewed_->confirmedUndecided))
-            blockers.push_back(Blocker::Undecided);
+        if (undecided != 0 && !(reviewed && reviewed_->confirmedUndecided)) blockers.push_back(Blocker::Undecided);
         if (facts.unsaved) blockers.push_back(Blocker::UnsavedDraft);
         if (facts.needsReview) blockers.push_back(Blocker::ReviewNeeded);
         if (!written) blockers.push_back(Blocker::WriteRequired);
@@ -855,19 +848,30 @@ FileFacts FileSession::facts() const
     const auto has = [&](Blocker blocker) {
         return std::find(blockers.begin(), blockers.end(), blocker) != blockers.end();
     };
-    if (support_ == Support::OutsideApp) facts.status = FileStatus::OutsideApp;
-    else if (support_ == Support::Unreadable) facts.status = FileStatus::Unreadable;
-    else if (support_ == Support::LargeFile) facts.status = FileStatus::LargeFile;
-    else if (has(Blocker::UncertainOutcome)) facts.status = FileStatus::OutcomeUncertain;
-    else if (has(Blocker::CheckpointFailed)) facts.status = FileStatus::CheckpointFailed;
-    else if (has(Blocker::WriteFailed)) facts.status = FileStatus::WriteFailed;
-    else if (has(Blocker::StageFailed)) facts.status = FileStatus::StageFailed;
-    else if (facts.earlierStaged) facts.status = FileStatus::EarlierStaged;
-    else if (facts.resolved) facts.status = FileStatus::Resolved;
+    if (support_ == Support::OutsideApp)
+        facts.status = FileStatus::OutsideApp;
+    else if (support_ == Support::Unreadable)
+        facts.status = FileStatus::Unreadable;
+    else if (support_ == Support::LargeFile)
+        facts.status = FileStatus::LargeFile;
+    else if (has(Blocker::UncertainOutcome))
+        facts.status = FileStatus::OutcomeUncertain;
+    else if (has(Blocker::CheckpointFailed))
+        facts.status = FileStatus::CheckpointFailed;
+    else if (has(Blocker::WriteFailed))
+        facts.status = FileStatus::WriteFailed;
+    else if (has(Blocker::StageFailed))
+        facts.status = FileStatus::StageFailed;
+    else if (facts.earlierStaged)
+        facts.status = FileStatus::EarlierStaged;
+    else if (facts.resolved)
+        facts.status = FileStatus::Resolved;
     else if (written_ && succeeded(writeOutcome_, written_->id))
         facts.status = FileStatus::WrittenUnresolved;
-    else if (checkpoint) facts.status = FileStatus::SavedDraft;
-    else if (undecided != 0) facts.status = FileStatus::Undecided;
+    else if (checkpoint)
+        facts.status = FileStatus::SavedDraft;
+    else if (undecided != 0)
+        facts.status = FileStatus::Undecided;
     facts.settled = support_ == Support::Supported && undecided == 0 && current().draft.unresolvedMarkers == 0
         && (facts.status == FileStatus::ReviewNeeded || facts.status == FileStatus::SavedDraft);
     return facts;

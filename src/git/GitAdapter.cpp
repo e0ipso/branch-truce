@@ -28,13 +28,18 @@ QString displayPath(const QByteArray &path)
     QByteArray label;
     for (const char value : path) {
         const auto byte = static_cast<unsigned char>(value);
-        if (byte == '\\') label += "\\\\";
-        else if (byte == '\n') label += "\\n";
-        else if (byte == '\r') label += "\\r";
-        else if (byte == '\t') label += "\\t";
+        if (byte == '\\')
+            label += "\\\\";
+        else if (byte == '\n')
+            label += "\\n";
+        else if (byte == '\r')
+            label += "\\r";
+        else if (byte == '\t')
+            label += "\\t";
         else if (byte < 0x20 || byte == 0x7f || (!utf8 && byte >= 0x80)) {
             label += "\\x" + QByteArray(1, value).toHex();
-        } else label += value;
+        } else
+            label += value;
     }
     return QString::fromUtf8(label);
 }
@@ -43,9 +48,8 @@ void GitAdapter::State::begin()
 {
     const auto &r = result.request;
     directory = QFileInfo(r.directory).canonicalFilePath();
-    if (!executableValid || directory.isEmpty() || !QDir(directory).exists()
-        || !QDir::isAbsolutePath(r.directory) || !exactPath(r.directory)
-        || executable.startsWith(directory + QLatin1Char('/'))) {
+    if (!executableValid || directory.isEmpty() || !QDir(directory).exists() || !QDir::isAbsolutePath(r.directory)
+        || !exactPath(r.directory) || executable.startsWith(directory + QLatin1Char('/'))) {
         reject(QStringLiteral("An absolute directory and trusted executable outside it are required"));
         return;
     }
@@ -64,7 +68,8 @@ void GitAdapter::State::begin()
     }
     if (r.input.size() > outputLimit) {
         reject(QStringLiteral("Canonicalization input has %1 bytes, exceeding the %2 byte input limit")
-            .arg(r.input.size()).arg(outputLimit));
+                   .arg(r.input.size())
+                   .arg(outputLimit));
         return;
     }
     deadline.start(deadlineMs);
@@ -78,7 +83,8 @@ void GitAdapter::State::complete()
     if (temporaryObjects) {
         if (!temporaryObjects->remove()) {
             if (result.outcome == Outcome::Success) result.outcome = Outcome::ProcessFailure;
-            result.diagnostic += QStringLiteral("; could not remove private conversion objects: ") + temporaryObjects->path();
+            result.diagnostic +=
+                QStringLiteral("; could not remove private conversion objects: ") + temporaryObjects->path();
         }
         temporaryObjects.reset();
     }

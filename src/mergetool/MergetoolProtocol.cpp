@@ -82,8 +82,8 @@ int openWalk(const QByteArray &path, bool directory, QString *error, bool writab
         }
         ++seen;
         const bool last = seen == meaningful;
-        const int access = last && writable ? O_WRONLY
-            : (last && !directory ? (O_RDONLY | O_NONBLOCK) : (O_RDONLY | O_DIRECTORY));
+        const int access =
+            last && writable ? O_WRONLY : (last && !directory ? (O_RDONLY | O_NONBLOCK) : (O_RDONLY | O_DIRECTORY));
         const int flags = O_CLOEXEC | O_NOFOLLOW | access;
         const int next = ::openat(fd, part.constData(), flags);
         ::close(fd);
@@ -93,7 +93,7 @@ int openWalk(const QByteArray &path, bool directory, QString *error, bool writab
         }
         fd = next;
     }
-    struct stat info {};
+    struct stat info{};
     if (::fstat(fd, &info) != 0 || (directory ? !S_ISDIR(info.st_mode) : !S_ISREG(info.st_mode))) {
         ::close(fd);
         fail(error, QStringLiteral("The mergetool path is not a regular file."));
@@ -106,11 +106,15 @@ int openWalk(const QByteArray &path, bool directory, QString *error, bool writab
 QByteArray mergetoolSessionKey(const git::RepositoryContext &repository)
 {
     QByteArray operation;
-    if (repository.operation == git::RepositoryOperation::Merge) operation = "merge";
-    else if (repository.operation == git::RepositoryOperation::Rebase) operation = "rebase";
-    else return {};
-    if (!repository.supported || repository.worktreeRoot.isEmpty()
-        || repository.stage2.commitId.isEmpty() || repository.stage3.commitId.isEmpty()) return {};
+    if (repository.operation == git::RepositoryOperation::Merge)
+        operation = "merge";
+    else if (repository.operation == git::RepositoryOperation::Rebase)
+        operation = "rebase";
+    else
+        return {};
+    if (!repository.supported || repository.worktreeRoot.isEmpty() || repository.stage2.commitId.isEmpty()
+        || repository.stage3.commitId.isEmpty())
+        return {};
     const auto material = QFile::encodeName(repository.worktreeRoot) + '\n' + operation + '\n'
         + repository.stage2.commitId + '\n' + repository.stage3.commitId;
     return sha256(material);
@@ -139,21 +143,24 @@ bool prepareMergetoolSocketDirectory(const QString &directory, QString *error)
 {
     const auto native = QFile::encodeName(directory);
     if (native.isEmpty() || (::mkdir(native.constData(), 0700) != 0 && errno != EEXIST))
-        return failBool(error, QStringLiteral("The mergetool socket directory %1 could not be created.").arg(directory));
-    struct stat info {};
+        return failBool(error,
+                        QStringLiteral("The mergetool socket directory %1 could not be created.").arg(directory));
+    struct stat info{};
     if (::lstat(native.constData(), &info) != 0 || !S_ISDIR(info.st_mode))
         return failBool(error, QStringLiteral("The mergetool socket directory %1 is not a directory.").arg(directory));
     if (info.st_uid != ::geteuid() || (info.st_mode & 077) != 0)
-        return failBool(error, QStringLiteral("The mergetool socket directory %1 is not private to this user.").arg(directory));
+        return failBool(
+            error, QStringLiteral("The mergetool socket directory %1 is not private to this user.").arg(directory));
     return true;
 }
 
 bool mergetoolPeerIsCurrentUser(qintptr descriptor)
 {
-    struct ucred peer {};
+    struct ucred peer{};
     socklen_t size = sizeof(peer);
     if (descriptor < 0 || ::getsockopt(static_cast<int>(descriptor), SOL_SOCKET, SO_PEERCRED, &peer, &size) != 0
-        || size != sizeof(peer)) return false;
+        || size != sizeof(peer))
+        return false;
     return peer.uid == ::geteuid();
 }
 
@@ -209,13 +216,14 @@ bool restoreMergetoolFile(const QByteArray &path, const QByteArray &bytes, QStri
         return failBool(error, QStringLiteral("The original file could not be restored."));
     }
     const auto wrote = file.write(bytes);
-    if (wrote != static_cast<qint64>(bytes.size()) || !file.flush()
-        || !file.resize(static_cast<qint64>(bytes.size())) || ::fsync(file.handle()) != 0)
+    if (wrote != static_cast<qint64>(bytes.size()) || !file.flush() || !file.resize(static_cast<qint64>(bytes.size()))
+        || ::fsync(file.handle()) != 0)
         return failBool(error, QStringLiteral("The original file could not be restored."));
     return true;
 }
 
-bool writeMergetoolIntake(const QString &directory, const QString &invocation, const MergetoolSources &sources, QString *error)
+bool writeMergetoolIntake(const QString &directory, const QString &invocation, const MergetoolSources &sources,
+                          QString *error)
 {
     if (QUuid::fromString(invocation).isNull() || !mergetoolRepositoryPath(sources.path))
         return failBool(error, QStringLiteral("The mergetool invocation is invalid."));
@@ -236,7 +244,8 @@ bool writeMergetoolIntake(const QString &directory, const QString &invocation, c
         }
         const auto wrote = file.write(bytes);
         return wrote == static_cast<qint64>(bytes.size()) && file.flush() && ::fsync(file.handle()) == 0
-            ? true : failBool(error, QStringLiteral("The mergetool intake could not be written."));
+            ? true
+            : failBool(error, QStringLiteral("The mergetool intake could not be written."));
     };
     bool stored = store("merged", sources.merged);
     if (stored && sources.basePresent) stored = store("base", sources.base);
@@ -259,23 +268,27 @@ bool writeMergetoolIntake(const QString &directory, const QString &invocation, c
         {QStringLiteral("remote"), sources.remotePresent ? QString::fromLatin1(sha256(sources.remote)) : QString{}}};
     const auto payload = QJsonDocument(manifest).toJson(QJsonDocument::Compact);
     stored = store("manifest.json", payload);
-    if (stored && ::fsync(dirfd) != 0) stored = failBool(error, QStringLiteral("The mergetool intake could not be written."));
+    if (stored && ::fsync(dirfd) != 0)
+        stored = failBool(error, QStringLiteral("The mergetool intake could not be written."));
     ::close(dirfd);
     return stored;
 }
 
-std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, const QByteArray &sessionKey, QString *error)
+std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, const QByteArray &sessionKey,
+                                                   QString *error)
 {
     const auto root = mergetoolIntakeRoot();
     const auto canonicalRoot = QFileInfo(root).canonicalFilePath();
     const auto canonical = QFileInfo(directory).canonicalFilePath();
     const auto prefix = canonicalRoot + QLatin1Char('/');
-    if (sessionKey.size() != 64 || canonicalRoot.isEmpty() || !canonical.startsWith(prefix + QString::fromLatin1(sessionKey) + QLatin1Char('/'))) {
+    if (sessionKey.size() != 64 || canonicalRoot.isEmpty()
+        || !canonical.startsWith(prefix + QString::fromLatin1(sessionKey) + QLatin1Char('/'))) {
         fail(error, QStringLiteral("The mergetool intake is outside app-owned storage."));
         return std::nullopt;
     }
     const auto invocation = QFileInfo(canonical).fileName();
-    if (QUuid::fromString(invocation).isNull() || QFileInfo(canonical).dir().dirName() != QString::fromLatin1(sessionKey)) {
+    if (QUuid::fromString(invocation).isNull()
+        || QFileInfo(canonical).dir().dirName() != QString::fromLatin1(sessionKey)) {
         fail(error, QStringLiteral("The mergetool intake identity does not match this session."));
         return std::nullopt;
     }
@@ -283,12 +296,14 @@ std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, con
     if (!readMergetoolFile(QFile::encodeName(canonical + QStringLiteral("/manifest.json")), &manifestBytes, error))
         return std::nullopt;
     const auto manifest = QJsonDocument::fromJson(manifestBytes).object();
-    if (manifest.value(QStringLiteral("v")).toInt() != 1 || manifest.value(QStringLiteral("invocation")).toString() != invocation) {
+    if (manifest.value(QStringLiteral("v")).toInt() != 1
+        || manifest.value(QStringLiteral("invocation")).toString() != invocation) {
         fail(error, QStringLiteral("The mergetool intake manifest is invalid."));
         return std::nullopt;
     }
     const auto path = QByteArray::fromHex(manifest.value(QStringLiteral("path")).toString().toLatin1());
-    if (!mergetoolRepositoryPath(path) || QString::fromLatin1(path.toHex()) != manifest.value(QStringLiteral("path")).toString()) {
+    if (!mergetoolRepositoryPath(path)
+        || QString::fromLatin1(path.toHex()) != manifest.value(QStringLiteral("path")).toString()) {
         fail(error, QStringLiteral("The mergetool intake path is invalid."));
         return std::nullopt;
     }
@@ -310,11 +325,14 @@ std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, con
     intake.basePresent = manifest.value(QStringLiteral("basePresent")).toBool();
     intake.localPresent = manifest.value(QStringLiteral("localPresent")).toBool();
     intake.remotePresent = manifest.value(QStringLiteral("remotePresent")).toBool();
-    if (intake.basePresent && !hashed(QStringLiteral("base"), manifest.value(QStringLiteral("base")).toString(), &intake.baseSha256))
+    if (intake.basePresent
+        && !hashed(QStringLiteral("base"), manifest.value(QStringLiteral("base")).toString(), &intake.baseSha256))
         return std::nullopt;
-    if (intake.localPresent && !hashed(QStringLiteral("local"), manifest.value(QStringLiteral("local")).toString(), &intake.localSha256))
+    if (intake.localPresent
+        && !hashed(QStringLiteral("local"), manifest.value(QStringLiteral("local")).toString(), &intake.localSha256))
         return std::nullopt;
-    if (intake.remotePresent && !hashed(QStringLiteral("remote"), manifest.value(QStringLiteral("remote")).toString(), &intake.remoteSha256))
+    if (intake.remotePresent
+        && !hashed(QStringLiteral("remote"), manifest.value(QStringLiteral("remote")).toString(), &intake.remoteSha256))
         return std::nullopt;
     return intake;
 }
@@ -361,6 +379,7 @@ bool writeMergetoolFrame(QIODevice *device, const QJsonObject &object, QString *
     frame.replace(4, payload.size(), payload);
     const auto wrote = device->write(frame);
     return wrote == static_cast<qint64>(frame.size()) && device->waitForBytesWritten(1000)
-        ? true : failBool(error, QStringLiteral("The mergetool message could not be written."));
+        ? true
+        : failBool(error, QStringLiteral("The mergetool message could not be written."));
 }
 }

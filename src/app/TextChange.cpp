@@ -15,7 +15,7 @@ TextChange changedRange(const QString &old, const QString &next)
     change.oldEnd = old.size();
     change.newEnd = next.size();
     while (change.oldEnd > change.begin && change.newEnd > change.begin
-        && old.at(change.oldEnd - 1) == next.at(change.newEnd - 1)) {
+           && old.at(change.oldEnd - 1) == next.at(change.newEnd - 1)) {
         --change.oldEnd;
         --change.newEnd;
     }
@@ -43,7 +43,8 @@ std::vector<TextChange> changedRanges(const QString &old, const QString &next)
     // Passages split at line ends, so each one decodes on its own. Their lengths
     // locate the parts of the original texts.
     const auto length = [](const QByteArray &bytes, ByteRange range) {
-        return QString::fromUtf8(bytes.constData() + range.begin, static_cast<qsizetype>(range.end - range.begin)).size();
+        return QString::fromUtf8(bytes.constData() + range.begin, static_cast<qsizetype>(range.end - range.begin))
+            .size();
     };
     std::vector<TextChange> changes;
     auto oldAt = outer.begin;

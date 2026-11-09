@@ -32,9 +32,23 @@ bool secureExecutable(const QString &path, struct stat &identity);
 
 class GitAdapter::State {
 public:
-    enum class Phase { Version, Configuration, PolicyRoot, ObjectDirectory, TrackedPaths, Attributes,
-                       GitDirectory, Hooks, Baseline, Operation, Discovery, Inspection,
-                       CanonicalSize, CanonicalObject, CanonicalCheckout };
+    enum class Phase {
+        Version,
+        Configuration,
+        PolicyRoot,
+        ObjectDirectory,
+        TrackedPaths,
+        Attributes,
+        GitDirectory,
+        Hooks,
+        Baseline,
+        Operation,
+        Discovery,
+        Inspection,
+        CanonicalSize,
+        CanonicalObject,
+        CanonicalCheckout
+    };
     // Process control (GitAdapterProcess.cpp).
     explicit State(GitAdapter *owner, const QString &selected);
     ~State();
@@ -98,7 +112,7 @@ public:
     QString directory;
     QString mutationKey;
     QString originalObjectDirectory;
-    struct stat identity {};
+    struct stat identity{};
     Result result;
     std::unique_ptr<detail::RepositoryDiscovery> discovery;
     std::unique_ptr<QTemporaryDir> temporaryObjects;

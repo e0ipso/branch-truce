@@ -2,12 +2,12 @@
 #include "ApplicationController.h"
 #include "CommandGuard.h"
 #include "NavigationTargets.h"
-#include "recovery/RecoveryRestore.h"
 #include "TextPositions.h"
+#include "core/BuildInfo.h"
 #include "core/Correspondence.h"
 #include "git/GitAdapter.h"
+#include "recovery/RecoveryRestore.h"
 #include <QDir>
-#include "core/BuildInfo.h"
 #include <algorithm>
 #include <set>
 #include <string_view>
@@ -15,16 +15,10 @@
 
 namespace branch_truce {
 namespace {
-QString text(const std::string &value)
-{
-    return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size()));
-}
+QString text(const std::string &value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
 
 // The undecorated last path component, for syntax definition lookup.
-QString fileName(const std::string &path)
-{
-    return text(path.substr(path.rfind('/') + 1));
-}
+QString fileName(const std::string &path) { return text(path.substr(path.rfind('/') + 1)); }
 
 bool scalarBoundary(const QString &value, int offset)
 {
@@ -33,45 +27,54 @@ bool scalarBoundary(const QString &value, int offset)
              && value.at(offset - 1).isHighSurrogate());
 }
 
-
 }
 
 ApplicationController::ApplicationController(QString gitExecutable, QObject *parent)
-    : QObject(parent), files_(this), selectedFile_(files_, this),
+    : QObject(parent),
+      files_(this),
+      selectedFile_(files_, this),
       coordinator_(files_, gitExecutable, this),
       publisher_(files_, coordinator_, gitExecutable, this),
-      mergetool_(publisher_, files_, coordinator_, [this] { return loader_.repository(); }, gitExecutable, this),
-      editor_(files_, [this] { return selectedFileId_; },
-          [this](const FileSession *file, const QString &loaded) { return firstUndecidedPlacement(file, loaded); }, this),
-      loader_(files_, coordinator_, gitExecutable, SessionLoader::Owners{
-          [](const std::string &path) {
-              return git::displayPath(QByteArray(path.data(), static_cast<qsizetype>(path.size())));
-          },
-          [this] { return selectedFileId_; },
-          [this] { return !sessionOutcome_.isEmpty() || publisher_.busy(); },
-          [this] { mergetool_.clearCopiedLaunches(); },
-          [this] { mergetool_.reassign(); },
-          [this](const git::RepositoryContext &repository, std::map<std::string, SnapshotFileIdentity> copiedLaunches,
-                 QString *error) {
-              publisher_.captureBaselines(repository);
-              mergetool_.adoptCopiedLaunches(std::move(copiedLaunches));
-              // A launcher can already wait here after an in-window recovery choice.
-              mergetool_.acceptCopiedLaunches();
-              return mergetool_.listen(repository, error);
-          }}, this),
-      navigator_(files_, editor_, FileNavigator::Owners{
-          [this] { return selectedFileId_; },
-          [this] { return selectedRow(); },
-          [this](const QString &fileId) { return selectFile(fileId); },
-          [this](const QString &fileId) { return files_.displayPath(fileId.toStdString()); }}, this),
-      choices_(files_, editor_, ChoicePreviewFlow::Owners{
-          [this] { return selectedFileId_; },
-          [this](const QString &fileId) { return files_.displayPath(fileId.toStdString()); },
-          [this](Transition result) { return commandResult(result); },
-          [this](const QString &message) { showMessage(message); }}, this)
+      mergetool_(
+          publisher_, files_, coordinator_, [this] { return loader_.repository(); }, gitExecutable, this),
+      editor_(
+          files_, [this] { return selectedFileId_; },
+          [this](const FileSession *file, const QString &loaded) { return firstUndecidedPlacement(file, loaded); },
+          this),
+      loader_(files_, coordinator_, gitExecutable,
+              SessionLoader::Owners{[](const std::string &path) {
+                                        return git::displayPath(
+                                            QByteArray(path.data(), static_cast<qsizetype>(path.size())));
+                                    },
+                                    [this] { return selectedFileId_; },
+                                    [this] { return !sessionOutcome_.isEmpty() || publisher_.busy(); },
+                                    [this] { mergetool_.clearCopiedLaunches(); }, [this] { mergetool_.reassign(); },
+                                    [this](const git::RepositoryContext &repository,
+                                           std::map<std::string, SnapshotFileIdentity> copiedLaunches, QString *error) {
+                                        publisher_.captureBaselines(repository);
+                                        mergetool_.adoptCopiedLaunches(std::move(copiedLaunches));
+                                        // A launcher can already wait here after an in-window recovery choice.
+                                        mergetool_.acceptCopiedLaunches();
+                                        return mergetool_.listen(repository, error);
+                                    }},
+              this),
+      navigator_(
+          files_, editor_,
+          FileNavigator::Owners{[this] { return selectedFileId_; }, [this] { return selectedRow(); },
+                                [this](const QString &fileId) { return selectFile(fileId); },
+                                [this](const QString &fileId) { return files_.displayPath(fileId.toStdString()); }},
+          this),
+      choices_(
+          files_, editor_,
+          ChoicePreviewFlow::Owners{[this] { return selectedFileId_; },
+                                    [this](const QString &fileId) { return files_.displayPath(fileId.toStdString()); },
+                                    [this](Transition result) { return commandResult(result); },
+                                    [this](const QString &message) { showMessage(message); }},
+          this)
 {
     connect(&editor_, &ResultEditorAdapter::edited, this, &ApplicationController::editResult);
-    connect(&editor_, &ResultEditorAdapter::editActionRequested, this, &ApplicationController::resultEditActionRequested);
+    connect(&editor_, &ResultEditorAdapter::editActionRequested, this,
+            &ApplicationController::resultEditActionRequested);
     connect(&editor_, &ResultEditorAdapter::editRejected, this, [this] { commandResult(Transition::InvalidAnchor); });
     connect(&editor_, &ResultEditorAdapter::notice, this, &ApplicationController::showMessage);
     connect(&editor_, &ResultEditorAdapter::loadRefused, this, [this](const QString &message) {
@@ -109,7 +112,8 @@ ApplicationController::ApplicationController(QString gitExecutable, QObject *par
                 loader_.clearPreferredFileId();
             } else {
                 selectedFileId_ = files_.totalFiles() > 0
-                    ? files_.data(files_.index(0), SessionModel::FileIdRole).toString() : QString{};
+                    ? files_.data(files_.index(0), SessionModel::FileIdRole).toString()
+                    : QString{};
             }
         }
         // Retry publishes the pending discard. The failure sentence must not
@@ -143,8 +147,7 @@ ApplicationController::ApplicationController(QString gitExecutable, QObject *par
 }
 QString ApplicationController::version() const
 {
-    return QString::fromUtf8(branch_truce::version().data(),
-                             static_cast<qsizetype>(branch_truce::version().size()));
+    return QString::fromUtf8(branch_truce::version().data(), static_cast<qsizetype>(branch_truce::version().size()));
 }
 
 bool ApplicationController::selectFile(const QString &fileId)
@@ -159,15 +162,9 @@ bool ApplicationController::selectFile(const QString &fileId)
     return true;
 }
 
-int ApplicationController::selectedRow() const
-{
-    return files_.rowOf(selectedFileId_.toStdString());
-}
+int ApplicationController::selectedRow() const { return files_.rowOf(selectedFileId_.toStdString()); }
 
-QVariantMap ApplicationController::commandPreview() const
-{
-    return choices_.view(ChoicePreviewFlow::Scope::Choice);
-}
+QVariantMap ApplicationController::commandPreview() const { return choices_.view(ChoicePreviewFlow::Scope::Choice); }
 
 void ApplicationController::showMessage(const QString &message)
 {
@@ -181,17 +178,21 @@ bool ApplicationController::commandResult(Transition result)
     case Transition::Applied: commandMessage_.clear(); break;
     case Transition::NoChange: commandMessage_ = tr("No change."); break;
     case Transition::StaleRevision: commandMessage_ = tr("The result changed. Select the scope again."); break;
-    case Transition::ConfirmationRequired: commandMessage_ = tr("Inspect and confirm the exact replacement first."); break;
+    case Transition::ConfirmationRequired:
+        commandMessage_ = tr("Inspect and confirm the exact replacement first.");
+        break;
     case Transition::AmbiguousTarget: commandMessage_ = tr("The target is ambiguous. Edit the result directly."); break;
-    case Transition::InvalidAnchor: commandMessage_ = tr("The target is no longer valid. Select the scope again."); break;
+    case Transition::InvalidAnchor:
+        commandMessage_ = tr("The target is no longer valid. Select the scope again.");
+        break;
     default: commandMessage_ = tr("Command not completed. Check pending recovery and the selected scope."); break;
     }
     Q_EMIT messageChanged();
     return result == Transition::Applied || result == Transition::NoChange;
 }
 
-bool ApplicationController::previewChoice(const QString &fileId, const QString &revision,
-                                         const QString &target, ChoicePreviewFlow::Action action)
+bool ApplicationController::previewChoice(const QString &fileId, const QString &revision, const QString &target,
+                                          ChoicePreviewFlow::Action action)
 {
     return choices_.preview(ChoicePreviewFlow::Scope::Choice, fileId, revision, action, target);
 }
@@ -206,7 +207,8 @@ QVariantMap ApplicationController::nonConflictingPreview() const
     return choices_.view(ChoicePreviewFlow::Scope::NonConflicting);
 }
 
-bool ApplicationController::previewNonConflicting(const QString &fileId, const QString &revision, ChoicePreviewFlow::NonConflicting scope)
+bool ApplicationController::previewNonConflicting(const QString &fileId, const QString &revision,
+                                                  ChoicePreviewFlow::NonConflicting scope)
 {
     return choices_.preview(ChoicePreviewFlow::Scope::NonConflicting, fileId, revision, scope);
 }
@@ -221,23 +223,18 @@ QVariantMap ApplicationController::wholeFilePreview() const
     return choices_.view(ChoicePreviewFlow::Scope::WholeFile);
 }
 
-bool ApplicationController::previewWholeFile(const QString &fileId, const QString &revision, ChoicePreviewFlow::Side side)
+bool ApplicationController::previewWholeFile(const QString &fileId, const QString &revision,
+                                             ChoicePreviewFlow::Side side)
 {
     return choices_.preview(ChoicePreviewFlow::Scope::WholeFile, fileId, revision, side);
 }
 
-bool ApplicationController::applyWholeFile()
-{
-    return choices_.apply(ChoicePreviewFlow::Scope::WholeFile, true);
-}
+bool ApplicationController::applyWholeFile() { return choices_.apply(ChoicePreviewFlow::Scope::WholeFile, true); }
 
-void ApplicationController::cancelChoice()
-{
-    choices_.cancel();
-}
+void ApplicationController::cancelChoice() { choices_.cancel(); }
 
-bool ApplicationController::editResult(const QString &fileId, const QString &revision,
-                                      int begin, int end, const QString &replacement)
+bool ApplicationController::editResult(const QString &fileId, const QString &revision, int begin, int end,
+                                       const QString &replacement)
 {
     const auto *file = files_.file(fileId.toStdString());
     const auto expected = parseRevisionId(revision);
@@ -245,10 +242,12 @@ bool ApplicationController::editResult(const QString &fileId, const QString &rev
         return commandResult(Transition::StaleRevision);
     const auto old = text(file->current().draft.text);
     if (begin > end || !scalarBoundary(old, begin) || !scalarBoundary(old, end)
-        || QString::fromUtf8(replacement.toUtf8()) != replacement) return commandResult(Transition::InvalidAnchor);
+        || QString::fromUtf8(replacement.toUtf8()) != replacement)
+        return commandResult(Transition::InvalidAnchor);
     return commandResult(files_.editResult(fileId.toStdString(), *expected,
-        {{static_cast<std::size_t>(old.left(begin).toUtf8().size()), static_cast<std::size_t>(old.left(end).toUtf8().size())},
-         replacement.toUtf8().toStdString()}));
+                                           {{static_cast<std::size_t>(old.left(begin).toUtf8().size()),
+                                             static_cast<std::size_t>(old.left(end).toUtf8().size())},
+                                            replacement.toUtf8().toStdString()}));
 }
 
 bool ApplicationController::undo(const QString &fileId, const QString &revision)
@@ -269,8 +268,8 @@ bool ApplicationController::redo(const QString &fileId, const QString &revision)
 
 std::optional<CommandTarget> ApplicationController::admitCommand(const QString &fileId, const QString &revision)
 {
-    const auto checked = checkCommand(files_, selectedFileId_, editor_.composing(), fileId, revision,
-                                      CommandCheck::CurrentSupported);
+    const auto checked =
+        checkCommand(files_, selectedFileId_, editor_.composing(), fileId, revision, CommandCheck::CurrentSupported);
     if (const auto *refused = std::get_if<Transition>(&checked)) {
         commandResult(*refused);
         return std::nullopt;
@@ -285,9 +284,8 @@ bool ApplicationController::saveDraft(const QString &fileId, const QString &revi
     const auto &[file, expected] = *target;
     const auto saved = file->checkpoint() && file->checkpoint()->id == expected
         && file->checkpoint()->result == file->current().result
-        && file->checkpoint()->decisions == file->current().decisions
-        && file->checkpointOutcome() && file->checkpointOutcome()->outcome == Outcome::Succeeded
-        && file->checkpointOutcome()->revision == expected;
+        && file->checkpoint()->decisions == file->current().decisions && file->checkpointOutcome()
+        && file->checkpointOutcome()->outcome == Outcome::Succeeded && file->checkpointOutcome()->revision == expected;
     if (saved) return commandResult(Transition::NoChange);
     // The recovery commit inside this call is the app checkpoint. It does not
     // write the worktree or stage a path; publication stays on Mark resolved.
@@ -313,15 +311,9 @@ bool ApplicationController::mergetoolWaiting() const
     return file && mergetool_.waitingOn(QByteArray::fromStdString(file->path()));
 }
 
-bool ApplicationController::parentSessionActive() const
-{
-    return mergetool_.parentSessionActive();
-}
+bool ApplicationController::parentSessionActive() const { return mergetool_.parentSessionActive(); }
 
-bool ApplicationController::canEndParentSession() const
-{
-    return mergetool_.canEndParentSession();
-}
+bool ApplicationController::canEndParentSession() const { return mergetool_.canEndParentSession(); }
 
 bool ApplicationController::markResolved(const QString &fileId, const QString &revision, bool confirmUndecided)
 {
@@ -336,7 +328,9 @@ bool ApplicationController::markResolved(const QString &fileId, const QString &r
     commandMessage_ = started.detail;
     markerBlocker_.clear();
     if (started.markers && started.markers->first())
-        markerBlocker_ = {{QStringLiteral("fileId"), fileId}, {QStringLiteral("revision"), revision},
+        markerBlocker_ = {
+            {QStringLiteral("fileId"), fileId},
+            {QStringLiteral("revision"), revision},
             {QStringLiteral("message"), started.detail},
             {QStringLiteral("count"), QVariant::fromValue(static_cast<qulonglong>(started.markers->count()))},
             {QStringLiteral("line"), QVariant::fromValue(static_cast<qulonglong>(started.markers->first()->line + 1))}};
@@ -351,7 +345,8 @@ bool ApplicationController::markResolved(const QString &fileId, const QString &r
 QVariantMap ApplicationController::markerBlocker() const
 {
     const auto *file = files_.file(selectedFileId_.toStdString());
-    if (markerBlocker_.isEmpty() || !file || markerBlocker_.value(QStringLiteral("fileId")).toString() != selectedFileId_
+    if (markerBlocker_.isEmpty() || !file
+        || markerBlocker_.value(QStringLiteral("fileId")).toString() != selectedFileId_
         || markerBlocker_.value(QStringLiteral("message")).toString() != commandMessage_
         || parseRevisionId(markerBlocker_.value(QStringLiteral("revision")).toString()) != file->current().id)
         return {};
@@ -372,15 +367,9 @@ bool ApplicationController::showFirstMarker()
     return true;
 }
 
-void ApplicationController::cancelResolution()
-{
-    publisher_.cancelConfirmation();
-}
+void ApplicationController::cancelResolution() { publisher_.cancelConfirmation(); }
 
-bool ApplicationController::assignParentStaging(const QByteArray &path)
-{
-    return publisher_.assignParentStaging(path);
-}
+bool ApplicationController::assignParentStaging(const QByteArray &path) { return publisher_.assignParentStaging(path); }
 
 bool ApplicationController::verifyParentAcknowledgment(const QString &fileId, const QString &revision)
 {
@@ -394,7 +383,6 @@ std::optional<ResolutionPublisher::Offer> ApplicationController::parentStagingOf
     return publisher_.parentStagingOffer(fileId.toStdString());
 }
 
-
 bool ApplicationController::leaveMergetool()
 {
     const auto *file = files_.file(selectedFileId_.toStdString());
@@ -402,19 +390,18 @@ bool ApplicationController::leaveMergetool()
     return mergetool_.leave(QByteArray::fromStdString(file->path()));
 }
 
-bool ApplicationController::endParentSession()
-{
-    return mergetool_.endParentSession();
-}
+bool ApplicationController::endParentSession() { return mergetool_.endParentSession(); }
 
 QVariantMap ApplicationController::handoff() const
 {
     auto result = files_.handoff();
     QStringList sessionBlockers;
-    if (publisher_.busy()) sessionBlockers.push_back(tr("A resolution is still running; its outcome is not known yet."));
+    if (publisher_.busy())
+        sessionBlockers.push_back(tr("A resolution is still running; its outcome is not known yet."));
     if (const auto launches = mergetool_.unreleasedLaunches(); launches > 0)
-        sessionBlockers.push_back(launches == 1 ? tr("Git is waiting on 1 launched path with no decision yet.")
-            : tr("Git is waiting on %1 launched paths with no decision yet.").arg(launches));
+        sessionBlockers.push_back(launches == 1
+                                      ? tr("Git is waiting on 1 launched path with no decision yet.")
+                                      : tr("Git is waiting on %1 launched paths with no decision yet.").arg(launches));
     const bool clean = result.value(QStringLiteral("clean")).toBool() && sessionBlockers.isEmpty();
     if (!clean && result.value(QStringLiteral("clean")).toBool())
         result.insert(QStringLiteral("outcome"), tr("Every file is resolved, but this session is not finished."));
@@ -464,10 +451,13 @@ bool ApplicationController::leaveSession()
         const auto outstanding = summary.value(QStringLiteral("outstandingFiles")).toInt();
         const auto total = summary.value(QStringLiteral("totalFiles")).toInt();
         sessionOutcome_ = tr("Left with %1 of %2 files outstanding. Drafts stay in Branch Truce; "
-                             "the Git operation was not continued or committed.").arg(outstanding).arg(total);
+                             "the Git operation was not continued or committed.")
+                              .arg(outstanding)
+                              .arg(total);
         if (launches > 0)
-            sessionOutcome_ += QLatin1Char(' ') + (launches == 1 ? tr("1 launched path returned to Git unresolved.")
-                : tr("%1 launched paths returned to Git unresolved.").arg(launches));
+            sessionOutcome_ += QLatin1Char(' ')
+                + (launches == 1 ? tr("1 launched path returned to Git unresolved.")
+                                 : tr("%1 launched paths returned to Git unresolved.").arg(launches));
     }
     Q_EMIT handoffChanged();
     Q_EMIT sessionEnded(sessionOutcome_, clean);
@@ -485,7 +475,8 @@ QString ApplicationController::discardedMessage(const FileSession *current) cons
 {
     return current && !current->facts().unsaved
         ? tr("Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.")
-        : tr("Discarded unsaved changes and restored the initial result. It is still unsaved, and the repository file is unchanged.");
+        : tr("Discarded unsaved changes and restored the initial result. It is still unsaved, and the repository file "
+             "is unchanged.");
 }
 
 bool ApplicationController::loadLargeFile(const QString &fileId)
@@ -534,7 +525,8 @@ bool ApplicationController::discardToStaged(const QString &fileId, const QString
     }
     stagedDiscardPending_ = false;
     if (result == Transition::Blocked) {
-        showMessage(tr("Discard was not completed. No verified result staged in Git to return to, so the draft is kept."));
+        showMessage(
+            tr("Discard was not completed. No verified result staged in Git to return to, so the draft is kept."));
         return false;
     }
     if (result != Transition::Applied) return commandResult(result);
@@ -542,20 +534,11 @@ bool ApplicationController::discardToStaged(const QString &fileId, const QString
     return true;
 }
 
-void ApplicationController::attachResultEditor(QObject *editor)
-{
-    editor_.attach(editor);
-}
+void ApplicationController::attachResultEditor(QObject *editor) { editor_.attach(editor); }
 
-void ApplicationController::attachSourceEditor(QObject *editor)
-{
-    editor_.attachSource(editor);
-}
+void ApplicationController::attachSourceEditor(QObject *editor) { editor_.attachSource(editor); }
 
-void ApplicationController::setSyntaxBackground(const QColor &background)
-{
-    editor_.setSyntaxBackground(background);
-}
+void ApplicationController::setSyntaxBackground(const QColor &background) { editor_.setSyntaxBackground(background); }
 
 bool ApplicationController::resultClipboard(ResultEditorAdapter::ClipboardAction action)
 {
@@ -575,11 +558,11 @@ QVariantMap ApplicationController::firstUndecidedPlacement(const FileSession *fi
     const int begin = first.resultRange ? utf16Offset(result, first.byteBegin) : -1;
     const int end = first.resultRange ? utf16Offset(result, first.byteEnd) : -1;
     return {{QStringLiteral("fileId"), selectedFileId_},
-        {QStringLiteral("scope"), first.resultRange ? QStringLiteral("result") : QStringLiteral("unmapped-source")},
-        {QStringLiteral("utf16Begin"), begin},
-        {QStringLiteral("utf16End"), end},
-        {QStringLiteral("contributionId"), text(first.contributionId)},
-        {QStringLiteral("count"), static_cast<int>(targets.size())}};
+            {QStringLiteral("scope"), first.resultRange ? QStringLiteral("result") : QStringLiteral("unmapped-source")},
+            {QStringLiteral("utf16Begin"), begin},
+            {QStringLiteral("utf16End"), end},
+            {QStringLiteral("contributionId"), text(first.contributionId)},
+            {QStringLiteral("count"), static_cast<int>(targets.size())}};
 }
 
 bool ApplicationController::toggleFileList()
@@ -596,8 +579,8 @@ bool ApplicationController::toggleFileList()
     const auto *after = files_.file(fileId.toStdString());
     const auto *afterPending = after ? files_.pendingDraft(after->id()) : nullptr;
     const auto afterText = after ? text(afterPending ? afterPending->text : after->current().draft.text) : QString{};
-    const bool preserved = selectedFileId_ == fileId && before == afterText
-        && (!after || after->current().id == revision);
+    const bool preserved =
+        selectedFileId_ == fileId && before == afterText && (!after || after->current().id == revision);
     editor_.restoreLocation();
     return preserved;
 }
@@ -607,13 +590,7 @@ bool ApplicationController::navigate(FileNavigator::Mode mode, int direction)
     return navigator_.navigate(mode, direction);
 }
 
-int ApplicationController::outsideAppFiles() const
-{
-    return files_.supportCount(Support::OutsideApp);
-}
+int ApplicationController::outsideAppFiles() const { return files_.supportCount(Support::OutsideApp); }
 
-int ApplicationController::loadErrorFiles() const
-{
-    return files_.supportCount(Support::Unreadable);
-}
+int ApplicationController::loadErrorFiles() const { return files_.supportCount(Support::Unreadable); }
 }

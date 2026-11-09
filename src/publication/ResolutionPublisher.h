@@ -1,8 +1,8 @@
 // Resolution publishing writes a reviewed result and verifies its Git staging or parent handoff.
 #pragma once
 
-#include "session/SessionCoordinator.h"
 #include "git/TextConversion.h"
+#include "session/SessionCoordinator.h"
 #include "storage/DestinationWriter.h"
 #include <QByteArray>
 #include <QObject>
@@ -36,8 +36,8 @@ public:
         std::optional<MarkerScan> markers;
     };
 
-    ResolutionPublisher(SessionModel &files, SessionCoordinator &coordinator,
-                        QString gitExecutable, QObject *parent = nullptr);
+    ResolutionPublisher(SessionModel &files, SessionCoordinator &coordinator, QString gitExecutable,
+                        QObject *parent = nullptr);
 
     void captureBaselines(const git::RepositoryContext &repository);
     // Uses the current repository file as the launch destination of a

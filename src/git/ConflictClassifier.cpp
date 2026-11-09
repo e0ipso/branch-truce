@@ -33,13 +33,13 @@ bool sameSnapshot(const Result &before, const Result &after)
 {
     const auto &a = before.repository;
     const auto &b = after.repository;
-    if (after.outcome != Outcome::Success || after.outputIncomplete
-        || a.worktreeRoot != b.worktreeRoot || a.gitDirectory != b.gitDirectory
-        || a.operation != b.operation || a.supported != b.supported
+    if (after.outcome != Outcome::Success || after.outputIncomplete || a.worktreeRoot != b.worktreeRoot
+        || a.gitDirectory != b.gitDirectory || a.operation != b.operation || a.supported != b.supported
         || a.stage2.commitId != b.stage2.commitId || a.stage3.commitId != b.stage3.commitId
-        || a.baseCommitId != b.baseCommitId || a.originalHead != b.originalHead
-        || a.onto != b.onto || a.headName != b.headName || a.unsupportedPaths != b.unsupportedPaths
-        || before.indexEntries.size() != after.indexEntries.size()) return false;
+        || a.baseCommitId != b.baseCommitId || a.originalHead != b.originalHead || a.onto != b.onto
+        || a.headName != b.headName || a.unsupportedPaths != b.unsupportedPaths
+        || before.indexEntries.size() != after.indexEntries.size())
+        return false;
     for (qsizetype i = 0; i < before.indexEntries.size(); ++i) {
         const auto &x = before.indexEntries[i];
         const auto &y = after.indexEntries[i];
@@ -53,14 +53,13 @@ bool sameSnapshot(const Result &before, const Result &after)
 // not a failure here; the session holds such a file until the user loads it.
 SnapshotFileIdentity fileIdentity(const struct stat &info)
 {
-    return {static_cast<std::uint64_t>(info.st_dev), static_cast<std::uint64_t>(info.st_ino),
-        static_cast<std::uint32_t>(info.st_mode), static_cast<std::int64_t>(info.st_size),
-        static_cast<std::int64_t>(info.st_mtim.tv_sec), static_cast<std::int64_t>(info.st_mtim.tv_nsec),
-        static_cast<std::int64_t>(info.st_ctim.tv_sec), static_cast<std::int64_t>(info.st_ctim.tv_nsec)};
+    return {static_cast<std::uint64_t>(info.st_dev),        static_cast<std::uint64_t>(info.st_ino),
+            static_cast<std::uint32_t>(info.st_mode),       static_cast<std::int64_t>(info.st_size),
+            static_cast<std::int64_t>(info.st_mtim.tv_sec), static_cast<std::int64_t>(info.st_mtim.tv_nsec),
+            static_cast<std::int64_t>(info.st_ctim.tv_sec), static_cast<std::int64_t>(info.st_ctim.tv_nsec)};
 }
 enum class ResultRead { Success, UnsupportedTopology, Failed };
-ResultRead readResult(const QString &root, const QByteArray &path, QByteArray &bytes,
-                      SnapshotFileIdentity &identity)
+ResultRead readResult(const QString &root, const QByteArray &path, QByteArray &bytes, SnapshotFileIdentity &identity)
 {
     int fd = ::open(QFile::encodeName(root).constData(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
     if (fd < 0) return ResultRead::Failed;
@@ -71,20 +70,29 @@ ResultRead readResult(const QString &root, const QByteArray &path, QByteArray &b
         const int next = ::openat(fd, parts[i].constData(), flags);
         const int error = errno;
         ::close(fd);
-        if (next < 0) return error == ELOOP || error == ENOTDIR
-            ? ResultRead::UnsupportedTopology : ResultRead::Failed;
+        if (next < 0) return error == ELOOP || error == ENOTDIR ? ResultRead::UnsupportedTopology : ResultRead::Failed;
         fd = next;
     }
-    struct stat info {};
-    if (::fstat(fd, &info) != 0) { ::close(fd); return ResultRead::Failed; }
-    if (!S_ISREG(info.st_mode)) { ::close(fd); return ResultRead::UnsupportedTopology; }
+    struct stat info{};
+    if (::fstat(fd, &info) != 0) {
+        ::close(fd);
+        return ResultRead::Failed;
+    }
+    if (!S_ISREG(info.st_mode)) {
+        ::close(fd);
+        return ResultRead::UnsupportedTopology;
+    }
     QFile file;
-    if (!file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) { ::close(fd); return ResultRead::Failed; }
+    if (!file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) {
+        ::close(fd);
+        return ResultRead::Failed;
+    }
     constexpr qsizetype limit = static_cast<qsizetype>(branch_truce::kMaxRecoveryPayloadBytes);
     bytes = file.read(limit + 1);
-    struct stat after {};
-    if (file.error() != QFileDevice::NoError || bytes.size() > limit
-        || ::fstat(fd, &after) != 0 || fileIdentity(info) != fileIdentity(after)) return ResultRead::Failed;
+    struct stat after{};
+    if (file.error() != QFileDevice::NoError || bytes.size() > limit || ::fstat(fd, &after) != 0
+        || fileIdentity(info) != fileIdentity(after))
+        return ResultRead::Failed;
     identity = fileIdentity(info);
     return ResultRead::Success;
 }
@@ -92,21 +100,22 @@ ResultRead readResult(const QString &root, const QByteArray &path, QByteArray &b
 QString textEnvelopeFailure(const QByteArray &bytes)
 {
     if (bytes.isEmpty()) return {};
-    const auto assessment = branch_truce::assessText(
-        std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
+    const auto assessment =
+        branch_truce::assessText(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
     if (assessment.limit == branch_truce::TextLimit::Within) return {};
     return QString::fromStdString("Load error: " + branch_truce::textLimitDiagnostic(assessment)
-        + "; the captured file was not loaded");
+                                  + "; the captured file was not loaded");
 }
 
 void excludeUnreadResult(Conflict &conflict, ResultRead read)
 {
     if (read == ResultRead::UnsupportedTopology) {
         exclude(conflict, ConflictSupport::TopologyConflict,
-            QStringLiteral("Outside app: current result must be a regular file without symlink traversal"));
+                QStringLiteral("Outside app: current result must be a regular file without symlink traversal"));
     } else {
         exclude(conflict, ConflictSupport::LoadFailure,
-            QStringLiteral("Load error: current result could not be read completely and stably within the 8388608 byte limit; check the file and reopen the session"));
+                QStringLiteral("Load error: current result could not be read completely and stably within the 8388608 "
+                               "byte limit; check the file and reopen the session"));
     }
 }
 } // namespace
@@ -117,7 +126,8 @@ public:
         : q(owner), adapter(executable, owner), conversion(executable, owner)
     {
         QObject::connect(&adapter, &GitAdapter::finished, q, [this](const Result &observed) { discovered(observed); });
-        QObject::connect(&conversion, &TextConversion::finished, q, [this](const TextConversionResult &observed) { converted(observed); });
+        QObject::connect(&conversion, &TextConversion::finished, q,
+                         [this](const TextConversionResult &observed) { converted(observed); });
     }
     void complete(Outcome outcome, const QString &diagnostic = {})
     {
@@ -134,17 +144,25 @@ public:
     }
     void discover()
     {
-        if (cancelled) { complete(Outcome::Cancelled, QStringLiteral("Outside app: conflict inspection cancelled")); return; }
+        if (cancelled) {
+            complete(Outcome::Cancelled, QStringLiteral("Outside app: conflict inspection cancelled"));
+            return;
+        }
         const auto &r = result.request;
         if (!adapter.start({Operation::DiscoverRepository, r.directory, {}, {}, r.sessionGeneration, r.inputRevision}))
             complete(Outcome::ProcessFailure, QStringLiteral("Outside app: conflict discovery was unexpectedly busy"));
     }
     void discovered(const Result &observed)
     {
-        if (cancelled) { complete(Outcome::Cancelled, QStringLiteral("Outside app: conflict inspection cancelled")); return; }
+        if (cancelled) {
+            complete(Outcome::Cancelled, QStringLiteral("Outside app: conflict inspection cancelled"));
+            return;
+        }
         if (rechecking) {
             if (!sameSnapshot(snapshot, observed)) {
-                complete(Outcome::InspectionFailure, QStringLiteral("Outside app: operation or index changed during classification; inspect again"));
+                complete(
+                    Outcome::InspectionFailure,
+                    QStringLiteral("Outside app: operation or index changed during classification; inspect again"));
                 return;
             }
             for (auto &conflict : result.conflicts) {
@@ -160,10 +178,12 @@ public:
                     exclude(conflict, ConflictSupport::LoadFailure, envelope);
                 } else if (current != conflict.result->originalBytes || identity != conflict.resultIdentity) {
                     exclude(conflict, ConflictSupport::TopologyConflict,
-                        QStringLiteral("Outside app: current result changed or became unreadable during classification; inspect again"));
+                            QStringLiteral("Outside app: current result changed or became unreadable during "
+                                           "classification; inspect again"));
                 } else if (conflict.sources.front().policy.configuration != observed.conversionPolicy.configuration) {
                     exclude(conflict, ConflictSupport::UnsupportedConversion,
-                        QStringLiteral("Outside app: conversion configuration changed during classification; inspect again"));
+                            QStringLiteral(
+                                "Outside app: conversion configuration changed during classification; inspect again"));
                 }
             }
             complete(Outcome::Success);
@@ -192,7 +212,10 @@ public:
             auto slash = conflict.path.indexOf('/');
             while (slash >= 0) {
                 const auto parent = conflict.path.first(slash);
-                if (positions.contains(parent)) { ambiguous.insert(parent); ambiguous.insert(conflict.path); }
+                if (positions.contains(parent)) {
+                    ambiguous.insert(parent);
+                    ambiguous.insert(conflict.path);
+                }
                 slash = conflict.path.indexOf('/', slash + 1);
             }
         }
@@ -201,17 +224,37 @@ public:
             bool valid = detail::relativeFile(conflict.path);
             bool regular = true;
             for (const auto &entry : conflict.stages) {
-                if (entry.stage < 1 || entry.stage > 3 || stages[entry.stage] || !detail::objectId(entry.objectId)) { valid = false; break; }
+                if (entry.stage < 1 || entry.stage > 3 || stages[entry.stage] || !detail::objectId(entry.objectId)) {
+                    valid = false;
+                    break;
+                }
                 stages[entry.stage] = &entry;
                 regular = regular && (entry.mode == "100644" || entry.mode == "100755");
             }
-            if (!valid) exclude(conflict, ConflictSupport::InspectionFailure, QStringLiteral("Outside app: invalid or duplicate conflict stages"));
-            else if (!regular) exclude(conflict, ConflictSupport::UnsupportedType, QStringLiteral("Outside app: symlink, submodule or other non-regular source type requires external resolution"));
-            else if (!stages[2] || !stages[3]) exclude(conflict, ConflictSupport::MissingSide, QStringLiteral("Outside app: missing stage 2 or 3 requires a deletion or destination decision"));
-            else if (stages[2]->mode != stages[3]->mode) exclude(conflict, ConflictSupport::ModeConflict, QStringLiteral("Outside app: stages 2 and 3 disagree on the executable mode"));
-            else if (ambiguous.contains(conflict.path)) exclude(conflict, ConflictSupport::TopologyConflict, QStringLiteral("Outside app: conflicting file and directory paths require a topology decision"));
-            else if (result.repository.unsupportedPaths.contains(conflict.path)) exclude(conflict, ConflictSupport::UnverifiedSource, result.repository.unsupportedPaths.value(conflict.path));
-            else if (!result.repository.supported) exclude(conflict, ConflictSupport::UnsupportedOperation, QStringLiteral("Outside app: ") + withoutOutsideAppPrefix(result.repository.diagnostic));
+            if (!valid)
+                exclude(conflict, ConflictSupport::InspectionFailure,
+                        QStringLiteral("Outside app: invalid or duplicate conflict stages"));
+            else if (!regular)
+                exclude(conflict, ConflictSupport::UnsupportedType,
+                        QStringLiteral("Outside app: symlink, submodule or other non-regular source type requires "
+                                       "external resolution"));
+            else if (!stages[2] || !stages[3])
+                exclude(
+                    conflict, ConflictSupport::MissingSide,
+                    QStringLiteral("Outside app: missing stage 2 or 3 requires a deletion or destination decision"));
+            else if (stages[2]->mode != stages[3]->mode)
+                exclude(conflict, ConflictSupport::ModeConflict,
+                        QStringLiteral("Outside app: stages 2 and 3 disagree on the executable mode"));
+            else if (ambiguous.contains(conflict.path))
+                exclude(
+                    conflict, ConflictSupport::TopologyConflict,
+                    QStringLiteral("Outside app: conflicting file and directory paths require a topology decision"));
+            else if (result.repository.unsupportedPaths.contains(conflict.path))
+                exclude(conflict, ConflictSupport::UnverifiedSource,
+                        result.repository.unsupportedPaths.value(conflict.path));
+            else if (!result.repository.supported)
+                exclude(conflict, ConflictSupport::UnsupportedOperation,
+                        QStringLiteral("Outside app: ") + withoutOutsideAppPrefix(result.repository.diagnostic));
             else {
                 conflict.mode = stages[2]->mode;
                 conflict.support = ConflictSupport::SupportedText;
@@ -224,7 +267,8 @@ public:
         while (offset < result.conflicts.size()) {
             auto &conflict = result.conflicts[offset];
             if (conflict.editable()) {
-                const auto read = readResult(result.repository.worktreeRoot, conflict.path, launchBytes, launchIdentity);
+                const auto read =
+                    readResult(result.repository.worktreeRoot, conflict.path, launchBytes, launchIdentity);
                 if (read == ResultRead::Success) conflict.launchSize = launchIdentity.size;
                 const auto envelope = read == ResultRead::Success ? textEnvelopeFailure(launchBytes) : QString{};
                 if (read == ResultRead::Success && envelope.isEmpty()) {
@@ -235,7 +279,8 @@ public:
                 if (!envelope.isEmpty()) {
                     launchBytes.clear();
                     exclude(conflict, ConflictSupport::LoadFailure, envelope);
-                } else excludeUnreadResult(conflict, read);
+                } else
+                    excludeUnreadResult(conflict, read);
             }
             ++offset;
         }
@@ -254,28 +299,40 @@ public:
         request.stages = conflict.stages;
         request.sessionGeneration = result.request.sessionGeneration;
         request.inputRevision = result.request.inputRevision;
-        if (!conversion.start(request)) complete(Outcome::ProcessFailure, QStringLiteral("Outside app: source conversion was unexpectedly busy"));
+        if (!conversion.start(request))
+            complete(Outcome::ProcessFailure, QStringLiteral("Outside app: source conversion was unexpectedly busy"));
     }
     void converted(const TextConversionResult &observed)
     {
-        if (cancelled) { complete(Outcome::Cancelled, QStringLiteral("Outside app: conflict inspection cancelled")); return; }
+        if (cancelled) {
+            complete(Outcome::Cancelled, QStringLiteral("Outside app: conflict inspection cancelled"));
+            return;
+        }
         auto &conflict = result.conflicts[offset];
         if (observed.outcome != Outcome::Success || !observed.text) {
-            const auto support = observed.outcome != Outcome::Rejected ? ConflictSupport::InspectionFailure
+            const auto support = observed.outcome != Outcome::Rejected       ? ConflictSupport::InspectionFailure
                 : observed.failure == TextConversionFailure::UnsupportedText ? ConflictSupport::UnsupportedText
-                : ConflictSupport::UnsupportedConversion;
-            exclude(conflict, support, QStringLiteral("Outside app: stage %1 cannot be edited: %2").arg(conflict.stages[source].stage).arg(withoutOutsideAppPrefix(observed.diagnostic)));
+                                                                             : ConflictSupport::UnsupportedConversion;
+            exclude(conflict, support,
+                    QStringLiteral("Outside app: stage %1 cannot be edited: %2")
+                        .arg(conflict.stages[source].stage)
+                        .arg(withoutOutsideAppPrefix(observed.diagnostic)));
         } else if (!conflict.sources.isEmpty() && conflict.sources.front().policy != observed.text->policy) {
-            exclude(conflict, ConflictSupport::UnsupportedConversion, QStringLiteral("Outside app: source conversion policies changed during classification"));
+            exclude(conflict, ConflictSupport::UnsupportedConversion,
+                    QStringLiteral("Outside app: source conversion policies changed during classification"));
         } else {
             conflict.sources.append(*observed.text);
-            if (++source < conflict.stages.size()) { readSource(); return; }
-            const auto decoded = storage::decodeText(launchBytes, conflict.sources.front().policy.attributes.value("working-tree-encoding"));
+            if (++source < conflict.stages.size()) {
+                readSource();
+                return;
+            }
+            const auto decoded = storage::decodeText(
+                launchBytes, conflict.sources.front().policy.attributes.value("working-tree-encoding"));
             if (decoded.document) {
                 conflict.result = decoded.document;
                 conflict.resultIdentity = launchIdentity;
-            }
-            else exclude(conflict, ConflictSupport::UnsupportedText, decoded.diagnostic);
+            } else
+                exclude(conflict, ConflictSupport::UnsupportedText, decoded.diagnostic);
         }
         ++offset;
         next();

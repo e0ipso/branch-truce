@@ -8,19 +8,14 @@
 
 namespace branch_truce::git {
 namespace {
-bool attributeAbsent(const QByteArray &value)
-{
-    return value.isEmpty() || value == "unspecified" || value == "unset";
-}
+bool attributeAbsent(const QByteArray &value) { return value.isEmpty() || value == "unspecified" || value == "unset"; }
 bool supportedPolicy(const ConversionPolicy &policy, QString &diagnostic)
 {
     const auto text = policy.attributes.value("text");
     const auto ident = policy.attributes.value("ident");
     const auto eol = policy.attributes.value("eol");
-    if ((!attributeAbsent(text) && text != "set" && text != "auto")
-        || (!attributeAbsent(ident) && ident != "set")
-        || (!attributeAbsent(eol) && eol != "lf" && eol != "crlf")
-        || (text == "unset" && !attributeAbsent(eol))) {
+    if ((!attributeAbsent(text) && text != "set" && text != "auto") || (!attributeAbsent(ident) && ident != "set")
+        || (!attributeAbsent(eol) && eol != "lf" && eol != "crlf") || (text == "unset" && !attributeAbsent(eol))) {
         diagnostic = QStringLiteral("Outside app: unsupported or contradictory text/eol/ident attributes");
         return false;
     }
@@ -32,7 +27,8 @@ bool captureMode(const TextConversionRequest &request, ConvertedText &text, QStr
     for (const auto &entry : request.stages) {
         if (entry.path != request.path || entry.stage < 1 || entry.stage > 3 || stages[entry.stage]
             || (entry.mode != "100644" && entry.mode != "100755") || !detail::objectId(entry.objectId)) {
-            diagnostic = QStringLiteral("Outside app: source stages require unique regular-file entries at the exact path");
+            diagnostic =
+                QStringLiteral("Outside app: source stages require unique regular-file entries at the exact path");
             return false;
         }
         stages[entry.stage] = &entry;
@@ -56,7 +52,17 @@ bool captureMode(const TextConversionRequest &request, ConvertedText &text, QStr
 
 class TextConversion::State {
 public:
-    enum class Step { Attributes, Source, RawSource, Canonical, Index, PublishedRaw, PublishedCheckout, FinalPolicy, FinalIndex };
+    enum class Step {
+        Attributes,
+        Source,
+        RawSource,
+        Canonical,
+        Index,
+        PublishedRaw,
+        PublishedCheckout,
+        FinalPolicy,
+        FinalIndex
+    };
     State(TextConversion *owner, const QString &executable) : q(owner), adapter(executable, owner)
     {
         QObject::connect(&adapter, &GitAdapter::finished, q, [this](const Result &result) { consume(result); });
@@ -87,7 +93,8 @@ public:
         gitRequest.input = input;
         gitRequest.sessionGeneration = request.sessionGeneration;
         gitRequest.inputRevision = request.inputRevision;
-        if (!adapter.start(gitRequest)) complete(Outcome::ProcessFailure, QStringLiteral("Conversion adapter was unexpectedly busy"));
+        if (!adapter.start(gitRequest))
+            complete(Outcome::ProcessFailure, QStringLiteral("Conversion adapter was unexpectedly busy"));
     }
     void begin()
     {
@@ -116,12 +123,17 @@ public:
                 return;
             }
             run(Step::Index, Operation::InspectIndex);
-        } else if (request.operation == TextOperation::ReadSource || request.operation == TextOperation::PrepareResult) {
+        } else if (request.operation == TextOperation::ReadSource
+                   || request.operation == TextOperation::PrepareResult) {
             QString diagnostic;
-            if (!captureMode(request, text, diagnostic)) reject(diagnostic);
-            else if (request.operation == TextOperation::ReadSource) run(Step::Source, Operation::MaterializeSource, request.objectId);
-            else run(Step::Attributes, Operation::ReadAttributes);
-        } else reject(QStringLiteral("Unknown text conversion operation"));
+            if (!captureMode(request, text, diagnostic))
+                reject(diagnostic);
+            else if (request.operation == TextOperation::ReadSource)
+                run(Step::Source, Operation::MaterializeSource, request.objectId);
+            else
+                run(Step::Attributes, Operation::ReadAttributes);
+        } else
+            reject(QStringLiteral("Unknown text conversion operation"));
     }
     void consume(const Result &observed)
     {
@@ -131,9 +143,9 @@ public:
         }
         if (observed.outcome != Outcome::Success || observed.outputIncomplete) {
             auto diagnostic = observed.diagnostic;
-            if (!observed.standardError.isEmpty()) diagnostic += QStringLiteral(": ") + QString::fromUtf8(observed.standardError).trimmed();
-            complete(observed.outcome == Outcome::Success ? Outcome::OutputLimit : observed.outcome,
-                     diagnostic);
+            if (!observed.standardError.isEmpty())
+                diagnostic += QStringLiteral(": ") + QString::fromUtf8(observed.standardError).trimmed();
+            complete(observed.outcome == Outcome::Success ? Outcome::OutputLimit : observed.outcome, diagnostic);
             return;
         }
         if (!text.worktreeRoot.isEmpty() && observed.worktreeRoot != text.worktreeRoot) {
@@ -146,12 +158,22 @@ public:
         case Step::Attributes: {
             text.worktreeRoot = observed.worktreeRoot;
             text.policy = observed.conversionPolicy;
-            if (!supportedPolicy(text.policy, diagnostic)) { reject(diagnostic); return; }
-            const auto format = storage::resultFormat(request.launchResultFormat,
-                text.policy.attributes.value("working-tree-encoding"), text.policy.attributes.value("eol"), diagnostic);
-            if (!format) { reject(diagnostic); return; }
+            if (!supportedPolicy(text.policy, diagnostic)) {
+                reject(diagnostic);
+                return;
+            }
+            const auto format =
+                storage::resultFormat(request.launchResultFormat, text.policy.attributes.value("working-tree-encoding"),
+                                      text.policy.attributes.value("eol"), diagnostic);
+            if (!format) {
+                reject(diagnostic);
+                return;
+            }
             const auto serialized = storage::serializeText(request.editedUtf8, *format);
-            if (!serialized.document) { reject(serialized.diagnostic); return; }
+            if (!serialized.document) {
+                reject(serialized.diagnostic);
+                return;
+            }
             text.document = *serialized.document;
             run(Step::Canonical, Operation::CanonicalizeText, {}, text.document.originalBytes);
             break;
@@ -159,9 +181,16 @@ public:
         case Step::Source: {
             text.worktreeRoot = observed.worktreeRoot;
             text.policy = observed.conversionPolicy;
-            if (!supportedPolicy(text.policy, diagnostic)) { reject(diagnostic); return; }
-            const auto decoded = storage::decodeText(observed.standardOutput, text.policy.attributes.value("working-tree-encoding"));
-            if (!decoded.document) { reject(decoded.diagnostic, TextConversionFailure::UnsupportedText); return; }
+            if (!supportedPolicy(text.policy, diagnostic)) {
+                reject(diagnostic);
+                return;
+            }
+            const auto decoded =
+                storage::decodeText(observed.standardOutput, text.policy.attributes.value("working-tree-encoding"));
+            if (!decoded.document) {
+                reject(decoded.diagnostic, TextConversionFailure::UnsupportedText);
+                return;
+            }
             text.document = *decoded.document;
             run(Step::RawSource, Operation::ReadObject, request.objectId);
             break;
@@ -176,12 +205,16 @@ public:
             break;
         case Step::Canonical:
             if (observed.conversionPolicy != text.policy) {
-                reject(QStringLiteral("Outside app: conversion attributes/configuration changed; reload before publishing"));
+                reject(QStringLiteral(
+                    "Outside app: conversion attributes/configuration changed; reload before publishing"));
             } else if (observed.standardOutput != text.document.originalBytes) {
-                reject(QStringLiteral("Outside app: clean/checkout changes the reviewed worktree bytes, including EOL, BOM or ident expansion"));
+                reject(QStringLiteral("Outside app: clean/checkout changes the reviewed worktree bytes, including EOL, "
+                                      "BOM or ident expansion"));
             } else if (request.operation == TextOperation::ReadSource
-                       && (observed.canonicalObjectId != request.objectId || observed.canonicalBytes != text.canonicalBytes)) {
-                reject(QStringLiteral("Outside app: source clean conversion does not round-trip to the captured canonical object"));
+                       && (observed.canonicalObjectId != request.objectId
+                           || observed.canonicalBytes != text.canonicalBytes)) {
+                reject(QStringLiteral(
+                    "Outside app: source clean conversion does not round-trip to the captured canonical object"));
             } else {
                 text.canonicalBytes = observed.canonicalBytes;
                 text.canonicalObjectId = observed.canonicalObjectId;
@@ -193,24 +226,33 @@ public:
             if (observed.indexEntries.size() != 1 || observed.indexEntries.front().stage != 0
                 || observed.indexEntries.front().path != request.path || observed.indexEntries.front().mode != text.mode
                 || observed.indexEntries.front().objectId != text.canonicalObjectId) {
-                reject(QStringLiteral("Outside app: staged canonical identity or executable mode differs from the reviewed result"));
-            } else if (step == Step::FinalIndex) complete(Outcome::Success);
-            else run(Step::PublishedRaw, Operation::ReadObject, text.canonicalObjectId);
+                reject(QStringLiteral(
+                    "Outside app: staged canonical identity or executable mode differs from the reviewed result"));
+            } else if (step == Step::FinalIndex)
+                complete(Outcome::Success);
+            else
+                run(Step::PublishedRaw, Operation::ReadObject, text.canonicalObjectId);
             break;
         case Step::PublishedRaw:
-            if (observed.standardOutput != text.canonicalBytes) reject(QStringLiteral("Outside app: staged canonical bytes differ from the reviewed result"));
-            else run(Step::PublishedCheckout, Operation::MaterializeSource, text.canonicalObjectId);
+            if (observed.standardOutput != text.canonicalBytes)
+                reject(QStringLiteral("Outside app: staged canonical bytes differ from the reviewed result"));
+            else
+                run(Step::PublishedCheckout, Operation::MaterializeSource, text.canonicalObjectId);
             break;
         case Step::PublishedCheckout:
             if (observed.conversionPolicy != text.policy || observed.standardOutput != text.document.originalBytes) {
-                reject(QStringLiteral("Outside app: staged checkout or conversion policy differs from the reviewed result"));
-            } else run(Step::FinalPolicy, Operation::ReadAttributes);
+                reject(QStringLiteral(
+                    "Outside app: staged checkout or conversion policy differs from the reviewed result"));
+            } else
+                run(Step::FinalPolicy, Operation::ReadAttributes);
             break;
         case Step::FinalPolicy:
             if (observed.conversionPolicy != text.policy) {
                 reject(QStringLiteral("Outside app: conversion policy changed during verification"));
-            } else if (request.operation == TextOperation::VerifyPublished) run(Step::FinalIndex, Operation::InspectIndex);
-            else complete(Outcome::Success);
+            } else if (request.operation == TextOperation::VerifyPublished)
+                run(Step::FinalIndex, Operation::InspectIndex);
+            else
+                complete(Outcome::Success);
             break;
         }
     }

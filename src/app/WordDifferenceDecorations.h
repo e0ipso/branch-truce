@@ -35,8 +35,7 @@ struct FileSnapshots;
 class WordDifferenceDecorations final : public QObject {
     Q_OBJECT
 public:
-    WordDifferenceDecorations(SessionModel &files, std::function<QString()> selectedFileId,
-                              QObject *parent = nullptr);
+    WordDifferenceDecorations(SessionModel &files, std::function<QString()> selectedFileId, QObject *parent = nullptr);
     // Attaching the same editor again changes nothing. An editor without
     // wordDifferenceStyle, or without a highlighter yet, is left alone.
     void attach(QObject *editor, QTextDocument *document);
