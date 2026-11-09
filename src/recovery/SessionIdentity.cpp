@@ -68,10 +68,13 @@ std::optional<QByteArray> serializedRevision(const FileSession &file, const Revi
 {
     const auto *snapshots = file.snapshots();
     if (!snapshots) return std::nullopt;
-    const auto result = storage::serializeText(QByteArray::fromStdString(revision.draft.text),
-                                               snapshots->launchResult.text.format);
+    const auto result =
+        storage::serializeText(QByteArray::fromStdString(revision.draft.text), snapshots->launchResult.text.format);
     return result.document ? std::optional<QByteArray>(result.document->originalBytes) : std::nullopt;
 }
 
-bool modeMatches(std::uint32_t fileMode, std::string_view gitMode) { return ((fileMode & 0111U) != 0) == (gitMode == "100755"); }
+bool modeMatches(std::uint32_t fileMode, std::string_view gitMode)
+{
+    return ((fileMode & 0111U) != 0) == (gitMode == "100755");
+}
 }

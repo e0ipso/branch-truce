@@ -75,17 +75,17 @@ ResolutionPublisher::ResolutionPublisher(SessionStore &files, SessionCoordinator
     });
 }
 
-void ResolutionPublisher::captureBaselines(const git::RepositoryContext &repository)
+ResolutionPublisher::Baselines
+ResolutionPublisher::readBaselines(const QString &worktreeRoot, const std::vector<FileSession> &files,
+                                   const std::shared_ptr<const storage::FileSystem> &destinations)
 {
-    repository_ = repository;
-    baselines_.clear();
-    for (const auto &file : files_.files()) {
-        const auto *session = &file;
-        if (session->support() != Support::Supported || !session->snapshots()) continue;
+    Baselines baselines;
+    for (const auto &session : files) {
+        if (session.support() != Support::Supported || !session.snapshots()) continue;
         Baseline baseline;
-        const auto captured = storage::captureDestination(repository.worktreeRoot,
-                                                          QByteArray::fromStdString(session->path()), destinations_);
-        const auto &launch = session->snapshots()->launchResult;
+        const auto captured =
+            storage::captureDestination(worktreeRoot, QByteArray::fromStdString(session.path()), destinations);
+        const auto &launch = session.snapshots()->launchResult;
         if (!captured.destination)
             baseline.diagnostic = captured.diagnostic;
         else if (captured.destination->identity() != launch.identity
@@ -93,8 +93,15 @@ void ResolutionPublisher::captureBaselines(const git::RepositoryContext &reposit
             baseline.diagnostic = tr("The repository file no longer matches the captured launch result.");
         } else
             baseline.destination = captured.destination;
-        baselines_.emplace(session->id(), std::move(baseline));
+        baselines.emplace(session.id(), std::move(baseline));
     }
+    return baselines;
+}
+
+void ResolutionPublisher::adoptBaselines(const git::RepositoryContext &repository, Baselines baselines)
+{
+    repository_ = repository;
+    baselines_ = std::move(baselines);
 }
 
 bool ResolutionPublisher::adoptCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity)

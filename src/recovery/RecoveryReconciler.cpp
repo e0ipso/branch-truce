@@ -105,10 +105,9 @@ QString recoverStaging(FileSession &file, std::vector<RecoveryMutation> &mutatio
                                   "Recovered staging completion verified against disk and index")
             != Transition::Applied)
             continue;
-        const auto committed =
-            lease.commit(recoveryTransaction(candidate, RecoveryAction::StageOutcome,
-                                             QUuid::createUuid().toString(QUuid::WithoutBraces),
-                                             file.current().draft.text));
+        const auto committed = lease.commit(recoveryTransaction(candidate, RecoveryAction::StageOutcome,
+                                                                QUuid::createUuid().toString(QUuid::WithoutBraces),
+                                                                file.current().draft.text));
         if (!committed.succeeded)
             return QStringLiteral("Staging evidence matched, but recovery could not retain its completion: %1")
                 .arg(committed.error);

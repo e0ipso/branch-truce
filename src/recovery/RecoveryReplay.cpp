@@ -48,8 +48,8 @@ Transition apply(RecoveryAction action, FileSession &file, const RecoveryRecordR
     }
     case RecoveryAction::StageOutcome: {
         const auto outcome = record.stageOutcome();
-        auto [objectId, mode] = outcome.outcome == Outcome::Succeeded ? record.stagedObject()
-                                                                      : std::pair<std::string, std::string>{};
+        auto [objectId, mode] =
+            outcome.outcome == Outcome::Succeeded ? record.stagedObject() : std::pair<std::string, std::string>{};
         return file.recordStage(outcome.revision, outcome.outcome, std::move(objectId), std::move(mode),
                                 outcome.detail);
     }
@@ -99,9 +99,11 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
             if (action == RecoveryAction::Open) {
                 require(found == files.end() || placeholder(found->second),
                         "Recovery attempted to replace an acknowledged session.");
-                found = files.insert_or_assign(id, FileSession(id, path, record.draft({}), record.support(),
-                                                               record.supportDetail(), record.snapshots(), false,
-                                                               correspondence))
+                found = files
+                            .insert_or_assign(id,
+                                              FileSession(id, path, record.draft({}), record.support(),
+                                                          record.supportDetail(), record.snapshots(), false,
+                                                          correspondence))
                             .first;
             } else {
                 require(found != files.end() && found->second.path() == path,
@@ -115,8 +117,9 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
                 if (action == RecoveryAction::MutationObservation) {
                     // The observation repeats its intent's target, whatever the
                     // file became since.
-                    const auto entry = std::find_if(result.mutations.begin(), result.mutations.end(),
-                                                    [&](const auto &candidate) { return candidate.id == mutation->id; });
+                    const auto entry =
+                        std::find_if(result.mutations.begin(), result.mutations.end(),
+                                     [&](const auto &candidate) { return candidate.id == mutation->id; });
                     require(entry != result.mutations.end() && entry->kind == mutation->kind && !entry->observation,
                             "Recovery mutation observation has no intent or repeats one.");
                     require(recoveryTransaction(entry->target, action, stored.id, entry->target.current().draft.text,
@@ -140,7 +143,8 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
             require(encoded == stored.state,
                     "Recovery state schema or transition does not match the acknowledged record.");
             if (action == RecoveryAction::WriteOutcome || action == RecoveryAction::StageOutcome) {
-                const auto kind = action == RecoveryAction::WriteOutcome ? MutationKind::Publication : MutationKind::Staging;
+                const auto kind =
+                    action == RecoveryAction::WriteOutcome ? MutationKind::Publication : MutationKind::Staging;
                 const auto &outcome = action == RecoveryAction::WriteOutcome ? found->second.writeOutcome()
                                                                              : found->second.stageOutcome();
                 // Match completion in journal order before a later revision can

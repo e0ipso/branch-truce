@@ -29,6 +29,13 @@ public:
         QString worktreeRoot;
         git::ConvertedText prepared;
     };
+    // The repository file a supported file publishes over, as captured before
+    // any edit, or why it cannot be used.
+    struct Baseline {
+        std::optional<storage::DestinationSnapshot> destination;
+        QString diagnostic;
+    };
+    using Baselines = std::map<std::string, Baseline>;
     struct StartResult {
         Transition transition = Transition::Blocked;
         QString detail;
@@ -41,7 +48,13 @@ public:
                         std::shared_ptr<const storage::FileSystem> destinations = storage::systemFileSystem(),
                         QObject *parent = nullptr);
 
-    void captureBaselines(const git::RepositoryContext &repository);
+    // Blocking: reads every supported file's destination, so a load worker
+    // calls it. A destination must still be the captured launch result.
+    [[nodiscard]] static Baselines readBaselines(const QString &worktreeRoot, const std::vector<FileSession> &files,
+                                                 const std::shared_ptr<const storage::FileSystem> &destinations);
+    // Uses baselines a load read for repository's files.
+    void adoptBaselines(const git::RepositoryContext &repository, Baselines baselines);
+    [[nodiscard]] const std::shared_ptr<const storage::FileSystem> &destinations() const { return destinations_; }
     // Uses the current repository file as the launch destination of a
     // recovered file that git mergetool replaced by a copy. The file must
     // still have the identity recovery validated and the launch bytes.
@@ -63,10 +76,6 @@ Q_SIGNALS:
 
 private:
     enum class Step { Prepare, Discover, Index, Publish, Stage, ParentPreflight, Verify };
-    struct Baseline {
-        std::optional<storage::DestinationSnapshot> destination;
-        QString diagnostic;
-    };
     struct Attempt {
         quint64 generation = 0;
         std::string fileId;
@@ -109,7 +118,7 @@ private:
     const std::shared_ptr<const storage::FileSystem> destinations_;
     git::RepositoryContext repository_;
     git::TextConversion conversion_;
-    std::map<std::string, Baseline> baselines_;
+    Baselines baselines_;
     std::optional<Attempt> attempt_;
     std::optional<Offer> offer_;
     QByteArray parentPath_;

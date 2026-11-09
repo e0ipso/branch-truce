@@ -303,6 +303,7 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
     }
     auto loaded = std::make_shared<std::vector<FileSession>>();
     auto recovery = std::make_shared<RecoveryRestore>();
+    auto baselines = std::make_shared<ResolutionPublisher::Baselines>();
     const auto anchor =
         conflicts.empty() ? std::string("recovery-inventory") : conflicts.front().path.toHex().toStdString();
     const auto recoveryDirectory = session_.store.recoveryDirectory();
@@ -311,8 +312,8 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
     const auto task = session_.coordinator.submit(
         anchor, 1,
         [files = std::move(conflicts), repository = repository_, sessionId, loaded, recovery, recoveryDirectory,
-         recoveryInventory, executable = gitExecutable_, correspondence = correspondence_,
-         chosen = recoverySession_](const TaskInput &, const TaskControl &control) {
+         recoveryInventory, executable = gitExecutable_, correspondence = correspondence_, chosen = recoverySession_,
+         baselines, destinations = session_.publisher.destinations()](const TaskInput &, const TaskControl &control) {
             for (const auto &file : files) {
                 if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
                 Draft draft;
@@ -333,9 +334,13 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
             }
             *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, executable, chosen,
                                         {correspondence, QDateTime::currentDateTimeUtc()});
+            // Reading every destination waits on the disk, so it happens here too.
+            if (repository.supported)
+                *baselines = ResolutionPublisher::readBaselines(
+                    repository.worktreeRoot, recovery->found ? recovery->files : *loaded, destinations);
             return TaskResult{};
         },
-        [this, loaded, recovery](const TaskCompletion &completion) {
+        [this, loaded, recovery, baselines](const TaskCompletion &completion) {
             const auto diagnostics = recovery->diagnostics.join(QLatin1Char('\n'));
             const bool recovered = recovery->found;
             auto choices = recovery->choices;
@@ -368,7 +373,7 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
             auto listen = MergetoolSession::Listen::Listening;
             QString listenError;
             if (repository_.supported) {
-                session_.publisher.captureBaselines(repository_);
+                session_.publisher.adoptBaselines(repository_, std::move(*baselines));
                 session_.mergetool.adoptCopiedLaunches(std::move(copiedLaunches));
                 // A launcher can already wait here after an in-window recovery choice.
                 session_.mergetool.acceptCopiedLaunches();

@@ -39,8 +39,7 @@ enum class MutationObservation { NotAttempted, ObservedUnchanged, ObservedChange
 // meaning, and a name this build does not know is refused when read.
 template <typename Enum, std::size_t Size> using NameTable = std::array<std::pair<Enum, std::string_view>, Size>;
 
-template <typename Enum, std::size_t Size>
-[[nodiscard]] QString nameOf(const NameTable<Enum, Size> &table, Enum value)
+template <typename Enum, std::size_t Size> [[nodiscard]] QString nameOf(const NameTable<Enum, Size> &table, Enum value)
 {
     for (const auto &[entry, name] : table)
         if (entry == value) return QString::fromLatin1(name.data(), static_cast<qsizetype>(name.size()));

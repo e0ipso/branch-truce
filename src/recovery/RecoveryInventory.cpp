@@ -221,7 +221,8 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         if (!file.snapshots()) continue;
         if (fresh.outcome != git::Outcome::Success || !sameOperation(file.snapshots()->provenance, fresh.repository)) {
             store.failures.insert_or_assign(
-                file.id(), QStringLiteral("Operation identity changed during recovery validation; work remains outstanding."));
+                file.id(),
+                QStringLiteral("Operation identity changed during recovery validation; work remains outstanding."));
             result.copiedLaunches.erase(file.id());
         }
     }
