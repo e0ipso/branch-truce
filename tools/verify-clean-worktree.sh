@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Validate the committed scaffold in a disposable detached worktree.
+#   tools/verify-clean-worktree.sh
 set -euo pipefail
+case "${1-}" in
+    '') ;;
+    -h|--help) echo "Usage: $0"; exit 0 ;;
+    *) echo "Usage: $0" >&2; exit 2 ;;
+esac
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 fixture=$(mktemp -d "${TMPDIR:-/tmp}/branch-truce-clean.XXXXXXXX")
 checkout="$fixture/checkout"

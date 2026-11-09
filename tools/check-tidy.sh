@@ -4,6 +4,7 @@
 set -euo pipefail
 root=$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)
 required=23.1.3
+case "${1:-}" in -h|--help) echo "Usage: $0 <build-directory-with-compile_commands.json> [jobs]"; exit 0 ;; esac
 build=${1:-}
 jobs=${2:-2}
 [[ -n "$build" && -f "$build/compile_commands.json" ]] || {

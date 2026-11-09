@@ -2,7 +2,13 @@
 # Prints the OS base, toolchain and Qt/KDE packages of a build or target
 # container. tools/build-artifact.sh and tools/inspect-artifact.sh run it
 # inside the container and keep its output with the artifact evidence.
+#   artifact-baseline.sh
 set -euo pipefail
+case "${1-}" in
+    '') ;;
+    -h|--help) echo "Usage: $0"; exit 0 ;;
+    *) echo "Usage: $0" >&2; exit 2 ;;
+esac
 . /etc/os-release
 printf 'os\t%s\t%s\n' "$PRETTY_NAME" "${VERSION_CODENAME:-}"
 if command -v g++ >/dev/null; then

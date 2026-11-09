@@ -4,8 +4,9 @@ set -euo pipefail
 root=$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)
 required=23.1.3
 case "${1:-}" in
-    '') mode=(--dry-run -Werror) ;;
-    --fix) mode=(-i) ;;
+    '') mode=(--dry-run -Werror) done=checked ;;
+    --fix) mode=(-i) done=formatted ;;
+    -h|--help) echo "Usage: $0 [--fix]"; exit 0 ;;
     *) echo "Usage: $0 [--fix]" >&2; exit 2 ;;
 esac
 command -v clang-format >/dev/null || {
@@ -21,4 +22,4 @@ mapfile -d '' files < <(git -C "$root" ls-files -z -- '*.cpp' '*.h')
 ((${#files[@]} > 0)) || { echo 'No C++ sources found.' >&2; exit 1; }
 cd "$root"
 clang-format "${mode[@]}" -- "${files[@]}"
-printf '%s C++ files formatted with clang-format %s\n' "${#files[@]}" "$required"
+printf '%s C++ files %s with clang-format %s\n' "${#files[@]}" "$done" "$required"
