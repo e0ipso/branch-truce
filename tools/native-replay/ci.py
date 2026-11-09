@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect both required native sizes and keep failures and pending acceptance visible."""
+"""Collect every native size in capture-profile.json and keep failures and pending acceptance visible."""
 import argparse
 from datetime import datetime, timezone
 import json
@@ -90,7 +90,7 @@ def main():
         context['checks'].append(dict(argv=command, cwd=str(args.source), exit_code=checked.returncode,
                                       log='calibration-tests.log'))
         save()
-    ledger = assemble(args.output)
+    ledger = assemble(args.output, shape=shape)
     (args.output / 'acceptance-ledger.json').write_text(json.dumps(ledger, indent=2) + '\n')
     context['finished_at_utc'] = datetime.now(timezone.utc).isoformat()
     context['acceptance'] = 'pending original-image and per-callout independent inspection'
