@@ -288,7 +288,7 @@ int correspondenceWorker(const std::string &name, const std::string &mode, std::
     bool emittedConstruct = false;
     try {
         const auto started = std::chrono::steady_clock::now();
-        branch_truce::CorrespondenceMap map(1, snapshots, result);
+        branch_truce::CorrespondenceMap map(1, std::make_shared<const branch_truce::FileSnapshots>(snapshots), result);
         auto record =
             baseRecord("correspondence", name + "-construct", "construct", result, byteCount, lineCount, maxLine);
         record.elapsedMs = since(started);

@@ -2,7 +2,7 @@
 #include <iostream>
 
 #ifndef BRANCH_TRUCE_EXPECTED_VERSION
-#define BRANCH_TRUCE_EXPECTED_VERSION "0.1.0"
+#error "BRANCH_TRUCE_EXPECTED_VERSION must name the resolved application version"
 #endif
 
 int main()

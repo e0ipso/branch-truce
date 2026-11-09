@@ -13,12 +13,13 @@
 
 namespace branch_truce {
 SessionLoader::SessionLoader(SessionModel &files, SessionCoordinator &coordinator, QString gitExecutable, Owners owners,
-                             QObject *parent)
+                             QObject *parent, std::shared_ptr<const CorrespondenceAlgorithm> correspondence)
     : QObject(parent),
       files_(files),
       coordinator_(coordinator),
       owners_(std::move(owners)),
       gitExecutable_(std::move(gitExecutable)),
+      correspondence_(std::move(correspondence)),
       classifier_(gitExecutable_, this)
 {
     connect(&classifier_, &git::ConflictClassifier::finished, this, &SessionLoader::classified);
@@ -292,7 +293,7 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
     const auto task = coordinator_.submit(
         anchor, 1,
         [files = std::move(conflicts), repository = repository_, sessionId, loaded, recovery, recoveryDirectory,
-         recoveryInventory, executable = gitExecutable_,
+         recoveryInventory, executable = gitExecutable_, correspondence = correspondence_,
          chosen = recoverySession_](const TaskInput &, const TaskControl &control) {
             for (const auto &file : files) {
                 if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
@@ -310,7 +311,7 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                                             "result snapshots; reopen the session.");
                 }
                 loaded->emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), std::move(draft),
-                                     support, detail.toStdString(), std::move(snapshots), true);
+                                     support, detail.toStdString(), std::move(snapshots), true, correspondence);
             }
             *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, executable, chosen);
             return TaskResult{};

@@ -1,4 +1,6 @@
+// Word differences: token ranges for a line pair and for a session's sources and result.
 #include "TestHarness.h"
+#include "core/FileWordDifferences.h"
 #include "core/WordDifferences.h"
 #include "fixtures/ChoiceFile.h"
 
@@ -12,6 +14,7 @@ namespace {
 std::vector<std::string> words(std::string_view text, const std::vector<ByteRange> &ranges)
 {
     std::vector<std::string> found;
+    found.reserve(ranges.size());
     for (const auto &range : ranges) found.emplace_back(text.substr(range.begin, range.end - range.begin));
     return found;
 }
@@ -57,6 +60,34 @@ int main()
         const std::string indented = "    value\n";
         const auto blanks = wordDifferences("  value\n", indented, budget);
         CHECK(words(indented, blanks.right) == std::vector<std::string>{"    "});
+    });
+
+    suite.run("punctuation, non-breaking spaces and ideographs separate tokens", [] {
+        std::size_t budget = kMaxWordDifferenceCells;
+        const std::string dashLeft = "foo\xe2\x80\x94"
+                                     "bar\n";
+        const std::string dashRight = "foo\xe2\x80\x94"
+                                      "baz\n";
+        const auto dash = wordDifferences(dashLeft, dashRight, budget);
+        CHECK(words(dashLeft, dash.left) == std::vector<std::string>{"bar"});
+        CHECK(words(dashRight, dash.right) == std::vector<std::string>{"baz"});
+        // A no-break space separates words and is trimmed like a space.
+        const std::string spaced = "a\xc2\xa0"
+                                   "b\n";
+        const std::string other = "a\xc2\xa0"
+                                  "c\xc2\xa0\n";
+        const auto blanks = wordDifferences(spaced, other, budget);
+        CHECK(words(spaced, blanks.left) == std::vector<std::string>{"b"});
+        CHECK(words(other, blanks.right) == std::vector<std::string>{"c"});
+        // Japanese has no spaces, so each character is compared on its own.
+        const std::string desu = "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe3\x81\xa7\xe3\x81\x99\n";
+        const std::string deshita = "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe3\x81\xa7\xe3\x81\x97\xe3\x81\x9f\n";
+        const auto japanese = wordDifferences(desu, deshita, budget);
+        CHECK(words(desu, japanese.left) == std::vector<std::string>{"\xe3\x81\x99"});
+        CHECK(words(deshita, japanese.right) == std::vector<std::string>{"\xe3\x81\x97\xe3\x81\x9f"});
+        // A stray byte is one token of its own.
+        const auto stray = wordDifferences("x\xff\n", "x\xfe\n", budget);
+        CHECK(stray.left == std::vector<ByteRange>{{1, 2}} && stray.right == std::vector<ByteRange>{{1, 2}});
     });
 
     suite.run("a line over the documented limit gets no word ranges", [] {

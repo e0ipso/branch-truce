@@ -55,23 +55,35 @@ result lines) memory for different buffers, including line, match and passage
 records. Each split releases its length rows before recursing. Binding keeps one
 line-start index per text and finds a paired line by binary search. Lines are
 interned, so long-line bytes are compared during interning rather than at each
-length calculation. Initial correspondence failure marks only that file session
-unreadable with a path-specific diagnostic, retaining its captured sources and
-launch result. Other files can finish loading. Allocation or representation
-failure during later edits still throws before a new session revision is
-published. There is no enforced file-size or latency limit. Representative
-measurements and a proposed envelope for large-file performance are in
-tests/fixtures/performance/evidence.md. Product output, line and recovery
-limits are unchanged.
+length calculation.
+
+`CorrespondenceAlgorithm` states the contract every implementation keeps: valid
+UTF-8 input inside the text envelope, a complete ordered partition, `Ambiguous`
+where equally good alignments disagree, no state between calls, and
+`std::bad_alloc` as the only failure. `CorrespondenceMap` checks every text it
+aligns against that input contract before the algorithm sees it, and
+`FileSession` takes the algorithm it uses as an argument, with
+`ExactLineCorrespondence` as the default. tests/core/CorrespondenceTests.cpp runs
+the contract checks against the default and a minimal implementation.
+
+The limits in ResourceLimits.h bound the input: no line over `kMaxLineBytes`
+and no text over `kMaxRecoveryPayloadBytes`. A file whose result or captured
+sources hold more than `kLargeFileLines` lines opens only after the user
+confirms it, because alignment time grows with the product of line counts.
+There is no hard bound on that product, so a confirmed file of many short lines
+can take a long time to align. If aligning runs out of memory, only that file
+opens as unreadable, with its captured sources and launch result kept, and
+other files finish loading. Measurements of the representative 4000-line size
+are in tests/fixtures/performance/evidence.md.
 
 `SourceAnchor` carries the caller's stable contribution ID, immutable source
 side/range and insertion affinity. `ResultAnchor` adds captured session, path and
 source-object identities, the exact transaction revision, mapping safety,
 manual-overlap state and a hand-edit flag. Contribution IDs cannot be rebound
-to different source ranges. `FileSession::replaceMapped` checks the current
-registered anchor and revision before changing either text or the
-contribution's decision. It changes only that result range, leaving
-neighboring edits and other decisions intact.
+to different source ranges. `FileSession::applyCommand` checks every target
+against the current registered anchor and revision before changing either text
+or decisions. It changes only those result ranges, leaving neighboring edits and
+other decisions intact.
 An overlapping manual change requires confirmation for that exact preview.
 An ambiguous or invalidated anchor remains unavailable even with confirmation.
 
@@ -113,24 +125,3 @@ stay immutable. These APIs perform no persistence, Qt or filesystem work.
 [`EditingCommands`](EditingCommands.md) builds scoped choices on these mappings.
 SessionModel owns recovery acknowledgment, and the Qt controller translates
 exact editor changes without introducing a second undo history.
-
-Disposable C++ fixtures compare the linear-space implementation with independent
-enumeration of every best alignment for binary-line sequences up to six lines
-and ternary sequences up to four lines, including UTF-8 and missing final
-newlines. The C++20 `-O1` AddressSanitizer/UndefinedBehaviorSanitizer run checked
-34,614 source/result pairs and passed 34,630 assertions, including repeated-line
-ambiguity, stale anchors, manual-edit preservation and history. A one-shot
-allocation failure during initial correspondence passed 14 assertions: the
-failed file stayed unreadable with its diagnostic and captures, while a second
-file retained its sources, result and correspondence.
-
-A generated 20,000-line conflict with a 1,057,790-byte result completed
-construction and a whole-buffer draft edit under a 2,000,000 KiB address-space
-cap. The `-O2` fixture process peaked at 44,184 KiB resident memory; construction
-took 12,225 ms and the edit took 15,498 ms. A real desktop load of a separate
-20,000-line conflict beside a small manually edited file completed under a
-3,000,000 KiB cap, with 13 acceptance and cleanup assertions. These are local
-observations from that fixture run. The representative measurements and proposed
-envelope are in tests/fixtures/performance/evidence.md. Quadratic time remains a
-tradeoff. Permanent regression additions are deferred to the wave gate by the
-worker contract.

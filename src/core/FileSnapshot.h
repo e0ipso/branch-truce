@@ -8,6 +8,10 @@
 
 namespace branch_truce {
 
+// The captured sources: the common earlier version (Git's stage 1) and the
+// two sides of the conflict (stages 2 and 3).
+enum class SourceSide { Earlier, Stage2, Stage3 };
+
 // Value records for the engine. Platform adapters translate codecs and paths
 // without introducing Qt or filesystem handles into session state.
 struct SnapshotFormat {
@@ -87,6 +91,16 @@ struct FileSnapshots {
     std::optional<SourceSnapshot> stage2;
     std::optional<SourceSnapshot> stage3;
     LaunchSnapshot launchResult;
+    // The capture of one side, absent when that stage has none.
+    [[nodiscard]] const std::optional<SourceSnapshot> &source(SourceSide side) const noexcept
+    {
+        switch (side) {
+        case SourceSide::Earlier: return earlier;
+        case SourceSide::Stage2: return stage2;
+        case SourceSide::Stage3: break;
+        }
+        return stage3;
+    }
     bool operator==(const FileSnapshots &) const = default;
 };
 

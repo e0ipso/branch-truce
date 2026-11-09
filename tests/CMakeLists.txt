@@ -1,31 +1,37 @@
 add_executable(branch_truce_core_smoke core/BuildSmoke.cpp)
 target_compile_definitions(branch_truce_core_smoke PRIVATE
     BRANCH_TRUCE_EXPECTED_VERSION="${BRANCH_TRUCE_RESOLVED_VERSION}")
-target_link_libraries(branch_truce_core_smoke PRIVATE branch_truce_core branch_truce_build_options)
+target_link_libraries(branch_truce_core_smoke PRIVATE branch_truce_build_info branch_truce_build_options)
 add_test(NAME core.build-smoke COMMAND branch_truce_core_smoke)
 add_test(NAME core.version-resolution
     COMMAND "${CMAKE_COMMAND}"
         "-DBRANCH_TRUCE_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
         "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/version-tests"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/core/VersionTests.cmake")
+add_test(NAME core.include-boundary
+    COMMAND "${CMAKE_COMMAND}" "-DCORE_DIR=${PROJECT_SOURCE_DIR}/src/core"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/core/IncludeBoundaryTests.cmake")
+set_tests_properties(core.include-boundary PROPERTIES TIMEOUT 30 LABELS unit)
 add_test(NAME core.native-version
     COMMAND "${CMAKE_COMMAND}"
         "-DBRANCH_TRUCE_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/core/NativeVersionTests.cmake")
-add_executable(branch_truce_session_tests core/SessionStateTests.cpp)
-target_include_directories(branch_truce_session_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(branch_truce_session_tests PRIVATE branch_truce_core branch_truce_build_options)
-# Reject matrix-sized allocations only while the correspondence resource fixture runs.
-target_link_options(branch_truce_session_tests PRIVATE "LINKER:--wrap=_Znwm")
-add_test(NAME core.session-state COMMAND branch_truce_session_tests)
-add_executable(branch_truce_correspondence_fixtures core/CorrespondenceCommandFixtures.cpp)
-target_include_directories(branch_truce_correspondence_fixtures PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(branch_truce_correspondence_fixtures PRIVATE branch_truce_core branch_truce_build_options)
-add_test(NAME core.correspondence-fixtures COMMAND branch_truce_correspondence_fixtures)
-add_executable(branch_truce_word_differences_tests core/WordDifferencesTests.cpp)
-target_include_directories(branch_truce_word_differences_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(branch_truce_word_differences_tests PRIVATE branch_truce_core branch_truce_build_options)
-add_test(NAME core.word-differences COMMAND branch_truce_word_differences_tests)
+# Engine unit tests: one executable per source file, Qt-free and without a display.
+function(branch_truce_add_core_test name source)
+    string(REPLACE "." "_" target "branch_truce_${name}_tests")
+    string(REPLACE "-" "_" target "${target}")
+    add_executable(${target} ${source})
+    target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(${target} PRIVATE branch_truce_core branch_truce_build_options)
+    add_test(NAME core.${name} COMMAND ${target})
+    set_tests_properties(core.${name} PROPERTIES TIMEOUT 60 LABELS unit)
+endfunction()
+branch_truce_add_core_test(file-session core/FileSessionTests.cpp)
+branch_truce_add_core_test(conflict-markers core/ConflictMarkersTests.cpp)
+branch_truce_add_core_test(correspondence core/CorrespondenceTests.cpp)
+branch_truce_add_core_test(editing-commands core/EditingCommandsTests.cpp)
+branch_truce_add_core_test(resource-limits core/ResourceLimitsTests.cpp)
+branch_truce_add_core_test(word-differences core/WordDifferencesTests.cpp)
 find_program(BASH_EXECUTABLE bash REQUIRED)
 add_test(NAME tooling.icon-name-collection
     COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
@@ -257,9 +263,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp)
     target_include_directories(branch_truce_startup_route_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_startup_route_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    # Fail one initial map in the real load worker; other files use the real constructor.
-    set(correspondence_constructor "_ZN12branch_truce17CorrespondenceMapC1EmRKNS_13FileSnapshotsENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt10shared_ptrIKNS_23CorrespondenceAlgorithmEE")
-    target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=${correspondence_constructor}")
     target_link_options(branch_truce_startup_route_tests PRIVATE "LINKER:--wrap=fsync")
     # Record the thread of every recovery store read, which every replay starts with.
     target_link_options(branch_truce_startup_route_tests PRIVATE

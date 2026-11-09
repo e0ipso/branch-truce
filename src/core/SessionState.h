@@ -1,57 +1,22 @@
 // Session state keeps result revisions, decisions and undo history separate from immutable sources.
 #pragma once
 
+#include "ChoiceCatalogue.h"
 #include "ConflictMarkers.h"
 #include "Correspondence.h"
-#include <algorithm>
+#include "Draft.h"
+#include "MarkerResolution.h"
+#include "PublicationState.h"
+#include "RevisionHistory.h"
+#include "Transition.h"
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace branch_truce {
-
-enum class DecisionValue { Undecided, Accepted, Ignored };
-struct Decision {
-    DecisionValue value = DecisionValue::Undecided;
-    // Explicit combination order, supplied by the editing command.
-    std::optional<std::uint64_t> order;
-    bool operator==(const Decision &) const = default;
-};
-
-struct Draft {
-    std::string text;
-    std::map<std::string, Decision> decisions;
-    // FileSession::markers().count() for this text. FileSession recomputes it
-    // for every revision it stores and ignores a supplied value.
-    std::size_t unresolvedMarkers = 0;
-    bool operator==(const Draft &) const = default;
-};
-
-// A complete conflict-marker block and the choice sections it encloses, in
-// text order. Either the two source scopes of one section fill its side
-// regions, or each side region holds one scope of every section, in the same
-// order, around lines both sides share.
-struct MarkerSection {
-    MarkerRange block;
-    std::vector<std::string> sections;
-    [[nodiscard]] bool encloses(const std::string &section) const
-    {
-        return std::find(sections.begin(), sections.end(), section) != sections.end();
-    }
-    bool operator==(const MarkerSection &) const = default;
-};
-
-struct Revision {
-    RevisionId id;
-    RevisionId result;
-    RevisionId decisions;
-    Draft draft;
-    std::shared_ptr<const CorrespondenceMap> correspondence = {};
-};
 
 // One atomic history entry. Future composition and bulk planners can submit
 // mapped edits and explicit ordered decisions through the same boundary.
@@ -64,110 +29,41 @@ struct EditingCommand {
     EditingScope scope = EditingScope::Mapped;
     bool operator==(const EditingCommand &) const = default;
 };
-struct ChoiceTarget;
-struct NonConflictingTarget;
 
-enum class Outcome { Succeeded, Failed, Uncertain };
-struct OperationOutcome {
-    RevisionId revision;
-    Outcome outcome;
-    std::string detail;
-};
-
-struct Review {
-    Revision revision;
-    bool confirmedUndecided;
-};
-
-struct StagedResult {
-    Revision revision;
-    std::string objectId;
-    std::string mode;
-    bool confirmedUndecided;
-};
-
-// LargeFile keeps a captured file with more than kLargeFileLines lines unloaded
-// until the user confirms it with loadLargeFile().
-enum class Support { Supported, OutsideApp, Unreadable, LargeFile };
-enum class Transition {
-    Applied,
-    NoChange,
-    StaleRevision,
-    ConfirmationRequired,
-    Blocked,
-    InvalidOutcome,
-    InvalidAnchor,
-    AmbiguousTarget
-};
-enum class Blocker {
-    OutsideApp,
-    Unreadable,
-    LargeFile,
-    UnresolvedMarkers,
-    Undecided,
-    UnsavedDraft,
-    ReviewNeeded,
-    WriteRequired,
-    StageRequired,
-    EarlierStagedResult,
-    CheckpointFailed,
-    WriteFailed,
-    StageFailed,
-    UncertainOutcome
-};
-enum class FileStatus {
-    OutsideApp,
-    Unreadable,
-    LargeFile,
-    OutcomeUncertain,
-    CheckpointFailed,
-    WriteFailed,
-    StageFailed,
-    EarlierStaged,
-    Resolved,
-    WrittenUnresolved,
-    SavedDraft,
-    Undecided,
-    ReviewNeeded
-};
-
-struct FileFacts {
-    std::size_t undecided;
-    bool unsaved;
-    bool needsReview;
-    bool earlierStaged;
-    bool resolved;
-    FileStatus status;
-    std::vector<Blocker> blockers;
-    // Every contribution is decided and no conflict marker remains, while the
-    // current result still waits for Mark resolved. Derived from the current
-    // revision, so an undo that reopens a choice clears it. It is not review
-    // and changes nothing in the repository or Git.
-    bool settled = false;
-};
-
-// Value-only session bookkeeping. This class performs no I/O. Success callbacks
-// must come from adapters that have persisted/verified the exact revision.
+// One file's editing session: its immutable captured sources, the revisions
+// of its result and the publication outcomes adapters report. It performs no
+// I/O. Success callbacks must come from adapters that have persisted or
+// verified the exact revision.
+//
+// A session is a value. Copies share every revision and capture, which never
+// change once stored, so a copy costs pointers rather than text. A session is
+// not synchronized: one thread at a time may use it, and a session built on a
+// worker thread may be handed to another thread once.
 class FileSession {
 public:
+    // `algorithm` aligns the captured sources with the result and the two
+    // sides with each other; without one, ExactLineCorrespondence does.
     FileSession(std::string id, std::string path, Draft initial, Support support = Support::Supported,
                 std::string supportDetail = {}, std::optional<FileSnapshots> snapshots = std::nullopt,
-                bool initializeChoices = false);
+                bool initializeChoices = false, std::shared_ptr<const CorrespondenceAlgorithm> algorithm = {});
 
     [[nodiscard]] const std::string &id() const noexcept { return id_; }
     [[nodiscard]] const std::string &path() const noexcept { return path_; }
     [[nodiscard]] Support support() const noexcept { return support_; }
+    // The adapter's explanation of its support decision, if it gave one.
     [[nodiscard]] const std::string &supportDetail() const noexcept { return supportDetail_; }
+    // Why the session itself held the file back, if it did.
+    [[nodiscard]] const std::optional<LoadFailure> &loadFailure() const noexcept { return loadFailure_; }
     // Shared immutable capture, retained independently of every result revision.
     // Null for sessions without an admitted source/result capture.
     [[nodiscard]] const FileSnapshots *snapshots() const noexcept { return snapshots_.get(); }
-    [[nodiscard]] const Revision &current() const { return revisions_.at(current_); }
+    [[nodiscard]] const Revision &current() const noexcept { return history_.current(); }
     [[nodiscard]] const CorrespondenceMap *correspondence() const noexcept { return current().correspondence.get(); }
     // Conflict-marker blocks and orphan marker lines in the current result.
     // A marker-like line the correspondence maps to identical text in a
     // captured side, or in the earlier version inside a diff3 base region, is
     // source content, not a marker.
-    [[nodiscard]] MarkerScan markers() const;
+    [[nodiscard]] const MarkerScan &markers() const noexcept { return *current().markers; }
     // Actual unresolved result regions, independent of source decisions. Each
     // recognized block or orphan marker is one stop, in result byte order.
     // Markerless drafts retain their decisions without inventing conflicts.
@@ -183,38 +79,40 @@ public:
     // True when the command decides the last open contribution of a marker
     // section, so applying it also removes that block's marker lines.
     [[nodiscard]] bool completesMarkers(const EditingCommand &command) const;
-    [[nodiscard]] const std::vector<ChoiceTarget> &choices() const noexcept;
+    [[nodiscard]] const std::vector<ChoiceTarget> &choices() const noexcept { return catalogue().targets(); }
+    [[nodiscard]] const ChoiceCatalogue &catalogue() const noexcept;
     [[nodiscard]] const std::vector<NonConflictingTarget> &nonConflictingTargets() const noexcept;
-    [[nodiscard]] const std::optional<Revision> &checkpoint() const noexcept { return checkpoint_; }
-    [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return reviewed_; }
-    [[nodiscard]] const std::optional<Revision> &written() const noexcept { return written_; }
-    [[nodiscard]] const std::optional<StagedResult> &staged() const noexcept { return staged_; }
+    [[nodiscard]] const std::optional<Revision> &checkpoint() const noexcept { return publication_.checkpoint(); }
+    [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return publication_.reviewed(); }
+    [[nodiscard]] const std::optional<Revision> &written() const noexcept { return publication_.written(); }
+    [[nodiscard]] const std::optional<StagedResult> &staged() const noexcept { return publication_.staged(); }
     [[nodiscard]] const std::optional<OperationOutcome> &checkpointOutcome() const noexcept
     {
-        return checkpointOutcome_;
+        return publication_.checkpointOutcome();
     }
-    [[nodiscard]] const std::optional<OperationOutcome> &writeOutcome() const noexcept { return writeOutcome_; }
-    [[nodiscard]] const std::optional<OperationOutcome> &stageOutcome() const noexcept { return stageOutcome_; }
-    [[nodiscard]] bool canUndo() const noexcept { return cursor_ > 0; }
-    [[nodiscard]] bool canRedo() const noexcept { return cursor_ + 1 < history_.size(); }
+    [[nodiscard]] const std::optional<OperationOutcome> &writeOutcome() const noexcept
+    {
+        return publication_.writeOutcome();
+    }
+    [[nodiscard]] const std::optional<OperationOutcome> &stageOutcome() const noexcept
+    {
+        return publication_.stageOutcome();
+    }
+    [[nodiscard]] bool canUndo() const noexcept { return history_.canUndo(); }
+    [[nodiscard]] bool canRedo() const noexcept { return history_.canRedo(); }
     [[nodiscard]] FileFacts facts() const;
 
     // Each editing transaction carries text and decisions together. Stale
     // editor commands cannot overwrite a later revision. Changed ranges count
     // as hand edits unless recovery replay supplies its recorded anchors and
-    // hand-edited result ranges.
-    Transition replaceDraft(RevisionId expected, Draft draft,
+    // hand-edited result ranges. The text must be UTF-8 with LF line endings.
+    // Decision keys are the caller's recorded vocabulary and need no anchor.
+    Transition replaceDraft(RevisionId expected, const Draft &draft,
                             const std::optional<std::set<std::string>> &handEdited = std::nullopt,
                             std::vector<ByteRange> handEditedRanges = {});
-    // Binding records a stable source contribution without changing decisions.
-    // Inspect the returned current anchor's state before offering a choice.
-    Transition bindSourceAnchor(RevisionId expected, SourceAnchor source);
-    Transition editResult(RevisionId expected, ResultEdit edit);
+    Transition editResult(RevisionId expected, const ResultEdit &edit);
+    // Decision keys of a command must name a registered anchor.
     Transition applyCommand(const EditingCommand &command, bool confirmReplacement = false);
-    // A preview uses this exact anchor and revision. Passing confirmation after
-    // either changes cannot authorize a different replacement.
-    Transition replaceMapped(RevisionId expected, const ResultAnchor &anchor, std::string replacement,
-                             std::optional<Decision> decision = {}, bool confirmManual = false);
     Transition undo(RevisionId expected);
     Transition redo(RevisionId expected);
     Transition discardToCheckpoint(RevisionId expected);
@@ -225,58 +123,59 @@ public:
     // Captures the review declaration of Mark resolved, not a review-only UI
     // action. Cancelling confirmation calls nothing and changes nothing.
     Transition beginMarkResolved(RevisionId expected, bool confirmUndecided = false);
+    // Outcomes are for revisions the session still stores: the current one,
+    // an undo history entry or the launch revision. An outcome for a revision
+    // a later edit discarded is stale.
     Transition recordCheckpoint(RevisionId revision, Outcome outcome, std::string detail = {});
     Transition recordWrite(RevisionId revision, Outcome outcome, std::string detail = {});
     Transition recordStage(RevisionId revision, Outcome outcome, std::string objectId = {}, std::string mode = {},
                            std::string detail = {});
+    // An adapter's own support decision, which replaces any load failure.
     Transition setSupport(Support support, std::string detail = {});
     // Opens a LargeFile session as it would have opened below the line
     // threshold. The loaded text gets a fresh revision and an empty history.
     Transition loadLargeFile();
 
 private:
-    void open(RevisionId id, Draft initial, bool correspond, bool initializeChoices);
-    RevisionId advance(const Draft &draft, std::shared_ptr<const CorrespondenceMap> correspondence = {});
-    RevisionId restore(const Revision &revision);
-    void appendHistory(RevisionId revision);
-    [[nodiscard]] std::vector<MarkerSection> markerSections(const std::string &text,
-                                                            const CorrespondenceMap &mapping) const;
-    // Text a choice deletes to resolve a marker section, leaving `anchor`
-    // empty, or a whole block it rebuilds from the text its sections keep.
-    struct MarkerEdit {
-        ByteRange range;
-        std::string anchor;
-        std::optional<std::vector<KeptSpan>> rebuilt;
+    // Everything opening a launch text derives, built before any member
+    // changes so a failure leaves the session as it was.
+    struct Launch {
+        Support support = Support::Supported;
+        std::optional<LoadFailure> failure;
+        std::shared_ptr<const ChoiceCatalogue> choices;
+        std::shared_ptr<const std::vector<NonConflictingTarget>> nonConflictingTargets;
+        std::shared_ptr<const LaunchFrames> launchFrames;
+        RevisionHistory history;
     };
-    [[nodiscard]] std::vector<MarkerEdit> markerEdits(const Draft &draft, const CorrespondenceMap &mapping,
-                                                      const std::map<std::string, Decision> &decided) const;
+    [[nodiscard]] Launch launch(RevisionId revision, Draft initial, bool correspond, bool initializeChoices) const;
+    void open(Launch opened) noexcept;
+    // The revision after the current one with this draft. Without a mapping
+    // the current one is recomputed against the new text.
+    [[nodiscard]] Revision successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence = {}) const;
+    // A fresh revision repeating `revision`'s text, decisions and mapping.
+    [[nodiscard]] Revision restored(const Revision &revision) const;
+    [[nodiscard]] MarkerPlanner planner() const noexcept;
+    [[nodiscard]] Transition validateCommand(const EditingCommand &command, const std::vector<ResultEdit> &edits,
+                                             bool confirmReplacement) const;
+    [[nodiscard]] Transition validateTarget(const ResultAnchor &target) const;
+    [[nodiscard]] Transition validateEdit(const EditingCommand &command, const ResultEdit &edit,
+                                          const ResultEdit *previous, bool confirmReplacement) const;
+
     std::string id_;
     std::string path_;
     Support support_;
     std::string supportDetail_;
+    std::optional<LoadFailure> loadFailure_;
     std::shared_ptr<const FileSnapshots> snapshots_;
-    std::shared_ptr<const std::vector<ChoiceTarget>> choices_;
+    std::shared_ptr<const CorrespondenceAlgorithm> algorithm_;
+    // The conflict-marker-size Git used for this file.
+    std::size_t markerSize_ = kDefaultConflictMarkerSize;
+    std::shared_ptr<const ChoiceCatalogue> choices_;
     std::shared_ptr<const std::vector<NonConflictingTarget>> nonConflictingTargets_;
     // Marker lines and base text of each complete block in the launch result.
-    std::shared_ptr<const std::set<std::vector<std::string>>> launchBlocks_;
-    std::map<RevisionId, Revision> revisions_;
-    RevisionId current_ = 1;
-    RevisionId next_ = 2;
-    RevisionId outcomeFloor_ = 1;
-    std::vector<RevisionId> history_{1};
-    std::size_t cursor_ = 0;
-    std::optional<Revision> checkpoint_;
-    std::optional<Review> reviewed_;
-    // The review's checkpoint outcome survives ordinary Saves of newer drafts.
-    bool reviewCheckpointSucceeded_ = false;
-    std::optional<Revision> written_;
-    std::optional<StagedResult> staged_;
-    std::optional<OperationOutcome> checkpointOutcome_;
-    std::optional<OperationOutcome> writeOutcome_;
-    std::optional<OperationOutcome> stageOutcome_;
+    std::shared_ptr<const LaunchFrames> launchFrames_;
+    RevisionHistory history_;
+    PublicationState publication_;
 };
-
-[[nodiscard]] const char *statusText(FileStatus status) noexcept;
-[[nodiscard]] const char *blockerText(Blocker blocker) noexcept;
 
 }

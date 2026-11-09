@@ -5,6 +5,9 @@
 # SemVer order with dpkg.
 cmake_minimum_required(VERSION 3.28)
 
+if(NOT BRANCH_TRUCE_SOURCE_DIR)
+    message(FATAL_ERROR "BRANCH_TRUCE_SOURCE_DIR must be set")
+endif()
 set(script "${BRANCH_TRUCE_SOURCE_DIR}/packaging/scripts/native-version.sh")
 
 function(native_version out version)

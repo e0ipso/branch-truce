@@ -2,7 +2,6 @@
 #pragma once
 
 #include <cstddef>
-#include <string>
 #include <string_view>
 
 namespace branch_truce {
@@ -16,6 +15,13 @@ inline constexpr std::size_t kLargeFileLines = 4000;
 inline constexpr std::size_t kMaxLineBytes = 262144;
 inline constexpr std::size_t kMaxGitReadBytes = 4194304;
 inline constexpr std::size_t kMaxRecoveryPayloadBytes = 8388608;
+// Longest conflict marker the engine recognizes. Git's default is 7, and
+// projects that change it with conflict-marker-size use a few dozen.
+inline constexpr std::size_t kMaxConflictMarkerSize = 1024;
+// Text the undo history of one file may hold. Each revision counts its result
+// text and its correspondence's copy of it. Older undo steps go first, so
+// even a file at the recovery payload limit keeps about 16 of them.
+inline constexpr std::size_t kMaxHistoryBytes = 268435456;
 
 enum class TextLimit { Within, LineBytes, RecoveryPayload };
 
@@ -24,6 +30,7 @@ struct TextAssessment {
     std::size_t lines = 0;
     std::size_t maxLineBytes = 0;
     std::size_t bytes = 0;
+    bool operator==(const TextAssessment &) const = default;
 };
 
 // Stops once a limit is exceeded so an oversized buffer is not scanned further.
@@ -65,20 +72,6 @@ inline std::size_t lineCount(std::string_view text) noexcept
     for (const char c : text)
         if (c == '\n') ++lines;
     return lines + (!text.empty() && text.back() != '\n' ? 1 : 0);
-}
-
-inline std::string textLimitDiagnostic(const TextAssessment &assessment)
-{
-    switch (assessment.limit) {
-    case TextLimit::LineBytes:
-        return "Line of " + std::to_string(assessment.maxLineBytes)
-            + " bytes exceeds the supported 262144 byte line limit";
-    case TextLimit::RecoveryPayload:
-        return "Text of " + std::to_string(assessment.bytes)
-            + " bytes exceeds the supported 8388608 byte recovery payload limit";
-    case TextLimit::Within: return {};
-    }
-    return {};
 }
 
 }

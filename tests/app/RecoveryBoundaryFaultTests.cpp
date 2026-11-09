@@ -1,5 +1,6 @@
 #include "TestHarness.h"
 #include "app/ApplicationController.h"
+#include "app/EngineText.h"
 #include "app/SessionModel.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/RecoveryJournal.h"
@@ -97,7 +98,7 @@ QJsonObject observation(const FileSession &file)
     return {{QStringLiteral("text"), QString::fromStdString(file.current().draft.text)},
             {QStringLiteral("decisions"), decisions},
             {QStringLiteral("revision"), QString::number(file.current().id)},
-            {QStringLiteral("status"), QString::fromUtf8(statusText(facts.status))},
+            {QStringLiteral("status"), engine_text::status(facts.status)},
             {QStringLiteral("unsaved"), facts.unsaved},
             {QStringLiteral("resolved"), facts.resolved},
             {QStringLiteral("checkpoint"),

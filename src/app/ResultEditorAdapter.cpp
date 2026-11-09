@@ -1,5 +1,6 @@
 // The result editor adapter journals text edits and connects native editing actions to file history.
 #include "ResultEditorAdapter.h"
+#include "EngineText.h"
 #include "SessionModel.h"
 #include "TextChange.h"
 #include "core/ResourceLimits.h"
@@ -49,7 +50,7 @@ QString envelopeRejection(std::string_view bytes)
 {
     const auto assessment = assessText(bytes);
     if (assessment.limit == TextLimit::Within) return {};
-    return QString::fromStdString(textLimitDiagnostic(assessment))
+    return engine_text::textLimit(assessment)
         + QStringLiteral(". The existing edit was kept and this change was not acknowledged.");
 }
 
@@ -281,7 +282,7 @@ void ResultEditorAdapter::sync()
     const auto *pending = file ? files_.pendingDraft(file->id()) : nullptr;
     const auto stored = file ? (pending ? pending->text : file->current().draft.text) : std::string{};
     if (file && !withinTextEnvelope(stored)) {
-        const auto rejection = QString::fromStdString(textLimitDiagnostic(assessText(stored)))
+        const auto rejection = engine_text::textLimit(assessText(stored))
             + QStringLiteral(". The captured text was kept and was not loaded into the editor.");
         syncing_ = true;
         document_->setPlainText({});
