@@ -82,7 +82,7 @@ ResolutionPublisher::readBaselines(const QString &worktreeRoot, const std::vecto
             storage::captureDestination(worktreeRoot, QByteArray::fromStdString(session.path()), destinations);
         const auto &launch = session.snapshots()->launchResult;
         if (!captured.destination)
-            baseline.diagnostic = captured.diagnostic;
+            baseline.diagnostic = captured.problem.encoded();
         else if (captured.destination->identity() != launch.identity
                  || captured.destination->bytes().toStdString() != launch.text.bytes) {
             baseline.diagnostic = tr("The repository file no longer matches the captured launch result.");
@@ -293,9 +293,9 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
                                                    session->snapshots()->launchResult.text.format);
     if (!serialized.document)
         return recordWrite(fileId, expected, Outcome::Failed,
-                           serialized.diagnostic.isEmpty()
+                           serialized.problem.isEmpty()
                                ? tr("Repository write failed. The saved draft is still available.")
-                               : serialized.diagnostic);
+                               : serialized.problem.encoded());
     auto baseline = baselines_.find(fileId);
     if (baseline == baselines_.end() || !baseline->second.destination) {
         const auto missingLaunch = [&] {
@@ -317,9 +317,9 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
             return recordWrite(fileId, expected, Outcome::Failed,
                                live.destination
                                    ? tr("The repository file no longer matches the written revision.")
-                                   : (live.diagnostic.isEmpty() ? tr("Repository write failed. No launch destination "
-                                                                     "is available, and the file is unresolved.")
-                                                                : live.diagnostic));
+                                   : (live.problem.isEmpty() ? tr("Repository write failed. No launch destination "
+                                                                  "is available, and the file is unresolved.")
+                                                             : live.problem.encoded()));
         }
         if (baseline == baselines_.end())
             baselines_.emplace(fileId, Baseline{std::move(live.destination), QString{}});
@@ -416,9 +416,9 @@ void ResolutionPublisher::prepared(const git::TextConversionResult &result)
         || !samePolicy(session->snapshots()->conversion, result.text->policy)) {
         const auto uncertain = result.outcome == git::Outcome::TimedOut;
         fail(uncertain ? Outcome::Uncertain : Outcome::Failed,
-             result.diagnostic.isEmpty()
+             result.problem.isEmpty()
                  ? tr("Repository write failed. The saved draft is still available, and the file is unresolved.")
-                 : result.diagnostic,
+                 : result.problem.encoded(),
              preserveWrite());
         return;
     }
@@ -499,8 +499,8 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
     if (written && !attempt_->parentOwned
         && (!current.destination || current.destination->bytes() != attempt_->serialized)) {
         fail(Outcome::Failed,
-             current.diagnostic.isEmpty() ? tr("The repository file no longer matches the written revision.")
-                                          : current.diagnostic,
+             current.problem.isEmpty() ? tr("The repository file no longer matches the written revision.")
+                                       : current.problem.encoded(),
              false);
         return;
     }
@@ -530,9 +530,9 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
             || (live.destination->bytes() != baseline->second.destination->bytes()
                 && live.destination->bytes().toStdString() != session->snapshots()->launchResult.text.bytes)) {
             fail(Outcome::Failed,
-                 live.diagnostic.isEmpty()
+                 live.problem.isEmpty()
                      ? tr("The repository file changed while Git was waiting. The draft was not published.")
-                     : live.diagnostic,
+                     : live.problem.encoded(),
                  false);
             return;
         }
@@ -550,13 +550,14 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
         [evidence, baseline, bytes, mode](const TaskInput &, const TaskControl &control) {
             *evidence = storage::publishDestination(*baseline, bytes, mode, [&] { return control.beginMutation(); });
             TaskResult result;
-            result.diagnostic = evidence->diagnostic;
+            result.diagnostic = evidence->problem.encoded();
             if (evidence->state == storage::PublicationState::Published
                 && evidence->failure == storage::DestinationFailure::None && evidence->destination)
                 result.status = TaskStatus::Succeeded;
             else
                 result.status = TaskStatus::Failed;
-            if (evidence->state == storage::PublicationState::Uncertain) result.diagnostic = evidence->diagnostic;
+            if (evidence->state == storage::PublicationState::Uncertain)
+                result.diagnostic = evidence->problem.encoded();
             return result;
         },
         [baseline, bytes, files = destinations_](const TaskInput &) {
@@ -667,9 +668,8 @@ void ResolutionPublisher::verified(const git::TextConversionResult &result)
         return;
     }
     fail(result.outcome == git::Outcome::TimedOut ? Outcome::Uncertain : Outcome::Failed,
-         result.diagnostic.isEmpty()
-             ? tr("Written, unresolved. The staged result does not match the reviewed revision.")
-             : result.diagnostic,
+         result.problem.isEmpty() ? tr("Written, unresolved. The staged result does not match the reviewed revision.")
+                                  : result.problem.encoded(),
          true);
 }
 

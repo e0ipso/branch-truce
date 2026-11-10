@@ -56,8 +56,9 @@ MergetoolSession::Listen MergetoolSession::listen(const git::RepositoryContext &
     if (name.isEmpty()) return unavailable(tr("This operation has no mergetool session identity."));
     sessionKey_ = mergetoolSessionKey(repository);
     repository_ = repository;
+    if (Problem problem; !prepareMergetoolSocketDirectory(config_.socketDirectory, &problem))
+        return unavailable(problem.encoded());
     QString reason;
-    if (!prepareMergetoolSocketDirectory(config_.socketDirectory, &reason)) return unavailable(reason);
     const auto listening = server_.listen(name, &reason);
     if (listening == Listen::Unavailable) return unavailable(reason);
     // Copies left by launchers that were killed while they waited. Removing
@@ -224,7 +225,7 @@ void MergetoolSession::intakeChecked(quint64 connection, const AttachMessage &me
 {
     if (!check.intake || check.intake->invocation != message.invocation) {
         reject(connection, message.invocation,
-               check.error.isEmpty() ? tr("The mergetool inputs could not be kept.") : check.error);
+               check.error.isEmpty() ? tr("The mergetool inputs could not be kept.") : check.error.encoded());
         return;
     }
     if (indexOfPath(check.intake->path) >= 0) {
@@ -407,7 +408,7 @@ void MergetoolSession::acceptCopiedLaunches()
             [snapshots = *file->snapshots(), identity, repository = loadedRepository_(),
              git = config_.git](const TaskInput &, const TaskControl &) {
                 TaskResult result;
-                result.diagnostic = revalidateCopiedLaunch(snapshots, identity, repository, git);
+                result.diagnostic = revalidateCopiedLaunch(snapshots, identity, repository, git).encoded();
                 return result;
             },
             [this, fileId, identity](const TaskCompletion &completion) {

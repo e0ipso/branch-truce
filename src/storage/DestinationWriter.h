@@ -3,6 +3,7 @@
 
 #include "core/FileSnapshot.h"
 #include "storage/FileSystem.h"
+#include "storage/Problem.h"
 #include <QByteArray>
 #include <QString>
 #include <functional>
@@ -54,12 +55,12 @@ private:
 struct DestinationCapture {
     std::optional<DestinationSnapshot> destination;
     DestinationFailure failure = DestinationFailure::None;
-    QString diagnostic;
+    Problem problem;
 };
 struct PublicationResult {
     PublicationState state = PublicationState::Unchanged;
     DestinationFailure failure = DestinationFailure::None;
-    QString diagnostic;
+    Problem problem;
     // Present only after verified publication. Use this baseline for a later write.
     std::optional<DestinationSnapshot> destination;
     // Exact native bytes, never a display path. On uncertainty the exchange slot

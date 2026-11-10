@@ -24,6 +24,9 @@ struct MergetoolLauncherOptions {
     int replyWaitMs = 15000;
     // Used when no window listens. --no-window clears it.
     MergetoolWindowStarter startWindow = startInstalledWindow;
+    // The sentence the user reads for a detail that may hold an encoded
+    // Problem, from this launcher or from the window. Empty prints it as it is.
+    std::function<QString(const QString &detail)> describe = {};
 };
 
 // Blocking Git mergetool child. It exits 0 only after the session reports a

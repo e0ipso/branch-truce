@@ -3,6 +3,7 @@
 
 #include "core/RevisionId.h"
 #include "git/GitTypes.h"
+#include "storage/Problem.h"
 #include <QByteArray>
 #include <QString>
 #include <optional>
@@ -30,7 +31,8 @@ struct AttachedMessage {
     QString invocation;
     bool operator==(const AttachedMessage &) const = default;
 };
-// Session to launcher: the launch cannot wait here, and why.
+// Session to launcher: the launch cannot wait here, and why: a translated
+// sentence or an encoded Problem.
 struct RejectedMessage {
     QString invocation;
     QString reason;
@@ -63,7 +65,7 @@ struct DecodedMergetoolMessage {
     MergetoolDecodeFailure failure = MergetoolDecodeFailure::None;
     // The version the frame named, when it named one.
     int version = 0;
-    QString error;
+    Problem problem;
 };
 
 // One JSON payload, without the length prefix.

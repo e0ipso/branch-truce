@@ -2,6 +2,7 @@
 #pragma once
 
 #include "git/GitTypes.h"
+#include "storage/Problem.h"
 #include <QByteArray>
 #include <QString>
 
@@ -21,7 +22,7 @@ namespace branch_truce {
 [[nodiscard]] QString mergetoolServerName(const QString &directory, const git::RepositoryContext &repository);
 // Creates directory with mode 0700 when missing, then requires a real
 // directory owned by this user with no group or other access.
-[[nodiscard]] bool prepareMergetoolSocketDirectory(const QString &directory, QString *error);
+[[nodiscard]] bool prepareMergetoolSocketDirectory(const QString &directory, Problem *error);
 // True when the process at the other end of a connected local socket runs as this user.
 [[nodiscard]] bool mergetoolPeerIsCurrentUser(qintptr descriptor);
 }

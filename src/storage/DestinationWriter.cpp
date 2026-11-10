@@ -31,15 +31,16 @@ struct DirectoryIdentity {
 };
 struct Failure {
     DestinationFailure kind = DestinationFailure::None;
-    QString diagnostic;
+    Problem problem;
     explicit operator bool() const { return kind != DestinationFailure::None; }
 };
-Failure systemFailure(const char *operation)
+// call names the system call that failed; the problem carries the system's error text.
+Failure systemFailure(ProblemCode call)
 {
     const int error = errno;
     const auto kind = error == EACCES || error == EPERM || error == EROFS ? DestinationFailure::PermissionDenied
                                                                           : DestinationFailure::IoError;
-    return {kind, QString::fromLatin1(operation) + QStringLiteral(": ") + qt_error_string(error)};
+    return {kind, Problem{call, {qt_error_string(error)}}};
 }
 bool sameInode(const struct stat &a, const struct stat &b) { return a.st_dev == b.st_dev && a.st_ino == b.st_ino; }
 bool sameMetadata(const struct stat &a, const struct stat &b, bool exchanged = false)
@@ -63,37 +64,35 @@ Failure openDirectory(int parent, const QByteArray &name, Directory &directory)
 {
     struct stat before{};
     if (::fstatat(parent, name.constData(), &before, AT_SYMLINK_NOFOLLOW) != 0)
-        return systemFailure("Cannot inspect destination directory");
-    if (S_ISLNK(before.st_mode))
-        return {DestinationFailure::Symlink, QStringLiteral("Destination directory is a symlink")};
+        return systemFailure(ProblemCode::SystemInspectDirectory);
+    if (S_ISLNK(before.st_mode)) return {DestinationFailure::Symlink, ProblemCode::DestinationDirectorySymlink};
     if (!S_ISDIR(before.st_mode))
-        return {DestinationFailure::PathChanged, QStringLiteral("Destination ancestor is not a directory")};
+        return {DestinationFailure::PathChanged, ProblemCode::DestinationAncestorNotDirectory};
     directory.name = name;
     directory.descriptor =
         Descriptor(::openat(parent, name.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-    if (directory.descriptor.get() < 0) return systemFailure("Cannot open destination directory");
+    if (directory.descriptor.get() < 0) return systemFailure(ProblemCode::SystemOpenDirectory);
     if (::fstat(directory.descriptor.get(), &directory.identity) != 0)
-        return systemFailure("Cannot inspect opened destination directory");
+        return systemFailure(ProblemCode::SystemInspectOpenedDirectory);
     if (!sameInode(before, directory.identity))
-        return {DestinationFailure::PathChanged, QStringLiteral("Destination directory changed while opening")};
+        return {DestinationFailure::PathChanged, ProblemCode::DestinationDirectoryChangedWhileOpening};
     return {};
 }
 Failure readStable(int fd, QByteArray &bytes, struct stat &identity)
 {
-    if (::fstat(fd, &identity) != 0) return systemFailure("Cannot inspect destination");
-    if (!S_ISREG(identity.st_mode))
-        return {DestinationFailure::NotRegularFile, QStringLiteral("Destination must be a regular file")};
+    if (::fstat(fd, &identity) != 0) return systemFailure(ProblemCode::SystemInspectDestination);
+    if (!S_ISREG(identity.st_mode)) return {DestinationFailure::NotRegularFile, ProblemCode::DestinationNotRegular};
     if (identity.st_size < 0
         || static_cast<quint64>(identity.st_size) >= static_cast<quint64>(std::numeric_limits<qsizetype>::max()))
-        return {DestinationFailure::IoError, QStringLiteral("Destination size cannot be represented")};
+        return {DestinationFailure::IoError, ProblemCode::DestinationSizeUnrepresentable};
     bytes.resize(static_cast<qsizetype>(identity.st_size));
     qsizetype offset = 0;
     while (offset < bytes.size()) {
         const auto size = static_cast<size_t>(std::min(qsizetype{65536}, bytes.size() - offset));
         const auto count = ::pread(fd, bytes.data() + offset, size, static_cast<off_t>(offset));
         if (count < 0 && errno == EINTR) continue;
-        if (count < 0) return systemFailure("Cannot read destination");
-        if (count == 0) return {DestinationFailure::ContentChanged, QStringLiteral("Destination shrank while reading")};
+        if (count < 0) return systemFailure(ProblemCode::SystemReadDestination);
+        if (count == 0) return {DestinationFailure::ContentChanged, ProblemCode::DestinationShrank};
         offset += count;
     }
     char extra;
@@ -101,11 +100,11 @@ Failure readStable(int fd, QByteArray &bytes, struct stat &identity)
     do {
         count = ::pread(fd, &extra, 1, identity.st_size);
     } while (count < 0 && errno == EINTR);
-    if (count < 0) return systemFailure("Cannot finish reading destination");
+    if (count < 0) return systemFailure(ProblemCode::SystemFinishReading);
     struct stat after{};
-    if (::fstat(fd, &after) != 0) return systemFailure("Cannot reinspect destination");
+    if (::fstat(fd, &after) != 0) return systemFailure(ProblemCode::SystemReinspectDestination);
     if (count != 0 || !sameMetadata(identity, after))
-        return {DestinationFailure::ContentChanged, QStringLiteral("Destination changed while reading")};
+        return {DestinationFailure::ContentChanged, ProblemCode::DestinationChangedWhileReading};
     return {};
 }
 } // namespace
@@ -127,15 +126,14 @@ namespace {
 Failure openParent(const DestinationSnapshot::State &state, Descriptor &parent)
 {
     Descriptor current(::open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-    if (current.get() < 0) return systemFailure("Cannot reopen filesystem root");
+    if (current.get() < 0) return systemFailure(ProblemCode::SystemReopenRoot);
     for (const auto &expected : state.directories) {
         Directory opened;
         if (auto failure = openDirectory(current.get(), expected.name, opened)) return failure;
         const auto &a = expected.identity;
         const auto &b = opened.identity;
         if (!sameInode(a, b) || a.st_mode != b.st_mode || a.st_uid != b.st_uid || a.st_gid != b.st_gid)
-            return {DestinationFailure::PathChanged,
-                    QStringLiteral("Destination directory identity or permissions changed")};
+            return {DestinationFailure::PathChanged, ProblemCode::DestinationDirectoryChanged};
         current = std::move(opened.descriptor);
     }
     parent = std::move(current);
@@ -152,20 +150,18 @@ Failure checkFile(const DestinationSnapshot::State &state, int parent, const QBy
 {
     struct stat entry{};
     if (::fstatat(parent, name.constData(), &entry, AT_SYMLINK_NOFOLLOW) != 0)
-        return systemFailure("Cannot reinspect destination entry");
-    if (S_ISLNK(entry.st_mode))
-        return {DestinationFailure::Symlink, QStringLiteral("Destination was replaced by a symlink")};
+        return systemFailure(ProblemCode::SystemReinspectEntry);
+    if (S_ISLNK(entry.st_mode)) return {DestinationFailure::Symlink, ProblemCode::DestinationReplacedBySymlink};
     if (!sameInode(entry, state.identity))
-        return {DestinationFailure::PathChanged, QStringLiteral("Destination file identity changed")};
+        return {DestinationFailure::PathChanged, ProblemCode::DestinationIdentityChanged};
     Descriptor file(::openat(parent, name.constData(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
-    if (file.get() < 0) return systemFailure("Cannot reopen destination entry");
+    if (file.get() < 0) return systemFailure(ProblemCode::SystemReopenEntry);
     QByteArray bytes;
     struct stat current{};
     if (auto failure = readStable(file.get(), bytes, current)) return failure;
-    if (!sameInode(entry, current))
-        return {DestinationFailure::PathChanged, QStringLiteral("Destination file identity changed")};
+    if (!sameInode(entry, current)) return {DestinationFailure::PathChanged, ProblemCode::DestinationIdentityChanged};
     if (!sameMetadata(state.identity, current, exchanged) || bytes != state.contents)
-        return {DestinationFailure::ContentChanged, QStringLiteral("Destination content or permissions changed")};
+        return {DestinationFailure::ContentChanged, ProblemCode::DestinationContentChanged};
     return {};
 }
 // The only extended attribute publication preserves: the SELinux label, which
@@ -175,12 +171,11 @@ constexpr char selinuxLabel[] = "security.selinux";
 Failure checkMetadata(const FileSystem &files, int fd, const struct stat &identity)
 {
     if (identity.st_uid != files.effectiveUser() || identity.st_nlink != 1 || (identity.st_mode & 07000) != 0)
-        return {DestinationFailure::UnsupportedMetadata,
-                QStringLiteral("Publication requires an owned file with one link and no special permission bits")};
+        return {DestinationFailure::UnsupportedMetadata, ProblemCode::PublicationOwnership};
     QByteArray names;
     for (;;) {
         const auto size = files.listAttributes(fd, nullptr, 0);
-        if (size < 0) return systemFailure("Cannot inspect destination extended attributes");
+        if (size < 0) return systemFailure(ProblemCode::SystemInspectAttributes);
         names.resize(static_cast<qsizetype>(size));
         const auto listed = files.listAttributes(fd, names.data(), static_cast<std::size_t>(names.size()));
         if (listed >= 0) {
@@ -188,12 +183,11 @@ Failure checkMetadata(const FileSystem &files, int fd, const struct stat &identi
             break;
         }
         // The list grew between the two calls.
-        if (errno != ERANGE) return systemFailure("Cannot inspect destination extended attributes");
+        if (errno != ERANGE) return systemFailure(ProblemCode::SystemInspectAttributes);
     }
     for (const auto &name : names.split('\0')) {
         if (!name.isEmpty() && name != selinuxLabel)
-            return {DestinationFailure::UnsupportedMetadata,
-                    QStringLiteral("Publication cannot preserve extended attributes or ACLs for this destination")};
+            return {DestinationFailure::UnsupportedMetadata, ProblemCode::PublicationExtendedAttributes};
     }
     return {};
 }
@@ -223,13 +217,12 @@ Failure preserveLabel(const FileSystem &files, int destination, int replacement)
 {
     const auto wanted = label(files, destination);
     const auto current = label(files, replacement);
-    if (!wanted || !current) return systemFailure("Cannot read the destination SELinux label");
+    if (!wanted || !current) return systemFailure(ProblemCode::SystemReadLabel);
     if (wanted->isEmpty() || *wanted == *current) return {};
     if (files.setAttribute(replacement, selinuxLabel, wanted->constData(), static_cast<std::size_t>(wanted->size()))
             != 0
         || label(files, replacement) != wanted)
-        return {DestinationFailure::UnsupportedMetadata,
-                QStringLiteral("Publication cannot give the replacement the destination's SELinux label")};
+        return {DestinationFailure::UnsupportedMetadata, ProblemCode::PublicationSelinuxLabel};
     return {};
 }
 } // namespace
@@ -257,9 +250,7 @@ DestinationCapture captureDestination(const QString &root, const QByteArray &pat
     const auto nativeRoot = QFile::encodeName(root);
     if (!state->files || !root.startsWith('/') || root.contains(QChar::Null) || QFile::decodeName(nativeRoot) != root
         || (nativeRoot != "/" && !relativePath(nativeRoot.mid(1))) || !relativePath(path))
-        return {{},
-                DestinationFailure::InvalidPath,
-                QStringLiteral("Expected canonical worktree root and exact relative destination bytes")};
+        return {{}, DestinationFailure::InvalidPath, ProblemCode::DestinationInvalidPath};
     // Start at '/' and open every component without following links. Only the
     // identities are kept; publication reopens the path and compares them.
     std::vector<QByteArray> components{"/"};
@@ -273,30 +264,29 @@ DestinationCapture captureDestination(const QString &root, const QByteArray &pat
     for (const auto &component : components) {
         Directory directory;
         if (auto failure = openDirectory(parent.get(), component, directory))
-            return {{}, failure.kind, failure.diagnostic};
+            return {{}, failure.kind, failure.problem};
         state->directories.push_back({directory.name, directory.identity});
         parent = std::move(directory.descriptor);
     }
     const auto name = relative.last();
     struct stat entry{};
     if (::fstatat(parent.get(), name.constData(), &entry, AT_SYMLINK_NOFOLLOW) != 0) {
-        const auto failure = systemFailure("Cannot inspect destination file");
-        return {{}, failure.kind, failure.diagnostic};
+        const auto failure = systemFailure(ProblemCode::SystemInspectFile);
+        return {{}, failure.kind, failure.problem};
     }
-    if (S_ISLNK(entry.st_mode)) return {{}, DestinationFailure::Symlink, QStringLiteral("Destination is a symlink")};
-    if (!S_ISREG(entry.st_mode))
-        return {{}, DestinationFailure::NotRegularFile, QStringLiteral("Destination must be a regular file")};
+    if (S_ISLNK(entry.st_mode)) return {{}, DestinationFailure::Symlink, ProblemCode::DestinationSymlink};
+    if (!S_ISREG(entry.st_mode)) return {{}, DestinationFailure::NotRegularFile, ProblemCode::DestinationNotRegular};
     const Descriptor file(::openat(parent.get(), name.constData(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
     if (file.get() < 0) {
-        const auto failure = systemFailure("Cannot open destination file");
-        return {{}, failure.kind, failure.diagnostic};
+        const auto failure = systemFailure(ProblemCode::SystemOpenFile);
+        return {{}, failure.kind, failure.problem};
     }
     if (auto failure = readStable(file.get(), state->contents, state->identity))
-        return {{}, failure.kind, failure.diagnostic};
+        return {{}, failure.kind, failure.problem};
     if (!sameMetadata(entry, state->identity))
-        return {{}, DestinationFailure::PathChanged, QStringLiteral("Destination changed while opening")};
-    if (auto failure = checkDirectories(*state)) return {{}, failure.kind, failure.diagnostic};
-    if (auto failure = checkFile(*state, parent.get(), name)) return {{}, failure.kind, failure.diagnostic};
+        return {{}, DestinationFailure::PathChanged, ProblemCode::DestinationChangedWhileOpening};
+    if (auto failure = checkDirectories(*state)) return {{}, failure.kind, failure.problem};
+    if (auto failure = checkFile(*state, parent.get(), name)) return {{}, failure.kind, failure.problem};
     return {DestinationSnapshot(std::move(state)), DestinationFailure::None, {}};
 }
 
@@ -308,13 +298,12 @@ PublicationResult publishDestination(const DestinationSnapshot &expected, const 
     PublicationResult result;
     auto reject = [&result](const Failure &failure) {
         result.failure = failure.kind;
-        result.diagnostic = failure.diagnostic;
+        result.problem = failure.problem;
         return result;
     };
     if (!beginMutation || (mode != "100644" && mode != "100755")
         || ((state.identity.st_mode & 0111) != 0) != (mode == "100755"))
-        return reject({DestinationFailure::InvalidRequest,
-                       QStringLiteral("Mutation admission and an agreed matching regular-file Git mode are required")});
+        return reject({DestinationFailure::InvalidRequest, ProblemCode::PublicationInvalidRequest});
     // These descriptors live only for this call. The parent and the original
     // file stay open across the exchange, so a later rename of an ancestor or
     // of the file cannot redirect what this call checks or retains.
@@ -326,25 +315,23 @@ PublicationResult publishDestination(const DestinationSnapshot &expected, const 
     const Descriptor original(::openat(parent, name.constData(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
     struct stat originalIdentity{};
     if (original.get() < 0 || ::fstat(original.get(), &originalIdentity) != 0)
-        return reject(systemFailure("Cannot reopen destination"));
+        return reject(systemFailure(ProblemCode::SystemReopenDestination));
     if (!sameMetadata(state.identity, originalIdentity))
-        return reject({DestinationFailure::PathChanged, QStringLiteral("Destination changed while reopening")});
+        return reject({DestinationFailure::PathChanged, ProblemCode::DestinationChangedWhileReopening});
     if (auto failure = checkMetadata(files, original.get(), state.identity)) return reject(failure);
     // Replacement must not bypass a read-only destination merely because its
     // directory is writable. O_WRONLY without O_TRUNC checks the actual access.
     Descriptor writable(::openat(parent, name.constData(), O_WRONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
-    if (writable.get() < 0) return reject(systemFailure("Destination is not writable"));
+    if (writable.get() < 0) return reject(systemFailure(ProblemCode::SystemNotWritable));
     struct stat accessIdentity{};
-    if (::fstat(writable.get(), &accessIdentity) != 0)
-        return reject(systemFailure("Cannot inspect writable destination"));
+    if (::fstat(writable.get(), &accessIdentity) != 0) return reject(systemFailure(ProblemCode::SystemInspectWritable));
     if (!sameMetadata(state.identity, accessIdentity))
-        return reject({DestinationFailure::PathChanged, QStringLiteral("Destination changed during permission check")});
-    if (!beginMutation())
-        return reject({DestinationFailure::Cancelled, QStringLiteral("Publication cancelled before mutation")});
+        return reject({DestinationFailure::PathChanged, ProblemCode::DestinationChangedDuringPermissionCheck});
+    if (!beginMutation()) return reject({DestinationFailure::Cancelled, ProblemCode::PublicationCancelled});
 
     const auto temporary = ".branch-truce-publish-" + QUuid::createUuid().toByteArray(QUuid::WithoutBraces);
     if (::mkdirat(parent, temporary.constData(), 0700) != 0)
-        return reject(systemFailure("Cannot create private publication directory"));
+        return reject(systemFailure(ProblemCode::SystemCreatePrivateDirectory));
     Directory staging;
     if (auto failure = openDirectory(parent, temporary, staging)) {
         (void)files.unlink(parent, temporary.constData(), AT_REMOVEDIR);
@@ -372,35 +359,32 @@ PublicationResult publishDestination(const DestinationSnapshot &expected, const 
         if (!cleanup()) {
             result.retainedPath = retained;
             return reject({DestinationFailure::CleanupFailure,
-                           failure.diagnostic + QStringLiteral("; could not remove private publication files")});
+                           Problem{ProblemCode::PublicationCleanupFailed}.wrapping(failure.problem)});
         }
         return reject(failure);
     };
-    if (output.get() < 0) return failBeforeExchange(systemFailure("Cannot create replacement file"));
+    if (output.get() < 0) return failBeforeExchange(systemFailure(ProblemCode::SystemCreateReplacement));
     qsizetype offset = 0;
     while (offset < bytes.size()) {
         const auto count = files.write(output.get(), bytes.constData() + offset,
                                        static_cast<size_t>(std::min(qsizetype{65536}, bytes.size() - offset)));
         if (count < 0 && errno == EINTR) continue;
-        if (count < 0) return failBeforeExchange(systemFailure("Cannot write complete replacement"));
-        if (count == 0)
-            return failBeforeExchange(
-                {DestinationFailure::IoError, QStringLiteral("Replacement write made no progress")});
+        if (count < 0) return failBeforeExchange(systemFailure(ProblemCode::SystemWriteReplacement));
+        if (count == 0) return failBeforeExchange({DestinationFailure::IoError, ProblemCode::PublicationNoProgress});
         offset += count;
     }
     if (::fchown(output.get(), state.identity.st_uid, state.identity.st_gid) != 0
         || ::fchmod(output.get(), state.identity.st_mode & 0777) != 0)
-        return failBeforeExchange(systemFailure("Cannot preserve destination permissions"));
+        return failBeforeExchange(systemFailure(ProblemCode::SystemPreservePermissions));
     if (auto failure = preserveLabel(files, original.get(), output.get())) return failBeforeExchange(failure);
     QByteArray prepared;
     struct stat preparedIdentity{};
     if (auto failure = readStable(output.get(), prepared, preparedIdentity)) return failBeforeExchange(failure);
     if (prepared != bytes)
-        return failBeforeExchange(
-            {DestinationFailure::ContentChanged, QStringLiteral("Replacement bytes changed before publication")});
+        return failBeforeExchange({DestinationFailure::ContentChanged, ProblemCode::PublicationReplacementChanged});
     if (auto failure = checkMetadata(files, output.get(), preparedIdentity)) return failBeforeExchange(failure);
     if (files.sync(output.get()) != 0 || files.sync(stage) != 0)
-        return failBeforeExchange(systemFailure("Cannot sync replacement"));
+        return failBeforeExchange(systemFailure(ProblemCode::SystemSyncReplacement));
     if (auto failure = checkDirectories(state)) return failBeforeExchange(failure);
     if (auto failure = checkFile(state, parent, name)) return failBeforeExchange(failure);
     if (auto failure = checkMetadata(files, original.get(), state.identity)) return failBeforeExchange(failure);
@@ -412,15 +396,15 @@ PublicationResult publishDestination(const DestinationSnapshot &expected, const 
         // Preserve the exchange slot on ambiguous I/O errors; never remove what
         // could already be the displaced entry or claim that nothing changed.
         if (errno == EIO || errno == ESTALE || errno == ETIMEDOUT) {
-            const auto failure = systemFailure("Atomic exchange outcome is uncertain");
+            const auto failure = systemFailure(ProblemCode::SystemExchangeUncertain);
             result.state = PublicationState::Uncertain;
             result.retainedPath = retained;
             return reject(failure);
         }
         if (errno == ENOSYS || errno == EINVAL || errno == EOPNOTSUPP || errno == EXDEV)
-            return failBeforeExchange({DestinationFailure::UnsupportedFilesystem,
-                                       QStringLiteral("Filesystem does not support atomic destination exchange")});
-        return failBeforeExchange(systemFailure("Cannot exchange destination"));
+            return failBeforeExchange(
+                {DestinationFailure::UnsupportedFilesystem, ProblemCode::PublicationUnsupportedFilesystem});
+        return failBeforeExchange(systemFailure(ProblemCode::SystemExchange));
     }
     result.state = PublicationState::Uncertain;
     result.retainedPath = retained;
@@ -428,21 +412,18 @@ PublicationResult publishDestination(const DestinationSnapshot &expected, const 
     if (auto failure = checkMetadata(files, original.get(), state.identity)) return reject(failure);
     if (auto failure = checkDirectories(state)) return reject(failure);
     auto published = captureDestination(state.root, state.path, state.files);
-    if (!published.destination) return reject({published.failure, published.diagnostic});
+    if (!published.destination) return reject({published.failure, published.problem});
     const auto &current = *published.destination->d;
     if (!sameMetadata(preparedIdentity, current.identity, true) || current.contents != bytes)
-        return reject({DestinationFailure::ContentChanged,
-                       QStringLiteral("Published destination identity or bytes could not be verified")});
+        return reject({DestinationFailure::ContentChanged, ProblemCode::PublicationUnverified});
     if (auto failure = checkDirectories(state)) return reject(failure);
     if (files.sync(parent) != 0 || files.sync(stage) != 0)
-        return reject(systemFailure("Cannot sync published destination"));
+        return reject(systemFailure(ProblemCode::SystemSyncPublished));
     if (auto failure = checkFile(state, stage, "previous", true)) return reject(failure);
     if (auto failure = checkFile(current, parent, name)) return reject(failure);
     if (auto failure = checkDirectories(state)) return reject(failure);
     result.state = PublicationState::Published;
-    if (!cleanup())
-        return reject({DestinationFailure::CleanupFailure,
-                       QStringLiteral("Published result verified; private publication cleanup is incomplete")});
+    if (!cleanup()) return reject({DestinationFailure::CleanupFailure, ProblemCode::PublicationCleanupIncomplete});
     result.retainedPath.clear();
     result.destination = std::move(published.destination);
     return result;

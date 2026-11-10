@@ -406,7 +406,7 @@ int main(int argc, char **argv)
             result.outcome = git::Outcome::ExitFailure;
             result.mutation = git::Mutation::ObservedUnchanged;
             result.exitCode = 128;
-            result.diagnostic = QStringLiteral("Git refused to stage the file.");
+            result.problem = {ProblemCode::GitExitCode, {QStringLiteral("128")}};
             return result;
         };
         Application controller{[&] {
@@ -424,7 +424,7 @@ int main(int argc, char **argv)
         CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Succeeded);
         CHECK(file.publication().stageOutcome() && file.publication().stageOutcome()->outcome == Outcome::Failed);
         CHECK_EQ(QString::fromStdString(file.publication().stageOutcome()->detail),
-                 QStringLiteral("Git refused to stage the file."));
+                 Problem(ProblemCode::GitExitCode, {QStringLiteral("128")}).encoded());
         CHECK(file.facts().status == FileStatus::StageFailed && !file.facts().resolved);
         CHECK(readFile(repo.path("tracked.txt")) == repo.manual);
         expectUnchanged(repo, before, true);
@@ -578,13 +578,13 @@ int main(int argc, char **argv)
     suite.run("staging that times out leaves the outcome uncertain, the conflict in place and a retry refused", [] {
         Repository repo;
         ScopedEnvironment environment(repo.environment);
-        const auto diagnostic = QStringLiteral("Git did not finish within the request deadline.");
+        const Problem diagnostic(ProblemCode::GitDeadline, {QStringLiteral("30")});
         // Git add hangs past the adapter's deadline: the index may or may not have changed.
         const auto timedOut = [diagnostic](const git::Request &) {
             git::Result result;
             result.outcome = git::Outcome::TimedOut;
             result.mutation = git::Mutation::Uncertain;
-            result.diagnostic = diagnostic;
+            result.problem = diagnostic;
             return result;
         };
         Application controller{[&] {
@@ -606,7 +606,8 @@ int main(int argc, char **argv)
         const auto &file = openedFile(controller);
         CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Succeeded);
         CHECK(file.publication().stageOutcome() && file.publication().stageOutcome()->outcome == Outcome::Uncertain);
-        CHECK_EQ(QString::fromStdString(file.publication().stageOutcome()->detail), diagnostic);
+        // The outcome keeps the problem encoded; the window shows it translated.
+        CHECK_EQ(QString::fromStdString(file.publication().stageOutcome()->detail), diagnostic.encoded());
         CHECK(!file.facts().resolved);
         CHECK(readFile(repo.path("tracked.txt")) == "written before the time out\n");
         CHECK(unmerged(repo).contains("tracked.txt"));

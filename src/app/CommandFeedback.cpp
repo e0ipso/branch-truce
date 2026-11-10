@@ -1,5 +1,6 @@
 // Command feedback is the one message the window shows about the last command, and the markers that refused it.
 #include "CommandFeedback.h"
+#include "ProblemText.h"
 #include "Selection.h"
 #include "session/SessionStore.h"
 
@@ -12,7 +13,7 @@ CommandFeedback::CommandFeedback(const SessionStore &store, const Selection &sel
 
 void CommandFeedback::show(const QString &message)
 {
-    message_ = message;
+    message_ = problem_text::detail(message);
     markers_.reset();
     Q_EMIT changed();
 }
@@ -38,7 +39,7 @@ bool CommandFeedback::report(Transition result)
 void CommandFeedback::showMarkers(const QString &message, const std::string &fileId, RevisionId revision,
                                   std::size_t count, std::size_t line)
 {
-    message_ = message;
+    message_ = problem_text::detail(message);
     markers_ = Markers{fileId, revision, count, line};
     Q_EMIT changed();
 }

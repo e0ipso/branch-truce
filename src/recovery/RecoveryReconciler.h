@@ -30,7 +30,7 @@ private:
 
 struct Reconciliation {
     // Empty when the file may be edited; otherwise its recovery error.
-    QString failure;
+    Problem failure;
     // The live identity when the only change is git mergetool's copy of the
     // launch file. The file still fails with copiedLaunchFailure().
     std::optional<SnapshotFileIdentity> copied;
@@ -46,12 +46,13 @@ struct Reconciliation {
                                        const git::RepositoryContext &repository, const RepositoryProbe &probe,
                                        storage::RecoveryLease &lease);
 
-// The recovery error of a file git mergetool replaced with a copy.
+// The recovery error of a file git mergetool replaced with a copy, encoded
+// as the session store keeps it.
 [[nodiscard]] QString copiedLaunchFailure();
 
 // Empty while the file still has the identity validation observed and the
 // launch bytes, and its index entries and conversion policy still match the
 // capture. Otherwise the error that replaces copiedLaunchFailure.
-[[nodiscard]] QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
+[[nodiscard]] Problem revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
                                              const git::RepositoryContext &repository, const RepositoryProbe &probe);
 }

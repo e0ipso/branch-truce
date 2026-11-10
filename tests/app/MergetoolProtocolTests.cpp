@@ -231,7 +231,7 @@ void invalidMessagesAreRefusedWithTheirReason()
         const auto decoded = decodeMergetoolMessage(row.payload);
         CHECK(!decoded.message);
         CHECK(decoded.failure == row.failure);
-        CHECK(!decoded.error.isEmpty());
+        CHECK(!decoded.problem.isEmpty());
     }
     const auto unknownField = decodeMergetoolMessage(R"({"v":)" + version + R"(,"kind":"leave","invocation":")"
                                                      + invocation + R"(","later":true})");
@@ -491,7 +491,7 @@ void theFallbackSocketDirectoryIsPrivateAndUnpredictable()
     struct stat info{};
     CHECK(::lstat(QFile::encodeName(first).constData(), &info) == 0 && S_ISDIR(info.st_mode));
     CHECK(info.st_uid == ::geteuid() && (info.st_mode & 077) == 0);
-    QString error;
+    Problem error;
     CHECK(prepareMergetoolSocketDirectory(first, &error));
     // A directory that went away, as /tmp does at boot, is replaced by a new one.
     CHECK(::rmdir(QFile::encodeName(first).constData()) == 0);
@@ -505,7 +505,7 @@ void theFallbackSocketDirectoryIsPrivateAndUnpredictable()
     const auto removeThird = qScopeGuard([&third] { ::rmdir(QFile::encodeName(third).constData()); });
     CHECK(third.startsWith(prefix) && third != second);
     CHECK(!prepareMergetoolSocketDirectory({}, &error));
-    CHECK(error.startsWith(QStringLiteral("No private mergetool socket directory is available")));
+    CHECK(error.code == ProblemCode::MergetoolNoSocketDirectory);
 }
 
 void intakesArePrivateCheckedAndRemoved()
@@ -519,7 +519,7 @@ void intakesArePrivateCheckedAndRemoved()
     sources.local = "local\n";
     sources.localPresent = true;
     const auto invocation = uuid();
-    QString error;
+    Problem error;
     const auto intake = writeMergetoolIntake(root, key, invocation, sources, &error);
     CHECK(!intake.isEmpty() && error.isEmpty());
     for (const auto &path : {root, QFileInfo(intake).absolutePath(), intake}) {
@@ -535,7 +535,7 @@ void intakesArePrivateCheckedAndRemoved()
     CHECK(!readMergetoolIntake(intake, directory.path(), key, &error));
     writeFile(intake + QStringLiteral("/merged"), "changed\n");
     CHECK(!readMergetoolIntake(intake, root, key, &error));
-    CHECK(error.contains(QStringLiteral("do not match")));
+    CHECK(error.code == ProblemCode::MergetoolIntakeBytes);
     // This process wrote it and is alive, so a prune keeps it.
     CHECK_EQ(pruneMergetoolIntakes(root, key), 0);
     removeMergetoolIntake(intake);
@@ -572,7 +572,7 @@ void aRestoreReplacesTheFileWholeAndKeepsItsMode()
     const auto native = QFile::encodeName(path);
     const QByteArray launch("<<<<<<< ours\nlaunch\n=======\nother\n>>>>>>> theirs\n");
     const auto longer = launch + QByteArray("a longer GUI write\n").repeated(64);
-    QString error;
+    Problem error;
     writeFile(path, longer);
     CHECK(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
     const auto before = inodeOf(path);
@@ -595,7 +595,7 @@ void aRestoreReplacesTheFileWholeAndKeepsItsMode()
         restored = restoreMergetoolFile(native, launch, &error);
     }
     CHECK(!restored);
-    CHECK_EQ(error, QStringLiteral("The original file could not be restored."));
+    CHECK(error.code == ProblemCode::MergetoolRestoreFailed);
     CHECK(readFile(path) == longer);
     CHECK_EQ(QDir(directory.path()).entryList(QDir::Files | QDir::Hidden), QStringList{QStringLiteral("merged.txt")});
 }

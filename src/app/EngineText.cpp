@@ -1,5 +1,6 @@
 // Engine text turns the merge engine's typed statuses, failures and preview notes into translated sentences.
 #include "EngineText.h"
+#include "ProblemText.h"
 
 #include <QCoreApplication>
 
@@ -181,7 +182,7 @@ QString loadFailure(const LoadFailure &failure)
 QString supportDetail(const FileSession &file)
 {
     const auto &failure = file.loadFailure();
-    return failure ? loadFailure(*failure) : utf8(file.supportDetail());
+    return failure ? loadFailure(*failure) : problem_text::detail(utf8(file.supportDetail()));
 }
 
 QString choice(const ChoicePreview &preview)

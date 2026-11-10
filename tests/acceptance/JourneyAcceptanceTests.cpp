@@ -8,6 +8,7 @@
 //   WindowChecks    fit, wrapping, wheel and placement checks.
 //   *Journeys.cpp   the journeys of one group each.
 #include "acceptance/JourneySuite.h"
+#include "app/ProblemText.h"
 #include "app/Translations.h"
 #include "fixtures/GitOnPath.h"
 #include "mergetool/MergetoolLauncher.h"
@@ -32,7 +33,7 @@ int main(int argc, char **argv)
         return branch_truce::runMergetoolLauncher(
             QCoreApplication::arguments(),
             branch_truce::git::GitProgram{gitOnPath(), branch_truce::git::GitEnvironment::fromProcess()},
-            {.startWindow = {}});
+            {.startWindow = {}, .describe = branch_truce::problem_text::detail});
     }
     const auto arguments = test_support::configure(argc, argv);
     QApplication application(argc, argv);

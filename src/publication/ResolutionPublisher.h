@@ -30,7 +30,8 @@ public:
         git::ConvertedText prepared;
     };
     // The repository file a supported file publishes over, as captured before
-    // any edit, or why it cannot be used.
+    // any edit, or why it cannot be used: a translated sentence or an encoded
+    // Problem, which the window shows translated.
     struct Baseline {
         std::optional<storage::DestinationSnapshot> destination;
         QString diagnostic;

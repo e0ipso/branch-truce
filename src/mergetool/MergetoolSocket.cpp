@@ -109,23 +109,22 @@ QString mergetoolServerName(const QString &directory, const git::RepositoryConte
         + QString::fromLatin1(key.left(kSocketKeyLength));
 }
 
-bool prepareMergetoolSocketDirectory(const QString &directory, QString *error)
+bool prepareMergetoolSocketDirectory(const QString &directory, Problem *error)
 {
-    const auto fail = [error](const QString &message) {
-        if (error) *error = message;
+    const auto fail = [error, &directory](ProblemCode problem) {
+        if (error) *error = {problem, {directory}};
         return false;
     };
     const auto native = QFile::encodeName(directory);
-    if (native.isEmpty())
-        return fail(QStringLiteral("No private mergetool socket directory is available: XDG_RUNTIME_DIR is unset "
-                                   "or too long, and none could be made under /tmp."));
-    if (::mkdir(native.constData(), 0700) != 0 && errno != EEXIST)
-        return fail(QStringLiteral("The mergetool socket directory %1 could not be created.").arg(directory));
+    if (native.isEmpty()) {
+        if (error) *error = ProblemCode::MergetoolNoSocketDirectory;
+        return false;
+    }
+    if (::mkdir(native.constData(), 0700) != 0 && errno != EEXIST) return fail(ProblemCode::MergetoolSocketCreate);
     struct stat info{};
     if (::lstat(native.constData(), &info) != 0 || !S_ISDIR(info.st_mode))
-        return fail(QStringLiteral("The mergetool socket directory %1 is not a directory.").arg(directory));
-    if (info.st_uid != ::geteuid() || (info.st_mode & 077) != 0)
-        return fail(QStringLiteral("The mergetool socket directory %1 is not private to this user.").arg(directory));
+        return fail(ProblemCode::MergetoolSocketNotDirectory);
+    if (info.st_uid != ::geteuid() || (info.st_mode & 077) != 0) return fail(ProblemCode::MergetoolSocketNotPrivate);
     return true;
 }
 

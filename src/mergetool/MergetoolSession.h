@@ -43,6 +43,7 @@ public:
     MergetoolSession(ResolutionPublisher &publisher, SessionStore &files, SessionCoordinator &coordinator,
                      std::function<git::RepositoryContext()> loadedRepository, Config config,
                      QObject *parent = nullptr);
+    // error gets a translated sentence or an encoded Problem.
     Listen listen(const git::RepositoryContext &repository, QString *error);
     [[nodiscard]] bool listening() const { return server_.listening(); }
     [[nodiscard]] bool parentSessionActive() const { return parentSession_; }
@@ -102,7 +103,7 @@ private:
     };
     struct IntakeCheck {
         std::optional<MergetoolIntake> intake;
-        QString error;
+        Problem error;
     };
     void attachReceived(quint64 connection, const AttachMessage &message);
     void intakeChecked(quint64 connection, const AttachMessage &message, const IntakeCheck &check);

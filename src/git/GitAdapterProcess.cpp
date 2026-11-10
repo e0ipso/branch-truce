@@ -165,7 +165,7 @@ GitAdapter::State::State(GitAdapter *owner, GitProgram selected)
         pid = process.processId();
         observeNativeLaunch();
         if (!nativeLaunchFailed && !phaseInput.isEmpty() && process.write(phaseInput) != phaseInput.size()) {
-            stop(Outcome::ProcessFailure, QStringLiteral("Could not send Git operation input"));
+            stop(Outcome::ProcessFailure, ProblemCode::GitInputNotSent);
         }
         process.closeWriteChannel();
         if (!nativeLaunchFailed && phase == Phase::Operation && spec->flow == detail::Flow::Stage) {
@@ -183,11 +183,11 @@ GitAdapter::State::State(GitAdapter *owner, GitProgram selected)
             escalation.stop();
             if (!stopping) {
                 result.outcome = Outcome::LaunchFailure;
-                result.diagnostic = process.errorString();
+                result.problem = {ProblemCode::GitLaunchFailed, {process.errorString()}};
             }
             afterProcess(false, -1);
         } else if (error != QProcess::Crashed) {
-            stop(Outcome::ProcessFailure, process.errorString());
+            stop(Outcome::ProcessFailure, {ProblemCode::GitProcessFailed, {process.errorString()}});
         }
     });
     QObject::connect(&process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), q,
@@ -201,9 +201,9 @@ GitAdapter::State::State(GitAdapter *owner, GitProgram selected)
                      });
     QObject::connect(&deadline, &QTimer::timeout, q, [this] {
         if (phase == Phase::Inspection) {
-            inspectionFailed(QStringLiteral("Index reinspection timed out"));
+            inspectionFailed(ProblemCode::GitReinspectionTimedOut);
         } else {
-            stop(Outcome::TimedOut, QStringLiteral("Git exceeded the %1 second deadline").arg(deadlineMs / 1000.0));
+            stop(Outcome::TimedOut, {ProblemCode::GitDeadline, {QString::number(deadlineMs / 1000.0)}});
         }
     });
     QObject::connect(&escalation, &QTimer::timeout, q, [this] {
@@ -256,7 +256,7 @@ void GitAdapter::State::observeNativeLaunch()
         nativeLaunchFailed = true;
         if (!stopping) {
             result.outcome = Outcome::LaunchFailure;
-            result.diagnostic = QStringLiteral("Could not start Git: ") + QString::fromLocal8Bit(std::strerror(error));
+            result.problem = {ProblemCode::GitStartFailed, {QString::fromLocal8Bit(std::strerror(error))}};
         }
         stopping = true;
     }
@@ -274,10 +274,10 @@ void GitAdapter::State::launch(Phase next, const QList<QByteArray> &arguments, b
     struct stat current{};
     if (!secureExecutable(executable, current) || !sameExecutable(identity, current)) {
         if (next == Phase::Inspection) {
-            inspectionFailed(QStringLiteral("Selected executable changed before reinspection"));
+            inspectionFailed(ProblemCode::GitExecutableChangedBeforeReinspection);
             complete();
         } else {
-            reject(QStringLiteral("Selected executable changed or is no longer trusted"));
+            reject(ProblemCode::GitExecutableChanged);
         }
         return;
     }
@@ -305,7 +305,7 @@ void GitAdapter::State::launch(Phase next, const QList<QByteArray> &arguments, b
     closeLaunchPipe();
     if (::pipe2(launchPipe, O_CLOEXEC | O_NONBLOCK) != 0) {
         result.outcome = Outcome::LaunchFailure;
-        result.diagnostic = QStringLiteral("Could not create the Git launch error pipe");
+        result.problem = ProblemCode::GitLaunchPipe;
         afterProcess(false, -1);
         return;
     }
@@ -330,27 +330,27 @@ void GitAdapter::State::launch(Phase next, const QList<QByteArray> &arguments, b
     process.setProgram(executable);
     process.start();
 }
-void GitAdapter::State::stop(Outcome outcome, const QString &message)
+void GitAdapter::State::stop(Outcome outcome, Problem problem)
 {
     if (stopping) {
         return;
     }
     stopping = true;
     result.outcome = outcome;
-    result.diagnostic = message;
+    result.problem = std::move(problem);
     signalGroup(SIGTERM);
     if (process.state() != QProcess::NotRunning) {
         process.terminate();
         escalation.start(killGraceMs);
     }
 }
-void GitAdapter::State::inspectionFailed(const QString &message)
+void GitAdapter::State::inspectionFailed(Problem failure)
 {
     result.mutation = Mutation::Uncertain;
     if (result.outcome == Outcome::Success) {
         result.outcome = Outcome::InspectionFailure;
     }
-    result.diagnostic += QStringLiteral("; ") + message;
+    addProblem(std::move(failure));
     stopping = true;
     signalGroup(SIGTERM);
     process.terminate();
@@ -377,10 +377,9 @@ void GitAdapter::State::drain(bool error)
         if (keep != chunk.size()) {
             result.outputIncomplete = true;
             if (phase == Phase::Inspection) {
-                inspectionFailed(QStringLiteral("Index reinspection exceeded %1 bytes").arg(inspectionLimit));
+                inspectionFailed({ProblemCode::GitReinspectionTooLarge, {QString::number(inspectionLimit)}});
             } else {
-                stop(Outcome::OutputLimit,
-                     QStringLiteral("Git output exceeded %1 bytes; captured prefix is incomplete").arg(limit));
+                stop(Outcome::OutputLimit, {ProblemCode::GitOutputLimit, {QString::number(limit)}});
             }
         }
     }

@@ -58,11 +58,11 @@ int main(int argc, char **argv)
                     const auto editable = line + "\n\t" + line + (final ? "\n" : "");
                     const TextFormat format{encoding.encoding, encoding.bom, newline, final};
                     const auto decoded = decodeText(bytes, encoding.attribute);
-                    CHECK(decoded.document && decoded.diagnostic.isEmpty());
+                    CHECK(decoded.document && decoded.problem.isEmpty());
                     CHECK(decoded.document->utf8 == editable && decoded.document->originalBytes == bytes);
                     CHECK(decoded.document->format == format);
                     const auto serialized = serializeText(editable, format);
-                    CHECK(serialized.document && serialized.diagnostic.isEmpty());
+                    CHECK(serialized.document && serialized.problem.isEmpty());
                     CHECK(serialized.document->originalBytes == bytes && serialized.document->format == format);
                 }
             }
@@ -109,14 +109,14 @@ int main(int argc, char **argv)
                               {"plain", "ISO-8859-1"}};
         for (const auto &invalid : cases) {
             const auto decoded = decodeText(invalid.bytes, invalid.encoding);
-            CHECK(!decoded.document && !decoded.diagnostic.isEmpty());
+            CHECK(!decoded.document && !decoded.problem.isEmpty());
         }
     });
     suite.run("serialization accepts only editable UTF-8 and takes final newline from the buffer", [] {
         for (const auto &invalid : {QByteArray::fromHex("ff"), QByteArray::fromHex("610062"), QByteArray("a\rb"),
                                     QByteArray("a\r\n"), QByteArray::fromHex("efbbbf61")}) {
             const auto result = serializeText(invalid, {});
-            CHECK(!result.document && !result.diagnostic.isEmpty());
+            CHECK(!result.document && !result.problem.isEmpty());
         }
         const auto added = serializeText("line\n", {TextEncoding::Utf8, false, Newline::CrLf, false});
         CHECK(added.document && added.document->originalBytes == "line\r\n");
@@ -139,11 +139,11 @@ int main(int argc, char **argv)
                                 {"utf16le", "lf", {TextEncoding::Utf16LittleEndian, false, Newline::Lf, true}},
                                 {"utf-16be", "crlf", {TextEncoding::Utf16BigEndian, false, Newline::CrLf, true}}};
         for (const auto &selection : cases) {
-            QString diagnostic;
+            branch_truce::Problem diagnostic;
             const auto format = resultFormat(launch, selection.encoding, selection.eol, diagnostic);
             CHECK(format && *format == selection.expected && diagnostic.isEmpty());
         }
-        QString diagnostic;
+        branch_truce::Problem diagnostic;
         const TextFormat utf8Bom{TextEncoding::Utf8, true, Newline::Lf, false};
         CHECK(resultFormat(utf8Bom, "UTF-8", {}, diagnostic) == utf8Bom);
         const auto utf16 = resultFormat(utf8Bom, "UTF-16", {}, diagnostic);

@@ -252,7 +252,7 @@ public:
             case git::Mutation::Uncertain: result.mutation = MutationObservation::Uncertain; break;
             }
             result.data = value.standardOutput;
-            result.diagnostic = value.diagnostic;
+            result.diagnostic = value.problem.encoded();
             result.gitResult = value;
             job->adapter = nullptr;
             adapter->deleteLater();

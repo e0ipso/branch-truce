@@ -2,6 +2,7 @@
 #pragma once
 
 #include "core/FileSnapshot.h"
+#include "storage/Problem.h"
 #include <QByteArray>
 #include <QString>
 #include <optional>
@@ -37,7 +38,7 @@ enum class TextFailure {
 struct TextResult {
     std::optional<TextDocument> document;
     TextFailure failure = TextFailure::None;
-    QString diagnostic;
+    Problem problem;
 };
 
 // The working-tree-encoding name decodeText takes for an encoding.
@@ -46,5 +47,5 @@ struct TextResult {
 [[nodiscard]] TextResult decodeText(const QByteArray &bytes, const QByteArray &workingTreeEncoding = {});
 [[nodiscard]] TextResult serializeText(const QByteArray &utf8, const TextFormat &format);
 [[nodiscard]] std::optional<TextFormat> resultFormat(const TextFormat &launch, const QByteArray &workingTreeEncoding,
-                                                     const QByteArray &eol, QString &diagnostic);
+                                                     const QByteArray &eol, Problem &problem);
 } // namespace branch_truce::storage

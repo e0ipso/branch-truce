@@ -35,7 +35,7 @@ struct TextConversionResult {
     TextConversionRequest request;
     Outcome outcome = Outcome::Rejected;
     TextConversionFailure failure = TextConversionFailure::None;
-    QString diagnostic;
+    Problem problem;
     std::optional<ConvertedText> text;
 };
 

@@ -7,6 +7,8 @@
 #include <QString>
 #include <utility>
 
+#include "storage/Problem.h"
+
 class QProcessEnvironment;
 
 namespace branch_truce::git {
@@ -24,10 +26,11 @@ struct RepositoryContext {
     // Operation identity only. Check unsupportedPaths, file types and conversion
     // policy before editing or publishing. Reinspect before any mutation.
     bool supported = false;
-    QString diagnostic;
-    // Exact conflict paths whose stages cannot be attributed to the operation.
-    // Keep their index entries visible without rejecting other paths.
-    QHash<QByteArray, QString> unsupportedPaths;
+    // Why the operation is unsupported, or that none is in progress.
+    Problem problem;
+    // Exact conflict paths whose stages cannot be attributed to the operation,
+    // and why. Keep their index entries visible without rejecting other paths.
+    QHash<QByteArray, Problem> unsupportedPaths;
     SourceIdentity stage2;
     SourceIdentity stage3;
     QByteArray baseCommitId; // Empty for an unavailable common earlier version.

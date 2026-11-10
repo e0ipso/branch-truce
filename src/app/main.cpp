@@ -2,6 +2,7 @@
 #include "AppPaths.h"
 #include "Appearance.h"
 #include "Application.h"
+#include "ProblemText.h"
 #include "StartupReport.h"
 #include "Translations.h"
 #include "core/BuildInfo.h"
@@ -63,7 +64,8 @@ int main(int argc, char *argv[])
         QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
         QCoreApplication::setOrganizationDomain(QStringLiteral("canpicasoft.com"));
         branch_truce::installTranslations(launcher);
-        return branch_truce::runMergetoolLauncher(QCoreApplication::arguments(), git);
+        return branch_truce::runMergetoolLauncher(QCoreApplication::arguments(), git,
+                                                  {.describe = branch_truce::problem_text::detail});
     }
     // QApplication rather than QGuiApplication: the org.kde.desktop style draws its
     // controls through QApplication::style(). See docs/platform-validation.md.

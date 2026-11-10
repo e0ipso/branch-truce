@@ -338,7 +338,7 @@ int gitWorker(const WorkerArgs &args)
     detail << "api=" << gitOutcome(result.outcome) << " incomplete=" << (result.outputIncomplete ? 1 : 0)
            << " captured=" << captured << " expected=" << expected << " exit=" << result.exitCode
            << " git_rss_kb=" << (childRss > 0 ? std::to_string(childRss) : std::string("-"))
-           << " diagnostic=" << sanitize(result.diagnostic.toStdString());
+           << " diagnostic=" << sanitize(result.problem.encoded().toStdString());
     record.detail = detail.str();
     if (!finished) {
         record.outcome = "incomplete";

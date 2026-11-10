@@ -35,6 +35,8 @@ struct StoredTransaction {
 
 struct RecoveryRead {
     bool succeeded = false;
+    // An encoded Problem; it passes through the session store, and the app
+    // shows it translated.
     QString error;
     // The journal or one of its records has a format later than this build reads.
     bool newerFormat = false;
@@ -46,6 +48,7 @@ struct RecoveryRead {
 
 struct RecoveryCommit {
     bool succeeded = false;
+    // An encoded Problem, as for RecoveryRead.
     QString error;
 };
 

@@ -111,12 +111,12 @@ struct Encoder {
     }
 };
 
-DecodedMergetoolMessage failed(MergetoolDecodeFailure failure, int version, const QString &error)
+DecodedMergetoolMessage failed(MergetoolDecodeFailure failure, int version, Problem problem)
 {
     DecodedMergetoolMessage decoded;
     decoded.failure = failure;
     decoded.version = version;
-    decoded.error = error;
+    decoded.problem = std::move(problem);
     return decoded;
 }
 } // namespace
@@ -132,7 +132,7 @@ QByteArray encodeMergetoolMessage(const MergetoolMessage &message)
 
 DecodedMergetoolMessage decodeMergetoolMessage(const QByteArray &payload)
 {
-    const auto malformed = QStringLiteral("The mergetool message is invalid.");
+    const Problem malformed(ProblemCode::MergetoolMessageInvalid);
     const auto document = QJsonDocument::fromJson(payload);
     if (!document.isObject()) return failed(MergetoolDecodeFailure::Malformed, 0, malformed);
     const auto object = document.object();
@@ -146,9 +146,8 @@ DecodedMergetoolMessage decodeMergetoolMessage(const QByteArray &payload)
     }
     if (version != kMergetoolProtocolVersion)
         return failed(MergetoolDecodeFailure::OtherVersion, version,
-                      QStringLiteral("The mergetool message uses protocol version %1; this side speaks %2.")
-                          .arg(version)
-                          .arg(kMergetoolProtocolVersion));
+                      {ProblemCode::MergetoolOtherVersion,
+                       {QString::number(version), QString::number(kMergetoolProtocolVersion)}});
     if (!kind) return failed(MergetoolDecodeFailure::UnknownKind, version, malformed);
     const auto text = [&object](const char *key) { return object.value(QLatin1String(key)).toString(); };
     const auto invocation = text("invocation");

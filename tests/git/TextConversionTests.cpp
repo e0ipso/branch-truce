@@ -105,30 +105,30 @@ int main(int argc, char **argv)
                       const auto before = repo.git({"ls-files", "--stage", "-z"});
                       TextConversion conversion(repo.program());
                       const auto rejected = run(conversion, textRequest(repo, TextOperation::ReadSource, object));
-                      CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
+                      CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.problem.isEmpty());
                       CHECK(rejected.failure == invalid.failure);
                       CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
                       checkConversionCleanup(repo);
                   });
     }
     for (const auto attributes : conversion_fixtures::rejectedAttributes) {
-        suite.run(
-            std::string("contradictory attributes reject reads and prepared results without writes: ") + attributes,
-            [attributes] {
-                Repository repo;
-                writeFile(repo.path(".gitattributes"), QByteArray("tracked.txt ") + attributes + '\n');
-                const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
-                const auto before = repo.git({"ls-files", "--stage", "-z"});
-                TextConversion conversion(repo.program());
-                for (const auto operation : {TextOperation::ReadSource, TextOperation::PrepareResult}) {
-                    auto request = textRequest(repo, operation, object);
-                    request.editedUtf8 = "reviewed\n";
-                    const auto rejected = run(conversion, request);
-                    CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
-                    CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
-                }
-                checkConversionCleanup(repo);
-            });
+        suite.run(std::string("contradictory attributes reject reads and prepared results without writes: ")
+                      + attributes,
+                  [attributes] {
+                      Repository repo;
+                      writeFile(repo.path(".gitattributes"), QByteArray("tracked.txt ") + attributes + '\n');
+                      const auto object = repo.git({"rev-parse", ":tracked.txt"}).trimmed();
+                      const auto before = repo.git({"ls-files", "--stage", "-z"});
+                      TextConversion conversion(repo.program());
+                      for (const auto operation : {TextOperation::ReadSource, TextOperation::PrepareResult}) {
+                          auto request = textRequest(repo, operation, object);
+                          request.editedUtf8 = "reviewed\n";
+                          const auto rejected = run(conversion, request);
+                          CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.problem.isEmpty());
+                          CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
+                      }
+                      checkConversionCleanup(repo);
+                  });
     }
     for (const auto &invalid : conversion_fixtures::rejectedEdits) {
         suite.run(std::string("invalid edited text rejects without accepted text or writes: ") + invalid.name,
@@ -140,7 +140,7 @@ int main(int argc, char **argv)
                       auto request = textRequest(repo, TextOperation::PrepareResult, object);
                       request.editedUtf8 = invalid.bytes;
                       const auto rejected = run(conversion, request);
-                      CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
+                      CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.problem.isEmpty());
                       CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
                       QFile untouched(repo.path("tracked.txt"));
                       CHECK(untouched.open(QIODevice::ReadOnly) && untouched.readAll() == "before\n");
@@ -166,7 +166,7 @@ int main(int argc, char **argv)
             request.editedUtf8 = "reviewed\n";
             const auto rejected = run(conversion, request);
             CHECK(rejected.outcome == Outcome::Rejected && !rejected.text);
-            CHECK(rejected.diagnostic.contains("clean/checkout changes"));
+            CHECK(rejected.problem.code == ProblemCode::ConversionChangesBytes);
             CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
             CHECK(repo.git({"show", ":tracked.txt"}) == "before\n");
             checkConversionCleanup(repo);
@@ -202,7 +202,7 @@ int main(int argc, char **argv)
         request.editedUtf8 += "changed\n";
         const auto stale = run(conversion, request);
         CHECK(stale.outcome == Outcome::Rejected && !stale.text);
-        CHECK(stale.diagnostic.contains("clean/checkout changes"));
+        CHECK(stale.problem.code == ProblemCode::ConversionChangesBytes);
         CHECK(repo.git({"show", ":tracked.txt"}) == "$Id$\n");
         CHECK(repo.git({"ls-files", "--stage", "-z"}) == staged.indexAfter);
         checkConversionCleanup(repo);
@@ -248,7 +248,7 @@ int main(int argc, char **argv)
             request.editedUtf8 = "reviewed\n";
             damage(request.stages);
             const auto rejected = run(conversion, request);
-            CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.diagnostic.isEmpty());
+            CHECK(rejected.outcome == Outcome::Rejected && !rejected.text && !rejected.problem.isEmpty());
         }
         const auto base = repo.git({"hash-object", "-w", "--stdin"}, "base\n").trimmed();
         auto request = textRequest(repo, TextOperation::ReadSource, object);
@@ -280,23 +280,24 @@ int main(int argc, char **argv)
         repo.git({"update-index", "--cacheinfo", "100644", QString::fromLatin1(wrong), "tracked.txt"});
         const auto wrongObject = run(conversion, verify);
         CHECK(wrongObject.outcome == Outcome::Rejected && !wrongObject.text);
-        CHECK(wrongObject.diagnostic.contains("canonical identity"));
+        CHECK(wrongObject.problem.code == ProblemCode::ConversionStagedIdentity);
         repo.git({"update-index", "--cacheinfo", "100644", QString::fromLatin1(prepared.text->canonicalObjectId),
                   "tracked.txt"});
         writeFile(repo.path(".gitattributes"), "tracked.txt text eol=lf\n");
         const auto wrongPolicy = run(conversion, verify);
         CHECK(wrongPolicy.outcome == Outcome::Rejected && !wrongPolicy.text);
-        CHECK(wrongPolicy.diagnostic.contains("conversion policy"));
+        CHECK(wrongPolicy.problem.code == ProblemCode::ConversionStagedCheckout
+              || wrongPolicy.problem.code == ProblemCode::ConversionPolicyChanged);
         CHECK(QFile::remove(repo.path(".gitattributes")));
         verify.expected->document.utf8 += "unreviewed\n";
         const auto wrongText = run(conversion, verify);
         CHECK(wrongText.outcome == Outcome::Rejected && !wrongText.text);
-        CHECK(wrongText.diagnostic.contains("no longer matches its serialized bytes"));
+        CHECK(wrongText.problem.code == ProblemCode::ConversionSnapshotBytes);
         verify.expected = prepared.text;
         verify.expected->worktreeRoot = repo.executables();
         const auto wrongWorktree = run(conversion, verify);
         CHECK(wrongWorktree.outcome == Outcome::Rejected && !wrongWorktree.text);
-        CHECK(wrongWorktree.diagnostic.contains("worktree identity changed"));
+        CHECK(wrongWorktree.problem.code == ProblemCode::ConversionWorktreeChanged);
     });
     suite.run("a cancel before the queued start completes once as cancelled", [] {
         Repository repo;
@@ -337,7 +338,7 @@ int main(int argc, char **argv)
         gate.close(QStringLiteral("check-attr"));
         QObject receiver;
         int completions = 0;
-        auto conversion = std::make_unique<TextConversion>(gate.executable());
+        auto conversion = std::make_unique<TextConversion>(repo.program(gate.executable()));
         QObject::connect(conversion.get(), &TextConversion::finished, &receiver,
                          [&](const TextConversionResult &) { ++completions; });
         CHECK(conversion->start(textRequest(repo, TextOperation::ReadSource, object)));

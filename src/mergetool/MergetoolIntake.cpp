@@ -23,9 +23,9 @@ constexpr char kOwnerFile[] = "launcher";
 // An intake with no owner file yet is still being written, unless it is older than this.
 constexpr qint64 kUnownedIntakeSeconds = 60;
 
-QString fail(QString *error, const QString &message)
+QString fail(Problem *error, ProblemCode problem)
 {
-    if (error) *error = message;
+    if (error) *error = problem;
     return {};
 }
 
@@ -79,17 +79,17 @@ QString mergetoolIntakeRoot(const QString &socketDirectory)
 }
 
 QString writeMergetoolIntake(const QString &root, const QByteArray &sessionKey, const QString &invocation,
-                             const MergetoolSources &sources, QString *error)
+                             const MergetoolSources &sources, Problem *error)
 {
     if (QUuid::fromString(invocation).isNull() || !mergetoolRepositoryPath(sources.path) || sessionKey.size() != 64
         || root.isEmpty())
-        return fail(error, QStringLiteral("The mergetool invocation is invalid."));
+        return fail(error, ProblemCode::MergetoolInvocationInvalid);
     const auto keyDirectory = root + QLatin1Char('/') + QString::fromLatin1(sessionKey);
     const auto directory = keyDirectory + QLatin1Char('/') + invocation;
     if (!privateDirectory(root) || !privateDirectory(keyDirectory) || !privateDirectory(directory))
-        return fail(error, QStringLiteral("The mergetool intake could not be created."));
+        return fail(error, ProblemCode::MergetoolIntakeCreate);
     const auto opened = storage::openWithoutLinks(QFile::encodeName(directory), storage::OpenTarget::Directory);
-    if (!opened.descriptor.valid()) return fail(error, QStringLiteral("The mergetool intake could not be created."));
+    if (!opened.descriptor.valid()) return fail(error, ProblemCode::MergetoolIntakeCreate);
     const auto &files = *storage::systemFileSystem();
     const auto store = [&](const char *name, const QByteArray &bytes) {
         return storage::createSynced(files, opened.descriptor.get(), name, bytes);
@@ -116,26 +116,26 @@ QString writeMergetoolIntake(const QString &root, const QByteArray &sessionKey, 
     if (stored) stored = files.sync(opened.descriptor.get()) == 0;
     if (!stored) {
         removeMergetoolIntake(directory);
-        return fail(error, QStringLiteral("The mergetool intake could not be written."));
+        return fail(error, ProblemCode::MergetoolIntakeWrite);
     }
     return directory;
 }
 
 std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, const QString &root,
-                                                   const QByteArray &sessionKey, QString *error)
+                                                   const QByteArray &sessionKey, Problem *error)
 {
     const auto canonicalRoot = QFileInfo(root).canonicalFilePath();
     const auto canonical = QFileInfo(directory).canonicalFilePath();
     const auto prefix = canonicalRoot + QLatin1Char('/');
     if (sessionKey.size() != 64 || canonicalRoot.isEmpty()
         || !canonical.startsWith(prefix + QString::fromLatin1(sessionKey) + QLatin1Char('/'))) {
-        fail(error, QStringLiteral("The mergetool intake is outside app-owned storage."));
+        fail(error, ProblemCode::MergetoolIntakeOutside);
         return std::nullopt;
     }
     const auto invocation = QFileInfo(canonical).fileName();
     if (QUuid::fromString(invocation).isNull()
         || QFileInfo(canonical).dir().dirName() != QString::fromLatin1(sessionKey)) {
-        fail(error, QStringLiteral("The mergetool intake identity does not match this session."));
+        fail(error, ProblemCode::MergetoolIntakeIdentity);
         return std::nullopt;
     }
     QByteArray manifestBytes;
@@ -143,13 +143,13 @@ std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, con
         return std::nullopt;
     const auto manifest = QJsonDocument::fromJson(manifestBytes).object();
     if (manifest.value(QStringLiteral("invocation")).toString() != invocation) {
-        fail(error, QStringLiteral("The mergetool intake manifest is invalid."));
+        fail(error, ProblemCode::MergetoolIntakeManifest);
         return std::nullopt;
     }
     const auto path = QByteArray::fromHex(manifest.value(QStringLiteral("path")).toString().toLatin1());
     if (!mergetoolRepositoryPath(path)
         || QString::fromLatin1(path.toHex()) != manifest.value(QStringLiteral("path")).toString()) {
-        fail(error, QStringLiteral("The mergetool intake path is invalid."));
+        fail(error, ProblemCode::MergetoolIntakePath);
         return std::nullopt;
     }
     const auto hashed = [&](const QString &name, QByteArray *digest) {
@@ -157,7 +157,7 @@ std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, con
         if (!readMergetoolFile(QFile::encodeName(canonical + QLatin1Char('/') + name), &bytes, error)) return false;
         *digest = sha256(bytes);
         if (QString::fromLatin1(*digest) != manifest.value(name).toString()) {
-            fail(error, QStringLiteral("The mergetool intake bytes do not match its manifest."));
+            fail(error, ProblemCode::MergetoolIntakeBytes);
             return false;
         }
         return true;

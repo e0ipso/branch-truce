@@ -31,7 +31,8 @@ struct RecoveryRestore {
     std::optional<AdoptedStore> adopted;
     std::vector<FileSession> files;
     std::set<std::string> newFiles;
-    QStringList diagnostics;
+    // What the restore found and did, for the window to tell the user.
+    QList<Problem> diagnostics;
     // Filled only when several stores with app edits block restoration.
     std::vector<RecoveryChoice> choices;
     // Files whose repository file was replaced by a copy: bytes, mode, size,
@@ -57,7 +58,7 @@ struct RestoreOptions {
 inline constexpr int kSetAsideLifetimeDays = 30;
 
 // Worker-only, read-only. Runs Git on runners from git.
-[[nodiscard]] QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
+[[nodiscard]] Problem revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
                                              const git::RepositoryContext &repository, const git::GitRunners &git);
 
 // Worker-only. Inspects the repository read-only, running Git on runners from

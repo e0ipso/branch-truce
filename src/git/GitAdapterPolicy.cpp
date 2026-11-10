@@ -118,9 +118,7 @@ bool GitAdapter::State::checkConfiguration()
         if (key == "extensions.partialclone"
             || (key.startsWith("remote.") && key.endsWith(".promisor") && !falseValue(value))
             || (spec->staging && key == "core.fsmonitor" && !falseValue(value))) {
-            result.diagnostic =
-                QStringLiteral("Outside app: unsupported partial repository or filesystem monitor setting: ")
-                + QString::fromUtf8(key);
+            result.problem = {ProblemCode::GitPartialOrMonitor, {QString::fromUtf8(key)}};
             return false;
         }
     }
@@ -133,8 +131,7 @@ bool GitAdapter::State::checkFilter(const QByteArray &path, const QByteArray &dr
     if (!configuration.value(prefix + ".clean").isEmpty() || !configuration.value(prefix + ".smudge").isEmpty()
         || !configuration.value(prefix + ".process").isEmpty()
         || (configuration.contains(prefix + ".required") && !falseValue(configuration.value(prefix + ".required")))) {
-        result.diagnostic = QStringLiteral("Outside app: custom filter '%1' is unsupported for %2")
-                                .arg(displayPath(driver), displayPath(path));
+        result.problem = {ProblemCode::GitCustomFilter, {displayPath(driver), displayPath(path)}};
         return false;
     }
     return true;
@@ -158,17 +155,17 @@ bool GitAdapter::State::captureAttributes()
 bool GitAdapter::State::checkFilters()
 {
     if (!captureAttributes()) {
-        result.diagnostic = QStringLiteral("Outside app: invalid conversion attribute inspection");
+        result.problem = ProblemCode::GitAttributeInspection;
         return false;
     }
     const auto fields = phaseOutput.split('\0');
     if (fields.isEmpty() || !fields.back().isEmpty() || (fields.size() - 1) % 3 != 0) {
-        result.diagnostic = QStringLiteral("Outside app: invalid filter attribute inspection");
+        result.problem = ProblemCode::GitFilterAttributes;
         return false;
     }
     for (qsizetype i = 0; i + 2 < fields.size(); i += 3) {
         if (!relativeFile(fields[i]) || fields[i] != result.request.path) {
-            result.diagnostic = QStringLiteral("Outside app: filter attributes do not match the requested path");
+            result.problem = ProblemCode::GitFilterPath;
             return false;
         }
         if (fields[i + 1] != "filter") continue;

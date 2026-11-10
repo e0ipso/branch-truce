@@ -653,7 +653,7 @@ public:
                 git::Result result;
                 result.outcome = git::Outcome::TimedOut;
                 result.mutation = git::Mutation::Uncertain;
-                result.diagnostic = QStringLiteral("Git did not finish within the request deadline.");
+                result.problem = {ProblemCode::GitDeadline, {QStringLiteral("30")}};
                 return result;
             };
             SessionCoordinator coordinator(model,

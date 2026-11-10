@@ -56,15 +56,17 @@ public:
     void observeNativeLaunch();
     void launch(Phase next, const QList<QByteArray> &arguments, bool configuration = false,
                 const QByteArray &input = {});
-    void stop(Outcome outcome, const QString &message);
-    void inspectionFailed(const QString &message);
+    void stop(Outcome outcome, Problem problem);
+    void inspectionFailed(Problem failure);
+    // Adds problem after the result's own, as the later of the two.
+    void addProblem(Problem problem);
     void drain(bool error);
     void inspectMutation();
 
     // Request lifecycle (GitAdapter.cpp).
     void begin();
     void complete();
-    void reject(const QString &message);
+    void reject(Problem problem);
 
     // Configuration and attribute policy (GitAdapterPolicy.cpp).
     bool validIndex(const QByteArray &bytes, bool resolved) const;

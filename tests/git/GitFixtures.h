@@ -29,6 +29,8 @@
 
 namespace git_fixture {
 using namespace branch_truce::git;
+using branch_truce::Problem;
+using branch_truce::ProblemCode;
 using test_support::readFile;
 using test_support::ScriptGate;
 using test_support::WhenCreated;
@@ -294,7 +296,7 @@ inline void checkOperationIdentity(const Result &result, const ConflictHistory &
     CHECK(result.outcome == Outcome::Success && result.exitCode == 0);
     CHECK(result.mutation == Mutation::NotAttempted && !result.outputIncomplete);
     CHECK(result.repository.supported && result.repository.operation == operation);
-    CHECK(result.repository.unsupportedPaths.isEmpty() && result.repository.diagnostic.isEmpty());
+    CHECK(result.repository.unsupportedPaths.isEmpty() && result.repository.problem.isEmpty());
     CHECK(result.repository.stage2.commitId == expectedHead && result.repository.stage3.commitId == history.side);
     if (expectedHead == history.main) CHECK(result.repository.stage2.name == QStringLiteral("main"));
     CHECK(result.repository.stage3.name == QStringLiteral("side"));
@@ -314,9 +316,19 @@ inline void checkOperationIdentity(const Result &result, const ConflictHistory &
     }
 }
 
+// Whether problem, or a problem it wraps, has code and, when given, exactly these arguments.
+inline bool hasProblem(const branch_truce::Problem &problem, branch_truce::ProblemCode code,
+                       const QStringList &arguments = {})
+{
+    for (const auto *step = &problem; step != nullptr; step = step->cause.get()) {
+        if (step->code == code && (arguments.isEmpty() || step->arguments == arguments)) return true;
+    }
+    return false;
+}
+
 // Discovery reports `reason` for an operation it cannot attribute, keeps the conflicted index
 // entries visible and labels no source.
-inline void checkUnsupportedDiscovery(Repository &repo, const QString &reason,
+inline void checkUnsupportedDiscovery(Repository &repo, branch_truce::ProblemCode reason,
                                       Outcome outcome = Outcome::InspectionFailure)
 {
     const auto before = repo.git({"ls-files", "--unmerged", "-z"});
@@ -324,7 +336,7 @@ inline void checkUnsupportedDiscovery(Repository &repo, const QString &reason,
     const auto result = run(adapter, repo.request(Operation::DiscoverRepository));
     CHECK(result.outcome == outcome && !result.repository.supported);
     CHECK(result.repository.operation == RepositoryOperation::Unsupported);
-    CHECK(result.repository.diagnostic.contains(reason));
+    CHECK(result.repository.problem.code == reason);
     CHECK(result.repository.stage2.commitId.isEmpty() && result.repository.stage3.commitId.isEmpty());
     CHECK(result.indexEntries.size() == before.count('\0') && !result.indexEntries.isEmpty());
     CHECK(result.mutation == Mutation::NotAttempted);

@@ -79,7 +79,8 @@ struct Result {
     QByteArray indexAfter;
     QList<IndexEntry> indexEntries; // Exact stages from DiscoverRepository/InspectIndex.
     RepositoryContext repository; // Structured DiscoverRepository snapshot, even when unsupported.
-    QString diagnostic;
+    // Why the request did not succeed, or why reinspection after it failed.
+    Problem problem;
     int exitCode = -1; // Requested operation only; -1 if no normal exit occurred.
     bool outputIncomplete = false;
     // A cancel request can arrive after the operation's outcome is known.

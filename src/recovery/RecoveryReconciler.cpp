@@ -75,7 +75,7 @@ QString kindName(MutationKind kind) { return nameOf(mutationKindNames, kind); }
 // A crash can lose the completion callback after Git installed the exact
 // reviewed result. Verify content, policy, mode and the written revision,
 // then persist that observation before exposing a resolved state.
-QString recoverStaging(FileSession &file, std::vector<RecoveryMutation> &mutations, const QByteArray &diskBytes,
+Problem recoverStaging(FileSession &file, std::vector<RecoveryMutation> &mutations, const QByteArray &diskBytes,
                        std::uint32_t diskMode, const QList<git::IndexEntry> &index,
                        const git::RepositoryContext &repository, const RepositoryProbe &probe,
                        storage::RecoveryLease &lease)
@@ -98,9 +98,7 @@ QString recoverStaging(FileSession &file, std::vector<RecoveryMutation> &mutatio
         const auto committed = lease.commit(recoveryTransaction(candidate, RecoveryAction::StageOutcome,
                                                                 QUuid::createUuid().toString(QUuid::WithoutBraces),
                                                                 file.current().draft.text));
-        if (!committed.succeeded)
-            return QStringLiteral("Staging evidence matched, but recovery could not retain its completion: %1")
-                .arg(committed.error);
+        if (!committed.succeeded) return {ProblemCode::RecoveryStagingNotRetained, {committed.error}};
         const auto revision = written->id;
         file = std::move(candidate);
         completeMutations(mutations, file.id(), MutationKind::Staging, revision);
@@ -109,32 +107,21 @@ QString recoverStaging(FileSession &file, std::vector<RecoveryMutation> &mutatio
 }
 }
 
-QString copiedLaunchFailure()
-{
-    return QStringLiteral(
-        "Recovered draft retained, but the repository file was replaced by a copy with the same bytes. "
-        "Work remains outstanding unless git mergetool is waiting on this path with those bytes.");
-}
+QString copiedLaunchFailure() { return Problem{ProblemCode::RecoveryCopiedLaunch}.encoded(); }
 
 Reconciliation reconcile(FileSession &file, std::vector<RecoveryMutation> &mutations,
                          const std::vector<FileSession> &observed, const git::RepositoryContext &repository,
                          const RepositoryProbe &probe, storage::RecoveryLease &lease)
 {
     if (!file.snapshots())
-        return {file.support() == Support::Supported
-                    ? QStringLiteral("Recovery has no admitted source and result captures; file remains outstanding.")
-                    : QString{},
-                {}};
+        return {file.support() == Support::Supported ? Problem{ProblemCode::RecoveryNoCaptures} : Problem{}, {}};
     const auto path = QByteArray::fromStdString(file.path());
-    if (file.id() != path.toHex().toStdString())
-        return {QStringLiteral("Recovered file identity does not match its exact path."), {}};
+    if (file.id() != path.toHex().toStdString()) return {ProblemCode::RecoveryIdentityMismatch, {}};
     const auto disk = probe.capture(repository.worktreeRoot, path);
-    if (!disk.destination)
-        return {QStringLiteral("Recovery could not validate the current repository file: %1").arg(disk.diagnostic), {}};
+    if (!disk.destination) return {Problem{ProblemCode::RecoveryFileUnvalidated}.wrapping(disk.problem), {}};
     const auto &destination = *disk.destination;
     const auto index = probe.inspect(indexRequest(repository, path));
-    if (index.outcome != git::Outcome::Success)
-        return {QStringLiteral("Recovery could not inspect the current Git index."), {}};
+    if (index.outcome != git::Outcome::Success) return {ProblemCode::RecoveryIndexUninspectable, {}};
     if (auto failure = recoverStaging(file, mutations, destination.bytes(), destination.identity().mode,
                                       index.indexEntries, repository, probe, lease);
         !failure.isEmpty())
@@ -175,12 +162,8 @@ Reconciliation reconcile(FileSession &file, std::vector<RecoveryMutation> &mutat
         if (mutation.completed || mutation.target.id() != file.id() || untouched(mutation)) continue;
         const auto bytes = serializedRevision(mutation.target, mutation.target.current());
         const bool resultPresent = bytes && *bytes == destination.bytes();
-        return {resultPresent ? QStringLiteral("Interrupted %1: result bytes are present; completion is uncertain. "
-                                               "Inspect disk and index before retrying.")
-                                    .arg(kindName(mutation.kind))
-                              : QStringLiteral("Interrupted %1: current disk/index evidence cannot establish "
-                                               "completion. Outcome uncertain; no retry was performed.")
-                                    .arg(kindName(mutation.kind)),
+        return {{resultPresent ? ProblemCode::RecoveryInterruptedPresent : ProblemCode::RecoveryInterruptedUnknown,
+                 {kindName(mutation.kind)}},
                 {}};
     }
     const bool modeAgrees = modeMatches(destination.identity().mode, captured->resultMode);
@@ -189,17 +172,14 @@ Reconciliation reconcile(FileSession &file, std::vector<RecoveryMutation> &mutat
     if (!finalDisk.destination || finalDisk.destination->identity() != destination.identity()
         || finalDisk.destination->bytes() != destination.bytes() || finalIndex.outcome != git::Outcome::Success
         || finalIndex.standardOutput != index.standardOutput)
-        return {QStringLiteral("Disk/index changed during recovery validation; work remains outstanding."), {}};
+        return {ProblemCode::RecoveryChangedDuringValidation, {}};
     if (copiedLaunch && indexMatches && policyMatches && modeAgrees)
-        return {copiedLaunchFailure(), destination.identity()};
-    if (!diskMatches || !indexMatches || !policyMatches || !modeAgrees)
-        return {QStringLiteral("Recovered draft retained, but the repository file, index or conversion policy changed. "
-                               "Work remains outstanding; no publication is authorized."),
-                {}};
+        return {ProblemCode::RecoveryCopiedLaunch, destination.identity()};
+    if (!diskMatches || !indexMatches || !policyMatches || !modeAgrees) return {ProblemCode::RecoveryChanged, {}};
     return {};
 }
 
-QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
+Problem revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
                                const git::RepositoryContext &repository, const RepositoryProbe &probe)
 {
     const auto path = QByteArray::fromStdString(captured.path);
@@ -210,9 +190,7 @@ QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFile
     };
     auto policyRequest = indexRequest(repository, path);
     policyRequest.operation = git::Operation::ReadAttributes;
-    const auto changed =
-        QStringLiteral("Recovered draft retained, but the repository file, index or conversion policy "
-                       "changed after recovery validation. Work remains outstanding; no publication is authorized.");
+    const Problem changed(ProblemCode::RecoveryChangedAfterValidation);
     if (!validatedFile()) return changed;
     const auto index = probe.inspect(indexRequest(repository, path));
     if (index.outcome != git::Outcome::Success || !matchesCapturedConflict(index.indexEntries, captured))

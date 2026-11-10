@@ -35,6 +35,7 @@ struct TaskResult {
     TaskStatus status = TaskStatus::Succeeded;
     MutationObservation mutation = MutationObservation::NotAttempted;
     QByteArray data;
+    // Text, which may hold encoded Problems that the window shows translated.
     QString diagnostic;
     std::optional<git::Result> gitResult;
 };

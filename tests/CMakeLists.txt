@@ -157,6 +157,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         PRIVATE_XDG TIMEOUT 120 LABELS app)
     branch_truce_add_unit_test(app.command-guard app/CommandGuardTests.cpp LIBS branch_truce_controller
         PRIVATE_XDG LABELS app)
+    branch_truce_add_unit_test(app.problem-text app/ProblemTextTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG LABELS app)
     branch_truce_add_unit_test(app.selected-file app/SelectedFileTests.cpp LIBS branch_truce_controller Qt6::Test
         PRIVATE_XDG LABELS app)
     branch_truce_add_unit_test(app.text-change app/TextChangeTests.cpp LIBS branch_truce_controller
