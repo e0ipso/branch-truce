@@ -51,7 +51,9 @@ public:
 };
 
 // Exact line LCS, retaining only matches shared by every optimal alignment.
-// See Correspondence.md for the cost, conservative range policy and evidence.
+// Texts whose line counts multiply to more than kMaxAlignmentCells are one
+// Ambiguous passage. See Correspondence.md for the cost, conservative range
+// policy and evidence.
 // Called directly, it also rejects text outside the contract's inputs with
 // std::invalid_argument.
 class ExactLineCorrespondence final : public CorrespondenceAlgorithm {

@@ -161,6 +161,21 @@ void aLongUniqueTextAlignsAsOneEqualPassage()
               {{source.size(), source.size()}, {14 + source.size(), result.size()}, PassageKind::ResultOnly}});
 }
 
+void textsOverTheCellBudgetAreOneAmbiguousPassage()
+{
+    // 8193 lines against 8193 is just over kMaxAlignmentCells.
+    std::string source;
+    for (int line = 0; line < 8193; ++line) source += "unique line " + std::to_string(line) + '\n';
+    CHECK(8193U * 8193U > kMaxAlignmentCells && 8192U * 8192U <= kMaxAlignmentCells);
+    auto result = source;
+    result.replace(0, 14, "changed line\n");
+    CHECK(ExactLineCorrespondence{}.compare(source, result)
+          == std::vector<Passage>{{{0, source.size()}, {0, result.size()}, PassageKind::Ambiguous}});
+    // Identical texts need no alignment, whatever their size.
+    CHECK(ExactLineCorrespondence{}.compare(source, source)
+          == std::vector<Passage>{{{0, source.size()}, {0, source.size()}, PassageKind::Equal}});
+}
+
 std::shared_ptr<const FileSnapshots> sources(const std::string &text, const std::string &result)
 {
     FileSnapshots captured;
@@ -326,6 +341,7 @@ int main()
               partitionsAreDeterministicForEachKindOfPassage);
     suite.run("a long unique text aligns as one equal passage between inserted lines",
               aLongUniqueTextAlignsAsOneEqualPassage);
+    suite.run("texts over the cell budget are one ambiguous passage", textsOverTheCellBudgetAreOneAmbiguousPassage);
     suite.run("the map checks every text before the algorithm sees it", theMapChecksEveryTextBeforeTheAlgorithmSeesIt);
     suite.run("repeated and reordered passages leave anchors ambiguous",
               repeatedAndReorderedPassagesLeaveAnchorsAmbiguous);

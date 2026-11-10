@@ -74,8 +74,10 @@ The limits in ResourceLimits.h bound the input: no line over `kMaxLineBytes`
 and no text over `kMaxRecoveryPayloadBytes`. A file whose result or captured
 sources hold more than `kLargeFileLines` lines opens only after the user
 confirms it, because alignment time grows with the product of line counts.
-There is no hard bound on that product, so a confirmed file of many short lines
-can take a long time to align. If aligning runs out of memory, only that file
+`kMaxAlignmentCells` bounds that product: a source and result whose line counts
+multiply to more are one `Ambiguous` passage, so their anchors stay unmapped
+and only direct editing applies, but no alignment runs for longer than the
+budget allows. If aligning runs out of memory, only that file
 opens as unreadable, with its captured sources and launch result kept, and
 other files finish loading. Measurements of the representative 4000-line size
 are in tests/fixtures/performance/evidence.md.

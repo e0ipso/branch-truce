@@ -20,6 +20,7 @@ is not recovered work.
 | Longest line | 262144 bytes | the edit is refused and the previous buffer stays in place |
 | Git process output | 4194304 bytes | `OutputLimit`, with an incomplete captured prefix |
 | Recovery payload | 8388608 bytes | the commit fails, the prior journal record stays acknowledged, and the new payload is not published |
+| Line alignment | 67108864 line pairs (source lines times result lines) | that source and result are one ambiguous passage: no choice in it is mapped and only direct editing applies |
 
 Each Git phase, including the canonical blob read and the checkout read, gets
 its own 4194304-byte budget. Stdout and stderr share the budget of that phase.
