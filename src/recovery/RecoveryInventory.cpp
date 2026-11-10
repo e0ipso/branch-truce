@@ -51,6 +51,17 @@ const FileSession *firstCaptured(const std::vector<FileSession> &files)
     const auto found = std::find_if(files.begin(), files.end(), [](const auto &file) { return file.snapshots(); });
     return found == files.end() ? nullptr : &*found;
 }
+
+bool unrelated(const storage::RecoveryStore &store, const QString &worktree)
+{
+    const auto hint = store.read(true);
+    if (!hint.succeeded || hint.transactions.empty()) return false;
+    try {
+        return RecoveryRecordReader(store, hint.transactions.front().state).worktreeRoot() != worktree.toStdString();
+    } catch (const RecoveryRecordError &) {
+        return false; // Unknown or malformed identity gets full replay and its diagnostic.
+    }
+}
 }
 
 Problem revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
@@ -79,6 +90,7 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
             chosenUnavailable = chosenUnavailable || entry.fileName() == chosenSession;
             continue;
         }
+        if (unrelated(lease->store(), repository.worktreeRoot)) continue;
         // A set-aside store returns only when the user names it, until it expires.
         const bool setAside = QFileInfo::exists(setAsideMarker(entry.absoluteFilePath()));
         if (setAside && entry.fileName() != chosenSession) {

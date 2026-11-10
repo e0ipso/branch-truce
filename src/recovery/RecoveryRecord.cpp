@@ -9,6 +9,19 @@ namespace branch_truce {
 namespace {
 constexpr int schema = 3;
 
+void retain(qint64 &remaining, qint64 bytes)
+{
+    if (bytes < 0 || bytes > remaining) throw RecoveryRecordError(Problem{ProblemCode::RecoveryResourceLimit});
+    remaining -= bytes;
+}
+
+void account(qint64 &used, qint64 bytes)
+{
+    auto remaining = std::numeric_limits<qint64>::max() - used;
+    retain(remaining, bytes);
+    used = std::numeric_limits<qint64>::max() - remaining;
+}
+
 // Field names, shared by the encoder and the reader.
 namespace field {
 constexpr QLatin1StringView schema("schema"), action("action"), fileId("fileId"), path("path"), support("support"),
@@ -96,12 +109,14 @@ public:
     QString bytes(std::string_view value)
     {
         const QByteArray data(value.data(), static_cast<qsizetype>(value.size()));
+        account(transaction.retainedBytes, data.size());
         const auto hash = storage::RecoveryStore::digest(data);
         transaction.payloads.insert(hash, data);
         return QString::fromLatin1(hash);
     }
     QJsonObject current(const Revision &value, std::string_view previousText)
     {
+        account(transaction.retainedBytes, static_cast<qint64>(value.draft.text.size()));
         QJsonArray decisions;
         for (const auto &[id, decision] : value.draft.decisions) {
             QJsonObject entry{{field::id, bytes(id)}, {field::value, nameOf(decisionNames, decision.value)}};
@@ -265,8 +280,9 @@ void requireRecord(bool condition, const char *detail)
     if (!condition) throw RecoveryRecordError(detail);
 }
 
-RecoveryRecordReader::RecoveryRecordReader(const storage::RecoveryStore &store, const QJsonObject &state)
-    : store_(store), state_(state)
+RecoveryRecordReader::RecoveryRecordReader(const storage::RecoveryStore &store, const QJsonObject &state,
+                                           qint64 retainedBytes)
+    : store_(store), state_(state), remainingBytes_(retainedBytes)
 {
     requireRecord(state_.value(field::schema).toInt() == schema, "Unsupported recovery state schema.");
 }
@@ -282,8 +298,10 @@ std::string RecoveryRecordReader::bytes(const QJsonValue &value) const
 {
     requireRecord(value.isString(), "Missing recovery payload reference.");
     Problem error;
-    const auto result = store_.payload(value.toString().toLatin1(), &error);
+    const auto result = store_.payload(value.toString().toLatin1(), &error, remainingBytes_);
+    if (error.code == ProblemCode::RecoveryResourceLimit) throw RecoveryRecordError(error);
     requireRecord(error.isEmpty(), "Recovery payload is missing, unsafe or corrupt.");
+    retain(remainingBytes_, result.size());
     return result.toStdString();
 }
 
@@ -317,6 +335,7 @@ Draft RecoveryRecordReader::draft(std::string_view previousText) const
     const auto suffix = number(change.value(field::suffix));
     requireRecord(prefix <= previousText.size() && suffix <= previousText.size() - prefix,
                   "Invalid recovered text change.");
+    retain(remainingBytes_, static_cast<qint64>(prefix + suffix));
     Draft result;
     result.text = std::string(previousText.substr(0, prefix)) + bytes(change.value(field::insert))
         + std::string(previousText.substr(previousText.size() - suffix));
@@ -448,6 +467,20 @@ std::map<std::string, std::string> RecoveryRecordReader::mapping(const QJsonValu
 
 std::string RecoveryRecordReader::alignment() const { return bytes(state_.value(field::alignment)); }
 
+std::string RecoveryRecordReader::worktreeRoot() const
+{
+    if (action() != RecoveryAction::Open) throw RecoveryRecordError(Problem{ProblemCode::RecoveryRecordSchema});
+    const auto root =
+        state_.value(field::snapshots).toObject().value(field::provenance).toObject().value(field::worktreeRoot);
+    if (!root.isString()) throw RecoveryRecordError(Problem{ProblemCode::RecoveryRecordSchema});
+    Problem error;
+    const auto value = store_.payload(root.toString().toLatin1(), &error, 4096);
+    if (!error.isEmpty() || !value.startsWith('/') || value.contains('\0'))
+        throw RecoveryRecordError(Problem{ProblemCode::RecoveryRecordSchema});
+    retain(remainingBytes_, value.size());
+    return value.toStdString();
+}
+
 std::optional<FileSnapshots> RecoveryRecordReader::snapshots() const
 {
     const auto value = state_.value(field::snapshots);
@@ -467,7 +500,7 @@ std::optional<FileSnapshots> RecoveryRecordReader::snapshots() const
     result.conversion = {mapping(policy.value(field::attributes)), mapping(policy.value(field::configuration))};
     auto &provenance = result.provenance;
     provenance.sessionId = bytes(p.value(field::sessionId));
-    provenance.worktreeRoot = bytes(p.value(field::worktreeRoot));
+    provenance.worktreeRoot = worktreeRoot();
     provenance.gitDirectory = bytes(p.value(field::gitDirectory));
     provenance.operation = named(operationNames, p.value(field::operation));
     provenance.stage2CommitId = bytes(p.value(field::stage2CommitId));

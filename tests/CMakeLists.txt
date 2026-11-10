@@ -143,6 +143,8 @@ endif()
 if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(storage.text-format storage/TextFormatTests.cpp LIBS branch_truce_storage)
     branch_truce_add_unit_test(storage.recovery-store storage/RecoveryStoreTests.cpp LIBS branch_truce_storage)
+    branch_truce_add_unit_test(recovery.resources storage/RecoveryResourceTests.cpp
+        LIBS branch_truce_recovery PRIVATE_XDG)
     # Faults and exchange races go in through the snapshot's FileSystem. Its read-only cases skip
     # when it runs as root, which can write anyway.
     branch_truce_add_unit_test(storage.destination-writer storage/DestinationWriterTests.cpp

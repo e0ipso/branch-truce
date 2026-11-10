@@ -84,6 +84,7 @@ namespace branch_truce {
     X(SystemSyncPublished) \
     /* Recovery storage */ \
     X(RecoveryPayloadTooLarge) \
+    X(RecoveryResourceLimit) \
     X(RecoveryPayloadUnsafe) \
     X(RecoveryPayloadIntegrity) \
     X(RecoveryJournalUnsafe) \
