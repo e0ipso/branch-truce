@@ -78,7 +78,7 @@ doubling.
 
 A key press costs about 65 ms of CPU here, under the 100 ms editor keystroke
 budget in the evidence above. The largest parts are the edit itself, about
-10 ms, and its recovery journal commit, about 3 ms. The commit rereads the
-journal's records only when the file differs from what the store last wrote, so
-its cost stays flat through the run: 2.9 ms for the first key and 3.4 ms for the
+10 ms, and its recovery journal commit, about 3 ms. The commit compares the
+journal's `fstat` with what the store last wrote and reads the journal again
+only when they differ, so its cost stays flat through the run: 2.9 ms for the first key and 3.4 ms for the
 eighteenth at a load average of about 4.

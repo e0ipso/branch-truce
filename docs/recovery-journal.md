@@ -270,11 +270,18 @@ interrupted trailing record is pending, never an acknowledged command. Orphan
 payloads left before a record commit are harmless and stay until their store
 is deleted.
 
-Before each append the store reads the journal and compares it with the bytes it
-last verified or wrote. Any difference, such as a changed byte, a cut or
-interrupted tail or a different journal, makes it verify the whole journal as
-the reader does, payloads included, before it appends. Payloads of records it
-already verified are not read again.
+Before each append the store compares the journal's `fstat` (device, inode,
+size, and modification and change times to the nanosecond) with what it saw
+when it last verified or wrote the journal, and remembers where the last
+complete record ends. A difference, such as a cut or interrupted tail, a
+different journal or a rewrite, makes it verify the whole journal as the
+reader does, payloads included, before it appends; otherwise it appends
+without reading the journal again, so a commit costs the same however long the
+journal is. Payloads of records it already verified are not read again. A
+rewrite of the same size that lands within the file system's timestamp
+granularity of the last append can go unnoticed until the journal is read; the
+reader then refuses the changed record. Only the lease holder writes the
+journal, so such a rewrite comes from outside the app.
 A recovery payload larger than `kMaxRecoveryPayloadBytes` (8388608 bytes) is
 refused before it is written. The prior acknowledged record stays in the
 journal, and the failure says that pending input is retained.

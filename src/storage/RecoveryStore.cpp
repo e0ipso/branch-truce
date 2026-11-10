@@ -1,7 +1,6 @@
 // The recovery store persists app-owned journals and text payloads; a lease is the only way to append.
 #include "RecoveryStore.h"
 #include "core/ResourceLimits.h"
-#include <QBuffer>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -222,9 +221,23 @@ RecoveryRead RecoveryStore::parse(QIODevice &file, std::set<QByteArray> *payload
     return result;
 }
 
-// Rereads and verifies the journal unless it still holds exactly the bytes
-// this store last verified or wrote. Payloads of those records were verified
-// then and are not read again. A missing journal is never remembered.
+bool RecoveryStore::FileStamp::operator==(const FileStamp &other) const
+{
+    return device == other.device && inode == other.inode && size == other.size
+        && modified.tv_sec == other.modified.tv_sec && modified.tv_nsec == other.modified.tv_nsec
+        && changed.tv_sec == other.changed.tv_sec && changed.tv_nsec == other.changed.tv_nsec;
+}
+
+std::optional<RecoveryStore::FileStamp> RecoveryStore::stampOf(const QFile &file) const
+{
+    struct stat status{};
+    if (files_->status(file.handle(), &status) != 0) return std::nullopt;
+    return FileStamp{status.st_dev, status.st_ino, status.st_size, status.st_mtim, status.st_ctim};
+}
+
+// Reads and verifies the whole journal unless fstat still describes it as
+// this store last verified or wrote it. Payloads of verified records are not
+// read again. A missing journal is never remembered.
 const RecoveryStore::JournalEnd *RecoveryStore::refreshEnd(QString *error)
 {
     static const JournalEnd missing;
@@ -235,34 +248,29 @@ const RecoveryStore::JournalEnd *RecoveryStore::refreshEnd(QString *error)
         *error = opened.error;
         return opened.succeeded ? &missing : nullptr;
     }
-    const auto bytes = file.readAll();
-    if (file.error() != QFileDevice::NoError) {
-        end_.reset();
-        *error = QStringLiteral("Could not read the complete recovery journal.");
-        return nullptr;
-    }
-    if (end_ && bytes == end_->bytes) return &*end_;
+    const auto stamp = stampOf(file);
+    if (end_ && stamp && end_->stamp == stamp) return &*end_;
     end_.reset();
-    QBuffer buffer;
-    buffer.setData(bytes);
-    if (!buffer.open(QIODevice::ReadOnly)) {
-        *error = QStringLiteral("Could not read the complete recovery journal.");
-        return nullptr;
-    }
-    // Another writer or a changed byte: verify every payload again.
+    // Another writer, a changed byte or a cut tail: verify every payload again.
     verified_.clear();
-    const auto current = parse(buffer, &verified_);
-    if (!current.succeeded) {
+    const auto current = parse(file, &verified_);
+    if (!current.succeeded || file.error() != QFileDevice::NoError) {
         verified_.clear();
-        *error = current.error;
+        *error = current.succeeded ? QStringLiteral("Could not read the complete recovery journal.") : current.error;
         return nullptr;
     }
-    end_ = JournalEnd{bytes.left(current.validBytes), current.transactions.size(), current.lastDigest, {}};
+    end_ = JournalEnd{stamp, current.validBytes, current.transactions.size(), current.lastDigest, {}};
     for (const auto &stored : current.transactions) end_->committed.emplace(stored.id, stateDigest(stored.state));
     return &*end_;
 }
 
 RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
+{
+    const std::lock_guard lock(commits_);
+    return append(transaction);
+}
+
+RecoveryCommit RecoveryStore::append(const RecoveryTransaction &transaction)
 {
     if (!QDir::isAbsolutePath(directory_))
         return {false, QStringLiteral("Recovery storage needs an absolute app-owned location.")};
@@ -282,18 +290,24 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
     const auto *current = refreshEnd(&readError);
     if (!current) return {false, readError};
     QFile journal(journalPath);
-    const auto validBytes = static_cast<qint64>(current->bytes.size());
-    if (!journal.open(QIODevice::ReadWrite) || !journal.resize(validBytes) || !journal.seek(validBytes))
+    const auto validBytes = current->size;
+    // Cutting an interrupted tail changes the file, so its stamp is taken again.
+    if (!journal.open(QIODevice::ReadWrite) || (journal.size() != validBytes && !journal.resize(validBytes))
+        || !journal.seek(validBytes))
         return {false, QStringLiteral("Could not open the recovery commit boundary.")};
+    const auto restamp = [&] {
+        if (end_) end_->stamp = stampOf(journal);
+    };
     // A sync failure may leave a complete record, and other records may follow
     // it before the retry. Retrying its stable ID makes that record durable
     // without appending the action twice.
     if (const auto committed = current->committed.find(transaction.id); committed != current->committed.end()) {
         if (committed->second != stateDigest(transaction.state))
             return {false, QStringLiteral("Recovery transaction identity was reused for different work.")};
-        return synchronize(*files_, journal)
-            ? RecoveryCommit{true, {}}
-            : RecoveryCommit{false, QStringLiteral("Could not flush the pending recovery transaction; retry.")};
+        if (!synchronize(*files_, journal))
+            return {false, QStringLiteral("Could not flush the pending recovery transaction; retry.")};
+        restamp();
+        return {true, {}};
     }
     QJsonArray references;
     for (auto entry = transaction.payloads.cbegin(); entry != transaction.payloads.cend(); ++entry) {
@@ -336,10 +350,11 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
     if (journal.write(frame) != frame.size() || !synchronize(*files_, journal))
         return {false, QStringLiteral("Recovery commit failed; pending input is retained for retry.")};
     if (end_) {
-        end_->bytes += frame;
+        end_->size += frame.size();
         ++end_->records;
         end_->lastDigest = bodyDigest;
         end_->committed.emplace(transaction.id, stateDigest(transaction.state));
+        restamp();
     }
     return {true, {}};
 }

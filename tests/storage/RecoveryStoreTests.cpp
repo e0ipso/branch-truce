@@ -4,6 +4,7 @@
 #include "fixtures/SyncFaults.h"
 #include "storage/RecoveryStore.h"
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -13,8 +14,12 @@
 #include <QTemporaryDir>
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <sys/stat.h>
 #include <utility>
 
 using namespace branch_truce::storage;
@@ -46,6 +51,16 @@ void overwritePrivate(const QString &path, const QByteArray &bytes)
     CHECK(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner));
 }
 
+// Moves a rewritten journal's modification time away from the last append's. A rewrite of the
+// same size within the file system's timestamp granularity would otherwise look unchanged to the
+// next commit, which compares fstat instead of reading the journal again.
+void markRewritten(const QString &path)
+{
+    QFile rewritten(path);
+    CHECK(rewritten.open(QIODevice::ReadWrite));
+    CHECK(rewritten.setFileTime(QDateTime::currentDateTimeUtc().addSecs(-3600), QFileDevice::FileModificationTime));
+}
+
 // Rewrites the journal's last record with `mutate` and gives it a matching checksum, so only
 // the record's own validation can refuse it.
 void rewriteLastRecord(const QString &directory, void (*mutate)(QJsonObject &))
@@ -63,6 +78,7 @@ void rewriteLastRecord(const QString &directory, void (*mutate)(QJsonObject &))
                                      {"sha256", QString::fromLatin1(RecoveryStore::digest(body))}})
                .toJson(QJsonDocument::Compact);
     writeFile(path, lines.join('\n'));
+    markRewritten(path);
 }
 
 // Records that keep a valid checksum but break the journal's schema or order.
@@ -73,6 +89,29 @@ const std::pair<const char *, void (*)(QJsonObject &)> invalidRecords[] = {
     {"an older record version", [](QJsonObject &record) { record.insert("version", 1); }},
     {"a state that is not an object", [](QJsonObject &record) { record.insert("state", "text"); }},
     {"an empty transaction identity", [](QJsonObject &record) { record.insert("transaction", ""); }}};
+
+// A file system whose fstat repeats the answer it gave for each file before `freeze` was set, as
+// if nothing had changed it since.
+class FrozenStatus final : public FileSystem {
+public:
+    std::atomic_bool freeze = false;
+    int status(int fd, struct stat *result) const override
+    {
+        if (FileSystem::status(fd, result) != 0) return -1;
+        const std::lock_guard lock(mutex_);
+        const auto key = std::pair{result->st_dev, result->st_ino};
+        if (!freeze) {
+            seen_[key] = *result;
+            return 0;
+        }
+        if (const auto found = seen_.find(key); found != seen_.end()) *result = found->second;
+        return 0;
+    }
+
+private:
+    mutable std::mutex mutex_;
+    mutable std::map<std::pair<dev_t, ino_t>, struct stat> seen_;
+};
 
 // The largest recovery payload the store accepts.
 constexpr auto limit = static_cast<qsizetype>(branch_truce::kMaxRecoveryPayloadBytes);
@@ -272,12 +311,33 @@ int main(int argc, char **argv)
         auto changed = readFile(journalPath);
         const auto firstFrame = changed.indexOf('\n') + 1;
         CHECK(firstFrame > 0 && changed.size() > firstFrame + 12);
-        // Rewritten at once, with the same size, so no timestamp or size can tell.
         changed[firstFrame + 11] = changed.at(firstFrame + 11) == 'A' ? 'B' : 'A';
         writeFile(journalPath, changed);
+        markRewritten(journalPath);
         const auto failed = store->commit(transaction("third", "three"));
         CHECK(!failed.succeeded && failed.error.contains("integrity"));
         CHECK(readFile(journalPath) == changed);
+    });
+    suite.run("a commit does not read the journal again while fstat still describes it", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto files = std::make_shared<FrozenStatus>();
+        const auto store = leased(directory.path() + "/recovery", files);
+        CHECK(store->commit(transaction("first", "one")).succeeded);
+        CHECK(store->commit(transaction("second", "two")).succeeded);
+        const auto journalPath = store->directory() + "/journal";
+        auto changed = readFile(journalPath);
+        const auto firstFrame = changed.indexOf('\n') + 1;
+        CHECK(firstFrame > 0 && changed.size() > firstFrame + 12);
+        changed[firstFrame + 11] = changed.at(firstFrame + 11) == 'A' ? 'B' : 'A';
+        // The rewrite keeps the size, and fstat keeps reporting the times of the last append, so
+        // only a reread could see it. The append goes ahead, and a reader still refuses the
+        // changed record.
+        files->freeze = true;
+        writeFile(journalPath, changed);
+        CHECK(store->commit(transaction("third", "three")).succeeded);
+        const auto reread = RecoveryStore(store->directory()).read();
+        CHECK(!reread.succeeded && reread.error.contains("integrity"));
     });
     suite.run("a foreign, truncated, newer or unsafe journal is verified before the next append", [] {
         QTemporaryDir directory;

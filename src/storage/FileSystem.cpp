@@ -10,6 +10,7 @@
 namespace branch_truce::storage {
 ssize_t FileSystem::write(int fd, const void *bytes, std::size_t size) const { return ::write(fd, bytes, size); }
 int FileSystem::sync(int fd) const { return ::fsync(fd); }
+int FileSystem::status(int fd, struct stat *result) const { return ::fstat(fd, result); }
 int FileSystem::exchange(int fromDirectory, const char *from, int toDirectory, const char *to) const
 {
     return ::renameat2(fromDirectory, from, toDirectory, to, RENAME_EXCHANGE);
