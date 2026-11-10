@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Optional ccache for the compilation entry points: package-*.sh,
 # test-desktop.sh, tools/verify-install-prefix.sh and the cache tests.
 #
@@ -18,6 +19,10 @@
 #   cache_report_path        the prefix of this build's report files, or nothing
 #   cache_end                prints the build's statistics and restores every
 #                            variable cache_begin changed
+#
+# A cache_begin inside an active one changes the settings but keeps the values
+# saved by the first, so cache_end always restores the state before it.
+# Sourcing the file again keeps an active build's saved values.
 #
 # Package recipes (debian/rules, the spec, the PKGBUILD) read
 # BRANCH_TRUCE_CACHE_CMAKE_INCLUDE, and compiler-cache.cmake reads
@@ -46,14 +51,17 @@ declare -ga _cache_variables=(CCACHE_CONFIGPATH CCACHE_DIR CCACHE_BASEDIR CCACHE
     CCACHE_COMPILERCHECK CCACHE_UMASK CCACHE_STATS CCACHE_STATSLOG CCACHE_HARDLINK CCACHE_SLOPPINESS
     CCACHE_HASHDIR CCACHE_NOHARDLINK CCACHE_REMOTE_STORAGE BRANCH_TRUCE_CACHE_PROFILE
     BRANCH_TRUCE_CACHE_CMAKE_INCLUDE BRANCH_TRUCE_CACHE_REPORT)
-declare -gA _cache_saved=()
+if ! declare -p _cache_saved >/dev/null 2>&1; then declare -gA _cache_saved=(); fi
+_cache_active=${_cache_active:-false}
 
 _cache_save() {
     local name
+    if $_cache_active; then return 0; fi
     _cache_saved=()
     for name in "${_cache_variables[@]}"; do
         if [ -n "${!name+set}" ]; then _cache_saved[$name]=${!name}; fi
     done
+    _cache_active=true
 }
 
 cache_begin() {
@@ -112,6 +120,8 @@ cache_end() {
         { ccache --print-log-stats > "$report.stats" && ccache --show-log-stats -v > "$report.summary" \
             && cat "$report.summary" >&2; } || echo "compiler cache statistics unavailable: $report" >&2
     fi
+    # Without an active cache_begin there is nothing to restore.
+    $_cache_active || return 0
     for name in "${_cache_variables[@]}"; do
         if [ -n "${_cache_saved[$name]+set}" ]; then
             export "$name=${_cache_saved[$name]}"
@@ -120,4 +130,5 @@ cache_end() {
         fi
     done
     _cache_saved=()
+    _cache_active=false
 }
