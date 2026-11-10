@@ -93,10 +93,7 @@ public:
     // section order, or whose section a combination ordered right first, is
     // rebuilt from that text and one copy of the shared lines instead. A
     // section whose ignored text holds other work keeps all.
-    [[nodiscard]] std::vector<MarkerEdit> edits(const Draft &draft, const CorrespondenceMap &mapping,
-                                                const std::map<std::string, Decision> &decided,
-                                                const MarkerScan *scan = nullptr) const;
-    // The same for `found`, the sections() of draft.text already listed.
+    // `found` is sections() of draft.text, listed once by the caller.
     [[nodiscard]] std::vector<MarkerEdit> edits(const Draft &draft, const CorrespondenceMap &mapping,
                                                 const std::map<std::string, Decision> &decided,
                                                 const std::vector<MarkerSection> &found) const;

@@ -166,68 +166,6 @@ private:
     std::optional<std::vector<std::size_t>> ends_;
 };
 
-// Assembles complete blocks from marker lines in text order. A line that does
-// not continue the open block becomes an orphan, and so do the open block's
-// lines when a new block begins or the text ends.
-class BlockAssembler {
-public:
-    void add(const MarkerLine &marker)
-    {
-        switch (marker.kind) {
-        case MarkerKind::Begin:
-            abandon();
-            open_ = OpenBlock{marker, {}, {}, {}};
-            return;
-        case MarkerKind::Base:
-            if (open_ && !open_->base && !open_->separator)
-                open_->base = marker;
-            else
-                result_.orphans.push_back(marker);
-            return;
-        case MarkerKind::Separator:
-            if (open_ && !open_->separator)
-                open_->separator = marker;
-            else
-                result_.orphans.push_back(marker);
-            return;
-        case MarkerKind::End: close(marker); return;
-        }
-    }
-
-    [[nodiscard]] std::optional<OpenBlock> &open() noexcept { return open_; }
-
-    [[nodiscard]] MarkerScan finish()
-    {
-        abandon();
-        std::sort(result_.orphans.begin(), result_.orphans.end(),
-                  [](const auto &left, const auto &right) { return left.line < right.line; });
-        return std::move(result_);
-    }
-
-private:
-    void close(const MarkerLine &end)
-    {
-        if (open_ && open_->separator) {
-            result_.blocks.push_back({open_->begin, open_->base, *open_->separator, end});
-            open_.reset();
-            return;
-        }
-        abandon();
-        result_.orphans.push_back(end);
-    }
-
-    void abandon()
-    {
-        if (!open_) return;
-        result_.orphans.push_back(open_->begin);
-        if (open_->base) result_.orphans.push_back(*open_->base);
-        if (open_->separator) result_.orphans.push_back(*open_->separator);
-        open_.reset();
-    }
-
-    MarkerScan result_;
-    std::optional<OpenBlock> open_;
-};
 }
 
 std::optional<std::size_t> conflictMarkerSize(std::string_view attribute) noexcept
@@ -255,12 +193,20 @@ std::optional<MarkerLine> MarkerScan::first() const
 MarkerScan scanMarkers(std::string_view text, MarkerContext context)
 {
     MarkerLexer lexer(text, std::move(context));
-    BlockAssembler blocks;
+    MarkerScan result;
+    std::optional<OpenBlock> open;
+    // Incomplete blocks retain each marker as an orphan.
+    const auto abandon = [&] {
+        if (!open) return;
+        result.orphans.push_back(open->begin);
+        if (open->base) result.orphans.push_back(*open->base);
+        if (open->separator) result.orphans.push_back(*open->separator);
+        open.reset();
+    };
     std::size_t number = 0;
     for (std::size_t begin = 0; begin < text.size(); ++number) {
         const auto line = lexer.lineAt(begin);
         begin = line.end;
-        auto &open = blocks.open();
         // Git's separator closes a base region, so earlier text counts only
         // between the base line and the first separator outside it.
         const bool inBase = open && open->base && !open->separator;
@@ -272,9 +218,40 @@ MarkerScan scanMarkers(std::string_view text, MarkerContext context)
         if (open && open->separatorLines && kind == MarkerKind::Separator && line.begin < open->separatorLines->end
             && line.begin != open->separatorLines->begin)
             kind.reset();
-        if (kind) blocks.add({*kind, number, line});
+        if (!kind) continue;
+        const MarkerLine marker{*kind, number, line};
+        switch (*kind) {
+        case MarkerKind::Begin:
+            abandon();
+            open = OpenBlock{marker, {}, {}, {}};
+            break;
+        case MarkerKind::Base:
+            if (open && !open->base && !open->separator)
+                open->base = marker;
+            else
+                result.orphans.push_back(marker);
+            break;
+        case MarkerKind::Separator:
+            if (open && !open->separator)
+                open->separator = marker;
+            else
+                result.orphans.push_back(marker);
+            break;
+        case MarkerKind::End:
+            if (open && open->separator) {
+                result.blocks.push_back({open->begin, open->base, *open->separator, marker});
+                open.reset();
+            } else {
+                abandon();
+                result.orphans.push_back(marker);
+            }
+            break;
+        }
     }
-    return blocks.finish();
+    abandon();
+    std::sort(result.orphans.begin(), result.orphans.end(),
+              [](const auto &left, const auto &right) { return left.line < right.line; });
+    return result;
 }
 
 }
