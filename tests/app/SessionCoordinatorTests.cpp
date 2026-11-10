@@ -669,7 +669,8 @@ public:
             repository.git({"add", "--", "tracked.txt"});
             test_support::TestSession model;
             int answered = 0;
-            const auto timedOut = [&answered](const git::Request &) {
+            const auto timedOut = [&answered](const git::Request &request) -> std::optional<git::Result> {
+                if (request.operation != git::Operation::StageFile) return std::nullopt;
                 ++answered;
                 git::Result result;
                 result.outcome = git::Outcome::TimedOut;
@@ -678,10 +679,11 @@ public:
                 return result;
             };
             QThreadPool workers;
-            SessionCoordinator coordinator(model,
-                                           test_support::ScriptedGitRunner::runners(git::Operation::StageFile, timedOut,
-                                                                                    test_support::gitExecutable()),
-                                           workers);
+            SessionCoordinator coordinator(
+                model,
+                test_support::ScriptedGit::runners(
+                    {test_support::gitExecutable(), git::GitEnvironment::from(repository.environment())}, timedOut),
+                workers);
             std::vector<TaskCompletion> finished;
             QObject::connect(&coordinator, &SessionCoordinator::taskFinished, &model,
                              [&](const TaskCompletion &value) { finished.push_back(value); });

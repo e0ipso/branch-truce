@@ -6,9 +6,9 @@
 // configuration is disabled, and PATH is /usr/bin:/bin.
 
 #include "TestHarness.h"
+#include "fixtures/ConflictedRepository.h"
 #include "fixtures/EventLoop.h"
 #include "fixtures/Files.h"
-#include "fixtures/GitRepository.h"
 #include "fixtures/ScopedEnvironment.h"
 #include "fixtures/ScriptGate.h"
 
@@ -54,7 +54,7 @@ struct ConflictPath {
     QByteArray launch;
 };
 
-class ParentRepository {
+class ParentRepository : public test_support::ConflictedRepository {
 public:
     // The documented tool: assign Git's unexported variables, then run the launcher. The session
     // runs in the test process, so the launcher gets --no-window and never starts another one.
@@ -65,38 +65,29 @@ public:
     static constexpr const char *TamperTool = "truce-tamper";
     static constexpr const char *TamperedBytes = "bytes the parent wrote after the launcher\n";
 
-    ParentRepository(const QString &launcher, const QList<ConflictPath> &conflicts) : conflicts_(conflicts)
+    ParentRepository(const QString &launcher, const QList<ConflictPath> &conflicts)
     {
-        CHECK(probe_.isValid() && runtime_.isValid());
-        root = repository_.root();
+        CHECK(probe_.isValid());
         probe = QFileInfo(probe_.path()).canonicalFilePath();
-        globalConfig = repository_.home().globalConfig();
-        // The shared Git sandbox sets PATH, LC_ALL, HOME, XDG_CONFIG_HOME and the Git configuration.
-        environment = repository_.environment();
-        environment.insert("XDG_CACHE_HOME", repository_.home().path() + "/cache");
-        environment.insert("XDG_DATA_HOME", repository_.home().path() + "/data");
-        // The session socket lives here, so the in-process session and every launcher meet.
-        CHECK(QFile::setPermissions(runtime_.path(),
-                                    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
-        environment.insert("XDG_RUNTIME_DIR", runtime_.path());
+        globalConfig = home().globalConfig();
         releaseGate_ = std::make_unique<test_support::ScriptGate>(releaseFile());
         configureGlobal(launcher);
-        createConflict();
-    }
-
-    QString path(const QByteArray &relative) const { return root + QLatin1Char('/') + QString::fromLatin1(relative); }
-
-    QByteArray git(const QStringList &arguments, int expected = 0, const QByteArray &input = {}) const
-    {
-        return test_support::runGit(environment, root, arguments, input, expected);
+        QMap<QString, QByteArray> base{{"notes.txt", "notes stay staged\n"}};
+        QMap<QString, QByteArray> ours;
+        QMap<QString, QByteArray> theirs;
+        for (const auto &conflict : conflicts) {
+            base.insert(QString::fromLatin1(conflict.path), conflict.base);
+            ours.insert(QString::fromLatin1(conflict.path), conflict.ours);
+            theirs.insert(QString::fromLatin1(conflict.path), conflict.theirs);
+        }
+        commit(base, "base");
+        ConflictedRepository::conflict(ours, theirs);
+        for (const auto &conflict : conflicts) writeFile(path(QString::fromLatin1(conflict.path)), conflict.launch);
+        notesObject = stagedObject("notes.txt");
     }
 
     // The full index listing, mode, object id and stage for every entry. It does not refresh or write the index.
     QByteArray index() const { return git({"ls-files", "--stage", "-z"}); }
-    bool unmerged(const QByteArray &relative) const
-    {
-        return !git({"ls-files", "--unmerged", "-z", "--", QString::fromLatin1(relative)}).isEmpty();
-    }
     QByteArray stagedObject(const QByteArray &relative) const
     {
         return git({"rev-parse", "--verify", "--quiet", QString::fromLatin1(":0:" + relative)}).trimmed();
@@ -115,7 +106,7 @@ public:
     }
 
     // The private XDG_RUNTIME_DIR; the session's socket directory belongs directly inside it.
-    QString runtimeDirectory() const { return runtime_.path(); }
+    QString runtimeDirectory() const { return runtime.path(); }
 
     QString releaseFile() const { return probe + QStringLiteral("/release"); }
     // The gated tool appends "<MERGED> <launcher status>" here after each launcher exit.
@@ -124,10 +115,9 @@ public:
     // Lets one gated tool command finish, now or when it next waits.
     void release() const { releaseGate_->pass(); }
 
-    QString root;
     QString probe;
     QString globalConfig;
-    QProcessEnvironment environment;
+    QByteArray notesObject;
 
 private:
     void configureGlobal(const QString &launcher)
@@ -156,49 +146,9 @@ private:
 
     void global(const QStringList &pair) const { git(QStringList{"config", "--global"} + pair); }
 
-    void createConflict()
-    {
-        writeFile(path("notes.txt"), "notes stay staged\n");
-        QStringList paths{"notes.txt"};
-        for (const auto &conflict : conflicts_) {
-            writeFile(path(conflict.path), conflict.base);
-            paths.append(QString::fromLatin1(conflict.path));
-        }
-        git(QStringList{"add", "--"} + paths);
-        git({"commit", "--quiet", "-m", "base"});
-        git({"checkout", "--quiet", "-b", "side"});
-        commitSide([](const ConflictPath &conflict) { return conflict.theirs; }, "side");
-        git({"checkout", "--quiet", "main"});
-        commitSide([](const ConflictPath &conflict) { return conflict.ours; }, "main");
-        git({"merge", "--no-edit", "side"}, 1);
-        for (const auto &conflict : conflicts_) writeFile(path(conflict.path), conflict.launch);
-        notesObject = stagedObject("notes.txt");
-    }
-
-    void commitSide(const std::function<QByteArray(const ConflictPath &)> &bytes, const QString &message)
-    {
-        QStringList paths;
-        for (const auto &conflict : conflicts_) {
-            writeFile(path(conflict.path), bytes(conflict));
-            paths.append(QString::fromLatin1(conflict.path));
-        }
-        git(QStringList{"add", "--"} + paths);
-        git({"commit", "--quiet", "-m", message});
-    }
-
-    QList<ConflictPath> conflicts_;
-    // The worktree, the private home and the global configuration fixture Git and the parent read.
-    test_support::GitRepository repository_;
     QTemporaryDir probe_;
     // The FIFO the gated tool reads before it lets Git stage or restore.
     std::unique_ptr<test_support::ScriptGate> releaseGate_;
-    // Under a long TMPDIR a QTemporaryDir would push the socket path past its
-    // length limit, and the session would fall back to the shared
-    // /tmp/branch-truce-<uid>. A short base under /tmp keeps it private.
-    QTemporaryDir runtime_{QStringLiteral("/tmp/bt-run-XXXXXX")};
-
-public:
-    QByteArray notesObject;
 };
 
 // Applies the fixture environment to this process, which hosts the application session.

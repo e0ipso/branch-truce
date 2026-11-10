@@ -7,7 +7,7 @@
 
 #include "TestHarness.h"
 #include "app/Application.h"
-#include "fixtures/ConflictRepository.h"
+#include "fixtures/ConflictedRepository.h"
 #include "fixtures/GitRepository.h"
 
 #include <QMap>
@@ -21,14 +21,39 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace journey {
 
-using Repository = test_support::ConflictRepository;
-using PathSpec = test_support::OperationPath;
-using test_support::GitOperation;
+// One path of a journey's repository, by its base, left and right bytes; a missing side deletes the
+// path on that branch. Left is main, the branch checked out when a merge stops, or the rebased
+// state; right is side, the branch merged or the commit replayed.
+struct PathSpec {
+    QString path;
+    std::optional<QByteArray> base;
+    std::optional<QByteArray> left;
+    std::optional<QByteArray> right;
+    // Written over Git's conflict output after the operation stops, as a user would before launch.
+    std::optional<QByteArray> manual;
+};
+
+// A repository stopped on `paths` by a real merge or rebase, with a tracked README and an
+// unreachable origin remote that opening and resolving must not contact.
+class Repository : public test_support::ConflictedRepository {
+public:
+    explicit Repository(const std::vector<PathSpec> &paths, Stop stop = Stop::Merge);
+    // The commits on each side, full object ids.
+    const QByteArray &leftCommit() const { return leftCommit_; }
+    const QByteArray &rightCommit() const { return rightCommit_; }
+    QByteArray stageObject(int stage, const QString &relative) const;
+    QByteArray stageText(int stage, const QString &relative) const;
+
+private:
+    QByteArray leftCommit_;
+    QByteArray rightCommit_;
+};
 
 // The id the session gives a path: its bytes in hex.
 QString fileId(const char *path);
@@ -67,10 +92,7 @@ public:
 private:
     test_support::OfflineGit git_;
     QTemporaryDir recovery_;
-    // Under a long TMPDIR a QTemporaryDir would push the socket path past its length limit, and the
-    // session would fall back to the shared /tmp/branch-truce-<uid>. A short base under /tmp keeps
-    // it private.
-    QTemporaryDir runtime_{QStringLiteral("/tmp/bt-run-XXXXXX")};
+    test_support::RuntimeDirectory runtime_;
 };
 
 // A selected file's progress, from SelectedFile::progress().

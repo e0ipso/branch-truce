@@ -1099,7 +1099,8 @@ int main(int argc, char **argv)
     suite.run("real Git and a scripted answer keep the same runner contract", [] {
         Repository repo;
         GitAdapter adapter(repo.program());
-        InterceptedGit scripted(
+        test_support::ScriptedGit passThrough(repo.program(), [](const Request &) { return std::nullopt; });
+        test_support::ScriptedGit scripted(
             repo.program(),
             [](const Request &) -> std::optional<Result> {
                 Result failed;
@@ -1107,13 +1108,62 @@ int main(int argc, char **argv)
                 return failed;
             },
             nullptr);
-        for (GitRunner *runner : std::initializer_list<GitRunner *>{&adapter, &scripted}) {
+        for (GitRunner *runner : std::initializer_list<GitRunner *>{&adapter, &passThrough, &scripted}) {
             test_support::AsyncCompletion<GitRunner, Result> completion(*runner, &GitRunner::finished);
             const auto result = completion.run(repo.readRequest());
             CHECK(result.request.operation == Operation::ReadObject && result.request.sessionGeneration == 71);
             runner->cancel();
             CHECK(!runner->busy());
         }
+    });
+    for (const auto mutation :
+         {Mutation::NotAttempted, Mutation::ObservedUnchanged, Mutation::ObservedChanged, Mutation::Uncertain}) {
+        for (const auto outcome : {Outcome::Success, Outcome::ExitFailure, Outcome::TimedOut}) {
+            suite.run("scripted cancellation preserves the observed mutation " + std::to_string(int(mutation))
+                          + " and outcome " + std::to_string(int(outcome)),
+                      [mutation, outcome] {
+                          Repository repo;
+                          test_support::ScriptedGit runner(repo.program(), [=](const Request &) {
+                              Result result;
+                              result.outcome = outcome;
+                              result.mutation = mutation;
+                              result.problem = {ProblemCode::GitDeadline, {QStringLiteral("30")}};
+                              result.indexAfter = "observed index";
+                              return std::optional<Result>(result);
+                          });
+                          test_support::AsyncCompletion<GitRunner, Result> completion(runner, &GitRunner::finished);
+                          const auto request = repo.request(Operation::StageFile, "tracked.txt");
+                          CHECK(runner.start(request));
+                          CHECK(runner.busy() && completion.results.empty());
+                          CHECK(!runner.start(request));
+                          runner.cancel();
+                          runner.cancel();
+                          CHECK(runner.busy() && completion.results.empty());
+                          const auto result = completion.wait();
+                          CHECK(result.cancellationRequested && result.mutation == mutation);
+                          CHECK(result.outcome == (mutation == Mutation::NotAttempted ? Outcome::Cancelled : outcome));
+                          CHECK(result.problem.code
+                                == (mutation == Mutation::NotAttempted ? ProblemCode::GitCancelled
+                                                                       : ProblemCode::GitDeadline));
+                          CHECK(result.indexAfter == "observed index");
+                          CHECK(result.request.path == request.path && result.request.sessionGeneration == 71);
+                          runner.cancel();
+                          test_support::AsyncCompletion<GitRunner, Result> later(runner, &GitRunner::finished);
+                          CHECK(!later.run(request).cancellationRequested);
+                      });
+        }
+    }
+    suite.run("destroying a scripted runner drops its queued answer", [] {
+        Repository repo;
+        QObject receiver;
+        int completions = 0;
+        auto runner = std::make_unique<test_support::ScriptedGit>(
+            repo.program(), [](const Request &) { return std::optional<Result>(Result{}); });
+        QObject::connect(runner.get(), &GitRunner::finished, &receiver, [&](const Result &) { ++completions; });
+        CHECK(runner->start(repo.readRequest()));
+        runner.reset();
+        QCoreApplication::processEvents();
+        CHECK_EQ(completions, 0);
     });
     suite.run("only staging is a mutation", [] {
         for (const auto operation :

@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <tuple>
 
 using namespace branch_truce;
 
@@ -72,17 +73,48 @@ void untilFramesDrawn(QQuickWindow *window)
     });
 }
 
-Sandbox::Sandbox()
+Repository::Repository(const std::vector<PathSpec> &paths, Stop stop)
 {
-    CHECK(recovery_.isValid() && runtime_.isValid());
-    CHECK(QFile::setPermissions(runtime_.path(),
-                                QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    git({"config", "remote.origin.url", "https://offline.invalid/never-contact"});
+    git({"config", "branch.main.remote", "origin"});
+    QMap<QString, QByteArray> base{{"README", "acceptance fixture\n"}};
+    QMap<QString, QByteArray> left;
+    QMap<QString, QByteArray> right;
+    QStringList leftRemoved;
+    QStringList rightRemoved;
+    for (const auto &spec : paths) {
+        if (spec.base) base.insert(spec.path, *spec.base);
+        if (spec.left)
+            left.insert(spec.path, *spec.left);
+        else if (spec.base)
+            leftRemoved << spec.path;
+        if (spec.right)
+            right.insert(spec.path, *spec.right);
+        else if (spec.base)
+            rightRemoved << spec.path;
+    }
+    commit(base, "base");
+    std::tie(rightCommit_, leftCommit_) = conflict(left, right, stop, leftRemoved, rightRemoved);
+    for (const auto &spec : paths)
+        if (spec.manual) test_support::writeFile(path(spec.path), *spec.manual);
 }
+
+QByteArray Repository::stageObject(int stage, const QString &relative) const
+{
+    return git({"rev-parse", QStringLiteral(":%1:%2").arg(stage).arg(relative)}).trimmed();
+}
+
+QByteArray Repository::stageText(int stage, const QString &relative) const
+{
+    return git({"cat-file", "blob", QString::fromLatin1(stageObject(stage, relative))});
+}
+
+Sandbox::Sandbox() { CHECK(recovery_.isValid()); }
 
 Application::Config Sandbox::config(const Repository &repository) const
 {
     Application::Config config;
-    config.git = {git_.executable(), git::GitEnvironment::from(repository.environment())};
+    config.git = {git_.executable(), git::GitEnvironment::from(repository.environment)};
     config.recoveryDirectory = recovery_.path() + QLatin1Char('/') + QUuid::createUuid().toString(QUuid::WithoutBraces);
     config.mergetoolDirectory = socketDirectory();
     return config;
@@ -92,7 +124,7 @@ QString Sandbox::socketDirectory() const { return mergetoolSocketDirectory(QFile
 
 QProcessEnvironment Sandbox::mergetoolEnvironment(const Repository &repository) const
 {
-    auto environment = repository.environment();
+    auto environment = repository.environment;
     environment.insert("PATH", git_.directory() + QStringLiteral(":/usr/bin:/bin"));
     environment.insert("XDG_RUNTIME_DIR", runtime_.path());
     return environment;
@@ -112,7 +144,7 @@ Scene::Scene(Sandbox &sandbox, const Repository &repository)
     window_->show();
     const auto before = repository.snapshot();
     auto *loader = controller_->loader();
-    CHECK(loader->openRepository(repository.root()));
+    CHECK(loader->openRepository(repository.root));
     // The load runs Git and the recovery restore off the GUI thread, so it gets the deadline of a
     // process, not the layout deadline of settleFor.
     waitFor(

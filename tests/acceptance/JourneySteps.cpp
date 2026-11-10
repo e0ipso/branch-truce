@@ -405,7 +405,7 @@ std::unique_ptr<mergetool_fixture::ParentProcess> startMergetool(const Sandbox &
     if (setsid.isEmpty()) throw std::runtime_error("setsid is not on PATH");
     auto process = std::make_unique<mergetool_fixture::ParentProcess>();
     process->setProcessEnvironment(sandbox.mergetoolEnvironment(repo));
-    process->setWorkingDirectory(repo.root());
+    process->setWorkingDirectory(repo.root);
     // setsid replaces itself with Git when, as here, its caller is not a group leader.
     process->start(setsid,
                    QStringList{"--wait", test_support::gitExecutable(), "--no-pager", "--literal-pathspecs",

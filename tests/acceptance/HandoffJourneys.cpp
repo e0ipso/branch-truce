@@ -51,7 +51,7 @@ void leaveEveryKindOfWork(Scene &scene, const Repository &repo)
     CHECK(failed.saved && !failed.resolved);
     CHECK(scene.text("resultText").endsWith(QStringLiteral("fails")));
     CHECK(readFile(repo.path("locked/failing.txt")) == "locked/failing.txt chosen by hand\n");
-    CHECK(!repo.unmerged("locked/failing.txt").isEmpty());
+    CHECK(repo.unmerged("locked/failing.txt"));
 
     // The repository write succeeds but Git refuses the resolution: written, unresolved.
     clickFile(scene, "written.txt");
@@ -62,7 +62,7 @@ void leaveEveryKindOfWork(Scene &scene, const Repository &repo)
     CHECK(!scene.progress().resolved);
     expectContains(scene.text("fileFailureNotice"), "Written, unresolved", "written status");
     CHECK(readFile(repo.path("written.txt")) == "written.txt chosen by hand\n");
-    CHECK(!repo.unmerged("written.txt").isEmpty());
+    CHECK(repo.unmerged("written.txt"));
 }
 
 // The handoff reports each file's category and blockers in words.
@@ -117,7 +117,7 @@ void routesReturnToTheirFiles(Scene &scene, QObject *dialog)
 
 void handoffSeparatesTheWork(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, handoffPaths());
+    Repository repo(handoffPaths());
     Scene scene(sandbox, repo);
     auto &app = scene.app();
     CHECK(app.files()->totalFiles() == 7);
@@ -149,8 +149,8 @@ void handoffSeparatesTheWork(Sandbox &sandbox)
     expectContains(app.completion()->outcome(), "Left with 6 of 7 files outstanding.", "leave outcome");
     CHECK(repo.snapshot() == beforeLeave && scene.gitCalls() == traced);
     for (const auto *path : {"saved.txt", "typed.txt", "written.txt", "locked/failing.txt", "removed.txt"})
-        CHECK(!repo.unmerged(path).isEmpty());
-    CHECK(repo.unmerged("done.txt").isEmpty() && repo.unmerged("newer.txt").isEmpty());
+        CHECK(repo.unmerged(path));
+    CHECK(!repo.unmerged("done.txt") && !repo.unmerged("newer.txt"));
     // The summary speaks only for this session.
     expectContains(app.loader()->workflow(), "only the work opened at launch", "session scope");
     checkOffline(scene);
@@ -160,7 +160,7 @@ void handoffSeparatesTheWork(Sandbox &sandbox)
 
 void newerDraftReturnsToTheStagedResult(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, {chosenByHand("newer.txt")});
+    Repository repo({chosenByHand("newer.txt")});
     Scene scene(sandbox, repo);
     auto &app = scene.app();
     const auto id = fileId("newer.txt");
@@ -169,7 +169,7 @@ void newerDraftReturnsToTheStagedResult(Sandbox &sandbox)
     CHECK(scene.progress().resolved);
     const auto staged = scene.text("resultText");
     const auto published = repo.snapshot();
-    CHECK(repo.unmerged("newer.txt").isEmpty());
+    CHECK(!repo.unmerged("newer.txt"));
     auto *prompt = scene.object("discardStagedDialog");
     auto *handoff = scene.object("handoffDialog");
     const auto newerDraft = [&] {
@@ -268,13 +268,13 @@ void reopenedWindowRestoresBothDrafts(Sandbox &sandbox, const Repository &repo, 
     // Restored work stays editable offline.
     appendToResult(reopened, "!");
     expectText(reopened.text("resultText"), typedText + "!", "edit after resume");
-    CHECK(!repo.unmerged("saved.txt").isEmpty() && !repo.unmerged("typed.txt").isEmpty());
+    CHECK(repo.unmerged("saved.txt") && repo.unmerged("typed.txt"));
     checkOffline(reopened);
 }
 
 void offlineStartupResumesDraftsAfterClosing(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, savedAndTypedPaths());
+    Repository repo(savedAndTypedPaths());
     const auto launched = repo.snapshot();
     QString savedText;
     QString typedText;
@@ -306,7 +306,7 @@ void offlineStartupResumesDraftsAfterClosing(Sandbox &sandbox)
 // typed input to the next window.
 void sessionEndedWithoutHandoffRestoresTheDraft(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, savedAndTypedPaths());
+    Repository repo(savedAndTypedPaths());
     const auto launched = repo.snapshot();
     QString typedText;
     {
@@ -326,13 +326,13 @@ void sessionEndedWithoutHandoffRestoresTheDraft(Sandbox &sandbox)
     CHECK(!reopened.progress().saved && !reopened.progress().resolved);
     clickFile(reopened, "saved.txt");
     expectText(reopened.text("resultText"), QStringLiteral("saved by hand\n"), "untouched file");
-    CHECK(!repo.unmerged("saved.txt").isEmpty() && !repo.unmerged("typed.txt").isEmpty());
+    CHECK(repo.unmerged("saved.txt") && repo.unmerged("typed.txt"));
     checkOffline(reopened);
 }
 
 void blockedStartupRestoresTheChosenSession(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, {chosenByHand("shared.txt")});
+    Repository repo({chosenByHand("shared.txt")});
     const auto id = fileId("shared.txt").toStdString();
     const auto edit = [&](Application &controller, const std::string &text) {
         const auto *file = controller.store()->file(id);
@@ -344,7 +344,7 @@ void blockedStartupRestoresTheChosenSession(Sandbox &sandbox)
         // Two windows on one merge each keep their own edits.
         Scene one(sandbox, repo);
         Application two{sandbox.config(repo)};
-        CHECK(two.loader()->openRepository(repo.root()));
+        CHECK(two.loader()->openRepository(repo.root));
         // The load runs Git and the recovery restore off the GUI thread, so it gets the deadline of
         // a process, not the layout deadline of settleFor.
         waitFor(
@@ -381,7 +381,7 @@ void blockedStartupRestoresTheChosenSession(Sandbox &sandbox)
     CHECK(!scene.item("recoveryChoices")->isVisible());
     CHECK(QFileInfo::exists(second + "/set-aside") && QFileInfo::exists(second + "/journal"));
     // Choosing touched only app-owned recovery files.
-    CHECK(repo.snapshot() == repository && !repo.unmerged("shared.txt").isEmpty());
+    CHECK(repo.snapshot() == repository && repo.unmerged("shared.txt"));
     checkOffline(scene);
 }
 
@@ -413,7 +413,7 @@ void waitForGitToExit(Scene &scene, QProcess &parent)
 
 void resolvedHandoffDropsTheWaitingText(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, {chosenByHand("launched.txt"), chosenByHand("later.txt")});
+    Repository repo({chosenByHand("launched.txt"), chosenByHand("later.txt")});
     Scene scene(sandbox, repo);
     auto &app = scene.app();
     auto parent = startMergetool(sandbox, repo, {"launched.txt"});
@@ -431,7 +431,7 @@ void resolvedHandoffDropsTheWaitingText(Sandbox &sandbox)
     markResolvedByMouse(scene);
     waitForGitToExit(scene, *parent);
     CHECK(parent->exitStatus() == QProcess::NormalExit && parent->exitCode() == 0);
-    CHECK(repo.unmerged("launched.txt").isEmpty() && !repo.unmerged("later.txt").isEmpty());
+    CHECK(!repo.unmerged("launched.txt") && repo.unmerged("later.txt"));
     waitFor(
         "the staged resolution",
         [&] { return scene.progress().resolved && app.mergetool()->parentStagingPath().isEmpty(); },
@@ -461,7 +461,7 @@ void resolvedHandoffDropsTheWaitingText(Sandbox &sandbox)
 
 void reselectingTheLaunchedPathOffersLeave(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, {chosenByHand("launched.txt"), chosenByHand("other.txt")});
+    Repository repo({chosenByHand("launched.txt"), chosenByHand("other.txt")});
     Scene scene(sandbox, repo);
     auto &app = scene.app();
     const auto waitingShown = [&] {
@@ -494,7 +494,7 @@ void reselectingTheLaunchedPathOffersLeave(Sandbox &sandbox)
     waitForGitToExit(scene, *parent);
     CHECK(parent->exitStatus() == QProcess::NormalExit && parent->exitCode() != 0);
     CHECK(readFile(repo.path("launched.txt")) == launchBytes);
-    CHECK(!repo.unmerged("launched.txt").isEmpty() && !repo.unmerged("other.txt").isEmpty());
+    CHECK(repo.unmerged("launched.txt") && repo.unmerged("other.txt"));
     settleFor("leave control gone after leaving", [&] { return !scene.item("leaveMergetool")->isVisible(); });
     checkOffline(scene);
 }
@@ -503,7 +503,7 @@ void reselectingTheLaunchedPathOffersLeave(Sandbox &sandbox)
 // the conflict and the launch bytes, and the next window restores the saved draft.
 void interruptedMergetoolKeepsTheSavedDraft(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge, {chosenByHand("launched.txt"), chosenByHand("other.txt")});
+    Repository repo({chosenByHand("launched.txt"), chosenByHand("other.txt")});
     const auto launchBytes = readFile(repo.path("launched.txt"));
     QString draft;
     {
@@ -532,7 +532,7 @@ void interruptedMergetoolKeepsTheSavedDraft(Sandbox &sandbox)
         });
         // Git did not receive the draft as a finished result; the window keeps it.
         CHECK(readFile(repo.path("launched.txt")) == launchBytes);
-        CHECK(!repo.unmerged("launched.txt").isEmpty() && !repo.unmerged("other.txt").isEmpty());
+        CHECK(repo.unmerged("launched.txt") && repo.unmerged("other.txt"));
         expectText(scene.text("resultText"), draft, "draft after the interrupt");
         CHECK(scene.progress().saved && !scene.progress().resolved);
         checkOffline(scene);

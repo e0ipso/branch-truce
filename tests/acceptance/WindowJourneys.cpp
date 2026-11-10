@@ -115,8 +115,7 @@ void outsideAppPlaceholdersKeepStressText(Sandbox &sandbox)
         + QStringLiteral("/literal <b>report&review</b> ") + QString(70, QLatin1Char('n')) + QStringLiteral(".bin");
     const auto pathBytes = longPath.toUtf8();
     const QByteArray binaryBase("b\0ase", 5), binaryLeft("l\0eft", 5), binaryRight("r\0ght", 5);
-    Repository repo(GitOperation::Merge,
-                    {{"story.txt", storyBase, storyLeft, storyRight, storyBase},
+    Repository repo({{"story.txt", storyBase, storyLeft, storyRight, storyBase},
                      {"image.bin", binaryBase, binaryLeft, binaryRight, std::nullopt},
                      {longPath, binaryBase, binaryLeft, binaryRight, std::nullopt}});
     const auto repository = repo.snapshot();
@@ -359,7 +358,7 @@ void logicalScreenFitsTheWindow(Sandbox &sandbox)
     auto paths = journeyPaths();
     paths.push_back(
         {"image.bin", QByteArray("base\0", 5), QByteArray("left\0", 5), QByteArray("side\0", 5), std::nullopt});
-    Repository repo(GitOperation::Merge, paths);
+    Repository repo(paths);
     Scene scene(sandbox, repo);
     const auto reference = fontReference(scene);
     CHECK(!scene.item("inventoryWarning")->isVisible() && scene.item("outsideAppCount")->isVisible());
@@ -407,8 +406,7 @@ void selectionShowsTheFirstUndecidedRegion(Sandbox &sandbox)
     for (int line = 1; line <= 120; ++line) before += "shared before " + QByteArray::number(line) + "\n";
     for (int line = 1; line <= 80; ++line) after += "shared after " + QByteArray::number(line) + "\n";
     // Git's conflict output stays the launch result, so the conflict starts at line 121.
-    Repository repo(GitOperation::Merge,
-                    {{"long.txt", before + "base value\n" + after, before + "left value\n" + after,
+    Repository repo({{"long.txt", before + "base value\n" + after, before + "left value\n" + after,
                       before + "right value\n" + after, std::nullopt},
                      {"short.txt", QByteArray("short base\n"), QByteArray("short left\n"), QByteArray("short right\n"),
                       std::nullopt}});
@@ -495,8 +493,7 @@ void choiceClearsHandEdits(Sandbox &sandbox)
 {
     // The left side changes two lines in one section, and the user set the result to it before launch.
     const QByteArray left = "header\nleft first\nleft second\nbridge\nleft later\ntail\n";
-    Repository repo(GitOperation::Merge,
-                    {{"pair.txt", QByteArray("header\nbase first\nbase second\nbridge\nbase later\ntail\n"), left,
+    Repository repo({{"pair.txt", QByteArray("header\nbase first\nbase second\nbridge\nbase later\ntail\n"), left,
                       QByteArray("header\nright first\nright second\nbridge\nright later\ntail\n"), left}});
     Scene scene(sandbox, repo);
     clickFile(scene, "pair.txt");
@@ -563,8 +560,7 @@ void linesFromBothSidesKeepTheirDecisions(Sandbox &sandbox)
 {
     // Both sides change the same three lines, and the user set the result to the common version before launch.
     const QByteArray base = "header\nbase one\nbase two\nbase three\ntail\n";
-    Repository repo(GitOperation::Merge,
-                    {{"lines.txt", base, QByteArray("header\nleft one\nleft two\nleft three\ntail\n"),
+    Repository repo({{"lines.txt", base, QByteArray("header\nleft one\nleft two\nleft three\ntail\n"),
                       QByteArray("header\nright one\nright two\nright three\ntail\n"), base}});
     Scene scene(sandbox, repo);
     clickFile(scene, "lines.txt");
@@ -637,8 +633,7 @@ void closeIntoTheGuard(Scene &scene)
 
 void closeGuardAsksToRetry(Sandbox &sandbox)
 {
-    Repository repo(GitOperation::Merge,
-                    {{"kept.txt", QByteArray("kept base\n"), QByteArray("kept left\n"), QByteArray("kept right\n"),
+    Repository repo({{"kept.txt", QByteArray("kept base\n"), QByteArray("kept left\n"), QByteArray("kept right\n"),
                       QByteArray("kept by hand\n")}});
     const auto launched = repo.snapshot();
     {

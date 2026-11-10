@@ -1,89 +1,74 @@
 #pragma once
 
-// A Git runner that answers one kind of request itself and runs every other request with real Git,
-// for a case that needs Git to hang past its deadline, fail or print garbage on one operation.
-// It keeps the GitRunner contract: start() refuses while busy, every accepted request finishes
-// exactly once from the event loop, cancel() ends a scripted request as Cancelled, and destruction
-// emits nothing.
+// A Git runner for the code under test: real Git, except that `intercept` sees each request first.
+// It may change the repository and return nothing, so real Git runs the request, or return a
+// result that stands for Git hanging past its deadline, failing or printing garbage.
+//
+// It keeps the GitRunner contract and GitAdapter's cancellation: start() refuses while busy, every
+// accepted request finishes exactly once from the event loop, a cancel() before the answer arrives
+// ends a request whose mutation was not attempted as Cancelled and keeps any other outcome, and
+// destruction emits nothing.
 
 #include "git/GitAdapter.h"
 
 #include <QObject>
-#include <QPointer>
-#include <QString>
 #include <QTimer>
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace test_support {
 
-class ScriptedGitRunner final : public branch_truce::git::GitRunner {
+class ScriptedGit final : public branch_truce::git::GitRunner {
 public:
-    using Answer = std::function<branch_truce::git::Result(const branch_truce::git::Request &)>;
+    using Intercept = std::function<std::optional<branch_truce::git::Result>(const branch_truce::git::Request &)>;
 
-    // Every other request runs on a GitAdapter for executable, reading the configuration this
-    // process's environment selects.
-    ScriptedGitRunner(branch_truce::git::Operation scripted, Answer answer, const QString &executable,
-                      QObject *parent = nullptr)
-        : GitRunner(parent),
-          scripted_(scripted),
-          answer_(std::move(answer)),
-          real_(std::make_unique<branch_truce::git::GitAdapter>(
-              branch_truce::git::GitProgram{executable, branch_truce::git::GitEnvironment::fromProcess()}, this))
+    ScriptedGit(const branch_truce::git::GitProgram &program, Intercept intercept, QObject *parent = nullptr)
+        : GitRunner(parent), real_(program, this), intercept_(std::move(intercept))
     {
-        connect(real_.get(), &branch_truce::git::GitRunner::finished, this,
+        connect(&real_, &branch_truce::git::GitRunner::finished, this,
                 [this](const branch_truce::git::Result &result) { Q_EMIT finished(result); });
     }
 
-    // Runners for a session: each answers `scripted` requests with `answer`.
-    static branch_truce::git::GitRunners runners(branch_truce::git::Operation scripted, Answer answer,
-                                                 QString executable)
+    // Runners for a session or service that all share one intercept.
+    static branch_truce::git::GitRunners runners(branch_truce::git::GitProgram program, Intercept intercept)
     {
-        return [=](QObject *parent) -> std::unique_ptr<branch_truce::git::GitRunner> {
-            return std::make_unique<ScriptedGitRunner>(scripted, answer, executable, parent);
+        return [program = std::move(program),
+                intercept = std::move(intercept)](QObject *parent) -> std::unique_ptr<branch_truce::git::GitRunner> {
+            return std::make_unique<ScriptedGit>(program, intercept, parent);
         };
     }
 
     bool start(const branch_truce::git::Request &request) override
     {
         if (busy()) return false;
-        if (request.operation != scripted_) return real_->start(request);
-        pending_ = std::make_unique<branch_truce::git::Request>(request);
-        cancelled_ = false;
+        auto scripted = intercept_(request);
+        if (!scripted) return real_.start(request);
+        scripted->request = request;
+        pending_ = std::move(scripted);
         // Answered from the event loop, never inside start(), as a real Git process would.
-        QTimer::singleShot(0, this, [this] { answer(); });
+        QTimer::singleShot(0, this, [this] {
+            if (pending_) Q_EMIT finished(*std::exchange(pending_, std::nullopt));
+        });
         return true;
     }
     void cancel() override
     {
-        if (pending_)
-            cancelled_ = true;
-        else
-            real_->cancel();
+        if (!pending_) return real_.cancel();
+        pending_->cancellationRequested = true;
+        if (pending_->mutation == branch_truce::git::Mutation::NotAttempted) {
+            pending_->outcome = branch_truce::git::Outcome::Cancelled;
+            pending_->problem = {branch_truce::ProblemCode::GitCancelled};
+        }
     }
-    [[nodiscard]] bool busy() const override { return pending_ != nullptr || real_->busy(); }
+    [[nodiscard]] bool busy() const override { return pending_.has_value() || real_.busy(); }
 
 private:
-    void answer()
-    {
-        if (!pending_) return;
-        const auto request = *std::exchange(pending_, nullptr);
-        auto result = answer_(request);
-        result.request = request;
-        if (cancelled_) {
-            result.outcome = branch_truce::git::Outcome::Cancelled;
-            result.cancellationRequested = true;
-        }
-        Q_EMIT finished(result);
-    }
-
-    branch_truce::git::Operation scripted_;
-    Answer answer_;
-    std::unique_ptr<branch_truce::git::GitAdapter> real_;
-    std::unique_ptr<branch_truce::git::Request> pending_;
-    bool cancelled_ = false;
+    branch_truce::git::GitAdapter real_;
+    Intercept intercept_;
+    std::optional<branch_truce::git::Result> pending_;
 };
 
 } // namespace test_support
