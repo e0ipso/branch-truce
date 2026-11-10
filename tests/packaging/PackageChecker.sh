@@ -4,7 +4,8 @@
 # installed package is used. NativeIntegration.sh runs this file.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-work="$(mktemp -d)"
+source "$root/tools/lib/fixture.sh"
+work=$(fixture_root)
 trap 'rm -rf "$work"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 # expect_death MESSAGE CODE: CODE, run in a subshell after sourcing the checker, dies with MESSAGE.
@@ -31,7 +32,7 @@ chmod +x "$work/app"
 (
     source "$root/packaging/scripts/check-package.sh"
     app_binary=$work/app
-    seed_user_home "$work/home"
+    seed_user_home "$work" "$work/home"
     [ -s "$work/home/config/branch-trucerc" ] && [ -s "$work/home/data/Branch Truce/recovery/unrelated/journal" ]
     run_app "$work/home" / --version
 ) || fail 'seeding or running the application failed'
@@ -88,3 +89,44 @@ expect_death 'previous package is other for amd64, not branch-truce for amd64' "
 expect_death 'previous package is branch-truce for arm64, not branch-truce for amd64' "$previous
     IDENTITY='branch-truce|1.0.0|arm64' check_previous /previous.deb 1.2.3 amd64"
 echo 'package checker home, application, previous package and removal contract passed'
+
+# Run the complete checker and real Debian adapter, with only native tool I/O stubbed.
+mkdir -p "$work/native"
+cat > "$work/native/dpkg-deb" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    -f) case "$3" in
+        Package) echo branch-truce ;; Version) echo 1.2.3 ;; Architecture) echo amd64 ;;
+        Depends) echo 'dependency boundary reached' >&2; exit 43 ;;
+    esac ;;
+    --fsys-tarfile) sed 's|^/|./|' "$CHECK_PAYLOAD" ;;
+    --ctrl-tarfile) case "$CHECK_SCRIPT_STATUS" in
+        0) echo ./postinst ;; 1) echo ./control ;; 2) echo 'native inspection refused' >&2; exit 42 ;;
+    esac ;;
+    *) exit 99 ;;
+esac
+STUB
+printf '#!/bin/sh\ncat\n' > "$work/native/tar"
+chmod +x "$work/native/"*
+export CHECK_PAYLOAD=$work/expected
+(source "$root/packaging/scripts/check-package.sh"
+    source "$root/packaging/scripts/pkg-deb.sh"
+    { installed_files "$root/packaging/installed-files.txt"; pkg_extra_files; } | sort) > "$CHECK_PAYLOAD"
+touch "$work/candidate.deb"
+for status in 0 1 2; do
+    if PATH="$work/native:$PATH" CHECK_SCRIPT_STATUS=$status bash "$root/packaging/scripts/check-package.sh" \
+        --format kubuntu-deb --version 1.2.3 --package "$work/candidate.deb" > "$work/result" 2>&1; then
+        fail "checker accepted script inspection status $status"
+    fi
+    case "$status" in
+        0) message='the package has scripts, triggers or configuration files' ;;
+        1) message='dependency boundary reached' ;;
+        2) message='cannot inspect package scripts' ;;
+    esac
+    grep -qF "$message" "$work/result" || { cat "$work/result"; fail "checker lost status $status"; }
+    if [[ "$status" == 2 ]]; then
+        grep -qF 'native inspection refused' "$work/result" || fail 'checker discarded native diagnostic'
+        if grep -qF 'PASS no package scripts' "$work/result"; then fail 'checker reported unreadable scripts as absent'; fi
+    fi
+done
+echo 'complete checker distinguishes present, absent and unreadable scripts'

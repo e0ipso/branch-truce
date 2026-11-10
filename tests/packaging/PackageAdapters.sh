@@ -30,6 +30,7 @@ TAGS
 cat > "$work/bin/dpkg-deb" <<'DPKG'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "${STUB_INSPECT_FAIL:-0}" != 1 || "$1" != --ctrl-tarfile ]] || { echo "inspection refused" >&2; exit 42; }
 case "$1" in
     -f) sed -n "s/^$3=//p" "$2/tags" ;;
     --ctrl-tarfile)
@@ -51,6 +52,7 @@ DPKG
 cat > "$work/bin/rpm" <<'RPM'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "${STUB_INSPECT_FAIL:-0}" != 1 || "$2" != --scripts ]] || { echo "inspection refused" >&2; exit 42; }
 case "$1 $2" in
     '-qp --qf') stub-tags "$4" "$3" ;;
     '-qp --scripts') if [ -s "$4/scripts" ]; then echo 'postinstall scriptlet (using /bin/sh):'; fi ;;
@@ -65,6 +67,7 @@ RPM
 cat > "$work/bin/bsdtar" <<'BSDTAR'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "${STUB_INSPECT_FAIL:-0}" != 1 || "$1" != -tf ]] || { echo "inspection refused" >&2; exit 42; }
 case "$1" in
     -xOf) [ "$3" = .PKGINFO ] || exit 9; sed 's/^\([a-z]*\)=/\1 = /' "$2/tags" ;;
     -tf) printf '.PKGINFO\n.MTREE\n'; if [ -s "$2/scripts" ]; then echo .INSTALL; fi; cat "$2/files" ;;
@@ -147,7 +150,7 @@ for family in deb rpm arch; do
     [ -z "$installed" ] || fail "$family reports '$installed' with nothing installed"
     pass
     # Scripts, triggers and configuration files all count; a plain payload does not.
-    adapter "$family" '! pkg_has_scripts "$1"' "$(package "$family" branch-truce 0 1.2.3)" \
+    adapter "$family" 'status=0; pkg_has_scripts "$1" || status=$?; [ "$status" = 1 ]' "$(package "$family" branch-truce 0 1.2.3)" \
         || fail "$family reports scripts for a plain package"
     pass
     adapter "$family" 'pkg_has_scripts "$1"' "$(package "$family" branch-truce 0 1.2.3 script)" \
@@ -158,6 +161,10 @@ for family in deb rpm arch; do
     pass
     adapter "$family" 'pkg_check_metadata "$1"' "$(package "$family" branch-truce 0 1.2.3)" \
         || fail "$family rejects the expected metadata"
+    pass
+    STUB_INSPECT_FAIL=1 adapter "$family" 'status=0; pkg_has_scripts "$1" || status=$?; [ "$status" = 2 ]' "$plain" \
+        2> "$work/error" || fail "$family lost the inspection failure status"
+    grep -q 'inspection refused' "$work/error" || fail "$family lost the inspection diagnostic"
     pass
     # Every adapter defines the whole contract.
     adapter "$family" 'declare -F pkg_identity pkg_check_metadata pkg_files pkg_extra_files pkg_has_scripts \

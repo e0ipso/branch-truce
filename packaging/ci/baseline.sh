@@ -60,7 +60,8 @@ check_component() {
 baseline_main() {
     local -A options=()
     cli_parse options - 'format=!' "$@" || { cli_usage $? usage; return; }
-    local format=${options[format]} family os found component minimum name
+    local format=${options[format]} family os found component minimum name components
+    components=$(tsv_column "$here/../minimum-versions.tsv" minimum) || return 2
     family=$(format_field "$format" family) && os=$(format_field "$format" os) || { usage >&2; return 2; }
     # shellcheck disable=SC1091
     . /etc/os-release
@@ -71,7 +72,7 @@ baseline_main() {
     while IFS=$'\t' read -r component minimum; do
         name=$(tsv_field "$here/../minimum-versions.tsv" "$component" "$family") || return 2
         check_component "$family" "$component" "$minimum" "$name"
-    done < <(tsv_column "$here/../minimum-versions.tsv" minimum)
+    done <<<"$components"
     [ "$failures" -eq 0 ] || return 1
 }
 

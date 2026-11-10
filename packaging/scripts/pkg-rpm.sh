@@ -11,8 +11,9 @@ _pkg_rpm_evr() {
     if [ "$1" = 0 ]; then printf '%s-%s\n' "$2" "$3"; else printf '%s:%s-%s\n' "$1" "$2" "$3"; fi
 }
 pkg_identity() {
-    local name epoch version release architecture license
-    IFS='|' read -r name epoch version release architecture license < <(_pkg_rpm_fields "$1") || return 1
+    local name epoch version release architecture license fields
+    fields=$(_pkg_rpm_fields "$1") || return 1
+    IFS='|' read -r name epoch version release architecture license <<<"$fields" || return 1
     printf '%s|%s|%s\n' "$name" "$(_pkg_rpm_evr "$epoch" "$version" "$release")" "$architecture"
 }
 pkg_check_metadata() {
@@ -51,9 +52,10 @@ pkg_refresh() { dnf makecache --refresh -y; }
 pkg_install() { dnf -y --setopt=localpkg_gpgcheck=False --setopt=install_weak_deps=False install "$1"; }
 pkg_remove() { dnf -y remove --no-autoremove branch-truce; }
 pkg_installed_version() {
-    local epoch version release
+    local epoch version release fields
     rpm -q branch-truce >/dev/null 2>&1 || return 0
-    IFS='|' read -r epoch version release < <(rpm -q --qf '%{EPOCHNUM}|%{VERSION}|%{RELEASE}\n' branch-truce) || return 1
+    fields=$(rpm -q --qf '%{EPOCHNUM}|%{VERSION}|%{RELEASE}\n' branch-truce) || return 1
+    IFS='|' read -r epoch version release <<<"$fields" || return 1
     _pkg_rpm_evr "$epoch" "$version" "$release"
 }
 pkg_verify_installed() { rpm -V branch-truce; }

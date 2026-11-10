@@ -20,13 +20,16 @@ builder_args() {
     return 2
 }
 
-builder_publish() {
-    local format=$1 version=$2 file=$3 output=$4 name
+builder_publish() (
+    local format=$1 version=$2 file=$3 output=$4 name temporary
     "$(dirname -- "${BASH_SOURCE[0]}")/package-identity.sh" --format "$format" --version "$version" "$file" >/dev/null \
         || return 1
     name=$(package_filename "$format" "$version") || return 1
-    # Copy under a temporary name, so an interrupted copy never leaves a
-    # truncated file with the release name.
-    cp -- "$file" "$output/.$name.partial" && mv -- "$output/.$name.partial" "$output/$name" || return 1
+    temporary=$(mktemp "$output/.$name.XXXXXXXX") || return 1
+    trap 'rm -f -- "$temporary"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    cp -- "$file" "$temporary" && chmod --reference="$file" "$temporary" \
+        && mv -T -- "$temporary" "$output/$name" || return 1
     printf '%s\n' "$output/$name"
-}
+)

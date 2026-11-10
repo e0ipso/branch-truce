@@ -4,6 +4,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 bash "$root/tests/packaging/DesktopPreparation.sh"
 bash "$root/tests/packaging/PackageChecker.sh"
+bash "$root/tests/packaging/AtomicPublication.sh"
+bash "$root/tests/tools/FixtureSafety.sh"
 bash "$root/tests/packaging/CompilerCacheMounts.sh"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

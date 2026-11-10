@@ -18,8 +18,9 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/lib/fixture.sh"
 source "$(dirname -- "${BASH_SOURCE[0]}")/lib/report.sh"
 
 app_id=com.canpicasoft.branch-truce
-home=/tmp/bt-home
-repo=/tmp/bt-repo
+fixture=
+home=
+repo=
 wayland_socket=/run/bt-wayland/wayland-0
 qml_root=/usr/lib/x86_64-linux-gnu/qt6/qml
 result_text='merged é ü'
@@ -41,8 +42,8 @@ isolated() { fixture_run "$home" "$repo" "$@"; }
 # A fresh home and a repository stopped on one merge conflict in tracked.txt.
 fresh_fixture() {
     pkill -x branch-truce 2>/dev/null || true
-    fixture_home "$home" && fixture_gitconfig "$home" /usr/bin/branch-truce \
-        && fixture_merge_repo "$home" "$repo" tracked.txt || fail "fixture merge did not conflict"
+    fixture_home "$fixture" "$home" && fixture_gitconfig "$fixture" "$home" /usr/bin/branch-truce \
+        && fixture_merge_repo "$fixture" "$home" "$repo" tracked.txt || fail "fixture merge did not conflict"
 }
 
 gui_pids() {
@@ -400,6 +401,14 @@ installed_checks_main() {
     step=${step//-/_}
     declare -F -- "$step" >/dev/null || { usage >&2; return 2; }
     shift
+    if [[ "$step" == c_install ]]; then
+        fixture=$(fixture_root) || return 1
+        (set -o noclobber; printf '%s\n' "$fixture" > /run/bt-installed-fixture-root) || return 1
+    else
+        fixture=$(cat /run/bt-installed-fixture-root) || return 1
+    fi
+    home=$fixture/home repo=$fixture/repo
+    fixture_path "$fixture" "$home" && fixture_path "$fixture" "$repo" || return 1
     "$step" "$@"
     ((${failures:-0} == 0))
 }

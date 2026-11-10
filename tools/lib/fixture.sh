@@ -6,10 +6,9 @@
 # runs nothing. Functions take everything they use as arguments, print their
 # result on stdout, print diagnostics on stderr and return non-zero on failure.
 #
-#   fixture_safe_path PATH                 PATH is absolute, below a top-level
-#                                          directory and free of "..", so it is
-#                                          safe to empty
-#   fixture_home HOME                      (re)creates HOME's data, config,
+#   fixture_root                          creates an owned disposable root
+#   fixture_path ROOT PATH                canonical strict containment in ROOT
+#   fixture_home ROOT HOME                 (re)creates HOME's data, config,
 #                                          cache, tmp and runtime directories
 #   fixture_env HOME                       NUL-separated NAME=VALUE pairs for
 #                                          `env -i`: a minimal PATH, HOME, TMPDIR,
@@ -18,10 +17,10 @@
 #   fixture_run HOME DIR [NAME=VALUE...] COMMAND...
 #                                          COMMAND in DIR with only fixture_env's
 #                                          environment and the NAME=VALUE pairs
-#   fixture_gitconfig HOME [LAUNCHER]      writes HOME/gitconfig with a commit
+#   fixture_gitconfig ROOT HOME [LAUNCHER] writes HOME/gitconfig with a commit
 #                                          identity and, with LAUNCHER, the
 #                                          `truce` mergetool that runs it
-#   fixture_merge_repo HOME REPO FILE...   rebuilds REPO stopped on a merge of
+#   fixture_merge_repo ROOT HOME REPO FILE... rebuilds REPO stopped on a merge of
 #                                          branch side into main in which every
 #                                          FILE conflicts
 #   smoke_record_ready OUTPUT              OUTPUT of --smoke-test opened the
@@ -43,20 +42,29 @@
 # holds NUL bytes) and anything else is a single line of text. Commits carry
 # fixed dates, so commit ids repeat from run to run.
 
-fixture_safe_path() {
-    local path=${1-}
-    case "$path" in
-        /*/*) ;;
-        *) echo "error: refusing to use '$path': not an absolute path below a top-level directory" >&2; return 2 ;;
-    esac
-    case "/$path/" in
-        */../*|*/./*) echo "error: refusing to use '$path': it has a . or .. component" >&2; return 2 ;;
-    esac
+fixture_root() {
+    local root
+    root=$(mktemp -d /tmp/bt-fixture.XXXXXXXX) || return 1
+    printf '%s\n' "$root" > "$root/.fixture-owner" || return 1
+    printf '%s\n' "$root"
+}
+
+fixture_path() {
+    local root=${1-} path=${2-} canonical
+    if [[ "$root" == /tmp/bt-fixture.* && ! -L "$root/.fixture-owner" \
+        && "$(stat -c '%u %a' -- "$root" 2>/dev/null)" == "$(id -u) 700" \
+        && "$(cat -- "$root/.fixture-owner" 2>/dev/null)" == "$root" \
+        && "$(realpath -e -- "$root")" == "$root" ]]; then
+        canonical=$(realpath -m -- "$path") || return 2
+        [[ "$canonical" == "$root/"* && "$canonical" == "$path" ]] && return 0
+    fi
+    echo "error: refusing fixture path '$path': outside canonical owned root '$root'" >&2
+    return 2
 }
 
 fixture_home() {
-    local home=${1-} directory
-    fixture_safe_path "$home" || return 2
+    local root=${1-} home=${2-} directory
+    fixture_path "$root" "$home" || return 2
     rm -rf -- "$home/data" "$home/config" "$home/cache" "$home/tmp" "$home/runtime" \
         "$home/mergetool.log" "$home/mergetool.status" || return 1
     for directory in data config cache tmp runtime; do
@@ -67,7 +75,6 @@ fixture_home() {
 
 fixture_env() {
     local home=${1-}
-    fixture_safe_path "$home" || return 2
     printf '%s\0' "PATH=/usr/bin:/bin" "HOME=$home" "TMPDIR=$home/tmp" "LC_ALL=C.UTF-8" \
         "XDG_DATA_HOME=$home/data" "XDG_CONFIG_HOME=$home/config" "XDG_CACHE_HOME=$home/cache" \
         "XDG_RUNTIME_DIR=$home/runtime" "GIT_CONFIG_NOSYSTEM=1" "GIT_CONFIG_GLOBAL=$home/gitconfig" \
@@ -83,8 +90,9 @@ fixture_run() {
 }
 
 fixture_gitconfig() {
-    local home=${1-} launcher=${2-}
-    fixture_safe_path "$home" || return 2
+    local root=${1-} home=${2-} launcher=${3-}
+    fixture_path "$root" "$home" || return 2
+    [[ ! -L "$home/gitconfig" ]] || return 2
     {
         if [[ -n "$launcher" ]]; then
             printf '[mergetool "truce"]\n'
@@ -106,11 +114,14 @@ fixture_content() {
 }
 
 fixture_merge_repo() {
-    local home=${1-} repo=${2-} label file conflicted expected
-    shift 2 || { echo 'usage: fixture_merge_repo HOME REPO FILE...' >&2; return 2; }
-    (($# > 0)) || { echo 'usage: fixture_merge_repo HOME REPO FILE...' >&2; return 2; }
-    fixture_safe_path "$home" && fixture_safe_path "$repo" || return 2
-    [[ -f "$home/gitconfig" ]] || fixture_gitconfig "$home" || return 1
+    local root=${1-} home=${2-} repo=${3-} label file conflicted expected
+    shift 3 || { echo 'usage: fixture_merge_repo ROOT HOME REPO FILE...' >&2; return 2; }
+    (($# > 0)) || { echo 'usage: fixture_merge_repo ROOT HOME REPO FILE...' >&2; return 2; }
+    fixture_path "$root" "$home" && fixture_path "$root" "$repo" || return 2
+    for file in "$@"; do
+        [[ "$file" != /* && "$file" != .* ]] && fixture_path "$root" "$repo/$file" || return 2
+    done
+    [[ -f "$home/gitconfig" ]] || fixture_gitconfig "$root" "$home" || return 1
     rm -rf -- "$repo" && mkdir -p -- "$repo" || return 1
     _fixture_git "$home" "$repo" init --quiet || return 1
     for label in base side main; do
@@ -128,7 +139,7 @@ fixture_merge_repo() {
         echo "error: the fixture merge in $repo did not conflict" >&2
         return 1
     fi
-    conflicted=$(_fixture_git "$home" "$repo" diff --name-only --diff-filter=U | LC_ALL=C sort)
+    conflicted=$(_fixture_git "$home" "$repo" diff --name-only --diff-filter=U | LC_ALL=C sort) || return 1
     expected=$(printf '%s\n' "$@" | LC_ALL=C sort)
     [[ "$conflicted" == "$expected" ]] || {
         echo "error: the fixture merge in $repo left '${conflicted//$'\n'/ }' unmerged, not '${expected//$'\n'/ }'" >&2

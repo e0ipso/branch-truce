@@ -7,6 +7,8 @@ import struct
 import subprocess
 import zlib
 
+from processes import run
+
 REFERENCE = Path(__file__).resolve().parent / 'reference'
 PATHS = ['src/net/retry.cpp', 'docs/release-notes.md', 'assets/logo.png']
 
@@ -49,8 +51,11 @@ def git(repo, *args, check=True):
                GIT_AUTHOR_NAME='Branch Truce Fixture', GIT_AUTHOR_EMAIL='fixture@example.invalid',
                GIT_COMMITTER_NAME='Branch Truce Fixture', GIT_COMMITTER_EMAIL='fixture@example.invalid',
                GIT_AUTHOR_DATE='2000-01-01T00:00:00+0000', GIT_COMMITTER_DATE='2000-01-01T00:00:00+0000')
-    result = subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.attributesFile=/dev/null', '-C', str(repo), *args],
-                            env=env, capture_output=True)
+    try:
+        result = run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.attributesFile=/dev/null', '-C', str(repo), *args], env=env)
+    except subprocess.SubprocessError as error:
+        diagnostic = (getattr(error, 'stderr', b'') or b'').decode(errors='replace').strip()
+        raise GitError(f'git {" ".join(args)} in {repo}: {error}: {diagnostic}') from error
     if check and result.returncode:
         raise GitError(f'git {" ".join(args)} in {repo} exited {result.returncode}: '
                        + result.stderr.decode(errors='replace').strip())

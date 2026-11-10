@@ -43,14 +43,15 @@ _format_json() { local value=${1//\\/\\\\}; printf '"%s"' "${value//\"/\\\"}"; }
 
 # The values come from the table itself; quotes and backslashes are escaped anyway.
 format_matrix() {
-    local id target fidelity separator=''
+    local id target fidelity ids separator=''
+    ids=$(format_ids) || return 2
     printf '{"include":['
     while IFS= read -r id; do
         target=$(format_field "$id" target) && fidelity=$(format_field "$id" native_fidelity) || return 2
         printf '%s{"format":%s,"target":%s,"native_fidelity":%s}' "$separator" \
             "$(_format_json "$id")" "$(_format_json "$target")" "$(_format_json "$fidelity")"
         separator=,
-    done < <(format_ids)
+    done <<<"$ids"
     printf ']}\n'
 }
 

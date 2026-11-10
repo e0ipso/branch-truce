@@ -40,12 +40,13 @@ usage_error() { [ $# -eq 0 ] || echo "error: $*" >&2; usage >&2; exit 2; }
 # formats, previous_version and previous_package, or exits 2 on a usage error.
 parse_args() {
     local -A options=()
-    local extension
+    local extension ids
     cli_parse options - 'version=! output=! format= previous-version= previous-package=' "$@" || { cli_usage $? usage; exit; }
     version=${options[version]} output=${options[output]}
     previous_version=${options[previous-version]-} previous_package=${options[previous-package]-}
     if [ "${options[format]:-all}" = all ]; then
-        mapfile -t formats < <(format_ids)
+        ids=$(format_ids) || exit 2
+        mapfile -t formats <<<"$ids"
     else
         format_field "${options[format]}" id >/dev/null || usage_error
         formats=("${options[format]}")
