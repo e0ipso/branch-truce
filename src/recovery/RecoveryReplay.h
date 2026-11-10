@@ -24,7 +24,7 @@ struct RecoveryMutation {
 
 struct RecoveryReplay {
     bool succeeded = false;
-    QString error;
+    Problem problem;
     // The journal was written by a newer Branch Truce, not damaged.
     bool newerFormat = false;
     bool incompleteTail = false;

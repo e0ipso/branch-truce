@@ -1,6 +1,7 @@
 // The recovery store persists app-owned journals and text payloads; a lease is the only way to append.
 #pragma once
 
+#include "problems/Problem.h"
 #include "storage/FileSystem.h"
 #include <QByteArray>
 #include <QJsonObject>
@@ -38,9 +39,7 @@ struct StoredTransaction {
 
 struct RecoveryRead {
     bool succeeded = false;
-    // An encoded Problem; it passes through the session store, and the app
-    // shows it translated.
-    QString error;
+    Problem problem;
     // The journal or one of its records has a format later than this build reads.
     bool newerFormat = false;
     QList<StoredTransaction> transactions;
@@ -51,8 +50,7 @@ struct RecoveryRead {
 
 struct RecoveryCommit {
     bool succeeded = false;
-    // An encoded Problem, as for RecoveryRead.
-    QString error;
+    Problem problem;
 };
 
 // App-owned data only. Reading validates frames and payloads, but neither the
@@ -63,7 +61,7 @@ public:
     explicit RecoveryStore(QString directory, std::shared_ptr<const FileSystem> files = systemFileSystem());
     [[nodiscard]] const QString &directory() const { return directory_; }
     [[nodiscard]] RecoveryRead read() const;
-    [[nodiscard]] QByteArray payload(const QByteArray &digest, QString *error = nullptr) const;
+    [[nodiscard]] QByteArray payload(const QByteArray &digest, Problem *problem = nullptr) const;
     [[nodiscard]] static QByteArray digest(const QByteArray &bytes);
 
 private:
@@ -99,7 +97,7 @@ private:
     [[nodiscard]] RecoveryCommit append(const RecoveryTransaction &transaction);
     [[nodiscard]] bool openJournal(QFile &file, RecoveryRead &result) const;
     [[nodiscard]] RecoveryRead parse(QIODevice &journal, std::set<QByteArray> *payloads = nullptr) const;
-    [[nodiscard]] const JournalEnd *refreshEnd(QString *error);
+    [[nodiscard]] const JournalEnd *refreshEnd(Problem *problem);
     [[nodiscard]] std::optional<FileStamp> stampOf(const QFile &file) const;
 
     QString directory_;

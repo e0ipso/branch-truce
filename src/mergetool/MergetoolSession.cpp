@@ -1,10 +1,10 @@
 // The mergetool session connects waiting Git launchers to the window and tracks their published results.
 #include "mergetool/MergetoolSession.h"
+#include "problems/ProblemText.h"
 #include "recovery/RecoveryRestore.h"
+#include "storage/OffThread.h"
 
 #include <QCryptographicHash>
-#include <QFutureWatcher>
-#include <QPromise>
 #include <QThreadPool>
 #include <QTimer>
 #include <algorithm>
@@ -57,7 +57,7 @@ MergetoolSession::Listen MergetoolSession::listen(const git::RepositoryContext &
     sessionKey_ = mergetoolSessionKey(repository);
     repository_ = repository;
     if (Problem problem; !prepareMergetoolSocketDirectory(config_.socketDirectory, &problem))
-        return unavailable(problem.encoded());
+        return unavailable(problem_text::text(problem));
     QString reason;
     const auto listening = server_.listen(name, &reason);
     if (listening == Listen::Unavailable) return unavailable(reason);
@@ -203,29 +203,21 @@ void MergetoolSession::attachReceived(quint64 connection, const AttachMessage &m
         return;
     }
     // Reading and hashing up to four copies is file I/O, so it runs off the GUI thread.
-    auto promise = std::make_shared<QPromise<IntakeCheck>>();
-    auto *watcher = new QFutureWatcher<IntakeCheck>(this);
-    connect(watcher, &QFutureWatcher<IntakeCheck>::finished, this, [this, watcher, connection, message] {
-        const auto check = watcher->result();
-        watcher->deleteLater();
-        intakeChecked(connection, message, check);
-    });
-    watcher->setFuture(promise->future());
-    promise->start();
-    workers_.start(
-        [promise, directory = message.intake, root = mergetoolIntakeRoot(config_.socketDirectory), key = sessionKey_] {
+    runOffThread(
+        workers_, this,
+        [directory = message.intake, root = mergetoolIntakeRoot(config_.socketDirectory), key = sessionKey_] {
             IntakeCheck check;
             check.intake = readMergetoolIntake(directory, root, key, &check.error);
-            promise->addResult(check);
-            promise->finish();
-        });
+            return check;
+        },
+        [this, connection, message](const IntakeCheck &check) { intakeChecked(connection, message, check); });
 }
 
 void MergetoolSession::intakeChecked(quint64 connection, const AttachMessage &message, const IntakeCheck &check)
 {
     if (!check.intake || check.intake->invocation != message.invocation) {
         reject(connection, message.invocation,
-               check.error.isEmpty() ? tr("The mergetool inputs could not be kept.") : check.error.encoded());
+               check.error.isEmpty() ? tr("The mergetool inputs could not be kept.") : problem_text::text(check.error));
         return;
     }
     if (indexOfPath(check.intake->path) >= 0) {
@@ -403,17 +395,20 @@ void MergetoolSession::acceptCopiedLaunches()
         // so Git inspects both again off the GUI thread before the error clears.
         const auto fileId = entry->first;
         const auto identity = entry->second;
+        auto live = std::make_shared<storage::DestinationCapture>();
         const auto task = coordinator_.submit(
             fileId, file->current().id,
-            [snapshots = *file->snapshots(), identity, repository = loadedRepository_(),
-             git = config_.git](const TaskInput &, const TaskControl &) {
+            [snapshots = *file->snapshots(), identity, repository = loadedRepository_(), git = config_.git, live,
+             path = QByteArray::fromStdString(file->path()),
+             files = publisher_.destinations()](const TaskInput &, const TaskControl &) {
                 TaskResult result;
-                result.diagnostic = revalidateCopiedLaunch(snapshots, identity, repository, git).encoded();
+                result.problem = revalidateCopiedLaunch(snapshots, identity, repository, git, files);
+                *live = storage::captureDestination(repository.worktreeRoot, path, files);
                 return result;
             },
-            [this, fileId, identity](const TaskCompletion &completion) {
+            [this, fileId, identity, live](const TaskCompletion &completion) {
                 copiedLaunchChecks_.erase(fileId);
-                settleCopiedLaunch(fileId, identity, completion.result.diagnostic);
+                settleCopiedLaunch(fileId, identity, completion.result.problem, *live);
             });
         if (task != 0) copiedLaunchChecks_.insert_or_assign(fileId, task);
         ++entry;
@@ -421,7 +416,7 @@ void MergetoolSession::acceptCopiedLaunches()
 }
 
 void MergetoolSession::settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity,
-                                          const QString &failure)
+                                          const Problem &failure, const storage::DestinationCapture &live)
 {
     const auto entry = copiedLaunches_.find(fileId);
     if (entry == copiedLaunches_.end() || entry->second != identity) return;
@@ -433,14 +428,11 @@ void MergetoolSession::settleCopiedLaunch(const std::string &fileId, const Snaps
     // The launcher left while Git inspected the path; a later attach checks again.
     if (!launchedWithCapturedBytes(*file)) return;
     // The copy must still be the file recovery validated; any change keeps the path failed.
-    const bool settled = failure.isEmpty() && publisher_.adoptCopiedLaunch(fileId, identity)
-        ? files_.settleRecoveryFailure(fileId, copiedLaunchFailure())
-        : files_.settleRecoveryFailure(
-              fileId, copiedLaunchFailure(),
-              !failure.isEmpty()
-                  ? failure
-                  : tr("Recovered draft retained, but the repository file changed after recovery validation. "
-                       "Work remains outstanding; no publication is authorized."));
+    const bool settled = failure.isEmpty() && publisher_.adoptCopiedLaunch(fileId, identity, live)
+        ? files_.settleRecoveryFailure(fileId, ProblemCode::RecoveryCopiedLaunch)
+        : files_.settleRecoveryFailure(fileId, ProblemCode::RecoveryCopiedLaunch,
+                                       !failure.isEmpty() ? failure
+                                                          : Problem{ProblemCode::RecoveryChangedAfterValidation});
     copiedLaunches_.erase(entry);
     if (settled) Q_EMIT changed();
 }

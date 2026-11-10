@@ -23,8 +23,7 @@ Kirigami.ApplicationWindow {
     // Hiding the file list keeps the selected file, the editor location and the unsaved result.
     property bool fileListVisible: true
     readonly property bool supportedSelection: selectedFile.supported
-    readonly property bool binarySelection: OutsideAppText.binaryExcluded(
-        selectedFile.support === FileStates.SupportKind.OutsideApp, selectedFile.supportDetail, selectedFile.pathBytes)
+    readonly property bool binarySelection: selectedFile.binaryExcluded
     readonly property string selectedAddCommand: OutsideAppText.gitAddCommand(selectedFile.pathBytes)
     // Fills %1, %2 and so on in one pass, so repository text in a value is never
     // read as another placeholder.
@@ -74,17 +73,17 @@ Kirigami.ApplicationWindow {
     }
     // The placeholder for a session with nothing to list: an empty session, an unsupported
     // operation and a failed open are three different messages.
-    function sessionPlaceholderIcon(state: string): string {
+    function sessionPlaceholderIcon(state: int): string {
         switch (state) {
-        case "error": return "dialog-error"
-        case "unsupported": return "unknown"
+        case SessionLoader.StartupState.Error: return "dialog-error"
+        case SessionLoader.StartupState.Unsupported: return "unknown"
         default: return "checkmark"
         }
     }
-    function sessionPlaceholderText(state: string): string {
+    function sessionPlaceholderText(state: int): string {
         switch (state) {
-        case "error": return qsTr("Could not open the conflicts")
-        case "unsupported": return qsTr("This operation is outside Branch Truce")
+        case SessionLoader.StartupState.Error: return qsTr("Could not open the conflicts")
+        case SessionLoader.StartupState.Unsupported: return qsTr("This operation is outside Branch Truce")
         default: return qsTr("No conflicted files")
         }
     }

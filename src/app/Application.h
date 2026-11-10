@@ -79,6 +79,8 @@ public:
 private:
     // First, so it outlives every collaborator that runs Git.
     std::shared_ptr<git::GitProcesses> gitProcesses_;
+    // The coordinator's workers; they outlive it, so it can wait for them.
+    QThreadPool workers_;
     SessionStore store_;
     SessionModel files_;
     SessionCoordinator coordinator_;

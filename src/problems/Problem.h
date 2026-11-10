@@ -1,4 +1,4 @@
-// A problem is a typed failure with the values its message names, which the app turns into translated text.
+// A problem is a typed failure with the values its message names, which ProblemText turns into translated text.
 #pragma once
 
 #include <QString>
@@ -9,9 +9,9 @@
 
 namespace branch_truce {
 
-// Every failure the layers between the engine and the app report. Each name
-// is stable: an encoded problem stores it. src/app/ProblemText.cpp holds the
-// sentence of each; nothing below the app formats one.
+// Every failure the layers between the engine and the app report, grouped by
+// the layer that reports it. Each name is stable: an encoded problem stores
+// it. ProblemText.cpp holds the sentence of each.
 // clang-format off
 #define BRANCH_TRUCE_PROBLEMS(X) \
     /* Text formats */ \
@@ -104,6 +104,8 @@ namespace branch_truce {
     X(RecoveryPayloadCommit) \
     X(RecoveryStorageSync) \
     X(RecoveryCommitFailed) \
+    X(RecoveryStoreHeld) \
+    X(RecoveryStoreUnavailable) \
     /* Git requests */ \
     X(GitInvalidRequest) \
     X(GitUnknownOperation) \
@@ -270,6 +272,20 @@ namespace branch_truce {
     X(RecoveryTailIgnored) \
     X(RecoveryOperationChanged) \
     X(RecoveryMarkerPermissions) \
+    X(RecoveryMarkerWrite) \
+    X(RecoveryRecordInvalid) \
+    /* Session tasks and loading */ \
+    X(TaskSuperseded) \
+    X(TaskRecoveryBlocked) \
+    X(TaskRecoveryUnavailable) \
+    X(TaskThrew) \
+    X(TaskNotAdmitted) \
+    X(TaskInspectionFailed) \
+    X(TaskUnverified) \
+    X(TaskOutcomeNotRetained) \
+    X(LoadOpening) \
+    X(LoadInspectingRecovery) \
+    X(LoadIncomplete) \
     /* Mergetool files, intakes and sockets */ \
     X(MergetoolPathEmpty) \
     X(MergetoolPathLeaves) \
@@ -318,9 +334,8 @@ struct Problem {
     // Whether this problem or one it wraps has code.
     [[nodiscard]] bool involves(ProblemCode problemCode) const;
 
-    // A stable text form for strings that cross into the engine, the session
-    // store or a journal, such as a file's support detail. The app decodes
-    // and translates it where it shows it.
+    // A stable text form for the one string the engine keeps for an adapter,
+    // a file's support detail. EngineText decodes it where it shows it.
     [[nodiscard]] QString encoded() const;
     // The problem an encoded text holds, or nothing for any other text.
     [[nodiscard]] static std::optional<Problem> decode(const QString &text);

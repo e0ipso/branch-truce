@@ -49,7 +49,6 @@ Transition apply(RecoveryAction action, FileSession &file, const RecoveryRecordR
         return file.recordStage(outcome.revision, outcome.outcome, std::move(objectId), std::move(mode),
                                 outcome.detail);
     }
-    case RecoveryAction::Support: return file.setSupport(record.support(), record.supportDetail());
     case RecoveryAction::LoadLarge: return file.loadLargeFile();
     case RecoveryAction::MutationIntent:
     case RecoveryAction::MutationObservation: return Transition::Applied;
@@ -72,7 +71,7 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
     RecoveryReplay result;
     const auto read = store.read();
     if (!read.succeeded) {
-        result.error = read.error;
+        result.problem = read.problem;
         result.newerFormat = read.newerFormat;
         return result;
     }
@@ -168,7 +167,7 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
         }
         result.succeeded = true;
     } catch (const std::exception &error) {
-        result.error = QString::fromUtf8(error.what());
+        result.problem = {ProblemCode::RecoveryRecordInvalid, {QString::fromUtf8(error.what())}};
         result.files.clear();
         result.mutations.clear();
         result.editedFiles.clear();

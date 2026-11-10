@@ -30,8 +30,7 @@ bool SessionStore::repositions(Action action)
     case Action::Open:
     case Action::StageOutcome:
     case Action::DiscardToStaged:
-    case Action::DiscardToCheckpoint:
-    case Action::Support: return true;
+    case Action::DiscardToCheckpoint: return true;
     case Action::ReplaceDraft:
     case Action::Undo:
     case Action::Redo:
@@ -87,10 +86,10 @@ std::optional<SessionStore::Action> SessionStore::pendingAction(const std::strin
     return pending ? std::optional<Action>(pending->action) : std::nullopt;
 }
 
-QString SessionStore::pendingError(const std::string &id) const
+Problem SessionStore::pendingError(const std::string &id) const
 {
     const auto *pending = journal_.pending(id);
-    return pending ? pending->error : QString{};
+    return pending ? pending->problem : Problem{};
 }
 
 const Draft *SessionStore::pendingDraft(const std::string &id) const
@@ -158,13 +157,13 @@ void SessionStore::typedRecordWritten(const std::string &id, const FileSession &
     notify(row, std::nullopt);
 }
 
-void SessionStore::recordRecoveryFailure(const std::string &id, const QString &error)
+void SessionStore::recordRecoveryFailure(const std::string &id, const Problem &problem)
 {
-    journal_.recordFailure(id, error);
+    journal_.recordFailure(id, problem);
     if (const auto row = rowOf(id); row >= 0) notify(static_cast<std::size_t>(row), std::nullopt);
 }
 
-bool SessionStore::settleRecoveryFailure(const std::string &id, const QString &expected, const QString &replacement)
+bool SessionStore::settleRecoveryFailure(const std::string &id, const Problem &expected, const Problem &replacement)
 {
     if (!journal_.settleFailure(id, expected, replacement)) return false;
     if (const auto row = rowOf(id); row >= 0) notify(static_cast<std::size_t>(row), std::nullopt);
@@ -206,14 +205,11 @@ Transition SessionStore::retryRecovery(const std::string &id)
     return journal_.pending(id) ? Transition::Blocked : Transition::Applied;
 }
 
-bool SessionStore::canCompleteLoad(const std::vector<FileSession> &files) const
+bool SessionStore::canRestoreLoad() const
 {
-    if (files.size() != files_.size()) return false;
-    for (std::size_t row = 0; row < files_.size(); ++row) {
-        const auto &file = files_[row];
-        if (file.id() != files[row].id() || file.path() != files[row].path() || file.support() != Support::Unreadable
-            || file.snapshots() || file.current().id != 1 || file.current().draft != Draft{}
-            || !file.publication().untouched())
+    for (const auto &file : files_) {
+        if (file.support() != Support::Unreadable || file.snapshots() || file.current().id != 1
+            || file.current().draft != Draft{} || !file.publication().untouched())
             return false;
     }
     return journal_.onlyOpenCapturesPending();
@@ -305,7 +301,9 @@ Transition SessionStore::replaceDraft(const std::string &id, RevisionId expected
 }
 Transition SessionStore::editResult(const std::string &id, RevisionId expected, ResultEdit edit)
 {
-    return update(id, Action::ReplaceDraft, [&](auto &file) { return file.editResult(expected, std::move(edit)); });
+    return update(id, Action::ReplaceDraft, [&](auto &file) {
+        return file.editResult(expected, std::move(edit), {.realignment = Realignment::Deferred});
+    });
 }
 Transition SessionStore::typeResult(const std::string &id, RevisionId expected, ResultEdit edit)
 {
@@ -432,10 +430,6 @@ Transition SessionStore::recordStage(const std::string &id, RevisionId revision,
     return update(id, Action::StageOutcome, [&](auto &file) {
         return file.recordStage(revision, outcome, std::move(objectId), std::move(mode), std::move(detail));
     });
-}
-Transition SessionStore::setSupport(const std::string &id, Support support, std::string detail)
-{
-    return update(id, Action::Support, [&](auto &file) { return file.setSupport(support, std::move(detail)); });
 }
 Transition SessionStore::loadLargeFile(const std::string &id)
 {

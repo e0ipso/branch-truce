@@ -12,27 +12,25 @@
 namespace branch_truce {
 
 // The read-only repository facts reconciliation checks recovered work
-// against. The default runs Git on a runner from git and reads the
-// destination; both block, so call it from a worker thread. A test
-// substitutes its own facts.
+// against: Git run on a runner from git, and the destination read through
+// files. Both block, so call it from a worker thread.
 class RepositoryProbe {
 public:
-    explicit RepositoryProbe(git::GitRunners git);
-    virtual ~RepositoryProbe() = default;
+    RepositoryProbe(git::GitRunners git, std::shared_ptr<const storage::FileSystem> files);
     // Runs one read-only Git request to completion.
-    [[nodiscard]] virtual git::Result inspect(const git::Request &request) const;
-    [[nodiscard]] virtual storage::DestinationCapture capture(const QString &worktreeRoot,
-                                                              const QByteArray &path) const;
+    [[nodiscard]] git::Result inspect(const git::Request &request) const;
+    [[nodiscard]] storage::DestinationCapture capture(const QString &worktreeRoot, const QByteArray &path) const;
 
 private:
     git::GitRunners git_;
+    std::shared_ptr<const storage::FileSystem> files_;
 };
 
 struct Reconciliation {
     // Empty when the file may be edited; otherwise its recovery error.
     Problem failure;
     // The live identity when the only change is git mergetool's copy of the
-    // launch file. The file still fails with copiedLaunchFailure().
+    // launch file. The file still fails with RecoveryCopiedLaunch.
     std::optional<SnapshotFileIdentity> copied;
 };
 
@@ -46,13 +44,9 @@ struct Reconciliation {
                                        const git::RepositoryContext &repository, const RepositoryProbe &probe,
                                        storage::RecoveryLease &lease);
 
-// The recovery error of a file git mergetool replaced with a copy, encoded
-// as the session store keeps it.
-[[nodiscard]] QString copiedLaunchFailure();
-
 // Empty while the file still has the identity validation observed and the
 // launch bytes, and its index entries and conversion policy still match the
-// capture. Otherwise the error that replaces copiedLaunchFailure.
+// capture. Otherwise the error that replaces RecoveryCopiedLaunch.
 [[nodiscard]] Problem revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
                                              const git::RepositoryContext &repository, const RepositoryProbe &probe);
 }

@@ -1,6 +1,6 @@
 add_library(branch_truce_controller STATIC Application.cpp Application.h AppPaths.cpp AppPaths.h Appearance.cpp Appearance.h
     ChoicePreviewFlow.cpp ChoicePreviewFlow.h CommandFeedback.cpp CommandFeedback.h CommandGuard.cpp CommandGuard.h
-    EngineText.cpp EngineText.h ProblemText.cpp ProblemText.h FileCommands.cpp FileCommands.h FileNavigator.cpp FileNavigator.h
+    EngineText.cpp EngineText.h FileCommands.cpp FileCommands.h FileNavigator.cpp FileNavigator.h
     FilePresentation.cpp FilePresentation.h FileStates.h MergetoolStatus.cpp MergetoolStatus.h
     NavigationTargets.cpp NavigationTargets.h TextPositions.h SelectedFile.cpp SelectedFile.h Selection.cpp Selection.h
     SessionCompletion.cpp SessionCompletion.h SessionHandoff.cpp SessionHandoff.h SessionModel.cpp SessionModel.h

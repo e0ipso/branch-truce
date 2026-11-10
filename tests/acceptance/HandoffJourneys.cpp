@@ -349,7 +349,7 @@ void blockedStartupRestoresTheChosenSession(Sandbox &sandbox)
         // a process, not the layout deadline of settleFor.
         waitFor(
             "the second window", [&] { return !two.loader()->opening(); }, [&] { return loaderState(*two.loader()); });
-        CHECK(two.loader()->startupState() == QStringLiteral("ready"));
+        CHECK(two.loader()->startupState() == SessionLoader::StartupState::Ready);
         edit(one.app(), "first window\n");
         edit(two, "second window\n");
         first = one.app().store()->recoveryDirectory();
@@ -374,7 +374,7 @@ void blockedStartupRestoresTheChosenSession(Sandbox &sandbox)
         "the chosen session to be restored",
         [&] { return !app.loader()->opening() && app.loader()->recoveryChoices().isEmpty(); },
         [&] { return loaderState(*app.loader()); });
-    CHECK(app.loader()->startupState() == QStringLiteral("ready"));
+    CHECK(app.loader()->startupState() == SessionLoader::StartupState::Ready);
     CHECK(app.store()->recoveryDirectory() == first);
     expectContains(app.loader()->detail(), secondName + " was set aside, not deleted", "set aside");
     settleFor("restored text", [&] { return scene.text("resultText").startsWith(QStringLiteral("first window\n")); });

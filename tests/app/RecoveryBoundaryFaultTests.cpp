@@ -3,7 +3,6 @@
 #include "app/AppPaths.h"
 #include "app/Application.h"
 #include "app/EngineText.h"
-#include "app/ProblemText.h"
 #include "app/SessionModel.h"
 #include "app/Translations.h"
 #include "fixtures/AppSession.h"
@@ -14,6 +13,7 @@
 #include "fixtures/ScopedEnvironment.h"
 #include "fixtures/SyncFaults.h"
 #include "mergetool/MergetoolSocket.h"
+#include "problems/ProblemText.h"
 #include "recovery/RecoveryRestore.h"
 #include "storage/DestinationWriter.h"
 
@@ -355,7 +355,8 @@ QJsonObject labeled(const QByteArray &output, const QByteArray &label)
 QJsonObject replayed(const QString &directory, bool *incomplete)
 {
     const auto replay = replayRecovery(storage::RecoveryStore(directory));
-    if (!replay.succeeded) throw std::runtime_error("recovery replay: " + replay.error.toStdString());
+    if (!replay.succeeded)
+        throw std::runtime_error("recovery replay: " + problem_text::text(replay.problem).toStdString());
     CHECK(replay.files.size() == 1);
     if (incomplete != nullptr) *incomplete = replay.incompleteTail;
     return observation(replay.files.front());
@@ -403,7 +404,7 @@ public:
         scoped.emplace(environment);
         controller = std::make_unique<Application>(test_support::windowConfig());
         test_support::openRepository(*controller, root);
-        if (controller->loader()->startupState() != QLatin1String("ready"))
+        if (controller->loader()->startupState() != SessionLoader::StartupState::Ready)
             throw std::runtime_error("controller startup: " + controller->loader()->detail().toStdString());
         CHECK(controller->selection()->select(id));
         auto draft = file().current().draft;
@@ -448,7 +449,8 @@ public:
 RecoveryReplay replayedJournal(const QString &directory)
 {
     auto replay = replayRecovery(storage::RecoveryStore(directory));
-    if (!replay.succeeded) throw std::runtime_error("recovery replay: " + replay.error.toStdString());
+    if (!replay.succeeded)
+        throw std::runtime_error("recovery replay: " + problem_text::text(replay.problem).toStdString());
     CHECK(!replay.incompleteTail && replay.files.size() == 1);
     return replay;
 }
@@ -667,7 +669,7 @@ public:
             writeFile(journalPath, corrupt);
             const auto replay = replayRecovery(storage::RecoveryStore(directory.path()));
             CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
-            CHECK(problem_text::detail(replay.error).contains(QStringLiteral("integrity")));
+            CHECK(problem_text::text(replay.problem).contains(QStringLiteral("integrity")));
         });
         suite.run("an unsupported schema is not restored as success", [] {
             QTemporaryDir directory;
@@ -677,7 +679,7 @@ public:
                 directory.path(), [](QJsonObject &state) { state.insert(QStringLiteral("schema"), 99); });
             const auto replay = replayRecovery(storage::RecoveryStore(directory.path()));
             CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
-            CHECK(problem_text::detail(replay.error).contains(QStringLiteral("schema")));
+            CHECK(problem_text::text(replay.problem).contains(QStringLiteral("schema")));
         });
         suite.run("an unsupported journal header is not restored as success", [] {
             QTemporaryDir directory;
@@ -691,7 +693,7 @@ public:
             const auto replay = replayRecovery(storage::RecoveryStore(directory.path()));
             CHECK(!replay.succeeded && replay.files.empty());
             CHECK(replay.newerFormat
-                  && problem_text::detail(replay.error).contains(QStringLiteral("newer Branch Truce")));
+                  && problem_text::text(replay.problem).contains(QStringLiteral("newer Branch Truce")));
         });
         suite.run("a mismatched file identity is not restored as success", [] {
             QTemporaryDir directory;
@@ -702,7 +704,7 @@ public:
             });
             const auto replay = replayRecovery(storage::RecoveryStore(directory.path()));
             CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
-            CHECK(problem_text::detail(replay.error).contains(QStringLiteral("matching open file")));
+            CHECK(problem_text::text(replay.problem).contains(QStringLiteral("matching open file")));
         });
         suite.run("a stale destination rejects publication and keeps the acknowledged draft", [] {
             IndexConflict conflict;

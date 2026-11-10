@@ -1,9 +1,8 @@
 // The recovery journal keeps acknowledged edits durable and retains failed input for retry.
 #include "recovery/RecoveryJournal.h"
 #include "recovery/RecoveryRecord.h"
+#include "storage/OffThread.h"
 #include <QFileInfo>
-#include <QMetaObject>
-#include <QPromise>
 #include <QUuid>
 #include <algorithm>
 #include <exception>
@@ -20,21 +19,20 @@ RecoveryJournal::RecoveryJournal(QString directory, std::shared_ptr<const storag
 // then has no context left to reach.
 RecoveryJournal::~RecoveryJournal() = default;
 
-QString RecoveryJournal::ensureLease()
+Problem RecoveryJournal::ensureLease()
 {
     if (lease_) return {};
     auto failure = storage::RecoveryLease::Failure::None;
     lease_ = storage::RecoveryLease::acquire(directory_, files_, &failure);
     if (lease_) return {};
-    return failure == storage::RecoveryLease::Failure::Held
-        ? tr("Recovery session is already open or unavailable; close its other window before retrying.")
-        : tr("Recovery storage is unavailable or unsafe.");
+    return failure == storage::RecoveryLease::Failure::Held ? ProblemCode::RecoveryStoreHeld
+                                                            : ProblemCode::RecoveryStoreUnavailable;
 }
 
 storage::RecoveryCommit RecoveryJournal::commitUnderLease(const storage::RecoveryTransaction &transaction)
 {
-    const auto leaseError = ensureLease();
-    if (!leaseError.isEmpty()) return storage::RecoveryCommit{false, leaseError};
+    auto leaseError = ensureLease();
+    if (!leaseError.isEmpty()) return storage::RecoveryCommit{false, std::move(leaseError)};
     return lease_->commit(transaction);
 }
 
@@ -62,7 +60,7 @@ bool RecoveryJournal::commitCandidate(const FileSession &candidate, RecoveryActi
         committed(action);
         return true;
     }
-    pending_[candidate.id()].push_back(Pending{candidate, action, std::move(transaction), result.error});
+    pending_[candidate.id()].push_back(Pending{candidate, action, std::move(transaction), result.problem});
     return false;
 }
 
@@ -91,7 +89,7 @@ void RecoveryJournal::settleBehind(const storage::RecoveryCommit &result)
     if (result.succeeded) {
         committed(action);
     } else {
-        next.record.error = result.error;
+        next.record.problem = result.problem;
         pending_[next.record.candidate.id()].push_back(std::move(next.record));
     }
     if (next.written) next.written(result.succeeded ? Written::Committed : Written::Failed);
@@ -104,26 +102,23 @@ void RecoveryJournal::writeNext()
             holdBehind();
             continue;
         }
-        if (const auto leaseError = ensureLease(); !leaseError.isEmpty()) {
-            settleBehind({false, leaseError});
+        if (auto leaseError = ensureLease(); !leaseError.isEmpty()) {
+            settleBehind({false, std::move(leaseError)});
             continue;
         }
         const auto ticket = nextTicket_++;
-        auto promise = std::make_shared<QPromise<storage::RecoveryCommit>>();
-        writing_ = Writing{ticket, promise->future()};
-        promise->start();
-        worker_.start([this, ticket, promise, lease = lease_, transaction = behind_.front().record.transaction] {
-            storage::RecoveryCommit result;
-            try {
-                result = lease->commit(transaction);
-            } catch (const std::exception &) {
-                result = {false, tr("Recovery commit failed; pending input is retained for retry.")};
-            }
-            promise->addResult(result);
-            promise->finish();
-            // Dropped if the journal, and with it the context, is gone.
-            QMetaObject::invokeMethod(&context_, [this, ticket] { wroteBehind(ticket); }, Qt::QueuedConnection);
-        });
+        // The outcome is dropped if the journal, and with it the context, is gone.
+        writing_ = Writing{ticket,
+                           runOffThread(
+                               worker_, &context_,
+                               [lease = lease_, transaction = behind_.front().record.transaction] {
+                                   try {
+                                       return lease->commit(transaction);
+                                   } catch (const std::exception &) {
+                                       return storage::RecoveryCommit{false, ProblemCode::RecoveryCommitFailed};
+                                   }
+                               },
+                               [this, ticket](const storage::RecoveryCommit &) { wroteBehind(ticket); })};
     }
 }
 
@@ -167,7 +162,7 @@ std::optional<FileSession> RecoveryJournal::retryPending(const std::string &id)
         auto &next = records.front();
         const auto result = commitUnderLease(next.transaction);
         if (!result.succeeded) {
-            next.error = result.error;
+            next.problem = result.problem;
             return last;
         }
         committed(next.action);
@@ -234,18 +229,18 @@ bool RecoveryJournal::onlyOpenCapturesPending() const
     });
 }
 
-const QString *RecoveryJournal::failure(const std::string &id) const
+const Problem *RecoveryJournal::failure(const std::string &id) const
 {
     const auto found = failures_.find(id);
     return found == failures_.end() ? nullptr : &found->second;
 }
 
-void RecoveryJournal::recordFailure(const std::string &id, const QString &error)
+void RecoveryJournal::recordFailure(const std::string &id, const Problem &problem)
 {
-    failures_.insert_or_assign(id, error);
+    failures_.insert_or_assign(id, problem);
 }
 
-bool RecoveryJournal::settleFailure(const std::string &id, const QString &expected, const QString &replacement)
+bool RecoveryJournal::settleFailure(const std::string &id, const Problem &expected, const Problem &replacement)
 {
     const auto failure = failures_.find(id);
     if (failure == failures_.end() || failure->second != expected) return false;

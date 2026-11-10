@@ -117,10 +117,10 @@ Scene::Scene(Sandbox &sandbox, const Repository &repository)
     // process, not the layout deadline of settleFor.
     waitFor(
         "the repository to open", [&] { return !loader->opening(); },
-        [&] { return loader->startupState().toStdString(); });
-    if (loader->startupState() != QStringLiteral("ready"))
-        throw std::runtime_error("startup " + loader->startupState().toStdString() + ": "
-                                 + loader->detail().toStdString());
+        [&] { return QVariant::fromValue(loader->startupState()).toString().toStdString(); });
+    if (loader->startupState() != SessionLoader::StartupState::Ready)
+        throw std::runtime_error("startup " + QVariant::fromValue(loader->startupState()).toString().toStdString()
+                                 + ": " + loader->detail().toStdString());
     // Opening a session inspects Git and never mutates the repository.
     CHECK(repository.snapshot() == before);
     // The session listens in the journey's private runtime directory, not a fallback.

@@ -7,7 +7,7 @@
 #include <QString>
 #include <utility>
 
-#include "storage/Problem.h"
+#include "problems/Problem.h"
 
 class QProcessEnvironment;
 

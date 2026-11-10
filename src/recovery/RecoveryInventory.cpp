@@ -30,7 +30,7 @@ bool expired(const QString &directory, const QDateTime &now)
 
 // Marks a store whose lease this launch holds. The journal and payloads stay
 // complete and in place, so choosing the store later restores it.
-QString setAside(const QString &directory)
+Problem setAside(const QString &directory)
 {
     const auto path = setAsideMarker(directory);
     QSaveFile marker(path);
@@ -40,9 +40,9 @@ QString setAside(const QString &directory)
                           .arg(kSetAsideLifetimeDays)
                           .toUtf8();
     if (!marker.open(QIODevice::WriteOnly) || marker.write(text) != text.size() || !marker.commit())
-        return marker.errorString();
+        return {ProblemCode::RecoveryMarkerWrite, {marker.errorString()}};
     if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner))
-        return Problem{ProblemCode::RecoveryMarkerPermissions}.encoded();
+        return ProblemCode::RecoveryMarkerPermissions;
     return {};
 }
 
@@ -54,9 +54,10 @@ const FileSession *firstCaptured(const std::vector<FileSession> &files)
 }
 
 Problem revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
-                               const git::RepositoryContext &repository, const git::GitRunners &git)
+                               const git::RepositoryContext &repository, const git::GitRunners &git,
+                               std::shared_ptr<const storage::FileSystem> files)
 {
-    return revalidateCopiedLaunch(captured, identity, repository, RepositoryProbe(git));
+    return revalidateCopiedLaunch(captured, identity, repository, RepositoryProbe(git, std::move(files)));
 }
 
 RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude,
@@ -91,7 +92,7 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         auto replay = replayRecovery(lease->store(), options.correspondence);
         if (!replay.succeeded) {
             result.diagnostics.push_back(
-                Problem{ProblemCode::RecoverySessionRejected, {entry.fileName(), replay.error}});
+                Problem{ProblemCode::RecoverySessionRejected, {entry.fileName()}}.wrapping(replay.problem));
             continue;
         }
         const auto *captured = firstCaptured(replay.files);
@@ -155,7 +156,8 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         }
         if (candidates.size() < 2 || !chosen) continue;
         if (const auto error = setAside(candidate.lease->directory()); !error.isEmpty())
-            result.diagnostics.push_back(Problem{ProblemCode::RecoverySetAsideFailed, {candidate.name(), error}});
+            result.diagnostics.push_back(
+                Problem{ProblemCode::RecoverySetAsideFailed, {candidate.name()}}.wrapping(error));
         else
             result.diagnostics.push_back(
                 Problem{ProblemCode::RecoverySetAside, {candidate.name(), QString::number(kSetAsideLifetimeDays)}});
@@ -170,10 +172,10 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
     result.found = true;
     AdoptedStore store{adopted->lease, replay.userWork, {}};
     if (replay.incompleteTail) result.diagnostics.push_back(Problem{ProblemCode::RecoveryTailIgnored});
-    const RepositoryProbe probe(git);
+    const RepositoryProbe probe(git, options.files);
     for (auto &file : replay.files) {
         const auto reconciled = reconcile(file, replay.mutations, observed, repository, probe, *adopted->lease);
-        if (!reconciled.failure.isEmpty()) store.failures.emplace(file.id(), reconciled.failure.encoded());
+        if (!reconciled.failure.isEmpty()) store.failures.emplace(file.id(), reconciled.failure);
         if (reconciled.copied) result.copiedLaunches.emplace(file.id(), *reconciled.copied);
         result.files.push_back(std::move(file));
     }
@@ -197,7 +199,7 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
     for (const auto &file : result.files) {
         if (!file.snapshots()) continue;
         if (fresh.outcome != git::Outcome::Success || !sameOperation(file.snapshots()->provenance, fresh.repository)) {
-            store.failures.insert_or_assign(file.id(), Problem{ProblemCode::RecoveryOperationChanged}.encoded());
+            store.failures.insert_or_assign(file.id(), Problem{ProblemCode::RecoveryOperationChanged});
             result.copiedLaunches.erase(file.id());
         }
     }

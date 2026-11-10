@@ -1,9 +1,9 @@
 // Session loading discovers conflicted files and offers recoverable work without silently replacing it.
 #include "SessionLoader.h"
-#include "ProblemText.h"
 #include "Selection.h"
 #include "SessionCompletion.h"
 #include "SourceIdentity.h"
+#include "problems/ProblemText.h"
 #include "publication/ResolutionPublisher.h"
 #include "session/ConflictCapture.h"
 #include "session/SessionCoordinator.h"
@@ -109,9 +109,9 @@ QString SessionLoader::noOperationDetail()
               "Branch Truce resolves conflicts while a merge or rebase is in progress.");
 }
 
-void SessionLoader::setState(QString state, QString detail)
+void SessionLoader::setState(StartupState state, QString detail)
 {
-    state_ = std::move(state);
+    state_ = state;
     detail_ = std::move(detail);
     Q_EMIT launchChanged();
 }
@@ -137,9 +137,9 @@ QString SessionLoader::appEditsRefusal()
               "Leave this session, then start Branch Truce with --recovery-session followed by the session to keep.");
 }
 
-QString SessionLoader::choiceRefusal(const QString &session, const QString &state)
+QString SessionLoader::choiceRefusal(const QString &session, StartupState state)
 {
-    if (state != QLatin1String("ready") && state != QLatin1String("ready-without-mergetool"))
+    if (state != StartupState::Ready && state != StartupState::ReadyWithoutMergetool)
         return tr("Choose a recovery session after the session finishes loading.");
     if (std::none_of(recoveryChoices_.cbegin(), recoveryChoices_.cend(),
                      [&](const auto &choice) { return choice.session == session; }))
@@ -185,7 +185,7 @@ bool SessionLoader::chooseRecoverySession(const QString &session)
               [this, session, directory, own](const TaskCompletion &completion) {
                   if (completion.result.status != TaskStatus::Succeeded) {
                       own->succeeded = false;
-                      own->error = completion.result.diagnostic;
+                      own->problem = completion.result.problem;
                   }
                   ownStoreRead(session, directory, *own);
               });
@@ -194,7 +194,7 @@ bool SessionLoader::chooseRecoverySession(const QString &session)
     choiceSession_ = session;
     choiceState_ = state_;
     choiceDetail_ = detail_;
-    setState(QStringLiteral("opening"), tr("Inspecting the selected local repository…"));
+    setState(StartupState::Opening, tr("Inspecting the selected local repository…"));
     return true;
 }
 
@@ -207,14 +207,14 @@ void SessionLoader::ownStoreRead(const QString &session, const QString &director
         return refuseChoice(tr("Choose a recovery session after the session finishes loading."));
     if (!own.succeeded)
         return refuseChoice(tr("This window's recovery store could not be read, so it cannot switch sessions: %1")
-                                .arg(problem_text::detail(own.error)));
+                                .arg(problem_text::text(own.problem)));
     // A record this window never acknowledged, from a commit that reported
     // failure after the record reached the disk, is work as well.
     if (own.userWork) return refuseChoice(appEditsRefusal());
     if (!session_.store.startNewRecoveryStore())
         return refuseChoice(tr("Choose a recovery session after the pending recovery input finishes."));
     Q_EMIT notice({});
-    state_ = QStringLiteral("idle");
+    state_ = StartupState::Idle;
     openRepository(repository_.worktreeRoot, session_.selection.fileId(), session);
 }
 
@@ -228,7 +228,7 @@ void SessionLoader::refuseChoice(const QString &message)
 bool SessionLoader::openRepository(const QString &directory, const QString &preferredFileId,
                                    const QString &recoverySession)
 {
-    if (state_ != QLatin1String("idle")) return false;
+    if (state_ != StartupState::Idle) return false;
     // A reload passes repository_.worktreeRoot, which the reset below clears.
     const auto launchDirectory = directory;
     session_.selection.prefer(preferredFileId);
@@ -238,11 +238,11 @@ bool SessionLoader::openRepository(const QString &directory, const QString &pref
     repository_ = {};
     classified_ = false;
     launchSizes_.clear();
-    setState(QStringLiteral("opening"), tr("Inspecting the selected local repository…"));
+    setState(StartupState::Opening, tr("Inspecting the selected local repository…"));
     git::ConflictClassificationRequest request;
     request.directory = launchDirectory;
     if (!classifier_.start(request)) {
-        setState(QStringLiteral("error"), tr("Could not start repository inspection."));
+        setState(StartupState::Error, tr("Could not start repository inspection."));
         return false;
     }
     return true;
@@ -272,12 +272,12 @@ void SessionLoader::classified(const git::ConflictClassificationResult &result)
             session_.coordinator.replaceSession(repository_.worktreeRoot, QStringLiteral("unsupported"),
                                                 std::move(files));
         if (result.outcome != git::Outcome::Success) {
-            setState(QStringLiteral("error"),
+            setState(StartupState::Error,
                      tr("Could not open the selected work: %1").arg(problem_text::text(result.problem)));
         } else if (repository_.operation == git::RepositoryOperation::None) {
-            setState(QStringLiteral("no-session"), noOperationDetail());
+            setState(StartupState::NoSession, noOperationDetail());
         } else {
-            setState(QStringLiteral("unsupported"), problem_text::text(repository_.problem));
+            setState(StartupState::Unsupported, problem_text::text(repository_.problem));
         }
         return;
     }
@@ -293,19 +293,20 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
     for (const auto &file : conflicts) {
         pending.emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), Draft{},
                              FileLaunch{.support = Support::Unreadable,
-                                        .supportDetail = tr("Opening the classified conflict").toStdString()});
+                                        .supportDetail = Problem(ProblemCode::LoadOpening).encoded().toStdString()});
     }
     if (pending.empty())
-        pending.emplace_back("recovery-inventory", "recovery-inventory", Draft{},
-                             FileLaunch{.support = Support::Unreadable,
-                                        .supportDetail = tr("Inspecting app-owned recovery records").toStdString()});
+        pending.emplace_back(
+            "recovery-inventory", "recovery-inventory", Draft{},
+            FileLaunch{.support = Support::Unreadable,
+                       .supportDetail = Problem(ProblemCode::LoadInspectingRecovery).encoded().toStdString()});
     // The fence key names the operation by its enum, never by display text.
     const auto identity = QString::number(static_cast<int>(repository_.operation)) + QLatin1Char(':')
         + QString::fromLatin1(repository_.stage2.commitId) + QLatin1Char(':')
         + QString::fromLatin1(repository_.stage3.commitId);
     const auto root = repository_.worktreeRoot;
     if (!session_.coordinator.replaceSession(root, identity, std::move(pending))) {
-        setState(QStringLiteral("error"), tr("Could not bind the session to the discovered worktree."));
+        setState(StartupState::Error, tr("Could not bind the session to the discovered worktree."));
         return;
     }
     auto loaded = std::make_shared<std::vector<FileSession>>();
@@ -325,7 +326,7 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                 if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
                 Draft draft;
                 auto support = supportFor(file);
-                auto detail = file.reason.encoded();
+                auto detail = file.reason;
                 auto snapshots = captureFile(file, repository, sessionId);
                 if (snapshots) {
                     support = Support::Supported;
@@ -333,12 +334,11 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                     draft.text = file.result->utf8.toStdString();
                 } else if (detail.isEmpty()) {
                     support = Support::Unreadable;
-                    detail = tr("Load error: conflict inspection did not provide complete source and result snapshots; "
-                                "reopen the session.");
+                    detail = ProblemCode::LoadIncomplete;
                 }
                 loaded->emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), std::move(draft),
                                      FileLaunch{.support = support,
-                                                .supportDetail = detail.toStdString(),
+                                                .supportDetail = detail.encoded().toStdString(),
                                                 .snapshots = std::move(snapshots),
                                                 .initializeChoices = true,
                                                 .algorithm = correspondence});
@@ -364,22 +364,22 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                                                              std::move(*recovery));
             session_.mergetool.reassign();
             if (!replaced) {
-                setState(QStringLiteral("error"), tr("Could not load the current conflict files."));
+                setState(StartupState::Error, tr("Could not load the current conflict files."));
                 return;
             }
             if (!repository_.supported && repository_.operation != git::RepositoryOperation::None) {
                 auto detail = problem_text::text(repository_.problem);
                 if (!diagnostics.isEmpty()) detail += QLatin1Char('\n') + diagnostics;
-                setState(QStringLiteral("unsupported"), detail);
+                setState(StartupState::Unsupported, detail);
                 return;
             }
             if (session_.store.size() == 0) {
                 if (!diagnostics.isEmpty())
-                    setState(QStringLiteral("error"), diagnostics);
+                    setState(StartupState::Error, diagnostics);
                 else if (repository_.operation == git::RepositoryOperation::None)
-                    setState(QStringLiteral("no-session"), noOperationDetail());
+                    setState(StartupState::NoSession, noOperationDetail());
                 else
-                    setState(QStringLiteral("no-session"),
+                    setState(StartupState::NoSession,
                              tr("This operation has no current unmerged files. Return to your Git workflow."));
                 return;
             }
@@ -400,14 +400,13 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                 detail += QLatin1Char('\n')
                     + tr("Another Branch Truce window receives git mergetool launches for this operation.");
             if (listen == MergetoolSession::Listen::Unavailable)
-                detail = tr("Mergetool attach is unavailable: %1").arg(problem_text::detail(listenError))
-                    + QLatin1Char('\n') + detail;
+                detail = tr("Mergetool attach is unavailable: %1").arg(listenError) + QLatin1Char('\n') + detail;
             if (!diagnostics.isEmpty()) detail += QLatin1Char('\n') + diagnostics;
             recoveryChoices_ = std::move(choices);
-            setState(listen == MergetoolSession::Listen::Unavailable ? QStringLiteral("ready-without-mergetool")
-                                                                     : QStringLiteral("ready"),
+            setState(listen == MergetoolSession::Listen::Unavailable ? StartupState::ReadyWithoutMergetool
+                                                                     : StartupState::Ready,
                      detail);
         });
-    if (task == 0) setState(QStringLiteral("error"), tr("Could not schedule conflict loading."));
+    if (task == 0) setState(StartupState::Error, tr("Could not schedule conflict loading."));
 }
 }

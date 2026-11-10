@@ -1,9 +1,7 @@
-// Outside-app messages explain captured file exclusions and format safe staging guidance.
+// Outside-app text formats safe staging guidance for a file the app cannot edit.
 #pragma once
 
 #include <QByteArray>
-#include <QMimeDatabase>
-#include <QMimeType>
 #include <QObject>
 #include <QRegularExpression>
 #include <QString>
@@ -17,26 +15,6 @@ class OutsideAppText : public QObject {
     QML_SINGLETON
 public:
     explicit OutsideAppText(QObject *parent = nullptr) : QObject(parent) {}
-
-    // Whether a file outside the app was excluded as binary, judged from its exact decoder diagnostic.
-    Q_INVOKABLE bool binaryExcluded(bool outsideApp, const QString &detail, const QByteArray &path) const
-    {
-        if (!outsideApp) return false;
-        // Only exact decoder diagnostics establish text rejection. A MIME extension alone
-        // must not turn an I/O, topology or conversion-policy failure into a binary claim.
-        static const QRegularExpression decoderReason(
-            QStringLiteral("\\AOutside app: (?:stage [123] cannot be edited: )?"
-                           "(binary/control characters are unsupported|"
-                           "invalid UTF-8 or an unattributed unsupported encoding)\\z"));
-        const auto reason = decoderReason.match(detail);
-        if (!reason.hasMatch()) return false;
-        if (reason.captured(1) == QLatin1String("binary/control characters are unsupported")) return true;
-        const auto name = QString::fromUtf8(path);
-        if (name.toUtf8() != path) return false;
-        const auto mime = QMimeDatabase().mimeTypeForFile(name, QMimeDatabase::MatchExtension);
-        // Invalid UTF-8 in a text or unknown type does not prove that it is binary.
-        return mime.isValid() && !mime.isDefault() && !mime.inherits(QStringLiteral("text/plain"));
-    }
 
     Q_INVOKABLE QString gitAddCommand(const QByteArray &path) const
     {

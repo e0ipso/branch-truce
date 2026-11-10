@@ -31,7 +31,7 @@ class SessionLoader : public QObject {
     Q_OBJECT
     QML_ELEMENT
     QML_UNCREATABLE("Owned by the application")
-    Q_PROPERTY(QString startupState READ startupState NOTIFY launchChanged)
+    Q_PROPERTY(branch_truce::SessionLoader::StartupState startupState READ startupState NOTIFY launchChanged)
     Q_PROPERTY(bool opening READ opening NOTIFY launchChanged)
     Q_PROPERTY(QString repositoryRoot READ repositoryRoot NOTIFY launchChanged)
     Q_PROPERTY(QString operation READ operation NOTIFY launchChanged)
@@ -48,6 +48,10 @@ class SessionLoader : public QObject {
     Q_PROPERTY(QString stage3ShortCommitId READ stage3ShortCommitId NOTIFY launchChanged)
     Q_PROPERTY(QString workflow READ workflow CONSTANT)
 public:
+    // Where opening the launched repository stands. ReadyWithoutMergetool is
+    // ready, but no git mergetool launcher can attach.
+    enum class StartupState { Idle, Opening, Ready, ReadyWithoutMergetool, NoSession, Unsupported, Error };
+    Q_ENUM(StartupState)
     // The collaborators a load reports to.
     struct Session {
         SessionStore &store;
@@ -63,8 +67,8 @@ public:
     SessionLoader(Session session, git::GitRunners git, QObject *parent = nullptr,
                   std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {});
 
-    [[nodiscard]] QString startupState() const { return state_; }
-    [[nodiscard]] bool opening() const { return state_ == QLatin1String("opening"); }
+    [[nodiscard]] StartupState startupState() const { return state_; }
+    [[nodiscard]] bool opening() const { return state_ == StartupState::Opening; }
     [[nodiscard]] QString repositoryRoot() const { return repository_.worktreeRoot; }
     // The classified operation's name, empty before or without a successful classification.
     [[nodiscard]] QString operation() const;
@@ -114,12 +118,12 @@ private:
     // Shown when the repository has no merge or rebase, unlike an operation
     // whose conflicts are all resolved.
     [[nodiscard]] static QString noOperationDetail();
-    void setState(QString state, QString detail);
+    void setState(StartupState state, QString detail);
     void classified(const git::ConflictClassificationResult &result);
     void loadWorkingFiles(QList<git::Conflict> conflicts);
     // Why this window cannot switch to session now, judged from memory while
     // it shows state, or empty.
-    [[nodiscard]] QString choiceRefusal(const QString &session, const QString &state);
+    [[nodiscard]] QString choiceRefusal(const QString &session, StartupState state);
     [[nodiscard]] static QString appEditsRefusal();
     // The worker read this window's store at directory for a choice of session.
     void ownStoreRead(const QString &session, const QString &directory, const RecoveryReplay &own);
@@ -131,7 +135,7 @@ private:
     git::ConflictClassifier classifier_;
     git::RepositoryContext repository_;
     QHash<QString, qint64> launchSizes_;
-    QString state_ = QStringLiteral("idle");
+    StartupState state_ = StartupState::Idle;
     // Whether repository_ comes from a successful classification of the current open.
     bool classified_ = false;
     QString detail_;
@@ -140,7 +144,7 @@ private:
     // A choice whose own-store read is running, and what the window showed before it.
     quint64 choiceTask_ = 0;
     QString choiceSession_;
-    QString choiceState_;
+    StartupState choiceState_ = StartupState::Idle;
     QString choiceDetail_;
 };
 }

@@ -3,7 +3,7 @@
 
 #include "core/RevisionId.h"
 #include "git/GitTypes.h"
-#include "storage/Problem.h"
+#include "problems/Problem.h"
 #include <QByteArray>
 #include <QString>
 #include <optional>
@@ -31,8 +31,8 @@ struct AttachedMessage {
     QString invocation;
     bool operator==(const AttachedMessage &) const = default;
 };
-// Session to launcher: the launch cannot wait here, and why: a translated
-// sentence or an encoded Problem.
+// Session to launcher: the launch cannot wait here, and why, translated by the
+// session; the launcher prints it as it is.
 struct RejectedMessage {
     QString invocation;
     QString reason;

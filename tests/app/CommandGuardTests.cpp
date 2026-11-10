@@ -111,11 +111,11 @@ int main(int argc, char **argv)
     suite.run("a recovery error on the file blocks every command until it is settled", [] {
         Guarded session;
         using Result = std::variant<RevisionId, Transition>;
-        session.store.recordRecoveryFailure("choices", "store unavailable");
+        session.store.recordRecoveryFailure("choices", ProblemCode::RecoveryStoreUnavailable);
         for (const auto kind :
              {CommandCheck::Selected, CommandCheck::Current, CommandCheck::Edit, CommandCheck::CurrentSupported})
             CHECK(session.check("choices", "2", kind) == Result{Transition::Blocked});
-        CHECK(session.store.settleRecoveryFailure("choices", "store unavailable"));
+        CHECK(session.store.settleRecoveryFailure("choices", ProblemCode::RecoveryStoreUnavailable));
         CHECK(session.check("choices", "2", CommandCheck::Current) == Result{RevisionId{2}});
     });
     suite.run("pending recovery input on any file blocks every command until it is retried", [] {

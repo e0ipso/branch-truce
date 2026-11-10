@@ -164,17 +164,13 @@ int main(int argc, char **argv)
         CHECK(role(model, SessionModel::SupportDetailRole, 1).toString() == "binary");
         CHECK(model.finishBlockers().size() == 1);
         CHECK(model.finishBlockers()[0].toMap().value("fileId").toString() == "second");
-        CHECK(model.setSupport("second", Support::Unreadable, "read failed") == Transition::Applied);
-        CHECK(role(model, SessionModel::SupportRole, 1).value<FileStates::SupportKind>()
-              == FileStates::SupportKind::Unreadable);
-        CHECK(!model.canFinish());
-        CHECK(model.setSupport("second", Support::Supported) == Transition::Applied);
-        resolve(model, "second");
-        CHECK(model.canFinish() && model.resolvedFiles() == 2);
-        CHECK(model.recordCheckpoint("second", 1, Outcome::Failed, "disk full") == Transition::Applied);
+        CHECK(model.appendFile(FileSession("third", "c", draft())));
+        resolve(model, "third");
+        CHECK(!model.canFinish() && model.resolvedFiles() == 2);
+        CHECK(model.recordCheckpoint("third", 1, Outcome::Failed, "disk full") == Transition::Applied);
         CHECK(!model.canFinish() && model.resolvedFiles() == 1);
-        CHECK(model.file("second")->publication().checkpointOutcome()->detail == "disk full");
-        CHECK(role(model, SessionModel::StatusRole, 1).toString() == "Draft save failed");
+        CHECK(model.file("third")->publication().checkpointOutcome()->detail == "disk full");
+        CHECK(role(model, SessionModel::StatusRole, 2).toString() == "Draft save failed");
     });
     suite.run("the English catalog supplies the plural forms of numerus messages", [] {
         const auto left = [](int count) {
@@ -309,7 +305,7 @@ int main(int argc, char **argv)
         CHECK(model.recordCheckpoint("stage", 1, Outcome::Succeeded) == Transition::Applied);
         CHECK(model.recordWrite("stage", 1, Outcome::Succeeded) == Transition::Applied);
         CHECK(model.recordStage("stage", 1, Outcome::Failed, {}, {}, "index locked") == Transition::Applied);
-        model.recordRecoveryFailure("recovery", "store unavailable");
+        model.recordRecoveryFailure("recovery", ProblemCode::RecoveryStoreUnavailable);
         const auto entries = handoffEntries(model.handoff());
         for (const auto *id : {"write", "stage", "recovery"}) {
             const auto entry = entries.value(id);
@@ -468,7 +464,7 @@ int main(int argc, char **argv)
         CHECK(!settled() && line() != "Ready to mark resolved");
         CHECK(model.redo("choices", model.file("choices")->current().id) == Transition::Applied);
         CHECK(settled());
-        model.recordRecoveryFailure("choices", "store unavailable");
+        model.recordRecoveryFailure("choices", ProblemCode::RecoveryStoreUnavailable);
         CHECK(!settled() && line() != "Ready to mark resolved");
     });
     suite.run("unconfirmed choices and marker blockers are visible without mutation", [] {

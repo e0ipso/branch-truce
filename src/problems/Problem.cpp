@@ -1,5 +1,5 @@
-// A problem is a typed failure with the values its message names, which the app turns into translated text.
-#include "storage/Problem.h"
+// A problem is a typed failure with the values its message names, which ProblemText turns into translated text.
+#include "problems/Problem.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>

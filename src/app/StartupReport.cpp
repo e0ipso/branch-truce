@@ -30,7 +30,7 @@ QJsonObject startupReport(const SessionLoader &loader, const SessionModel &files
             {QStringLiteral("detail"), files.data(index, SessionModel::SupportDetailRole).toString()},
             {QStringLiteral("text"), QString::fromUtf8(QByteArray::fromStdString(file->current().draft.text))}});
     }
-    return {{QStringLiteral("state"), loader.startupState()},
+    return {{QStringLiteral("state"), QVariant::fromValue(loader.startupState()).toString()},
             {QStringLiteral("repository"), loader.repositoryRoot()},
             {QStringLiteral("operation"), loader.operation()},
             {QStringLiteral("detail"), loader.detail()},

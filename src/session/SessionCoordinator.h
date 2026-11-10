@@ -6,6 +6,7 @@
 #include <QByteArray>
 #include <QObject>
 #include <QString>
+#include <QThreadPool>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -35,8 +36,7 @@ struct TaskResult {
     TaskStatus status = TaskStatus::Succeeded;
     MutationObservation mutation = MutationObservation::NotAttempted;
     QByteArray data;
-    // Text, which may hold encoded Problems that the window shows translated.
-    QString diagnostic;
+    Problem problem;
     std::optional<git::Result> gitResult;
 };
 struct TaskCompletion {
@@ -77,17 +77,21 @@ public:
     using Inspect = std::function<MutationObservation(const TaskInput &)>;
     using Completion = std::function<void(const TaskCompletion &)>;
 
-    // Each Git task runs in its own runner from git, a child of this coordinator.
-    SessionCoordinator(SessionStore &store, git::GitRunners git, QObject *parent = nullptr);
+    // How long destruction waits for admitted mutations to end.
+    static constexpr int kShutdownGraceMs = 2000;
+
+    // Each Git task runs in its own runner from git, a child of this
+    // coordinator; other work runs on workers, which only this coordinator
+    // uses and which outlives it.
+    SessionCoordinator(SessionStore &store, git::GitRunners git, QThreadPool &workers, QObject *parent = nullptr);
     ~SessionCoordinator() override;
     // worktree is the verified repository root, not a launch subdirectory.
     // Canonicalization coalesces symlink aliases. Replacing cancels old work
     // without releasing an active mutation's queue slot prematurely.
     bool replaceSession(const QString &worktree, const QString &operation, std::vector<FileSession> files);
-    // Complete a current load of the same initial placeholders, including
-    // failed open commits. Captured files replace their pending placeholders;
-    // pending edits and unrelated session replacements remain protected.
-    bool completeSessionLoad(const TaskStamp &stamp, std::vector<FileSession> files);
+    // Completes a current load of the same initial placeholders, including
+    // failed open commits, with the restored files or else the observed ones.
+    // Pending edits and unrelated session replacements remain protected.
     bool completeRecoveryLoad(const TaskStamp &stamp, std::vector<FileSession> observed, RecoveryRestore restore);
     [[nodiscard]] quint64 generation() const;
     [[nodiscard]] int pendingTasks() const;
@@ -100,9 +104,6 @@ public:
     TaskId submitGit(const std::string &fileId, RevisionId expected, git::Request request, Completion completion = {});
     bool cancel(TaskId id);
     void cancelAll();
-    // Retains outcomes for original worktrees/revisions, including discarded
-    // completions. Uncertain entries require further adapter inspection.
-    [[nodiscard]] const std::vector<TaskCompletion> &mutationOutcomes() const;
 
 Q_SIGNALS:
     void pendingTasksChanged();

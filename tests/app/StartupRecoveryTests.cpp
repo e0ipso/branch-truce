@@ -15,7 +15,7 @@ int startup_routes::openEditAndCrash(const QString &root)
     });
     QTimer::singleShot(test_support::kWaitDeadlineMs, &loop, &QEventLoop::quit);
     if (controller.loader()->opening()) loop.exec();
-    if (controller.loader()->startupState() != "ready") return 4;
+    if (controller.loader()->startupState() != SessionLoader::StartupState::Ready) return 4;
     const auto *file = controller.store()->file(test_support::fileIdOf("tracked.txt"));
     if (!file || !controller.store()->recoveryLease()) return 5;
     if (controller.store()->editResult(file->id(), file->current().id, {{0, 0}, "edited before the crash\n"})
@@ -357,7 +357,8 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         const auto reload = [](Application &controller, const QString &session) {
             if (!controller.loader()->chooseRecoverySession(session)) return false;
             waitOpened(controller, "the chosen recovery session");
-            CHECK(!controller.loader()->opening() && controller.loader()->startupState() == "ready");
+            CHECK(!controller.loader()->opening()
+                  && controller.loader()->startupState() == SessionLoader::StartupState::Ready);
             return true;
         };
 
@@ -520,7 +521,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         CHECK(controller.loader()->opening());
         waitOpened(controller, "the choice refused by its unreadable store");
         auto calls = alignments->stop();
-        CHECK(controller.loader()->startupState() == "ready");
+        CHECK(controller.loader()->startupState() == SessionLoader::StartupState::Ready);
         CHECK(controller.feedback()->message().contains("This window's recovery store could not be read"));
         CHECK(controller.store()->recoveryDirectory() == own && controller.loader()->recoveryChoices().size() == 2);
         CHECK(!QFileInfo::exists(first + "/set-aside") && !QFileInfo::exists(second + "/set-aside"));
@@ -535,7 +536,8 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         CHECK(controller.loader()->chooseRecoverySession(firstName));
         waitOpened(controller, "the chosen recovery session");
         calls = alignments->stop();
-        CHECK(controller.loader()->startupState() == "ready" && controller.store()->recoveryDirectory() == first);
+        CHECK(controller.loader()->startupState() == SessionLoader::StartupState::Ready
+              && controller.store()->recoveryDirectory() == first);
         CHECK(openedFile(controller).current().draft.text.starts_with("first window\n"));
         const auto ownReplay = replayed(calls, [&](const std::string &text) { return text == ownText; });
         CHECK(std::any_of(ownReplay.begin(), ownReplay.end(), [&](const auto &call) { return call.thread != gui; }));
@@ -578,7 +580,8 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                 QLockFile held(first + "/session.lock");
                 CHECK(held.tryLock(0));
                 waitOpened(controller, "the reload after the locked choice");
-                CHECK(!controller.loader()->opening() && controller.loader()->startupState() == "ready");
+                CHECK(!controller.loader()->opening()
+                      && controller.loader()->startupState() == SessionLoader::StartupState::Ready);
             }
             const auto location = controller.store()->recoveryDirectory();
             CHECK(location != first && location != second && location != own);

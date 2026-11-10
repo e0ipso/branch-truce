@@ -76,10 +76,10 @@ public:
     [[nodiscard]] bool hasPendingRecovery() const { return journal_.hasPending(); }
     [[nodiscard]] bool hasRecoveryFailures() const { return journal_.hasFailures(); }
     [[nodiscard]] bool hasRecoveryFailure(const std::string &id) const { return journal_.failure(id) != nullptr; }
-    [[nodiscard]] const QString *recoveryFailure(const std::string &id) const { return journal_.failure(id); }
+    [[nodiscard]] const Problem *recoveryFailure(const std::string &id) const { return journal_.failure(id); }
     // The command whose commit failed and is waiting for retry, or nothing.
     [[nodiscard]] std::optional<Action> pendingAction(const std::string &id) const;
-    [[nodiscard]] QString pendingError(const std::string &id) const;
+    [[nodiscard]] Problem pendingError(const std::string &id) const;
     // The draft of a file's newest pending input, which the editor shows until retry.
     [[nodiscard]] const Draft *pendingDraft(const std::string &id) const;
     // Whether typed edits of the file, or of any file, are applied but not yet acknowledged.
@@ -89,13 +89,13 @@ public:
     // thread. Returns whether nothing waits for recovery afterwards.
     bool recordTyping();
     // Records a recovery error that blocks the file until it is settled.
-    void recordRecoveryFailure(const std::string &id, const QString &error);
+    void recordRecoveryFailure(const std::string &id, const Problem &problem);
     // Replaces a file's recovery error only while it is still exactly
     // expected; an empty replacement clears it. Returns whether it changed.
-    bool settleRecoveryFailure(const std::string &id, const QString &expected, const QString &replacement = {});
+    bool settleRecoveryFailure(const std::string &id, const Problem &expected, const Problem &replacement = {});
     [[nodiscard]] const QString &recoveryDirectory() const { return journal_.directory(); }
     // Takes the store's lease on first use; empty while it holds, otherwise why the store is unavailable.
-    QString ensureRecoveryLease() { return journal_.ensureLease(); }
+    Problem ensureRecoveryLease() { return journal_.ensureLease(); }
     // The held lease, or null. A mutation keeps it to record its observation
     // in this store even after the session moves to another one.
     [[nodiscard]] std::shared_ptr<storage::RecoveryLease> recoveryLease() const { return journal_.lease(); }
@@ -115,11 +115,9 @@ public:
     // Applied once none is left; Blocked when a commit failed again.
     Transition retryRecovery(const std::string &id);
 
-    // Whether files may complete the current load: every file is still the
-    // untouched placeholder for the same ID and path, and only its open
-    // capture waits for recovery retry.
-    [[nodiscard]] bool canCompleteLoad(const std::vector<FileSession> &files) const;
-    [[nodiscard]] bool canRestoreLoad() const { return canCompleteLoad(files_); }
+    // Whether a load may still complete: every file is an untouched
+    // placeholder, and only its open capture waits for recovery retry.
+    [[nodiscard]] bool canRestoreLoad() const;
     // Resets every file and drops pending input and recovery errors. With a
     // restore that adopted a store, moves to that store, takes its errors and
     // commits only its new files.
@@ -128,8 +126,8 @@ public:
     bool appendFile(FileSession file);
 
     Transition replaceDraft(const std::string &id, RevisionId expected, Draft draft);
-    // One edit, such as a paste or a drop, as its own command: aligned at once
-    // and acknowledged once durable.
+    // One edit, such as a paste or a drop, as its own command: acknowledged
+    // once durable, with its passages aligned behind it as for typing.
     Transition editResult(const std::string &id, RevisionId expected, ResultEdit edit);
     // A typed edit: applied at once, joined to the file's burst and recorded
     // behind (see the class comment). Its passages stay provisional until
@@ -156,7 +154,6 @@ public:
     Transition recordWrite(const std::string &id, RevisionId revision, Outcome outcome, std::string detail = {});
     Transition recordStage(const std::string &id, RevisionId revision, Outcome outcome, std::string objectId = {},
                            std::string mode = {}, std::string detail = {});
-    Transition setSupport(const std::string &id, Support support, std::string detail = {});
     Transition loadLargeFile(const std::string &id);
 
 Q_SIGNALS:

@@ -226,7 +226,8 @@ public:
     {
         settleFor("typing recorded", [&] { return !controller.store()->recording(); });
         const auto replay = replayRecovery(storage::RecoveryStore(controller.store()->recoveryDirectory()));
-        if (!replay.succeeded) throw std::runtime_error("comparison recovery: " + replay.error.toStdString());
+        if (!replay.succeeded)
+            throw std::runtime_error("comparison recovery: " + replay.problem.encoded().toStdString());
         CHECK(replay.succeeded && replay.files.size() == expectedFiles);
         const auto recovered =
             std::find_if(replay.files.begin(), replay.files.end(),

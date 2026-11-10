@@ -1,8 +1,8 @@
 // File presentation turns a stored file's facts and recovery state into the states and sentences views show.
 #include "FilePresentation.h"
 #include "EngineText.h"
-#include "ProblemText.h"
 #include "QtText.h"
+#include "problems/ProblemText.h"
 #include <array>
 
 namespace branch_truce {
@@ -247,7 +247,7 @@ QStringList FilePresentation::blockers(std::size_t row) const
         result.push_back(*action == SessionStore::Action::ManualSave
                              ? tr("Draft save failed; the edited result is still available")
                              : tr("Pending input needs recovery retry"));
-    if (const auto *failure = store_.recoveryFailure(id)) result.push_back(problem_text::detail(*failure));
+    if (const auto *failure = store_.recoveryFailure(id)) result.push_back(problem_text::text(*failure));
     return result;
 }
 

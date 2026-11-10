@@ -2,8 +2,8 @@
 #pragma once
 
 #include "core/FileSnapshot.h"
+#include "problems/Problem.h"
 #include "storage/FileSystem.h"
-#include "storage/Problem.h"
 #include <QByteArray>
 #include <QString>
 #include <functional>

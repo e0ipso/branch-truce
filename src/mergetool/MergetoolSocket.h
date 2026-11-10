@@ -2,7 +2,7 @@
 #pragma once
 
 #include "git/GitTypes.h"
-#include "storage/Problem.h"
+#include "problems/Problem.h"
 #include <QByteArray>
 #include <QString>
 

@@ -1,7 +1,7 @@
 // The mergetool intake keeps a waiting launcher's input copies where its window can read and check them.
 #pragma once
 
-#include "storage/Problem.h"
+#include "problems/Problem.h"
 #include <QByteArray>
 #include <QString>
 #include <optional>

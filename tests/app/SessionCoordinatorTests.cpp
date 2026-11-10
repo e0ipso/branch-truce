@@ -91,7 +91,7 @@ public:
         write("tracked.txt", "before\n");
         git({"add", "--", "tracked.txt"});
         coordinator = std::make_unique<SessionCoordinator>(
-            model, git::gitAdapters({test_support::gitExecutable(), git::GitEnvironment::fromProcess()}));
+            model, git::gitAdapters({test_support::gitExecutable(), git::GitEnvironment::fromProcess()}), workers);
         QObject::connect(coordinator.get(), &SessionCoordinator::taskFinished, &model,
                          [this](const TaskCompletion &value) { finished.push_back(value); });
         replace();
@@ -117,6 +117,7 @@ public:
     }
     test_support::GitRepository repository;
     test_support::TestSession model;
+    QThreadPool workers;
     std::unique_ptr<SessionCoordinator> coordinator;
     std::vector<TaskCompletion> finished;
 };
@@ -168,7 +169,6 @@ public:
             CHECK(stamp.id == id && stamp.generation == f.coordinator->generation());
             CHECK(stamp.worktree == f.root() && stamp.operation == "merge" && stamp.fileId == "file");
             CHECK(stamp.inputRevision == 1 && stamp.resultRevision == 1 && stamp.decisionRevision == 1);
-            CHECK(f.coordinator->mutationOutcomes().empty());
         });
         test("invalid requests never dispatch or emit a completion", [] {
             Fixture f;
@@ -235,7 +235,29 @@ public:
             CHECK(f.finished[0].result.mutation == MutationObservation::ObservedChanged);
             CHECK(f.finished[0].stamp.inputRevision == 1 && f.finished[0].result.data == "old result\n");
             CHECK(f.model.file("file")->current().draft.text == "new draft\n");
-            CHECK(f.coordinator->mutationOutcomes().size() == 1 && f.coordinator->mutationOutcomes()[0].stamp.id == id);
+            CHECK(f.finished[0].stamp.id == id);
+        });
+        test("closing waits for an admitted mutation and records what it observed", [] {
+            Fixture f;
+            Gate inspect;
+            CHECK(f.coordinator->submitMutation(
+                      "file", 1,
+                      [](const TaskInput &input, const TaskControl &control) {
+                          return writeResult(input, control, "closed\n");
+                      },
+                      [state = inspect.state](const TaskInput &) {
+                          state->pause();
+                          return MutationObservation::ObservedChanged;
+                      })
+                  != 0);
+            inspect.wait();
+            // No event runs between here and the coordinator's end, so only the
+            // wait on closing can record the observation.
+            inspect.open();
+            f.coordinator.reset();
+            const auto replay = replayRecovery(storage::RecoveryStore(f.model.recoveryDirectory()));
+            CHECK(replay.succeeded && replay.mutations.size() == 1);
+            CHECK(replay.mutations.front().observation == MutationObservation::ObservedChanged);
         });
         test("session replacement fences work even with the same file identity", [] {
             Fixture f;
@@ -298,7 +320,6 @@ public:
             CHECK(f.git({"show", ":tracked.txt"}) == "first\n");
             QFile file(f.root() + "/tracked.txt");
             CHECK(file.open(QIODevice::ReadOnly) && file.readAll() == "third\n");
-            CHECK(f.coordinator->mutationOutcomes().size() == 3);
         });
         test("cancellation before dispatch and while queued has no side effects", [] {
             Fixture f;
@@ -396,7 +417,7 @@ public:
                   && f.finished[0].disposition == TaskDisposition::Cancelled);
             CHECK(f.finished[0].result.mutation == MutationObservation::ObservedChanged
                   && f.finished[0].result.data == "first\n");
-            CHECK(f.coordinator->mutationOutcomes()[0].stamp.id == id);
+            CHECK(f.finished[0].stamp.id == id);
         });
         test("a mutation records its observation under the lease its intent was committed with", [] {
             Fixture f;
@@ -494,9 +515,7 @@ public:
                       == (scenario == 0       ? MutationObservation::NotAttempted
                               : scenario == 1 ? MutationObservation::ObservedChanged
                                               : MutationObservation::Uncertain));
-                CHECK(!f.finished[0].result.diagnostic.isEmpty()
-                      && f.finished[1].result.status == TaskStatus::Succeeded);
-                CHECK(f.coordinator->mutationOutcomes().size() == 2);
+                CHECK(!f.finished[0].result.problem.isEmpty() && f.finished[1].result.status == TaskStatus::Succeeded);
             }
         });
         test("teardown returns while workers or inspection are blocked and suppresses callbacks", [] {
@@ -642,7 +661,6 @@ public:
                 CHECK(result.request.sessionGeneration == f.coordinator->generation()
                       && result.request.inputRevision == 1);
                 CHECK(result.indexAfter == "100644 " + expected + " 0\t" + path + QByteArray(1, '\0'));
-                CHECK(f.coordinator->mutationOutcomes().size() == 1);
             }
         });
         test("a Git task that times out fails with an uncertain mutation and releases the worktree queue", [] {
@@ -659,9 +677,11 @@ public:
                 result.problem = {ProblemCode::GitDeadline, {QStringLiteral("30")}};
                 return result;
             };
+            QThreadPool workers;
             SessionCoordinator coordinator(model,
                                            test_support::ScriptedGitRunner::runners(git::Operation::StageFile, timedOut,
-                                                                                    test_support::gitExecutable()));
+                                                                                    test_support::gitExecutable()),
+                                           workers);
             std::vector<TaskCompletion> finished;
             QObject::connect(&coordinator, &SessionCoordinator::taskFinished, &model,
                              [&](const TaskCompletion &value) { finished.push_back(value); });
@@ -687,7 +707,6 @@ public:
             CHECK(timed.result.gitResult && timed.result.gitResult->outcome == git::Outcome::TimedOut);
             CHECK(timed.result.gitResult->request.path == "tracked.txt");
             CHECK(finished.back().result.status == TaskStatus::Succeeded);
-            CHECK_EQ(coordinator.mutationOutcomes().size(), 2u);
             CHECK(repository.index() == indexBefore);
         });
         return suite.report();

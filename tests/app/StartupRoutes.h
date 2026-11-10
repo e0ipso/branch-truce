@@ -219,7 +219,7 @@ inline void openController(Application &controller, const Repository &repo, cons
     repo.checkSocketDirectory();
     CHECK(mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR")) == repo.socketDirectory());
     test_support::openRepository(controller, repo.root, {}, recoverySession);
-    if (controller.loader()->startupState() != "ready")
+    if (controller.loader()->startupState() != SessionLoader::StartupState::Ready)
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(QFileInfo(repo.socketDirectory()).isDir());
     if (const auto changed = Repository::changed(before, repo.snapshot()); !changed.isEmpty())

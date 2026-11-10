@@ -13,6 +13,7 @@
 #include "fixtures/ScriptedGit.h"
 #include "fixtures/SyncFaults.h"
 #include "mergetool/MergetoolSocket.h"
+#include "problems/ProblemText.h"
 #include "recovery/RecoveryRestore.h"
 #include <QCoreApplication>
 #include <QDirIterator>
@@ -103,7 +104,7 @@ void openController(Application &controller, const Repository &repo)
 {
     const auto before = repo.snapshot();
     test_support::openRepository(controller, repo.root);
-    if (controller.loader()->startupState() != "ready")
+    if (controller.loader()->startupState() != SessionLoader::StartupState::Ready)
         throw std::runtime_error("controller startup: " + controller.loader()->detail().toStdString());
     CHECK(repo.snapshot() == before);
 }
@@ -424,7 +425,7 @@ int main(int argc, char **argv)
         CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Succeeded);
         CHECK(file.publication().stageOutcome() && file.publication().stageOutcome()->outcome == Outcome::Failed);
         CHECK_EQ(QString::fromStdString(file.publication().stageOutcome()->detail),
-                 Problem(ProblemCode::GitExitCode, {QStringLiteral("128")}).encoded());
+                 problem_text::text(Problem(ProblemCode::GitExitCode, {QStringLiteral("128")})));
         CHECK(file.facts().status == FileStatus::StageFailed && !file.facts().resolved);
         CHECK(readFile(repo.path("tracked.txt")) == repo.manual);
         expectUnchanged(repo, before, true);
@@ -606,8 +607,8 @@ int main(int argc, char **argv)
         const auto &file = openedFile(controller);
         CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Succeeded);
         CHECK(file.publication().stageOutcome() && file.publication().stageOutcome()->outcome == Outcome::Uncertain);
-        // The outcome keeps the problem encoded; the window shows it translated.
-        CHECK_EQ(QString::fromStdString(file.publication().stageOutcome()->detail), diagnostic.encoded());
+        // The outcome keeps the problem's sentence.
+        CHECK_EQ(QString::fromStdString(file.publication().stageOutcome()->detail), problem_text::text(diagnostic));
         CHECK(!file.facts().resolved);
         CHECK(readFile(repo.path("tracked.txt")) == "written before the time out\n");
         CHECK(unmerged(repo).contains("tracked.txt"));
