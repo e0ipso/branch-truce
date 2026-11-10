@@ -42,6 +42,7 @@ enum class Transition {
     StaleRevision,
     ConfirmationRequired,
     Blocked,
+    // Invalid publication/replay data, or no unused revision identity remains.
     InvalidOutcome,
     InvalidAnchor,
     AmbiguousTarget,

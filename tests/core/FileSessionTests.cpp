@@ -7,6 +7,7 @@
 #include "fixtures/ChoiceFile.h"
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <memory>
 #include <new>
 #include <set>
@@ -1081,6 +1082,57 @@ void aDeferredEditIsAlignedLaterOnlyForItsRevision()
     CHECK(file.beginMarkResolved(4, true) == Transition::Applied && !file.pendingAlignment());
 }
 
+void anAlignmentInstalledLaterKeepsTheDecisionsIdReplayDerives()
+{
+    auto live = test_support::headingFile();
+    // Changing the heading leaves its underline provisional, where it reads as an orphan marker line.
+    CHECK(live.editResult(1, {{6, 8}, "S\n"}, {.realignment = Realignment::Deferred}) == Transition::Applied);
+    CHECK(live.markers().count() == 2);
+    const auto pending = live.pendingAlignment();
+    CHECK(pending
+          && live.installAlignment(2, std::make_shared<const CorrespondenceMap>(pending->realigned()))
+              == Transition::Applied);
+    CHECK(live.markers().count() == 1);
+    auto replayed = test_support::headingFile();
+    CHECK(test_support::replay(replayed, live.current().draft, live.correspondence()->handEditedAnchors(),
+                               live.correspondence()->handEditedRanges())
+          == Transition::Applied);
+    CHECK(replayed.current().id == 2 && replayed.markers() == live.markers());
+    CHECK(live.current().decisions == 1 && replayed.current().decisions == 1);
+}
+
+void exhaustedRevisionIdsRefuseEditingWithoutChangingTheSession()
+{
+    FileSession file("file", "file.txt", {"before", {}});
+    const auto last = std::numeric_limits<RevisionId>::max() - 1;
+    CHECK(file.replayDraft(1, {last + 1, last + 1, {"after", {}}, {}, {}}) == Transition::InvalidOutcome);
+    CHECK(file.current().id == 1);
+    CHECK(file.replayDraft(1, {last, last, {"after", {}}, {}, {}}) == Transition::Applied);
+    CHECK(file.replaceDraft(last, {"new", {}}) == Transition::InvalidOutcome);
+    CHECK(file.editResult(last, {{0, 5}, "new"}) == Transition::InvalidOutcome);
+    CHECK(file.undo(last) == Transition::InvalidOutcome);
+    CHECK(file.discardToCheckpoint(last) == Transition::InvalidOutcome);
+    CHECK(file.current().id == last && file.current().draft.text == "after" && file.canUndo());
+}
+
+void previewsRefuseProvisionalPassagesUntilAlignmentIsInstalled()
+{
+    auto file = test_support::choiceFile();
+    CHECK(file.editResult(1, {{0, 0}, "prefix\n"}, {.realignment = Realignment::Deferred}) == Transition::Applied);
+    const auto &target = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section);
+    const auto choice = previewChoice(file, 2, target.source.contributionId, ChoiceAction::Accept);
+    CHECK(choice.state == Transition::Blocked);
+    CHECK(previewNonConflicting(file, 2).state == Transition::Blocked);
+    CHECK(previewWholeFile(file, 2, SourceSide::Stage2).state == Transition::Blocked);
+    CHECK(applyChoice(file, choice, true) == Transition::Blocked);
+    const auto pending = file.pendingAlignment();
+    CHECK(pending
+          && file.installAlignment(2, std::make_shared<const CorrespondenceMap>(pending->realigned()))
+              == Transition::Applied);
+    CHECK(applyChoice(file, choice, true) == Transition::PreviewChanged);
+    CHECK(previewWholeFile(file, 2, SourceSide::Stage2).state == Transition::ConfirmationRequired);
+}
+
 void aFileOverTheLineThresholdWaitsForConfirmation()
 {
     CHECK(captured(lines(kLargeFileLines - 1)).support() == Support::Supported);
@@ -1228,6 +1280,12 @@ int main()
     suite.run("support is admitted only through the launch checks", supportIsAdmittedOnlyThroughTheLaunchChecks);
     suite.run("a recorded revision replays in one step", aRecordedRevisionReplaysInOneStep);
     suite.run("a deferred edit is aligned later only for its revision", aDeferredEditIsAlignedLaterOnlyForItsRevision);
+    suite.run("an alignment installed later keeps the decisions id replay derives",
+              anAlignmentInstalledLaterKeepsTheDecisionsIdReplayDerives);
+    suite.run("exhausted revision ids refuse editing without changing the session",
+              exhaustedRevisionIdsRefuseEditingWithoutChangingTheSession);
+    suite.run("previews refuse provisional passages until alignment is installed",
+              previewsRefuseProvisionalPassagesUntilAlignmentIsInstalled);
     suite.run("a file over the line threshold waits for confirmation", aFileOverTheLineThresholdWaitsForConfirmation);
     suite.run("text over the line or payload limit is unreadable", textOutsideTheEnvelopeIsUnreadable);
     suite.run("edits stay inside the text envelope", editsStayInsideTheEnvelope);

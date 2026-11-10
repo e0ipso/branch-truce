@@ -359,7 +359,7 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected, const 
     preview.target = target;
     if (file.current().id != expected)
         return failed(std::move(preview), Transition::StaleRevision, ChoiceNote::StaleRevision);
-    if (file.support() != Support::Supported)
+    if (file.support() != Support::Supported || file.pendingAlignment())
         return failed(std::move(preview), Transition::Blocked, ChoiceNote::FileNotEditable);
     const auto *found = file.catalogue().find(target);
     const auto *mapping = file.correspondence();
@@ -520,7 +520,8 @@ NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId 
         preview.note = BatchNote::StaleRevision;
         return preview;
     }
-    if (file.support() != Support::Supported || !file.correspondence() || !file.snapshots()) {
+    if (file.support() != Support::Supported || file.pendingAlignment() || !file.correspondence()
+        || !file.snapshots()) {
         preview.note = BatchNote::FileNotEditable;
         return preview;
     }
@@ -573,7 +574,8 @@ WholeFilePreview previewWholeFile(const FileSession &file, RevisionId expected, 
         preview.note = WholeFileNote::StaleRevision;
         return preview;
     }
-    if (file.support() != Support::Supported || !file.snapshots() || !file.correspondence()) {
+    if (file.support() != Support::Supported || file.pendingAlignment() || !file.snapshots()
+        || !file.correspondence()) {
         preview.note = WholeFileNote::NoCapturedSource;
         return preview;
     }
