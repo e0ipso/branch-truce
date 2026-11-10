@@ -65,8 +65,9 @@ struct Gate {
     }
 };
 
+// A worker still running when the case ends fails it instead of leaking into the next case.
 struct DrainWorkers {
-    ~DrainWorkers() { QThreadPool::globalInstance()->waitForDone(6000); }
+    ~DrainWorkers() { EXPECT(QThreadPool::globalInstance()->waitForDone(6000)); }
 };
 
 TaskResult writeResult(const TaskInput &input, const TaskControl &control, const QByteArray &bytes)
@@ -540,12 +541,13 @@ public:
             const auto work = [](const TaskInput &, const TaskControl &) { return TaskResult{}; };
             QObject::connect(f.coordinator.get(), &SessionCoordinator::taskFinished, &f.model,
                              [&](const TaskCompletion &value) {
-                                 if (value.stamp.generation == 1) CHECK(applied == 1 && replacementQueued);
+                                 if (value.stamp.generation == 1) EXPECT(applied == 1 && replacementQueued);
                              });
             CHECK(f.coordinator->submit("file", 1, work, [&](const TaskCompletion &) {
                 ++applied;
-                f.replace("tracked.txt", "new-merge");
-                CHECK(f.coordinator->submit("file", 1, work, [&](const TaskCompletion &) { ++applied; }) != 0);
+                EXPECT(f.coordinator->replaceSession(f.root(), "new-merge",
+                                                     {FileSession("file", "tracked.txt", draft())}));
+                EXPECT(f.coordinator->submit("file", 1, work, [&](const TaskCompletion &) { ++applied; }) != 0);
                 replacementQueued = true;
             }) != 0);
             f.wait(2);
@@ -568,8 +570,9 @@ public:
             QObject::connect(f.coordinator.get(), &SessionCoordinator::pendingTasksChanged, &f.model, [&] {
                 if (replaced || f.coordinator->pendingTasks() != 1) return;
                 replaced = true;
-                f.replace("tracked.txt", "replacement");
-                CHECK(f.coordinator->submit("file", 1, work) != 0);
+                EXPECT(f.coordinator->replaceSession(f.root(), "replacement",
+                                                     {FileSession("file", "tracked.txt", draft())}));
+                EXPECT(f.coordinator->submit("file", 1, work) != 0);
             });
             CHECK(f.coordinator->submit("file", 1, work) != 0);
             f.wait(2);

@@ -113,12 +113,12 @@ int main(int argc, char **argv)
         QObject::connect(&model.rows, &SessionModel::summaryChanged, &model, [&] { ++summaries; });
         QObject::connect(&model.rows, &QAbstractItemModel::rowsInserted, &model,
                          [&](const QModelIndex &parent, int first, int last) {
-                             CHECK(!parent.isValid() && first == last);
+                             EXPECT(!parent.isValid() && first == last);
                              ++insertions;
                          });
         QObject::connect(&model.rows, &QAbstractItemModel::dataChanged, &model,
                          [&](const QModelIndex &top, const QModelIndex &bottom, const QList<int> &roles) {
-                             CHECK(top.row() == 0 && top == bottom && roles.isEmpty());
+                             EXPECT(top.row() == 0 && top == bottom && roles.isEmpty());
                              ++changes;
                          });
         CHECK(model.appendFile(FileSession("id", "file", draft())));
