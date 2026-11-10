@@ -141,12 +141,35 @@ public:
     {
         CHECK(QMetaObject::invokeMethod(item("resultText"), "select", Q_ARG(int, begin), Q_ARG(int, end)));
     }
+    // A typed key leaves the file's passages provisional until a worker aligns them; this waits
+    // for that, as a user who looks at the result would.
     void key(int code, Qt::KeyboardModifiers modifiers = Qt::NoModifier, const QString &text = {})
     {
         auto *editor = item("resultText");
         editor->forceActiveFocus();
         QKeyEvent event(QEvent::KeyPress, code, modifiers, text);
         QCoreApplication::sendEvent(editor, &event);
+        settleAligned();
+    }
+    // Types each character with no event-loop turn in between, so no pause ends the burst.
+    void type(const QString &text)
+    {
+        auto *editor = item("resultText");
+        editor->forceActiveFocus();
+        for (const auto character : text) {
+            // Qt's key codes for Latin letters and digits are their upper-case code points.
+            QKeyEvent event(QEvent::KeyPress, static_cast<int>(character.toUpper().unicode()), Qt::NoModifier,
+                            QString(character));
+            QCoreApplication::sendEvent(editor, &event);
+        }
+        settleAligned();
+    }
+    void settleAligned()
+    {
+        settleFor("the typed edit aligned", [&] {
+            const auto *shown = controller.store()->file(controller.selection()->fileId().toStdString());
+            return !shown || !shown->pendingAlignment();
+        });
     }
     void click(const char *name)
     {
@@ -197,8 +220,10 @@ public:
         test_support::settleFor(std::string("the menu holding ") + entry + " to close",
                                 [&] { return !test_support::visualItem(window->contentItem(), name); });
     }
+    // Typing is recorded once its burst ends and its record is durable.
     void checkRecovered(const Draft &expected, std::size_t expectedFiles = 1)
     {
+        settleFor("typing recorded", [&] { return !controller.store()->recording(); });
         const auto replay = replayRecovery(storage::RecoveryStore(controller.store()->recoveryDirectory()));
         if (!replay.succeeded) throw std::runtime_error("comparison recovery: " + replay.error.toStdString());
         CHECK(replay.succeeded && replay.files.size() == expectedFiles);

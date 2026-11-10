@@ -364,8 +364,11 @@ void scopedChoicesShareOneHistory(Sandbox &sandbox)
     std::vector<Work> history{work(scene, "story.txt")};
     chooseLinesAndSections(scene, history);
     previewAndApplyOrder(scene, history);
-    // Direct typing joins the same history.
-    appendToResult(scene, "ok");
+    // Direct typing joins the same history. A pause ends a burst of typing, so the two keys are
+    // two undo steps.
+    appendToResult(scene, "o");
+    settleFor("the first key recorded", [&] { return !scene.app().store()->recording(); });
+    typeText(scene, "k");
     expectText(scene.text("resultText"),
                "header\nright first\nleft first\nbridge one\nbridge two\nbridge three\nright later\ntail\nok", "typed");
     CHECK(scene.file("story.txt").current().draft.decisions == history.back().draft.decisions);

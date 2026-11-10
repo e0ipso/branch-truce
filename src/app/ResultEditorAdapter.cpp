@@ -107,7 +107,7 @@ void ResultEditorAdapter::attach(QObject *editor)
     }
     document_->setUndoRedoEnabled(false);
     syntax_.attach(document_);
-    documentConnection_ = connect(document_, &QTextDocument::contentsChange, this, &ResultEditorAdapter::capture);
+    documentConnection_ = connect(document_, &QTextDocument::contentsChange, this, [this] { capture(); });
     words_.attach(editor, document_);
     sync();
     Q_EMIT stateChanged();
@@ -156,7 +156,7 @@ void ResultEditorAdapter::setCursorPosition(int cursor)
     if (editor_) editor_->setProperty("cursorPosition", cursor);
 }
 
-void ResultEditorAdapter::capture()
+void ResultEditorAdapter::capture(Input input)
 {
     if (syncing_ || processingEvent_ || !document_) return;
     const auto next = documentText(*document_);
@@ -178,8 +178,12 @@ void ResultEditorAdapter::capture()
     // an IME commit with several document notifications, as one domain command.
     const auto change = changedRange(old, next);
     text_ = next;
-    Q_EMIT edited(fileId_, QString::number(file->current().id), static_cast<int>(change.begin),
-                  static_cast<int>(change.oldEnd), next.mid(change.begin, change.newEnd - change.begin));
+    const auto revision = QString::number(file->current().id);
+    const auto replacement = next.mid(change.begin, change.newEnd - change.begin);
+    if (input == Input::Typing)
+        Q_EMIT typed(fileId_, revision, static_cast<int>(change.begin), static_cast<int>(change.oldEnd), replacement);
+    else
+        Q_EMIT edited(fileId_, revision, static_cast<int>(change.begin), static_cast<int>(change.oldEnd), replacement);
     sync();
 }
 
@@ -269,11 +273,14 @@ bool ResultEditorAdapter::eventFilter(QObject *watched, QEvent *event)
     if (watched == editor_
         && (event->type() == QEvent::KeyPress || event->type() == QEvent::InputMethod || event->type() == QEvent::Drop
             || middlePaste)) {
+        // A keyboard cut is one edit, as the menu's is.
+        const bool typing = event->type() == QEvent::InputMethod
+            || (event->type() == QEvent::KeyPress && !static_cast<QKeyEvent *>(event)->matches(QKeySequence::Cut));
         {
             QScopedValueRollback guard(processingEvent_, true);
             QCoreApplication::sendEvent(watched, event);
         }
-        capture();
+        capture(typing ? Input::Typing : Input::Edit);
         return true;
     }
     return QObject::eventFilter(watched, event);

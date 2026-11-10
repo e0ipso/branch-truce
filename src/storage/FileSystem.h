@@ -4,6 +4,7 @@
 #include <QString>
 #include <cstddef>
 #include <memory>
+#include <sys/stat.h>
 #include <sys/types.h>
 
 namespace branch_truce::storage {
@@ -17,6 +18,8 @@ public:
     virtual ~FileSystem() = default;
     [[nodiscard]] virtual ssize_t write(int fd, const void *bytes, std::size_t size) const;
     [[nodiscard]] virtual int sync(int fd) const;
+    // fstat.
+    [[nodiscard]] virtual int status(int fd, struct stat *result) const;
     // renameat2 with RENAME_EXCHANGE.
     [[nodiscard]] virtual int exchange(int fromDirectory, const char *from, int toDirectory, const char *to) const;
     [[nodiscard]] virtual int unlink(int directory, const char *name, int flags) const;

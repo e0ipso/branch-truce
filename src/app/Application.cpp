@@ -7,6 +7,7 @@ Application::Application(Config config, QObject *parent)
       store_(std::move(config.recoveryDirectory), config.files, this),
       files_(store_, this),
       coordinator_(store_, config.sessionGit ? config.sessionGit : git::gitAdapters(config.gitExecutable), this),
+      alignment_(store_, this),
       publisher_(store_, coordinator_, config.gitExecutable, config.files, this),
       mergetool_(
           publisher_, store_, coordinator_, [this] { return loader_.repository(); },

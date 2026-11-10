@@ -100,6 +100,10 @@ bool ChoicePreviewFlow::preview(Scope scope, const QString &fileId, const QStrin
         checkCommand(store_, selection_.fileId(), editor_.composing(), fileId, revision, CommandCheck::Selected);
     if (const auto *refused = std::get_if<Transition>(&checked)) return feedback_.report(*refused);
     const auto &[file, expected] = std::get<CommandTarget>(checked);
+    // A preview reads exact passages; typing leaves them provisional until aligned.
+    if (const auto aligned = store_.settleAlignment(fileId.toStdString());
+        aligned != Transition::Applied && aligned != Transition::NoChange)
+        return feedback_.report(aligned);
     decltype(pending_) pending;
     QString message;
     bool accepted = false;

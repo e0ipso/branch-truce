@@ -155,6 +155,15 @@ void openBase(test_support::TestSession &model)
 {
     CHECK(model.appendFile(FileSession("file", "file.txt", baseDraft())));
 }
+constexpr const char *typedText = "typed ";
+// Types typedText at the start of the file, one key at a time, as one burst.
+void typeBurst(test_support::TestSession &model)
+{
+    for (std::size_t index = 0; index < std::string_view(typedText).size(); ++index)
+        CHECK(model.typeResult("file", model.file("file")->current().id,
+                               {{index, index}, std::string(1, typedText[index])})
+              == Transition::Applied);
+}
 void saveCheckpoint(test_support::TestSession &model)
 {
     openBase(model);
@@ -183,6 +192,32 @@ void writeSaved(test_support::TestSession &model)
             model, *files,
             [](test_support::TestSession &session) { return session.replaceDraft("file", 1, savedDraft()); },
             [](FileSession &file) { return file.replaceDraft(file.current().id, savedDraft()); });
+    }
+    if (name == QLatin1String("typing")) {
+        // A burst of typing, acknowledged once its record is durable.
+        openBase(model);
+        commitBoundary(
+            model, *files,
+            [](test_support::TestSession &session) {
+                typeBurst(session);
+                return session.recordTyping() ? Transition::Applied : Transition::Blocked;
+            },
+            [](FileSession &file) {
+                for (std::size_t index = 0; index < std::string_view(typedText).size(); ++index) {
+                    const auto applied = file.editResult(
+                        file.current().id, {{index, index}, std::string(1, typedText[index])}, {.join = index > 0});
+                    if (applied != Transition::Applied) return applied;
+                }
+                return Transition::Applied;
+            });
+    }
+    if (name == QLatin1String("typing-unacknowledged")) {
+        // Typing whose burst has not ended when the process dies.
+        openBase(model);
+        emitObservation("BEFORE", *model.file("file"));
+        typeBurst(model);
+        CHECK(model.recording());
+        std::_Exit(0);
     }
     if (name == QLatin1String("checkpoint")) {
         openBase(model);
@@ -496,8 +531,8 @@ public:
                       CHECK(qgetenv("XDG_RUNTIME_DIR") == previous);
                       CHECK(!QFileInfo::exists(runtime));
                   });
-        const QStringList durable{QStringLiteral("edit"), QStringLiteral("checkpoint"), QStringLiteral("discard"),
-                                  QStringLiteral("write"), QStringLiteral("stage")};
+        const QStringList durable{QStringLiteral("edit"),    QStringLiteral("typing"), QStringLiteral("checkpoint"),
+                                  QStringLiteral("discard"), QStringLiteral("write"),  QStringLiteral("stage")};
         QStringList recorded = durable;
         recorded << QStringLiteral("checkpoint-failed") << QStringLiteral("write-failed")
                  << QStringLiteral("write-uncertain") << QStringLiteral("stage-failed");
@@ -561,6 +596,15 @@ public:
                 CHECK(!incomplete);
             });
         }
+        suite.run("typing not yet acknowledged when the process dies leaves the acknowledged draft", [] {
+            QTemporaryDir directory;
+            CHECK(directory.isValid());
+            const auto child = runChild(QStringLiteral("typing-unacknowledged"), directory.path(), {});
+            requireChild(child, 0);
+            bool incomplete = true;
+            CHECK(replayed(directory.path(), &incomplete) == labeled(child.output, "BEFORE"));
+            CHECK(!incomplete);
+        });
         suite.run("payload sync death during edit keeps only the acknowledged draft", [] {
             QTemporaryDir directory;
             CHECK(directory.isValid());

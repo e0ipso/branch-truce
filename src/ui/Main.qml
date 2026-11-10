@@ -108,6 +108,8 @@ Kirigami.ApplicationWindow {
     // opens the handoff instead, where leaving is a deliberate choice. Input that
     // recovery could not keep blocks the close until it is kept or the user cancels.
     onClosing: close => {
+        // Typing still being recorded is written first, so a failure shows as pending input.
+        window.commands.recordTyping();
         if (window.files.hasPendingRecovery) {
             close.accepted = false;
             recoveryCloseDialog.open();

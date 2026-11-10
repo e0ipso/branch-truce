@@ -23,7 +23,8 @@ class SessionStore;
 // of the file it shows as domain edits, loads that file's text, keeps the
 // cursor and scroll position across text replacements, and attaches syntax
 // highlighting and word-level differences to the result and source panes.
-// While an input method composes, it holds the selection.
+// While an input method composes, it holds the selection. Key presses and
+// input method commits are typing; a cut, a paste or a drop is one edit.
 class ResultEditorAdapter : public QObject, public SelectionGuard {
     Q_OBJECT
     QML_ELEMENT
@@ -81,7 +82,9 @@ public:
     Q_INVOKABLE void restoreLocation();
 
 Q_SIGNALS:
-    // A native edit of the selected file, as editResult arguments.
+    // Text typed into the selected file, as typeResult arguments.
+    void typed(const QString &fileId, const QString &revision, int begin, int end, const QString &replacement);
+    // A cut, paste or drop in the selected file, as editResult arguments.
     void edited(const QString &fileId, const QString &revision, int begin, int end, const QString &replacement);
     void editActionRequested(const QString &name);
     // The editor text no longer matched the file's current revision.
@@ -107,8 +110,10 @@ private:
         qreal contentY = 0;
         bool hasViewport = false;
     };
+    // How the editor changed its text.
+    enum class Input { Typing, Edit };
     bool eventFilter(QObject *watched, QEvent *event) override;
-    void capture();
+    void capture(Input input = Input::Edit);
     // Loads the shown file's text, or its pending draft, into the editor.
     void sync();
     void setEditable(bool editable);
