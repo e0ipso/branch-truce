@@ -40,8 +40,9 @@ def stop_group(process, grace=5):
     process.wait(timeout=5)
 
 
-def run(argv, *, env=None, cwd=None, timeout=30, max_output=4 * 1024 * 1024, check=False, log=None):
-    """Capture bytes with a combined output budget and deadline; cancellation always cleans up."""
+def run(argv, *, env=None, cwd=None, timeout=30, max_output=4 * 1024 * 1024,
+        check=False, log=None, cleanup_grace=5):
+    """Capture bounded output; allow a supervising child its cleanup_grace before forced termination."""
     process = subprocess.Popen(argv, env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, start_new_session=True)
     output = [bytearray(), bytearray()]
@@ -72,7 +73,7 @@ def run(argv, *, env=None, cwd=None, timeout=30, max_output=4 * 1024 * 1024, che
         return result
     finally:
         try:
-            stop_group(process)
+            stop_group(process, grace=cleanup_grace)
         finally:
             process.stdout.close()
             process.stderr.close()

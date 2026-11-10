@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -180,6 +181,45 @@ class ProcessTests(unittest.TestCase):
 
 
 class ResourceTests(PrivateBaseTestCase):
+    def test_nested_owner_finishes_cleanup_before_outer_force_termination(self):
+        script = '''
+import json, os, signal, sys
+from pathlib import Path
+import processes
+from processes import OwnedResources, interrupt, stop_group
+processes.stop_group = lambda process: stop_group(process, grace=0.05)
+signal.signal(signal.SIGTERM, interrupt)
+with OwnedResources(base_dir=Path(sys.argv[1])) as owned:
+    children = []
+    for index in range(2):
+        process, _ = owned.spawn([sys.executable, '-c',
+            'import signal; signal.signal(signal.SIGTERM, signal.SIG_IGN); print("ready", flush=True); signal.pause()'],
+            env=dict(os.environ), log=owned.root / str(index), pipe=True)
+        assert process.stdout.readline() == b'ready\\n'
+        children.append(process.pid)
+    Path(sys.argv[2]).write_text(json.dumps(dict(root=str(owned.root), pids=children)))
+    os.write(1, b'exceed')
+    signal.pause()
+'''
+        ledger = self.base / 'owned.json'
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / 'tools/native-replay'))
+        try:
+            with self.assertRaises(OutputLimitError):
+                run([sys.executable, '-B', '-c', script, str(self.base), str(ledger)],
+                    env=env, timeout=30, max_output=1, cleanup_grace=5)
+            owned = json.loads(ledger.read_text())
+            self.assertFalse(Path(owned['root']).exists())
+            for pid in owned['pids']:
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
+        finally:
+            if ledger.exists():
+                for pid in json.loads(ledger.read_text())['pids']:
+                    try:
+                        os.killpg(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
     def test_exited_leader_does_not_hide_a_surviving_child(self):
         unrelated = subprocess.Popen([sys.executable, '-c', 'import signal; signal.pause()'])
         self.addCleanup(lambda: (unrelated.terminate(), unrelated.wait()))

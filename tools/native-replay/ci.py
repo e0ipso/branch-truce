@@ -57,8 +57,9 @@ def main():
 
     def invoke(command, log, timeout):
         try:
+            # Replay stops its own app/compositor groups and readers before it can exit.
             result = run(command, cwd=args.source, timeout=timeout, max_output=16 * 1024 * 1024,
-                         log=args.output / log)
+                         log=args.output / log, cleanup_grace=60)
             status = result.returncode
         except (OSError, subprocess.SubprocessError) as error:
             with (args.output / log).open('ab') as stream:
