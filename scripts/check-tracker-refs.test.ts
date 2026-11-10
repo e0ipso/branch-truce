@@ -16,9 +16,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CLEAN_MESSAGE, findReferences, isReference } from './check-tracker-refs.ts';
+import { CLEAN_MESSAGE, findReferences, isReference, readText, trackedFiles } from './check-tracker-refs.ts';
 
-// The scan itself is findReferences(), which these tests call on throwaway git repositories. A few
+// The scan itself is findReferences(), which these tests call on throwaway git repositories, listed
+// and read as main() does them, and on paths and texts in memory. A few
 // end-to-end tests copy the script into such a repository and run it there, for its output and exit
 // status. Nothing touches the real checkout. The fixtures build the forbidden strings from parts: a
 // literal ticket ID or plan path in this file would trip the check on the repository that holds it.
@@ -64,8 +65,8 @@ function track(root: string): void {
   git(root, 'add', '-A', '--force');
 }
 
-/** The hits of the scan of ROOT, sorted. */
-const hits = (root: string) => findReferences(root).sort();
+/** The hits of the scan of ROOT's tracked files, sorted. */
+const hits = (root: string) => findReferences(trackedFiles(root), (path) => readText(root, path)).sort();
 
 function run(root: string, ...args: string[]): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, [join(root, 'scripts', 'check-tracker-refs.ts'), ...args], {
@@ -151,7 +152,7 @@ test('outside a git repository the script fails instead of reporting a clean tre
   const result = run(root);
   assert.notEqual(result.status, 0);
   assert.doesNotMatch(result.stdout, /No ticket or plan references/);
-  assert.throws(() => findReferences(root));
+  assert.throws(() => trackedFiles(root));
 });
 
 // --- The scan
@@ -171,6 +172,15 @@ test('every ticket pattern edge: digit count, word boundaries and near misses', 
     ['TRUCE 0001', false], //                      no hyphen
   ] as const;
   for (const [line, expected] of lines) assert.equal(isReference('notes.txt', line), expected, line);
+});
+
+test('the scan reports the paths it is given in their order and skips those READ answers null for', () => {
+  const texts: Record<string, string | null> = {
+    'z.md': `${ticket('1')}\n`,
+    'skipped.bin': null,
+    'a.md': `clean\nsee ${PLANS}/1\n`,
+  };
+  assert.deepEqual(findReferences(Object.keys(texts), (path) => texts[path] ?? null), ['z.md:1', 'a.md:2']);
 });
 
 test('a partial plan path does not match', (t) => {

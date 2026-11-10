@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 //   node scripts/check-tracker-refs.ts [--help]
 //
 // Prints `path:line` for each hit on stderr and exits 1, or prints a clean message and exits 0.
-// Usage errors exit 2. findReferences() is the check itself, for code and tests.
+// Usage errors exit 2. findReferences() is the check itself, for code and tests; it reads nothing but
+// what its caller passes in. main() lists the files with Git and reads them from the working tree.
 //
 // Neither pattern matches its own source: the regex has `\d`, not digits, and the path is joined.
 
@@ -64,11 +65,12 @@ export function readText(root: string, path: string): string | null {
   }
 }
 
-/** Every `path:line` under ROOT that cites a ticket ID or a plan path, in Git's file order. */
-export function findReferences(root: string): string[] {
+/** Every `path:line` of PATHS, in their order, whose text cites a ticket ID or a plan path. READ gives a
+ * path's text, or null to skip it. */
+export function findReferences(paths: Iterable<string>, read: (path: string) => string | null): string[] {
   const hits: string[] = [];
-  for (const path of trackedFiles(root)) {
-    const text = readText(root, path);
+  for (const path of paths) {
+    const text = read(path);
     if (text === null) continue;
     text.split('\n').forEach((line, index) => {
       if (isReference(path, line)) hits.push(`${path}:${index + 1}`);
@@ -87,7 +89,8 @@ export function main(argv: string[], out = process.stdout, err = process.stderr)
     err.write(`${USAGE}\n`);
     return 2;
   }
-  const hits = findReferences(fileURLToPath(new URL('../', import.meta.url)));
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const hits = findReferences(trackedFiles(root), (path) => readText(root, path));
   if (hits.length === 0) {
     out.write(`${CLEAN_MESSAGE}\n`);
     return 0;
