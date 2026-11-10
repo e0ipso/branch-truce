@@ -302,6 +302,7 @@ namespace branch_truce {
     X(MergetoolIntakeManifest) \
     X(MergetoolIntakePath) \
     X(MergetoolIntakeBytes) \
+    X(MergetoolIntakeCheckFailed) \
     X(MergetoolNoSocketDirectory) \
     X(MergetoolSocketCreate) \
     X(MergetoolSocketNotDirectory) \

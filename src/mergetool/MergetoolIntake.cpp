@@ -122,7 +122,8 @@ QString writeMergetoolIntake(const QString &root, const QByteArray &sessionKey, 
 }
 
 std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, const QString &root,
-                                                   const QByteArray &sessionKey, Problem *error)
+                                                   const QByteArray &sessionKey, Problem *error,
+                                                   const MergetoolRead &read)
 {
     const auto canonicalRoot = QFileInfo(root).canonicalFilePath();
     const auto canonical = QFileInfo(directory).canonicalFilePath();
@@ -139,7 +140,7 @@ std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, con
         return std::nullopt;
     }
     QByteArray manifestBytes;
-    if (!readMergetoolFile(QFile::encodeName(canonical + QStringLiteral("/manifest.json")), &manifestBytes, error))
+    if (!read(QFile::encodeName(canonical + QStringLiteral("/manifest.json")), &manifestBytes, error))
         return std::nullopt;
     const auto manifest = QJsonDocument::fromJson(manifestBytes).object();
     if (manifest.value(QStringLiteral("invocation")).toString() != invocation) {
@@ -154,7 +155,7 @@ std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, con
     }
     const auto hashed = [&](const QString &name, QByteArray *digest) {
         QByteArray bytes;
-        if (!readMergetoolFile(QFile::encodeName(canonical + QLatin1Char('/') + name), &bytes, error)) return false;
+        if (!read(QFile::encodeName(canonical + QLatin1Char('/') + name), &bytes, error)) return false;
         *digest = sha256(bytes);
         if (QString::fromLatin1(*digest) != manifest.value(name).toString()) {
             fail(error, ProblemCode::MergetoolIntakeBytes);

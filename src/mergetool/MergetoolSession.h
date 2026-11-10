@@ -12,6 +12,7 @@
 #include <QObject>
 #include <QString>
 #include <QThreadPool>
+#include <atomic>
 #include <functional>
 #include <map>
 #include <optional>
@@ -38,11 +39,17 @@ public:
         git::GitEnvironment gitEnvironment;
         // Builds the runners copied-launch checks run Git on, on a worker thread.
         git::GitRunners git;
+        // Also caps queued plus running intake jobs, including jobs whose peer left.
+        MergetoolServer::Limits limits = {};
+        // Runs on the intake worker for both manifest and source reads.
+        MergetoolRead readIntakeFile = readMergetoolFile;
     };
     // loadedRepository is the loaded operation that copied-launch checks inspect.
     MergetoolSession(ResolutionPublisher &publisher, SessionStore &files, SessionCoordinator &coordinator,
                      std::function<git::RepositoryContext()> loadedRepository, Config config,
                      QObject *parent = nullptr);
+    ~MergetoolSession() override;
+    [[nodiscard]] int pendingIntakes() const { return static_cast<int>(intakes_.size()); }
     // error gets why the session cannot listen, translated.
     Listen listen(const git::RepositoryContext &repository, QString *error);
     [[nodiscard]] bool listening() const { return server_.listening(); }
@@ -131,7 +138,6 @@ private:
     const Config config_;
     MergetoolServer server_;
     QTimer *acknowledgment_ = nullptr;
-    git::RepositoryContext repository_;
     QByteArray sessionKey_;
     QList<Waiter> waiters_;
     std::string acknowledgmentFile_;
@@ -146,8 +152,10 @@ private:
     std::map<std::string, SnapshotFileIdentity> copiedLaunches_;
     // The revalidation task in flight for a copiedLaunches_ entry.
     std::map<std::string, TaskId> copiedLaunchChecks_;
-    // Intake reads and pruning, one at a time and off the GUI thread. Its
-    // tasks capture values only, and destruction waits for them.
-    QThreadPool workers_;
+    // A dead peer invalidates its result but retains admission until the work settles.
+    std::map<quint64, std::shared_ptr<std::atomic_bool>> intakes_;
+    // One worker for pruning and intake. Value-only work drains off the GUI
+    // thread on destruction; a blocked filesystem call cannot be interrupted.
+    std::unique_ptr<QThreadPool> workers_ = std::make_unique<QThreadPool>();
 };
 }

@@ -4,6 +4,7 @@
 #include "mergetool/MergetoolMessages.h"
 #include "mergetool/MergetoolSocket.h"
 #include <QByteArray>
+#include <QDeadlineTimer>
 #include <QHash>
 #include <QObject>
 #include <QString>
@@ -29,7 +30,7 @@ public:
     // Unavailable: no launcher can attach here; error says why.
     enum class Listen { Listening, Elsewhere, Unavailable };
     struct Limits {
-        // A peer that has not sent a complete attach frame by then is closed.
+        // Total time from connection through intake validation; expiry closes the peer.
         int attachDeadlineMs = 5000;
         // Connections open at once, attached launchers included. Others are closed at once.
         int maxConnections = 32;
@@ -52,8 +53,8 @@ public:
     [[nodiscard]] int connections() const { return static_cast<int>(connections_.size()); }
 
 Q_SIGNALS:
-    // A peer sent a valid attach. Its deadline has stopped; any further byte
-    // from it closes the connection. Reply with send(), then keep or close it.
+    // A peer sent a valid attach. Its deadline runs until Attached is sent; any
+    // further byte closes it. A late Attached is refused even before timer delivery.
     void attachReceived(quint64 connection, const branch_truce::AttachMessage &message);
     // The connection is gone, whichever side closed it.
     void closed(quint64 connection);
@@ -63,7 +64,8 @@ private:
         QLocalSocket *socket = nullptr;
         QTimer *deadline = nullptr;
         QByteArray buffer;
-        bool attached = false;
+        QString invocation;
+        QDeadlineTimer expires;
     };
     void accept();
     void read(quint64 connection);
