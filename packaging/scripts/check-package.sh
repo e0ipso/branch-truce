@@ -119,8 +119,10 @@ check_icons() {
 
 # check_desktop_files: the desktop entry and the AppStream metainfo validate.
 check_desktop_files() {
-    desktop-file-validate /usr/share/applications/com.canpicasoft.branch-truce.desktop
-    appstreamcli validate --no-net /usr/share/metainfo/com.canpicasoft.branch-truce.metainfo.xml
+    desktop-file-validate /usr/share/applications/com.canpicasoft.branch-truce.desktop \
+        || die 'the desktop entry does not validate'
+    appstreamcli validate --no-net /usr/share/metainfo/com.canpicasoft.branch-truce.metainfo.xml \
+        || die 'the AppStream metainfo does not validate'
 }
 
 # check_binary WORK: every linked library resolves, the binary uses no private
@@ -130,10 +132,9 @@ check_binary() {
     local work=$1
     ldd "$app_binary" > "$work/ldd" 2>&1 || die "ldd failed on $app_binary: $(cat "$work/ldd")"
     ! grep -q 'not found' "$work/ldd" || die "unresolved libraries: $(grep 'not found' "$work/ldd" | tr '\n' ' ')"
-    objdump -T "$app_binary" > "$work/symbols"
-    readelf -hW "$app_binary" > "$work/header"
-    readelf -lW "$app_binary" > "$work/segments"
-    readelf -dW "$app_binary" > "$work/dynamic"
+    { objdump -T "$app_binary" > "$work/symbols" && readelf -hW "$app_binary" > "$work/header" \
+        && readelf -lW "$app_binary" > "$work/segments" && readelf -dW "$app_binary" > "$work/dynamic"; } \
+        || die "cannot read the ELF headers of $app_binary"
     ! grep -q Qt_6_PRIVATE_API "$work/symbols" || die 'the binary uses the private Qt ABI'
     grep -q 'Type:.*DYN' "$work/header" || die 'the binary is not PIE'
     grep -q GNU_RELRO "$work/segments" || die 'the binary lacks RELRO'
@@ -161,7 +162,7 @@ check_launch() {
     local version=$1 home=$2 work=$3 got
     got=$(run_app "$home" / --version) || die "installed --version exited $?"
     [ "$got" = "Branch Truce $version" ] || die "installed --version reports '$got'"
-    fixture_merge_repo "$home" "$work/repo" tracked.txt
+    fixture_merge_repo "$home" "$work/repo" tracked.txt || die 'the fixture merge did not conflict'
     got=$(run_app "$home" "$work/repo" --smoke-test "$work/repo") || die "installed --smoke-test exited $?: $got"
     smoke_record_ready "$got" || die "installed --smoke-test did not open the merge session: $got"
 }
@@ -185,7 +186,7 @@ remove_and_check() {
     local home=$1 payload=$2 before path suffix
     before=$(user_files "$home")
     step "remove $(pkg_installed_version)"
-    pkg_remove
+    pkg_remove || die 'the package manager did not remove branch-truce'
     [ -z "$(pkg_installed_version)" ] || die 'branch-truce is still installed'
     while IFS= read -r path; do
         [ ! -e "$path" ] && [ ! -L "$path" ] || die "removal left $path"

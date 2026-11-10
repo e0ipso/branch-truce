@@ -42,7 +42,7 @@ change it. `check-package.sh` calls them only after every read check passed.
 | Function | Answer |
 | --- | --- |
 | `pkg_target_ready` | Status 0 when the container is the format's target; otherwise one line on stderr. |
-| `pkg_refresh` | Refreshes the package lists. |
+| `pkg_refresh` | Brings the package lists up to date, so `pkg_install` resolves against the current repositories. On Arch, a rolling release that does not support partial upgrades, it also upgrades the installed packages. |
 | `pkg_install FILE` | Installs or upgrades from a local file, with the dependencies from the target's repositories. |
 | `pkg_remove` | Removes branch-truce completely, configuration included. |
 | `pkg_installed_version` | The installed native version in the form `pkg_identity` gives, or nothing, with status 0, when branch-truce is not installed. |
