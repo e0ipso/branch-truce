@@ -8,6 +8,18 @@
 #include <unistd.h>
 
 namespace branch_truce::storage {
+int FileSystem::openAt(int directory, const char *name, int flags, mode_t mode) const
+{
+    return ::openat(directory, name, flags, mode);
+}
+int FileSystem::statusAt(int directory, const char *name, struct stat *result, int flags) const
+{
+    return ::fstatat(directory, name, result, flags);
+}
+ssize_t FileSystem::readAt(int fd, void *bytes, std::size_t size, off_t offset) const
+{
+    return ::pread(fd, bytes, size, offset);
+}
 ssize_t FileSystem::write(int fd, const void *bytes, std::size_t size) const { return ::write(fd, bytes, size); }
 int FileSystem::sync(int fd) const { return ::fsync(fd); }
 int FileSystem::status(int fd, struct stat *result) const { return ::fstat(fd, result); }

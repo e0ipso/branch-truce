@@ -16,6 +16,9 @@ namespace branch_truce::storage {
 class FileSystem {
 public:
     virtual ~FileSystem() = default;
+    [[nodiscard]] virtual int openAt(int directory, const char *name, int flags, mode_t mode = 0) const;
+    [[nodiscard]] virtual int statusAt(int directory, const char *name, struct stat *result, int flags) const;
+    [[nodiscard]] virtual ssize_t readAt(int fd, void *bytes, std::size_t size, off_t offset) const;
     [[nodiscard]] virtual ssize_t write(int fd, const void *bytes, std::size_t size) const;
     [[nodiscard]] virtual int sync(int fd) const;
     // fstat.

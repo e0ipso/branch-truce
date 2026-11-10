@@ -1,7 +1,7 @@
 // Session state keeps result revisions, decisions and undo history separate from immutable sources.
-#include "SessionState.h"
 #include "ExactLineCorrespondence.h"
 #include "ResourceLimits.h"
+#include "SessionCheckpoint.h"
 
 #include <algorithm>
 #include <limits>
@@ -250,19 +250,33 @@ void FileSession::open(Launch opened) noexcept
     history_ = std::move(opened.history);
 }
 
-void FileSession::restoreHistory(RevisionHistory::Checkpoint checkpoint, std::vector<RecordedRevision> revisions,
-                                 PublicationState publication)
+SessionCheckpoint SessionCheckpoint::capture(const FileSession &file)
 {
+    return {file.history_.checkpoint(), file.publication_.state_,
+            file.history_.find(file.history_.launchId())->correspondence != nullptr};
+}
+
+void SessionCheckpoint::restore(FileSession &file, std::vector<RecordedRevision> revisions) &&
+{
+    auto checkpoint = std::move(history);
+    if (!checkpoint.revisions.empty()) throw std::invalid_argument("Checkpoint already contains derived revisions");
+    for (const auto &revision : revisions)
+        if (!validDecisions(revision.draft.decisions)
+            || ((file.support_ == Support::Supported || aligned)
+                && (!editableText(revision.draft.text)
+                    || !partsFit(std::array{std::string_view(revision.draft.text)}))))
+            throw std::invalid_argument("Invalid checkpoint draft");
     const auto found = std::find_if(revisions.begin(), revisions.end(),
                                     [&](const auto &revision) { return revision.id == checkpoint.launch; });
     if (found == revisions.end()) throw std::invalid_argument("Missing checkpoint launch");
-    auto restored = *this;
-    restored.open(launch(checkpoint.launch, found->draft, support_, loadFailure_, false));
+    auto restored = file;
+    const auto support = aligned ? Support::Supported : file.support_;
+    restored.open(file.launch(checkpoint.launch, found->draft, support, file.loadFailure_, false));
+    if (restored.support_ != support || bool(restored.correspondence()) != aligned)
+        throw std::invalid_argument("Checkpoint changed file admission");
+    restored.support_ = file.support_;
     std::size_t retained = 0;
     for (auto &recorded : revisions) {
-        if (!validDecisions(recorded.draft.decisions)
-            || (restored.support_ == Support::Supported && !editableText(recorded.draft.text)))
-            throw std::invalid_argument("Invalid checkpoint draft");
         std::shared_ptr<const CorrespondenceMap> mapping;
         if (const auto *base = restored.correspondence()) {
             auto map = base->recomputed(recorded.id, recorded.draft.text);
@@ -272,7 +286,7 @@ void FileSession::restoreHistory(RevisionHistory::Checkpoint checkpoint, std::ve
         } else if (!recorded.handEdited.empty() || !recorded.handEditedRanges.empty()) {
             throw std::invalid_argument("Checkpoint hand edits without correspondence");
         }
-        auto scan = restored.support_ == Support::Supported
+        auto scan = support == Support::Supported
             ? resultMarkers(recorded.draft.text, restored.markerSize_, mapping.get(), restored.launchFrames_.get())
             : MarkerScan{};
         auto draft = std::move(recorded.draft);
@@ -285,9 +299,11 @@ void FileSession::restoreHistory(RevisionHistory::Checkpoint checkpoint, std::ve
         retained += bytes;
         checkpoint.revisions.push_back(std::move(revision));
     }
-    restored.history_ = RevisionHistory::restore(std::move(checkpoint), publication.held());
-    restored.publication_ = std::move(publication);
-    *this = std::move(restored);
+    PublicationState held;
+    held.state_ = publication;
+    restored.history_ = RevisionHistory::restore(std::move(checkpoint), held.held());
+    restored.publication_ = PublicationState::restore(std::move(publication), restored.history_);
+    file = std::move(restored);
 }
 
 std::vector<ByteRange> FileSession::conflictRegions() const

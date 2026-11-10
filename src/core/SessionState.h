@@ -85,7 +85,10 @@ public:
     [[nodiscard]] const std::string &path() const noexcept { return path_; }
     [[nodiscard]] Support support() const noexcept { return support_; }
     // The alignment the session's choices and decision IDs come from.
-    [[nodiscard]] const CorrespondenceAlgorithm &algorithm() const noexcept { return *algorithm_; }
+    [[nodiscard]] const std::shared_ptr<const CorrespondenceAlgorithm> &algorithm() const noexcept
+    {
+        return algorithm_;
+    }
     // The adapter's explanation of its support decision, if it gave one.
     [[nodiscard]] const std::string &supportDetail() const noexcept { return supportDetail_; }
     // Why the session itself held the file back, if it did.
@@ -127,11 +130,6 @@ public:
     // A stored revision: the current one, an undo history entry, the launch
     // revision or one the publication state names. Null once it is dropped.
     [[nodiscard]] const Revision *revision(RevisionId id) const noexcept { return history_.find(id); }
-    [[nodiscard]] RevisionHistory::Checkpoint checkpointHistory() const { return history_.checkpoint(); }
-    // Imports a complete retained history, rebuilding derived maps against the
-    // immutable launch. Publication is reconstructed by recovery's typed reader.
-    void restoreHistory(RevisionHistory::Checkpoint checkpoint, std::vector<RecordedRevision> revisions,
-                        PublicationState publication);
     [[nodiscard]] bool canUndo() const noexcept { return history_.canUndo(); }
     [[nodiscard]] bool canRedo() const noexcept { return history_.canRedo(); }
     [[nodiscard]] FileFacts facts() const;
@@ -194,6 +192,7 @@ public:
     Transition loadLargeFile();
 
 private:
+    friend struct SessionCheckpoint;
     // Why the session holds a text back instead of editing it.
     struct Hold {
         Support support;

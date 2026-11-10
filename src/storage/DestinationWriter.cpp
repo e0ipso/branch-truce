@@ -9,7 +9,6 @@
 #include <cerrno>
 #include <cstdio>
 #include <fcntl.h>
-#include <limits>
 #include <optional>
 #include <sys/stat.h>
 #include <sys/xattr.h>
@@ -60,36 +59,41 @@ bool relativePath(const QByteArray &path)
     }
     return true;
 }
-Failure openDirectory(int parent, const QByteArray &name, Directory &directory)
+Failure openDirectory(const FileSystem &files, int parent, const QByteArray &name, Directory &directory)
 {
     struct stat before{};
-    if (::fstatat(parent, name.constData(), &before, AT_SYMLINK_NOFOLLOW) != 0)
+    if (files.statusAt(parent, name.constData(), &before, AT_SYMLINK_NOFOLLOW) != 0)
         return systemFailure(ProblemCode::SystemInspectDirectory);
     if (S_ISLNK(before.st_mode)) return {DestinationFailure::Symlink, ProblemCode::DestinationDirectorySymlink};
     if (!S_ISDIR(before.st_mode))
         return {DestinationFailure::PathChanged, ProblemCode::DestinationAncestorNotDirectory};
     directory.name = name;
     directory.descriptor =
-        Descriptor(::openat(parent, name.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+        Descriptor(files.openAt(parent, name.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
     if (directory.descriptor.get() < 0) return systemFailure(ProblemCode::SystemOpenDirectory);
-    if (::fstat(directory.descriptor.get(), &directory.identity) != 0)
+    if (files.status(directory.descriptor.get(), &directory.identity) != 0)
         return systemFailure(ProblemCode::SystemInspectOpenedDirectory);
     if (!sameInode(before, directory.identity))
         return {DestinationFailure::PathChanged, ProblemCode::DestinationDirectoryChangedWhileOpening};
     return {};
 }
-Failure readStable(int fd, QByteArray &bytes, struct stat &identity)
+Failure readStable(const FileSystem &files, int fd, QByteArray &bytes, struct stat &identity,
+                   const struct stat *expected = nullptr, bool exchanged = false)
 {
-    if (::fstat(fd, &identity) != 0) return systemFailure(ProblemCode::SystemInspectDestination);
+    if (files.status(fd, &identity) != 0) return systemFailure(ProblemCode::SystemInspectDestination);
     if (!S_ISREG(identity.st_mode)) return {DestinationFailure::NotRegularFile, ProblemCode::DestinationNotRegular};
-    if (identity.st_size < 0
-        || static_cast<quint64>(identity.st_size) >= static_cast<quint64>(std::numeric_limits<qsizetype>::max()))
-        return {DestinationFailure::IoError, ProblemCode::DestinationSizeUnrepresentable};
+    if (expected && !sameInode(*expected, identity))
+        return {DestinationFailure::PathChanged, ProblemCode::DestinationIdentityChanged};
+    if (expected && !sameMetadata(*expected, identity, exchanged))
+        return {DestinationFailure::ContentChanged, ProblemCode::DestinationContentChanged};
+    if (identity.st_size < 0 || static_cast<quint64>(identity.st_size) > kMaxDestinationBytes)
+        return {DestinationFailure::ReadLimit,
+                Problem{ProblemCode::ClassificationResultUnreadable, {QString::number(kMaxDestinationBytes)}}};
     bytes.resize(static_cast<qsizetype>(identity.st_size));
     qsizetype offset = 0;
     while (offset < bytes.size()) {
         const auto size = static_cast<size_t>(std::min(qsizetype{65536}, bytes.size() - offset));
-        const auto count = ::pread(fd, bytes.data() + offset, size, static_cast<off_t>(offset));
+        const auto count = files.readAt(fd, bytes.data() + offset, size, static_cast<off_t>(offset));
         if (count < 0 && errno == EINTR) continue;
         if (count < 0) return systemFailure(ProblemCode::SystemReadDestination);
         if (count == 0) return {DestinationFailure::ContentChanged, ProblemCode::DestinationShrank};
@@ -98,11 +102,11 @@ Failure readStable(int fd, QByteArray &bytes, struct stat &identity)
     char extra;
     ssize_t count;
     do {
-        count = ::pread(fd, &extra, 1, identity.st_size);
+        count = files.readAt(fd, &extra, 1, identity.st_size);
     } while (count < 0 && errno == EINTR);
     if (count < 0) return systemFailure(ProblemCode::SystemFinishReading);
     struct stat after{};
-    if (::fstat(fd, &after) != 0) return systemFailure(ProblemCode::SystemReinspectDestination);
+    if (files.status(fd, &after) != 0) return systemFailure(ProblemCode::SystemReinspectDestination);
     if (count != 0 || !sameMetadata(identity, after))
         return {DestinationFailure::ContentChanged, ProblemCode::DestinationChangedWhileReading};
     return {};
@@ -125,11 +129,12 @@ namespace {
 // with the same permissions and owner.
 Failure openParent(const DestinationSnapshot::State &state, Descriptor &parent)
 {
-    Descriptor current(::open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    const auto &files = *state.files;
+    Descriptor current(files.openAt(AT_FDCWD, "/", O_RDONLY | O_DIRECTORY | O_CLOEXEC));
     if (current.get() < 0) return systemFailure(ProblemCode::SystemReopenRoot);
     for (const auto &expected : state.directories) {
         Directory opened;
-        if (auto failure = openDirectory(current.get(), expected.name, opened)) return failure;
+        if (auto failure = openDirectory(files, current.get(), expected.name, opened)) return failure;
         const auto &a = expected.identity;
         const auto &b = opened.identity;
         if (!sameInode(a, b) || a.st_mode != b.st_mode || a.st_uid != b.st_uid || a.st_gid != b.st_gid)
@@ -148,20 +153,20 @@ Failure checkDirectories(const DestinationSnapshot::State &state)
 // snapshot's file, with its bytes and metadata.
 Failure checkFile(const DestinationSnapshot::State &state, int parent, const QByteArray &name, bool exchanged = false)
 {
+    const auto &files = *state.files;
     struct stat entry{};
-    if (::fstatat(parent, name.constData(), &entry, AT_SYMLINK_NOFOLLOW) != 0)
+    if (files.statusAt(parent, name.constData(), &entry, AT_SYMLINK_NOFOLLOW) != 0)
         return systemFailure(ProblemCode::SystemReinspectEntry);
     if (S_ISLNK(entry.st_mode)) return {DestinationFailure::Symlink, ProblemCode::DestinationReplacedBySymlink};
     if (!sameInode(entry, state.identity))
         return {DestinationFailure::PathChanged, ProblemCode::DestinationIdentityChanged};
-    Descriptor file(::openat(parent, name.constData(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
+    Descriptor file(files.openAt(parent, name.constData(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
     if (file.get() < 0) return systemFailure(ProblemCode::SystemReopenEntry);
     QByteArray bytes;
     struct stat current{};
-    if (auto failure = readStable(file.get(), bytes, current)) return failure;
+    if (auto failure = readStable(files, file.get(), bytes, current, &state.identity, exchanged)) return failure;
     if (!sameInode(entry, current)) return {DestinationFailure::PathChanged, ProblemCode::DestinationIdentityChanged};
-    if (!sameMetadata(state.identity, current, exchanged) || bytes != state.contents)
-        return {DestinationFailure::ContentChanged, ProblemCode::DestinationContentChanged};
+    if (bytes != state.contents) return {DestinationFailure::ContentChanged, ProblemCode::DestinationContentChanged};
     return {};
 }
 // The only extended attribute publication preserves: the SELinux label, which
@@ -231,22 +236,26 @@ DestinationSnapshot::DestinationSnapshot(std::shared_ptr<const State> state) : d
 const QString &DestinationSnapshot::worktreeRoot() const { return d->root; }
 const QByteArray &DestinationSnapshot::path() const { return d->path; }
 const QByteArray &DestinationSnapshot::bytes() const { return d->contents; }
-SnapshotFileIdentity DestinationSnapshot::identity() const
+namespace {
+SnapshotFileIdentity fileIdentity(const struct stat &info)
 {
-    const auto &info = d->identity;
     return {static_cast<std::uint64_t>(info.st_dev),        static_cast<std::uint64_t>(info.st_ino),
             static_cast<std::uint32_t>(info.st_mode),       static_cast<std::int64_t>(info.st_size),
             static_cast<std::int64_t>(info.st_mtim.tv_sec), static_cast<std::int64_t>(info.st_mtim.tv_nsec),
             static_cast<std::int64_t>(info.st_ctim.tv_sec), static_cast<std::int64_t>(info.st_ctim.tv_nsec)};
 }
 
+} // namespace
+SnapshotFileIdentity DestinationSnapshot::identity() const { return fileIdentity(d->identity); }
+
 DestinationCapture captureDestination(const QString &root, const QByteArray &path,
-                                      std::shared_ptr<const FileSystem> files)
+                                      std::shared_ptr<const FileSystem> fileSystem,
+                                      const SnapshotFileIdentity *expected)
 {
     auto state = std::make_shared<DestinationSnapshot::State>();
     state->root = root;
     state->path = path;
-    state->files = std::move(files);
+    state->files = std::move(fileSystem);
     const auto nativeRoot = QFile::encodeName(root);
     if (!state->files || !root.startsWith('/') || root.contains(QChar::Null) || QFile::decodeName(nativeRoot) != root
         || (nativeRoot != "/" && !relativePath(nativeRoot.mid(1))) || !relativePath(path))
@@ -263,28 +272,29 @@ DestinationCapture captureDestination(const QString &root, const QByteArray &pat
     Descriptor parent(AT_FDCWD);
     for (const auto &component : components) {
         Directory directory;
-        if (auto failure = openDirectory(parent.get(), component, directory))
+        if (auto failure = openDirectory(*state->files, parent.get(), component, directory))
             return {{}, failure.kind, failure.problem};
         state->directories.push_back({directory.name, directory.identity});
         parent = std::move(directory.descriptor);
     }
     const auto name = relative.last();
+    const auto &files = *state->files;
     struct stat entry{};
-    if (::fstatat(parent.get(), name.constData(), &entry, AT_SYMLINK_NOFOLLOW) != 0) {
+    if (files.statusAt(parent.get(), name.constData(), &entry, AT_SYMLINK_NOFOLLOW) != 0) {
         const auto failure = systemFailure(ProblemCode::SystemInspectFile);
         return {{}, failure.kind, failure.problem};
     }
     if (S_ISLNK(entry.st_mode)) return {{}, DestinationFailure::Symlink, ProblemCode::DestinationSymlink};
     if (!S_ISREG(entry.st_mode)) return {{}, DestinationFailure::NotRegularFile, ProblemCode::DestinationNotRegular};
-    const Descriptor file(::openat(parent.get(), name.constData(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
+    if (expected && fileIdentity(entry) != *expected)
+        return {{}, DestinationFailure::ContentChanged, ProblemCode::DestinationContentChanged};
+    const Descriptor file(files.openAt(parent.get(), name.constData(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
     if (file.get() < 0) {
         const auto failure = systemFailure(ProblemCode::SystemOpenFile);
         return {{}, failure.kind, failure.problem};
     }
-    if (auto failure = readStable(file.get(), state->contents, state->identity))
+    if (auto failure = readStable(files, file.get(), state->contents, state->identity, &entry))
         return {{}, failure.kind, failure.problem};
-    if (!sameMetadata(entry, state->identity))
-        return {{}, DestinationFailure::PathChanged, ProblemCode::DestinationChangedWhileOpening};
     if (auto failure = checkDirectories(*state)) return {{}, failure.kind, failure.problem};
     if (auto failure = checkFile(*state, parent.get(), name)) return {{}, failure.kind, failure.problem};
     return {DestinationSnapshot(std::move(state)), DestinationFailure::None, {}};
@@ -312,19 +322,20 @@ PublicationResult publishDestination(const DestinationSnapshot &expected, const 
     const int parent = parentDirectory.get();
     const auto name = state.path.mid(state.path.lastIndexOf('/') + 1);
     if (auto failure = checkFile(state, parent, name)) return reject(failure);
-    const Descriptor original(::openat(parent, name.constData(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
+    const Descriptor original(files.openAt(parent, name.constData(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
     struct stat originalIdentity{};
-    if (original.get() < 0 || ::fstat(original.get(), &originalIdentity) != 0)
+    if (original.get() < 0 || files.status(original.get(), &originalIdentity) != 0)
         return reject(systemFailure(ProblemCode::SystemReopenDestination));
     if (!sameMetadata(state.identity, originalIdentity))
         return reject({DestinationFailure::PathChanged, ProblemCode::DestinationChangedWhileReopening});
     if (auto failure = checkMetadata(files, original.get(), state.identity)) return reject(failure);
     // Replacement must not bypass a read-only destination merely because its
     // directory is writable. O_WRONLY without O_TRUNC checks the actual access.
-    Descriptor writable(::openat(parent, name.constData(), O_WRONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
+    Descriptor writable(files.openAt(parent, name.constData(), O_WRONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
     if (writable.get() < 0) return reject(systemFailure(ProblemCode::SystemNotWritable));
     struct stat accessIdentity{};
-    if (::fstat(writable.get(), &accessIdentity) != 0) return reject(systemFailure(ProblemCode::SystemInspectWritable));
+    if (files.status(writable.get(), &accessIdentity) != 0)
+        return reject(systemFailure(ProblemCode::SystemInspectWritable));
     if (!sameMetadata(state.identity, accessIdentity))
         return reject({DestinationFailure::PathChanged, ProblemCode::DestinationChangedDuringPermissionCheck});
     if (!beginMutation()) return reject({DestinationFailure::Cancelled, ProblemCode::PublicationCancelled});
@@ -333,23 +344,23 @@ PublicationResult publishDestination(const DestinationSnapshot &expected, const 
     if (::mkdirat(parent, temporary.constData(), 0700) != 0)
         return reject(systemFailure(ProblemCode::SystemCreatePrivateDirectory));
     Directory staging;
-    if (auto failure = openDirectory(parent, temporary, staging)) {
+    if (auto failure = openDirectory(files, parent, temporary, staging)) {
         (void)files.unlink(parent, temporary.constData(), AT_REMOVEDIR);
         return reject(failure);
     }
     const int stage = staging.descriptor.get();
     const auto parentPath = QFile::encodeName(state.root) + '/' + state.path.left(state.path.size() - name.size());
     const auto retained = parentPath + temporary + "/previous";
-    Descriptor output(::openat(stage, "previous", O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
+    Descriptor output(files.openAt(stage, "previous", O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
     auto cleanup = [&]() {
         struct stat linked{};
-        if (::fstatat(parent, temporary.constData(), &linked, AT_SYMLINK_NOFOLLOW) != 0
+        if (files.statusAt(parent, temporary.constData(), &linked, AT_SYMLINK_NOFOLLOW) != 0
             || !sameInode(linked, staging.identity))
             return false;
-        if (::fstatat(stage, "previous", &linked, AT_SYMLINK_NOFOLLOW) == 0) {
+        if (files.statusAt(stage, "previous", &linked, AT_SYMLINK_NOFOLLOW) == 0) {
             struct stat owned{};
             const int owner = result.state == PublicationState::Unchanged ? output.get() : original.get();
-            if (owner < 0 || ::fstat(owner, &owned) != 0 || !sameInode(linked, owned)) return false;
+            if (owner < 0 || files.status(owner, &owned) != 0 || !sameInode(linked, owned)) return false;
             if (files.unlink(stage, "previous", 0) != 0) return false;
         } else if (errno != ENOENT)
             return false;
@@ -379,7 +390,7 @@ PublicationResult publishDestination(const DestinationSnapshot &expected, const 
     if (auto failure = preserveLabel(files, original.get(), output.get())) return failBeforeExchange(failure);
     QByteArray prepared;
     struct stat preparedIdentity{};
-    if (auto failure = readStable(output.get(), prepared, preparedIdentity)) return failBeforeExchange(failure);
+    if (auto failure = readStable(files, output.get(), prepared, preparedIdentity)) return failBeforeExchange(failure);
     if (prepared != bytes)
         return failBeforeExchange({DestinationFailure::ContentChanged, ProblemCode::PublicationReplacementChanged});
     if (auto failure = checkMetadata(files, output.get(), preparedIdentity)) return failBeforeExchange(failure);

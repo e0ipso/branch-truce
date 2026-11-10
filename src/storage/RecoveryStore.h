@@ -9,6 +9,7 @@
 #include <QMap>
 #include <QString>
 #include <ctime>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -33,7 +34,7 @@ struct RecoveryTransaction {
     qint64 retainedBytes = 0; // Decoded domain state, checked by its reader.
     // Domain-owned compaction, called under the commit lock before admission
     // runs out. Encoding and I/O stay on the calling serial worker.
-    RecoveryTransaction (*continuation)(const RecoveryStore &) = nullptr;
+    std::function<RecoveryTransaction(const RecoveryStore &)> continuation = {};
 };
 
 // A record as read back from the journal.

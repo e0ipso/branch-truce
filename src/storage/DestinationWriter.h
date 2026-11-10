@@ -2,6 +2,7 @@
 #pragma once
 
 #include "core/FileSnapshot.h"
+#include "core/ResourceLimits.h"
 #include "problems/Problem.h"
 #include "storage/FileSystem.h"
 #include <QByteArray>
@@ -11,11 +12,16 @@
 #include <optional>
 
 namespace branch_truce::storage {
+// Worst supported original representation: UTF-16, CRLF and a BOM. This
+// bounds raw reads independently of the live file size; normalized drafts
+// still obey their existing byte, line and index limits.
+inline constexpr std::size_t kMaxDestinationBytes = 2 * (kMaxRecoveryPayloadBytes + kMaxIndexedLines) + 3;
 enum class DestinationFailure {
     None,
     // The caller gave no admission callback or a mode that is not the file's.
     InvalidRequest,
     InvalidPath,
+    ReadLimit,
     Symlink,
     NotRegularFile,
     PermissionDenied,
@@ -47,8 +53,8 @@ public:
 private:
     explicit DestinationSnapshot(std::shared_ptr<const State> state);
     std::shared_ptr<const State> d;
-    friend DestinationCapture captureDestination(const QString &, const QByteArray &,
-                                                 std::shared_ptr<const FileSystem>);
+    friend DestinationCapture captureDestination(const QString &, const QByteArray &, std::shared_ptr<const FileSystem>,
+                                                 const SnapshotFileIdentity *);
     friend PublicationResult publishDestination(const DestinationSnapshot &, const QByteArray &, const QByteArray &,
                                                 const std::function<bool()> &);
 };
@@ -73,9 +79,11 @@ struct PublicationResult {
 
 // Requires an absolute canonical worktree root and exact relative filename bytes.
 // Rejects symlinks in every component, including the root's ancestry. The
-// snapshot publishes through files.
+// snapshot publishes through files. When expected is supplied, reject a changed
+// launch identity/metadata before allocating or reading file contents.
 [[nodiscard]] DestinationCapture captureDestination(const QString &worktreeRoot, const QByteArray &path,
-                                                    std::shared_ptr<const FileSystem> files = systemFileSystem());
+                                                    std::shared_ptr<const FileSystem> files = systemFileSystem(),
+                                                    const SnapshotFileIdentity *expected = nullptr);
 
 // Blocking: reads and writes the destination, so run it on a worker thread.
 // Caller owns draft persistence, review/revision, operation/index/conversion
