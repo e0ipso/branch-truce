@@ -53,9 +53,17 @@ void isolateIconThemes(const QString &dataDirs)
 {
     const auto breeze =
         QStandardPaths::locate(QStandardPaths::GenericDataLocation, "icons/breeze", QStandardPaths::LocateDirectory);
-    CHECK(!breeze.isEmpty());
+    // A host package, not the app, provides it; without it the case cannot tell what it checks.
+    if (breeze.isEmpty()) test_support::skip("no Breeze icon theme is installed (breeze-icon-theme)");
     CHECK(QDir().mkpath(dataDirs + "/icons"));
     CHECK(QFile::link(breeze, dataDirs + "/icons/breeze"));
+}
+
+// Whether Qt can load the KDE platform theme, which plasma-integration installs.
+bool kdePlatformTheme()
+{
+    const QDir themes(QLibraryInfo::path(QLibraryInfo::PluginsPath) + "/platformthemes");
+    return !themes.entryList({"KDEPlasmaPlatformTheme*"}, QDir::Files).isEmpty();
 }
 
 // The real binary started offscreen with no Plasma session variables and the
@@ -228,6 +236,7 @@ int main(int argc, char **argv)
         Launch launch(probe);
         // Plain offscreen Qt exposes only :/icons. The KDE platform theme supplies
         // the XDG icon search paths used by an installed desktop application.
+        if (!kdePlatformTheme()) test_support::skip("the KDE platform theme is not installed (plasma-integration)");
         launch.environment.insert("QT_QPA_PLATFORMTHEME", "kde");
         launch.environment.insert("XDG_DATA_DIRS", dataDirs.path());
         installThemedApplicationIcon(launch.home.path() + "/data");

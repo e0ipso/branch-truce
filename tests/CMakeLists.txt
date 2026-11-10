@@ -292,7 +292,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_dependencies(branch_truce_startup_appearance_tests branch-truce branch_truce_appearance_probe)
     add_test(NAME app.startup-appearance COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_appearance_tests>
         $<TARGET_FILE:branch-truce> $<TARGET_FILE:branch_truce_appearance_probe>)
-    set_tests_properties(app.startup-appearance PROPERTIES TIMEOUT 90)
+    # A case whose host theme package is missing is reported as skipped; 77 means every case was.
+    set_tests_properties(app.startup-appearance PROPERTIES TIMEOUT 90 LABELS app SKIP_RETURN_CODE 77)
 
     # Mark resolved and the result commands through the application, on real repositories.
     branch_truce_add_unit_test(app.mark-resolved app/MarkResolvedTests.cpp LIBS branch_truce_controller
