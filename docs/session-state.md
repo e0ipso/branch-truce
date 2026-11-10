@@ -137,8 +137,12 @@ effect and stops when that returns false. Cancellation before admission retains
 or the worker throws. The queue stays occupied through inspection. Observed
 changes, observed unchanged state and uncertainty are distinct, and none imply
 a rollback. An inspection exception or missing observation retains uncertainty.
-`mutationOutcomes` keeps the original task's evidence across session replacement.
+The recovery journal keeps the original task's evidence across session
+replacement, and `taskFinished` reports every outcome, including fenced ones.
 An uncertain outcome remains outstanding and needs further adapter inspection.
+Closing the window waits up to `kShutdownGraceMs` for an admitted mutation, so
+its observation reaches the journal; one still running is left to the next
+start's reconciler.
 
 `submitGit` keeps Git on asynchronous QProcess signals. Stage requests use the
 same mutation queue through the adapter's final index inspection. The controller

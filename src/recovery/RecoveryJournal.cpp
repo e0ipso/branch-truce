@@ -1,9 +1,8 @@
 // The recovery journal keeps acknowledged edits durable and retains failed input for retry.
 #include "recovery/RecoveryJournal.h"
 #include "recovery/RecoveryRecord.h"
+#include "storage/OffThread.h"
 #include <QFileInfo>
-#include <QMetaObject>
-#include <QPromise>
 #include <QUuid>
 #include <algorithm>
 #include <exception>
@@ -108,21 +107,18 @@ void RecoveryJournal::writeNext()
             continue;
         }
         const auto ticket = nextTicket_++;
-        auto promise = std::make_shared<QPromise<storage::RecoveryCommit>>();
-        writing_ = Writing{ticket, promise->future()};
-        promise->start();
-        worker_.start([this, ticket, promise, lease = lease_, transaction = behind_.front().record.transaction] {
-            storage::RecoveryCommit result;
-            try {
-                result = lease->commit(transaction);
-            } catch (const std::exception &) {
-                result = {false, ProblemCode::RecoveryCommitFailed};
-            }
-            promise->addResult(result);
-            promise->finish();
-            // Dropped if the journal, and with it the context, is gone.
-            QMetaObject::invokeMethod(&context_, [this, ticket] { wroteBehind(ticket); }, Qt::QueuedConnection);
-        });
+        // The outcome is dropped if the journal, and with it the context, is gone.
+        writing_ = Writing{ticket,
+                           runOffThread(
+                               worker_, &context_,
+                               [lease = lease_, transaction = behind_.front().record.transaction] {
+                                   try {
+                                       return lease->commit(transaction);
+                                   } catch (const std::exception &) {
+                                       return storage::RecoveryCommit{false, ProblemCode::RecoveryCommitFailed};
+                                   }
+                               },
+                               [this, ticket](const storage::RecoveryCommit &) { wroteBehind(ticket); })};
     }
 }
 

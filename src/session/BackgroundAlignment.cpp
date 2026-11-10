@@ -1,7 +1,7 @@
 // Background alignment aligns typed edits on a worker and installs the result while its revision is current.
 #include "session/BackgroundAlignment.h"
 #include "session/SessionStore.h"
-#include <QMetaObject>
+#include "storage/OffThread.h"
 #include <exception>
 
 namespace branch_truce {
@@ -26,18 +26,17 @@ void BackgroundAlignment::request(int row)
     const auto revision = file.current().id;
     const auto generation = generation_;
     running_.insert(id);
-    workers_.start([this, pending, id, revision, generation] {
-        std::shared_ptr<const CorrespondenceMap> map;
-        try {
-            map = std::make_shared<const CorrespondenceMap>(pending->realigned());
-        } catch (const std::exception &) {
-            // Out of memory: the passages stay provisional, as the engine allows.
-        }
-        // Dropped once this object is gone.
-        QMetaObject::invokeMethod(
-            this, [this, id, revision, generation, map] { aligned(id, revision, generation, map); },
-            Qt::QueuedConnection);
-    });
+    runOffThread(
+        workers_, this,
+        [pending]() -> std::shared_ptr<const CorrespondenceMap> {
+            try {
+                return std::make_shared<const CorrespondenceMap>(pending->realigned());
+            } catch (const std::exception &) {
+                // Out of memory: the passages stay provisional, as the engine allows.
+                return nullptr;
+            }
+        },
+        [this, id, revision, generation](const auto &map) { aligned(id, revision, generation, map); });
 }
 
 void BackgroundAlignment::aligned(const std::string &id, RevisionId revision, quint64 generation,

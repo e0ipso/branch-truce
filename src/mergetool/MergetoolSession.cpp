@@ -2,10 +2,9 @@
 #include "mergetool/MergetoolSession.h"
 #include "problems/ProblemText.h"
 #include "recovery/RecoveryRestore.h"
+#include "storage/OffThread.h"
 
 #include <QCryptographicHash>
-#include <QFutureWatcher>
-#include <QPromise>
 #include <QThreadPool>
 #include <QTimer>
 #include <algorithm>
@@ -204,22 +203,14 @@ void MergetoolSession::attachReceived(quint64 connection, const AttachMessage &m
         return;
     }
     // Reading and hashing up to four copies is file I/O, so it runs off the GUI thread.
-    auto promise = std::make_shared<QPromise<IntakeCheck>>();
-    auto *watcher = new QFutureWatcher<IntakeCheck>(this);
-    connect(watcher, &QFutureWatcher<IntakeCheck>::finished, this, [this, watcher, connection, message] {
-        const auto check = watcher->result();
-        watcher->deleteLater();
-        intakeChecked(connection, message, check);
-    });
-    watcher->setFuture(promise->future());
-    promise->start();
-    workers_.start(
-        [promise, directory = message.intake, root = mergetoolIntakeRoot(config_.socketDirectory), key = sessionKey_] {
+    runOffThread(
+        workers_, this,
+        [directory = message.intake, root = mergetoolIntakeRoot(config_.socketDirectory), key = sessionKey_] {
             IntakeCheck check;
             check.intake = readMergetoolIntake(directory, root, key, &check.error);
-            promise->addResult(check);
-            promise->finish();
-        });
+            return check;
+        },
+        [this, connection, message](const IntakeCheck &check) { intakeChecked(connection, message, check); });
 }
 
 void MergetoolSession::intakeChecked(quint64 connection, const AttachMessage &message, const IntakeCheck &check)

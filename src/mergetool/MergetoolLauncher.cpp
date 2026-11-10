@@ -29,6 +29,12 @@ struct Text {
     Q_DECLARE_TR_FUNCTIONS(MergetoolLauncher)
 };
 
+// How long one frame may take to reach the session.
+constexpr int kSendWaitMs = 5000;
+// While the launcher waits for a decision without a deadline, it checks that
+// the session is still connected this often.
+constexpr int kDecisionCheckMs = 1000;
+
 int fail(const QString &message)
 {
     QTextStream(stderr) << "mergetool: " << message << '\n';
@@ -50,7 +56,7 @@ std::optional<QByteArray> readPayload(QLocalSocket &socket, QByteArray &buffer, 
             continue;
         }
         if (socket.state() != QLocalSocket::ConnectedState) return std::nullopt;
-        const qint64 left = waitMs < 0 ? 1000 : waitMs - clock.elapsed();
+        const qint64 left = waitMs < 0 ? kDecisionCheckMs : waitMs - clock.elapsed();
         if (left <= 0) return std::nullopt;
         socket.waitForReadyRead(static_cast<int>(left));
     }
@@ -59,7 +65,7 @@ std::optional<QByteArray> readPayload(QLocalSocket &socket, QByteArray &buffer, 
 bool sendMessage(QLocalSocket &socket, const MergetoolMessage &message)
 {
     const auto frame = mergetoolFrame(encodeMergetoolMessage(message));
-    return !frame.isEmpty() && socket.write(frame) == frame.size() && socket.waitForBytesWritten(5000);
+    return !frame.isEmpty() && socket.write(frame) == frame.size() && socket.waitForBytesWritten(kSendWaitMs);
 }
 
 QString otherVersion(int version)
@@ -149,19 +155,9 @@ std::optional<QString> guiProgram(QString *error)
     return std::nullopt;
 }
 
-bool connectSession(QLocalSocket *socket, const QString &name, int attempts)
-{
-    for (int attempt = 0; attempt < attempts; ++attempt) {
-        socket->abort();
-        socket->connectToServer(name);
-        if (socket->waitForConnected(200)) return true;
-    }
-    return false;
-}
-
-// waitForConnected returns at once when no server exists, so counted retries
-// finish in milliseconds. After the GUI starts, the launcher retries for this
-// long in wall-clock time; --session-wait changes it.
+// waitForConnected returns at once when no server exists, so retries are
+// timed in wall-clock slices. After the GUI starts, the launcher retries for
+// this long; --session-wait changes it.
 constexpr qint64 kSessionWaitMs = 15000;
 constexpr qint64 kListenRetrySliceMs = 200;
 
@@ -269,7 +265,8 @@ int runMergetoolLauncher(const QStringList &arguments, const git::GitProgram &gi
 
     const auto server = mergetoolServerName(directory, discovered.repository);
     QLocalSocket socket;
-    bool connected = connectSession(&socket, server, 5);
+    // One retry slice finds a window that already listens.
+    bool connected = connectUntilDeadline(&socket, server, kListenRetrySliceMs);
     if (!connected && startWindow) {
         if (const auto refusal = startWindow(discovered.repository.worktreeRoot, sources.path); !refusal.isEmpty())
             return fail(refusal);
