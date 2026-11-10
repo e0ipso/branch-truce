@@ -241,6 +241,11 @@ void comparison_scene::addMarkCases(Groups groups)
                                                             + expected.toStdString());
                            }
                            CHECK(chosen == 2);
+                           if (choice.name == "resolve")
+                               CHECK(qmlValue(fixture.item("comparisonView"),
+                                              QStringLiteral("resultSections.decisions[2].label"))
+                                         .toString()
+                                     == "Left accepted, Right ignored");
                            const auto when = "after " + choice.name.toStdString();
                            expectMarks(fixture, when, "stage2", choice.stage2);
                            expectMarks(fixture, when, "result", choice.result);

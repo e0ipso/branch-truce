@@ -236,11 +236,11 @@ ColumnLayout {
                 manual: qsTr("Left edited by hand"), undecided: qsTr("Left undecided")},
             stage3: {accepted: qsTr("Right accepted"), ignored: qsTr("Right ignored"),
                 manual: qsTr("Right edited by hand"), undecided: qsTr("Right undecided")}}
-        const sideState = side => sideStates[side][section.sides[side].region.state] || ""
         const decisions = {}
         const combinations = {}
         for (let i = 0; i < order.length; ++i) {
             const section = sections[order[i]]
+            const sideState = side => sideStates[side][section.sides[side].region.state] || ""
             if (section.first < 0)
                 continue
             const row = rowOf(section.first)
