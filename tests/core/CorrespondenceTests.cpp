@@ -259,7 +259,8 @@ void aDeferredEditKeepsThePassagesAroundTheEditedLines()
             result = passage.result.end;
         }
         CHECK(source == text.size() && result == provisional.text().size());
-        CHECK(*provisional.realigned().passages(SourceSide::Stage2) == *map.edited(2, other).passages(SourceSide::Stage2));
+        CHECK(*provisional.realigned().passages(SourceSide::Stage2)
+              == *map.edited(2, other).passages(SourceSide::Stage2));
     }
 }
 

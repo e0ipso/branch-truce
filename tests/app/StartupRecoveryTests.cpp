@@ -743,7 +743,8 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
         }
         CHECK(QDir(location).removeRecursively());
         const std::map<std::string, Decision> vocabulary{{"left", {DecisionValue::Accepted, 1}}, {"right", {}}};
-        const FileSession legacy(captured->id(), captured->path(), {captured->current().draft.text, vocabulary, 0}, {.snapshots = *captured->snapshots()});
+        const FileSession legacy(captured->id(), captured->path(), {captured->current().draft.text, vocabulary, 0},
+                                 {.snapshots = *captured->snapshots()});
         CHECK(test_support::leasedStore(location)
                   ->commit(recoveryTransaction(legacy, RecoveryAction::Open, QUuid::createUuid().toString(), {}))
                   .succeeded);

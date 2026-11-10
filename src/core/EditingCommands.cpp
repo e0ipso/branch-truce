@@ -312,14 +312,15 @@ constexpr std::array kActionRules{
     ActionRule{ChoiceAction::Ignore, ChoiceNote::Ignore, DecisionValue::Ignored},
     ActionRule{ChoiceAction::Accept, ChoiceNote::Accept, DecisionValue::Accepted, planReplacement},
     ActionRule{ChoiceAction::ResolveUsingSide, ChoiceNote::ResolveUsingSide, DecisionValue::Accepted, planResolution},
-    ActionRule{ChoiceAction::CombineLeftFirst, ChoiceNote::Combine, DecisionValue::Accepted, nullptr, SourceSide::Stage2},
+    ActionRule{ChoiceAction::CombineLeftFirst, ChoiceNote::Combine, DecisionValue::Accepted, nullptr,
+               SourceSide::Stage2},
     ActionRule{ChoiceAction::CombineRightFirst, ChoiceNote::Combine, DecisionValue::Accepted, nullptr,
                SourceSide::Stage3}};
 
 const ActionRule *ruleOf(ChoiceAction action) noexcept
 {
-    const auto found = std::find_if(kActionRules.begin(), kActionRules.end(),
-                                    [&](const auto &rule) { return rule.action == action; });
+    const auto found =
+        std::find_if(kActionRules.begin(), kActionRules.end(), [&](const auto &rule) { return rule.action == action; });
     return found == kActionRules.end() ? nullptr : &*found;
 }
 
@@ -373,9 +374,8 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected, const 
                       ChoiceNote::UnmappedScope);
     const auto *rule = ruleOf(action);
     if (!rule) return failed(std::move(preview), Transition::InvalidAnchor, ChoiceNote::UnknownScope);
-    const Selection selected{*file.snapshots(), *mapping,      file.catalogue(),       file.current().draft,
-                             *found,            *anchor,       *range,                 file.planner(),
-                             file.markerSections()};
+    const Selection selected{*file.snapshots(), *mapping, file.catalogue(), file.current().draft, *found,
+                             *anchor,           *range,   file.planner(),   file.markerSections()};
     if (rule->first) return previewCombination(std::move(preview), selected, *rule->first);
     return previewSingleSide(std::move(preview), selected, *rule);
 }

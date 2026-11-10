@@ -19,7 +19,7 @@ void completeMutations(std::vector<RecoveryMutation> &mutations, const std::stri
 bool placeholder(const FileSession &file)
 {
     return !file.snapshots() && file.current().id == 1 && file.current().draft == Draft{}
-        && !file.publication().checkpoint();
+    && !file.publication().checkpoint();
 }
 
 // Repeats one file command on file. Mutation facts change no file.
@@ -28,8 +28,7 @@ Transition apply(RecoveryAction action, FileSession &file, const RecoveryRecordR
 {
     const auto revision = file.current().id;
     switch (action) {
-    case RecoveryAction::ReplaceDraft:
-        return file.replayDraft(revision, record.revision(previousText));
+    case RecoveryAction::ReplaceDraft: return file.replayDraft(revision, record.revision(previousText));
     case RecoveryAction::Undo: return file.undo(revision);
     case RecoveryAction::Redo: return file.redo(revision);
     case RecoveryAction::DiscardToCheckpoint: return file.discardToCheckpoint(revision);
@@ -99,7 +98,11 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
                               "Recovery attempted to replace an acknowledged session.");
                 found = files
                             .insert_or_assign(id,
-                                              FileSession(id, path, record.draft({}), {.support = record.support(), .supportDetail = record.supportDetail(), .snapshots = record.snapshots(), .algorithm = correspondence}))
+                                              FileSession(id, path, record.draft({}),
+                                                          {.support = record.support(),
+                                                           .supportDetail = record.supportDetail(),
+                                                           .snapshots = record.snapshots(),
+                                                           .algorithm = correspondence}))
                             .first;
                 requireRecord(found->second.algorithm().identity() == record.alignment(),
                               "Recovery journal was aligned with another correspondence algorithm.");
@@ -145,8 +148,8 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
                 const auto kind =
                     action == RecoveryAction::WriteOutcome ? MutationKind::Publication : MutationKind::Staging;
                 const auto &publication = found->second.publication();
-                const auto &outcome = action == RecoveryAction::WriteOutcome ? publication.writeOutcome()
-                                                                             : publication.stageOutcome();
+                const auto &outcome =
+                    action == RecoveryAction::WriteOutcome ? publication.writeOutcome() : publication.stageOutcome();
                 // Match completion in journal order before a later revision can
                 // replace the file's latest outcome, or a new intent can reuse it.
                 if (outcome && outcome->outcome == Outcome::Succeeded)

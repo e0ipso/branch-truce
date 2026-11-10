@@ -89,8 +89,8 @@ void comparison_scene::addNavigationCases(Groups groups)
         expectProgress(fixture, true, true, true, false, QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"),
                        QStringLiteral("1"), 4);
 
-        CHECK(fixture.controller.store()->appendFile(
-            FileSession("outside", "diagram.png", {}, {.support = Support::OutsideApp, .supportDetail = "image content"})));
+        CHECK(fixture.controller.store()->appendFile(FileSession(
+            "outside", "diagram.png", {}, {.support = Support::OutsideApp, .supportDetail = "image content"})));
         CHECK(fixture.controller.files()->outsideAppFiles() == 1);
         CHECK(fixture.file().facts().resolved);
         fixture.click("nextUnfinished");
@@ -360,7 +360,8 @@ void comparison_scene::addNavigationCases(Groups groups)
                                          earlier,          test_support::choiceText(earlier),
                                          "earlier-commit", "Common earlier version"};
         const auto launch = sources.launchResult.text.utf8;
-        Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
+        Fixture fixture(
+            FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
         fixture.click("showEarlier");
         auto *left = fixture.item("stage2Viewport");
         auto *earlierView = fixture.item("earlierViewport");
@@ -378,7 +379,8 @@ void comparison_scene::addNavigationCases(Groups groups)
                                          earlier,          test_support::choiceText(earlier),
                                          "earlier-commit", "Common earlier version"};
         const auto launch = sources.launchResult.text.utf8;
-        Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
+        Fixture fixture(
+            FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
         auto *left = fixture.item("stage2Viewport");
         auto *earlierView = fixture.item("earlierViewport");
         auto *editor = fixture.item("resultText");

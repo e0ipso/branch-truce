@@ -148,8 +148,7 @@ FileFacts PublicationState::facts(const Revision &current, const Revision *check
                                   std::size_t undecided) const
 {
     const bool reviewed = reviewed_ && reviewed_->revision == current.id;
-    const bool saved =
-        checkpoint && checkpoint->result == current.result && checkpoint->decisions == current.decisions;
+    const bool saved = checkpoint && checkpoint->result == current.result && checkpoint->decisions == current.decisions;
     const bool written = writtenAt(current.id);
     const bool staged = staged_ && staged_->revision == current.id && succeeded(stageOutcome_, current.id);
     const bool unresolved = current.draft.unresolvedMarkers != 0;

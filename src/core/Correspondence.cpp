@@ -130,7 +130,6 @@ Projection project(const std::vector<Passage> &passages, ByteRange range, Insert
     return projection;
 }
 
-
 // Hand-edited ranges after `edit` replaced its range with `inserted` bytes.
 // The replaced text leaves them, and a hand edit adds the text it wrote.
 std::vector<ByteRange> editedRanges(const std::vector<ByteRange> &ranges, ByteRange edit, std::size_t inserted,
@@ -276,7 +275,8 @@ std::vector<Passage> shifted(const std::vector<Passage> &passages, std::string_v
             tail.push_back({source, {shift(result.begin), shift(result.end)}, passage.kind});
         } else if (passage.kind == PassageKind::Equal) {
             if (result.begin < from)
-                head.push_back({{source.begin, source.begin + from - result.begin}, {result.begin, from}, passage.kind});
+                head.push_back(
+                    {{source.begin, source.begin + from - result.begin}, {result.begin, from}, passage.kind});
             if (result.end > to)
                 tail.push_back(
                     {{source.end - (result.end - to), source.end}, {shift(to), shift(result.end)}, passage.kind});
@@ -305,10 +305,7 @@ void requireComparable(std::string_view text)
 
 CorrespondenceMap::CorrespondenceMap(RevisionId revision, std::shared_ptr<const FileSnapshots> sources,
                                      std::string result, std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
-    : revision_(revision),
-      sources_(std::move(sources)),
-      algorithm_(std::move(algorithm)),
-      text_(std::move(result))
+    : revision_(revision), sources_(std::move(sources)), algorithm_(std::move(algorithm)), text_(std::move(result))
 {
     if (!sources_) throw std::invalid_argument("Correspondence needs captured sources");
     if (!algorithm_) throw std::invalid_argument("Correspondence needs an alignment algorithm");

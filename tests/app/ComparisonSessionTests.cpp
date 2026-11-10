@@ -108,7 +108,8 @@ void comparison_scene::addSessionCases(Groups groups)
         CHECK(files->recordStage("published", 1, Outcome::Succeeded, "verified-object", "100644")
               == Transition::Applied);
         CHECK(files->file("published")->facts().resolved);
-        CHECK(files->appendFile(FileSession("outside", "diagram.png", {}, {.support = Support::OutsideApp, .supportDetail = "image content"})));
+        CHECK(files->appendFile(FileSession("outside", "diagram.png", {},
+                                            {.support = Support::OutsideApp, .supportDetail = "image content"})));
 
         auto *dialog = fixture.object("handoffDialog");
         const auto opened = [&] { return dialog->property("opened").toBool(); };
@@ -211,8 +212,8 @@ void comparison_scene::addSessionCases(Groups groups)
         }();
         auto sources = *test_support::choiceFile("x\n", "x\n", large).snapshots();
         sources.path = "large.txt";
-        CHECK(fixture.controller.store()->appendFile(
-            FileSession("large", "large.txt", {large, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true})));
+        CHECK(fixture.controller.store()->appendFile(FileSession(
+            "large", "large.txt", {large, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true})));
         const auto *held = fixture.controller.store()->file("large");
         CHECK(held && held->support() == Support::LargeFile && !held->correspondence());
         CHECK(fixture.controller.selection()->select(QStringLiteral("large")));
@@ -258,8 +259,8 @@ void comparison_scene::addSessionCases(Groups groups)
         auto sources = *test_support::choiceFile().snapshots();
         sources.path = path;
         const auto launch = sources.launchResult.text.utf8;
-        CHECK(fixture.controller.store()->appendFile(
-            FileSession("crafted", path, {launch, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true})));
+        CHECK(fixture.controller.store()->appendFile(FileSession(
+            "crafted", path, {launch, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true})));
         const auto shown = fixture.controller.files()->displayPath("crafted");
         CHECK(shown.toStdString() == path);
         CHECK(fixture.controller.selection()->select("crafted"));

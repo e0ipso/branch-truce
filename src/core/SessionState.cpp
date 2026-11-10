@@ -348,10 +348,9 @@ Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit, 
         draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
         if (exceedsEnvelope(draft.text)) return Transition::TextTooLarge;
         if (draft == current().draft) return Transition::NoChange;
-        auto mapping = correspondence()
-            ? std::make_shared<const CorrespondenceMap>(
-                  correspondence()->edited(history_.nextId(), edit, true, {}, options.realignment))
-            : nullptr;
+        auto mapping = correspondence() ? std::make_shared<const CorrespondenceMap>(correspondence()->edited(
+                                              history_.nextId(), edit, true, {}, options.realignment))
+                                        : nullptr;
         history_.publish(successor(std::move(draft), std::move(mapping)),
                          options.join ? RevisionHistory::Step::Join : RevisionHistory::Step::Edit);
         return Transition::Applied;
@@ -531,8 +530,8 @@ Transition FileSession::beginMarkResolved(RevisionId expected, bool confirmUndec
         // Provisional passages can hide a marker line, so review counts
         // markers against the aligned ones.
         if (const auto pending = pendingAlignment())
-            if (const auto installed = installAlignment(expected, std::make_shared<const CorrespondenceMap>(
-                                                                      pending->realigned()));
+            if (const auto installed =
+                    installAlignment(expected, std::make_shared<const CorrespondenceMap>(pending->realigned()));
                 installed != Transition::Applied)
                 return installed;
         if (support_ != Support::Supported || current().draft.unresolvedMarkers != 0) return Transition::Blocked;
@@ -548,8 +547,8 @@ Transition FileSession::recordCheckpoint(RevisionId revision, Outcome outcome, s
 {
     return withinMemory([&] {
         auto next = publication_;
-        const auto recorded =
-            next.recordCheckpoint(history_.find(revision) != nullptr, revision, current().id, outcome, std::move(detail));
+        const auto recorded = next.recordCheckpoint(history_.find(revision) != nullptr, revision, current().id, outcome,
+                                                    std::move(detail));
         if (recorded == Transition::Applied) adopt(std::move(next));
         return recorded;
     });
@@ -570,8 +569,8 @@ Transition FileSession::recordStage(RevisionId revision, Outcome outcome, std::s
 {
     return withinMemory([&] {
         auto next = publication_;
-        const auto recorded = next.recordStage(revision, current().id, outcome, std::move(objectId), std::move(mode),
-                                               std::move(detail));
+        const auto recorded =
+            next.recordStage(revision, current().id, outcome, std::move(objectId), std::move(mode), std::move(detail));
         if (recorded == Transition::Applied) adopt(std::move(next));
         return recorded;
     });

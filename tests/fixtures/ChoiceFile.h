@@ -114,7 +114,8 @@ inline branch_truce::FileSession diff3File(const std::string &left, const std::s
     if (captured)
         sources.earlier = SourceSnapshot{"earlier-object",    "100644",         earlier,
                                          choiceText(earlier), "earlier-commit", "Common earlier version"};
-    return FileSession("choices", sources.path, {std::move(result), {}, 0}, {.snapshots = sources, .initializeChoices = true});
+    return FileSession("choices", sources.path, {std::move(result), {}, 0},
+                       {.snapshots = sources, .initializeChoices = true});
 }
 
 // What `git merge-file --diff3` writes for three versions, with the labels a merge gives them.

@@ -218,7 +218,8 @@ int main(int argc, char **argv)
         CHECK(model.appendFile(recoverableFile()));
         auto captures = *recoverableFile().snapshots();
         captures.path = "other.txt";
-        CHECK(model.appendFile(FileSession("other", captures.path, draft(captures.launchResult.text.utf8), {.snapshots = captures})));
+        CHECK(model.appendFile(
+            FileSession("other", captures.path, draft(captures.launchResult.text.utf8), {.snapshots = captures})));
         preparePublication(model, "recoverable", false);
         preparePublication(model, "other", false);
         recordIntent(model, "recoverable", MutationKind::Publication);

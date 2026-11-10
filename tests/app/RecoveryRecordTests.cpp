@@ -37,7 +37,9 @@ FileSession capturedFile()
     captured.launchResult.identity = {11, 22, 0100644, 64, 33, 44, 55, 66};
     const auto text = captured.launchResult.text.utf8;
     const auto path = captured.path;
-    return FileSession("choices", path, {text, {}, 0}, {.supportDetail = "captured at launch", .snapshots = std::move(captured), .initializeChoices = true});
+    return FileSession(
+        "choices", path, {text, {}, 0},
+        {.supportDetail = "captured at launch", .snapshots = std::move(captured), .initializeChoices = true});
 }
 
 // Appends records the way SessionStore does: each one encodes the file after its command, with

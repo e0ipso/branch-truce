@@ -1,9 +1,9 @@
 // FileSession transactions: launch, captures, history, discard, outcomes, facts and the large-file gate.
 #include "TestHarness.h"
+#include "core/ExactLineCorrespondence.h"
 #include "core/ResourceLimits.h"
 #include "core/SessionFixtures.h"
 #include "core/SessionState.h"
-#include "core/ExactLineCorrespondence.h"
 #include "fixtures/ChoiceFile.h"
 #include <algorithm>
 #include <array>
@@ -300,7 +300,8 @@ FileSession diff3Session(std::shared_ptr<const CorrespondenceAlgorithm> algorith
 {
     auto sources = *test_support::underlinedBaseFile().snapshots();
     const auto text = sources.launchResult.text.utf8;
-    return FileSession("diff3", sources.path, {text, {}, 0}, {.snapshots = sources, .initializeChoices = true, .algorithm = std::move(algorithm)});
+    return FileSession("diff3", sources.path, {text, {}, 0},
+                       {.snapshots = sources, .initializeChoices = true, .algorithm = std::move(algorithm)});
 }
 
 void theSessionAlignsWithTheAlgorithmItIsGiven()
@@ -406,7 +407,9 @@ void launchTextOutsideTheInvariantIsUnreadable()
     const std::string block = "<<<<<<< ours\r\nleft\r\n=======\r\nright\r\n>>>>>>> theirs\r\n";
     CHECK(FileSession("id", "file", {block, {}, 0}).support() == Support::Unreadable);
     // An adapter's own diagnosis stays in place.
-    CHECK(FileSession("outside", "image.png", {"\xff", {}, 0}, {.support = Support::OutsideApp, .supportDetail = "binary"}).supportDetail()
+    CHECK(FileSession("outside", "image.png", {"\xff", {}, 0},
+                      {.support = Support::OutsideApp, .supportDetail = "binary"})
+              .supportDetail()
           == "binary");
 }
 
@@ -493,7 +496,8 @@ void sourceCapturesRejectADifferentPathOrLaunchResult()
         bool rejected = false;
         try {
             FileSession invalid("id", wrongPath ? "another path" : captured.path,
-                                draft(wrongPath ? captured.launchResult.text.utf8 : "regenerated source"), {.snapshots = captured});
+                                draft(wrongPath ? captured.launchResult.text.utf8 : "regenerated source"),
+                                {.snapshots = captured});
         } catch (const std::invalid_argument &) {
             rejected = true;
         }
@@ -930,10 +934,8 @@ void handEditsKeepTheirRangesThroughUndoRedoChoicesAndReplay()
     auto replay = test_support::choiceFile();
     CHECK(test_support::replay(replay, typed.draft, {}, {{0, 6}}) == Transition::Applied);
     CHECK((ranges(replay) == Ranges{{0, 6}}));
-    CHECK(test_support::replay(replay, typed.draft, {}, {{0, 6}})
-          == Transition::NoChange);
-    CHECK(test_support::replay(replay, typed.draft, {}, {{0, 3}})
-          == Transition::Applied);
+    CHECK(test_support::replay(replay, typed.draft, {}, {{0, 6}}) == Transition::NoChange);
+    CHECK(test_support::replay(replay, typed.draft, {}, {{0, 3}}) == Transition::Applied);
     CHECK(replay.undo(replay.current().id) == Transition::Applied && (ranges(replay) == Ranges{{0, 6}}));
     auto older = test_support::choiceFile();
     CHECK(test_support::replay(older, typed.draft) == Transition::Applied);
@@ -987,12 +989,14 @@ void supportIsAdmittedOnlyThroughTheLaunchChecks()
     CHECK(large.setSupport(Support::LargeFile) == Transition::InvalidOutcome);
     CHECK(large.loadLargeFile() == Transition::Applied && large.correspondence());
     // Text an adapter held back was never checked, so admitting it checks it.
-    FileSession binary("binary", "binary.txt", {"carriage\r\nreturn\n", {}, 0}, {.support = Support::OutsideApp, .supportDetail = "binary"});
+    FileSession binary("binary", "binary.txt", {"carriage\r\nreturn\n", {}, 0},
+                       {.support = Support::OutsideApp, .supportDetail = "binary"});
     CHECK(binary.setSupport(Support::Supported) == Transition::Blocked && binary.support() == Support::OutsideApp);
     // A captured file the adapter held back is aligned when it is admitted.
     auto sources = *test_support::choiceFile().snapshots();
     const auto text = sources.launchResult.text.utf8;
-    FileSession held("choices", sources.path, {text, {}, 0}, {.support = Support::OutsideApp, .supportDetail = "busy", .snapshots = sources});
+    FileSession held("choices", sources.path, {text, {}, 0},
+                     {.support = Support::OutsideApp, .supportDetail = "busy", .snapshots = sources});
     CHECK(!held.correspondence() && held.choices().empty());
     CHECK(held.setSupport(Support::Supported) == Transition::Applied);
     CHECK(held.support() == Support::Supported && held.supportDetail().empty());
@@ -1003,7 +1007,8 @@ void supportIsAdmittedOnlyThroughTheLaunchChecks()
     CHECK(held.setSupport(Support::Unreadable, "gone") == Transition::Applied);
     CHECK(held.setSupport(Support::Supported) == Transition::Applied && held.canUndo());
     // An untouched capture held back is not admitted once it has outcomes.
-    FileSession saved("choices", sources.path, {text, {}, 0}, {.support = Support::OutsideApp, .supportDetail = "busy", .snapshots = sources});
+    FileSession saved("choices", sources.path, {text, {}, 0},
+                      {.support = Support::OutsideApp, .supportDetail = "busy", .snapshots = sources});
     CHECK(saved.recordCheckpoint(1, Outcome::Failed, "disk full") == Transition::Applied);
     CHECK(saved.setSupport(Support::Supported) == Transition::Blocked && saved.support() == Support::OutsideApp);
 }
@@ -1036,7 +1041,8 @@ void aRecordedRevisionReplaysInOneStep()
     // Undo takes back the whole burst in both, and later ids agree.
     CHECK(live.undo(4) == Transition::Applied && replayed.undo(4) == Transition::Applied);
     CHECK(!live.canUndo() && !replayed.canUndo() && live.current().id == 5 && replayed.current().id == 5);
-    CHECK(replayed.current().draft == live.current().draft && live.current().draft.text == test_support::choiceFile().current().draft.text);
+    CHECK(replayed.current().draft == live.current().draft
+          && live.current().draft.text == test_support::choiceFile().current().draft.text);
     // The first entry, where the history starts, is never joined.
     auto fresh = test_support::choiceFile();
     CHECK(fresh.editResult(1, {{0, 0}, "x"}, {.join = true}) == Transition::Applied && fresh.canUndo());
@@ -1055,7 +1061,8 @@ void aDeferredEditIsAlignedLaterOnlyForItsRevision()
     CHECK(pending->sameAnchors(*now.correspondence()));
     CHECK(file.installAlignment(1, std::make_shared<const CorrespondenceMap>(pending->realigned()))
           == Transition::StaleRevision);
-    CHECK(file.installAlignment(2, std::make_shared<const CorrespondenceMap>(file.revision(1)->correspondence->realigned()))
+    CHECK(file.installAlignment(
+              2, std::make_shared<const CorrespondenceMap>(file.revision(1)->correspondence->realigned()))
           == Transition::InvalidAnchor);
     const auto aligned = std::make_shared<const CorrespondenceMap>(pending->realigned());
     CHECK(file.installAlignment(2, aligned) == Transition::Applied);

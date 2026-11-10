@@ -121,21 +121,20 @@ QVariantMap FilePresentation::progressData(std::size_t row) const
     const auto &file = store_.files()[row];
     const auto &publication = file.publication();
     const auto facts = progress(row);
-    return {
-        {QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(facts.undecided))},
-        {QStringLiteral("conflicts"), QVariant::fromValue(static_cast<qulonglong>(facts.conflicts))},
-        {QStringLiteral("saved"), facts.saved},
-        {QStringLiteral("reviewed"), facts.reviewed},
-        {QStringLiteral("resolved"), facts.resolved},
-        {QStringLiteral("earlierResolved"), facts.earlierStaged},
-        {QStringLiteral("settled"), facts.settled},
-        {QStringLiteral("currentRevision"), qt_text::revision(file.current().id)},
-        {QStringLiteral("savedRevision"),
-         facts.saved && publication.checkpoint() ? qt_text::revision(*publication.checkpoint()) : QString{}},
-        {QStringLiteral("reviewedRevision"),
-         facts.reviewed ? qt_text::revision(publication.reviewed()->revision) : QString{}},
-        {QStringLiteral("stagedRevision"),
-         publication.staged() ? qt_text::revision(publication.staged()->revision) : QString{}}};
+    return {{QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(facts.undecided))},
+            {QStringLiteral("conflicts"), QVariant::fromValue(static_cast<qulonglong>(facts.conflicts))},
+            {QStringLiteral("saved"), facts.saved},
+            {QStringLiteral("reviewed"), facts.reviewed},
+            {QStringLiteral("resolved"), facts.resolved},
+            {QStringLiteral("earlierResolved"), facts.earlierStaged},
+            {QStringLiteral("settled"), facts.settled},
+            {QStringLiteral("currentRevision"), qt_text::revision(file.current().id)},
+            {QStringLiteral("savedRevision"),
+             facts.saved && publication.checkpoint() ? qt_text::revision(*publication.checkpoint()) : QString{}},
+            {QStringLiteral("reviewedRevision"),
+             facts.reviewed ? qt_text::revision(publication.reviewed()->revision) : QString{}},
+            {QStringLiteral("stagedRevision"),
+             publication.staged() ? qt_text::revision(publication.staged()->revision) : QString{}}};
 }
 
 StatusKind FilePresentation::statusKind(std::size_t row) const
