@@ -164,7 +164,11 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(app.recovery-record app/RecoveryRecordTests.cpp
         LIBS branch_truce_controller branch_truce_storage PRIVATE_XDG LABELS app)
 
-    add_executable(branch_truce_comparison_tests app/ComparisonViewTests.cpp)
+    # One executable from the comparison view's feature files; ComparisonViewTests.cpp selects the groups.
+    add_executable(branch_truce_comparison_tests app/ComparisonViewTests.cpp app/ComparisonLayoutTests.cpp
+        app/ComparisonEditingTests.cpp app/ComparisonTextTests.cpp app/ComparisonMarkTests.cpp
+        app/ComparisonFoldingTests.cpp app/ComparisonNavigationTests.cpp app/ComparisonSessionTests.cpp
+        app/ComparisonBoundaryTests.cpp)
     target_include_directories(branch_truce_comparison_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_comparison_tests PRIVATE branch_truce_controller branch_truce_uiplugin
         Qt6::Widgets Qt6::QuickControls2 Qt6::Network Qt6::Test Qt6::QuickTest branch_truce_build_options)
