@@ -331,6 +331,13 @@ Draft RecoveryRecordReader::draft(std::string_view previousText) const
     return result;
 }
 
+RecordedRevision RecoveryRecordReader::revision(std::string_view previousText) const
+{
+    const auto current = state_.value(field::current).toObject();
+    return {number(current.value(field::id)), number(current.value(field::result)), draft(previousText), handEdited(),
+            handEditedRanges()};
+}
+
 std::set<std::string> RecoveryRecordReader::handEdited() const
 {
     const auto value = state_.value(field::current).toObject().value(field::handEdited);

@@ -101,6 +101,10 @@ struct ResultEdit {
     bool operator==(const ResultEdit &) const = default;
 };
 
+// When an edited map aligns its sources with the new text again: at once, or
+// later through realigned(), so the caller can do that work on another thread.
+enum class Realignment { Now, Deferred };
+
 // Part of a range a choice rebuilds: `span` without the `dropped` ranges inside
 // it, which are disjoint and in text order.
 struct KeptSpan {
@@ -142,8 +146,24 @@ public:
     // edge of dropped text stays ambiguous.
     void settle(SourceSide side, const std::vector<ByteRange> &dropped);
     [[nodiscard]] CorrespondenceMap atRevision(RevisionId revision) const;
+    // The map after `edit`. Its anchors, hand edits and text follow the edit
+    // at once. With Realignment::Deferred the passages are provisional
+    // instead of aligned again: those before and after the edited lines keep
+    // their alignment, shifted, and the edited lines with every passage they
+    // touch become one Ambiguous passage. That costs time in proportion to the
+    // passages, not to the product of line counts.
     [[nodiscard]] CorrespondenceMap edited(RevisionId revision, const ResultEdit &edit, bool manual = true,
-                                           const std::string &selectedAnchor = {}) const;
+                                           const std::string &selectedAnchor = {},
+                                           Realignment realignment = Realignment::Now) const;
+    // False while the passages are provisional, after a deferred edit.
+    [[nodiscard]] bool aligned() const noexcept { return aligned_; }
+    // This map with every source aligned with its text again: the map a
+    // Realignment::Now edit would have built. Const and pure, so a worker
+    // thread may run it while others read this map. Throws std::bad_alloc.
+    [[nodiscard]] CorrespondenceMap realigned() const;
+    // Whether `other` is this map with its passages aligned again: the same
+    // revision, text, anchors and hand edits.
+    [[nodiscard]] bool sameAnchors(const CorrespondenceMap &other) const;
     // A choice that replaces `range` with the text its `spans` keep, in the
     // given order. An anchor inside a span keeps its place in that span's text,
     // and one on exactly a dropped range is left empty where that range was.
@@ -169,6 +189,9 @@ public:
 
 private:
     void align();
+    // Provisional passages after `edit` replaced its range of the old text with
+    // `inserted` bytes.
+    void shiftPassages(std::string_view old, ByteRange edit, std::size_t inserted);
     RevisionId revision_;
     std::shared_ptr<const FileSnapshots> sources_;
     std::shared_ptr<const CorrespondenceAlgorithm> algorithm_;
@@ -180,6 +203,7 @@ private:
     std::shared_ptr<const std::vector<std::size_t>> resultLines_;
     std::map<std::string, ResultAnchor> anchors_;
     std::vector<ByteRange> handEditedRanges_;
+    bool aligned_ = true;
 };
 
 }

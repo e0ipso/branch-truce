@@ -184,9 +184,9 @@ void resolvesDiff3Block(const std::string &left, const std::string &earlier, con
         CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
         CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
         auto replayed = test_support::diff3File(left, right, earlier, merged);
-        CHECK(replayed.replaceDraft(1, partly, std::set<std::string>{}) == Transition::Applied);
+        CHECK(test_support::replay(replayed, partly) == Transition::Applied);
         CHECK(replayed.current().draft == partly && replayed.markers() == held);
-        CHECK(replayed.replaceDraft(replayed.current().id, chosen, std::set<std::string>{}) == Transition::Applied);
+        CHECK(test_support::replay(replayed, chosen) == Transition::Applied);
         CHECK(replayed.current().draft == chosen && replayed.markers().count() == 0);
         CHECK(replayed.beginMarkResolved(replayed.current().id) == Transition::Applied);
     }
@@ -1263,8 +1263,8 @@ void aSplitBlockWithCrossedSidesResolvesInSectionOrder()
     CHECK(crossed.beginMarkResolved(crossed.current().id) == Transition::Applied);
     // Recovery replays each draft with its hand-edit flags and derives the same text and count.
     auto replayed = test_support::splitFile();
-    CHECK(replayed.replaceDraft(1, partly.draft, std::set<std::string>{}) == Transition::Applied);
-    CHECK(replayed.replaceDraft(replayed.current().id, chosen, std::set<std::string>{}) == Transition::Applied);
+    CHECK(test_support::replay(replayed, partly.draft) == Transition::Applied);
+    CHECK(test_support::replay(replayed, chosen) == Transition::Applied);
     CHECK(replayed.current().draft == chosen && replayed.markers().count() == 0);
     CHECK(replayed.beginMarkResolved(replayed.current().id) == Transition::Applied);
 }
@@ -1367,13 +1367,13 @@ void expectSplitRecovery(const SplitTakeBoth &step, const std::vector<MarkerSect
                          const Draft &chosen, const std::string &rest)
 {
     auto replayed = test_support::splitFile();
-    CHECK(replayed.replaceDraft(1, partly, std::set<std::string>{}) == Transition::Applied);
+    CHECK(test_support::replay(replayed, partly) == Transition::Applied);
     CHECK(replayed.markerSections() == sections);
-    CHECK(replayed.replaceDraft(replayed.current().id, chosen, std::set<std::string>{}) == Transition::Applied);
+    CHECK(test_support::replay(replayed, chosen) == Transition::Applied);
     CHECK(replayed.current().draft == chosen && replayed.markers().count() == 0);
     CHECK(replayed.beginMarkResolved(replayed.current().id) == Transition::Applied);
     auto resumed = test_support::splitFile();
-    CHECK(resumed.replaceDraft(1, partly, std::set<std::string>{}) == Transition::Applied);
+    CHECK(test_support::replay(resumed, partly) == Transition::Applied);
     if (step.combineFirst)
         CHECK(decideOther(resumed, step.other, step.rest()) == rest);
     else

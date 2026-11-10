@@ -3,6 +3,7 @@
 #include "ResourceLimits.h"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -31,17 +32,22 @@ const Revision *RevisionHistory::find(RevisionId id) const noexcept
 
 void RevisionHistory::publish(Revision revision, Step step)
 {
-    if (revision.id != next_) throw std::logic_error("A published revision must take the next revision id");
+    if (revision.id < next_ || revision.id == std::numeric_limits<RevisionId>::max())
+        throw std::logic_error("A published revision must take a new revision id");
     if ((step == Step::Undo && !canUndo()) || (step == Step::Redo && !canRedo()))
         throw std::logic_error("No history entry to move to");
     // Everything that allocates comes first, so a failure changes nothing.
     auto stored = std::make_shared<const Revision>(std::move(revision));
-    if (step == Step::Edit) entries_.reserve(cursor_ + 2);
+    if (step == Step::Edit || step == Step::Join) entries_.reserve(cursor_ + 2);
     revisions_.emplace(stored->id, stored);
     current_ = std::move(stored);
-    ++next_;
+    next_ = current_->id + 1;
     switch (step) {
     case Step::Edit: append(current_->id); break;
+    case Step::Join:
+        if (cursor_ > 0) --cursor_;
+        append(current_->id);
+        break;
     case Step::Undo: --cursor_; break;
     case Step::Redo: ++cursor_; break;
     }
@@ -65,6 +71,15 @@ void RevisionHistory::append(RevisionId id) noexcept
     entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(cursor_ + 1), entries_.end());
     entries_.push_back(id);
     cursor_ = entries_.size() - 1;
+}
+
+void RevisionHistory::replaceCurrent(Revision revision)
+{
+    if (revision.id != current_->id) throw std::logic_error("A replacement must keep the current revision id");
+    auto stored = std::make_shared<const Revision>(std::move(revision));
+    revisions_.at(stored->id) = stored;
+    current_ = std::move(stored);
+    prune();
 }
 
 void RevisionHistory::hold(std::vector<RevisionId> ids) noexcept

@@ -29,7 +29,7 @@ Transition apply(RecoveryAction action, FileSession &file, const RecoveryRecordR
     const auto revision = file.current().id;
     switch (action) {
     case RecoveryAction::ReplaceDraft:
-        return file.replaceDraft(revision, record.draft(previousText), record.handEdited(), record.handEditedRanges());
+        return file.replayDraft(revision, record.revision(previousText));
     case RecoveryAction::Undo: return file.undo(revision);
     case RecoveryAction::Redo: return file.redo(revision);
     case RecoveryAction::DiscardToCheckpoint: return file.discardToCheckpoint(revision);

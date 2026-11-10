@@ -226,6 +226,42 @@ CorrespondenceMap chosen(const CorrespondenceMap &map, const std::string &id, co
     return map.edited(map.revision() + 1, {*anchor->result, replacement}, false, id);
 }
 
+void aDeferredEditKeepsThePassagesAroundTheEditedLines()
+{
+    const std::string text = "a\nb\nc\nd\n";
+    auto map = mapped(text, text);
+    const auto anchor = bound(map, {"c", SourceSide::Stage2, {4, 6}});
+    const ResultEdit edit{{4, 4}, "x"};
+    const auto deferred = map.edited(2, edit, true, {}, Realignment::Deferred);
+    const auto now = map.edited(2, edit);
+    CHECK(!deferred.aligned() && now.aligned() && map.aligned());
+    CHECK(deferred.text() == "a\nb\nxc\nd\n" && deferred.sameAnchors(now));
+    CHECK(*deferred.passages(SourceSide::Stage2)
+          == std::vector<Passage>({{{0, 4}, {0, 4}, PassageKind::Equal},
+                                   {{4, 6}, {4, 7}, PassageKind::Ambiguous},
+                                   {{6, 8}, {7, 9}, PassageKind::Equal}}));
+    const auto realigned = deferred.realigned();
+    CHECK(realigned.aligned() && realigned.sameAnchors(now));
+    CHECK(*realigned.passages(SourceSide::Stage2) == *now.passages(SourceSide::Stage2));
+    CHECK(anchorOf(realigned, "c") == anchorOf(now, "c") && anchor.result == ByteRange{4, 6});
+    // Every edit leaves a partition of both texts, at either end too.
+    for (const ResultEdit other : {ResultEdit{{0, 0}, "start\n"}, ResultEdit{{8, 8}, "end"}, ResultEdit{{1, 7}, ""},
+                                   ResultEdit{{0, 8}, "all new\n"}}) {
+        const auto provisional = map.edited(2, other, true, {}, Realignment::Deferred);
+        std::size_t source = 0;
+        std::size_t result = 0;
+        for (const auto &passage : *provisional.passages(SourceSide::Stage2)) {
+            CHECK(passage.source.begin == source && passage.result.begin == result);
+            if (passage.kind == PassageKind::Equal)
+                CHECK(slice(text, passage.source) == slice(provisional.text(), passage.result));
+            source = passage.source.end;
+            result = passage.result.end;
+        }
+        CHECK(source == text.size() && result == provisional.text().size());
+        CHECK(*provisional.realigned().passages(SourceSide::Stage2) == *map.edited(2, other).passages(SourceSide::Stage2));
+    }
+}
+
 void repeatedAndReorderedPassagesLeaveAnchorsAmbiguous()
 {
     for (const auto &[source, result] : {std::pair{"head\nrepeat\nrepeat\nend\n", "head\nrepeat\nend\n"},
@@ -343,6 +379,8 @@ int main()
               aLongUniqueTextAlignsAsOneEqualPassage);
     suite.run("texts over the cell budget are one ambiguous passage", textsOverTheCellBudgetAreOneAmbiguousPassage);
     suite.run("the map checks every text before the algorithm sees it", theMapChecksEveryTextBeforeTheAlgorithmSeesIt);
+    suite.run("a deferred edit keeps the passages around the edited lines",
+              aDeferredEditKeepsThePassagesAroundTheEditedLines);
     suite.run("repeated and reordered passages leave anchors ambiguous",
               repeatedAndReorderedPassagesLeaveAnchorsAmbiguous);
     suite.run("equal repeated passages keep the selected occurrence", equalRepeatedPassagesKeepTheSelectedOccurrence);

@@ -339,6 +339,53 @@ void transform(ResultAnchor &anchor, const ResultEdit &edit, bool manual, bool s
     }
     anchor.result = range;
 }
+// Where the line holding `position` starts.
+std::size_t lineBegin(std::string_view text, std::size_t position) noexcept
+{
+    const auto newline = position == 0 ? std::string_view::npos : text.rfind('\n', position - 1);
+    return newline == std::string_view::npos ? 0 : newline + 1;
+}
+
+// Provisional passages after an edit of the result: the passages outside the
+// lines the edit touches keep their alignment, those after it shifted, and
+// the rest is one Ambiguous passage between them. Equal passages are cut at
+// those line edges, so lines both texts share outside the edit stay equal.
+std::vector<Passage> shifted(const std::vector<Passage> &passages, std::string_view old, ByteRange edit,
+                             std::size_t inserted)
+{
+    const auto from = lineBegin(old, edit.begin);
+    const auto to = edit.end == old.size() ? old.size() : lineAt(old, lineBegin(old, edit.end)).end;
+    const auto shift = [&](std::size_t offset) { return offset - (edit.end - edit.begin) + inserted; };
+    std::vector<Passage> head;
+    std::vector<Passage> tail;
+    for (const auto &passage : passages) {
+        const auto &source = passage.source;
+        const auto &result = passage.result;
+        if (result.end <= from) {
+            head.push_back(passage);
+        } else if (result.begin >= to) {
+            tail.push_back({source, {shift(result.begin), shift(result.end)}, passage.kind});
+        } else if (passage.kind == PassageKind::Equal) {
+            if (result.begin < from)
+                head.push_back({{source.begin, source.begin + from - result.begin}, {result.begin, from}, passage.kind});
+            if (result.end > to)
+                tail.push_back(
+                    {{source.end - (result.end - to), source.end}, {shift(to), shift(result.end)}, passage.kind});
+        }
+    }
+    const ByteRange sourceWindow{head.empty() ? 0 : head.back().source.end,
+                                 tail.empty() ? (passages.empty() ? 0 : passages.back().source.end)
+                                              : tail.front().source.begin};
+    const ByteRange resultWindow{head.empty() ? 0 : head.back().result.end,
+                                 tail.empty() ? shift(old.size()) : tail.front().result.begin};
+    auto result = std::move(head);
+    result.reserve(result.size() + 1 + tail.size());
+    if (sourceWindow.begin != sourceWindow.end || resultWindow.begin != resultWindow.end)
+        result.push_back({sourceWindow, resultWindow, PassageKind::Ambiguous});
+    result.insert(result.end(), tail.begin(), tail.end());
+    return result;
+}
+
 // A text without some disjoint ranges of it: its kept pieces in order, each
 // with where it starts in the shorter text.
 class KeptView {
@@ -646,6 +693,30 @@ void CorrespondenceMap::align()
     resultLines_.reset();
     for (const auto side : kSides)
         if (const auto *text = source(side)) passages_[side] = algorithm_->compare(*text, text_);
+    aligned_ = true;
+}
+
+void CorrespondenceMap::shiftPassages(std::string_view old, ByteRange edit, std::size_t inserted)
+{
+    resultLines_.reset();
+    for (auto &[side, passages] : passages_) {
+        (void)side;
+        passages = shifted(passages, old, edit, inserted);
+    }
+    aligned_ = false;
+}
+
+CorrespondenceMap CorrespondenceMap::realigned() const
+{
+    auto result = *this;
+    result.align();
+    return result;
+}
+
+bool CorrespondenceMap::sameAnchors(const CorrespondenceMap &other) const
+{
+    return revision_ == other.revision_ && sources_ == other.sources_ && text_ == other.text_
+        && anchors_ == other.anchors_ && handEditedRanges_ == other.handEditedRanges_;
 }
 
 const std::vector<Passage> *CorrespondenceMap::passages(SourceSide side) const noexcept
@@ -721,7 +792,7 @@ CorrespondenceMap CorrespondenceMap::atRevision(RevisionId revision) const
 }
 
 CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdit &edit, bool manual,
-                                            const std::string &selectedAnchor) const
+                                            const std::string &selectedAnchor, Realignment realignment) const
 {
     if (!validByteRange(text_, edit.range) || !validUtf8(edit.replacement))
         throw std::invalid_argument("Result edit must use UTF-8 character boundaries");
@@ -748,7 +819,10 @@ CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdi
         transform(value, edit, manual, id == selectedAnchor, selected && sibling(selected->source, value.source));
     }
     result.handEditedRanges_ = editedRanges(handEditedRanges_, edit.range, edit.replacement.size(), manual);
-    result.align();
+    if (realignment == Realignment::Deferred)
+        result.shiftPassages(text_, edit.range, edit.replacement.size());
+    else
+        result.align();
     return result;
 }
 

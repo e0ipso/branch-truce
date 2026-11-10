@@ -253,9 +253,10 @@ bool FileSession::completesMarkers(const EditingCommand &command) const
     return !planner().edits(draft, *mapping, command.decisions, &markers()).empty();
 }
 
-Revision FileSession::successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence) const
+Revision FileSession::successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence,
+                                std::optional<RevisionId> next) const
 {
-    const auto id = history_.nextId();
+    const auto id = next.value_or(history_.nextId());
     if (id == std::numeric_limits<RevisionId>::max()) throw std::overflow_error("Session revision space exhausted");
     const auto &previous = current();
     if (!correspondence && previous.correspondence)
@@ -289,40 +290,61 @@ Revision FileSession::restored(const Revision &revision) const
     return copy;
 }
 
-Transition FileSession::replaceDraft(RevisionId expected, const Draft &draft,
-                                     const std::optional<std::set<std::string>> &handEdited,
-                                     std::vector<ByteRange> handEditedRanges)
+Transition FileSession::validateDraft(RevisionId expected, const Draft &draft) const
+{
+    if (expected != current().id) return Transition::StaleRevision;
+    if (support_ != Support::Supported) return Transition::Blocked;
+    if (exceedsEnvelope(draft.text)) return Transition::Blocked;
+    if (!editableText(draft.text) || !validDecisions(draft.decisions)) return Transition::InvalidAnchor;
+    return Transition::Applied;
+}
+
+Transition FileSession::replaceDraft(RevisionId expected, const Draft &draft)
 {
     return withinMemory([&] {
-        if (expected != current().id) return Transition::StaleRevision;
-        if (support_ != Support::Supported) return Transition::Blocked;
-        if (exceedsEnvelope(draft.text)) return Transition::Blocked;
-        if (!editableText(draft.text) || !validDecisions(draft.decisions)) return Transition::InvalidAnchor;
-        if (!handEdited && !handEditedRanges.empty()) return Transition::InvalidAnchor;
+        if (const auto refused = validateDraft(expected, draft); refused != Transition::Applied) return refused;
         // The marker count follows from the text, so a supplied count changes nothing.
-        const bool unchanged = draft.text == current().draft.text && draft.decisions == current().draft.decisions;
-        std::shared_ptr<const CorrespondenceMap> mapping;
-        if (handEdited && correspondence()) {
-            auto replayed = correspondence()->recomputed(history_.nextId(), draft.text);
-            if (!replayed.restoreHandEdits(*handEdited)
-                || !replayed.restoreHandEditedRanges(std::move(handEditedRanges)))
-                return Transition::InvalidAnchor;
-            // A recorded choice can change only the hand-edit flags and ranges.
-            if (unchanged && replayed.handEditedAnchors() == correspondence()->handEditedAnchors()
-                && replayed.handEditedRanges() == correspondence()->handEditedRanges())
-                return Transition::NoChange;
-            mapping = std::make_shared<const CorrespondenceMap>(std::move(replayed));
-        } else if (unchanged) {
+        if (draft.text == current().draft.text && draft.decisions == current().draft.decisions)
             return Transition::NoChange;
-        } else if (handEdited && (!handEdited->empty() || !handEditedRanges.empty())) {
-            return Transition::InvalidAnchor;
-        }
-        history_.publish(successor(draft, std::move(mapping)), RevisionHistory::Step::Edit);
+        history_.publish(successor(draft), RevisionHistory::Step::Edit);
         return Transition::Applied;
     });
 }
 
-Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit)
+Transition FileSession::replayDraft(RevisionId expected, const RecordedRevision &recorded)
+{
+    return withinMemory([&] {
+        const auto &draft = recorded.draft;
+        if (const auto refused = validateDraft(expected, draft); refused != Transition::Applied) return refused;
+        const bool sameText = draft.text == current().draft.text;
+        if (recorded.id < history_.nextId()
+            || (recorded.result != recorded.id && (!sameText || recorded.result != current().result)))
+            return Transition::InvalidOutcome;
+        const bool unchanged = sameText && draft.decisions == current().draft.decisions;
+        std::shared_ptr<const CorrespondenceMap> mapping;
+        if (const auto *now = correspondence()) {
+            auto replayed = now->recomputed(recorded.id, draft.text);
+            if (!replayed.restoreHandEdits(recorded.handEdited)
+                || !replayed.restoreHandEditedRanges(recorded.handEditedRanges))
+                return Transition::InvalidAnchor;
+            // A recorded choice can change only the hand-edit flags and ranges.
+            if (unchanged && replayed.handEditedAnchors() == now->handEditedAnchors()
+                && replayed.handEditedRanges() == now->handEditedRanges())
+                return Transition::NoChange;
+            mapping = std::make_shared<const CorrespondenceMap>(std::move(replayed));
+        } else if (!recorded.handEdited.empty() || !recorded.handEditedRanges.empty()) {
+            return Transition::InvalidAnchor;
+        } else if (unchanged) {
+            return Transition::NoChange;
+        }
+        auto revision = successor(draft, std::move(mapping), recorded.id);
+        revision.result = recorded.result;
+        history_.publish(std::move(revision), RevisionHistory::Step::Edit);
+        return Transition::Applied;
+    });
+}
+
+Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit, EditOptions options)
 {
     return withinMemory([&] {
         if (expected != current().id) return Transition::StaleRevision;
@@ -335,9 +357,33 @@ Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit)
         if (exceedsEnvelope(draft.text)) return Transition::Blocked;
         if (draft == current().draft) return Transition::NoChange;
         auto mapping = correspondence()
-            ? std::make_shared<const CorrespondenceMap>(correspondence()->edited(history_.nextId(), edit))
+            ? std::make_shared<const CorrespondenceMap>(
+                  correspondence()->edited(history_.nextId(), edit, true, {}, options.realignment))
             : nullptr;
-        history_.publish(successor(std::move(draft), std::move(mapping)), RevisionHistory::Step::Edit);
+        history_.publish(successor(std::move(draft), std::move(mapping)),
+                         options.join ? RevisionHistory::Step::Join : RevisionHistory::Step::Edit);
+        return Transition::Applied;
+    });
+}
+
+std::shared_ptr<const CorrespondenceMap> FileSession::pendingAlignment() const noexcept
+{
+    const auto &mapping = current().correspondence;
+    return mapping && !mapping->aligned() ? mapping : nullptr;
+}
+
+Transition FileSession::installAlignment(RevisionId revision, std::shared_ptr<const CorrespondenceMap> aligned)
+{
+    return withinMemory([&] {
+        const auto &now = current();
+        if (now.id != revision || !pendingAlignment()) return Transition::StaleRevision;
+        if (!aligned || !aligned->aligned() || !now.correspondence->sameAnchors(*aligned))
+            return Transition::InvalidAnchor;
+        auto draft = now.draft;
+        auto scan = resultMarkers(draft.text, markerSize_, aligned.get(), launchFrames_.get());
+        draft.unresolvedMarkers = scan.count();
+        history_.replaceCurrent(Revision{now.id, now.result, now.decisions, std::move(draft), std::move(aligned),
+                                         std::make_shared<const MarkerScan>(std::move(scan))});
         return Transition::Applied;
     });
 }
@@ -490,6 +536,13 @@ Transition FileSession::beginMarkResolved(RevisionId expected, bool confirmUndec
 {
     return withinMemory([&] {
         if (expected != current().id) return Transition::StaleRevision;
+        // Provisional passages can hide a marker line, so review counts
+        // markers against the aligned ones.
+        if (const auto pending = pendingAlignment())
+            if (const auto installed = installAlignment(expected, std::make_shared<const CorrespondenceMap>(
+                                                                      pending->realigned()));
+                installed != Transition::Applied)
+                return installed;
         if (support_ != Support::Supported || current().draft.unresolvedMarkers != 0) return Transition::Blocked;
         if (undecidedCount(current().draft) != 0 && !confirmUndecided) return Transition::ConfirmationRequired;
         auto next = publication_;

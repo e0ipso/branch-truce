@@ -8,8 +8,11 @@
 #include <cstddef>
 #include <initializer_list>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace test_support {
 // True when the file's facts list `blocker`.
@@ -28,6 +31,18 @@ inline branch_truce::Transition choose(branch_truce::FileSession &file, branch_t
 {
     const auto &target = choiceTarget(file, side, scope, occurrence);
     return applyChoice(file, previewChoice(file, file.current().id, target.source.contributionId, action), true);
+}
+
+// Replays `draft` the way recovery does, as the revision after the current
+// one, with the recorded hand edits.
+inline branch_truce::Transition replay(branch_truce::FileSession &file, const branch_truce::Draft &draft,
+                                       std::set<std::string> handEdited = {},
+                                       std::vector<branch_truce::ByteRange> handEditedRanges = {})
+{
+    const auto &current = file.current();
+    const auto id = current.id + 1;
+    const auto result = draft.text == current.draft.text ? current.result : id;
+    return file.replayDraft(current.id, {id, result, draft, std::move(handEdited), std::move(handEditedRanges)});
 }
 
 // The value inside `optional`; an empty one fails the case.

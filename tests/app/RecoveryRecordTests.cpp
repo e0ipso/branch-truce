@@ -185,6 +185,24 @@ int main()
         CHECK(all.front().contains("snapshots"));
         CHECK(std::none_of(all.begin() + 1, all.end(), [](const auto &state) { return state.contains("snapshots"); }));
     });
+    suite.run("one record replays a burst of edits", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        Recorder recorder(directory.path() + "/store", capturedFile());
+        const auto before = recorder.file.current().draft.text;
+        bool join = false;
+        for (const auto *typed : {"one\n", "two\n", "three\n"}) {
+            CHECK(recorder.file.editResult(recorder.file.current().id, {{0, 0}, typed}, {.join = join})
+                  == Transition::Applied);
+            join = true;
+        }
+        recorder.commit(RecoveryAction::ReplaceDraft, before);
+        recorder.step(RecoveryAction::Undo, [](FileSession &file) { return file.undo(file.current().id); });
+        const auto replay = replayRecovery(recorder.lease->store());
+        CHECK(replay.succeeded && replay.files.size() == 1);
+        const auto &file = replay.files.front();
+        CHECK(file.current().id == recorder.file.current().id && file.current().draft == recorder.file.current().draft);
+    });
     suite.run("replay refuses a journal another correspondence algorithm wrote", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());

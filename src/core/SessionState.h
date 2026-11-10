@@ -31,6 +31,27 @@ struct EditingCommand {
     bool operator==(const EditingCommand &) const = default;
 };
 
+// A revision a recovery journal recorded: its id, the id of the revision whose
+// result text it repeats, its draft and its hand-edited anchors and ranges.
+struct RecordedRevision {
+    RevisionId id = 0;
+    RevisionId result = 0;
+    Draft draft;
+    std::set<std::string> handEdited;
+    std::vector<ByteRange> handEditedRanges;
+};
+
+// How editResult records an edit.
+struct EditOptions {
+    // Deferred leaves the passages provisional for a worker to align (see
+    // FileSession).
+    Realignment realignment = Realignment::Now;
+    // Joins the edit to the current undo entry, so one undo takes back a burst
+    // of typing and a recovery journal can record the burst once. The first
+    // entry, where the history starts, is never joined.
+    bool join = false;
+};
+
 // One file's editing session: its immutable captured sources, the revisions
 // of its result and the publication outcomes adapters report. It performs no
 // I/O. Success callbacks must come from adapters that have persisted or
@@ -40,6 +61,16 @@ struct EditingCommand {
 // change once stored, so a copy costs pointers rather than text. A session is
 // not synchronized: one thread at a time may use it, and a session built on a
 // worker thread may be handed to another thread once.
+//
+// Aligning the sources with an edited result costs time in proportion to the
+// product of their line counts, so an editor can defer it. The owning thread
+// edits with Realignment::Deferred and hands pendingAlignment() to a worker.
+// That map is immutable and shared, so the worker may call realigned() on it
+// while the owner keeps editing; the worker touches no session. The owner then
+// passes the result to installAlignment(), which keeps it only if the revision
+// it was made for is still current. Until then the revision's passages are
+// provisional (see CorrespondenceMap::edited), and so are the marker scan and
+// the word differences built from them.
 class FileSession {
 public:
     // `algorithm` aligns the captured sources with the result and the two
@@ -96,14 +127,30 @@ public:
     [[nodiscard]] FileFacts facts() const;
 
     // Each editing transaction carries text and decisions together. Stale
-    // editor commands cannot overwrite a later revision. Changed ranges count
-    // as hand edits unless recovery replay supplies its recorded anchors and
-    // hand-edited result ranges. The text must be UTF-8 with LF line endings.
-    // Decision keys are the caller's recorded vocabulary and need no anchor.
-    Transition replaceDraft(RevisionId expected, const Draft &draft,
-                            const std::optional<std::set<std::string>> &handEdited = std::nullopt,
-                            std::vector<ByteRange> handEditedRanges = {});
-    Transition editResult(RevisionId expected, const ResultEdit &edit);
+    // editor commands cannot overwrite a later revision. A whole-buffer update
+    // has no edit location, so ranges its comparison changed count as hand
+    // edits. The text must be UTF-8 with LF line endings. Decision keys are
+    // the caller's recorded vocabulary and need no anchor.
+    Transition replaceDraft(RevisionId expected, const Draft &draft);
+    // Restores a revision a recovery journal recorded, in one step however
+    // many commands made it, so a journal can record only the last revision
+    // of a burst of edits. Its id is at least the next revision id; its result
+    // id is its own, or the current one's when the text is unchanged
+    // (InvalidOutcome otherwise). The recorded hand-edit flags and ranges
+    // replace the ones the comparison derives (InvalidAnchor if they do not
+    // fit). Text and decisions are checked as replaceDraft checks them.
+    Transition replayDraft(RevisionId expected, const RecordedRevision &recorded);
+    Transition editResult(RevisionId expected, const ResultEdit &edit, EditOptions options = {});
+    // The current revision's correspondence while its passages are
+    // provisional, or null. Safe to read from any thread.
+    [[nodiscard]] std::shared_ptr<const CorrespondenceMap> pendingAlignment() const noexcept;
+    // Replaces the current revision's provisional passages with `aligned`, a
+    // map pendingAlignment() returned for `revision` and realigned() built.
+    // The revision keeps its id, text, decisions and anchors; its marker scan
+    // is counted again. StaleRevision once another revision is current or the
+    // passages are no longer pending; InvalidAnchor for a map of other anchors.
+    // Recovery records hold nothing it changes.
+    Transition installAlignment(RevisionId revision, std::shared_ptr<const CorrespondenceMap> aligned);
     // Decision keys of a command must name a registered anchor.
     Transition applyCommand(const EditingCommand &command, bool confirmReplacement = false);
     Transition undo(RevisionId expected);
@@ -167,9 +214,13 @@ private:
     // The untouched launch revision of a captured file opened again as
     // Supported and aligned, or nothing when it is no longer untouched.
     [[nodiscard]] std::optional<Launch> relaunchSupported() const;
-    // The revision after the current one with this draft. Without a mapping
-    // the current one is recomputed against the new text.
-    [[nodiscard]] Revision successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence = {}) const;
+    // The revision after the current one with this draft, numbered `id` or
+    // the next id. Without a mapping the current one is recomputed against
+    // the new text.
+    [[nodiscard]] Revision successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence = {},
+                                     std::optional<RevisionId> id = std::nullopt) const;
+    // Why a draft cannot replace the current one, or Applied.
+    [[nodiscard]] Transition validateDraft(RevisionId expected, const Draft &draft) const;
     // A fresh revision repeating `revision`'s text, decisions and mapping.
     [[nodiscard]] Revision restored(const Revision &revision) const;
     [[nodiscard]] MarkerPlanner planner() const noexcept;

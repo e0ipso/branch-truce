@@ -929,22 +929,21 @@ void handEditsKeepTheirRangesThroughUndoRedoChoicesAndReplay()
     // Recovery replay restores the recorded ranges. A record without them,
     // as written before they were recorded, replays with none.
     auto replay = test_support::choiceFile();
-    CHECK(replay.replaceDraft(1, typed.draft, std::set<std::string>{}, {{0, 6}}) == Transition::Applied);
+    CHECK(test_support::replay(replay, typed.draft, {}, {{0, 6}}) == Transition::Applied);
     CHECK((ranges(replay) == Ranges{{0, 6}}));
-    CHECK(replay.replaceDraft(replay.current().id, typed.draft, std::set<std::string>{}, {{0, 6}})
+    CHECK(test_support::replay(replay, typed.draft, {}, {{0, 6}})
           == Transition::NoChange);
-    CHECK(replay.replaceDraft(replay.current().id, typed.draft, std::set<std::string>{}, {{0, 3}})
+    CHECK(test_support::replay(replay, typed.draft, {}, {{0, 3}})
           == Transition::Applied);
     CHECK(replay.undo(replay.current().id) == Transition::Applied && (ranges(replay) == Ranges{{0, 6}}));
     auto older = test_support::choiceFile();
-    CHECK(older.replaceDraft(1, typed.draft, std::set<std::string>{}) == Transition::Applied);
+    CHECK(test_support::replay(older, typed.draft) == Transition::Applied);
     CHECK(ranges(older).empty() && older.current().draft == typed.draft);
-    // Ranges must be in order, apart and inside the text, and only replay supplies them.
+    // Ranges must be in order, apart and inside the text.
     auto refused = test_support::choiceFile();
     for (const auto &bad :
          std::vector<Ranges>{{{4, 2}}, {{0, 3}, {3, 6}}, {{3, 6}, {0, 2}}, {{0, typed.draft.text.size() + 1}}})
-        CHECK(refused.replaceDraft(1, typed.draft, std::set<std::string>{}, bad) == Transition::InvalidAnchor);
-    CHECK(refused.replaceDraft(1, typed.draft, std::nullopt, {{0, 6}}) == Transition::InvalidAnchor);
+        CHECK(test_support::replay(refused, typed.draft, {}, bad) == Transition::InvalidAnchor);
     CHECK(refused.current().id == 1 && ranges(refused).empty());
 }
 
@@ -1008,6 +1007,72 @@ void supportIsAdmittedOnlyThroughTheLaunchChecks()
     FileSession saved("choices", sources.path, {text, {}, 0}, Support::OutsideApp, "busy", sources);
     CHECK(saved.recordCheckpoint(1, Outcome::Failed, "disk full") == Transition::Applied);
     CHECK(saved.setSupport(Support::Supported) == Transition::Blocked && saved.support() == Support::OutsideApp);
+}
+
+void aRecordedRevisionReplaysInOneStep()
+{
+    // A burst of typing joined into one undo entry, which a journal records once.
+    auto live = test_support::choiceFile();
+    bool join = false;
+    for (const auto *typed : {"one\n", "two\n", "three\n"}) {
+        CHECK(live.editResult(live.current().id, {{0, 0}, typed}, {.join = join}) == Transition::Applied);
+        join = true;
+    }
+    const auto &last = live.current();
+    CHECK(last.id == 4 && !last.correspondence->handEditedRanges().empty());
+    const RecordedRevision recorded{last.id, last.result, last.draft, last.correspondence->handEditedAnchors(),
+                                    last.correspondence->handEditedRanges()};
+    auto replayed = test_support::choiceFile();
+    auto stale = recorded;
+    stale.id = 1;
+    CHECK(replayed.replayDraft(1, stale) == Transition::InvalidOutcome);
+    auto foreign = recorded;
+    foreign.result = 2;
+    CHECK(replayed.replayDraft(1, foreign) == Transition::InvalidOutcome);
+    CHECK(replayed.current().id == 1);
+    CHECK(replayed.replayDraft(1, recorded) == Transition::Applied);
+    CHECK(replayed.current().id == 4 && replayed.current().result == 4 && replayed.current().draft == last.draft);
+    CHECK(replayed.correspondence()->handEditedRanges() == last.correspondence->handEditedRanges());
+    CHECK(replayed.correspondence()->handEditedAnchors() == last.correspondence->handEditedAnchors());
+    // Undo takes back the whole burst in both, and later ids agree.
+    CHECK(live.undo(4) == Transition::Applied && replayed.undo(4) == Transition::Applied);
+    CHECK(!live.canUndo() && !replayed.canUndo() && live.current().id == 5 && replayed.current().id == 5);
+    CHECK(replayed.current().draft == live.current().draft && live.current().draft.text == test_support::choiceFile().current().draft.text);
+    // The first entry, where the history starts, is never joined.
+    auto fresh = test_support::choiceFile();
+    CHECK(fresh.editResult(1, {{0, 0}, "x"}, {.join = true}) == Transition::Applied && fresh.canUndo());
+}
+
+void aDeferredEditIsAlignedLaterOnlyForItsRevision()
+{
+    auto file = test_support::choiceFile();
+    auto now = file;
+    CHECK(now.editResult(1, {{0, 0}, "typed\n"}) == Transition::Applied);
+    CHECK(!now.pendingAlignment());
+    CHECK(file.editResult(1, {{0, 0}, "typed\n"}, {.realignment = Realignment::Deferred}) == Transition::Applied);
+    const auto pending = file.pendingAlignment();
+    CHECK(pending && pending == file.current().correspondence && !pending->aligned());
+    // Anchors, hand edits and text follow the edit at once.
+    CHECK(pending->sameAnchors(*now.correspondence()));
+    CHECK(file.installAlignment(1, std::make_shared<const CorrespondenceMap>(pending->realigned()))
+          == Transition::StaleRevision);
+    CHECK(file.installAlignment(2, std::make_shared<const CorrespondenceMap>(file.revision(1)->correspondence->realigned()))
+          == Transition::InvalidAnchor);
+    const auto aligned = std::make_shared<const CorrespondenceMap>(pending->realigned());
+    CHECK(file.installAlignment(2, aligned) == Transition::Applied);
+    CHECK(!file.pendingAlignment() && file.correspondence() == aligned.get() && file.current().id == 2);
+    for (const auto side : {SourceSide::Stage2, SourceSide::Stage3})
+        CHECK(*file.correspondence()->passages(side) == *now.correspondence()->passages(side));
+    CHECK(file.markers() == now.markers() && file.current().draft == now.current().draft);
+    CHECK(file.installAlignment(2, aligned) == Transition::StaleRevision);
+    // A map made for a revision a later edit replaced is never installed.
+    CHECK(file.editResult(2, {{0, 0}, "more\n"}, {.realignment = Realignment::Deferred}) == Transition::Applied);
+    const auto older = file.pendingAlignment();
+    CHECK(file.editResult(3, {{0, 0}, "again\n"}, {.realignment = Realignment::Deferred}) == Transition::Applied);
+    CHECK(file.installAlignment(3, std::make_shared<const CorrespondenceMap>(older->realigned()))
+          == Transition::StaleRevision);
+    // Mark resolved counts markers against aligned passages.
+    CHECK(file.beginMarkResolved(4, true) == Transition::Applied && !file.pendingAlignment());
 }
 
 void aFileOverTheLineThresholdWaitsForConfirmation()
@@ -1155,6 +1220,8 @@ int main()
     suite.run("a newer review rejects superseded publication callbacks",
               aNewerReviewRejectsSupersededPublicationCallbacks);
     suite.run("support is admitted only through the launch checks", supportIsAdmittedOnlyThroughTheLaunchChecks);
+    suite.run("a recorded revision replays in one step", aRecordedRevisionReplaysInOneStep);
+    suite.run("a deferred edit is aligned later only for its revision", aDeferredEditIsAlignedLaterOnlyForItsRevision);
     suite.run("a file over the line threshold waits for confirmation", aFileOverTheLineThresholdWaitsForConfirmation);
     suite.run("text over the line or payload limit is unreadable", textOutsideTheEnvelopeIsUnreadable);
     suite.run("edits stay inside the text envelope", editsStayInsideTheEnvelope);
