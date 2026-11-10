@@ -7,6 +7,7 @@
 #include "app/Application.h"
 #include "app/Translations.h"
 #include "core/ResourceLimits.h"
+#include "fixtures/AppSession.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/GuiState.h"
@@ -239,10 +240,11 @@ public:
 
     // The recovery store syncs through this, so a case can fail one sync.
     std::shared_ptr<test_support::SyncFaults> faults = std::make_shared<test_support::SyncFaults>();
-    Application controller{Application::Config{.gitExecutable = gitOnPath(),
-                                               .recoveryDirectory = newRecoveryDirectory(),
-                                               .correspondence = {},
-                                               .files = faults}};
+    Application controller{[&] {
+        auto config = test_support::windowConfig();
+        config.files = faults;
+        return config;
+    }()};
     // Every network request the scene makes; it outlives the engine that uses it.
     RecordingNetwork network;
     QQmlApplicationEngine engine;

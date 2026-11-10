@@ -90,7 +90,8 @@ public:
     {
         write("tracked.txt", "before\n");
         git({"add", "--", "tracked.txt"});
-        coordinator = std::make_unique<SessionCoordinator>(model, test_support::gitExecutable());
+        coordinator = std::make_unique<SessionCoordinator>(
+            model, git::gitAdapters({test_support::gitExecutable(), git::GitEnvironment::fromProcess()}));
         QObject::connect(coordinator.get(), &SessionCoordinator::taskFinished, &model,
                          [this](const TaskCompletion &value) { finished.push_back(value); });
         replace();
@@ -655,7 +656,7 @@ public:
                 git::Result result;
                 result.outcome = git::Outcome::TimedOut;
                 result.mutation = git::Mutation::Uncertain;
-                result.diagnostic = QStringLiteral("Git did not finish within the request deadline.");
+                result.problem = {ProblemCode::GitDeadline, {QStringLiteral("30")}};
                 return result;
             };
             SessionCoordinator coordinator(model,

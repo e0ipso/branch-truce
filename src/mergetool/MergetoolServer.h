@@ -2,10 +2,12 @@
 #pragma once
 
 #include "mergetool/MergetoolMessages.h"
+#include "mergetool/MergetoolSocket.h"
 #include <QByteArray>
 #include <QHash>
 #include <QObject>
 #include <QString>
+#include <functional>
 #include <memory>
 
 class QLocalServer;
@@ -31,6 +33,9 @@ public:
         int attachDeadlineMs = 5000;
         // Connections open at once, attached launchers included. Others are closed at once.
         int maxConnections = 32;
+        // Whether the process at the other end of a connection runs as this user. Other
+        // peers are closed before anything is read from them.
+        std::function<bool(qintptr descriptor)> peerIsCurrentUser = mergetoolPeerIsCurrentUser;
     };
     explicit MergetoolServer(QObject *parent = nullptr);
     MergetoolServer(Limits limits, QObject *parent);

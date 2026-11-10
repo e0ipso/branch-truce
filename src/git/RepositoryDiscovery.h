@@ -46,8 +46,8 @@ private:
     void beginTrees();
     void verifyStages();
     bool finish();
-    bool fail(const QString &reason);
-    void unsupported(const QString &reason);
+    bool fail(Problem reason);
+    void unsupported(Problem reason);
     Result &result;
     Step step = Step::GitDirectory;
     QMap<QString, QByteArray> metadata;

@@ -141,7 +141,9 @@ int main(int argc, char **argv)
                 CHECK(!conflict.reason.isEmpty() && conflict.sources.isEmpty() && !conflict.result);
                 if (scenario.endsWith("-result") && expected == ConflictSupport::LoadFailure
                     && scenario != "missing-result")
-                    CHECK(conflict.reason.contains(QStringLiteral("Load error")));
+                    CHECK(conflict.reason.code == ProblemCode::ClassificationResultUnreadable
+                          || conflict.reason.code == ProblemCode::ClassificationLineTooLong
+                          || conflict.reason.code == ProblemCode::ClassificationTextTooLarge);
             }
             CHECK(repo.git({"ls-files", "--stage", "-z"}) == before);
             CHECK(repo.git({"count-objects", "-v"}) == objects);
@@ -292,8 +294,9 @@ int main(int argc, char **argv)
                 repo.git({"am", "--3way"}, patch, 128);
             } else
                 repo.git({operation, "--no-edit", QString::fromLatin1(history.side)}, {}, 1);
-            checkUnsupportedDiscovery(repo, mailbox ? "apply-mailbox" : "cherry-pick, revert and sequencer",
-                                      Outcome::Success);
+            checkUnsupportedDiscovery(
+                repo, mailbox ? ProblemCode::DiscoveryApplyMailbox : ProblemCode::DiscoverySequencerUnsupported,
+                Outcome::Success);
             const auto before = repo.git({"ls-files", "--stage", "-z"});
             ConflictClassifier classifier(repo.program());
             const auto result = run(classifier, {repo.root(), 71, 93});
@@ -316,7 +319,7 @@ int main(int argc, char **argv)
         classifier.cancel();
         const auto result = completion.wait();
         CHECK_EQ(result.outcome, Outcome::Cancelled);
-        CHECK(result.diagnostic.contains("cancelled"));
+        CHECK(result.problem.code == ProblemCode::ClassificationCancelled);
         CHECK(result.conflicts.isEmpty());
         classifier.cancel();
         CHECK(!classifier.busy());
@@ -354,7 +357,7 @@ int main(int argc, char **argv)
         gate.releaseAll();
         const auto result = completion.wait();
         CHECK_EQ(result.outcome, Outcome::InspectionFailure);
-        CHECK(result.diagnostic.contains("operation or index changed during classification"));
+        CHECK(result.problem.code == ProblemCode::ClassificationChanged);
         for (const auto &conflict : result.conflicts) CHECK(!conflict.editable());
     });
     suite.run("a result rewritten while sources are read is excluded by the recheck", [] {
@@ -375,7 +378,7 @@ int main(int argc, char **argv)
         const auto &conflict = result.conflicts.front();
         CHECK(!conflict.editable());
         CHECK_EQ(conflict.support, ConflictSupport::TopologyConflict);
-        CHECK(conflict.reason.contains("current result changed or became unreadable during classification"));
+        CHECK(conflict.reason.code == ProblemCode::ClassificationResultChanged);
     });
     suite.run("destroying the classifier with a held Git call publishes no result", [] {
         Repository repo;
@@ -385,7 +388,7 @@ int main(int argc, char **argv)
         gate.close(QStringLiteral("check-attr"));
         QObject receiver;
         int completions = 0;
-        auto classifier = std::make_unique<ConflictClassifier>(gate.executable());
+        auto classifier = std::make_unique<ConflictClassifier>(repo.program(gate.executable()));
         QObject::connect(classifier.get(), &ConflictClassifier::finished, &receiver,
                          [&](const ConflictClassificationResult &) { ++completions; });
         CHECK(classifier->start({repo.root(), 71, 93}));
@@ -416,7 +419,7 @@ int main(int argc, char **argv)
         const auto &conflict = result.conflicts.front();
         CHECK(!conflict.editable());
         CHECK_EQ(conflict.support, ConflictSupport::UnsupportedConversion);
-        CHECK(conflict.reason.contains("conversion configuration changed during classification"));
+        CHECK(conflict.reason.code == ProblemCode::ClassificationConfigurationChanged);
     });
     suite.run("a source over the Git read limit is a load failure that names the limit", [] {
         Repository repo;
@@ -426,7 +429,7 @@ int main(int argc, char **argv)
             Result limited;
             limited.outcome = Outcome::OutputLimit;
             limited.outputIncomplete = true;
-            limited.diagnostic = QStringLiteral("Git output exceeded the limit; captured prefix is incomplete");
+            limited.problem = {ProblemCode::GitOutputLimit, {QStringLiteral("1")}};
             return limited;
         }));
         const auto result = run(classifier, {repo.root(), 71, 93});
@@ -434,9 +437,9 @@ int main(int argc, char **argv)
         CHECK_EQ(result.conflicts.size(), 1);
         const auto &conflict = result.conflicts.front();
         CHECK_EQ(conflict.support, ConflictSupport::LoadFailure);
-        CHECK(conflict.reason.startsWith("Load error: stage "));
-        CHECK(conflict.reason.contains(QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))
-                                       + " byte Git read limit"));
+        CHECK(conflict.reason.code == ProblemCode::ClassificationStageTooLarge);
+        CHECK(conflict.reason.arguments.value(1)
+              == QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes)));
     });
     suite.run("a discovery that times out offers nothing", [] {
         Repository repo;
@@ -445,12 +448,12 @@ int main(int argc, char **argv)
             if (request.operation != Operation::DiscoverRepository) return std::nullopt;
             Result late;
             late.outcome = Outcome::TimedOut;
-            late.diagnostic = QStringLiteral("Git exceeded the 30 second deadline");
+            late.problem = {ProblemCode::GitDeadline, {QStringLiteral("30")}};
             return late;
         }));
         const auto result = run(classifier, {repo.root(), 71, 93});
         CHECK_EQ(result.outcome, Outcome::TimedOut);
-        CHECK(result.diagnostic.contains("deadline"));
+        CHECK(hasProblem(result.problem, ProblemCode::GitDeadline));
         for (const auto &conflict : result.conflicts) CHECK(!conflict.editable());
     });
     return suite.report();

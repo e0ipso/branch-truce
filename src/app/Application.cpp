@@ -2,16 +2,30 @@
 #include "Application.h"
 
 namespace branch_truce {
+namespace {
+// The session's own Git processes register in processes.
+git::GitRunners runnersOf(Application::Config &config, const std::shared_ptr<git::GitProcesses> &processes)
+{
+    if (!config.gitRunners) {
+        auto program = config.git;
+        program.processes = processes;
+        config.gitRunners = git::gitAdapters(std::move(program));
+    }
+    return config.gitRunners;
+}
+}
+
 Application::Application(Config config, QObject *parent)
     : QObject(parent),
+      gitProcesses_(std::make_shared<git::GitProcesses>()),
       store_(std::move(config.recoveryDirectory), config.files, this),
       files_(store_, this),
-      coordinator_(store_, config.sessionGit ? config.sessionGit : git::gitAdapters(config.gitExecutable), this),
+      coordinator_(store_, runnersOf(config, gitProcesses_), this),
       alignment_(store_, this),
-      publisher_(store_, coordinator_, config.gitExecutable, config.files, this),
+      publisher_(store_, coordinator_, runnersOf(config, gitProcesses_), config.files, this),
       mergetool_(
           publisher_, store_, coordinator_, [this] { return loader_.repository(); },
-          {config.mergetoolDirectory, config.gitEnvironment, config.gitExecutable}, this),
+          {config.mergetoolDirectory, config.git.environment, runnersOf(config, gitProcesses_)}, this),
       editor_(store_, this),
       selection_(files_, editor_, this),
       selectedFile_(files_, selection_, this),
@@ -21,8 +35,8 @@ Application::Application(Config config, QObject *parent)
       commands_(store_, selection_, editor_, publisher_, mergetool_, feedback_, this),
       completion_(store_, publisher_, mergetool_, feedback_, this),
       mergetoolStatus_(mergetool_, publisher_, files_, selection_, this),
-      loader_({store_, coordinator_, selection_, publisher_, mergetool_, completion_}, config.gitExecutable, this,
-              std::move(config.correspondence))
+      loader_({store_, coordinator_, selection_, publisher_, mergetool_, completion_}, runnersOf(config, gitProcesses_),
+              this, std::move(config.correspondence))
 {
     // The editor shows the selected file, and reloads it after any change.
     const auto show = [this] { editor_.show(selection_.fileId()); };
@@ -46,6 +60,8 @@ Application::Application(Config config, QObject *parent)
     connect(&loader_, &SessionLoader::notice, &feedback_, &CommandFeedback::show);
     connect(&mergetool_, &MergetoolSession::notice, &feedback_, &CommandFeedback::show);
 }
+
+Application::~Application() { gitProcesses_->stopAll(); }
 
 QVariantMap Application::windowProperties()
 {

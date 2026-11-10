@@ -84,7 +84,7 @@ window. The window shows "Git is waiting on this path." on the waiting file.
 A window the launcher starts writes nothing into the `git mergetool`
 terminal. The launcher waits 15 seconds for it to open; add
 `--session-wait <seconds>` after `--mergetool` in the tool command to wait
-longer on a slow machine. Set `BRANCH_TRUCE_MERGETOOL_NO_SPAWN=1` to stop the
+longer on a slow machine. Add `--no-window` after `--mergetool` to stop the
 launcher starting a window. It then
 exits 1 with "No Branch Truce session is listening for this repository."
 when none is open, and Git restores the file.

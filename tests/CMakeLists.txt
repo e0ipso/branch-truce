@@ -157,6 +157,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         PRIVATE_XDG TIMEOUT 120 LABELS app)
     branch_truce_add_unit_test(app.command-guard app/CommandGuardTests.cpp LIBS branch_truce_controller
         PRIVATE_XDG LABELS app)
+    branch_truce_add_unit_test(app.problem-text app/ProblemTextTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG LABELS app)
     branch_truce_add_unit_test(app.selected-file app/SelectedFileTests.cpp LIBS branch_truce_controller Qt6::Test
         PRIVATE_XDG LABELS app)
     branch_truce_add_unit_test(app.text-change app/TextChangeTests.cpp LIBS branch_truce_controller
@@ -327,8 +329,6 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     add_executable(branch_truce_mergetool_tests app/MergetoolLauncherTests.cpp)
     target_include_directories(branch_truce_mergetool_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_mergetool_tests PRIVATE branch_truce_controller branch_truce_build_options)
-    # Its --foreign-peer-launcher child reports another uid for SO_PEERCRED.
-    target_link_options(branch_truce_mergetool_tests PRIVATE "LINKER:--wrap=getsockopt")
     add_dependencies(branch_truce_mergetool_tests branch-truce)
     add_test(NAME app.mergetool-launcher COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_mergetool_tests> $<TARGET_FILE:branch-truce>)
     # The timeout must be at least twice the slowest measured run.

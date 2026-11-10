@@ -13,10 +13,12 @@
 
 namespace branch_truce {
 namespace {
-// Acknowledgment polls back off from the first interval to the last and go
-// on while the offer is held.
+// Acknowledgment polls back off from the first interval to the last, about
+// two minutes in all, while the offer is held. Then the outcome is unknown
+// until the user checks again.
 constexpr int kFirstAcknowledgmentPollMs = 200;
 constexpr int kLastAcknowledgmentPollMs = 5000;
+constexpr int kAcknowledgmentPolls = 28;
 }
 
 MergetoolSession::MergetoolSession(ResolutionPublisher &publisher, SessionStore &files, SessionCoordinator &coordinator,
@@ -30,6 +32,7 @@ MergetoolSession::MergetoolSession(ResolutionPublisher &publisher, SessionStore 
       config_(std::move(config)),
       server_(this)
 {
+    workers_.setMaxThreadCount(1);
     acknowledgment_ = new QTimer(this);
     acknowledgment_->setSingleShot(true);
     connect(acknowledgment_, &QTimer::timeout, this, &MergetoolSession::pollAcknowledgment);
@@ -53,13 +56,17 @@ MergetoolSession::Listen MergetoolSession::listen(const git::RepositoryContext &
     if (name.isEmpty()) return unavailable(tr("This operation has no mergetool session identity."));
     sessionKey_ = mergetoolSessionKey(repository);
     repository_ = repository;
+    if (Problem problem; !prepareMergetoolSocketDirectory(config_.socketDirectory, &problem))
+        return unavailable(problem.encoded());
     QString reason;
-    if (!prepareMergetoolSocketDirectory(config_.socketDirectory, &reason)) return unavailable(reason);
     const auto listening = server_.listen(name, &reason);
     if (listening == Listen::Unavailable) return unavailable(reason);
-    // Copies left by launchers that were killed while they waited.
+    // Copies left by launchers that were killed while they waited. Removing
+    // them is file I/O, so it runs off the GUI thread, before any intake read.
     if (listening == Listen::Listening)
-        pruneMergetoolIntakes(mergetoolIntakeRoot(config_.socketDirectory), sessionKey_);
+        workers_.start([root = mergetoolIntakeRoot(config_.socketDirectory), key = sessionKey_] {
+            pruneMergetoolIntakes(root, key);
+        });
     return listening;
 }
 
@@ -158,12 +165,7 @@ void MergetoolSession::onPublisherChanged()
 {
     if (assigning_) return;
     if (offerHeld_) {
-        if (!publisher_.parentStagingOffer(acknowledgmentFile_)) {
-            offerHeld_ = false;
-            acknowledgment_->stop();
-            tryAssign();
-            Q_EMIT changed();
-        }
+        if (!publisher_.parentStagingOffer(acknowledgmentFile_)) endAcknowledgment();
         return;
     }
     const auto path = waitingPath();
@@ -184,8 +186,7 @@ void MergetoolSession::onPublisherChanged()
     offerHeld_ = true;
     acknowledgmentFile_ = path.toHex().toStdString();
     acknowledgmentRevision_ = offer->revision;
-    acknowledgmentInterval_ = kFirstAcknowledgmentPollMs;
-    acknowledgment_->start(acknowledgmentInterval_);
+    startAcknowledgmentPolls();
     release(index);
     Q_EMIT changed();
 }
@@ -211,7 +212,7 @@ void MergetoolSession::attachReceived(quint64 connection, const AttachMessage &m
     });
     watcher->setFuture(promise->future());
     promise->start();
-    QThreadPool::globalInstance()->start(
+    workers_.start(
         [promise, directory = message.intake, root = mergetoolIntakeRoot(config_.socketDirectory), key = sessionKey_] {
             IntakeCheck check;
             check.intake = readMergetoolIntake(directory, root, key, &check.error);
@@ -224,7 +225,7 @@ void MergetoolSession::intakeChecked(quint64 connection, const AttachMessage &me
 {
     if (!check.intake || check.intake->invocation != message.invocation) {
         reject(connection, message.invocation,
-               check.error.isEmpty() ? tr("The mergetool inputs could not be kept.") : check.error);
+               check.error.isEmpty() ? tr("The mergetool inputs could not be kept.") : check.error.encoded());
         return;
     }
     if (indexOfPath(check.intake->path) >= 0) {
@@ -300,18 +301,55 @@ void MergetoolSession::clearAssignment()
     assigning_ = false;
 }
 
+void MergetoolSession::startAcknowledgmentPolls()
+{
+    acknowledgmentUnknown_ = false;
+    acknowledgmentPolls_ = 0;
+    acknowledgmentInterval_ = kFirstAcknowledgmentPollMs;
+    acknowledgment_->start(acknowledgmentInterval_);
+}
+
+void MergetoolSession::endAcknowledgment()
+{
+    offerHeld_ = false;
+    acknowledgmentUnknown_ = false;
+    acknowledgment_->stop();
+    tryAssign();
+    Q_EMIT changed();
+}
+
 void MergetoolSession::pollAcknowledgment()
 {
     if (!offerHeld_) return;
     if (!publisher_.parentStagingOffer(acknowledgmentFile_)) {
-        offerHeld_ = false;
-        tryAssign();
-        Q_EMIT changed();
+        endAcknowledgment();
         return;
     }
     if (!publisher_.busy()) publisher_.verifyParentAcknowledgment(acknowledgmentFile_, acknowledgmentRevision_);
+    if (!offerHeld_) return;
+    if (++acknowledgmentPolls_ >= kAcknowledgmentPolls) {
+        acknowledgmentUnknown_ = true;
+        Q_EMIT notice(tr("Git has not staged the written result yet. Check Git staging once git mergetool is done."));
+        Q_EMIT changed();
+        return;
+    }
     acknowledgmentInterval_ = std::min(acknowledgmentInterval_ * 2, kLastAcknowledgmentPollMs);
     acknowledgment_->start(acknowledgmentInterval_);
+}
+
+bool MergetoolSession::recheckAcknowledgment(const std::string &fileId)
+{
+    if (offerHeld_ && acknowledgmentFile_ == fileId) {
+        const bool unknown = std::exchange(acknowledgmentUnknown_, false);
+        acknowledgmentPolls_ = 0;
+        acknowledgmentInterval_ = kFirstAcknowledgmentPollMs;
+        acknowledgment_->stop();
+        pollAcknowledgment();
+        if (unknown && !acknowledgmentUnknown_) Q_EMIT changed();
+        return true;
+    }
+    const auto offer = publisher_.parentStagingOffer(fileId);
+    return offer && publisher_.verifyParentAcknowledgment(fileId, offer->revision);
 }
 
 qsizetype MergetoolSession::indexOfConnection(quint64 connection) const
@@ -368,9 +406,9 @@ void MergetoolSession::acceptCopiedLaunches()
         const auto task = coordinator_.submit(
             fileId, file->current().id,
             [snapshots = *file->snapshots(), identity, repository = loadedRepository_(),
-             executable = config_.gitExecutable](const TaskInput &, const TaskControl &) {
+             git = config_.git](const TaskInput &, const TaskControl &) {
                 TaskResult result;
-                result.diagnostic = revalidateCopiedLaunch(snapshots, identity, repository, executable);
+                result.diagnostic = revalidateCopiedLaunch(snapshots, identity, repository, git).encoded();
                 return result;
             },
             [this, fileId, identity](const TaskCompletion &completion) {

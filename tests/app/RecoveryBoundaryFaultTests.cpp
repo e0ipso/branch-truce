@@ -3,6 +3,7 @@
 #include "app/AppPaths.h"
 #include "app/Application.h"
 #include "app/EngineText.h"
+#include "app/ProblemText.h"
 #include "app/SessionModel.h"
 #include "app/Translations.h"
 #include "fixtures/AppSession.h"
@@ -12,7 +13,7 @@
 #include "fixtures/RecoveryJournal.h"
 #include "fixtures/ScopedEnvironment.h"
 #include "fixtures/SyncFaults.h"
-#include "mergetool/MergetoolProtocol.h"
+#include "mergetool/MergetoolSocket.h"
 #include "recovery/RecoveryRestore.h"
 #include "storage/DestinationWriter.h"
 
@@ -400,7 +401,7 @@ public:
         writeFile(path(QStringLiteral("result.txt")), manual);
         // Restores the process environment when it goes, even if the rest of construction throws.
         scoped.emplace(environment);
-        controller = std::make_unique<Application>(Application::Config{gitOnPath(), newRecoveryDirectory(), {}});
+        controller = std::make_unique<Application>(test_support::windowConfig());
         test_support::openRepository(*controller, root);
         if (controller->loader()->startupState() != QLatin1String("ready"))
             throw std::runtime_error("controller startup: " + controller->loader()->detail().toStdString());
@@ -666,7 +667,7 @@ public:
             writeFile(journalPath, corrupt);
             const auto replay = replayRecovery(storage::RecoveryStore(directory.path()));
             CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
-            CHECK(replay.error.contains(QStringLiteral("integrity")));
+            CHECK(problem_text::detail(replay.error).contains(QStringLiteral("integrity")));
         });
         suite.run("an unsupported schema is not restored as success", [] {
             QTemporaryDir directory;
@@ -676,7 +677,7 @@ public:
                 directory.path(), [](QJsonObject &state) { state.insert(QStringLiteral("schema"), 99); });
             const auto replay = replayRecovery(storage::RecoveryStore(directory.path()));
             CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
-            CHECK(replay.error.contains(QStringLiteral("schema")));
+            CHECK(problem_text::detail(replay.error).contains(QStringLiteral("schema")));
         });
         suite.run("an unsupported journal header is not restored as success", [] {
             QTemporaryDir directory;
@@ -689,7 +690,8 @@ public:
             writeFile(journalPath, bytes);
             const auto replay = replayRecovery(storage::RecoveryStore(directory.path()));
             CHECK(!replay.succeeded && replay.files.empty());
-            CHECK(replay.newerFormat && replay.error.contains(QStringLiteral("newer Branch Truce")));
+            CHECK(replay.newerFormat
+                  && problem_text::detail(replay.error).contains(QStringLiteral("newer Branch Truce")));
         });
         suite.run("a mismatched file identity is not restored as success", [] {
             QTemporaryDir directory;
@@ -700,7 +702,7 @@ public:
             });
             const auto replay = replayRecovery(storage::RecoveryStore(directory.path()));
             CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
-            CHECK(replay.error.contains(QStringLiteral("matching open file")));
+            CHECK(problem_text::detail(replay.error).contains(QStringLiteral("matching open file")));
         });
         suite.run("a stale destination rejects publication and keeps the acknowledged draft", [] {
             IndexConflict conflict;

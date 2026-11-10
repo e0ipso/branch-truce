@@ -1,5 +1,6 @@
 // Session loading discovers conflicted files and offers recoverable work without silently replacing it.
 #include "SessionLoader.h"
+#include "ProblemText.h"
 #include "Selection.h"
 #include "SessionCompletion.h"
 #include "SourceIdentity.h"
@@ -15,13 +16,13 @@
 #include <memory>
 
 namespace branch_truce {
-SessionLoader::SessionLoader(Session session, QString gitExecutable, QObject *parent,
+SessionLoader::SessionLoader(Session session, git::GitRunners git, QObject *parent,
                              std::shared_ptr<const CorrespondenceAlgorithm> correspondence)
     : QObject(parent),
       session_(session),
-      gitExecutable_(std::move(gitExecutable)),
+      git_(std::move(git)),
       correspondence_(std::move(correspondence)),
-      classifier_(gitExecutable_, this)
+      classifier_(git_, this)
 {
     connect(&classifier_, &git::ConflictClassifier::finished, this, &SessionLoader::classified);
     // The fences drop a choice's read when work changes or the session is
@@ -205,8 +206,8 @@ void SessionLoader::ownStoreRead(const QString &session, const QString &director
     if (session_.store.recoveryDirectory() != directory)
         return refuseChoice(tr("Choose a recovery session after the session finishes loading."));
     if (!own.succeeded)
-        return refuseChoice(
-            tr("This window's recovery store could not be read, so it cannot switch sessions: %1").arg(own.error));
+        return refuseChoice(tr("This window's recovery store could not be read, so it cannot switch sessions: %1")
+                                .arg(problem_text::detail(own.error)));
     // A record this window never acknowledged, from a commit that reported
     // failure after the record reached the disk, is work as well.
     if (own.userWork) return refuseChoice(appEditsRefusal());
@@ -261,20 +262,22 @@ void SessionLoader::classified(const git::ConflictClassificationResult &result)
     if (result.outcome != git::Outcome::Success || !repository_.supported) {
         std::vector<FileSession> files;
         for (const auto &file : result.conflicts) {
-            files.emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), Draft{},
-                               FileLaunch{.support = supportFor(file),
-                                          .supportDetail = file.reason.isEmpty() ? result.diagnostic.toStdString()
-                                                                                 : file.reason.toStdString()});
+            files.emplace_back(
+                file.path.toHex().toStdString(), file.path.toStdString(), Draft{},
+                FileLaunch{.support = supportFor(file),
+                           .supportDetail =
+                               (file.reason.isEmpty() ? result.problem : file.reason).encoded().toStdString()});
         }
         if (!files.empty())
             session_.coordinator.replaceSession(repository_.worktreeRoot, QStringLiteral("unsupported"),
                                                 std::move(files));
         if (result.outcome != git::Outcome::Success) {
-            setState(QStringLiteral("error"), tr("Could not open the selected work: %1").arg(result.diagnostic));
+            setState(QStringLiteral("error"),
+                     tr("Could not open the selected work: %1").arg(problem_text::text(result.problem)));
         } else if (repository_.operation == git::RepositoryOperation::None) {
             setState(QStringLiteral("no-session"), noOperationDetail());
         } else {
-            setState(QStringLiteral("unsupported"), repository_.diagnostic);
+            setState(QStringLiteral("unsupported"), problem_text::text(repository_.problem));
         }
         return;
     }
@@ -288,14 +291,14 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
         if (file.launchSize >= 0) launchSizes_.insert(QString::fromLatin1(file.path.toHex()), file.launchSize);
     std::vector<FileSession> pending;
     for (const auto &file : conflicts) {
-        pending.emplace_back(
-            file.path.toHex().toStdString(), file.path.toStdString(), Draft{},
-            FileLaunch{.support = Support::Unreadable, .supportDetail = "Opening the classified conflict"});
+        pending.emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), Draft{},
+                             FileLaunch{.support = Support::Unreadable,
+                                        .supportDetail = tr("Opening the classified conflict").toStdString()});
     }
     if (pending.empty())
-        pending.emplace_back(
-            "recovery-inventory", "recovery-inventory", Draft{},
-            FileLaunch{.support = Support::Unreadable, .supportDetail = "Inspecting app-owned recovery records"});
+        pending.emplace_back("recovery-inventory", "recovery-inventory", Draft{},
+                             FileLaunch{.support = Support::Unreadable,
+                                        .supportDetail = tr("Inspecting app-owned recovery records").toStdString()});
     // The fence key names the operation by its enum, never by display text.
     const auto identity = QString::number(static_cast<int>(repository_.operation)) + QLatin1Char(':')
         + QString::fromLatin1(repository_.stage2.commitId) + QLatin1Char(':')
@@ -316,13 +319,13 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
     const auto task = session_.coordinator.submit(
         anchor, 1,
         [files = std::move(conflicts), repository = repository_, sessionId, loaded, recovery, recoveryDirectory,
-         recoveryInventory, executable = gitExecutable_, correspondence = correspondence_, chosen = recoverySession_,
-         baselines, destinations = session_.publisher.destinations()](const TaskInput &, const TaskControl &control) {
+         recoveryInventory, git = git_, correspondence = correspondence_, chosen = recoverySession_, baselines,
+         destinations = session_.publisher.destinations()](const TaskInput &, const TaskControl &control) {
             for (const auto &file : files) {
                 if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
                 Draft draft;
                 auto support = supportFor(file);
-                auto detail = file.reason;
+                auto detail = file.reason.encoded();
                 auto snapshots = captureFile(file, repository, sessionId);
                 if (snapshots) {
                     support = Support::Supported;
@@ -330,8 +333,8 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                     draft.text = file.result->utf8.toStdString();
                 } else if (detail.isEmpty()) {
                     support = Support::Unreadable;
-                    detail = QStringLiteral("Load error: conflict inspection did not provide complete source and "
-                                            "result snapshots; reopen the session.");
+                    detail = tr("Load error: conflict inspection did not provide complete source and result snapshots; "
+                                "reopen the session.");
                 }
                 loaded->emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), std::move(draft),
                                      FileLaunch{.support = support,
@@ -340,7 +343,7 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                                                 .initializeChoices = true,
                                                 .algorithm = correspondence});
             }
-            *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, executable, chosen,
+            *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, git, chosen,
                                         {correspondence, QDateTime::currentDateTimeUtc()});
             // Reading every destination waits on the disk, so it happens here too.
             if (repository.supported)
@@ -349,7 +352,9 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
             return TaskResult{};
         },
         [this, loaded, recovery, baselines](const TaskCompletion &completion) {
-            const auto diagnostics = recovery->diagnostics.join(QLatin1Char('\n'));
+            QStringList lines;
+            for (const auto &diagnostic : recovery->diagnostics) lines.push_back(problem_text::text(diagnostic));
+            const auto diagnostics = lines.join(QLatin1Char('\n'));
             const bool recovered = recovery->found;
             auto choices = recovery->choices;
             session_.mergetool.clearCopiedLaunches();
@@ -363,7 +368,7 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                 return;
             }
             if (!repository_.supported && repository_.operation != git::RepositoryOperation::None) {
-                auto detail = repository_.diagnostic;
+                auto detail = problem_text::text(repository_.problem);
                 if (!diagnostics.isEmpty()) detail += QLatin1Char('\n') + diagnostics;
                 setState(QStringLiteral("unsupported"), detail);
                 return;
@@ -395,7 +400,8 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                 detail += QLatin1Char('\n')
                     + tr("Another Branch Truce window receives git mergetool launches for this operation.");
             if (listen == MergetoolSession::Listen::Unavailable)
-                detail = tr("Mergetool attach is unavailable: %1").arg(listenError) + QLatin1Char('\n') + detail;
+                detail = tr("Mergetool attach is unavailable: %1").arg(problem_text::detail(listenError))
+                    + QLatin1Char('\n') + detail;
             if (!diagnostics.isEmpty()) detail += QLatin1Char('\n') + diagnostics;
             recoveryChoices_ = std::move(choices);
             setState(listen == MergetoolSession::Listen::Unavailable ? QStringLiteral("ready-without-mergetool")

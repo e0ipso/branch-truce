@@ -7,13 +7,17 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QVersionNumber>
+
+#include <memory>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 #include <iostream>
 #include <memory>
@@ -83,71 +87,71 @@ void registerMergetool(Repository &repo, const QString &scenario)
 // of a merge or rebase of conflictHistory().
 struct MetadataCase {
     const char *name;
-    const char *reason;
+    ProblemCode reason;
     Outcome outcome;
     void (*change)(Repository &, const ConflictHistory &);
 };
 
 const MetadataCase unsupportedMetadata[] = {
-    {"a rebase directory beside the merge", "Conflicting merge, rebase", Outcome::InspectionFailure,
+    {"a rebase directory beside the merge", ProblemCode::DiscoveryConflictingOperations, Outcome::InspectionFailure,
      [](Repository &repo, const ConflictHistory &) { CHECK(QDir().mkdir(repo.path(".git/rebase-merge"))); }},
-    {"two MERGE_HEAD commits", "multiple MERGE_HEAD", Outcome::InspectionFailure,
+    {"two MERGE_HEAD commits", ProblemCode::DiscoveryMultipleMergeHeads, Outcome::InspectionFailure,
      [](Repository &repo, const ConflictHistory &history) {
          writeFile(repo.path(".git/MERGE_HEAD"), history.side + '\n' + history.main + '\n');
      }},
-    {"an invalid MERGE_HEAD", "Invalid commit identity", Outcome::InspectionFailure,
+    {"an invalid MERGE_HEAD", ProblemCode::DiscoveryInvalidCommitIdentity, Outcome::InspectionFailure,
      [](Repository &repo, const ConflictHistory &) { writeFile(repo.path(".git/MERGE_HEAD"), "not-a-commit\n"); }},
-    {"a symbolic link as MERGE_HEAD", "not a regular file", Outcome::InspectionFailure,
+    {"a symbolic link as MERGE_HEAD", ProblemCode::DiscoveryMetadataNotFile, Outcome::InspectionFailure,
      [](Repository &repo, const ConflictHistory &history) {
          CHECK(QFile::remove(repo.path(".git/MERGE_HEAD")));
          writeFile(repo.path("marker"), history.side + '\n');
          CHECK(QFile::link(repo.path("marker"), repo.path(".git/MERGE_HEAD")));
      }},
-    {"a cherry-pick in place of the merge", "cherry-pick, revert and sequencer", Outcome::Success,
+    {"a cherry-pick in place of the merge", ProblemCode::DiscoverySequencerUnsupported, Outcome::Success,
      [](Repository &repo, const ConflictHistory &history) {
          CHECK(QFile::remove(repo.path(".git/MERGE_HEAD")));
          writeFile(repo.path(".git/CHERRY_PICK_HEAD"), history.side + '\n');
      }},
-    {"a revert in place of the merge", "cherry-pick, revert and sequencer", Outcome::Success,
+    {"a revert in place of the merge", ProblemCode::DiscoverySequencerUnsupported, Outcome::Success,
      [](Repository &repo, const ConflictHistory &history) {
          CHECK(QFile::remove(repo.path(".git/MERGE_HEAD")));
          writeFile(repo.path(".git/REVERT_HEAD"), history.side + '\n');
      }},
-    {"a mailbox application in place of the merge", "apply-mailbox", Outcome::Success,
+    {"a mailbox application in place of the merge", ProblemCode::DiscoveryApplyMailbox, Outcome::Success,
      [](Repository &repo, const ConflictHistory &) {
          CHECK(QFile::remove(repo.path(".git/MERGE_HEAD")));
          CHECK(QDir().mkdir(repo.path(".git/rebase-apply")));
          writeFile(repo.path(".git/rebase-apply/applying"), "");
      }},
-    {"REBASE_HEAD without a rebase", "REBASE_HEAD exists without", Outcome::InspectionFailure,
+    {"REBASE_HEAD without a rebase", ProblemCode::DiscoveryRebaseHeadAlone, Outcome::InspectionFailure,
      [](Repository &repo, const ConflictHistory &history) {
          CHECK(QFile::remove(repo.path(".git/MERGE_HEAD")));
          writeFile(repo.path(".git/REBASE_HEAD"), history.side + '\n');
      }}};
 
 const MetadataCase inconsistentRebases[] = {
-    {"stopped-sha names another commit", "replay metadata disagrees", Outcome::InspectionFailure,
+    {"stopped-sha names another commit", ProblemCode::DiscoveryReplayDisagrees, Outcome::InspectionFailure,
      [](Repository &repo, const ConflictHistory &history) {
          writeFile(repo.path(".git/rebase-merge/stopped-sha"), history.main + '\n');
      }},
-    {"an invalid head-name", "Invalid rebase head-name", Outcome::InspectionFailure,
+    {"an invalid head-name", ProblemCode::DiscoveryInvalidHeadName, Outcome::InspectionFailure,
      [](Repository &repo, const ConflictHistory &) {
          writeFile(repo.path(".git/rebase-merge/head-name"), "refs/heads/../side\n");
      }},
-    {"orig-head outside the rebased history", "not part of the original rebase history", Outcome::InspectionFailure,
+    {"orig-head outside the rebased history", ProblemCode::DiscoveryReplayOutsideHistory, Outcome::InspectionFailure,
      [](Repository &repo, const ConflictHistory &history) {
          writeFile(repo.path(".git/rebase-merge/orig-head"), history.main + '\n');
      }},
-    {"onto that the replay is not based on", "not based on the recorded rebase onto", Outcome::InspectionFailure,
+    {"onto that the replay is not based on", ProblemCode::DiscoveryHeadNotOnOnto, Outcome::InspectionFailure,
      [](Repository &repo, const ConflictHistory &history) {
          writeFile(repo.path(".git/rebase-merge/onto"), history.side + '\n');
      }},
-    {"no commit being replayed", "no verified commit being replayed", Outcome::InspectionFailure,
+    {"no commit being replayed", ProblemCode::DiscoveryNoReplayedCommit, Outcome::InspectionFailure,
      [](Repository &repo, const ConflictHistory &) {
          CHECK(QFile::remove(repo.path(".git/REBASE_HEAD")));
          CHECK(QFile::remove(repo.path(".git/rebase-merge/stopped-sha")));
      }},
-    {"no orig-head", "Required operation metadata is missing", Outcome::InspectionFailure,
+    {"no orig-head", ProblemCode::DiscoveryMetadataMissing, Outcome::InspectionFailure,
      [](Repository &repo, const ConflictHistory &) {
          CHECK(QFile::remove(repo.path(".git/rebase-merge/orig-head")));
      }}};
@@ -237,7 +241,7 @@ int main(int argc, char **argv)
                       const auto history = conflictHistory(repo);
                       repo.git({"merge", "--no-edit", "side"}, {}, 1);
                       metadata.change(repo, history);
-                      checkUnsupportedDiscovery(repo, QString::fromLatin1(metadata.reason), metadata.outcome);
+                      checkUnsupportedDiscovery(repo, metadata.reason, metadata.outcome);
                   });
     }
     for (const auto &metadata : inconsistentRebases) {
@@ -248,7 +252,7 @@ int main(int argc, char **argv)
                       repo.git({"checkout", "--quiet", "side"});
                       repo.git({"rebase", "--merge", "main"}, {}, 1);
                       metadata.change(repo, history);
-                      checkUnsupportedDiscovery(repo, QString::fromLatin1(metadata.reason), metadata.outcome);
+                      checkUnsupportedDiscovery(repo, metadata.reason, metadata.outcome);
                   });
     }
     suite.run("multiple merge bases and replayed merge commits reject ambiguous provenance", [] {
@@ -268,7 +272,7 @@ int main(int argc, char **argv)
         repo.git({"update-ref", "refs/heads/side", QString::fromLatin1(right)});
         CHECK(repo.git({"merge-base", "--all", "main", "side"}).count('\n') == 2);
         repo.git({"merge", "--no-edit", "side"}, {}, 1);
-        checkUnsupportedDiscovery(repo, "multiple merge bases");
+        checkUnsupportedDiscovery(repo, ProblemCode::DiscoveryMultipleBases);
         CHECK(QFile::remove(repo.path(".git/MERGE_HEAD")));
         CHECK(QDir().mkdir(repo.path(".git/rebase-merge")));
         writeFile(repo.path(".git/rebase-merge/head-name"), "refs/heads/side\n");
@@ -276,7 +280,7 @@ int main(int argc, char **argv)
         writeFile(repo.path(".git/rebase-merge/onto"), history.main + '\n');
         writeFile(repo.path(".git/rebase-merge/stopped-sha"), right + '\n');
         writeFile(repo.path(".git/REBASE_HEAD"), right + '\n');
-        checkUnsupportedDiscovery(repo, "replaying merge commits");
+        checkUnsupportedDiscovery(repo, ProblemCode::DiscoveryMergeCommitReplay);
     });
     suite.run("renamed text conflicts verify old-path blobs and isolate invalid paths", [] {
         Repository repo;
@@ -319,7 +323,8 @@ int main(int argc, char **argv)
                 CHECK(result.repository.operation == RepositoryOperation::Merge && result.indexEntries.size() == 6);
                 CHECK(result.repository.unsupportedPaths.size() == 1
                       && result.repository.unsupportedPaths.contains(path));
-                CHECK(result.repository.unsupportedPaths.value(path).contains("stage 3 provenance"));
+                CHECK(hasProblem(result.repository.unsupportedPaths.value(path), ProblemCode::DiscoveryStageProvenance)
+                      && result.repository.unsupportedPaths.value(path).arguments.value(0) == QStringLiteral("3"));
                 CHECK(result.repository.stage2.commitId == history.main
                       && result.repository.stage3.commitId == history.side);
                 const auto classifiedInvalid = run(classifier, {repo.root(), 71, 93});
@@ -351,7 +356,7 @@ int main(int argc, char **argv)
                 CHECK(result.repository.worktreeRoot == repo.root());
                 CHECK(result.repository.gitDirectory == repo.path(".git"));
                 CHECK(result.repository.operation == RepositoryOperation::None && !result.repository.supported);
-                CHECK(!result.repository.diagnostic.isEmpty() && result.indexEntries.isEmpty());
+                CHECK(!result.repository.problem.isEmpty() && result.indexEntries.isEmpty());
             }
             if (operation == Operation::InspectIndex)
                 CHECK(result.standardOutput.endsWith(QByteArray("\ttracked.txt\0", 13)));
@@ -386,7 +391,8 @@ int main(int argc, char **argv)
         CHECK(run(conversion, verify).outcome == Outcome::Success);
         repo.git({"update-index", "--chmod=+x", "--", "tracked.txt"});
         const auto wrongMode = run(conversion, verify);
-        CHECK(wrongMode.outcome == Outcome::Rejected && wrongMode.diagnostic.contains("executable mode"));
+        CHECK(wrongMode.outcome == Outcome::Rejected
+              && wrongMode.problem.code == ProblemCode::ConversionStagedIdentity);
     });
     suite.run("literal conflict staging preserves every unrelated staged entry", [] {
         Repository repo;
@@ -419,14 +425,16 @@ int main(int argc, char **argv)
         CHECK(repo.git({"ls-files", "--unmerged", "-z"}).count('\0') == names.size() * 3);
         CHECK(discovery.indexEntries.size() == names.size() * 3);
         CHECK(discovery.repository.stage2.commitId.isEmpty() && discovery.repository.stage3.commitId.isEmpty());
-        CHECK(discovery.repository.diagnostic.contains("no verified merge or rebase"));
+        CHECK(discovery.repository.problem.code == ProblemCode::DiscoveryUnverifiedIndex);
         ConflictClassifier classifier(repo.program());
         const auto classified = run(classifier, {repo.root(), 71, 93});
         CHECK(classified.outcome == Outcome::Success && classified.conflicts.size() == names.size());
         for (const auto &conflict : classified.conflicts) {
             CHECK(names.contains(conflict.path) && conflict.stages.size() == 3 && !conflict.editable());
             CHECK(conflict.support == ConflictSupport::UnsupportedOperation && !conflict.reason.isEmpty());
-            CHECK(conflict.reason.count(QStringLiteral("Outside app:")) == 1);
+            // The classification wraps discovery's reason instead of repeating it.
+            CHECK(conflict.reason.code == ProblemCode::ClassificationUnsupportedOperation && conflict.reason.cause
+                  && conflict.reason.cause->code == ProblemCode::DiscoveryUnverifiedIndex);
         }
         for (const auto &name : names) {
             unsigned int stages = 0;
@@ -524,7 +532,7 @@ int main(int argc, char **argv)
         for (const auto &path : paths) {
             const auto result = run(adapter, repo.request(Operation::StageFile, path));
             CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
-            CHECK(result.exitCode == -1 && !result.diagnostic.isEmpty());
+            CHECK(result.exitCode == -1 && !result.problem.isEmpty());
         }
         auto bad = repo.request(Operation::ReadObject);
         for (const auto &object : {QByteArray("HEAD"), QByteArray(40, 'g'), QByteArray("--help")}) {
@@ -631,7 +639,7 @@ int main(int argc, char **argv)
                               if (operation == Operation::CanonicalizeText) request.input = "reviewed\n";
                               const auto result = run(adapter, request);
                               CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
-                              CHECK(result.diagnostic.contains("Outside app") && result.diagnostic.contains("filter"));
+                              CHECK(hasProblem(result.problem, ProblemCode::GitCustomFilter));
                           }
                           TextConversion conversion(repo.program());
                           for (const auto operation : {TextOperation::ReadSource, TextOperation::PrepareResult}) {
@@ -639,7 +647,7 @@ int main(int argc, char **argv)
                               request.editedUtf8 = "reviewed\n";
                               const auto result = run(conversion, request);
                               CHECK(result.outcome == Outcome::Rejected && !result.text
-                                    && result.diagnostic.contains("filter"));
+                                    && hasProblem(result.problem, ProblemCode::GitCustomFilter));
                           }
                           CHECK(!QFile::exists(repo.path(".helper-ran")));
                           repo.git({"config", "--unset", QString::fromLatin1(key)});
@@ -680,7 +688,7 @@ int main(int argc, char **argv)
         writeFile(repo.path(".gitattributes"), "/tracked.txt filter=unused\n");
         CHECK(run(adapter, source).outcome == Outcome::Rejected);
         const auto denied = run(conversion, textRequest(repo, TextOperation::ReadSource, blob));
-        CHECK(denied.outcome == Outcome::Rejected && denied.diagnostic.contains("filter"));
+        CHECK(denied.outcome == Outcome::Rejected && hasProblem(denied.problem, ProblemCode::GitCustomFilter));
         CHECK(run(conversion, prepare).outcome == Outcome::Rejected);
         CHECK(run(adapter, repo.request(Operation::StageFile, "tracked.txt")).outcome == Outcome::Rejected);
         CHECK(QDir(repo.root()).mkdir("subdirectory"));
@@ -714,7 +722,7 @@ int main(int argc, char **argv)
             for (const auto operation : {Operation::CheckParentStaging, Operation::StageFile}) {
                 const auto result = run(adapter, repo.request(operation, "tracked.txt"));
                 CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
-                CHECK(result.diagnostic.contains("post-index-change"));
+                CHECK(result.problem.code == ProblemCode::GitPostIndexChangeHook);
             }
             auto source = repo.request(Operation::MaterializeSource, "tracked.txt");
             source.objectId = blob;
@@ -746,7 +754,7 @@ int main(int argc, char **argv)
         for (const auto operation : {Operation::CheckParentStaging, Operation::StageFile}) {
             const auto result = run(adapter, repo.request(operation, "tracked.txt"));
             CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
-            CHECK(result.diagnostic.contains("core.fsmonitor"));
+            CHECK(hasProblem(result.problem, ProblemCode::GitPartialOrMonitor, {QStringLiteral("core.fsmonitor")}));
         }
         CHECK(!QFile::exists(repo.path(".monitor-ran")));
         repo.git({"config", "core.fsmonitor", "false"});
@@ -798,7 +806,7 @@ int main(int argc, char **argv)
         request.directory = clone;
         const auto denied = run(adapter, request);
         CHECK(denied.outcome == Outcome::Rejected);
-        CHECK(denied.diagnostic.contains("object storage cannot be inspected offline"));
+        CHECK(denied.problem.code == ProblemCode::GitObjectStoreUninspectable);
     });
     for (int scenario = 0; scenario < 4; ++scenario) {
         suite.run(std::string("promisor and partial-clone repositories reject every operation before lazy "
@@ -832,8 +840,8 @@ int main(int argc, char **argv)
                           if (operation == Operation::CanonicalizeText) request.input = "reviewed\n";
                           const auto result = run(adapter, request);
                           CHECK(result.outcome == Outcome::Rejected && result.mutation == Mutation::NotAttempted);
-                          CHECK(result.diagnostic.contains("Outside app"));
-                          if (scenario >= 2) CHECK(result.diagnostic.contains("promisor object packs"));
+                          CHECK(result.problem.code
+                                == (scenario >= 2 ? ProblemCode::GitPromisorPacks : ProblemCode::GitPartialOrMonitor));
                       }
                       // A missing object must be rejected before Git can try lazy retrieval.
                       auto missing = repo.request(Operation::ReadObject);
@@ -904,12 +912,13 @@ int main(int argc, char **argv)
         CHECK(result.outcome == Outcome::ExitFailure && result.exitCode == -1);
         // A policy check's output stays out of the result; its standard error and status do not.
         CHECK(result.standardOutput.isEmpty() && result.standardError == "preflight stderr");
-        CHECK(result.diagnostic.contains("17") && result.mutation == Mutation::NotAttempted);
+        CHECK(hasProblem(result.problem, ProblemCode::GitExitCode, {QStringLiteral("17")})
+              && result.mutation == Mutation::NotAttempted);
         const auto missing = repo.executable("#!/definitely/missing/interpreter\n");
         GitAdapter launch(repo.program(missing));
         const auto absent = run(launch, repo.readRequest());
         CHECK(absent.outcome == Outcome::LaunchFailure && absent.exitCode == -1);
-        CHECK(!absent.diagnostic.isEmpty() && absent.mutation == Mutation::NotAttempted);
+        CHECK(!absent.problem.isEmpty() && absent.mutation == Mutation::NotAttempted);
     });
     suite.run("a crashed operation retains its output without a normal exit code", [] {
         Repository repo;
@@ -918,7 +927,7 @@ int main(int argc, char **argv)
         const auto result = run(adapter, repo.readRequest());
         CHECK(result.outcome == Outcome::ProcessFailure && result.exitCode == -1);
         CHECK(result.standardOutput == "crash stdout" && result.standardError == "crash stderr");
-        CHECK(result.mutation == Mutation::NotAttempted && result.diagnostic.contains("crashed"));
+        CHECK(result.mutation == Mutation::NotAttempted && result.problem.code == ProblemCode::GitCrashed);
     });
     suite.run("destruction before queued launch publishes no result or mutation", [] {
         Repository repo;
@@ -947,7 +956,8 @@ int main(int argc, char **argv)
         const auto result = run(adapter, repo.request(Operation::StageFile, "tracked.txt"));
         CHECK(result.outcome == Outcome::ExitFailure && result.exitCode == 23);
         CHECK(result.standardOutput == "operation stdout" && result.standardError == "operation stderr");
-        CHECK(result.diagnostic.contains("23") && result.mutation == Mutation::ObservedChanged);
+        CHECK(hasProblem(result.problem, ProblemCode::GitExitCode, {QStringLiteral("23")})
+              && result.mutation == Mutation::ObservedChanged);
         CHECK(result.indexBefore.contains(QByteArray(40, 'a')) && result.indexAfter.contains(QByteArray(40, 'b')));
     });
     suite.run("failed reinspection retains the original failed operation diagnostics", [] {
@@ -961,7 +971,8 @@ int main(int argc, char **argv)
         CHECK(result.mutation == Mutation::Uncertain && result.standardOutput == "original stdout");
         CHECK(result.standardError.contains("original stderr") && result.standardError.contains("inspection stderr"));
         CHECK(result.indexAfter == "inspection stdout");
-        CHECK(result.diagnostic.contains("23") && result.diagnostic.contains("reinspection failed"));
+        CHECK(hasProblem(result.problem, ProblemCode::GitExitCode, {QStringLiteral("23")})
+              && result.problem.code == ProblemCode::GitReinspectionFailed);
     });
     suite.run("successful child exit cannot claim staging when index inspection fails", [] {
         Repository repo;
@@ -1040,7 +1051,8 @@ int main(int argc, char **argv)
             CHECK(result.standardOutput == "before cancellation" && !result.indexAfter.isEmpty());
             if (finished) {
                 CHECK(result.exitCode == exitCode);
-                CHECK(result.diagnostic == (exitCode == 0 ? QString{} : QStringLiteral("Git exited with code 128")));
+                CHECK(result.problem
+                      == (exitCode == 0 ? Problem{} : Problem{ProblemCode::GitExitCode, {QStringLiteral("128")}}));
                 CHECK(result.standardError == (exitCode == 0 ? QByteArray{} : QByteArray("fatal: index.lock exists")));
             }
             adapter.cancel();
@@ -1062,6 +1074,27 @@ int main(int argc, char **argv)
         CHECK(adapter->start(repo.request(Operation::StageFile, "tracked.txt")));
         test_support::waitUntil([&] { return destroyed; }, "the staging operation did not start");
         CHECK(QFile::exists(repo.path(".terminated")));
+    });
+    suite.run("an owner that stops its Git processes waits one grace period for all of them", [] {
+        Repository repo;
+        // Each stand-in ignores SIGTERM, so only SIGKILL after the grace period ends it.
+        const auto fake = repo.fakeGit(": > .after-add\ntrap '' TERM\n: > .started-$$\nsleep 30\n");
+        auto program = repo.program(fake);
+        program.processes = std::make_shared<GitProcesses>();
+        std::vector<std::unique_ptr<GitAdapter>> adapters;
+        for (int count = 0; count < 3; ++count) {
+            adapters.push_back(std::make_unique<GitAdapter>(program));
+            CHECK(adapters.back()->start(repo.request(Operation::StageFile, "tracked.txt")));
+        }
+        test_support::waitUntil(
+            [&] { return QDir(repo.root()).entryList({".started-*"}, QDir::Files | QDir::Hidden).size() == 3; },
+            "the three staging operations did not start");
+        QElapsedTimer clock;
+        clock.start();
+        program.processes->stopAll();
+        adapters.clear();
+        // An adapter alone waits 500 ms after SIGTERM; three in turn would take 1500 ms.
+        CHECK_LT(clock.elapsed(), 1200);
     });
     suite.run("real Git and a scripted answer keep the same runner contract", [] {
         Repository repo;
@@ -1099,7 +1132,9 @@ int main(int argc, char **argv)
         CHECK(result.outcome == Outcome::OutputLimit && result.outputIncomplete);
         CHECK(result.standardOutput.startsWith("operation prefix"));
         CHECK(result.standardOutput.size() == static_cast<qsizetype>(branch_truce::kMaxGitReadBytes));
-        CHECK(result.diagnostic.contains(QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))));
+        CHECK(result.problem.code == ProblemCode::GitOutputLimit
+              && result.problem.arguments.value(0)
+                  == QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes)));
         CHECK(result.mutation == Mutation::ObservedChanged && result.indexAfter.contains(QByteArray(40, 'b')));
     });
     suite.run("measured git output envelope accepts the limit and rejects one extra byte", [] {
@@ -1117,8 +1152,9 @@ int main(int argc, char **argv)
             } else {
                 CHECK(result.outcome == Outcome::OutputLimit && result.outputIncomplete);
                 CHECK(result.standardOutput.size() == static_cast<qsizetype>(branch_truce::kMaxGitReadBytes));
-                CHECK(result.diagnostic.contains(
-                    QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))));
+                CHECK(result.problem.code == ProblemCode::GitOutputLimit
+                      && result.problem.arguments.value(0)
+                          == QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes)));
                 CHECK(result.mutation == Mutation::ObservedChanged);
             }
         }
@@ -1132,7 +1168,7 @@ int main(int argc, char **argv)
         const auto result = completion.run(repo.readRequest());
         CHECK(result.outcome == Outcome::TimedOut && result.mutation == Mutation::NotAttempted);
         CHECK(result.standardOutput == "deadline prefix");
-        CHECK_EQ(result.diagnostic, QStringLiteral("Git exceeded the 0.3 second deadline"));
+        CHECK(result.problem == Problem(ProblemCode::GitDeadline, {QStringLiteral("0.3")}));
     });
     suite.run("expanding canonical text is size-validated before reading", [] {
         const auto gitLimit = QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes));
@@ -1157,12 +1193,11 @@ int main(int argc, char **argv)
                       == repo.git({"hash-object", "--no-filters", "--stdin"}, expected).trimmed());
             } else if (inputSize == 3000000) {
                 CHECK(result.outcome == Outcome::Rejected && result.canonicalBytes.isEmpty());
-                CHECK(result.diagnostic.contains("4425000 bytes")
-                      && result.diagnostic.contains(gitLimit + " byte output limit"));
+                CHECK(result.problem
+                      == Problem(ProblemCode::GitCanonicalTooLarge, {QStringLiteral("4425000"), gitLimit}));
             } else {
                 CHECK(result.outcome == Outcome::Rejected && result.canonicalBytes.isEmpty());
-                CHECK(result.diagnostic.contains("6000000 bytes")
-                      && result.diagnostic.contains(gitLimit + " byte input limit"));
+                CHECK(result.problem == Problem(ProblemCode::GitInputTooLarge, {QStringLiteral("6000000"), gitLimit}));
             }
             CHECK(repo.git({"count-objects", "-v"}) == objects);
             CHECK(repo.git({"ls-files", "--stage", "-z"}) == index);
@@ -1221,7 +1256,9 @@ int main(int argc, char **argv)
         CHECK(result.outputIncomplete);
         CHECK(result.standardError.startsWith("error prefix"));
         CHECK_LE(result.standardError.size(), static_cast<qsizetype>(branch_truce::kMaxGitReadBytes) + 4096);
-        CHECK(result.diagnostic.contains(QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))));
+        CHECK(result.problem.code == ProblemCode::GitOutputLimit
+              && result.problem.arguments.value(0)
+                  == QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes)));
         CHECK_EQ(result.mutation, Mutation::ObservedChanged);
     });
     // The failure-path cases run against the scripted Git, so it must answer the success paths
@@ -1239,7 +1276,7 @@ int main(int argc, char **argv)
                       CHECK_EQ(staged.outcome, Outcome::Success);
                       CHECK_EQ(staged.exitCode, 0);
                       CHECK_EQ(staged.mutation, Mutation::ObservedChanged);
-                      CHECK(!staged.outputIncomplete && staged.diagnostic.isEmpty());
+                      CHECK(!staged.outputIncomplete && staged.problem.isEmpty());
                       for (const auto &index : {staged.indexBefore, staged.indexAfter}) {
                           CHECK_EQ(index.count('\0'), 1);
                           CHECK(index.startsWith("100644 ") && index.endsWith(QByteArray(" 0\ttracked.txt\0", 15)));

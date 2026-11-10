@@ -1,6 +1,5 @@
 // The mergetool server is the session's end of the launcher socket, with a guarded listener and checked peers.
 #include "mergetool/MergetoolServer.h"
-#include "mergetool/MergetoolProtocol.h"
 
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -83,7 +82,8 @@ void MergetoolServer::accept()
     while (auto *socket = server_->nextPendingConnection()) {
         // The directory is private, but its /tmp fallback is shared: check
         // who connected before reading anything.
-        if (connections_.size() >= limits_.maxConnections || !mergetoolPeerIsCurrentUser(socket->socketDescriptor())) {
+        if (connections_.size() >= limits_.maxConnections || !limits_.peerIsCurrentUser
+            || !limits_.peerIsCurrentUser(socket->socketDescriptor())) {
             socket->abort();
             socket->deleteLater();
             continue;

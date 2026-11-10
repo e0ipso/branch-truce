@@ -22,6 +22,8 @@ public:
     [[nodiscard]] virtual int status(int fd, struct stat *result) const;
     // renameat2 with RENAME_EXCHANGE.
     [[nodiscard]] virtual int exchange(int fromDirectory, const char *from, int toDirectory, const char *to) const;
+    // renameat, replacing to.
+    [[nodiscard]] virtual int rename(int fromDirectory, const char *from, int toDirectory, const char *to) const;
     [[nodiscard]] virtual int unlink(int directory, const char *name, int flags) const;
     [[nodiscard]] virtual uid_t effectiveUser() const;
     [[nodiscard]] virtual ssize_t listAttributes(int fd, char *names, std::size_t size) const;

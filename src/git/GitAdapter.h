@@ -1,15 +1,18 @@
 // The Git adapter inspects repository state and performs guarded operations for conflict resolution.
 #pragma once
 
+#include "git/GitTypes.h"
 #include <QByteArray>
+#include <QDeadlineTimer>
 #include <QHash>
 #include <QList>
 #include <QObject>
 #include <QString>
 #include <functional>
 #include <memory>
-
-class QProcessEnvironment;
+#include <mutex>
+#include <optional>
+#include <set>
 
 namespace branch_truce::git {
 
@@ -54,33 +57,6 @@ struct IndexEntry {
     unsigned int stage = 0;
 };
 
-enum class RepositoryOperation { None, Merge, Rebase, Unsupported };
-struct SourceIdentity {
-    QByteArray commitId;
-    QString label;
-    QString name = {}; // A unique local branch observed pointing exactly at commitId.
-};
-struct RepositoryContext {
-    QString worktreeRoot;
-    QString gitDirectory; // Canonical per-worktree directory, including linked worktrees.
-    RepositoryOperation operation = RepositoryOperation::None;
-    // Operation identity only. Check unsupportedPaths, file types and conversion
-    // policy before editing or publishing. Reinspect before any mutation.
-    bool supported = false;
-    QString diagnostic;
-    // Exact conflict paths whose stages cannot be attributed to the operation.
-    // Keep their index entries visible without rejecting other paths.
-    QHash<QByteArray, QString> unsupportedPaths;
-    SourceIdentity stage2;
-    SourceIdentity stage3;
-    QByteArray baseCommitId; // Empty for an unavailable common earlier version.
-    // Validated rebase context; these names do not label either index side.
-    QByteArray headName;
-    QByteArray originalHead;
-    QByteArray onto;
-    QString ontoName = {};
-};
-
 struct Request {
     Operation operation = Operation::DiscoverRepository;
     QString directory;
@@ -107,7 +83,8 @@ struct Result {
     QByteArray indexAfter;
     QList<IndexEntry> indexEntries; // Exact stages from DiscoverRepository/InspectIndex.
     RepositoryContext repository; // Structured DiscoverRepository snapshot, even when unsupported.
-    QString diagnostic;
+    // Why the request did not succeed, or why reinspection after it failed.
+    Problem problem;
     int exitCode = -1; // Requested operation only; -1 if no normal exit occurred.
     bool outputIncomplete = false;
     // A cancel request can arrive after the operation's outcome is known.
@@ -118,26 +95,29 @@ struct Result {
     QByteArray canonicalObjectId;
 };
 
-// The variables that choose which configuration files Git reads. The Git the
-// adapter starts reads the same files as the user's own Git and a `git
-// mergetool` parent started from the same environment. Every other variable of
-// the Git child is fixed by the adapter.
-struct GitEnvironment {
-    QString home; // HOME
-    QString configHome; // XDG_CONFIG_HOME; empty lets Git use $HOME/.config
-    QString globalConfig; // GIT_CONFIG_GLOBAL; empty when unset
-    QString systemConfig; // GIT_CONFIG_SYSTEM; empty when unset
-    QString noSystem; // GIT_CONFIG_NOSYSTEM as given; empty when unset
-    bool operator==(const GitEnvironment &) const = default;
-    // Takes each path only when it is absolute. HOME falls back to the
-    // account's home directory, as before a desktop session sets it.
-    [[nodiscard]] static GitEnvironment from(const QProcessEnvironment &environment);
-    [[nodiscard]] static GitEnvironment fromProcess();
-};
-
 // How long one request may run, from its first Git process to its result.
 // Index reinspection after a mutation has its own shorter bound.
 inline constexpr int kGitRequestDeadlineMs = 30000;
+
+// The running Git processes of one owner, such as a window's session.
+// stopAll() asks every one of them to stop at once, so the adapters destroyed
+// after it wait for them together, within one grace period, instead of one
+// grace period each. Adapters on any thread may share it.
+class GitProcesses {
+public:
+    void stopAll();
+    // For GitAdapter: a started process group, and one that ended.
+    void add(qint64 group);
+    void remove(qint64 group);
+    // How long a destroyed adapter waits after SIGTERM: what is left of the
+    // shared grace period once stopAll() ran, otherwise normalMs.
+    [[nodiscard]] int graceMs(int normalMs) const;
+
+private:
+    mutable std::mutex mutex_;
+    std::set<qint64> groups_;
+    std::optional<QDeadlineTimer> stopping_;
+};
 
 // Which Git runs, the configuration it reads and how long a request may take.
 // The composition root builds it once; requests cannot override any of it.
@@ -145,6 +125,8 @@ struct GitProgram {
     QString executable;
     GitEnvironment environment;
     int deadlineMs = kGitRequestDeadlineMs;
+    // Where its adapters register their processes; none when empty.
+    std::shared_ptr<GitProcesses> processes = {};
 };
 
 // What a consumer of Git requests depends on. Every implementation, fakes
@@ -174,9 +156,6 @@ class GitAdapter final : public GitRunner {
     Q_OBJECT
 public:
     explicit GitAdapter(GitProgram program, QObject *parent = nullptr);
-    // Reads the configuration this process's environment selects. For callers
-    // that hold only the executable.
-    explicit GitAdapter(const QString &executable, QObject *parent = nullptr);
     ~GitAdapter() override;
     bool start(const Request &request) override;
     void cancel() override;
@@ -189,13 +168,13 @@ private:
 
 // Runners that are GitAdapters for program.
 [[nodiscard]] GitRunners gitAdapters(GitProgram program);
-// Runners that are GitAdapters for executable, each reading the configuration the process
-// environment selects when it is built.
-[[nodiscard]] GitRunners gitAdapters(QString executable);
 
-// Runs one request to completion in a nested event loop and returns its
-// result. The adapter's own deadline bounds the wait. For headless callers
-// with no event loop of their own, such as the mergetool launcher.
+// Runs one request to completion on a runner from runners, in a nested event
+// loop, and returns its result. The runner's own deadline bounds the wait. For
+// worker threads and headless callers with no event loop of their own, such
+// as recovery reconciliation and the mergetool launcher. A runner that refuses
+// the request gives a Rejected result that says so.
+[[nodiscard]] Result runBlocking(const GitRunners &runners, const Request &request);
 [[nodiscard]] Result runBlocking(const GitProgram &program, const Request &request);
 } // namespace branch_truce::git
 Q_DECLARE_METATYPE(branch_truce::git::Result)

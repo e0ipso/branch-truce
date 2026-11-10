@@ -3,6 +3,7 @@
 #include "TestHarness.h"
 #include "app/AppPaths.h"
 #include "app/Application.h"
+#include "app/CommandGuard.h"
 #include "app/EngineText.h"
 #include "app/Translations.h"
 #include "fixtures/AppSession.h"
@@ -11,7 +12,7 @@
 #include "fixtures/ScopedEnvironment.h"
 #include "fixtures/ScriptedGit.h"
 #include "fixtures/SyncFaults.h"
-#include "mergetool/MergetoolProtocol.h"
+#include "mergetool/MergetoolSocket.h"
 #include "recovery/RecoveryRestore.h"
 #include <QCoreApplication>
 #include <QDirIterator>
@@ -147,10 +148,11 @@ struct Session {
     Repository repo;
     ScopedEnvironment environment;
     std::shared_ptr<PublishFiles> files = std::make_shared<PublishFiles>();
-    Application controller{Application::Config{.gitExecutable = gitOnPath(),
-                                               .recoveryDirectory = newRecoveryDirectory(),
-                                               .correspondence = {},
-                                               .files = files}};
+    Application controller{[&] {
+        auto config = test_support::windowConfig();
+        config.files = files;
+        return config;
+    }()};
     QString id;
     explicit Session(bool unsupportedResult = false) : environment(repo.environment)
     {
@@ -254,7 +256,7 @@ struct RestartedWrite {
     {
         const auto hook = repo.path(".git/hooks/post-index-change");
         {
-            Application first{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application first{test_support::windowConfig()};
             openController(first, repo);
             CHECK(first.selection()->select(id));
             auto draft = openedFile(first).current().draft;
@@ -277,7 +279,7 @@ struct RestartedWrite {
             CHECK(readFile(repo.path("tracked.txt")) == edited);
         }
         CHECK(QFile::remove(hook));
-        controller = std::make_unique<Application>(Application::Config{gitOnPath(), newRecoveryDirectory(), {}});
+        controller = std::make_unique<Application>(test_support::windowConfig());
         openController(*controller, repo);
         CHECK(controller->selection()->select(id));
         const auto &restored = openedFile(*controller);
@@ -404,14 +406,15 @@ int main(int argc, char **argv)
             result.outcome = git::Outcome::ExitFailure;
             result.mutation = git::Mutation::ObservedUnchanged;
             result.exitCode = 128;
-            result.diagnostic = QStringLiteral("Git refused to stage the file.");
+            result.problem = {ProblemCode::GitExitCode, {QStringLiteral("128")}};
             return result;
         };
-        Application controller{Application::Config{
-            .gitExecutable = gitOnPath(),
-            .recoveryDirectory = newRecoveryDirectory(),
-            .correspondence = {},
-            .sessionGit = test_support::ScriptedGitRunner::runners(git::Operation::StageFile, refused, gitOnPath())}};
+        Application controller{[&] {
+            auto config = test_support::windowConfig();
+            config.gitRunners =
+                test_support::ScriptedGitRunner::runners(git::Operation::StageFile, refused, gitOnPath());
+            return config;
+        }()};
         openController(controller, repo);
         const auto id = selectTracked(controller);
         const auto before = repo.snapshot();
@@ -421,7 +424,7 @@ int main(int argc, char **argv)
         CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Succeeded);
         CHECK(file.publication().stageOutcome() && file.publication().stageOutcome()->outcome == Outcome::Failed);
         CHECK_EQ(QString::fromStdString(file.publication().stageOutcome()->detail),
-                 QStringLiteral("Git refused to stage the file."));
+                 Problem(ProblemCode::GitExitCode, {QStringLiteral("128")}).encoded());
         CHECK(file.facts().status == FileStatus::StageFailed && !file.facts().resolved);
         CHECK(readFile(repo.path("tracked.txt")) == repo.manual);
         expectUnchanged(repo, before, true);
@@ -442,15 +445,15 @@ int main(int argc, char **argv)
               && !remaining.contains("notes.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
         CHECK(!session.controller.completion()->handoff().clean);
-        CHECK(!session.controller.mergetool()->parentStagingOffer(session.id));
+        CHECK(!session.controller.publisher()->parentStagingOffer(session.id.toStdString()));
     });
     suite.run("parent-owned staging waits for Git and resolves only after that index entry matches", [] {
         Session session;
-        CHECK(session.controller.mergetool()->assignParentStaging("tracked.txt"));
+        CHECK(session.controller.publisher()->assignParentStaging("tracked.txt"));
         CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
         waitFor(session.controller, [&] {
             return !session.controller.commands()->resolutionBusy()
-                && session.controller.mergetool()->parentStagingOffer(session.id).has_value();
+                && session.controller.publisher()->parentStagingOffer(session.id.toStdString()).has_value();
         });
         CHECK(openedFile(session.controller).publication().writeOutcome()
               && openedFile(session.controller).publication().writeOutcome()->outcome == Outcome::Succeeded);
@@ -458,19 +461,21 @@ int main(int argc, char **argv)
         CHECK(!openedFile(session.controller).facts().resolved);
         CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
-        const auto offered = session.controller.mergetool()->parentStagingOffer(session.id);
+        const auto offered = session.controller.publisher()->parentStagingOffer(session.id.toStdString());
         CHECK(offered && offered->path == "tracked.txt" && !offered->canonicalObjectId.isEmpty());
         CHECK(session.controller.mergetool()->parentStagingPath().endsWith(QStringLiteral("tracked.txt")));
-        CHECK(session.controller.mergetool()->verifyParentAcknowledgment(session.id, session.revision()));
+        CHECK(session.controller.publisher()->verifyParentAcknowledgment(session.id.toStdString(),
+                                                                         *parseRevisionId(session.revision())));
         waitFor(session.controller, [&] { return !session.controller.commands()->resolutionBusy(); });
         CHECK(!openedFile(session.controller).facts().resolved);
-        CHECK(session.controller.mergetool()->parentStagingOffer(session.id));
+        CHECK(session.controller.publisher()->parentStagingOffer(session.id.toStdString()));
         CHECK(unmerged(session.repo).contains("tracked.txt"));
         session.repo.git({"add", "--", "tracked.txt"});
         CHECK(!unmerged(session.repo).contains("tracked.txt"));
-        CHECK(session.controller.mergetool()->verifyParentAcknowledgment(session.id, session.revision()));
+        CHECK(session.controller.publisher()->verifyParentAcknowledgment(session.id.toStdString(),
+                                                                         *parseRevisionId(session.revision())));
         waitFor(session.controller, [&] { return openedFile(session.controller).facts().resolved; });
-        CHECK(!session.controller.mergetool()->parentStagingOffer(session.id));
+        CHECK(!session.controller.publisher()->parentStagingOffer(session.id.toStdString()));
         CHECK(unmerged(session.repo).contains("excluded.txt"));
         CHECK(session.repo.git({"rev-parse", ":notes.txt"}).trimmed() == session.repo.notesObject);
         CHECK(session.repo.git({"show", ":tracked.txt"}) == session.repo.manual);
@@ -573,20 +578,21 @@ int main(int argc, char **argv)
     suite.run("staging that times out leaves the outcome uncertain, the conflict in place and a retry refused", [] {
         Repository repo;
         ScopedEnvironment environment(repo.environment);
-        const auto diagnostic = QStringLiteral("Git did not finish within the request deadline.");
+        const Problem diagnostic(ProblemCode::GitDeadline, {QStringLiteral("30")});
         // Git add hangs past the adapter's deadline: the index may or may not have changed.
         const auto timedOut = [diagnostic](const git::Request &) {
             git::Result result;
             result.outcome = git::Outcome::TimedOut;
             result.mutation = git::Mutation::Uncertain;
-            result.diagnostic = diagnostic;
+            result.problem = diagnostic;
             return result;
         };
-        Application controller{Application::Config{
-            .gitExecutable = gitOnPath(),
-            .recoveryDirectory = newRecoveryDirectory(),
-            .correspondence = {},
-            .sessionGit = test_support::ScriptedGitRunner::runners(git::Operation::StageFile, timedOut, gitOnPath())}};
+        Application controller{[&] {
+            auto config = test_support::windowConfig();
+            config.gitRunners =
+                test_support::ScriptedGitRunner::runners(git::Operation::StageFile, timedOut, gitOnPath());
+            return config;
+        }()};
         openController(controller, repo);
         const auto id = selectTracked(controller);
         auto draft = openedFile(controller).current().draft;
@@ -600,7 +606,8 @@ int main(int argc, char **argv)
         const auto &file = openedFile(controller);
         CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Succeeded);
         CHECK(file.publication().stageOutcome() && file.publication().stageOutcome()->outcome == Outcome::Uncertain);
-        CHECK_EQ(QString::fromStdString(file.publication().stageOutcome()->detail), diagnostic);
+        // The outcome keeps the problem encoded; the window shows it translated.
+        CHECK_EQ(QString::fromStdString(file.publication().stageOutcome()->detail), diagnostic.encoded());
         CHECK(!file.facts().resolved);
         CHECK(readFile(repo.path("tracked.txt")) == "written before the time out\n");
         CHECK(unmerged(repo).contains("tracked.txt"));
@@ -645,12 +652,12 @@ int main(int argc, char **argv)
         // git mergetool moves MERGED to BACKUP and copies it back before the tool runs.
         CHECK(QFile::rename(merged, backup) && QFile::copy(backup, merged));
         const auto offered = [&] {
-            CHECK(session.controller.mergetool()->assignParentStaging({})
-                  && session.controller.mergetool()->assignParentStaging("tracked.txt"));
+            CHECK(session.controller.publisher()->assignParentStaging({})
+                  && session.controller.publisher()->assignParentStaging("tracked.txt"));
             CHECK(session.controller.commands()->markResolved(session.id, revision, true));
             waitFor(session.controller, [&] {
                 return !session.controller.commands()->resolutionBusy()
-                    && session.controller.mergetool()->parentStagingOffer(session.id).has_value();
+                    && session.controller.publisher()->parentStagingOffer(session.id.toStdString()).has_value();
             });
         };
         const auto inode = [&] {
@@ -673,15 +680,15 @@ int main(int argc, char **argv)
         CHECK(inode() == written && readFile(merged) == reviewed);
         const QByteArray tampered("changed while Git was waiting\n");
         writeFile(merged, tampered);
-        CHECK(session.controller.mergetool()->assignParentStaging({})
-              && session.controller.mergetool()->assignParentStaging("tracked.txt"));
+        CHECK(session.controller.publisher()->assignParentStaging({})
+              && session.controller.publisher()->assignParentStaging("tracked.txt"));
         CHECK(session.controller.commands()->markResolved(session.id, revision, true));
         waitFor(session.controller, [&] {
             const auto &file = openedFile(session.controller);
             return !session.controller.commands()->resolutionBusy() && file.publication().writeOutcome()
                 && file.publication().writeOutcome()->outcome == Outcome::Failed;
         });
-        CHECK(!session.controller.mergetool()->parentStagingOffer(session.id));
+        CHECK(!session.controller.publisher()->parentStagingOffer(session.id.toStdString()));
         CHECK(!openedFile(session.controller).facts().resolved);
         CHECK(readFile(merged) == tampered);
         const auto index = session.repo.git({"ls-files", "-s", "--", "tracked.txt"});

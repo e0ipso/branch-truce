@@ -4,9 +4,11 @@
 #include "TestHarness.h"
 #include "fixtures/EventLoop.h"
 #include "fixtures/Files.h"
+#include "mergetool/MergetoolFiles.h"
+#include "mergetool/MergetoolIntake.h"
 #include "mergetool/MergetoolMessages.h"
-#include "mergetool/MergetoolProtocol.h"
 #include "mergetool/MergetoolServer.h"
+#include "mergetool/MergetoolSocket.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -14,6 +16,7 @@
 #include <QFileInfo>
 #include <QLocalSocket>
 #include <QProcess>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QUuid>
 
@@ -40,7 +43,9 @@ git::GitEnvironment configuration()
             QStringLiteral("/home/user/.config"),
             QStringLiteral("/home/user/global"),
             {},
-            QStringLiteral("1")};
+            QStringLiteral("1"),
+            QStringLiteral("'core.autocrlf'='true'"),
+            {{QStringLiteral("core.eol"), QStringLiteral("lf")}}};
 }
 
 QByteArray frameOf(const MergetoolMessage &message) { return mergetoolFrame(encodeMergetoolMessage(message)); }
@@ -198,6 +203,10 @@ void invalidMessagesAreRefusedWithTheirReason()
          R"({"v":)" + version + R"(,"kind":"attach","invocation":")" + invocation + R"(","intake":"intake",)"
              + configuration + "}",
          MergetoolDecodeFailure::Malformed},
+        {"an attach whose configuration entries are not pairs",
+         R"({"v":)" + version + R"(,"kind":"attach","invocation":")" + invocation + R"(","intake":"/i",)"
+             + configuration.chopped(1) + R"(,"parameters":"","entries":[["core.eol"]]}})",
+         MergetoolDecodeFailure::Malformed},
         {"an attach without its configuration",
          R"({"v":)" + version + R"(,"kind":"attach","invocation":")" + invocation + R"(","intake":"/i"})",
          MergetoolDecodeFailure::Malformed},
@@ -222,7 +231,7 @@ void invalidMessagesAreRefusedWithTheirReason()
         const auto decoded = decodeMergetoolMessage(row.payload);
         CHECK(!decoded.message);
         CHECK(decoded.failure == row.failure);
-        CHECK(!decoded.error.isEmpty());
+        CHECK(!decoded.problem.isEmpty());
     }
     const auto unknownField = decodeMergetoolMessage(R"({"v":)" + version + R"(,"kind":"leave","invocation":")"
                                                      + invocation + R"(","later":true})");
@@ -387,6 +396,27 @@ void connectionsBeyondTheCapAreClosedAtOnce()
     CHECK(!fourth.closed);
 }
 
+void aPeerOfAnotherUserIsClosedAtOnce()
+{
+    SocketDirectory directory;
+    MergetoolServer::Limits limits;
+    qintptr checked = -1;
+    limits.peerIsCurrentUser = [&checked](qintptr descriptor) {
+        checked = descriptor;
+        return false;
+    };
+    MergetoolServer server(limits, nullptr);
+    QString error;
+    CHECK(server.listen(directory.socket(), &error) == MergetoolServer::Listen::Listening);
+    Attaches attaches(server);
+    Peer peer(directory.socket());
+    peer.waitClosed();
+    CHECK(checked >= 0);
+    CHECK_EQ(server.connections(), 0);
+    CHECK(attaches.messages.isEmpty() && attaches.connections.isEmpty());
+    CHECK(peer.received.isEmpty());
+}
+
 void oneListenerOwnsTheSocketAndAStaleOneIsReplaced()
 {
     SocketDirectory directory;
@@ -421,7 +451,9 @@ void oneListenerOwnsTheSocketAndAStaleOneIsReplaced()
 
 void theSocketDirectoryIgnoresTemporaryDirectories()
 {
-    const auto fallback = QStringLiteral("/tmp/branch-truce-") + QString::number(::geteuid());
+    const auto fallback = mergetoolSocketDirectory({});
+    // The fallback directory and its link go when the case ends; the private cache holds the link.
+    const auto removeFallback = qScopeGuard([&fallback] { ::rmdir(QFile::encodeName(fallback).constData()); });
     git::RepositoryContext repository;
     repository.operation = git::RepositoryOperation::Merge;
     repository.supported = true;
@@ -440,12 +472,40 @@ void theSocketDirectoryIgnoresTemporaryDirectories()
     CHECK_EQ(fitDirectory, QString::fromLatin1(boundary) + QStringLiteral("/branch-truce"));
     CHECK_EQ(QFile::encodeName(mergetoolServerName(fitDirectory, repository)).size(), 106);
     CHECK_EQ(mergetoolSocketDirectory(boundary + 'x'), fallback);
-    CHECK_EQ(mergetoolSocketDirectory({}), fallback);
     CHECK_EQ(mergetoolSocketDirectory("run/user/7"), fallback);
     CHECK(QFile::encodeName(mergetoolServerName(fallback, repository)).size() <= 106);
     CHECK_EQ(mergetoolIntakeRoot(shortDirectory), shortDirectory + QStringLiteral("/intake"));
     repository.supported = false;
     CHECK(mergetoolServerName(shortDirectory, repository).isEmpty());
+}
+
+// Without a usable runtime directory, every process of this user meets in one /tmp directory that
+// another user cannot name in advance, and a missing one is made again.
+void theFallbackSocketDirectoryIsPrivateAndUnpredictable()
+{
+    const auto prefix = QStringLiteral("/tmp/branch-truce-%1-").arg(::geteuid());
+    const auto first = mergetoolSocketDirectory({});
+    auto removeFirst = qScopeGuard([&first] { ::rmdir(QFile::encodeName(first).constData()); });
+    CHECK(first.startsWith(prefix) && first.size() == prefix.size() + 6);
+    CHECK_EQ(mergetoolSocketDirectory({}), first);
+    struct stat info{};
+    CHECK(::lstat(QFile::encodeName(first).constData(), &info) == 0 && S_ISDIR(info.st_mode));
+    CHECK(info.st_uid == ::geteuid() && (info.st_mode & 077) == 0);
+    Problem error;
+    CHECK(prepareMergetoolSocketDirectory(first, &error));
+    // A directory that went away, as /tmp does at boot, is replaced by a new one.
+    CHECK(::rmdir(QFile::encodeName(first).constData()) == 0);
+    removeFirst.dismiss();
+    const auto second = mergetoolSocketDirectory({});
+    const auto removeSecond = qScopeGuard([&second] { ::rmdir(QFile::encodeName(second).constData()); });
+    CHECK(second.startsWith(prefix) && second != first);
+    // A directory that is no longer private is not used either.
+    CHECK(::chmod(QFile::encodeName(second).constData(), 0755) == 0);
+    const auto third = mergetoolSocketDirectory({});
+    const auto removeThird = qScopeGuard([&third] { ::rmdir(QFile::encodeName(third).constData()); });
+    CHECK(third.startsWith(prefix) && third != second);
+    CHECK(!prepareMergetoolSocketDirectory({}, &error));
+    CHECK(error.code == ProblemCode::MergetoolNoSocketDirectory);
 }
 
 void intakesArePrivateCheckedAndRemoved()
@@ -459,7 +519,7 @@ void intakesArePrivateCheckedAndRemoved()
     sources.local = "local\n";
     sources.localPresent = true;
     const auto invocation = uuid();
-    QString error;
+    Problem error;
     const auto intake = writeMergetoolIntake(root, key, invocation, sources, &error);
     CHECK(!intake.isEmpty() && error.isEmpty());
     for (const auto &path : {root, QFileInfo(intake).absolutePath(), intake}) {
@@ -475,7 +535,7 @@ void intakesArePrivateCheckedAndRemoved()
     CHECK(!readMergetoolIntake(intake, directory.path(), key, &error));
     writeFile(intake + QStringLiteral("/merged"), "changed\n");
     CHECK(!readMergetoolIntake(intake, root, key, &error));
-    CHECK(error.contains(QStringLiteral("do not match")));
+    CHECK(error.code == ProblemCode::MergetoolIntakeBytes);
     // This process wrote it and is alive, so a prune keeps it.
     CHECK_EQ(pruneMergetoolIntakes(root, key), 0);
     removeMergetoolIntake(intake);
@@ -489,11 +549,19 @@ void intakesArePrivateCheckedAndRemoved()
     CHECK(ended.waitForStarted(5000));
     const auto endedPid = ended.processId();
     CHECK(ended.waitForFinished(5000));
-    writeFile(orphan + QStringLiteral("/launcher"), QByteArray::number(endedPid) + '\n');
+    writeFile(orphan + QStringLiteral("/launcher"), QByteArray::number(endedPid) + " 1\n");
     const auto live = writeMergetoolIntake(root, key, uuid(), sources, &error);
     CHECK(!live.isEmpty());
-    CHECK_EQ(pruneMergetoolIntakes(root, key), 1);
-    CHECK(!QFileInfo::exists(orphan) && QFileInfo::exists(live));
+    // A later process with the launcher's PID does not keep its intake: this process's PID with
+    // another start time stands for one.
+    const auto reused = writeMergetoolIntake(root, key, uuid(), sources, &error);
+    CHECK(!reused.isEmpty());
+    const auto owner = readFile(reused + QStringLiteral("/launcher")).trimmed().split(' ');
+    CHECK(owner.size() == 2 && owner[0] == QByteArray::number(QCoreApplication::applicationPid()));
+    writeFile(reused + QStringLiteral("/launcher"),
+              owner[0] + ' ' + QByteArray::number(owner[1].toLongLong() + 1) + '\n');
+    CHECK_EQ(pruneMergetoolIntakes(root, key), 2);
+    CHECK(!QFileInfo::exists(orphan) && !QFileInfo::exists(reused) && QFileInfo::exists(live));
 }
 
 void aRestoreReplacesTheFileWholeAndKeepsItsMode()
@@ -504,7 +572,7 @@ void aRestoreReplacesTheFileWholeAndKeepsItsMode()
     const auto native = QFile::encodeName(path);
     const QByteArray launch("<<<<<<< ours\nlaunch\n=======\nother\n>>>>>>> theirs\n");
     const auto longer = launch + QByteArray("a longer GUI write\n").repeated(64);
-    QString error;
+    Problem error;
     writeFile(path, longer);
     CHECK(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
     const auto before = inodeOf(path);
@@ -527,7 +595,7 @@ void aRestoreReplacesTheFileWholeAndKeepsItsMode()
         restored = restoreMergetoolFile(native, launch, &error);
     }
     CHECK(!restored);
-    CHECK_EQ(error, QStringLiteral("The original file could not be restored."));
+    CHECK(error.code == ProblemCode::MergetoolRestoreFailed);
     CHECK(readFile(path) == longer);
     CHECK_EQ(QDir(directory.path()).entryList(QDir::Files | QDir::Hidden), QStringList{QStringLiteral("merged.txt")});
 }
@@ -545,9 +613,12 @@ int main(int argc, char **argv)
     suite.run("misbehaving and stalled peers are closed", misbehavingPeersAreClosed);
     suite.run("a byte after the attach closes the connection", aByteAfterTheAttachClosesTheConnection);
     suite.run("connections beyond the cap are closed at once", connectionsBeyondTheCapAreClosedAtOnce);
+    suite.run("a peer of another user is closed at once", aPeerOfAnotherUserIsClosedAtOnce);
     suite.run("one listener owns the socket and a stale one is replaced",
               oneListenerOwnsTheSocketAndAStaleOneIsReplaced);
     suite.run("the socket directory ignores temporary directories", theSocketDirectoryIgnoresTemporaryDirectories);
+    suite.run("the fallback socket directory is private and unpredictable",
+              theFallbackSocketDirectoryIsPrivateAndUnpredictable);
     suite.run("intakes are private, checked and removed", intakesArePrivateCheckedAndRemoved);
     suite.run("a restore replaces the file whole and keeps its mode", aRestoreReplacesTheFileWholeAndKeepsItsMode);
     return suite.report();

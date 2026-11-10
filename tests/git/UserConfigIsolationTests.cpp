@@ -100,6 +100,34 @@ void theEnvironmentSelectionKeepsAbsoluteConfigurationPathsOnly()
     if (const auto *account = ::getpwuid(::geteuid()); account != nullptr)
         CHECK_EQ(dropped.home, QFile::decodeName(account->pw_dir));
 }
+
+// A git mergetool parent started as `git -c ...` passes that configuration to its tools in the
+// environment. The adapter's Git must read it too, or it inspects other settings than the parent
+// stages with.
+void commandLineConfigurationReachesTheAdaptersGit()
+{
+    QProcessEnvironment environment;
+    environment.insert(QStringLiteral("HOME"), QStringLiteral("/home/chosen"));
+    environment.insert(QStringLiteral("GIT_CONFIG_PARAMETERS"), QStringLiteral("'core.autocrlf'='input'"));
+    environment.insert(QStringLiteral("GIT_CONFIG_COUNT"), QStringLiteral("1"));
+    environment.insert(QStringLiteral("GIT_CONFIG_KEY_0"), QStringLiteral("core.eol"));
+    environment.insert(QStringLiteral("GIT_CONFIG_VALUE_0"), QStringLiteral("crlf"));
+    const auto chosen = GitEnvironment::from(environment);
+    CHECK_EQ(chosen.parameters, QStringLiteral("'core.autocrlf'='input'"));
+    CHECK(chosen.entries == (QList<std::pair<QString, QString>>{{QStringLiteral("core.eol"), QStringLiteral("crlf")}}));
+    environment.remove(QStringLiteral("GIT_CONFIG_VALUE_0"));
+    CHECK(GitEnvironment::from(environment).entries.isEmpty());
+
+    Repository repo;
+    auto program = repo.program();
+    program.environment.parameters = chosen.parameters;
+    program.environment.entries = chosen.entries;
+    GitAdapter adapter(program);
+    const auto result = run(adapter, repo.request(Operation::ReadAttributes, "tracked.txt"));
+    CHECK_EQ(result.outcome, Outcome::Success);
+    CHECK_EQ(result.conversionPolicy.configuration.value("core.autocrlf"), QByteArray("input"));
+    CHECK_EQ(result.conversionPolicy.configuration.value("core.eol"), QByteArray("crlf"));
+}
 } // namespace
 
 int main(int argc, char **argv)
@@ -111,5 +139,6 @@ int main(int argc, char **argv)
               theAdaptersGitReadsNoAccountOrSystemConfiguration);
     suite.run("the environment selection keeps absolute configuration paths only",
               theEnvironmentSelectionKeepsAbsoluteConfigurationPathsOnly);
+    suite.run("command-line configuration reaches the adapter's Git", commandLineConfigurationReachesTheAdaptersGit);
     return suite.report();
 }

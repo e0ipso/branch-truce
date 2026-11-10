@@ -46,24 +46,22 @@ void GitAdapter::State::begin()
     directory = QFileInfo(r.directory).canonicalFilePath();
     if (!executableValid || directory.isEmpty() || !QDir(directory).exists() || !QDir::isAbsolutePath(r.directory)
         || !exactPath(r.directory) || executable.startsWith(directory + QLatin1Char('/'))) {
-        reject(QStringLiteral("An absolute directory and trusted executable outside it are required"));
+        reject(ProblemCode::GitInvalidRequest);
         return;
     }
     spec = detail::operationSpec(r.operation);
     if (!spec) {
-        reject(QStringLiteral("Unknown Git operation"));
+        reject(ProblemCode::GitUnknownOperation);
         return;
     }
     if ((spec->path && !relativeFile(r.path)) || (!spec->path && !r.path.isEmpty())
         || (spec->object && !objectId(r.objectId)) || (!spec->object && !r.objectId.isEmpty())
         || (!spec->input && !r.input.isEmpty())) {
-        reject(QStringLiteral("Invalid operands for the named Git operation"));
+        reject(ProblemCode::GitInvalidOperands);
         return;
     }
     if (r.input.size() > outputLimit) {
-        reject(QStringLiteral("Canonicalization input has %1 bytes, exceeding the %2 byte input limit")
-                   .arg(r.input.size())
-                   .arg(outputLimit));
+        reject({ProblemCode::GitInputTooLarge, {QString::number(r.input.size()), QString::number(outputLimit)}});
         return;
     }
     deadline.start(deadlineMs);
@@ -76,34 +74,34 @@ void GitAdapter::State::complete()
     if (temporaryObjects) {
         if (!temporaryObjects->remove()) {
             if (result.outcome == Outcome::Success) result.outcome = Outcome::ProcessFailure;
-            result.diagnostic +=
-                QStringLiteral("; could not remove private conversion objects: ") + temporaryObjects->path();
+            addProblem({ProblemCode::GitCleanupFailed, {temporaryObjects->path()}});
         }
         temporaryObjects.reset();
     }
     if (result.request.operation == Operation::DiscoverRepository && result.outcome != Outcome::Success) {
         result.repository.operation = RepositoryOperation::Unsupported;
         result.repository.supported = false;
-        if (result.repository.diagnostic.isEmpty()) result.repository.diagnostic = result.diagnostic;
+        if (result.repository.problem.isEmpty()) result.repository.problem = result.problem;
     }
     const auto completed = result;
     active = false;
     Q_EMIT q->finished(completed);
 }
-void GitAdapter::State::reject(const QString &message)
+void GitAdapter::State::reject(Problem problem)
 {
     result.outcome = Outcome::Rejected;
-    result.diagnostic = message;
+    result.problem = std::move(problem);
     complete();
+}
+void GitAdapter::State::addProblem(Problem problem)
+{
+    result.problem = result.problem.isEmpty() ? std::move(problem) : problem.wrapping(std::move(result.problem));
 }
 GitAdapter::GitAdapter(GitProgram program, QObject *parent)
     : GitRunner(parent), d(std::make_unique<State>(this, std::move(program)))
 {
     qRegisterMetaType<Result>();
 }
-GitAdapter::GitAdapter(const QString &executable, QObject *parent)
-    : GitAdapter(GitProgram{executable, GitEnvironment::fromProcess()}, parent)
-{}
 GitAdapter::~GitAdapter() = default;
 bool GitAdapter::start(const Request &request)
 {
@@ -140,7 +138,7 @@ void GitAdapter::cancel()
         // reinspection determines the observed index mutation.
         return;
     }
-    d->stop(Outcome::Cancelled, QStringLiteral("Git request cancelled"));
+    d->stop(Outcome::Cancelled, ProblemCode::GitCancelled);
 }
 bool GitAdapter::busy() const { return d->active; }
 
@@ -151,30 +149,28 @@ GitRunners gitAdapters(GitProgram program)
     };
 }
 
-GitRunners gitAdapters(QString executable)
+Result runBlocking(const GitRunners &runners, const Request &request)
 {
-    return [executable = std::move(executable)](QObject *parent) -> std::unique_ptr<GitRunner> {
-        return std::make_unique<GitAdapter>(executable, parent);
-    };
+    const auto runner = runners(nullptr);
+    QEventLoop loop;
+    std::optional<Result> result;
+    QObject::connect(runner.get(), &GitRunner::finished, &loop, [&](const Result &value) {
+        result = value;
+        loop.quit();
+    });
+    if (!runner->start(request)) {
+        Result refused;
+        refused.request = request;
+        refused.problem = ProblemCode::GitStartRefused;
+        return refused;
+    }
+    // Every accepted request completes within the runner's deadline.
+    loop.exec();
+    return result.value_or(Result{});
 }
 
 Result runBlocking(const GitProgram &program, const Request &request)
 {
-    GitAdapter adapter(program);
-    QEventLoop loop;
-    std::optional<Result> result;
-    QObject::connect(&adapter, &GitAdapter::finished, &loop, [&](const Result &value) {
-        result = value;
-        loop.quit();
-    });
-    if (!adapter.start(request)) {
-        Result refused;
-        refused.request = request;
-        refused.diagnostic = QStringLiteral("The Git request could not start");
-        return refused;
-    }
-    // Every accepted request completes within the adapter's deadline.
-    loop.exec();
-    return result.value_or(Result{});
+    return runBlocking(gitAdapters(program), request);
 }
 } // namespace branch_truce::git

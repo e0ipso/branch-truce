@@ -3,7 +3,7 @@
 
 #include "fixtures/EventLoop.h"
 #include "fixtures/QuickScene.h"
-#include "mergetool/MergetoolProtocol.h"
+#include "mergetool/MergetoolSocket.h"
 
 #include <QCoreApplication>
 #include <QFile>
@@ -82,9 +82,8 @@ Sandbox::Sandbox()
 Application::Config Sandbox::config(const Repository &repository) const
 {
     Application::Config config;
-    config.gitExecutable = git_.executable();
+    config.git = {git_.executable(), git::GitEnvironment::from(repository.environment())};
     config.recoveryDirectory = recovery_.path() + QLatin1Char('/') + QUuid::createUuid().toString(QUuid::WithoutBraces);
-    config.gitEnvironment = git::GitEnvironment::from(repository.environment());
     config.mergetoolDirectory = socketDirectory();
     return config;
 }
@@ -96,8 +95,6 @@ QProcessEnvironment Sandbox::mergetoolEnvironment(const Repository &repository) 
     auto environment = repository.environment();
     environment.insert("PATH", git_.directory() + QStringLiteral(":/usr/bin:/bin"));
     environment.insert("XDG_RUNTIME_DIR", runtime_.path());
-    // The session in this process must already listen; a launcher never starts another GUI.
-    environment.insert("BRANCH_TRUCE_MERGETOOL_NO_SPAWN", "1");
     return environment;
 }
 

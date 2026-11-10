@@ -55,14 +55,14 @@ void installHazard(const QString &scenario)
 int resolve(const QString &scenario, const QString &merged)
 {
     installHazard(scenario);
-    GitAdapter adapter(test_support::gitExecutable());
+    GitAdapter adapter(GitProgram{test_support::gitExecutable(), GitEnvironment::fromProcess()});
     test_support::AsyncCompletion<GitAdapter, Result> completion(adapter, &GitAdapter::finished);
     const Request request{Operation::CheckParentStaging, QDir::currentPath(), QFile::encodeName(merged), {}, 71, 93};
     const auto preflight = completion.run(request);
     CHECK(preflight.request.operation == request.operation && preflight.request.directory == request.directory);
     CHECK(preflight.request.path == request.path && preflight.request.objectId == request.objectId);
     CHECK(preflight.request.sessionGeneration == 71 && preflight.request.inputRevision == 93);
-    writeFile(".handoff-preflight", preflight.diagnostic.toUtf8());
+    writeFile(".handoff-preflight", preflight.problem.encoded().toUtf8());
     CHECK(preflight.mutation == Mutation::NotAttempted);
     if (preflight.outcome != Outcome::Success) {
         writeFile(".handoff-rejected", "blocked\n");

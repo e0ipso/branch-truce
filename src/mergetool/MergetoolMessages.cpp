@@ -1,6 +1,7 @@
 // Mergetool messages are the typed frames a launcher and a session exchange, with their framing and version check.
 #include "mergetool/MergetoolMessages.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QUuid>
@@ -40,11 +41,15 @@ bool objectId(const QByteArray &id)
 
 QJsonObject configurationObject(const git::GitEnvironment &configuration)
 {
+    QJsonArray entries;
+    for (const auto &[key, value] : configuration.entries) entries.append(QJsonArray{key, value});
     return {{QStringLiteral("home"), configuration.home},
             {QStringLiteral("configHome"), configuration.configHome},
             {QStringLiteral("globalConfig"), configuration.globalConfig},
             {QStringLiteral("systemConfig"), configuration.systemConfig},
-            {QStringLiteral("noSystem"), configuration.noSystem}};
+            {QStringLiteral("noSystem"), configuration.noSystem},
+            {QStringLiteral("parameters"), configuration.parameters},
+            {QStringLiteral("entries"), entries}};
 }
 
 std::optional<git::GitEnvironment> configurationFrom(const QJsonValue &value)
@@ -56,9 +61,17 @@ std::optional<git::GitEnvironment> configurationFrom(const QJsonValue &value)
                                      std::pair{QStringLiteral("configHome"), &configuration.configHome},
                                      std::pair{QStringLiteral("globalConfig"), &configuration.globalConfig},
                                      std::pair{QStringLiteral("systemConfig"), &configuration.systemConfig},
-                                     std::pair{QStringLiteral("noSystem"), &configuration.noSystem}}) {
+                                     std::pair{QStringLiteral("noSystem"), &configuration.noSystem},
+                                     std::pair{QStringLiteral("parameters"), &configuration.parameters}}) {
         if (!object.value(key).isString()) return std::nullopt;
         *field = object.value(key).toString();
+    }
+    const auto entries = object.value(QStringLiteral("entries"));
+    if (!entries.isArray()) return std::nullopt;
+    for (const auto &entry : entries.toArray()) {
+        const auto pair = entry.toArray();
+        if (!entry.isArray() || pair.size() != 2 || !pair[0].isString() || !pair[1].isString()) return std::nullopt;
+        configuration.entries.append({pair[0].toString(), pair[1].toString()});
     }
     return configuration;
 }
@@ -98,12 +111,12 @@ struct Encoder {
     }
 };
 
-DecodedMergetoolMessage failed(MergetoolDecodeFailure failure, int version, const QString &error)
+DecodedMergetoolMessage failed(MergetoolDecodeFailure failure, int version, Problem problem)
 {
     DecodedMergetoolMessage decoded;
     decoded.failure = failure;
     decoded.version = version;
-    decoded.error = error;
+    decoded.problem = std::move(problem);
     return decoded;
 }
 } // namespace
@@ -119,7 +132,7 @@ QByteArray encodeMergetoolMessage(const MergetoolMessage &message)
 
 DecodedMergetoolMessage decodeMergetoolMessage(const QByteArray &payload)
 {
-    const auto malformed = QStringLiteral("The mergetool message is invalid.");
+    const Problem malformed(ProblemCode::MergetoolMessageInvalid);
     const auto document = QJsonDocument::fromJson(payload);
     if (!document.isObject()) return failed(MergetoolDecodeFailure::Malformed, 0, malformed);
     const auto object = document.object();
@@ -133,9 +146,8 @@ DecodedMergetoolMessage decodeMergetoolMessage(const QByteArray &payload)
     }
     if (version != kMergetoolProtocolVersion)
         return failed(MergetoolDecodeFailure::OtherVersion, version,
-                      QStringLiteral("The mergetool message uses protocol version %1; this side speaks %2.")
-                          .arg(version)
-                          .arg(kMergetoolProtocolVersion));
+                      {ProblemCode::MergetoolOtherVersion,
+                       {QString::number(version), QString::number(kMergetoolProtocolVersion)}});
     if (!kind) return failed(MergetoolDecodeFailure::UnknownKind, version, malformed);
     const auto text = [&object](const char *key) { return object.value(QLatin1String(key)).toString(); };
     const auto invocation = text("invocation");

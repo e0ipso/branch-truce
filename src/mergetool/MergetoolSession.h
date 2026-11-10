@@ -2,14 +2,16 @@
 #pragma once
 
 #include "git/GitAdapter.h"
-#include "mergetool/MergetoolProtocol.h"
+#include "mergetool/MergetoolIntake.h"
 #include "mergetool/MergetoolServer.h"
+#include "mergetool/MergetoolSocket.h"
 #include "publication/ResolutionPublisher.h"
 #include "session/SessionCoordinator.h"
 #include <QByteArray>
 #include <QList>
 #include <QObject>
 #include <QString>
+#include <QThreadPool>
 #include <functional>
 #include <map>
 #include <optional>
@@ -34,13 +36,14 @@ public:
         // The configuration files this window's Git reads. A launcher whose
         // Git reads others is refused, since the parent stages with them.
         git::GitEnvironment gitEnvironment;
-        // The Git that copied-launch checks run.
-        QString gitExecutable;
+        // Builds the runners copied-launch checks run Git on, on a worker thread.
+        git::GitRunners git;
     };
     // loadedRepository is the loaded operation that copied-launch checks inspect.
     MergetoolSession(ResolutionPublisher &publisher, SessionStore &files, SessionCoordinator &coordinator,
                      std::function<git::RepositoryContext()> loadedRepository, Config config,
                      QObject *parent = nullptr);
+    // error gets a translated sentence or an encoded Problem.
     Listen listen(const git::RepositoryContext &repository, QString *error);
     [[nodiscard]] bool listening() const { return server_.listening(); }
     [[nodiscard]] bool parentSessionActive() const { return parentSession_; }
@@ -54,6 +57,13 @@ public:
     // The intake of the launcher waiting on path. Its launcher removes it on exit.
     [[nodiscard]] QString intake(const QByteArray &path) const;
     [[nodiscard]] bool canEndParentSession() const;
+    // Git was released to stage an offered revision, but the index has not
+    // shown it after the polls ran out. The outcome stays unknown until a
+    // recheck finds it.
+    [[nodiscard]] bool acknowledgmentUnknown() const { return acknowledgmentUnknown_; }
+    // Checks the index again for the offer of fileId, and polls again for
+    // one the session still holds. False when there is no offer to check.
+    bool recheckAcknowledgment(const std::string &fileId);
     bool leave(const QByteArray &path);
     // Launched paths whose launcher has not received a decision yet.
     [[nodiscard]] int unreleasedLaunches() const { return static_cast<int>(waiters_.size()); }
@@ -93,7 +103,7 @@ private:
     };
     struct IntakeCheck {
         std::optional<MergetoolIntake> intake;
-        QString error;
+        Problem error;
     };
     void attachReceived(quint64 connection, const AttachMessage &message);
     void intakeChecked(quint64 connection, const AttachMessage &message, const IntakeCheck &check);
@@ -104,6 +114,9 @@ private:
     void tryAssign();
     void clearAssignment();
     void pollAcknowledgment();
+    void startAcknowledgmentPolls();
+    // The offer is gone: stop polling and hand the assignment on.
+    void endAcknowledgment();
     [[nodiscard]] qsizetype indexOfConnection(quint64 connection) const;
     [[nodiscard]] qsizetype indexOfPath(const QByteArray &path) const;
     [[nodiscard]] bool launchedWithCapturedBytes(const FileSession &file) const;
@@ -122,6 +135,8 @@ private:
     std::string acknowledgmentFile_;
     RevisionId acknowledgmentRevision_ = 0;
     int acknowledgmentInterval_ = 0;
+    int acknowledgmentPolls_ = 0;
+    bool acknowledgmentUnknown_ = false;
     bool parentSession_ = false;
     bool offerHeld_ = false;
     bool assigning_ = false;
@@ -129,5 +144,8 @@ private:
     std::map<std::string, SnapshotFileIdentity> copiedLaunches_;
     // The revalidation task in flight for a copiedLaunches_ entry.
     std::map<std::string, TaskId> copiedLaunchChecks_;
+    // Intake reads and pruning, one at a time and off the GUI thread. Its
+    // tasks capture values only, and destruction waits for them.
+    QThreadPool workers_;
 };
 }

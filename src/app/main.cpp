@@ -2,6 +2,7 @@
 #include "AppPaths.h"
 #include "Appearance.h"
 #include "Application.h"
+#include "ProblemText.h"
 #include "StartupReport.h"
 #include "Translations.h"
 #include "core/BuildInfo.h"
@@ -58,7 +59,14 @@ int main(int argc, char *argv[])
     // Git's mergetool command line names the launcher mode first. Only that
     // position selects it, so a repository or option value spelled
     // --mergetool still opens the window.
-    if (argc > 1 && qstrcmp(argv[1], "--mergetool") == 0) return branch_truce::runMergetoolLauncher(argc, argv, git);
+    if (argc > 1 && qstrcmp(argv[1], "--mergetool") == 0) {
+        QCoreApplication launcher(argc, argv);
+        QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
+        QCoreApplication::setOrganizationDomain(QStringLiteral("canpicasoft.com"));
+        branch_truce::installTranslations(launcher);
+        return branch_truce::runMergetoolLauncher(QCoreApplication::arguments(), git,
+                                                  {.describe = branch_truce::problem_text::detail});
+    }
     // QApplication rather than QGuiApplication: the org.kde.desktop style draws its
     // controls through QApplication::style(). See docs/platform-validation.md.
     QApplication application(argc, argv);
@@ -121,11 +129,10 @@ int main(int argc, char *argv[])
     if (paths.size() > 1) parser.showHelp(2);
 
     // The composition root: the data roots and services this session uses.
-    branch_truce::Application session({git.executable,
-                                       branch_truce::newRecoveryDirectory(),
-                                       {},
-                                       git.environment,
-                                       branch_truce::mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"))});
+    branch_truce::Application session(
+        {.git = git,
+         .recoveryDirectory = branch_truce::newRecoveryDirectory(),
+         .mergetoolDirectory = branch_truce::mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"))});
     QQmlApplicationEngine engine;
     branch_truce::selectControlsStyle(engine);
     engine.setInitialProperties(session.windowProperties());

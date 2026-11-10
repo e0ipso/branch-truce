@@ -59,9 +59,11 @@ the previous path's offer has been acknowledged.
 
 Frames are a 4-byte big-endian length plus one compact JSON object, at most
 65536 bytes. `src/mergetool/MergetoolMessages.h` defines every message and
-checks every field. Each frame names protocol version 2. The launcher sends
+checks every field. Each frame names protocol version 3. The launcher sends
 `attach` with its invocation, its intake and the configuration its Git reads
-(`HOME`, `XDG_CONFIG_HOME` and `GIT_CONFIG_GLOBAL`, `_SYSTEM` and `_NOSYSTEM`).
+(`HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`, `_SYSTEM` and `_NOSYSTEM`,
+and the command-line configuration in `GIT_CONFIG_PARAMETERS` and
+`GIT_CONFIG_COUNT`, which `git -c ... mergetool` passes to its tools).
 The session refuses an attach whose configuration differs from its own,
 because the parent stages with that configuration and the release preflight
 must inspect the same one. The session replies `attached` or `rejected`, and
@@ -75,7 +77,10 @@ offer until the index shows whether Git staged it.
 
 ## Lifecycle
 
-The launcher blocks until that reply. It returns 0 only for `resolved`. Save
+The launcher blocks until that reply. It returns 0 only for `resolved`, and
+only while `MERGED` still holds the object that reply names: it asks Git to
+clean-convert the current `MERGED` bytes, as `git add` will, and compares the
+object id. Any other bytes restore the launch snapshot and return 1. Save
 never writes `MERGED` or the index. Before the tool runs, installed Git moves
 `MERGED` aside and copies those bytes back. Mark resolved writes that copy when
 the bytes are still the launch snapshot, refuses a different file, and leaves
@@ -102,8 +107,9 @@ in the attach frame, with the hidden `--mergetool-path` option, so the window
 opens on that file. The started GUI's standard input, output and error go to
 `/dev/null`, so it writes nothing into the `git mergetool` terminal. It waits
 15 seconds for that window to listen; `--session-wait <seconds>` after
-`--mergetool` changes the wait. `BRANCH_TRUCE_MERGETOOL_NO_SPAWN` disables
-that start.
+`--mergetool` changes the wait. `--no-window` after `--mergetool` disables
+that start. The session has 15 seconds to answer the attach; no answer, an
+invalid frame or an answer for another invocation returns 1.
 
 On leave the launcher writes the captured bytes to a temporary file next to
 `MERGED` with the same permission bits, then renames it over `MERGED`, so a

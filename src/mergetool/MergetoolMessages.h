@@ -2,7 +2,8 @@
 #pragma once
 
 #include "core/RevisionId.h"
-#include "git/GitAdapter.h"
+#include "git/GitTypes.h"
+#include "storage/Problem.h"
 #include <QByteArray>
 #include <QString>
 #include <optional>
@@ -12,7 +13,7 @@ namespace branch_truce {
 
 // The launcher and the window ship in one package. A peer that speaks another
 // version gets an Unsupported reply naming this one, and neither side guesses.
-inline constexpr int kMergetoolProtocolVersion = 2;
+inline constexpr int kMergetoolProtocolVersion = 3;
 // Largest payload of one frame. A frame is a 4-byte big-endian length, then
 // that many bytes of one compact JSON object.
 inline constexpr qsizetype kMergetoolFrameLimit = 65536;
@@ -30,7 +31,8 @@ struct AttachedMessage {
     QString invocation;
     bool operator==(const AttachedMessage &) const = default;
 };
-// Session to launcher: the launch cannot wait here, and why.
+// Session to launcher: the launch cannot wait here, and why: a translated
+// sentence or an encoded Problem.
 struct RejectedMessage {
     QString invocation;
     QString reason;
@@ -63,7 +65,7 @@ struct DecodedMergetoolMessage {
     MergetoolDecodeFailure failure = MergetoolDecodeFailure::None;
     // The version the frame named, when it named one.
     int version = 0;
-    QString error;
+    Problem problem;
 };
 
 // One JSON payload, without the length prefix.

@@ -31,27 +31,31 @@ namespace branch_truce {
 class Application final : public QObject {
     Q_OBJECT
 public:
+    // What main resolves from the process once. Nothing here reads the
+    // process environment itself.
     struct Config {
-        // The Git every collaborator and worker task runs; main resolves it
-        // once. Empty when Git is not on PATH.
-        QString gitExecutable;
+        // The Git every collaborator and worker task runs, and the
+        // configuration files it reads. A waiting launcher must have started
+        // its Git with the same files. The executable is empty when Git is not
+        // on PATH.
+        git::GitProgram git;
         // This session's recovery store; see newRecoveryDirectory().
         QString recoveryDirectory;
+        // Where the session listens for mergetool launchers and they leave
+        // their inputs; see mergetoolSocketDirectory().
+        QString mergetoolDirectory;
         // Loaded files align their sources with this, or with the engine's default.
-        std::shared_ptr<const CorrespondenceAlgorithm> correspondence;
-        // The configuration files Git reads. A waiting launcher must have
-        // started its Git with the same ones. The process environment selects
-        // them by default, as it does for the Git the session's tasks run.
-        git::GitEnvironment gitEnvironment = git::GitEnvironment::fromProcess();
-        // Where the session listens for mergetool launchers and they leave their inputs.
-        QString mergetoolDirectory = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
+        std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {};
         // The file system the recovery store and repository publication write through.
         std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem();
-        // The runner of each Git task the session queues, such as staging a resolved file. Empty
-        // runs gitExecutable.
-        git::GitRunners sessionGit = {};
+        // Builds every Git runner the session uses: classification, conversion,
+        // queued tasks and recovery checks. Empty runs GitAdapters for git.
+        git::GitRunners gitRunners = {};
     };
     explicit Application(Config config, QObject *parent = nullptr);
+    // Stops every running Git process of the session at once, so they end
+    // within one grace period while the collaborators go.
+    ~Application() override;
 
     // Main.qml's required properties, by name.
     [[nodiscard]] QVariantMap windowProperties();
@@ -73,6 +77,8 @@ public:
     [[nodiscard]] SessionLoader *loader() noexcept { return &loader_; }
 
 private:
+    // First, so it outlives every collaborator that runs Git.
+    std::shared_ptr<git::GitProcesses> gitProcesses_;
     SessionStore store_;
     SessionModel files_;
     SessionCoordinator coordinator_;

@@ -46,7 +46,7 @@ std::optional<QString> responsePath(const QByteArray &output)
         return std::nullopt;
     return path;
 }
-bool localObjectStores(const QString &objects, QString &diagnostic)
+bool localObjectStores(const QString &objects, Problem &problem)
 {
     // Git 2.43 has no reliable no-lazy-fetch switch. Inspect the common object
     // store and its alternates without asking Git to open any object first.
@@ -57,26 +57,26 @@ bool localObjectStores(const QString &objects, QString &diagnostic)
         const auto path = QFileInfo(pending.takeLast()).canonicalFilePath();
         if (path.isEmpty() || !QFileInfo(path).isDir()
             || ::access(QFile::encodeName(path).constData(), R_OK | X_OK) != 0) {
-            diagnostic = QStringLiteral("Outside app: object storage cannot be inspected offline");
+            problem = ProblemCode::GitObjectStoreUninspectable;
             return false;
         }
         if (seen.contains(path)) continue;
         seen.insert(path);
         if (seen.size() > 256) {
-            diagnostic = QStringLiteral("Outside app: too many alternate object stores to inspect");
+            problem = ProblemCode::GitTooManyAlternates;
             return false;
         }
         const auto packPath = path + QStringLiteral("/pack");
         const QFileInfo packInfo(packPath);
         if (packInfo.exists() || packInfo.isSymLink()) {
             if (!packInfo.isDir() || ::access(QFile::encodeName(packPath).constData(), R_OK | X_OK) != 0) {
-                diagnostic = QStringLiteral("Outside app: object packs cannot be inspected offline");
+                problem = ProblemCode::GitPacksUninspectable;
                 return false;
             }
             if (!QDir(packPath)
                      .entryList({QStringLiteral("*.promisor")}, QDir::Files | QDir::Hidden | QDir::System)
                      .isEmpty()) {
-                diagnostic = QStringLiteral("Outside app: promisor object packs require unsupported lazy fetching");
+                problem = ProblemCode::GitPromisorPacks;
                 return false;
             }
         }
@@ -84,13 +84,13 @@ bool localObjectStores(const QString &objects, QString &diagnostic)
         const QFileInfo alternateInfo(alternates.fileName());
         if (!alternateInfo.exists() && !alternateInfo.isSymLink()) continue;
         if (!alternates.open(QIODevice::ReadOnly)) {
-            diagnostic = QStringLiteral("Outside app: alternate object stores cannot be inspected");
+            problem = ProblemCode::GitAlternatesUninspectable;
             return false;
         }
         const auto bytes = alternates.read(inspectionLimit + 1);
         alternateBytes += bytes.size();
         if (alternates.error() != QFileDevice::NoError || alternateBytes > inspectionLimit) {
-            diagnostic = QStringLiteral("Outside app: alternate object store list is unreadable or oversized");
+            problem = ProblemCode::GitAlternatesUnreadable;
             return false;
         }
         for (const auto &line : bytes.split('\n')) {
@@ -99,7 +99,7 @@ bool localObjectStores(const QString &objects, QString &diagnostic)
             // Fail closed on Git's quoted alternate syntax rather than inspect
             // a different directory. Ordinary relative/absolute alternates work.
             if (line.startsWith('"') || line.contains('\0') || QFile::encodeName(decoded) != line) {
-                diagnostic = QStringLiteral("Outside app: alternate object path cannot be inspected losslessly");
+                problem = ProblemCode::GitAlternatePathLossy;
                 return false;
             }
             pending.append(QDir::isAbsolutePath(decoded) ? decoded : path + QLatin1Char('/') + decoded);
@@ -137,8 +137,8 @@ void GitAdapter::State::afterProcess(bool normal, int code)
     if (!stopping && (!normal || code != 0)) {
         if (result.outcome != Outcome::LaunchFailure) {
             result.outcome = normal ? Outcome::ExitFailure : Outcome::ProcessFailure;
-            result.diagnostic =
-                normal ? QStringLiteral("Git exited with code %1").arg(code) : QStringLiteral("Git process crashed");
+            result.problem =
+                normal ? Problem{ProblemCode::GitExitCode, {QString::number(code)}} : Problem{ProblemCode::GitCrashed};
         }
         stopping = true;
     }
@@ -181,7 +181,7 @@ void GitAdapter::State::afterPolicy()
         temporaryObjects =
             std::make_unique<QTemporaryDir>(QDir::tempPath() + QStringLiteral("/branch-truce-conversion-XXXXXX"));
         if (!temporaryObjects->isValid()) {
-            reject(QStringLiteral("Could not create private conversion object storage"));
+            reject(ProblemCode::GitPrivateObjectStore);
             return;
         }
         launch(Phase::Operation, spec->arguments(result.request), false, result.request.input);
@@ -192,7 +192,7 @@ void GitAdapter::State::afterPolicy()
 void GitAdapter::State::handleVersion()
 {
     if (!phaseOutput.startsWith("git version ")) {
-        reject(QStringLiteral("Selected executable did not identify itself as Git"));
+        reject(ProblemCode::GitNotGit);
     } else {
         launch(Phase::Configuration, {"config", "--null", "--list", "--includes"}, true);
     }
@@ -200,7 +200,7 @@ void GitAdapter::State::handleVersion()
 void GitAdapter::State::handleConfiguration()
 {
     if (!checkConfiguration())
-        reject(result.diagnostic);
+        reject(result.problem);
     else
         launch(Phase::PolicyRoot, {"rev-parse", "--path-format=absolute", "--show-toplevel"});
 }
@@ -208,19 +208,19 @@ void GitAdapter::State::handlePolicyRoot()
 {
     const auto root = responsePath(phaseOutput);
     if (!root || !QFileInfo(*root).isDir()) {
-        reject(QStringLiteral("Outside app: invalid worktree root response"));
+        reject(ProblemCode::GitWorktreeRootResponse);
         return;
     }
     const auto prefix = *root == QLatin1String("/") ? *root : *root + QLatin1Char('/');
     if (executable.startsWith(prefix)) {
-        reject(QStringLiteral("The trusted Git executable must be outside the repository"));
+        reject(ProblemCode::GitExecutableInRepository);
         return;
     }
     // Request paths are repository-relative, even when Git is launched from a subdirectory.
     directory = *root;
     result.worktreeRoot = *root;
     if (spec->flow == Flow::Stage && !regularFile(directory, result.request.path)) {
-        reject(QStringLiteral("Staging requires one regular file without symlink traversal"));
+        reject(ProblemCode::GitStagingNotRegular);
     } else {
         launch(Phase::ObjectDirectory, {"rev-parse", "--path-format=absolute", "--git-path", "objects"});
     }
@@ -229,9 +229,9 @@ void GitAdapter::State::handleObjectDirectory()
 {
     const auto objects = responsePath(phaseOutput);
     if (!objects) {
-        reject(QStringLiteral("Outside app: invalid object directory response"));
-    } else if (!localObjectStores(*objects, result.diagnostic)) {
-        reject(result.diagnostic);
+        reject(ProblemCode::GitObjectDirectoryResponse);
+    } else if (Problem problem; !localObjectStores(*objects, problem)) {
+        reject(problem);
     } else {
         originalObjectDirectory = *objects;
         if (spec->filters)
@@ -243,38 +243,38 @@ void GitAdapter::State::handleObjectDirectory()
 void GitAdapter::State::handleAttributes()
 {
     if (!checkFilters())
-        reject(result.diagnostic);
+        reject(result.problem);
     else
         afterPolicy();
 }
 void GitAdapter::State::handleHooks()
 {
     if (!phaseOutput.endsWith('\n')) {
-        reject(QStringLiteral("Outside app: invalid hooks directory response"));
+        reject(ProblemCode::GitHooksResponse);
         return;
     }
     phaseOutput.chop(1);
     const auto decoded = QFile::decodeName(phaseOutput);
     if (QFile::encodeName(decoded) != phaseOutput) {
-        reject(QStringLiteral("Outside app: hooks directory cannot round-trip through Qt's directory API"));
+        reject(ProblemCode::GitHooksPathLossy);
         return;
     }
     const QFileInfo info(decoded);
     const QDir hooks(info.isAbsolute() ? info.filePath() : directory + QLatin1Char('/') + info.filePath());
     if (hooks.exists()) {
         if (!QFileInfo(hooks.path()).isReadable()) {
-            reject(QStringLiteral("Outside app: hooks directory cannot be inspected"));
+            reject(ProblemCode::GitHooksUninspectable);
             return;
         }
         // git add and its mergetool parent run post-index-change, not
         // commit/checkout hooks. Inspect the effective core.hooksPath.
         const QFileInfo hook(hooks.filePath(QStringLiteral("post-index-change")));
         if (hook.isExecutable()) {
-            reject(QStringLiteral("Outside app: executable post-index-change hook is unsupported"));
+            reject(ProblemCode::GitPostIndexChangeHook);
             return;
         }
     } else if ((info.exists() || info.isSymLink()) && info.canonicalFilePath() != QLatin1String("/dev/null")) {
-        reject(QStringLiteral("Outside app: hooks path is not an inspectable directory"));
+        reject(ProblemCode::GitHooksPathNotDirectory);
         return;
     }
     if (spec->flow == Flow::Stage) {
@@ -288,7 +288,7 @@ void GitAdapter::State::handleHooks()
 void GitAdapter::State::handleBaseline()
 {
     if (!validIndex(phaseOutput, false) || phaseOutput.size() > inspectionLimit) {
-        reject(QStringLiteral("Unsupported or oversized index baseline"));
+        reject(ProblemCode::GitIndexBaseline);
     } else {
         result.indexBefore = phaseOutput;
         launch(Phase::Operation, spec->arguments(result.request));
@@ -301,7 +301,7 @@ void GitAdapter::State::handleOperation()
     case Output::Raw: break;
     case Output::Attributes:
         if (!captureAttributes()) {
-            reject(QStringLiteral("Outside app: invalid conversion attribute inspection"));
+            reject(ProblemCode::GitAttributeInspection);
             return;
         }
         break;
@@ -310,12 +310,12 @@ void GitAdapter::State::handleOperation()
             result.indexEntries = *entries;
         } else {
             result.outcome = Outcome::InspectionFailure;
-            result.diagnostic = QStringLiteral("Invalid NUL-delimited index records");
+            result.problem = ProblemCode::GitIndexRecords;
         }
         break;
     case Output::CanonicalObject:
         if (!phaseOutput.endsWith('\n') || !objectId(phaseOutput.first(phaseOutput.size() - 1))) {
-            reject(QStringLiteral("Invalid canonical object response"));
+            reject(ProblemCode::GitCanonicalResponse);
         } else {
             result.canonicalObjectId = phaseOutput.first(phaseOutput.size() - 1);
             launch(Phase::CanonicalSize, {"cat-file", "-s", result.canonicalObjectId});
@@ -345,10 +345,10 @@ void GitAdapter::State::handleInspection(bool normal, int code)
             result.indexBefore == result.indexAfter ? Mutation::ObservedUnchanged : Mutation::ObservedChanged;
         if (result.outcome == Outcome::Success && !validIndex(phaseOutput, true)) {
             result.outcome = Outcome::InspectionFailure;
-            result.diagnostic = QStringLiteral("Staging exited successfully without a single regular stage-zero entry");
+            result.problem = ProblemCode::GitStagingWithoutEntry;
         }
     } else {
-        inspectionFailed(QStringLiteral("Index reinspection failed; mutation remains uncertain"));
+        inspectionFailed(ProblemCode::GitReinspectionFailed);
     }
     complete();
 }
@@ -357,11 +357,9 @@ void GitAdapter::State::handleCanonicalSize()
     bool valid = false;
     const auto size = phaseOutput.toULongLong(&valid);
     if (!valid || QByteArray::number(size) + '\n' != phaseOutput) {
-        reject(QStringLiteral("Invalid canonical object size response"));
+        reject(ProblemCode::GitCanonicalSizeResponse);
     } else if (size > static_cast<qulonglong>(outputLimit)) {
-        reject(QStringLiteral("Canonical text size %1 bytes after clean conversion exceeds the %2 byte output limit")
-                   .arg(size)
-                   .arg(outputLimit));
+        reject({ProblemCode::GitCanonicalTooLarge, {QString::number(size), QString::number(outputLimit)}});
     } else {
         launch(Phase::CanonicalObject, {"cat-file", "blob", result.canonicalObjectId});
     }

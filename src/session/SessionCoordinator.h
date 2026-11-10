@@ -35,6 +35,7 @@ struct TaskResult {
     TaskStatus status = TaskStatus::Succeeded;
     MutationObservation mutation = MutationObservation::NotAttempted;
     QByteArray data;
+    // Text, which may hold encoded Problems that the window shows translated.
     QString diagnostic;
     std::optional<git::Result> gitResult;
 };
@@ -76,8 +77,6 @@ public:
     using Inspect = std::function<MutationObservation(const TaskInput &)>;
     using Completion = std::function<void(const TaskCompletion &)>;
 
-    // Git tasks run in a GitAdapter for gitExecutable, which reads the process environment.
-    explicit SessionCoordinator(SessionStore &store, QString gitExecutable, QObject *parent = nullptr);
     // Each Git task runs in its own runner from git, a child of this coordinator.
     SessionCoordinator(SessionStore &store, git::GitRunners git, QObject *parent = nullptr);
     ~SessionCoordinator() override;

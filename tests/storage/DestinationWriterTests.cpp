@@ -194,7 +194,7 @@ public:
 void unchanged(const Fixture &fixture, const PublicationResult &result, DestinationFailure failure)
 {
     CHECK(result.state == PublicationState::Unchanged && result.failure == failure);
-    CHECK(!result.destination && !result.diagnostic.isEmpty() && result.retainedPath.isEmpty());
+    CHECK(!result.destination && !result.problem.isEmpty() && result.retainedPath.isEmpty());
     CHECK(readFile(fixture.path()) == fixture.original);
     fixture.clean();
 }
@@ -202,7 +202,7 @@ void unchanged(const Fixture &fixture, const PublicationResult &result, Destinat
 void retained(const Fixture &fixture, const PublicationResult &result, const QByteArray &previous)
 {
     CHECK(result.state == PublicationState::Uncertain && result.failure != DestinationFailure::None);
-    CHECK(!result.destination && !result.diagnostic.isEmpty() && !result.retainedPath.isEmpty());
+    CHECK(!result.destination && !result.problem.isEmpty() && !result.retainedPath.isEmpty());
     CHECK(readFile(QFile::decodeName(result.retainedPath)) == previous);
     CHECK(readFile(fixture.path()) == fixture.edited);
 }
@@ -417,7 +417,7 @@ int main(int argc, char **argv)
             const auto baseline = fixture.capture();
             const auto result = publishDestination(baseline, fixture.edited, "100644", [] { return true; });
             CHECK(::chmod(target.constData(), directory ? 0700 : 0644) == 0);
-            CHECK(result.state == PublicationState::Unchanged && !result.destination && !result.diagnostic.isEmpty());
+            CHECK(result.state == PublicationState::Unchanged && !result.destination && !result.problem.isEmpty());
             CHECK_EQ(result.failure, DestinationFailure::PermissionDenied);
             CHECK(readFile(fixture.path()) == fixture.original);
             fixture.clean();

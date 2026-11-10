@@ -2,6 +2,7 @@
 #include "core/ResourceLimits.h"
 #include "fixtures/Files.h"
 #include "fixtures/SyncFaults.h"
+#include "storage/Problem.h"
 #include "storage/RecoveryStore.h"
 #include <QCoreApplication>
 #include <QDateTime>
@@ -23,12 +24,21 @@
 #include <utility>
 
 using namespace branch_truce::storage;
+using branch_truce::Problem;
+using branch_truce::ProblemCode;
 using test_support::ArmedFault;
 using test_support::readFile;
 using test_support::SyncFaults;
 using test_support::writeFile;
 
 namespace {
+// Whether a store error holds the problem with code.
+bool reports(const QString &error, ProblemCode code)
+{
+    const auto problem = Problem::decode(error);
+    return problem && problem->code == code;
+}
+
 RecoveryTransaction transaction(const QString &id, const QByteArray &bytes)
 {
     const auto hash = RecoveryStore::digest(bytes);
@@ -215,9 +225,8 @@ int main(int argc, char **argv)
         const auto journalBefore = readFile(store->directory() + "/journal");
         const auto failed = store->commit(transaction("above", QByteArray(limit + 1, 'Z')));
         CHECK(!failed.succeeded);
-        CHECK(failed.error.contains(QString::number(limit + 1)));
-        CHECK(failed.error.contains(QString::number(limit)));
-        CHECK(failed.error.contains("pending input is retained"));
+        CHECK(Problem::decode(failed.error)
+              == Problem(ProblemCode::RecoveryPayloadTooLarge, {QString::number(limit + 1), QString::number(limit)}));
         CHECK(readFile(store->directory() + "/journal") == journalBefore);
         const auto reloaded = RecoveryStore(store->directory()).read();
         CHECK(reloaded.succeeded && !reloaded.incompleteTail);
@@ -231,7 +240,7 @@ int main(int argc, char **argv)
         const auto aboveHash = RecoveryStore::digest(QByteArray(limit + 1, 'Z'));
         CHECK(!QFileInfo::exists(store->directory() + "/payloads/" + QString::fromLatin1(aboveHash)));
         CHECK(reader.payload(aboveHash, &error).isEmpty());
-        CHECK(error.contains("missing or unsafe"));
+        CHECK(reports(error, ProblemCode::RecoveryPayloadUnsafe));
     });
     suite.run("a long-lived lease writes the bytes of leases taken for each commit", [] {
         QTemporaryDir directory;
@@ -288,7 +297,8 @@ int main(int argc, char **argv)
         const auto reloaded = RecoveryStore(store->directory()).read();
         CHECK(reloaded.succeeded);
         CHECK(reloaded.transactions == (QList<StoredTransaction>{stored(first), stored(other)}));
-        CHECK(store->commit(transaction("first", "different work")).error.contains("reused for different work"));
+        CHECK(reports(store->commit(transaction("first", "different work")).error,
+                      ProblemCode::RecoveryTransactionReused));
     });
     suite.run("a journal that repeats a transaction identity is refused", [] {
         QTemporaryDir directory;
@@ -299,7 +309,7 @@ int main(int argc, char **argv)
         rewriteLastRecord(store->directory(), [](QJsonObject &record) { record.insert("transaction", "first"); });
         const auto reread = RecoveryStore(store->directory()).read();
         CHECK(!reread.succeeded);
-        CHECK(reread.error.contains("repeats a transaction"));
+        CHECK(reports(reread.error, ProblemCode::RecoveryTransactionRepeated));
     });
     suite.run("a same-size change to an earlier record fails the next commit", [] {
         QTemporaryDir directory;
@@ -315,7 +325,9 @@ int main(int argc, char **argv)
         writeFile(journalPath, changed);
         markRewritten(journalPath);
         const auto failed = store->commit(transaction("third", "three"));
-        CHECK(!failed.succeeded && failed.error.contains("integrity"));
+        CHECK(!failed.succeeded
+              && (reports(failed.error, ProblemCode::RecoveryRecordIntegrity)
+                  || reports(failed.error, ProblemCode::RecoveryPayloadIntegrity)));
         CHECK(readFile(journalPath) == changed);
     });
     suite.run("a commit does not read the journal again while fstat still describes it", [] {
@@ -370,7 +382,7 @@ int main(int argc, char **argv)
         writeFile(journalPath, acknowledged);
         CHECK(QFile::remove(store->directory() + "/payloads/" + QString::fromLatin1(RecoveryStore::digest("one"))));
         auto failed = store->commit(transaction("missing", "four"));
-        CHECK(!failed.succeeded && failed.error.contains("missing or unsafe"));
+        CHECK(!failed.succeeded && reports(failed.error, ProblemCode::RecoveryPayloadUnsafe));
         CHECK(readFile(journalPath) == acknowledged);
         overwritePrivate(store->directory() + "/payloads/" + QString::fromLatin1(RecoveryStore::digest("one")), "one");
 
@@ -379,13 +391,14 @@ int main(int argc, char **argv)
         newer.replace(0, 33, "Branch Truce recovery journal v9\n");
         writeFile(journalPath, newer);
         failed = store->commit(transaction("newer", "five"));
-        CHECK(!failed.succeeded && failed.error.contains("newer Branch Truce"));
+        CHECK(!failed.succeeded && reports(failed.error, ProblemCode::RecoveryJournalNewer));
         CHECK(RecoveryStore(store->directory()).read().newerFormat);
         auto unknown = acknowledged;
         unknown.replace(0, 33, "Branch Truce recovery journal vX\n");
         writeFile(journalPath, unknown);
         const auto corrupt = RecoveryStore(store->directory()).read();
-        CHECK(!corrupt.succeeded && !corrupt.newerFormat && corrupt.error.contains("Unknown or corrupt"));
+        CHECK(!corrupt.succeeded && !corrupt.newerFormat
+              && reports(corrupt.error, ProblemCode::RecoveryJournalVersion));
 
         // A journal cut back to its first record continues from that record.
         writeFile(journalPath, acknowledged.left(acknowledged.indexOf('\n', 33) + 1));
@@ -400,7 +413,7 @@ int main(int argc, char **argv)
         CHECK(QFile::setPermissions(journalPath,
                                     QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadOther));
         failed = store->commit(transaction("exposed", "seven"));
-        CHECK(!failed.succeeded && failed.error.contains("unavailable or unsafe"));
+        CHECK(!failed.succeeded && reports(failed.error, ProblemCode::RecoveryJournalUnsafe));
         CHECK(readFile(journalPath) == before);
     });
     suite.run("a store has one lease holder at a time", [] {
@@ -462,7 +475,7 @@ int main(int argc, char **argv)
         const auto journalBefore = readFile(store->directory() + "/journal");
         const auto reused = store->commit(transaction("stable-identity", "a newer draft"));
         CHECK(!reused.succeeded);
-        CHECK(reused.error.contains("identity was reused for different work"));
+        CHECK(reports(reused.error, ProblemCode::RecoveryTransactionReused));
         CHECK_EQ(readFile(store->directory() + "/journal"), journalBefore);
         const auto reloaded = RecoveryStore(store->directory()).read();
         CHECK(reloaded.succeeded && reloaded.transactions == QList<StoredTransaction>{stored(original)});
@@ -476,9 +489,9 @@ int main(int argc, char **argv)
         overwritePrivate(store->directory() + "/payloads/" + QString::fromLatin1(hash), "exact payload bytez");
         QString error;
         CHECK(store->store().payload(hash, &error).isEmpty());
-        CHECK(error.contains("payload integrity check failed"));
+        CHECK(reports(error, ProblemCode::RecoveryPayloadIntegrity));
         const auto reread = RecoveryStore(store->directory()).read();
-        CHECK(!reread.succeeded && reread.error.contains("payload integrity check failed"));
+        CHECK(!reread.succeeded && reports(reread.error, ProblemCode::RecoveryPayloadIntegrity));
     });
     for (const auto &[name, mutate] : invalidRecords) {
         suite.run(std::string("a checksummed record with ") + name + " is refused by reads and commits", [mutate] {
@@ -491,9 +504,9 @@ int main(int argc, char **argv)
             const auto journal = readFile(store->directory() + "/journal");
             const auto reread = RecoveryStore(store->directory()).read();
             CHECK(!reread.succeeded);
-            CHECK(reread.error.contains("schema or ordering is invalid"));
+            CHECK(reports(reread.error, ProblemCode::RecoveryRecordSchema));
             const auto failed = store->commit(transaction("third", "three"));
-            CHECK(!failed.succeeded && failed.error.contains("schema or ordering is invalid"));
+            CHECK(!failed.succeeded && reports(failed.error, ProblemCode::RecoveryRecordSchema));
             CHECK_EQ(readFile(store->directory() + "/journal"), journal);
         });
     }
@@ -508,12 +521,12 @@ int main(int argc, char **argv)
         CHECK(!QFileInfo::exists(relative));
         const auto store = leased(directory.path() + "/recovery");
         const auto refused = store->commit(transaction("", "three"));
-        CHECK(!refused.succeeded && refused.error.contains("Invalid recovery transaction"));
+        CHECK(!refused.succeeded && reports(refused.error, ProblemCode::RecoveryTransactionInvalid));
         CHECK(!QFileInfo::exists(store->directory() + "/journal"));
         auto misnamed = transaction("misnamed", "four");
         misnamed.payloads = {{RecoveryStore::digest("not these bytes"), "four"}};
         const auto wrong = store->commit(misnamed);
-        CHECK(!wrong.succeeded && wrong.error.contains("Invalid recovery payload identity"));
+        CHECK(!wrong.succeeded && reports(wrong.error, ProblemCode::RecoveryPayloadIdentity));
         CHECK(RecoveryStore(store->directory()).read().transactions.isEmpty());
     });
     return suite.report();

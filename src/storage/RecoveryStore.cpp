@@ -1,6 +1,7 @@
 // The recovery store persists app-owned journals and text payloads; a lease is the only way to append.
 #include "RecoveryStore.h"
 #include "core/ResourceLimits.h"
+#include "storage/Problem.h"
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -21,9 +22,10 @@ constexpr auto directoryPermissions = filePermissions | QFileDevice::ExeOwner;
 
 QString payloadLimitError(qint64 size)
 {
-    return QStringLiteral("Recovery payload of %1 bytes exceeds the %2 byte limit; pending input is retained.")
-        .arg(size)
-        .arg(static_cast<qulonglong>(branch_truce::kMaxRecoveryPayloadBytes));
+    return Problem{
+        ProblemCode::RecoveryPayloadTooLarge,
+        {QString::number(size), QString::number(static_cast<qulonglong>(branch_truce::kMaxRecoveryPayloadBytes))}}
+        .encoded();
 }
 
 bool validDigest(const QByteArray &value)
@@ -103,7 +105,7 @@ QByteArray RecoveryStore::payload(const QByteArray &hash, QString *error) const
     const auto path = directory_ + QStringLiteral("/payloads/") + QString::fromLatin1(hash);
     QFile file(path);
     if (!validDigest(hash) || !regularPrivateFile(*files_, path) || !file.open(QIODevice::ReadOnly)) {
-        if (error) *error = QStringLiteral("Recovery payload is missing or unsafe.");
+        if (error) *error = Problem{ProblemCode::RecoveryPayloadUnsafe}.encoded();
         return {};
     }
     if (file.size() > static_cast<qint64>(branch_truce::kMaxRecoveryPayloadBytes)) {
@@ -112,7 +114,7 @@ QByteArray RecoveryStore::payload(const QByteArray &hash, QString *error) const
     }
     const auto bytes = file.readAll();
     if (file.error() != QFileDevice::NoError || digest(bytes) != hash) {
-        if (error) *error = QStringLiteral("Recovery payload integrity check failed.");
+        if (error) *error = Problem{ProblemCode::RecoveryPayloadIntegrity}.encoded();
         return {};
     }
     if (error) error->clear();
@@ -131,7 +133,7 @@ bool RecoveryStore::openJournal(QFile &file, RecoveryRead &result) const
     file.setFileName(path);
     if (root.isSymLink() || !root.isDir() || payloads.isSymLink() || !payloads.isDir()
         || !regularPrivateFile(*files_, path) || !file.open(QIODevice::ReadOnly)) {
-        result.error = QStringLiteral("Recovery journal is unavailable or unsafe.");
+        result.error = Problem{ProblemCode::RecoveryJournalUnsafe}.encoded();
         return false;
     }
     return true;
@@ -145,7 +147,7 @@ RecoveryRead RecoveryStore::read() const
     result = parse(file);
     if (result.succeeded && file.error() != QFileDevice::NoError) {
         result.succeeded = false;
-        result.error = QStringLiteral("Could not read the complete recovery journal.");
+        result.error = Problem{ProblemCode::RecoveryJournalIncomplete}.encoded();
     }
     return result;
 }
@@ -155,13 +157,13 @@ RecoveryRead RecoveryStore::parse(QIODevice &file, std::set<QByteArray> *payload
     RecoveryRead result;
     const auto newer = [&result] {
         result.newerFormat = true;
-        result.error = QStringLiteral("Recovery journal was written by a newer Branch Truce.");
+        result.error = Problem{ProblemCode::RecoveryJournalNewer}.encoded();
         return result;
     };
     const auto version = headerVersion(file.readLine());
     if (version > journalVersion) return newer();
     if (version != journalVersion) {
-        result.error = QStringLiteral("Unknown or corrupt recovery journal version.");
+        result.error = Problem{ProblemCode::RecoveryJournalVersion}.encoded();
         return result;
     }
     result.validBytes = file.pos();
@@ -181,7 +183,7 @@ RecoveryRead RecoveryStore::parse(QIODevice &file, std::set<QByteArray> *payload
         const auto hash = object.value(QStringLiteral("sha256")).toString().toLatin1();
         if (parse.error != QJsonParseError::NoError || !frame.isObject() || body.toBase64() != encoded
             || !validDigest(hash) || hash != digest(body)) {
-            result.error = QStringLiteral("Recovery record integrity check failed.");
+            result.error = Problem{ProblemCode::RecoveryRecordIntegrity}.encoded();
             return result;
         }
         const auto recordDocument = QJsonDocument::fromJson(body, &parse);
@@ -194,11 +196,11 @@ RecoveryRead RecoveryStore::parse(QIODevice &file, std::set<QByteArray> *payload
             || record.value(QStringLiteral("previous")).toString().toLatin1() != result.lastDigest
             || !record.value(QStringLiteral("payloads")).isArray() || !record.value(QStringLiteral("state")).isObject()
             || id.isEmpty()) {
-            result.error = QStringLiteral("Recovery record schema or ordering is invalid.");
+            result.error = Problem{ProblemCode::RecoveryRecordSchema}.encoded();
             return result;
         }
         if (!identities.insert(id).second) {
-            result.error = QStringLiteral("Recovery journal repeats a transaction.");
+            result.error = Problem{ProblemCode::RecoveryTransactionRepeated}.encoded();
             return result;
         }
         for (const auto &reference : record.value(QStringLiteral("payloads")).toArray()) {
@@ -256,7 +258,7 @@ const RecoveryStore::JournalEnd *RecoveryStore::refreshEnd(QString *error)
     const auto current = parse(file, &verified_);
     if (!current.succeeded || file.error() != QFileDevice::NoError) {
         verified_.clear();
-        *error = current.succeeded ? QStringLiteral("Could not read the complete recovery journal.") : current.error;
+        *error = current.succeeded ? Problem{ProblemCode::RecoveryJournalIncomplete}.encoded() : current.error;
         return nullptr;
     }
     end_ = JournalEnd{stamp, current.validBytes, current.transactions.size(), current.lastDigest, {}};
@@ -272,18 +274,16 @@ RecoveryCommit RecoveryStore::commit(const RecoveryTransaction &transaction)
 
 RecoveryCommit RecoveryStore::append(const RecoveryTransaction &transaction)
 {
-    if (!QDir::isAbsolutePath(directory_))
-        return {false, QStringLiteral("Recovery storage needs an absolute app-owned location.")};
+    if (!QDir::isAbsolutePath(directory_)) return {false, Problem{ProblemCode::RecoveryStorageLocation}.encoded()};
     if (transaction.id.isEmpty() || transaction.state.isEmpty())
-        return {false, QStringLiteral("Invalid recovery transaction.")};
+        return {false, Problem{ProblemCode::RecoveryTransactionInvalid}.encoded()};
     const auto payloadDirectory = directory_ + QStringLiteral("/payloads");
     if (!privateDirectory(*files_, directory_, unsynced_) || !privateDirectory(*files_, payloadDirectory, unsynced_))
-        return {false,
-                QStringLiteral("Could not create private recovery storage; retry after repairing its location.")};
+        return {false, Problem{ProblemCode::RecoveryStorageCreate}.encoded()};
     const auto journalPath = directory_ + QStringLiteral("/journal");
     if (!QFileInfo::exists(journalPath)) {
         if (!atomicFile(*files_, journalPath, header))
-            return {false, QStringLiteral("Could not initialize the recovery journal.")};
+            return {false, Problem{ProblemCode::RecoveryJournalInitialize}.encoded()};
         unsynced_.insert(directory_);
     }
     QString readError;
@@ -294,7 +294,7 @@ RecoveryCommit RecoveryStore::append(const RecoveryTransaction &transaction)
     // Cutting an interrupted tail changes the file, so its stamp is taken again.
     if (!journal.open(QIODevice::ReadWrite) || (journal.size() != validBytes && !journal.resize(validBytes))
         || !journal.seek(validBytes))
-        return {false, QStringLiteral("Could not open the recovery commit boundary.")};
+        return {false, Problem{ProblemCode::RecoveryCommitBoundary}.encoded()};
     const auto restamp = [&] {
         if (end_) end_->stamp = stampOf(journal);
     };
@@ -303,9 +303,8 @@ RecoveryCommit RecoveryStore::append(const RecoveryTransaction &transaction)
     // without appending the action twice.
     if (const auto committed = current->committed.find(transaction.id); committed != current->committed.end()) {
         if (committed->second != stateDigest(transaction.state))
-            return {false, QStringLiteral("Recovery transaction identity was reused for different work.")};
-        if (!synchronize(*files_, journal))
-            return {false, QStringLiteral("Could not flush the pending recovery transaction; retry.")};
+            return {false, Problem{ProblemCode::RecoveryTransactionReused}.encoded()};
+        if (!synchronize(*files_, journal)) return {false, Problem{ProblemCode::RecoveryPendingFlush}.encoded()};
         restamp();
         return {true, {}};
     }
@@ -314,7 +313,7 @@ RecoveryCommit RecoveryStore::append(const RecoveryTransaction &transaction)
         references.push_back(QString::fromLatin1(entry.key()));
         if (verified_.contains(entry.key())) continue;
         if (!validDigest(entry.key()) || digest(entry.value()) != entry.key())
-            return {false, QStringLiteral("Invalid recovery payload identity.")};
+            return {false, Problem{ProblemCode::RecoveryPayloadIdentity}.encoded()};
         if (entry.value().size() > static_cast<qsizetype>(branch_truce::kMaxRecoveryPayloadBytes))
             return {false, payloadLimitError(entry.value().size())};
         const auto path = payloadDirectory + QLatin1Char('/') + QString::fromLatin1(entry.key());
@@ -324,7 +323,7 @@ RecoveryCommit RecoveryStore::append(const RecoveryTransaction &transaction)
             if (!error.isEmpty()) return {false, error};
         } else {
             if (!atomicFile(*files_, path, entry.value()))
-                return {false, QStringLiteral("Could not commit a recovery payload; pending input is retained.")};
+                return {false, Problem{ProblemCode::RecoveryPayloadCommit}.encoded()};
             unsynced_.insert(payloadDirectory);
         }
         verified_.insert(entry.key());
@@ -332,8 +331,7 @@ RecoveryCommit RecoveryStore::append(const RecoveryTransaction &transaction)
     // The record must not outlive the directory entries it depends on: the
     // store, the journal and its payloads.
     for (auto pending = unsynced_.begin(); pending != unsynced_.end(); pending = unsynced_.erase(pending)) {
-        if (!syncDirectory(*files_, *pending))
-            return {false, QStringLiteral("Could not sync recovery storage; pending input is retained for retry.")};
+        if (!syncDirectory(*files_, *pending)) return {false, Problem{ProblemCode::RecoveryStorageSync}.encoded()};
     }
     const QJsonObject record{{QStringLiteral("version"), journalVersion},
                              {QStringLiteral("sequence"), QString::number(current->records + 1)},
@@ -348,7 +346,7 @@ RecoveryCommit RecoveryStore::append(const RecoveryTransaction &transaction)
                            .toJson(QJsonDocument::Compact)
         + '\n';
     if (journal.write(frame) != frame.size() || !synchronize(*files_, journal))
-        return {false, QStringLiteral("Recovery commit failed; pending input is retained for retry.")};
+        return {false, Problem{ProblemCode::RecoveryCommitFailed}.encoded()};
     if (end_) {
         end_->size += frame.size();
         ++end_->records;

@@ -62,19 +62,19 @@ QList<QByteArray> RepositoryDiscovery::arguments() const
     return {};
 }
 
-bool RepositoryDiscovery::fail(const QString &reason)
+bool RepositoryDiscovery::fail(Problem reason)
 {
     unsupported(reason);
     result.outcome = Outcome::InspectionFailure;
     step = Step::Done;
     return false;
 }
-void RepositoryDiscovery::unsupported(const QString &reason)
+void RepositoryDiscovery::unsupported(Problem reason)
 {
     result.repository.operation = RepositoryOperation::Unsupported;
     result.repository.supported = false;
-    result.repository.diagnostic = reason;
-    result.diagnostic = reason;
+    result.repository.problem = reason;
+    result.problem = std::move(reason);
 }
 
 bool RepositoryDiscovery::captureMetadata(QMap<QString, QByteArray> &snapshot)
@@ -86,12 +86,12 @@ bool RepositoryDiscovery::captureMetadata(QMap<QString, QByteArray> &snapshot)
         const QFileInfo info(path);
         if (!info.exists() && !info.isSymLink()) return true;
         if (info.isSymLink() || (directory ? !info.isDir() : !info.isFile())) {
-            return fail(QStringLiteral("Operation metadata is not a regular %1: %2")
-                            .arg(directory ? QStringLiteral("directory") : QStringLiteral("file"), name));
+            return fail({directory ? ProblemCode::DiscoveryMetadataNotDirectory : ProblemCode::DiscoveryMetadataNotFile,
+                         {name}});
         }
         if (directory) {
             if (::access(QFile::encodeName(path).constData(), R_OK | X_OK) != 0)
-                return fail(QStringLiteral("Operation metadata directory is unreadable: ") + name);
+                return fail({ProblemCode::DiscoveryMetadataDirectoryUnreadable, {name}});
             snapshot.insert(name, "directory");
             return true;
         }
@@ -100,19 +100,19 @@ bool RepositoryDiscovery::captureMetadata(QMap<QString, QByteArray> &snapshot)
         const int fd = ::open(QFile::encodeName(path).constData(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
         struct stat stat{};
         QFile file;
-        if (fd < 0) return fail(QStringLiteral("Operation metadata is unreadable: ") + name);
+        if (fd < 0) return fail({ProblemCode::DiscoveryMetadataUnreadable, {name}});
         if (::fstat(fd, &stat) != 0 || !S_ISREG(stat.st_mode)) {
             ::close(fd);
-            return fail(QStringLiteral("Operation metadata changed type: ") + name);
+            return fail({ProblemCode::DiscoveryMetadataChangedType, {name}});
         }
         if (!file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) {
             ::close(fd);
-            return fail(QStringLiteral("Operation metadata cannot be read: ") + name);
+            return fail({ProblemCode::DiscoveryMetadataCannotRead, {name}});
         }
         const auto bytes = file.read(metadataLimit - total + 1);
         total += bytes.size();
         if (file.error() != QFileDevice::NoError || total > metadataLimit)
-            return fail(QStringLiteral("Operation metadata is unreadable or oversized: ") + name);
+            return fail({ProblemCode::DiscoveryMetadataOversized, {name}});
         snapshot.insert(name, bytes);
         return true;
     };
@@ -138,10 +138,10 @@ bool RepositoryDiscovery::captureMetadata(QMap<QString, QByteArray> &snapshot)
 bool RepositoryDiscovery::readId(const QString &name, QByteArray &value, bool required)
 {
     if (!metadata.contains(name)) {
-        return !required || fail(QStringLiteral("Required operation metadata is missing: ") + name);
+        return !required || fail({ProblemCode::DiscoveryMetadataMissing, {name}});
     }
     value = line(metadata.value(name));
-    if (!objectId(value)) return fail(QStringLiteral("Invalid commit identity in operation metadata: ") + name);
+    if (!objectId(value)) return fail({ProblemCode::DiscoveryInvalidCommitIdentity, {name}});
     value = value.toLower();
     return true;
 }
@@ -158,16 +158,15 @@ bool RepositoryDiscovery::identifyOperation()
     if ((merge && (rebaseMerge || rebaseApply)) || (rebaseMerge && rebaseApply)
         || (foreign && (merge || rebaseMerge || rebaseApply || metadata.contains(QStringLiteral("REBASE_HEAD"))))
         || (cherryPick && revert))
-        return fail(QStringLiteral("Conflicting merge, rebase or sequencer operation metadata"));
+        return fail(ProblemCode::DiscoveryConflictingOperations);
     if (foreign) {
-        unsupported(QStringLiteral("Outside app: cherry-pick, revert and sequencer operations are unsupported"));
+        unsupported(ProblemCode::DiscoverySequencerUnsupported);
         return true;
     }
     if (merge) {
-        if (metadata.contains(QStringLiteral("REBASE_HEAD")))
-            return fail(QStringLiteral("MERGE_HEAD conflicts with REBASE_HEAD"));
+        if (metadata.contains(QStringLiteral("REBASE_HEAD"))) return fail(ProblemCode::DiscoveryMergeAndRebaseHead);
         if (line(metadata.value(QStringLiteral("MERGE_HEAD"))).contains('\n'))
-            return fail(QStringLiteral("Outside app: merges with multiple MERGE_HEAD commits are unsupported"));
+            return fail(ProblemCode::DiscoveryMultipleMergeHeads);
         if (!readId(QStringLiteral("MERGE_HEAD"), other)) return false;
         context.operation = RepositoryOperation::Merge;
         return true;
@@ -177,55 +176,53 @@ bool RepositoryDiscovery::identifyOperation()
         if (rebaseApply && metadata.contains(directory + QStringLiteral("applying"))) {
             if (metadata.contains(directory + QStringLiteral("rebasing"))
                 || metadata.contains(QStringLiteral("REBASE_HEAD")))
-                return fail(QStringLiteral("Conflicting apply-mailbox and rebase metadata"));
-            unsupported(QStringLiteral("Outside app: apply-mailbox (git am) is not a supported rebase"));
+                return fail(ProblemCode::DiscoveryApplyAndRebase);
+            unsupported(ProblemCode::DiscoveryApplyMailbox);
             return true;
         }
         if (rebaseApply && !metadata.contains(directory + QStringLiteral("rebasing")))
-            return fail(QStringLiteral("rebase-apply metadata does not identify a rebase"));
+            return fail(ProblemCode::DiscoveryApplyNotRebase);
         if (!readId(directory + QStringLiteral("orig-head"), originalHead)
             || !readId(directory + QStringLiteral("onto"), onto))
             return false;
         headName = line(metadata.value(directory + QStringLiteral("head-name")));
         if (metadata.contains(directory + QStringLiteral("head-name")) && !branchContext(headName))
-            return fail(QStringLiteral("Invalid rebase head-name context"));
+            return fail(ProblemCode::DiscoveryInvalidHeadName);
         QByteArray recorded;
         if (!readId(QStringLiteral("REBASE_HEAD"), other, false)
             || !readId(directory + (rebaseMerge ? QStringLiteral("stopped-sha") : QStringLiteral("original-commit")),
                        recorded, false))
             return false;
         if (other.isEmpty()) other = recorded;
-        if (other.isEmpty()) return fail(QStringLiteral("Rebase has no verified commit being replayed"));
-        if (!recorded.isEmpty() && other != recorded)
-            return fail(QStringLiteral("Rebase replay metadata disagrees with REBASE_HEAD"));
+        if (other.isEmpty()) return fail(ProblemCode::DiscoveryNoReplayedCommit);
+        if (!recorded.isEmpty() && other != recorded) return fail(ProblemCode::DiscoveryReplayDisagrees);
         context.operation = RepositoryOperation::Rebase;
         return true;
     }
-    if (metadata.contains(QStringLiteral("REBASE_HEAD")))
-        return fail(QStringLiteral("REBASE_HEAD exists without supported rebase metadata"));
+    if (metadata.contains(QStringLiteral("REBASE_HEAD"))) return fail(ProblemCode::DiscoveryRebaseHeadAlone);
     if (!result.indexEntries.isEmpty())
-        unsupported(QStringLiteral("Outside app: unresolved index entries have no verified merge or rebase identity"));
+        unsupported(ProblemCode::DiscoveryUnverifiedIndex);
     else
-        context.diagnostic = QStringLiteral("No merge or rebase is in progress");
+        context.problem = ProblemCode::DiscoveryNoOperation;
     return true;
 }
 
 bool RepositoryDiscovery::readCommit(const QByteArray &bytes)
 {
     const auto end = bytes.indexOf("\n\n");
-    if (end < 0) return fail(QStringLiteral("Invalid commit object in operation identity"));
+    if (end < 0) return fail(ProblemCode::DiscoveryInvalidCommit);
     bool tree = false;
     Commit commit;
     for (const auto &header : bytes.first(end).split('\n')) {
         if (header.startsWith("tree ")) {
-            if (tree || !objectId(header.mid(5))) return fail(QStringLiteral("Invalid commit tree identity"));
+            if (tree || !objectId(header.mid(5))) return fail(ProblemCode::DiscoveryInvalidTree);
             tree = true;
         } else if (header.startsWith("parent ")) {
-            if (!objectId(header.mid(7))) return fail(QStringLiteral("Invalid commit parent identity"));
+            if (!objectId(header.mid(7))) return fail(ProblemCode::DiscoveryInvalidParent);
             commit.parents.append(header.mid(7));
         }
     }
-    if (!tree) return fail(QStringLiteral("Operation identity has no commit tree"));
+    if (!tree) return fail(ProblemCode::DiscoveryCommitWithoutTree);
     commits.insert(commitQueue.takeFirst(), commit);
     return true;
 }
@@ -246,7 +243,7 @@ bool RepositoryDiscovery::readTree(const QByteArray &bytes)
     qsizetype offset = 0;
     while (offset < bytes.size()) {
         const auto end = bytes.indexOf('\0', offset);
-        if (end < 0) return fail(QStringLiteral("Invalid NUL-delimited source tree"));
+        if (end < 0) return fail(ProblemCode::DiscoveryInvalidSourceTree);
         const auto record = bytes.mid(offset, end - offset);
         const auto tab = record.indexOf('\t');
         const auto fields = record.first(tab < 0 ? 0 : tab).split(' ');
@@ -257,7 +254,7 @@ bool RepositoryDiscovery::readTree(const QByteArray &bytes)
         if (fields.size() != 3 || fields[0].size() != 6 || !objectId(fields[2])
             || (fields[1] != "blob" && fields[1] != "commit" && fields[1] != "tree") || !relativeFile(path)
             || !requested || (!sourceTree && tree.contains(path)))
-            return fail(QStringLiteral("Source tree does not match the captured conflict paths"));
+            return fail(ProblemCode::DiscoveryTreeMismatch);
         if (sourceTree) {
             auto &objects = sourceObjects[treeQueue.front()];
             const auto key = fields[0] + ' ' + fields[2];
@@ -308,11 +305,9 @@ void RepositoryDiscovery::verifyStages()
         const bool elsewhere = !trees.value(source).contains(entry.path)
             && sourceObjects.value(source).value(entry.mode + ' ' + entry.objectId);
         if (present.contains(key) || source.isEmpty() || (!atPath && !elsewhere)) {
-            result.repository.unsupportedPaths.insert(
-                entry.path,
-                QStringLiteral("Outside app: index stage %1 provenance does not match its verified commit at %2")
-                    .arg(entry.stage)
-                    .arg(displayPath(entry.path)));
+            result.repository.unsupportedPaths.insert(entry.path,
+                                                      Problem{ProblemCode::DiscoveryStageProvenance,
+                                                              {QString::number(entry.stage), displayPath(entry.path)}});
         }
         present.insert(key);
     }
@@ -320,10 +315,7 @@ void RepositoryDiscovery::verifyStages()
         for (qsizetype i = 0; i < sources.size(); ++i) {
             if (trees.value(sources[i]).contains(path) && !present.contains(QByteArray::number(i + 1) + '\0' + path)) {
                 result.repository.unsupportedPaths.insert(
-                    path,
-                    QStringLiteral("Outside app: missing index stage %1 has ambiguous source topology at %2")
-                        .arg(i + 1)
-                        .arg(displayPath(path)));
+                    path, Problem{ProblemCode::DiscoveryMissingStage, {QString::number(i + 1), displayPath(path)}});
             }
         }
     }
@@ -333,7 +325,7 @@ bool RepositoryDiscovery::finish()
 {
     QMap<QString, QByteArray> current;
     if (!captureMetadata(current)) return false;
-    if (current != metadata) return fail(QStringLiteral("Operation metadata changed during discovery; inspect again"));
+    if (current != metadata) return fail(ProblemCode::DiscoveryMetadataChanged);
     auto &context = result.repository;
     if (context.operation == RepositoryOperation::Merge || context.operation == RepositoryOperation::Rebase) {
         const bool rebase = context.operation == RepositoryOperation::Rebase;
@@ -360,11 +352,9 @@ bool RepositoryDiscovery::finish()
 bool RepositoryDiscovery::consume(const QByteArray &output, int code)
 {
     if (code != 0 && !(step == Step::MergeBase && code == 1 && output.isEmpty())) {
-        const auto reason = step == Step::ReplayAncestor
-            ? QStringLiteral("Replayed commit is not part of the original rebase history")
-            : step == Step::OntoAncestor
-            ? QStringLiteral("Current HEAD is not based on the recorded rebase onto commit")
-            : QStringLiteral("Git could not verify operation metadata or a required local source object");
+        const auto reason = step == Step::ReplayAncestor ? ProblemCode::DiscoveryReplayOutsideHistory
+            : step == Step::OntoAncestor                 ? ProblemCode::DiscoveryHeadNotOnOnto
+                                                         : ProblemCode::DiscoveryUnverifiedObject;
         return fail(reason);
     }
     switch (step) {
@@ -374,16 +364,16 @@ bool RepositoryDiscovery::consume(const QByteArray &output, int code)
         const auto canonical = QFileInfo(path).canonicalFilePath();
         if (!output.endsWith('\n') || bytes.isEmpty() || bytes.contains('\0') || QFile::encodeName(path) != bytes
             || !QDir::isAbsolutePath(path) || canonical.isEmpty() || !QFileInfo(canonical).isDir())
-            return fail(QStringLiteral("Git did not provide a usable per-worktree Git directory"));
+            return fail(ProblemCode::DiscoveryGitDirectory);
         result.repository.gitDirectory = canonical;
         step = Step::Index;
         break;
     }
     case Step::Index: {
         const auto entries = parseIndex(output);
-        if (!entries) return fail(QStringLiteral("Invalid unmerged index records during discovery"));
+        if (!entries) return fail(ProblemCode::DiscoveryUnmergedRecords);
         for (const auto &entry : *entries) {
-            if (entry.stage == 0) return fail(QStringLiteral("Stage zero appeared in the unmerged index"));
+            if (entry.stage == 0) return fail(ProblemCode::DiscoveryStageZero);
             if (!paths.contains(entry.path)) paths.append(entry.path);
         }
         result.indexEntries = *entries;
@@ -397,7 +387,7 @@ bool RepositoryDiscovery::consume(const QByteArray &output, int code)
     }
     case Step::Head:
         head = line(output);
-        if (!objectId(head)) return fail(QStringLiteral("HEAD has no valid commit identity"));
+        if (!objectId(head)) return fail(ProblemCode::DiscoveryInvalidHead);
         for (const auto &id : {head, other, originalHead, onto}) {
             if (!id.isEmpty() && !commitQueue.contains(id)) commitQueue.append(id);
         }
@@ -408,9 +398,7 @@ bool RepositoryDiscovery::consume(const QByteArray &output, int code)
         if (commitQueue.isEmpty()) {
             if (result.repository.operation == RepositoryOperation::Rebase) {
                 const auto parents = commits.value(other).parents;
-                if (parents.size() > 1)
-                    return fail(
-                        QStringLiteral("Outside app: replaying merge commits has unsupported stage provenance"));
+                if (parents.size() > 1) return fail(ProblemCode::DiscoveryMergeCommitReplay);
                 if (!parents.isEmpty()) base = parents.front();
                 step = Step::ReplayAncestor;
             } else
@@ -419,11 +407,10 @@ bool RepositoryDiscovery::consume(const QByteArray &output, int code)
         break;
     case Step::MergeBase: {
         const auto bases = output.isEmpty() ? QList<QByteArray>{} : line(output).split('\n');
-        if (bases.size() > 1)
-            return fail(QStringLiteral("Outside app: multiple merge bases have ambiguous earlier-stage provenance"));
+        if (bases.size() > 1) return fail(ProblemCode::DiscoveryMultipleBases);
         if (!bases.isEmpty()) {
             base = bases.front();
-            if (!objectId(base)) return fail(QStringLiteral("Invalid common earlier commit identity"));
+            if (!objectId(base)) return fail(ProblemCode::DiscoveryInvalidBase);
         }
         beginTrees();
         break;
@@ -433,12 +420,12 @@ bool RepositoryDiscovery::consume(const QByteArray &output, int code)
     case Step::Tree:
     case Step::SourceTree: return readTree(output);
     case Step::FinalIndex:
-        if (output != index) return fail(QStringLiteral("Unmerged index changed during discovery; inspect again"));
+        if (output != index) return fail(ProblemCode::DiscoveryIndexChanged);
         if (head.isEmpty()) return finish();
         step = Step::FinalHead;
         break;
     case Step::FinalHead:
-        if (line(output) != head) return fail(QStringLiteral("HEAD changed during discovery; inspect again"));
+        if (line(output) != head) return fail(ProblemCode::DiscoveryHeadChanged);
         step = Step::Names;
         break;
     case Step::Names: {
@@ -447,7 +434,7 @@ bool RepositoryDiscovery::consume(const QByteArray &output, int code)
             if (record.isEmpty()) continue;
             const auto fields = record.split('\0');
             if (fields.size() != 2 || !objectId(fields[0]) || !branchContext(fields[1]))
-                return fail(QStringLiteral("Invalid local branch identity during discovery"));
+                return fail(ProblemCode::DiscoveryInvalidBranch);
             names[fields[0]].append(fields[1].mid(11));
         }
         const auto uniqueName = [&names](const QByteArray &id) {

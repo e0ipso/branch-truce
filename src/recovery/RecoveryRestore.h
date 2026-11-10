@@ -31,7 +31,8 @@ struct RecoveryRestore {
     std::optional<AdoptedStore> adopted;
     std::vector<FileSession> files;
     std::set<std::string> newFiles;
-    QStringList diagnostics;
+    // What the restore found and did, for the window to tell the user.
+    QList<Problem> diagnostics;
     // Filled only when several stores with app edits block restoration.
     std::vector<RecoveryChoice> choices;
     // Files whose repository file was replaced by a copy: bytes, mode, size,
@@ -56,11 +57,12 @@ struct RestoreOptions {
 // How long a set-aside store is kept before a later restore deletes it.
 inline constexpr int kSetAsideLifetimeDays = 30;
 
-// Worker-only, read-only. Runs Git through gitExecutable.
-[[nodiscard]] QString revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
-                                             const git::RepositoryContext &repository, const QString &gitExecutable);
+// Worker-only, read-only. Runs Git on runners from git.
+[[nodiscard]] Problem revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
+                                             const git::RepositoryContext &repository, const git::GitRunners &git);
 
-// Worker-only. Inspects the repository read-only; ambiguous inventories and
+// Worker-only. Inspects the repository read-only, running Git on runners from
+// git; ambiguous inventories and
 // mismatched identities fail closed and no worktree or index mutation is
 // retried. Stores holding only launch captures carry no work: one that is not
 // adopted is deleted. chosenSession names the store the user picked; it is
@@ -71,6 +73,6 @@ inline constexpr int kSetAsideLifetimeDays = 30;
 // expires (see RestoreOptions::now).
 [[nodiscard]] RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude,
                                               const git::RepositoryContext &repository,
-                                              const std::vector<FileSession> &observed, const QString &gitExecutable,
+                                              const std::vector<FileSession> &observed, const git::GitRunners &git,
                                               const QString &chosenSession = {}, const RestoreOptions &options = {});
 }

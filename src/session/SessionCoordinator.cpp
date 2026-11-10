@@ -254,7 +254,7 @@ public:
             case git::Mutation::Uncertain: result.mutation = MutationObservation::Uncertain; break;
             }
             result.data = value.standardOutput;
-            result.diagnostic = value.diagnostic;
+            result.diagnostic = value.problem.encoded();
             result.gitResult = value;
             job->adapter = nullptr;
             adapter->deleteLater();
@@ -325,9 +325,6 @@ public:
     std::vector<TaskCompletion> mutations;
 };
 
-SessionCoordinator::SessionCoordinator(SessionStore &store, QString gitExecutable, QObject *parent)
-    : SessionCoordinator(store, git::gitAdapters(std::move(gitExecutable)), parent)
-{}
 SessionCoordinator::SessionCoordinator(SessionStore &store, git::GitRunners git, QObject *parent)
     : QObject(parent), d(std::make_unique<State>(*this, store, std::move(git)))
 {}

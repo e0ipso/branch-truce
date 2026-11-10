@@ -22,6 +22,7 @@
 #include "app/Appearance.h"
 #include "app/Application.h"
 #include "app/Translations.h"
+#include "fixtures/AppSession.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/QuickScene.h"
@@ -117,7 +118,7 @@ public:
         test_support::waitForLayout(window, QStringLiteral("earlierViewport"), 60);
     }
 
-    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+    Application controller{test_support::windowConfig()};
     QQmlApplicationEngine engine;
     QQuickWindow *window = nullptr;
 };

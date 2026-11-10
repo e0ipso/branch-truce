@@ -15,13 +15,7 @@
 
 namespace branch_truce::git {
 namespace {
-// A reason already carries the "Outside app: " prefix; wrapping it in another reason keeps one.
-QString withoutOutsideAppPrefix(const QString &reason)
-{
-    const auto prefix = QStringLiteral("Outside app: ");
-    return reason.startsWith(prefix) ? reason.mid(prefix.size()) : reason;
-}
-void exclude(Conflict &conflict, ConflictSupport support, const QString &reason)
+void exclude(Conflict &conflict, ConflictSupport support, const Problem &reason)
 {
     conflict.support = support;
     conflict.reason = reason;
@@ -97,32 +91,29 @@ ResultRead readResult(const QString &root, const QByteArray &path, QByteArray &b
     return ResultRead::Success;
 }
 
-QString textEnvelopeFailure(const QByteArray &bytes)
+Problem textEnvelopeFailure(const QByteArray &bytes)
 {
     if (bytes.isEmpty()) return {};
     const auto assessment =
         branch_truce::assessText(std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
     if (assessment.limit == branch_truce::TextLimit::Within) return {};
-    const auto limit = assessment.limit == branch_truce::TextLimit::LineBytes
-        ? QStringLiteral("Line of %1 bytes exceeds the supported %2 byte line limit")
-              .arg(static_cast<qulonglong>(assessment.maxLineBytes))
-              .arg(static_cast<qulonglong>(branch_truce::kMaxLineBytes))
-        : QStringLiteral("Text of %1 bytes exceeds the supported %2 byte recovery payload limit")
-              .arg(static_cast<qulonglong>(assessment.bytes))
-              .arg(static_cast<qulonglong>(branch_truce::kMaxRecoveryPayloadBytes));
-    return QStringLiteral("Load error: %1; the captured file was not loaded").arg(limit);
+    if (assessment.limit == branch_truce::TextLimit::LineBytes)
+        return {ProblemCode::ClassificationLineTooLong,
+                {QString::number(static_cast<qulonglong>(assessment.maxLineBytes)),
+                 QString::number(static_cast<qulonglong>(branch_truce::kMaxLineBytes))}};
+    return {ProblemCode::ClassificationTextTooLarge,
+            {QString::number(static_cast<qulonglong>(assessment.bytes)),
+             QString::number(static_cast<qulonglong>(branch_truce::kMaxRecoveryPayloadBytes))}};
 }
 
 void excludeUnreadResult(Conflict &conflict, ResultRead read)
 {
     if (read == ResultRead::UnsupportedTopology) {
-        exclude(conflict, ConflictSupport::TopologyConflict,
-                QStringLiteral("Outside app: current result must be a regular file without symlink traversal"));
+        exclude(conflict, ConflictSupport::TopologyConflict, ProblemCode::ClassificationResultTopology);
     } else {
         exclude(conflict, ConflictSupport::LoadFailure,
-                QStringLiteral("Load error: current result could not be read completely and stably within the %1 "
-                               "byte limit; check the file and reopen the session")
-                    .arg(static_cast<qulonglong>(branch_truce::kMaxRecoveryPayloadBytes)));
+                {ProblemCode::ClassificationResultUnreadable,
+                 {QString::number(static_cast<qulonglong>(branch_truce::kMaxRecoveryPayloadBytes))}});
     }
 }
 } // namespace
@@ -137,13 +128,13 @@ public:
         QObject::connect(&conversion, &TextConversion::finished, q,
                          [this](const TextConversionResult &observed) { converted(observed); });
     }
-    void complete(Outcome outcome, const QString &diagnostic = {})
+    void complete(Outcome outcome, const Problem &problem = {})
     {
         result.outcome = outcome;
-        result.diagnostic = diagnostic;
+        result.problem = problem;
         if (outcome != Outcome::Success) {
             for (auto &conflict : result.conflicts) {
-                if (conflict.editable()) exclude(conflict, ConflictSupport::InspectionFailure, diagnostic);
+                if (conflict.editable()) exclude(conflict, ConflictSupport::InspectionFailure, problem);
             }
         }
         active = false;
@@ -153,24 +144,22 @@ public:
     void discover()
     {
         if (cancelled) {
-            complete(Outcome::Cancelled, QStringLiteral("Outside app: conflict inspection cancelled"));
+            complete(Outcome::Cancelled, ProblemCode::ClassificationCancelled);
             return;
         }
         const auto &r = result.request;
         if (!adapter->start({Operation::DiscoverRepository, r.directory, {}, {}, r.sessionGeneration, r.inputRevision}))
-            complete(Outcome::ProcessFailure, QStringLiteral("Outside app: conflict discovery was unexpectedly busy"));
+            complete(Outcome::ProcessFailure, ProblemCode::ClassificationBusy);
     }
     void discovered(const Result &observed)
     {
         if (cancelled) {
-            complete(Outcome::Cancelled, QStringLiteral("Outside app: conflict inspection cancelled"));
+            complete(Outcome::Cancelled, ProblemCode::ClassificationCancelled);
             return;
         }
         if (rechecking) {
             if (!sameSnapshot(snapshot, observed)) {
-                complete(
-                    Outcome::InspectionFailure,
-                    QStringLiteral("Outside app: operation or index changed during classification; inspect again"));
+                complete(Outcome::InspectionFailure, ProblemCode::ClassificationChanged);
                 return;
             }
             for (auto &conflict : result.conflicts) {
@@ -178,20 +167,17 @@ public:
                 QByteArray current;
                 SnapshotFileIdentity identity;
                 const auto read = readResult(result.repository.worktreeRoot, conflict.path, current, identity);
-                const auto envelope = read == ResultRead::Success ? textEnvelopeFailure(current) : QString{};
+                const auto envelope = read == ResultRead::Success ? textEnvelopeFailure(current) : Problem{};
                 if (read != ResultRead::Success) {
                     excludeUnreadResult(conflict, read);
                 } else if (!envelope.isEmpty()) {
                     current.clear();
                     exclude(conflict, ConflictSupport::LoadFailure, envelope);
                 } else if (current != conflict.result->originalBytes || identity != conflict.resultIdentity) {
-                    exclude(conflict, ConflictSupport::TopologyConflict,
-                            QStringLiteral("Outside app: current result changed or became unreadable during "
-                                           "classification; inspect again"));
+                    exclude(conflict, ConflictSupport::TopologyConflict, ProblemCode::ClassificationResultChanged);
                 } else if (conflict.sources.front().policy.configuration != observed.conversionPolicy.configuration) {
                     exclude(conflict, ConflictSupport::UnsupportedConversion,
-                            QStringLiteral(
-                                "Outside app: conversion configuration changed during classification; inspect again"));
+                            ProblemCode::ClassificationConfigurationChanged);
                 }
             }
             complete(Outcome::Success);
@@ -210,7 +196,7 @@ public:
             result.conflicts[positions.value(entry.path)].stages.append(entry);
         }
         if (observed.outcome != Outcome::Success || observed.outputIncomplete) {
-            const auto reason = QStringLiteral("Outside app: repository inspection failed: ") + observed.diagnostic;
+            const auto reason = Problem{ProblemCode::ClassificationInspectionFailed}.wrapping(observed.problem);
             for (auto &conflict : result.conflicts) exclude(conflict, ConflictSupport::InspectionFailure, reason);
             complete(observed.outcome == Outcome::Success ? Outcome::OutputLimit : observed.outcome, reason);
             return;
@@ -240,29 +226,21 @@ public:
                 regular = regular && (entry.mode == "100644" || entry.mode == "100755");
             }
             if (!valid)
-                exclude(conflict, ConflictSupport::InspectionFailure,
-                        QStringLiteral("Outside app: invalid or duplicate conflict stages"));
+                exclude(conflict, ConflictSupport::InspectionFailure, ProblemCode::ClassificationInvalidStages);
             else if (!regular)
-                exclude(conflict, ConflictSupport::UnsupportedType,
-                        QStringLiteral("Outside app: symlink, submodule or other non-regular source type requires "
-                                       "external resolution"));
+                exclude(conflict, ConflictSupport::UnsupportedType, ProblemCode::ClassificationNonRegular);
             else if (!stages[2] || !stages[3])
-                exclude(
-                    conflict, ConflictSupport::MissingSide,
-                    QStringLiteral("Outside app: missing stage 2 or 3 requires a deletion or destination decision"));
+                exclude(conflict, ConflictSupport::MissingSide, ProblemCode::ClassificationMissingSide);
             else if (stages[2]->mode != stages[3]->mode)
-                exclude(conflict, ConflictSupport::ModeConflict,
-                        QStringLiteral("Outside app: stages 2 and 3 disagree on the executable mode"));
+                exclude(conflict, ConflictSupport::ModeConflict, ProblemCode::ClassificationModeConflict);
             else if (ambiguous.contains(conflict.path))
-                exclude(
-                    conflict, ConflictSupport::TopologyConflict,
-                    QStringLiteral("Outside app: conflicting file and directory paths require a topology decision"));
+                exclude(conflict, ConflictSupport::TopologyConflict, ProblemCode::ClassificationTopology);
             else if (result.repository.unsupportedPaths.contains(conflict.path))
                 exclude(conflict, ConflictSupport::UnverifiedSource,
                         result.repository.unsupportedPaths.value(conflict.path));
             else if (!result.repository.supported)
                 exclude(conflict, ConflictSupport::UnsupportedOperation,
-                        QStringLiteral("Outside app: ") + withoutOutsideAppPrefix(result.repository.diagnostic));
+                        Problem{ProblemCode::ClassificationUnsupportedOperation}.wrapping(result.repository.problem));
             else {
                 conflict.mode = stages[2]->mode;
                 conflict.support = ConflictSupport::SupportedText;
@@ -278,7 +256,7 @@ public:
                 const auto read =
                     readResult(result.repository.worktreeRoot, conflict.path, launchBytes, launchIdentity);
                 if (read == ResultRead::Success) conflict.launchSize = launchIdentity.size;
-                const auto envelope = read == ResultRead::Success ? textEnvelopeFailure(launchBytes) : QString{};
+                const auto envelope = read == ResultRead::Success ? textEnvelopeFailure(launchBytes) : Problem{};
                 if (read == ResultRead::Success && envelope.isEmpty()) {
                     source = 0;
                     readSource();
@@ -307,34 +285,31 @@ public:
         request.stages = conflict.stages;
         request.sessionGeneration = result.request.sessionGeneration;
         request.inputRevision = result.request.inputRevision;
-        if (!conversion.start(request))
-            complete(Outcome::ProcessFailure, QStringLiteral("Outside app: source conversion was unexpectedly busy"));
+        if (!conversion.start(request)) complete(Outcome::ProcessFailure, ProblemCode::ClassificationConversionBusy);
     }
     void converted(const TextConversionResult &observed)
     {
         if (cancelled) {
-            complete(Outcome::Cancelled, QStringLiteral("Outside app: conflict inspection cancelled"));
+            complete(Outcome::Cancelled, ProblemCode::ClassificationCancelled);
             return;
         }
         auto &conflict = result.conflicts[offset];
         if (observed.outcome == Outcome::OutputLimit) {
             // Over the size envelope, like a result too large to load, not unreadable.
             exclude(conflict, ConflictSupport::LoadFailure,
-                    QStringLiteral("Load error: stage %1 is larger than the %2 byte Git read limit; the captured "
-                                   "file was not loaded")
-                        .arg(conflict.stages[source].stage)
-                        .arg(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes)));
+                    {ProblemCode::ClassificationStageTooLarge,
+                     {QString::number(conflict.stages[source].stage),
+                      QString::number(static_cast<qulonglong>(branch_truce::kMaxGitReadBytes))}});
         } else if (observed.outcome != Outcome::Success || !observed.text) {
             const auto support = observed.outcome != Outcome::Rejected       ? ConflictSupport::InspectionFailure
                 : observed.failure == TextConversionFailure::UnsupportedText ? ConflictSupport::UnsupportedText
                                                                              : ConflictSupport::UnsupportedConversion;
-            exclude(conflict, support,
-                    QStringLiteral("Outside app: stage %1 cannot be edited: %2")
-                        .arg(conflict.stages[source].stage)
-                        .arg(withoutOutsideAppPrefix(observed.diagnostic)));
+            exclude(
+                conflict, support,
+                Problem{ProblemCode::ClassificationStageNotEditable, {QString::number(conflict.stages[source].stage)}}
+                    .wrapping(observed.problem));
         } else if (!conflict.sources.isEmpty() && conflict.sources.front().policy != observed.text->policy) {
-            exclude(conflict, ConflictSupport::UnsupportedConversion,
-                    QStringLiteral("Outside app: source conversion policies changed during classification"));
+            exclude(conflict, ConflictSupport::UnsupportedConversion, ProblemCode::ClassificationPoliciesChanged);
         } else {
             conflict.sources.append(*observed.text);
             if (++source < conflict.stages.size()) {
@@ -347,7 +322,7 @@ public:
                 conflict.result = decoded.document;
                 conflict.resultIdentity = launchIdentity;
             } else
-                exclude(conflict, ConflictSupport::UnsupportedText, decoded.diagnostic);
+                exclude(conflict, ConflictSupport::UnsupportedText, decoded.problem);
         }
         ++offset;
         next();
@@ -373,9 +348,6 @@ ConflictClassifier::ConflictClassifier(const GitRunners &runners, QObject *paren
 }
 ConflictClassifier::ConflictClassifier(GitProgram program, QObject *parent)
     : ConflictClassifier(gitAdapters(std::move(program)), parent)
-{}
-ConflictClassifier::ConflictClassifier(const QString &executable, QObject *parent)
-    : ConflictClassifier(GitProgram{executable, GitEnvironment::fromProcess()}, parent)
 {}
 ConflictClassifier::~ConflictClassifier() = default;
 bool ConflictClassifier::start(const ConflictClassificationRequest &request)

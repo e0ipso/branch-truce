@@ -83,7 +83,9 @@ ObjectModel {
         icon.name: "vcs-locally-modified"
         Layout.fillWidth: true
         visible: fileNotices.mergetool.parentStagingPath.length > 0
-        text: qsTr("Written, unresolved. Waiting for Git to stage %1.").arg(fileNotices.mergetool.parentStagingPath)
+        text: (fileNotices.mergetool.parentStagingUnknown
+               ? qsTr("Written, unresolved. Git has not staged %1 yet. Check Git staging once git mergetool is done.")
+               : qsTr("Written, unresolved. Waiting for Git to stage %1.")).arg(fileNotices.mergetool.parentStagingPath)
         actions: [NamedAction { controlName: "recheckParentStaging"; text: qsTr("Check Git staging"); enabled: !fileNotices.commands.resolutionBusy; onTriggered: fileNotices.mergetool.recheckParentAcknowledgment() }]
     }
     PlainInlineMessage {

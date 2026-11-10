@@ -140,7 +140,7 @@ int editorWorker(const WorkerArgs &args)
 
     const auto scratch = QString::fromStdString(args.scratch);
     branch_truce::Application::Config config;
-    config.gitExecutable = QString::fromStdString(test_support::fixtureGit());
+    config.git = {QString::fromStdString(test_support::fixtureGit()), branch_truce::git::GitEnvironment::fromProcess()};
     config.recoveryDirectory = scratch + QStringLiteral("/recovery/session");
     config.mergetoolDirectory = scratch + QStringLiteral("/mergetool");
     branch_truce::Application controller{std::move(config)};

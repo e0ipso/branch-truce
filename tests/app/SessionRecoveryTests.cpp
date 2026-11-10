@@ -3,6 +3,7 @@
 #include "SessionFixtures.h"
 #include "TestHarness.h"
 #include "TestSession.h"
+#include "app/ProblemText.h"
 #include "app/Translations.h"
 #include "fixtures/ApplicationIdentity.h"
 #include "fixtures/EventLoop.h"
@@ -395,7 +396,7 @@ int main(int argc, char **argv)
                 CHECK(store.read().succeeded);
                 const auto replay = replayRecovery(store);
                 CHECK(!replay.succeeded && replay.files.empty() && replay.mutations.empty());
-                CHECK(replay.error.contains(expected));
+                CHECK(problem_text::detail(replay.error).contains(expected));
             });
     }
     suite.run(

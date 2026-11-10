@@ -1,6 +1,7 @@
 // The session model lists the store's files for the window, unresolved files first.
 #include "SessionModel.h"
 #include "EngineText.h"
+#include "ProblemText.h"
 #include "QtText.h"
 #include "git/GitAdapter.h"
 #include <QMimeDatabase>
@@ -160,7 +161,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case PendingInputRole: return pendingInput;
     case PendingTextRole: return pendingInput ? utf8(pendingDraft->text) : QString{};
     case RecoveryStateRole: return QVariant::fromValue(presentation_.recoveryState(row));
-    case RecoveryErrorRole: return recoveryFailed ? *failure : store_.pendingError(file.id());
+    case RecoveryErrorRole: return problem_text::detail(recoveryFailed ? *failure : store_.pendingError(file.id()));
     case ProgressRole: return presentation_.progressData(row);
     case StatusIconRole: return FilePresentation::categoryIcon(presentation_.route(row).category);
     case StatusLineRole: return presentation_.statusLine(row);

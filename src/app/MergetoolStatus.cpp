@@ -1,6 +1,5 @@
 // The mergetool status shows whether Git waits on the selected path and who stages it.
 #include "MergetoolStatus.h"
-#include "CommandGuard.h"
 #include "Selection.h"
 #include "SessionModel.h"
 #include "mergetool/MergetoolSession.h"
@@ -23,6 +22,11 @@ QString MergetoolStatus::parentStagingPath() const
     return files_.displayPath(selection_.id());
 }
 
+bool MergetoolStatus::parentStagingUnknown() const
+{
+    return !parentStagingPath().isEmpty() && session_.acknowledgmentUnknown();
+}
+
 bool MergetoolStatus::waiting() const
 {
     const auto *file = files_.store().file(selection_.id());
@@ -41,22 +45,5 @@ bool MergetoolStatus::leave()
 
 bool MergetoolStatus::endParentSession() { return session_.endParentSession(); }
 
-bool MergetoolStatus::recheckParentAcknowledgment()
-{
-    const auto offer = publisher_.parentStagingOffer(selection_.id());
-    return offer && verifyParentAcknowledgment(selection_.fileId(), QString::number(offer->revision));
-}
-
-bool MergetoolStatus::assignParentStaging(const QByteArray &path) { return publisher_.assignParentStaging(path); }
-
-bool MergetoolStatus::verifyParentAcknowledgment(const QString &fileId, const QString &revision)
-{
-    const auto expected = parseRevisionId(revision);
-    return expected && publisher_.verifyParentAcknowledgment(fileId.toStdString(), *expected);
-}
-
-std::optional<ResolutionPublisher::Offer> MergetoolStatus::parentStagingOffer(const QString &fileId) const
-{
-    return publisher_.parentStagingOffer(fileId.toStdString());
-}
+bool MergetoolStatus::recheckParentAcknowledgment() { return session_.recheckAcknowledgment(selection_.id()); }
 }

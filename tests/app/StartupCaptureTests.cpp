@@ -1,6 +1,7 @@
 // What startup captures for each conflict: mixed inventories, failed alignments and placeholders,
 // and the sources, provenance and formats of merge, rebase and converted files.
 #include "StartupRoutes.h"
+#include "fixtures/AppSession.h"
 
 using namespace startup_routes;
 
@@ -26,7 +27,7 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
             CHECK(expectedPaths.size() == 6);
             const auto before = repo.snapshot();
             ScopedEnvironment environment(repo.environment);
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             auto *model = controller.store();
             CHECK(controller.files()->totalFiles() == 6 && controller.files()->outsideAppFiles() == 1
@@ -108,7 +109,11 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
         const auto smallOther = readFile(repo.path("excluded.txt"));
         ScopedEnvironment environment(repo.environment);
         const auto fault = std::make_shared<const FailingLargeFile>();
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), fault}};
+        Application controller{[&] {
+            auto config = test_support::windowConfig();
+            config.correspondence = fault;
+            return config;
+        }()};
         openController(controller, repo);
         CHECK(fault->failures == 1);
         CHECK(controller.files()->totalFiles() == 3 && controller.files()->loadErrorFiles() == 1);
@@ -145,7 +150,7 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
                 auto isolatedEnvironment = repo.environment;
                 isolatedEnvironment.insert("XDG_DATA_HOME", recoveryData.path());
                 ScopedEnvironment isolated(isolatedEnvironment);
-                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                Application controller{test_support::windowConfig()};
                 auto *model = controller.store();
                 const auto location = model->recoveryDirectory();
                 if (failRecovery) {
@@ -222,7 +227,7 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
             repo.conflict(operation);
             const auto launchIdentity = identity(repo.path("tracked.txt"));
             ScopedEnvironment environment(repo.environment);
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             const auto &selected = openedFile(controller);
             CHECK(selected.support() == Support::Supported && selected.snapshots());
@@ -316,7 +321,7 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
             writeFile(repo.path("tracked.txt"), format.launch);
             const auto launchIdentity = identity(repo.path("tracked.txt"));
             ScopedEnvironment environment(repo.environment);
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             const auto &selected = openedFile(controller);
             CHECK(selected.support() == Support::Supported && selected.snapshots());
@@ -368,7 +373,7 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
             repo.git({"commit", "--quiet", "-m", "prepare earlier source"});
             repo.conflict("merge");
             ScopedEnvironment environment(repo.environment);
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             const auto &selected = openedFile(controller);
             CHECK(selected.support() == Support::Supported && selected.snapshots());

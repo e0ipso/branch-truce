@@ -1,6 +1,7 @@
 #include "TestHarness.h"
 #include "app/AppPaths.h"
 #include "app/Application.h"
+#include "app/ProblemText.h"
 #include "app/Translations.h"
 #include "fixtures/AppSession.h"
 #include "fixtures/ConflictedRepository.h"
@@ -11,9 +12,11 @@
 #include "fixtures/ScopedEnvironment.h"
 #include "fixtures/ScriptGate.h"
 #include "fixtures/mergetool/GitGate.h"
+#include "mergetool/MergetoolFiles.h"
+#include "mergetool/MergetoolIntake.h"
 #include "mergetool/MergetoolLauncher.h"
 #include "mergetool/MergetoolMessages.h"
-#include "mergetool/MergetoolProtocol.h"
+#include "mergetool/MergetoolSocket.h"
 #include "recovery/RecoveryRestore.h"
 
 #include <QCoreApplication>
@@ -30,32 +33,15 @@
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QUuid>
 
 #include <cstring>
 #include <functional>
 #include <memory>
-#include <sys/socket.h>
 #include <unistd.h>
 #include <utility>
 
 using namespace branch_truce;
-
-namespace peer_credentials {
-// Set only in the --foreign-peer-launcher child of this test binary.
-bool foreign = false;
-}
-
-// Linked into this test executable only. The launcher's SO_PEERCRED query then
-// reports another uid, as a socket answered by a different user would.
-extern "C" int __real_getsockopt(int descriptor, int level, int name, void *value, socklen_t *size);
-extern "C" int __wrap_getsockopt(int descriptor, int level, int name, void *value, socklen_t *size)
-{
-    const int result = __real_getsockopt(descriptor, level, name, value, size);
-    if (result == 0 && peer_credentials::foreign && level == SOL_SOCKET && name == SO_PEERCRED && value != nullptr
-        && size != nullptr && *size == sizeof(ucred))
-        static_cast<ucred *>(value)->uid = ::geteuid() + 1;
-    return result;
-}
 
 namespace {
 using test_support::readFile;
@@ -79,7 +65,6 @@ public:
     explicit Repository(QByteArray trackedText, QByteArray excludedText)
         : tracked(std::move(trackedText)), excluded(std::move(excludedText))
     {
-        environment.insert("BRANCH_TRUCE_MERGETOOL_NO_SPAWN", "1");
         commit({{"tracked.txt", "base\n"}, {"excluded.txt", "base\n"}, {"notes.txt", "notes stay staged\n"}}, "base");
         conflict({{"tracked.txt", "main\n"}, {"excluded.txt", "main\n"}},
                  {{"tracked.txt", "side\n"}, {"excluded.txt", "side\n"}});
@@ -87,7 +72,7 @@ public:
         writeFile(path("excluded.txt"), excluded);
         notesObject = git({"rev-parse", ":notes.txt"}).trimmed();
         const auto command = QStringLiteral("MERGED=\"$MERGED\" BASE=\"$BASE\" LOCAL=\"$LOCAL\" REMOTE=\"$REMOTE\" ")
-            + shellQuote(launcherBinary) + QStringLiteral(" --mergetool");
+            + shellQuote(launcherBinary) + QStringLiteral(" --mergetool --no-window");
         git({"config", "mergetool.truce-launcher.cmd", command});
         git({"config", "mergetool.truce-launcher.trustExitCode", "true"});
         git({"config", "mergetool.keepBackup", "false"});
@@ -217,7 +202,7 @@ void copyInPlace(const QString &target)
 void storeBeforeCopiedLaunch(const Repository &repo)
 {
     {
-        Application before{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application before{test_support::windowConfig()};
         openController(before, repo);
         CHECK(before.store()->editResult(QByteArray("tracked.txt").toHex().toStdString(),
                                          opened(before, "tracked.txt").current().id, {{0, 0}, "recovered edit\n"})
@@ -231,7 +216,7 @@ void attachLauncher(QProcess &launcher, const Repository &repo, const QTemporary
 {
     launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
     launcher.setWorkingDirectory(repo.root);
-    launcher.start(launcherBinary, {"--mergetool"});
+    launcher.start(launcherBinary, {"--mergetool", "--no-window"});
     CHECK(launcher.waitForStarted(5000));
     pump([&] { return controller.mergetoolSession()->waitingPath() == "tracked.txt"; },
          controller.feedback()->message());
@@ -263,7 +248,7 @@ void rejectDuplicate(const Repository &repo, Application &controller, QProcess &
     QProcess duplicate;
     duplicate.setProcessEnvironment(directLauncherEnvironment(repo, sides));
     duplicate.setWorkingDirectory(repo.root);
-    duplicate.start(launcherBinary, {"--mergetool"});
+    duplicate.start(launcherBinary, {"--mergetool", "--no-window"});
     CHECK(duplicate.waitForStarted(5000));
     pump([&] { return duplicate.state() == QProcess::NotRunning; }, "duplicate launcher still running");
     CHECK(duplicate.exitCode() != 0);
@@ -316,7 +301,6 @@ public:
                       + marker.toUtf8() + ".part' '" + marker.toUtf8() + "'\n");
         makeExecutable(stub);
         auto environment = directLauncherEnvironment(repo, sides);
-        environment.remove(QStringLiteral("BRANCH_TRUCE_MERGETOOL_NO_SPAWN"));
         environment.insert(QStringLiteral("PATH"),
                            stage.filePath(QStringLiteral("bin")) + QStringLiteral(":/usr/bin:/bin"));
         process.setProcessEnvironment(environment);
@@ -373,18 +357,110 @@ public:
     qint64 elapsed = 0;
     QByteArray errors;
 };
+
+// The child modes of this binary run the real launcher code with one option replaced. None of
+// them starts a window.
+constexpr char kForeignPeerLauncher[] = "--foreign-peer-launcher";
+constexpr char kShortReplyLauncher[] = "--short-reply-launcher";
+// How long the --short-reply-launcher child waits for the answer to its attach.
+constexpr int kShortReplyWaitMs = 500;
+
+int runChildLauncher(int argc, char **argv)
+{
+    QCoreApplication application(argc, argv);
+    MergetoolLauncherOptions options;
+    options.startWindow = {};
+    options.describe = problem_text::detail;
+    // The session socket then looks answered by a different user.
+    if (std::strcmp(argv[1], kForeignPeerLauncher) == 0) options.peerIsCurrentUser = [](qintptr) { return false; };
+    if (std::strcmp(argv[1], kShortReplyLauncher) == 0) options.replyWaitMs = kShortReplyWaitMs;
+    return runMergetoolLauncher({QString::fromLocal8Bit(argv[0]), QStringLiteral("--mergetool")},
+                                git::GitProgram{gitOnPath(), git::GitEnvironment::fromProcess()}, options);
+}
+
+// A launcher child of this binary started directly on tracked.txt.
+struct ChildLauncher {
+    ChildLauncher(const Repository &repo, const char *mode)
+    {
+        process.setProcessEnvironment(directLauncherEnvironment(repo, sides));
+        process.setWorkingDirectory(repo.root);
+        process.start(QCoreApplication::applicationFilePath(), {QString::fromLatin1(mode)});
+        CHECK(process.waitForStarted(5000));
+    }
+    // Waits for the exit and returns standard error.
+    QByteArray finish(int expected)
+    {
+        pump([&] { return process.state() == QProcess::NotRunning; }, QStringLiteral("launcher still running"));
+        CHECK(process.exitStatus() == QProcess::NormalExit);
+        const auto errors = process.readAllStandardError();
+        if (process.exitCode() != expected)
+            throw std::runtime_error("launcher exit " + std::to_string(process.exitCode()) + ": "
+                                     + errors.toStdString());
+        return errors;
+    }
+    QTemporaryDir sides;
+    QProcess process;
+};
+
+// Stands in for the window on the launcher socket of repo's operation. It reads one attach
+// and writes the frames answer returns for its invocation, keeping the connection open. Use it
+// with repo's environment in place.
+class FakeSession {
+public:
+    using Answer = std::function<QList<MergetoolMessage>(const QString &invocation)>;
+    FakeSession(const Repository &repo, Answer answer) : answer_(std::move(answer))
+    {
+        git::Request discover;
+        discover.operation = git::Operation::DiscoverRepository;
+        discover.directory = repo.root;
+        const auto discovered = git::runBlocking({gitOnPath(), git::GitEnvironment::fromProcess()}, discover);
+        CHECK(discovered.repository.supported);
+        const auto directory = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
+        Problem error;
+        CHECK(prepareMergetoolSocketDirectory(directory, &error));
+        CHECK(server_.listen(mergetoolServerName(directory, discovered.repository)));
+        QObject::connect(&server_, &QLocalServer::newConnection, &server_, [this] {
+            auto *socket = server_.nextPendingConnection();
+            QObject::connect(socket, &QLocalSocket::readyRead, socket, [this, socket] { read(socket); });
+        });
+    }
+    bool attached() const { return attached_; }
+
+private:
+    void read(QLocalSocket *socket)
+    {
+        buffer_ += socket->readAll();
+        QByteArray payload;
+        if (attached_ || takeMergetoolFrame(&buffer_, &payload) != MergetoolFrame::Ready) return;
+        const auto decoded = decodeMergetoolMessage(payload);
+        const auto *attach = decoded.message ? std::get_if<AttachMessage>(&*decoded.message) : nullptr;
+        // Nothing may throw through the socket's signal; an unanswered launcher fails its case.
+        if (!attach) return;
+        attached_ = true;
+        for (const auto &message : answer_(attach->invocation))
+            socket->write(mergetoolFrame(encodeMergetoolMessage(message)));
+        socket->flush();
+    }
+    Answer answer_;
+    QLocalServer server_;
+    QByteArray buffer_;
+    bool attached_ = false;
+};
+
+// Ends with the launcher's own error line; Qt may warn about the C locale first.
+void checkRefusal(const QByteArray &errors, const QByteArray &message)
+{
+    const auto line = "mergetool: " + message + '\n';
+    if (errors != line && !errors.endsWith('\n' + line))
+        throw std::runtime_error("launcher stderr: " + errors.toStdString());
+}
 }
 
 int main(int argc, char **argv)
 {
-    // Child mode: run the real launcher code from this binary with a foreign peer uid.
-    if (argc == 2 && std::strcmp(argv[1], "--foreign-peer-launcher") == 0) {
-        peer_credentials::foreign = true;
-        char mergetool[] = "--mergetool";
-        char *launcherArguments[] = {argv[0], mergetool, nullptr};
-        return runMergetoolLauncher(2, launcherArguments,
-                                    git::GitProgram{gitOnPath(), git::GitEnvironment::fromProcess()});
-    }
+    if (argc == 2
+        && (std::strcmp(argv[1], kForeignPeerLauncher) == 0 || std::strcmp(argv[1], kShortReplyLauncher) == 0))
+        return runChildLauncher(argc, argv);
     QCoreApplication application(argc, argv);
     // The English catalog supplies the plural forms these checks read.
     branch_truce::installTranslations(application);
@@ -398,7 +474,7 @@ int main(int argc, char **argv)
         "installed Git stages only after an explicit resolution and a repeated launch keeps the first inputs", [] {
             Repository repo("resolved from the app\n", "excluded stays conflicted\n");
             ScopedEnvironment environment(repo.environment);
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
             auto parent = startMergetool(repo, {"tracked.txt"});
             pump([&] { return controller.mergetoolSession()->waitingPath() == "tracked.txt"; },
@@ -452,7 +528,7 @@ int main(int argc, char **argv)
     suite.run("cancel restores the parent-visible file and keeps the app checkpoint", [] {
         Repository repo("cancel keeps this draft\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         auto parent = startMergetool(repo, {"tracked.txt"});
         pump([&] { return controller.mergetoolSession()->waitingPath() == "tracked.txt"; },
@@ -472,7 +548,7 @@ int main(int argc, char **argv)
     suite.run("multi-file Git mergetool blocks the second path until the first launcher is released", [] {
         Repository repo("first path resolved\n", "second path left unresolved\n");
         ScopedEnvironment environment(repo.environment);
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         auto parent = startMergetool(repo, {});
         pump(
@@ -520,7 +596,7 @@ int main(int argc, char **argv)
     suite.run("selecting the launched path after Git attached notifies the waiting state and the staging path", [] {
         Repository repo("selected after the attach\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         // QML reads both properties again only when their notify signal fires.
         const auto *meta = controller.mergetool()->metaObject();
@@ -542,7 +618,7 @@ int main(int argc, char **argv)
         QProcess launcher;
         launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
         launcher.setWorkingDirectory(repo.root);
-        launcher.start(launcherBinary, {"--mergetool"});
+        launcher.start(launcherBinary, {"--mergetool", "--no-window"});
         CHECK(launcher.waitForStarted(5000));
         pump([&] { return controller.mergetoolSession()->waitingPath() == "tracked.txt"; },
              controller.feedback()->message());
@@ -576,9 +652,9 @@ int main(int argc, char **argv)
         ScopedEnvironment environment(repo.environment);
         QString chosen;
         {
-            Application one{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application one{test_support::windowConfig()};
             openController(one, repo);
-            Application two{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application two{test_support::windowConfig()};
             startController(two, repo);
             for (auto *controller : {&one, &two}) {
                 const auto revision = opened(*controller, "tracked.txt").current().id;
@@ -588,7 +664,7 @@ int main(int argc, char **argv)
             }
             chosen = QFileInfo(one.store()->recoveryDirectory()).fileName();
         }
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         CHECK(controller.loader()->recoveryChoices().size() == 2);
         // A direct launcher has no Git parent, so MERGED keeps the identity the stores captured.
@@ -596,7 +672,7 @@ int main(int argc, char **argv)
         QProcess launcher;
         launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
         launcher.setWorkingDirectory(repo.root);
-        launcher.start(launcherBinary, {"--mergetool"});
+        launcher.start(launcherBinary, {"--mergetool", "--no-window"});
         CHECK(launcher.waitForStarted(5000));
         pump([&] { return controller.mergetoolSession()->waitingPath() == "tracked.txt"; },
              controller.feedback()->message());
@@ -612,7 +688,7 @@ int main(int argc, char **argv)
         waitFinished(launcher, 0, controller);
         pump([&] { return controller.mergetool()->parentStagingPath() == QStringLiteral("tracked.txt"); },
              controller.feedback()->message());
-        const auto offer = controller.mergetool()->parentStagingOffer(id);
+        const auto offer = controller.publisher()->parentStagingOffer(id.toStdString());
         CHECK(offer && offer->path == "tracked.txt");
         CHECK(readFile(repo.path("tracked.txt")) == QByteArray::fromStdString(expected));
         // Only the parent stages the path, and the app waits for that acknowledgment.
@@ -631,7 +707,7 @@ int main(int argc, char **argv)
                 ScopedEnvironment environment(repo.environment);
                 const auto fileId = QString::fromLatin1(QByteArray("tracked.txt").toHex());
                 {
-                    Application before{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                    Application before{test_support::windowConfig()};
                     openController(before, repo);
                     CHECK(before.store()->editResult(fileId.toStdString(), opened(before, "tracked.txt").current().id,
                                                      {{0, 0}, "recovered edit\n"})
@@ -640,21 +716,24 @@ int main(int argc, char **argv)
                 const auto target = repo.path("tracked.txt");
                 CHECK(QFile::rename(target, target + ".moved") && QFile::copy(target + ".moved", target));
                 CHECK(QFile::remove(target + ".moved"));
-                Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+                Application controller{test_support::windowConfig()};
                 openController(controller, repo);
-                CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
+                CHECK(recoveryError(controller, "tracked.txt") == problem_text::detail(copiedLaunchFailure()));
                 if (change == QStringLiteral("staged")) repo.git({"add", "--", "tracked.txt"});
                 if (change == QStringLiteral("autocrlf")) repo.git({"config", "core.autocrlf", "true"});
                 QTemporaryDir sides;
                 QProcess launcher;
                 launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
                 launcher.setWorkingDirectory(repo.root);
-                launcher.start(launcherBinary, {"--mergetool"});
+                launcher.start(launcherBinary, {"--mergetool", "--no-window"});
                 CHECK(launcher.waitForStarted(5000));
                 pump([&] { return controller.mergetoolSession()->waitingPath() == "tracked.txt"; },
                      controller.feedback()->message());
-                pump([&] { return recoveryError(controller, "tracked.txt") != copiedLaunchFailure(); },
-                     change + QStringLiteral(": the attach did not settle the copied launch"));
+                pump(
+                    [&] {
+                        return recoveryError(controller, "tracked.txt") != problem_text::detail(copiedLaunchFailure());
+                    },
+                    change + QStringLiteral(": the attach did not settle the copied launch"));
                 select(controller, "tracked.txt");
                 const auto revision = revisionOf(opened(controller, "tracked.txt"));
                 if (change == QStringLiteral("none")) {
@@ -688,7 +767,7 @@ int main(int argc, char **argv)
         ScopedEnvironment environment(repo.environment);
         storeBeforeCopiedLaunch(repo);
         const auto target = repo.path("tracked.txt");
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         SpawnedLauncher launcher(repo);
         launcher.start();
         pump([&] { return launcher.spawned() || launcher.process.state() == QProcess::NotRunning; },
@@ -723,9 +802,9 @@ int main(int argc, char **argv)
             ScopedEnvironment environment(repo.environment);
             storeBeforeCopiedLaunch(repo);
             const auto target = repo.path("tracked.txt");
-            Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig()};
             openController(controller, repo);
-            CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
+            CHECK(recoveryError(controller, "tracked.txt") == problem_text::detail(copiedLaunchFailure()));
             if (change == QStringLiteral("copied"))
                 copyInPlace(target);
             else
@@ -735,15 +814,18 @@ int main(int argc, char **argv)
             QProcess launcher;
             attachLauncher(launcher, repo, sides, controller);
             if (change == QStringLiteral("copied")) {
-                pump([&] { return recoveryError(controller, "tracked.txt") != copiedLaunchFailure(); },
-                     change + QStringLiteral(": the attach did not settle the copied launch"));
+                pump(
+                    [&] {
+                        return recoveryError(controller, "tracked.txt") != problem_text::detail(copiedLaunchFailure());
+                    },
+                    change + QStringLiteral(": the attach did not settle the copied launch"));
                 CHECK(recoveryError(controller, "tracked.txt")
                           .contains(QStringLiteral("changed after recovery validation")));
             } else {
                 // The launcher's MERGED digest is not the launch bytes, so the attach started no
                 // check: with no task in flight, nothing can clear the error later.
                 CHECK_EQ(controller.coordinator()->pendingTasks(), 0);
-                CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
+                CHECK(recoveryError(controller, "tracked.txt") == problem_text::detail(copiedLaunchFailure()));
             }
             checkCopiedLaunchRefused(controller, launcher, target, expected, expected);
         }
@@ -761,14 +843,14 @@ int main(int argc, char **argv)
             const auto target = repo.path("tracked.txt");
             // Open until close, so the load runs Git through it unchanged.
             mergetool_fixture::GitGate gate("tracked.txt");
-            Application controller{Application::Config{gate.executable(), newRecoveryDirectory(), {}}};
+            Application controller{test_support::windowConfig(gate.executable())};
             // Runs before the controller goes, so its tasks never wait on a held call.
             const auto releaseGate = qScopeGuard([&gate] {
                 gate.open();
                 gate.releaseAll();
             });
             openController(controller, repo);
-            CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
+            CHECK(recoveryError(controller, "tracked.txt") == problem_text::detail(copiedLaunchFailure()));
             gate.close(QStringLiteral("ls-files"));
             QTemporaryDir sides;
             QProcess launcher;
@@ -779,13 +861,14 @@ int main(int argc, char **argv)
             CHECK(held.size() == 1);
             CHECK(gate.arguments(held.front()).contains("ls-files --stage -z -- tracked.txt"));
             gate.open();
-            CHECK(recoveryError(controller, "tracked.txt") == copiedLaunchFailure());
+            CHECK(recoveryError(controller, "tracked.txt") == problem_text::detail(copiedLaunchFailure()));
             if (change == QStringLiteral("edited")) writeFile(target, "written by another editor\n");
             if (change == QStringLiteral("copied")) copyInPlace(target);
             const auto outside = readFile(target);
             gate.release(held.front());
-            pump([&] { return recoveryError(controller, "tracked.txt") != copiedLaunchFailure(); },
-                 change + QStringLiteral(": the revalidation did not settle the copied launch"));
+            pump(
+                [&] { return recoveryError(controller, "tracked.txt") != problem_text::detail(copiedLaunchFailure()); },
+                change + QStringLiteral(": the revalidation did not settle the copied launch"));
             if (change == QStringLiteral("none")) {
                 CHECK(!controller.store()->hasRecoveryFailure(QByteArray("tracked.txt").toHex().toStdString()));
                 select(controller, "tracked.txt");
@@ -801,7 +884,7 @@ int main(int argc, char **argv)
     suite.run("a session that listens after the GUI start is attached within the deadline", [] {
         Repository repo("attached after the spawn\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         SpawnedLauncher launcher(repo);
         launcher.start();
         pump([&] { return launcher.spawned() || launcher.process.state() == QProcess::NotRunning; },
@@ -842,14 +925,14 @@ int main(int argc, char **argv)
     suite.run("a leave after a longer write restores exactly the launch bytes", [] {
         Repository repo("short launch\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         // A direct launcher has no Git parent whose backup move would hide a leftover tail.
         QTemporaryDir sides;
         QProcess launcher;
         launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
         launcher.setWorkingDirectory(repo.root);
-        launcher.start(launcherBinary, {"--mergetool"});
+        launcher.start(launcherBinary, {"--mergetool", "--no-window"});
         CHECK(launcher.waitForStarted(5000));
         pump([&] { return controller.mergetoolSession()->waitingPath() == "tracked.txt"; },
              controller.feedback()->message());
@@ -881,7 +964,7 @@ int main(int argc, char **argv)
         guiEnvironment.insert("TMPDIR", guiTemporary);
         ScopedEnvironment environment(guiEnvironment);
         CHECK(QDir::tempPath() == guiTemporary);
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         openController(controller, repo);
         const auto sockets =
             QDir(runtime + QStringLiteral("/branch-truce")).entryInfoList({QStringLiteral("bt-mt-*")}, QDir::System);
@@ -893,7 +976,7 @@ int main(int argc, char **argv)
         QProcess launcher;
         launcher.setProcessEnvironment(launcherEnvironment);
         launcher.setWorkingDirectory(repo.root);
-        launcher.start(launcherBinary, {"--mergetool"});
+        launcher.start(launcherBinary, {"--mergetool", "--no-window"});
         CHECK(launcher.waitForStarted(5000));
         pump([&] { return controller.mergetoolSession()->waitingPath() == "tracked.txt"; },
              controller.feedback()->message() + " | " + QString::fromLocal8Bit(launcher.readAllStandardError()));
@@ -912,7 +995,7 @@ int main(int argc, char **argv)
         writeFile(runtime.filePath(QStringLiteral("branch-truce")), "not a directory\n");
         repo.environment.insert("XDG_RUNTIME_DIR", runtime.path());
         ScopedEnvironment environment(repo.environment);
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        Application controller{test_support::windowConfig()};
         startController(controller, repo);
         CHECK(controller.loader()->startupState() == QStringLiteral("ready-without-mergetool"));
         CHECK(controller.loader()->detail().startsWith(
@@ -924,7 +1007,7 @@ int main(int argc, char **argv)
         QProcess launcher;
         launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
         launcher.setWorkingDirectory(repo.root);
-        launcher.start(launcherBinary, {"--mergetool"});
+        launcher.start(launcherBinary, {"--mergetool", "--no-window"});
         CHECK(launcher.waitForStarted(5000));
         waitFinished(launcher, 1, controller);
         // The launcher cannot keep its inputs in that directory either. Qt may warn about the C
@@ -939,47 +1022,76 @@ int main(int argc, char **argv)
     suite.run("a session socket answered by another uid is refused before the launcher sends anything", [] {
         Repository repo("never attached\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
-        openController(controller, repo);
-        QTemporaryDir sides;
-        QProcess launcher;
-        launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
-        launcher.setWorkingDirectory(repo.root);
-        launcher.start(QCoreApplication::applicationFilePath(), {"--foreign-peer-launcher"});
-        CHECK(launcher.waitForStarted(5000));
-        waitFinished(launcher, 1, controller);
-        // Qt may warn about the C locale first.
-        const QByteArray refusal("mergetool: The session socket does not belong to this user.\n");
-        const auto errors = launcher.readAllStandardError();
-        if (errors != refusal && !errors.endsWith('\n' + refusal))
-            throw std::runtime_error("launcher stderr: " + errors.toStdString());
-        // The launcher refused before it sent a byte, and only an attach frame makes a waiter, so
-        // no later event can add one.
-        CHECK(controller.mergetoolSession()->listening());
-        CHECK(controller.mergetoolSession()->waitingPath().isEmpty()
-              && !controller.mergetoolSession()->hasWaiter("tracked.txt"));
+        FakeSession session(
+            repo, [](const QString &invocation) { return QList<MergetoolMessage>{AttachedMessage{invocation}}; });
+        ChildLauncher launcher(repo, kForeignPeerLauncher);
+        const auto errors = launcher.finish(1);
+        checkRefusal(errors, "The session socket does not belong to this user.");
+        // The launcher refused before it sent a byte.
+        CHECK(!session.attached());
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
         CHECK(unmerged(repo, "tracked.txt"));
     });
-    suite.run("a launcher the session's peer check sees as another uid is closed before its attach is read", [] {
-        Repository repo("never attached\n", "excluded stays conflicted\n");
+    // The reply phase: what the launcher does with each answer to its attach and to the wait.
+    suite.run("a session that never answers the attach fails the launcher after the reply wait", [] {
+        Repository repo("silent session\n", "excluded stays conflicted\n");
         ScopedEnvironment environment(repo.environment);
-        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
-        openController(controller, repo);
-        // From here on the session's own SO_PEERCRED query reports another uid.
-        peer_credentials::foreign = true;
-        const auto sameUser = qScopeGuard([] { peer_credentials::foreign = false; });
-        QTemporaryDir sides;
-        QProcess launcher;
-        launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
-        launcher.setWorkingDirectory(repo.root);
-        launcher.start(launcherBinary, {"--mergetool"});
-        CHECK(launcher.waitForStarted(5000));
-        waitFinished(launcher, 1, controller);
-        CHECK(!controller.mergetoolSession()->hasWaiter("tracked.txt"));
-        CHECK(!controller.mergetool()->parentSessionActive());
+        FakeSession session(repo, [](const QString &) { return QList<MergetoolMessage>{}; });
+        QElapsedTimer clock;
+        clock.start();
+        ChildLauncher launcher(repo, kShortReplyLauncher);
+        checkRefusal(launcher.finish(1), "The session did not answer the mergetool attach.");
+        CHECK(session.attached());
+        CHECK_GE(clock.elapsed(), kShortReplyWaitMs);
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
-        CHECK(unmerged(repo, "tracked.txt"));
+    });
+    suite.run("a malformed answer to the attach fails the launcher", [] {
+        Repository repo("malformed answer\n", "excluded stays conflicted\n");
+        ScopedEnvironment environment(repo.environment);
+        FakeSession session(repo, [](const QString &invocation) {
+            // A resolved frame without its object is not a valid message of any kind.
+            return QList<MergetoolMessage>{ResolvedMessage{invocation, 1, {}}};
+        });
+        ChildLauncher launcher(repo, kShortReplyLauncher);
+        checkRefusal(launcher.finish(1), "The session sent an invalid mergetool message.");
+        CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+    });
+    suite.run("an attach answered for another invocation fails the launcher", [] {
+        Repository repo("other invocation\n", "excluded stays conflicted\n");
+        ScopedEnvironment environment(repo.environment);
+        FakeSession session(repo, [](const QString &) {
+            return QList<MergetoolMessage>{AttachedMessage{QUuid::createUuid().toString(QUuid::WithoutBraces)}};
+        });
+        ChildLauncher launcher(repo, kShortReplyLauncher);
+        checkRefusal(launcher.finish(1), "The session answered a different mergetool launch.");
+        CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+    });
+    suite.run("a resolved answer exits 0 only while MERGED holds the object it names", [] {
+        const QByteArray written("the reviewed result\n");
+        for (const bool matching : {true, false}) {
+            Repository repo("launch bytes\n", "excluded stays conflicted\n");
+            ScopedEnvironment environment(repo.environment);
+            QByteArray object;
+            FakeSession session(repo, [&](const QString &invocation) {
+                // The window writes MERGED, then names the object Git makes of what it wrote.
+                writeFile(repo.path("tracked.txt"), written);
+                object = repo.git({"hash-object", "--path=tracked.txt", "tracked.txt"}).trimmed();
+                if (!matching) writeFile(repo.path("tracked.txt"), "an outside edit after the write\n");
+                return QList<MergetoolMessage>{AttachedMessage{invocation}, ResolvedMessage{invocation, 7, object}};
+            });
+            ChildLauncher launcher(repo, kShortReplyLauncher);
+            if (matching) {
+                launcher.finish(0);
+                CHECK(readFile(repo.path("tracked.txt")) == written);
+            } else {
+                checkRefusal(launcher.finish(1),
+                             "MERGED no longer holds revision 7 that Branch Truce wrote, so it is not staged.");
+                // A refused decision restores the launch bytes, as a leave does.
+                CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
+            }
+            CHECK(object.size() == 40 || object.size() == 64);
+            CHECK(unmerged(repo, "tracked.txt"));
+        }
     });
     suite.run("a launcher answered by a session of another protocol version asks for a restart", [] {
         Repository repo("other version\n", "excluded stays conflicted\n");
@@ -990,7 +1102,7 @@ int main(int argc, char **argv)
         const auto discovered = git::runBlocking({gitOnPath(), git::GitEnvironment::fromProcess()}, discover);
         CHECK(discovered.repository.supported);
         const auto directory = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
-        QString error;
+        Problem error;
         CHECK(prepareMergetoolSocketDirectory(directory, &error));
         // The window of another installation reads the attach and answers in its own version.
         QLocalServer older;
@@ -1007,7 +1119,7 @@ int main(int argc, char **argv)
         QProcess launcher;
         launcher.setProcessEnvironment(directLauncherEnvironment(repo, sides));
         launcher.setWorkingDirectory(repo.root);
-        launcher.start(launcherBinary, {"--mergetool"});
+        launcher.start(launcherBinary, {"--mergetool", "--no-window"});
         CHECK(launcher.waitForStarted(5000));
         pump([&] { return launcher.state() == QProcess::NotRunning; }, QStringLiteral("launcher still running"));
         CHECK(launcher.exitStatus() == QProcess::NormalExit && launcher.exitCode() == 1);

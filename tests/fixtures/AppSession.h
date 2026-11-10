@@ -2,14 +2,17 @@
 
 // Driving an Application the way a window does, for the suites that open real repositories.
 //
+//   windowConfig(executable)               what main builds for a window from this process's environment.
 //   waitOpened(application, what)          runs the event loop until the loader stops opening.
 //   openRepository(application, root, ...) asks the loader to open root and waits for it.
 //   fileIdOf(path)                         the ID a loaded file gets: its path bytes in hex.
 //   loadedFile(application, path)          the loaded file at path; a missing one fails the case.
 
 #include "TestHarness.h"
+#include "app/AppPaths.h"
 #include "app/Application.h"
 #include "fixtures/EventLoop.h"
+#include "fixtures/GitOnPath.h"
 
 #include <QByteArray>
 #include <QString>
@@ -17,6 +20,16 @@
 #include <string>
 
 namespace test_support {
+
+// What main builds for a window: Git (from PATH unless executable names another), the
+// configuration this process's environment selects, a new recovery store and the mergetool
+// directory of its XDG_RUNTIME_DIR. Build it once the case's environment is in place.
+inline branch_truce::Application::Config windowConfig(const QString &executable = gitOnPath())
+{
+    return {.git = gitProgramOnPath(executable),
+            .recoveryDirectory = branch_truce::newRecoveryDirectory(),
+            .mergetoolDirectory = branch_truce::mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"))};
+}
 
 // Opening takes about 0.5 s on an idle host. At load averages of 25 to 36 on 8 cores it averaged
 // 2.5 s and some opens took over 10 s, so the wait uses the shared deadline.

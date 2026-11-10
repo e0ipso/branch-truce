@@ -11,7 +11,7 @@ struct SyntaxHighlighting::Private {
     // Loading definitions and themes is costly, so one repository serves the controller's lifetime.
     KSyntaxHighlighting::Repository repository;
     KSyntaxHighlighting::Definition definition;
-    KSyntaxHighlighting::Theme theme = repository.theme(QStringLiteral("Breeze Light"));
+    KSyntaxHighlighting::Theme theme = repository.defaultTheme(KSyntaxHighlighting::Repository::LightTheme);
     QString fileName;
     QList<QPointer<PaneHighlighter>> highlighters;
 
@@ -50,9 +50,11 @@ void SyntaxHighlighting::setFileName(const QString &fileName)
 void SyntaxHighlighting::setBackground(const QColor &background)
 {
     if (!background.isValid()) return;
-    const auto name = background.lightnessF() < 0.5 ? QStringLiteral("Breeze Dark") : QStringLiteral("Breeze Light");
-    if (name == d_->theme.name()) return;
-    d_->theme = d_->repository.theme(name);
+    const auto theme =
+        d_->repository.defaultTheme(background.lightnessF() < 0.5 ? KSyntaxHighlighting::Repository::DarkTheme
+                                                                  : KSyntaxHighlighting::Repository::LightTheme);
+    if (theme.name() == d_->theme.name()) return;
+    d_->theme = theme;
     d_->apply();
 }
 }

@@ -22,7 +22,7 @@ struct Conflict {
     QByteArray path; // Exact repository filename bytes, including unsupported paths.
     QList<IndexEntry> stages;
     ConflictSupport support = ConflictSupport::InspectionFailure;
-    QString reason; // Empty only for supported text. Unsupported work stays outstanding.
+    Problem reason; // Empty only for supported text. Unsupported work stays outstanding.
     QByteArray mode; // Agreed stage-2/stage-3 mode, never inferred from the result.
     QList<ConvertedText> sources; // Present only after every available stage passes.
     std::optional<storage::TextDocument> result; // Preserves launch-time manual edits.
@@ -41,7 +41,7 @@ struct ConflictClassificationResult {
     Outcome outcome = Outcome::Rejected;
     RepositoryContext repository;
     QList<Conflict> conflicts;
-    QString diagnostic;
+    Problem problem;
 };
 
 // Read-only editing admission: discovery alone verifies operation identity, and
@@ -54,8 +54,6 @@ public:
     // Takes its discovery runner and its conversion's runner from runners.
     explicit ConflictClassifier(const GitRunners &runners, QObject *parent = nullptr);
     explicit ConflictClassifier(GitProgram program, QObject *parent = nullptr);
-    // Reads the configuration this process's environment selects.
-    explicit ConflictClassifier(const QString &executable, QObject *parent = nullptr);
     ~ConflictClassifier() override;
     bool start(const ConflictClassificationRequest &request);
     void cancel();
