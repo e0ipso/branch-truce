@@ -38,7 +38,7 @@ def main():
             assert int(after['progress']['undecided']) == int(before['progress']['undecided']) - 1
             assert not after['pendingInput'] and after['recoveryState'] == 0
             client.command('quit')
-            assert process.wait(timeout=10) == 0
+            assert process.wait_exit(10) == 0
         except BaseException:
             print((owned.root / 'app.log').read_text(errors='replace'), file=sys.stderr)
             raise

@@ -23,7 +23,7 @@ from reports import write_json  # noqa: E402
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('source', 'build', 'output'):
-        parser.add_argument('--' + name, required=True, type=Path)
+        parser.add_argument('--' + name, required=True, type=lambda value: Path(value).resolve())
     args = parser.parse_args()
     # The replay that runs is the one in --source, so its profile sets the run shape.
     shape = capture_profile.run_shape(capture_profile.load(args.source / 'tools/native-replay/capture-profile.json'))

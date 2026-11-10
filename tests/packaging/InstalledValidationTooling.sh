@@ -328,6 +328,51 @@ pass
 pass
 expect_no_fixture
 
+# Writer, append and rename failures retain the previous complete report. The writer
+# consumes stdin even on failure so this exercises status propagation without a SIGPIPE race.
+cat > "$work/stubs/tee" <<'TEE'
+#!/usr/bin/env bash
+if [[ "${STUB_REPORT_FAILURE:-}" == writer && "$1" == -- ]]; then
+    printf truncated > "$2"
+    cat >/dev/null
+    exit 7
+fi
+if [[ "${STUB_REPORT_FAILURE:-}" == append && "$1" == -a ]]; then
+    printf truncated-append >> "$3"
+    cat >/dev/null
+    exit 8
+fi
+exec "$STUB_REAL_TEE" "$@"
+TEE
+cat > "$work/stubs/mv" <<'MV'
+#!/usr/bin/env bash
+[[ "${STUB_REPORT_FAILURE:-}" != move ]] || exit 9
+exec "$STUB_REAL_MV" "$@"
+MV
+chmod +x "$work/stubs/tee" "$work/stubs/mv"
+for failure in writer append move report; do
+    destination=$work/reports/$failure
+    mkdir -p "$destination"
+    report=$destination/$deb_name.validation
+    printf 'previous complete report\n' > "$report"
+    command=("$script")
+    if [[ "$failure" == report ]]; then
+        command=(bash -c 'source "$1"; run_steps() { printf "partial report\n"; return 7; }; set -uo pipefail; host_main "${@:2}"' _ "$script")
+    fi
+    failed_steps=''
+    if [[ "$failure" == append ]]; then failed_steps=cli; fi
+    invoke "STUB_REPORT_FAILURE=$failure" "STUB_REAL_TEE=$(command -v tee)" "STUB_REAL_MV=$(command -v mv)" \
+        "STUB_FAIL_STEPS=$failed_steps" -- "${command[@]}" --target kubuntu --package "$deb" --output "$destination"
+    expect_status 1
+    [[ "$(cat "$report")" == 'previous complete report' ]] || fail "$failure replaced the prior report"
+    pass
+    [[ -s "$destination/.$deb_name.validation.partial" ]] || fail "$failure lost partial evidence"
+    pass
+    expect_no_output "Report: $report"
+    expect_no_fixture
+done
+rm -- "$work/stubs/tee" "$work/stubs/mv"
+
 # --- --wayland pre-flight: each missing piece stops before any container runs
 # wayland_args OUTPUT: the arguments of a --wayland run writing to OUTPUT.
 wayland_args() { args=(--target kubuntu --package "$deb" --output "$1" --wayland); }

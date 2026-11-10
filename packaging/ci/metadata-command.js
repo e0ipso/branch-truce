@@ -45,7 +45,8 @@ export function run(command, args, { cwd, env, signal }, { timeout = 30_000, max
       stop();
       if (failure) reject(failure);
       else if (code === 0) resolve(Buffer.concat(output).toString('utf8').trim());
-      else reject(new Error(`${command} ${args.join(' ')} exited with ${code ?? killedBy}`));
+      else reject(Object.assign(new Error(`${command} ${args.join(' ')} exited with ${code ?? killedBy}`),
+        { status: code, signal: killedBy }));
     });
   });
 }

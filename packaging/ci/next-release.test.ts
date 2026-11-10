@@ -8,12 +8,14 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
-import { packageable, select, UsageError } from './next-release.js';
+import { main, packageable, select, UsageError } from './next-release.js';
 
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const workflow = require('js-yaml').load(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8'));
 const selection = join(ROOT, 'packaging/ci/next-release.js');
+import { run as metadata } from './metadata-command.js';
+
 const accepts = (version: string) => packageable(version, ROOT);
 const expressionForJS = (expression: string) => expression.replace(/\bneeds\.([\w-]+)/g, 'needs["$1"]');
 const formats = ['kubuntu-deb', 'fedora-rpm', 'arch-pkg'];
@@ -72,25 +74,25 @@ test('PR and main selection bind candidate, publication intent and source revisi
   assert.match(extra.stderr, /^error: usage: /);
 });
 
-test('selection binds the analysed candidate and accepts only packageable versions', () => {
+test('selection binds the analysed candidate and accepts only packageable versions', async () => {
   const revision = 'a'.repeat(40);
-  assert.deepEqual(select({ event: 'pull_request', revision, packageVersion: '1.2.3-rc.1' }, accepts),
+  assert.deepEqual(await select({ event: 'pull_request', revision, packageVersion: '1.2.3-rc.1' }, accepts),
     { version: '1.2.3-rc.1', revision, publish: false });
-  assert.deepEqual(select({ event: 'push', revision, analyzedRevision: revision, analyzedVersion: '', packageVersion: '1.2.3' }, accepts),
+  assert.deepEqual(await select({ event: 'push', revision, analyzedRevision: revision, analyzedVersion: '', packageVersion: '1.2.3' }, accepts),
     { version: '1.2.3', revision, publish: false });
-  assert.deepEqual(select({ event: 'push', revision, analyzedRevision: revision, analyzedVersion: '1.3.0', packageVersion: '1.2.3' }, accepts),
+  assert.deepEqual(await select({ event: 'push', revision, analyzedRevision: revision, analyzedVersion: '1.3.0', packageVersion: '1.2.3' }, accepts),
     { version: '1.3.0', revision, publish: true });
-  assert.throws(() => select({ event: 'push', revision, analyzedRevision: 'b'.repeat(40), analyzedVersion: '1.3.0', packageVersion: '1.2.3' }, accepts),
+  await assert.rejects(() => select({ event: 'push', revision, analyzedRevision: 'b'.repeat(40), analyzedVersion: '1.3.0', packageVersion: '1.2.3' }, accepts),
     /belongs to another revision/);
-  assert.throws(() => select({ event: 'schedule', revision, packageVersion: '1.2.3' }, accepts), UsageError);
+  await assert.rejects(() => select({ event: 'schedule', revision, packageVersion: '1.2.3' }, accepts), UsageError);
   for (const version of ['1.2.3-rc-1', '1.2.3-rc.0', '1.2', 'v1.2.3', '--help', '-h']) {
-    assert.equal(packageable(version, ROOT), false, version);
-    assert.throws(() => select({ event: 'pull_request', revision, packageVersion: version }, accepts), /Unsupported native package version/);
+    assert.equal(await packageable(version, ROOT), false, version);
+    await assert.rejects(() => select({ event: 'pull_request', revision, packageVersion: version }, accepts), /Unsupported native package version/);
   }
-  for (const version of ['0.0.0', '1.2.3', '1.2.3-rc', '1.2.3-rc.10']) assert.equal(packageable(version, ROOT), true, version);
+  for (const version of ['0.0.0', '1.2.3', '1.2.3-rc', '1.2.3-rc.10']) assert.equal(await packageable(version, ROOT), true, version);
   // The grammar check is the caller's: select runs no process of its own.
   const asked: string[] = [];
-  assert.deepEqual(select({ event: 'pull_request', revision, packageVersion: 'any' }, version => asked.push(version) > 0),
+  assert.deepEqual(await select({ event: 'pull_request', revision, packageVersion: 'any' }, version => asked.push(version) > 0),
     { version: 'any', revision, publish: false });
   assert.deepEqual(asked, ['any']);
 });
@@ -263,15 +265,39 @@ test('full fidelity uses one baseline while every platform still reaches native 
 });
 
 
-test('validator launch and infrastructure failures remain errors', t => {
+test('validator launch and infrastructure failures remain errors', async t => {
   const { cwd } = repository(t);
   const validator = join(cwd, 'packaging/scripts/native-version.sh');
   for (const body of ['#!/bin/sh\nexit 1\n', '#!/bin/sh\nkill -TERM $$\n']) {
     writeFileSync(validator, body);
-    assert.throws(() => packageable('1.2.3', cwd));
+    await assert.rejects(() => packageable('1.2.3', cwd));
   }
   chmodSync(validator, 0o644);
-  assert.throws(() => packageable('1.2.3', cwd), { code: 'EACCES' });
+  await assert.rejects(() => packageable('1.2.3', cwd), { code: 'EACCES' });
   rmSync(validator);
-  assert.throws(() => packageable('1.2.3', cwd), { code: 'ENOENT' });
+  await assert.rejects(() => packageable('1.2.3', cwd), { code: 'ENOENT' });
+});
+
+
+test('release metadata deadlines remain failures including a checker that would reject later', async t => {
+  const { cwd } = repository(t);
+  const validator = join(cwd, 'packaging/scripts/native-version.sh');
+  writeFileSync(validator, '#!/bin/bash\nsleep 60\nexit 2\n');
+  const bounded: typeof metadata = (command, args, context) => metadata(command, args, context, { timeout: 100 });
+  await assert.rejects(packageable('1.2.3', cwd, bounded), /timed out/);
+  const bin = join(cwd, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'git'), '#!/bin/bash\nexec /bin/sleep 60\n', { mode: 0o755 });
+  await assert.rejects(main([], cwd, { PATH: bin, BRANCH_TRUCE_CI_EVENT: 'pull_request' }, bounded), /timed out/);
+});
+
+test('release help and invalid arguments perform no metadata work', async t => {
+  const { cwd } = repository(t);
+  for (const [args, status, stream] of [[['--help'], 0, 'stdout'], [['--help', 'extra'], 2, 'stderr'],
+    [['extra'], 2, 'stderr']] as const) {
+    const result = spawnSync(process.execPath, [selection, ...args], { cwd, env: { PATH: '/missing' }, encoding: 'utf8' });
+    assert.equal(result.status, status, result.stderr);
+    assert.match(result[stream], /usage: node packaging\/ci\/next-release.js/);
+    assert.equal(result[stream === 'stdout' ? 'stderr' : 'stdout'], '');
+  }
 });
