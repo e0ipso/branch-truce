@@ -38,6 +38,8 @@
 #include <QUuid>
 #include <array>
 #include <atomic>
+#include <csignal>
+#include <cstdio>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -46,6 +48,7 @@
 #include <string>
 #include <sys/stat.h>
 #include <tuple>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -326,6 +329,10 @@ inline void ready(const Repository &repo, const QJsonObject &state, const QStrin
     CHECK(state.value("stage2CommitId").toString() == QString::fromLatin1(repo.main));
     CHECK(state.value("stage3CommitId").toString() == QString::fromLatin1(repo.side));
 }
+
+// Child mode of this executable: opens the repository at root, edits tracked.txt and kills itself
+// while it holds the store's lease. Prints ACK after the edit is acknowledged.
+int openEditAndCrash(const QString &root);
 
 // Each file registers its cases; application is the real branch-truce binary.
 void addPublicationCases(test_support::Suite &suite, const QString &application);

@@ -10,6 +10,8 @@ int main(int argc, char **argv)
     QCoreApplication application(argc, argv);
     // The English catalog supplies the plural forms these checks read.
     branch_truce::installTranslations(application);
+    if (argc == 3 && std::string_view(argv[1]) == "--open-edit-and-crash")
+        return openEditAndCrash(QString::fromLocal8Bit(argv[2]));
     const auto arguments = test_support::configure(argc, argv);
     const std::map<std::string, void (*)(test_support::Suite &, const QString &)> groups{
         {"publication", addPublicationCases},

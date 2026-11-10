@@ -151,6 +151,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # Its process-exit case starts this executable again as the child that exits.
     branch_truce_add_unit_test(app.session-recovery app/SessionRecoveryTests.cpp LIBS branch_truce_controller
         PRIVATE_XDG TIMEOUT 120 LABELS app)
+    branch_truce_add_unit_test(app.command-guard app/CommandGuardTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG LABELS app)
     branch_truce_add_unit_test(app.selected-file app/SelectedFileTests.cpp LIBS branch_truce_controller Qt6::Test
         PRIVATE_XDG LABELS app)
     branch_truce_add_unit_test(app.text-change app/TextChangeTests.cpp LIBS branch_truce_controller
@@ -292,8 +294,12 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         $<TARGET_FILE:branch-truce> $<TARGET_FILE:branch_truce_appearance_probe>)
     set_tests_properties(app.startup-appearance PROPERTIES TIMEOUT 90)
 
-    branch_truce_add_unit_test(app.resolution app/ResolutionPublisherTests.cpp LIBS branch_truce_controller
+    # Mark resolved and the result commands through the application, on real repositories.
+    branch_truce_add_unit_test(app.mark-resolved app/MarkResolvedTests.cpp LIBS branch_truce_controller
         PRIVATE_XDG TIMEOUT 90 LABELS app)
+    # The publisher alone, on a session store and coordinator without a window.
+    branch_truce_add_unit_test(publication.resolution-publisher app/ResolutionPublisherTests.cpp
+        LIBS branch_truce_controller PRIVATE_XDG LABELS app)
 
     # The launcher protocol alone: messages, framing, the listener against misbehaving peers, paths and restore.
     branch_truce_add_unit_test(mergetool.protocol app/MergetoolProtocolTests.cpp LIBS branch_truce_mergetool_protocol

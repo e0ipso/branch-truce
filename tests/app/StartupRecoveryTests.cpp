@@ -4,8 +4,56 @@
 
 using namespace startup_routes;
 
+int startup_routes::openEditAndCrash(const QString &root)
+{
+    Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+    if (!controller.loader()->openRepository(root)) return 3;
+    QEventLoop loop;
+    QObject::connect(controller.loader(), &SessionLoader::launchChanged, &loop, [&] {
+        if (!controller.loader()->opening()) loop.quit();
+    });
+    QTimer::singleShot(test_support::kWaitDeadlineMs, &loop, &QEventLoop::quit);
+    if (controller.loader()->opening()) loop.exec();
+    if (controller.loader()->startupState() != "ready") return 4;
+    const auto *file = controller.store()->file(test_support::fileIdOf("tracked.txt"));
+    if (!file || !controller.store()->recoveryLease()) return 5;
+    if (controller.store()->editResult(file->id(), file->current().id, {{0, 0}, "edited before the crash\n"})
+        != Transition::Applied)
+        return 6;
+    std::fputs("ACK\n", stdout);
+    std::fflush(stdout);
+    // Ends the process the way a crash does: no destructor runs, so the lease's lock file stays.
+    ::kill(::getpid(), SIGKILL);
+    return 7;
+}
+
 void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString &application)
 {
+    suite.run("a window killed while it holds the session lock leaves its edit for the next start", [] {
+        Repository repo;
+        repo.conflict("merge");
+        ScopedEnvironment environment(repo.environment);
+        QProcess crashed;
+        crashed.setProcessEnvironment(repo.environment);
+        crashed.start(QCoreApplication::applicationFilePath(), {"--open-edit-and-crash", repo.root});
+        CHECK(crashed.waitForStarted(5000));
+        test_support::waitUntil([&] { return crashed.state() == QProcess::NotRunning; },
+                                "the window that crashes did not end");
+        CHECK(crashed.exitStatus() == QProcess::CrashExit);
+        CHECK_EQ(crashed.readAllStandardOutput(), QByteArray("ACK\n"));
+        // The killed window left its store and the lock file of its lease behind.
+        const auto stores = QDir(recoveryRoot()).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+        CHECK_EQ(stores.size(), 1);
+        const auto location = recoveryRoot() + "/" + stores.front();
+        CHECK(QFileInfo::exists(location + "/session.lock"));
+        Application controller{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
+        openController(controller, repo);
+        CHECK(controller.loader()->recoveryChoices().isEmpty());
+        CHECK_EQ(controller.store()->recoveryDirectory(), location);
+        CHECK(controller.store()->recoveryLease() != nullptr);
+        CHECK(openedFile(controller).current().draft.text.starts_with("edited before the crash\n"));
+        CHECK(readFile(repo.path("tracked.txt")) == repo.manual);
+    });
     suite.run("restart restores acknowledged unsaved work independently of Save review and resolution", [] {
         Repository repo;
         repo.conflict("merge");
