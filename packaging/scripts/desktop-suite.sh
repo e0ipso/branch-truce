@@ -12,30 +12,18 @@
 # scope.json). Exits with the first failing status, after every step ran.
 set -euo pipefail
 
+source "$(dirname -- "${BASH_SOURCE[0]}")/cli.sh"
 usage() { echo "usage: $0 --source DIR --work DIR --version SEMVER --reports DIR [--native-fidelity]"; }
-source_dir='' work='' version='' reports='' fidelity=false
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h|--help) usage; exit 0 ;;
-        --native-fidelity) fidelity=true; shift ;;
-        --source|--work|--version|--reports)
-            [ $# -ge 2 ] || { usage >&2; exit 2; }
-            case "$1" in
-                --source) source_dir=$2 ;; --work) work=$2 ;; --version) version=$2 ;; --reports) reports=$2 ;;
-            esac
-            shift 2 ;;
-        *) usage >&2; exit 2 ;;
-    esac
-done
-[ -n "$source_dir" ] && [ -n "$work" ] && [ -n "$version" ] && [ -n "$reports" ] || { usage >&2; exit 2; }
+declare -A options=()
+cli_parse options - 'source=! work=! version=! reports=! native-fidelity' "$@" || { cli_usage $? usage; exit; }
+source_dir=${options[source]} work=${options[work]} version=${options[version]} reports=${options[reports]}
+fidelity=false
+[ -z "${options[native-fidelity]-}" ] || fidelity=true
 
 # Fail before configuring or building when the report directory is not writable.
 test -w "$reports"
 : > "$reports/write-probe"
 rm "$reports/write-probe"
-if command -v ccache >/dev/null; then
-    bash "$source_dir/tests/packaging/CompilerCache.sh"
-fi
 source "$source_dir/packaging/scripts/compiler-cache.sh"
 
 # configure BUILD-DIR CACHE-PROFILE [CMAKE-ARGUMENT...]: a Debug desktop build tree with tests.

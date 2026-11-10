@@ -14,7 +14,8 @@ RUN dnf install -y --setopt=install_weak_deps=False rpm-build ccache \
     && dnf builddep -y --setopt=install_weak_deps=False -D 'branch_truce_version 0.0.0' \
         -D 'branch_truce_native_version 0.0.0' /opt/branch-truce/rpm/branch-truce.spec \
     && dnf clean all
-COPY minimum-versions.tsv /opt/branch-truce/
+COPY formats.tsv minimum-versions.tsv /opt/branch-truce/
+COPY scripts/cli.sh scripts/tsv.sh scripts/formats.sh /opt/branch-truce/scripts/
 COPY ci/baseline.sh /opt/branch-truce/ci/
 RUN /opt/branch-truce/ci/baseline.sh --format fedora-rpm > /opt/branch-truce/baseline.txt \
     && cat /opt/branch-truce/baseline.txt

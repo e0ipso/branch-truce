@@ -66,4 +66,19 @@ expect_death "removal left $work/installed/branch-truce.save" "$stubs
 expect_death 'branch-truce is still installed' "$stubs
     pkg_remove() { :; }; pkg_installed_version() { echo 1.2.3; }
     remove_and_check \"$work/home\" \"$work/payload\""
-echo 'package checker home, application and removal contract passed'
+# The previous package must be an older branch-truce for the same architecture,
+# checked with the adapter's own version order before anything is installed.
+previous="pkg_identity() { echo \"\$IDENTITY\"; }; pkg_older() { [ \"\$1\" = 1.0.0 ] && [ \"\$2\" = 1.2.3 ]; }"
+(source "$root/packaging/scripts/check-package.sh"; eval "$previous"
+    IDENTITY='branch-truce|1.0.0|amd64' check_previous /previous.deb 1.2.3 amd64) > "$work/result" \
+    || { cat "$work/result" >&2; fail 'an older previous package was rejected'; }
+[ "$(cat "$work/result")" = 1.0.0 ] || fail "previous version printed as '$(cat "$work/result")'"
+for identity in 'branch-truce|1.2.3|amd64' 'branch-truce|1.2.4|amd64'; do
+    expect_death "previous version ${identity:13:5} is not older than 1.2.3" "$previous
+        IDENTITY='$identity' check_previous /previous.deb 1.2.3 amd64"
+done
+expect_death 'previous package is other for amd64, not branch-truce for amd64' "$previous
+    IDENTITY='other|1.0.0|amd64' check_previous /previous.deb 1.2.3 amd64"
+expect_death 'previous package is branch-truce for arm64, not branch-truce for amd64' "$previous
+    IDENTITY='branch-truce|1.0.0|arm64' check_previous /previous.deb 1.2.3 amd64"
+echo 'package checker home, application, previous package and removal contract passed'

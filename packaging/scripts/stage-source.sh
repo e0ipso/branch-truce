@@ -11,26 +11,19 @@
 # <root> must then be a Git work tree. Without it, the paths are copied as
 # they are, for a <root> that is already such a copy. <dir> must not exist.
 set -euo pipefail
+source "$(dirname -- "${BASH_SOURCE[0]}")/cli.sh"
 
 usage() { echo "usage: $0 [--tracked] --from <root> --to <dir> [PATH...]"; }
 inputs=(CMakeLists.txt cmake src LICENSE
     packaging/CMakeLists.txt packaging/com.canpicasoft.branch-truce.desktop
     packaging/com.canpicasoft.branch-truce.metainfo.xml packaging/installed-files.txt
     assets/branding/platform/linux assets/branding/svg)
-tracked=false from='' to=''
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h|--help) usage; exit 0 ;;
-        --tracked) tracked=true; shift ;;
-        --from|--to)
-            [ $# -ge 2 ] || { usage >&2; exit 2; }
-            if [ "$1" = --from ]; then from=$2; else to=$2; fi
-            shift 2 ;;
-        -*) usage >&2; exit 2 ;;
-        *) inputs+=("$1"); shift ;;
-    esac
-done
-[ -n "$from" ] && [ -n "$to" ] || { usage >&2; exit 2; }
+declare -A options=()
+declare -a extra=()
+cli_parse options extra 'tracked from=! to=!' "$@" || { cli_usage $? usage; exit; }
+inputs+=("${extra[@]}")
+from=${options[from]} to=${options[to]} tracked=false
+[ -z "${options[tracked]-}" ] || tracked=true
 [ -d "$from" ] || { echo "error: $from is not a directory" >&2; exit 2; }
 [ ! -e "$to" ] || { echo "error: $to already exists" >&2; exit 2; }
 mkdir -p -- "$to"

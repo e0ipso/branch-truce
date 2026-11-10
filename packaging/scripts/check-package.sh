@@ -12,25 +12,7 @@
 # packaging/scripts/container-check.sh assembles that tree.
 #
 # Every format runs the same checks. The package manager calls live in
-# pkg-<family>.sh, which defines:
-#   pkg_identity FILE           name|native version|architecture
-#   pkg_check_metadata FILE     format-specific metadata, such as licenses
-#   pkg_files FILE              payload files, absolute and sorted
-#   pkg_extra_files             payload files beyond installed-files.txt
-#   pkg_has_scripts FILE        true when the package has scripts, triggers
-#                               or configuration files
-#   pkg_depends FILE            declared dependency names
-#   pkg_recipe_depends ROOT     dependency names the recipe declares
-#   pkg_older OLD NEW           native version order
-#   pkg_target_ready            the container is the format's target
-#   pkg_refresh                 refresh the package lists
-#   pkg_install FILE            install or upgrade from a local file
-#   pkg_remove                  remove completely
-#   pkg_installed_version       the installed native version, or nothing
-#   pkg_verify_installed        the package manager's file integrity check
-#   pkg_runtime_versions        print the target's Qt, KDE and Git packages
-#   pkg_qt_root                 the Qt 6 directory holding qml/ and plugins/
-#   pkg_leftover_suffixes       suffixes of saved configuration files
+# pkg-<family>.sh, whose contract pkg-adapters.md documents.
 #
 # The first failed check stops the run. Exit status: 0 every check passed,
 # 1 a check failed, 2 usage error or unsupported version. Sourcing the file
@@ -38,6 +20,7 @@
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd -- "$here/../.." && pwd)
+source "$here/cli.sh"
 source "$here/package-info.sh"
 source "$root/tools/lib/fixture.sh"
 app_binary=/usr/bin/branch-truce
@@ -108,14 +91,19 @@ check_previous() {
     printf '%s\n' "$version"
 }
 
-# check_installed WANT VERSION HOME WORK: the installed package and the
-# application it installs, run on a fresh conflict in WORK/repo.
-check_installed() {
-    local want=$1 version=$2 home=$3 work=$4 path relative size got module kind qt_root
-    local branding=$root/assets/branding/platform/linux/hicolor
+# check_installed_files WANT PAYLOAD-FILE: the package manager reports
+# version WANT installed, every payload file exists and none changed.
+check_installed_files() {
+    local want=$1 payload=$2 path
     [ "$(pkg_installed_version)" = "$want" ] || die "installed version is '$(pkg_installed_version)', expected $want"
-    while IFS= read -r path; do [ -f "$path" ] || die "missing installed file $path"; done < "$work/payload"
+    while IFS= read -r path; do [ -f "$path" ] || die "missing installed file $path"; done < "$payload"
     pkg_verify_installed || die 'the package manager reports changed installed files'
+}
+
+# check_icons: each installed icon is the branding pack's file, its directory
+# is declared at its size in hicolor's index.theme, and a PNG has that size.
+check_icons() {
+    local branding=$root/assets/branding/platform/linux/hicolor relative path size got
     while IFS= read -r relative; do
         path=/usr/share/icons/hicolor/$relative
         cmp -s -- "$branding/$relative" "$path" || die "icon $relative differs from the branding pack"
@@ -127,11 +115,21 @@ check_installed() {
             [ "$got" = "$size" ] || die "icon $relative is $got, expected $size"
         fi
     done < <(installed_files "$root/packaging/installed-files.txt" '' | sed -n 's|^/share/icons/hicolor/||p')
+}
+
+# check_desktop_files: the desktop entry and the AppStream metainfo validate.
+check_desktop_files() {
     desktop-file-validate /usr/share/applications/com.canpicasoft.branch-truce.desktop
     appstreamcli validate --no-net /usr/share/metainfo/com.canpicasoft.branch-truce.metainfo.xml
+}
+
+# check_binary WORK: every linked library resolves, the binary uses no private
+# Qt ABI and has the hardening the distributions build with. Tool output goes
+# to files in WORK first, so a failing objdump or readelf fails the check.
+check_binary() {
+    local work=$1
     ldd "$app_binary" > "$work/ldd" 2>&1 || die "ldd failed on $app_binary: $(cat "$work/ldd")"
     ! grep -q 'not found' "$work/ldd" || die "unresolved libraries: $(grep 'not found' "$work/ldd" | tr '\n' ' ')"
-    # Write the tool output to files first, so a failing objdump or readelf fails the check.
     objdump -T "$app_binary" > "$work/symbols"
     readelf -hW "$app_binary" > "$work/header"
     readelf -lW "$app_binary" > "$work/segments"
@@ -141,7 +139,12 @@ check_installed() {
     grep -q GNU_RELRO "$work/segments" || die 'the binary lacks RELRO'
     grep -q BIND_NOW "$work/dynamic" || die 'the binary lacks immediate binding'
     grep GNU_STACK "$work/segments" | grep -q 'RW ' || die 'the binary has an executable or no stack policy'
-    qt_root=$(pkg_qt_root)
+}
+
+# check_runtime_modules QT-ROOT: every QML module and Qt plugin of
+# runtime-modules.txt is installed under QT-ROOT.
+check_runtime_modules() {
+    local qt_root=$1 kind module path
     while IFS=$'\t' read -r kind module; do
         case "$kind" in
             qml) path=$qt_root/qml/${module//.//}/qmldir ;;
@@ -150,11 +153,29 @@ check_installed() {
         esac
         [ -f "$path" ] || die "runtime $kind $module is not installed: no $path"
     done < "$root/packaging/runtime-modules.txt"
+}
+
+# check_launch VERSION HOME WORK: the installed binary reports VERSION and opens
+# a fresh conflict in WORK/repo with --smoke-test, with HOME's environment.
+check_launch() {
+    local version=$1 home=$2 work=$3 got
     got=$(run_app "$home" / --version) || die "installed --version exited $?"
     [ "$got" = "Branch Truce $version" ] || die "installed --version reports '$got'"
     fixture_merge_repo "$home" "$work/repo" tracked.txt
     got=$(run_app "$home" "$work/repo" --smoke-test "$work/repo") || die "installed --smoke-test exited $?: $got"
     smoke_record_ready "$got" || die "installed --smoke-test did not open the merge session: $got"
+}
+
+# check_installed WANT VERSION HOME WORK: the installed package and the
+# application it installs, run on a fresh conflict in WORK/repo.
+check_installed() {
+    local want=$1 version=$2 home=$3 work=$4
+    check_installed_files "$want" "$work/payload"
+    check_icons
+    check_desktop_files
+    check_binary "$work"
+    check_runtime_modules "$(pkg_qt_root)"
+    check_launch "$version" "$home" "$work"
     ok "installed $want: files, integrity, icons, metadata, libraries, hardening, runtime modules, --version and --smoke-test"
 }
 
@@ -180,25 +201,15 @@ remove_and_check() {
 }
 
 check_main() {
-    local format='' version='' package='' previous='' family extension architecture native file work previous_native=''
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            -h|--help) usage; return 0 ;;
-            --format|--version|--package|--previous)
-                [ $# -ge 2 ] || { usage >&2; return 2; }
-                case "$1" in
-                    --format) format=$2 ;; --version) version=$2 ;;
-                    --package) package=$2 ;; --previous) previous=$2 ;;
-                esac
-                shift 2 ;;
-            *) usage >&2; return 2 ;;
-        esac
-    done
-    [ -n "$format" ] && [ -n "$version" ] && [ -n "$package" ] || { usage >&2; return 2; }
+    local format version package previous family extension architecture native file work previous_native=''
+    local -A options=()
+    cli_parse options - 'format=! version=! package=! previous=' "$@" || { cli_usage $? usage; return; }
+    format=${options[format]} version=${options[version]} package=${options[package]} previous=${options[previous]-}
     family=$(format_field "$format" family) || return 2
     extension=$(format_field "$format" extension)
     architecture=$(format_field "$format" architecture)
     native=$(package_native_version "$format" "$version") || return 2
+    # shellcheck source=pkg-deb.sh
     source "$here/pkg-$family.sh"
     for file in "$package" ${previous:+"$previous"}; do
         [ -f "$file" ] || { echo "error: $file is not a file" >&2; return 2; }

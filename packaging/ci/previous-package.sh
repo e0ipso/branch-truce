@@ -13,23 +13,13 @@
 
 set -euo pipefail
 
+source "$(dirname -- "${BASH_SOURCE[0]}")/../scripts/cli.sh"
 source "$(dirname -- "${BASH_SOURCE[0]}")/../scripts/package-info.sh"
 usage() { echo "usage: $0 --format $(format_ids | paste -sd '|' -) --version <semver> --output <dir>"; }
 
-format=""
-version=""
-output=""
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h|--help) usage; exit 0 ;;
-        --format|--version|--output)
-            [ $# -ge 2 ] || { usage >&2; exit 2; }
-            case "$1" in --format) format=$2 ;; --version) version=$2 ;; --output) output=$2 ;; esac
-            shift 2 ;;
-        *) usage >&2; exit 2 ;;
-    esac
-done
-[ -n "$format" ] && [ -n "$version" ] && [ -n "$output" ] || { usage >&2; exit 2; }
+declare -A options=()
+cli_parse options - 'format=! version=! output=!' "$@" || { cli_usage $? usage; exit; }
+format=${options[format]} version=${options[version]} output=${options[output]}
 label=$(format_field "$format" label) || { usage >&2; exit 2; }
 packaging_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 native_version() { "$packaging_dir/scripts/native-version.sh" "$1"; }

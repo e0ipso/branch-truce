@@ -40,7 +40,7 @@ python=$(command -v python3 || true)
 # A PATH with only the commands the host side uses, so the host's own sway,
 # grim or Docker can never be reached. Stubs come first.
 for tool in bash env dirname basename mkdir readlink sha256sum cut uname grep tee cp mktemp rm sed wc \
-    sleep cat find sort ls head tr; do
+    sleep cat find sort ls head tr awk paste; do
     found=$(command -v "$tool") || fail "test needs $tool"
     ln -s -- "$found" "$work/sys/$tool"
 done
@@ -55,7 +55,7 @@ set -euo pipefail
 state=$STUB_STATE
 { printf '%q' "$1"; printf ' %q' "${@:2}"; printf '\n'; } >> "$state/engine.log"
 case "$1" in
-    image) exit "${STUB_IMAGE_STATUS:-0}" ;;
+    build) exit "${STUB_BUILD_STATUS:-0}" ;;
     run)
         while (($# > 0)); do
             case "$1" in
@@ -173,7 +173,7 @@ make_socket() {
 }
 
 mkdir -p -- "$work/debs"
-deb_name=branch-truce_1.2.3+kubuntu26.04_amd64
+deb_name=branch-truce_1.2.3_amd64-ubuntu26.04
 deb=$work/debs/$deb_name.deb
 printf 'stub deb\n' > "$deb"
 deb_sha=$(sha256sum < "$deb" | cut -d' ' -f1)
@@ -196,13 +196,17 @@ pass
 expect_rejected "$script" --in-container bogus
 expect_no_fixture
 
-# --- a missing target image stops before any container runs
-invoke STUB_IMAGE_STATUS=1 -- "$script" --target kubuntu --package "$deb" --output "$work/out"
+# --- a target image that does not build stops before any container runs
+image_build() {
+    printf 'build --quiet --target target --tag branch-truce-validate:%s --build-arg BRANCH_TRUCE_KDE_CI_REFRESH= --file %s %s' \
+        "$1" "$root/packaging/$2" "$root/packaging"
+}
+invoke STUB_BUILD_STATUS=1 -- "$script" --target kubuntu --package "$deb" --output "$work/out"
 expect_status 1
-expect_output 'Missing image branch-truce-artifact:kubuntu-26.04-target; run tools/build-artifact.sh --target kubuntu first'
+expect_output 'error: the kubuntu image did not build from packaging/ci/kubuntu.Dockerfile'
 expect_engine_calls 1
-[[ "$(cat "$work/state/engine.log")" == 'image inspect branch-truce-artifact:kubuntu-26.04-target' ]] \
-    || fail "image query"
+[[ "$(cat "$work/state/engine.log")" == "$(image_build kubuntu ci/kubuntu.Dockerfile)" ]] \
+    || fail "image build: $(cat "$work/state/engine.log")"
 pass
 [[ ! -e "$work/out/$deb_name.validation" ]] || fail "report written without an image"
 pass
@@ -219,7 +223,7 @@ expected_report="== Artifact
 file $deb_name.deb
 sha256 $deb_sha
 host kernel $(uname -r)
-PASS stub install kubuntu26.04 /artifact/$deb_name.deb
+PASS stub install /artifact/$deb_name.deb
 PASS stub layout
 PASS stub cli
 PASS stub desktop
@@ -233,7 +237,7 @@ SKIP not requested; Wayland, scaling, theme, input and AT-SPI not exercised
 pass
 [[ "$output" == "$expected_report"$'\n'"Report: $report" ]] || fail "terminal output is the report and its path"
 pass
-[[ "$(steps)" == "install kubuntu26.04 /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;" ]] \
+[[ "$(steps)" == "install /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;" ]] \
     || fail "container steps: $(steps)"
 pass
 # The container runs from the target image with the package and fixture read-only.
@@ -244,7 +248,7 @@ run_line=$(sed -n 2p "$work/state/engine.log")
 [[ "$run_line" =~ ^run\ --detach\ --init\ --name\ (bt-validate-kubuntu-[0-9]+)\ --volume\ (.*)$ ]] \
     || fail "run line: $run_line"
 container=${BASH_REMATCH[1]}
-[[ "${BASH_REMATCH[2]}" == "$deb:/artifact/$deb_name.deb:ro --volume $fixture:/validate:ro branch-truce-artifact:kubuntu-26.04-target sleep infinity" ]] \
+[[ "${BASH_REMATCH[2]}" == "$deb:/artifact/$deb_name.deb:ro --volume $fixture:/validate:ro branch-truce-validate:kubuntu sleep infinity" ]] \
     || fail "run mounts and image: $run_line"
 pass
 # Each step runs in that container; the container is removed last.
@@ -254,23 +258,23 @@ pass
 [[ "$(tail -n 1 "$work/state/engine.log")" == "rm --force $container" ]] || fail "container not removed last"
 pass
 # The container gets this checkout's validation scripts and nothing else.
-expect_files "$work/state/fixture-copy" 'artifact-baseline.sh atspi-probe.py lib validate-installed-artifact.sh '
-for file in artifact-baseline.sh atspi-probe.py lib/fixture.sh validate-installed-artifact.sh; do
+expect_files "$work/state/fixture-copy" 'atspi-probe.py lib validate-installed-artifact.sh '
+for file in atspi-probe.py lib/fixture.sh validate-installed-artifact.sh; do
     cmp -s -- "$root/tools/$file" "$work/state/fixture-copy/$file" || fail "fixture $file differs from tools/$file"
     pass
 done
 expect_no_fixture
 
-# tuxedo selects its own base and image.
+# tuxedo builds its own image from its row of validation-targets.tsv.
 invoke -- "$script" --target tuxedo --package "$deb" --output "$work/reports/tuxedo"
 expect_status 0
-[[ "$(sed -n 1p "$work/state/engine.log")" == 'image inspect branch-truce-artifact:tuxedo-24.04-target' ]] \
-    || fail "tuxedo image"
+[[ "$(sed -n 1p "$work/state/engine.log")" == "$(image_build tuxedo tuxedo/Dockerfile)" ]] \
+    || fail "tuxedo image: $(sed -n 1p "$work/state/engine.log")"
 pass
-[[ "$(sed -n 2p "$work/state/engine.log")" == *' --name bt-validate-tuxedo-'*' branch-truce-artifact:tuxedo-24.04-target sleep infinity' ]] \
+[[ "$(sed -n 2p "$work/state/engine.log")" == *' --name bt-validate-tuxedo-'*' branch-truce-validate:tuxedo sleep infinity' ]] \
     || fail "tuxedo container"
 pass
-[[ "$(steps)" == "install tuxedo24.04 /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;" ]] \
+[[ "$(steps)" == "install /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;" ]] \
     || fail "tuxedo steps: $(steps)"
 pass
 expect_no_fixture
@@ -280,7 +284,7 @@ expect_no_fixture
 invoke STUB_FAIL_STEPS='cli desktop' -- "$script" --target kubuntu --package "$deb" --output "$work/reports/fail"
 expect_status 1
 report=$work/reports/fail/$deb_name.validation
-[[ "$(steps)" == "install kubuntu26.04 /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;" ]] \
+[[ "$(steps)" == "install /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;" ]] \
     || fail "steps after a failure: $(steps)"
 pass
 grep -qx 'FAIL step cli exited 3' "$report" && grep -qx 'FAIL step desktop exited 3' "$report" || fail "step failures in report"
@@ -299,7 +303,7 @@ expect_no_fixture
 invoke STUB_FAIL_STEPS=install -- "$script" --target kubuntu --package "$deb" --output "$work/reports/install"
 expect_status 1
 report=$work/reports/install/$deb_name.validation
-[[ "$(steps)" == "install kubuntu26.04 /artifact/$deb_name.deb;" ]] || fail "steps after a failed install: $(steps)"
+[[ "$(steps)" == "install /artifact/$deb_name.deb;" ]] || fail "steps after a failed install: $(steps)"
 pass
 grep -qx 'FAIL step install exited 3' "$report" || fail "install failure in report"
 pass
@@ -327,7 +331,7 @@ if [[ -n "$python" && -n "$jq_path" ]]; then
         invoke "$@" -- "$script" "${args[@]}"
         expect_status 1
         expect_output "$message"
-        expect_engine_calls 1
+        expect_engine_calls 0
         expect_no_fixture
     }
     mv "$work/stubs/grim" "$work/grim"
@@ -348,7 +352,7 @@ if [[ -n "$python" && -n "$jq_path" ]]; then
     invoke STUB_WINDOW_OPEN=1 "${wayland_env[@]}" -- "$script" "${args[@]}"
     expect_status 1
     expect_output 'FAIL a com.canpicasoft.branch-truce window is already open on this session'
-    [[ "$(steps)" == "install kubuntu26.04 /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;" ]] \
+    [[ "$(steps)" == "install /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;" ]] \
         || fail "Wayland steps ran beside an open window: $(steps)"
     pass
     expect_no_fixture
@@ -363,7 +367,7 @@ if [[ -n "$python" && -n "$jq_path" ]]; then
 $deb_name-scale1-BreezeDark.png $deb_name-scale1-BreezeLight.png $deb_name-scale1.5-BreezeDark.png \
 $deb_name-scale1.5-BreezeLight.png $deb_name-scale2-BreezeDark.png $deb_name-scale2-BreezeLight.png \
 $deb_name.atspi $deb_name.validation "
-    expected_steps="install kubuntu26.04 /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;wayland-minimal;session;"
+    expected_steps="install /artifact/$deb_name.deb;layout;cli;desktop;mergetool-leave;wayland-minimal;session;"
     for window in '1 BreezeLight' '1 BreezeDark' '1.5 BreezeLight' '1.5 BreezeDark' '2 BreezeLight' '2 BreezeDark'; do
         expected_steps+="gui-start $window desktop;wait-ready;gui-stop;"
     done
@@ -451,14 +455,45 @@ expect_only_output() {
     [[ "$output" == "$1" ]] || fail "output is not exactly: $1"
     pass
 }
-# Sourcing defines the functions and runs neither half.
-for args in '' '--target kubuntu --package /nonexistent.deb --output /nonexistent' '--in-container install kubuntu26.04 /x.deb'; do
+# Sourcing defines the functions, sets no shell options and runs neither half.
+for args in '' '--target kubuntu --package /nonexistent.deb --output /nonexistent' '--in-container install /x.deb'; do
     # shellcheck disable=SC2086
-    sourced 'declare -F host_main container_main c_atspi_check c_wait_ready c_editor_input >/dev/null; echo sourced' $args
+    sourced 'declare -F host_main container_main c_atspi_check c_wait_ready c_editor_input >/dev/null
+        [[ $- != *e* && $- != *u* ]] && ! shopt -qo pipefail && echo sourced' $args
     expect_status 0
     expect_only_output sourced
     expect_engine_calls 0
 done
+
+# check_loaded_resources reads a --smoke-test log. A log without embedded QML
+# and a loaded file no package ships are failed checks; neither ends the step
+# early under set -e and pipefail, as an empty grep or dpkg-query once did.
+mkdir -p -- "$work/dpkg" "$work/loaded/qml/QtQuick" "$work/loaded/plugins"
+: > "$work/loaded/qml/QtQuick/qmldir"
+: > "$work/loaded/plugins/libqsvgicon.so"
+cat > "$work/dpkg/dpkg-query" <<DPKG
+#!/usr/bin/env bash
+[[ "\$2" == "$work/loaded/qml/QtQuick/qmldir" ]] || exit 1
+echo "qml6-module-qtquick:amd64: \$2"
+DPKG
+chmod +x "$work/dpkg/dpkg-query"
+printf 'BRANCH_TRUCE_SESSION={}\nqt.qml.import: addImportPath: "%s"\nLoaded "%s"\n' \
+    "$work/loaded/qml/QtQuick/qmldir" "$work/loaded/plugins/libqsvgicon.so" > "$work/loaded/plain.log"
+sourced 'PATH=$1:$PATH; check_loaded_resources "$2"; echo end' "$work/dpkg" "$work/loaded/plain.log"
+expect_status 0
+expect_output 'embedded QML: none'
+expect_output 'FAIL no embedded BranchTruce module'
+expect_output "unowned $work/loaded/plugins/libqsvgicon.so"
+expect_output 'loaded from the file system: 1 qmldir, 1 plugins'
+expect_output 'FAIL 1 loaded files belong to no package'
+expect_output $'\nend'
+printf 'Loading qrc:/qt/qml/BranchTruce/Main.qml\n' > "$work/loaded/embedded.log"
+sourced 'PATH=$1:$PATH; check_loaded_resources "$2"; echo end' "$work/dpkg" "$work/loaded/embedded.log"
+expect_status 0
+expect_output 'PASS application QML comes from the binary'"'"'s resources'
+expect_output 'loaded from the file system: 0 qmldir, 0 plugins'
+expect_output 'PASS every loaded qmldir and plugin belongs to an installed package'
+expect_no_output FAIL
 
 # The tree the probe prints for the application's accessible controls.
 if [[ -n "$python" ]]; then

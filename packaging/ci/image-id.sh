@@ -5,18 +5,13 @@
 #
 #   image-id.sh --format <id>
 set -euo pipefail
+source "$(dirname -- "${BASH_SOURCE[0]}")/../scripts/cli.sh"
 source "$(dirname -- "${BASH_SOURCE[0]}")/../scripts/formats.sh"
 
 usage() { echo "usage: $0 --format $(format_ids | paste -sd '|' -)"; }
-format=''
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h|--help) usage; exit 0 ;;
-        --format) [ $# -ge 2 ] || { usage >&2; exit 2; }; format=$2; shift 2 ;;
-        *) usage >&2; exit 2 ;;
-    esac
-done
-[ -n "$format" ] || { usage >&2; exit 2; }
+declare -A options=()
+cli_parse options - 'format=!' "$@" || { cli_usage $? usage; exit; }
+format=${options[format]}
 dockerfile=$(format_field "$format" dockerfile) || { usage >&2; exit 2; }
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

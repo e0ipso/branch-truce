@@ -50,7 +50,7 @@ Host, shared by both containers:
   (`/run/user/1000/wayland-1`) through a bind mount. They used their own
   D-Bus session bus, home and XDG directories, and never touched the host's.
 
-Artifacts, built with `tools/build-artifact.sh` from the commit that added
+Artifacts, built with the since-removed per-base builder from the commit that added
 `qt6-wayland` to `Depends`, with no changed source paths:
 
 | | Kubuntu 26.04 | Tuxedo OS 24.04 |
@@ -101,16 +101,23 @@ do not provide KWin, the Plasma shell, portals or a real seat.
 
 ## How to reproduce
 
-Build both artifacts as described in
-[target-platforms.md](target-platforms.md#build-and-inspect), then, from a
-shell inside a wlroots session such as sway:
+Build the Kubuntu release DEB as described in
+[target-platforms.md](target-platforms.md#build-and-inspect-a-release-deb),
+then, from a shell inside a wlroots session such as sway:
 
 ```sh
-tools/validate-installed-artifact.sh --target kubuntu --wayland \
-    --package "$out/branch-truce_0.1.0+kubuntu26.04_amd64.deb" --output "$out/kubuntu"
-tools/validate-installed-artifact.sh --target tuxedo --wayland \
-    --package "$out/branch-truce_0.1.0+tuxedo24.04_amd64.deb" --output "$out/tuxedo"
+deb="$out/branch-truce_1.2.3_amd64-ubuntu26.04.deb"
+tools/validate-installed-artifact.sh --target kubuntu --wayland --package "$deb" --output "$out/kubuntu"
+tools/validate-installed-artifact.sh --target tuxedo --wayland --package "$deb" --output "$out/tuxedo"
 ```
+
+`--target` names a row of
+[packaging/validation-targets.tsv](../packaging/validation-targets.tsv): the
+Kubuntu 26.04 target stage of the CI image, or Tuxedo OS 24.04 with its vendor
+Qt/KDE repositories. The script builds that image, or reuses it from the
+engine's layer cache. The dated runs below used the earlier per-base DEBs,
+which a removed builder made with a `+kubuntu26.04` or `+tuxedo24.04` version
+suffix.
 
 Run them one after the other: both look for the same window on the
 compositor. Without `--wayland` the script runs only the offscreen steps.

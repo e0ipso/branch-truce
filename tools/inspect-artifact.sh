@@ -1,106 +1,67 @@
 #!/usr/bin/env bash
-# Inspects a branch-truce .deb from tools/build-artifact.sh on its own OS base.
+# Inspects the runtime closure of a branch-truce DEB on a clean OS base, the
+# checks packaging/scripts/check-package.sh does not make.
 #
-#   tools/inspect-artifact.sh --target kubuntu|tuxedo --package DEB [--output DIR]
+#   tools/inspect-artifact.sh --target <target> --package DEB [--output DIR]
 #
-# It runs in a throwaway container from branch-truce-artifact:<base>-target,
-# the clean OS base that tools/build-artifact.sh leaves, so the host's packages
-# are never touched. The container fetches the target archive's package lists,
-# so it needs network access.
+# <target> is a row of packaging/validation-targets.tsv whose release format is
+# a DEB, such as kubuntu or tuxedo. The script builds that target image, or
+# reuses it from the engine's layer cache, and installs the DEB there with
+# apt-get --no-install-recommends in a throwaway container, so the host's
+# packages are never touched. The container fetches the target archive's
+# package lists, so it needs network access. It then reports:
 #
-# Steps:
-#   1. Package metadata and contents: name, version suffix for the base,
-#      architecture, exactly the installed files listed in docs/build.md plus
-#      the Debian copyright and changelog, and no maintainer scripts.
-#   2. Clean install with apt and --no-install-recommends. The packages the
-#      install adds are the runtime closure; they are printed with versions.
-#   3. ELF closure: NEEDED libraries, RUNPATH, highest required symbol
-#      versions, every library resolves, the package of each NEEDED
-#      library is in Depends, and Qt_6_PRIVATE_API symbols, if any, come with
-#      an exact Qt private ABI pin in Depends.
-#   4. QML closure: each module src/ui imports has a qmldir whose package is
-#      in Depends.
-#   5. desktop-file-validate and appstreamcli validate --no-net.
-#      The application icons are the branding pack's exports byte for byte, each
-#      PNG has its directory's size, and hicolor's index.theme declares every
-#      icon directory, so a theme lookup finds the icon in installed files only.
-#   6. The installed branch-truce runs --version and --smoke-test on a
-#      disposable merge conflict, offscreen. This loads the embedded QML,
-#      Kirigami and Qt Quick Controls from the installed closure.
-#   7. The installed application resolves the Breeze icon document-save, read
-#      by tests/fixtures/AppearanceProbe.cpp preloaded into the real binary.
-#      Without the SVG icon engine in the closure the icon is null. The run
-#      names no desktop, so it also covers the app naming its own icon theme.
-#   8. Removal leaves none of the package's files.
-# binutils, desktop-file-utils and appstream are installed after step 2 for
-# steps 3 and 5 only; they are not part of the closure. The probe is built
-# from the sources in the matching -build image, which must exist.
+#   1. The runtime closure: every package the install added, with its version.
+#   2. ELF closure: the RUNPATH and the highest required symbol versions, and
+#      the package of each NEEDED library is named in Depends itself, not only
+#      reached through another package.
+#   3. QML closure: each module src/ui imports has a qmldir from a package
+#      named in Depends.
+#
+# check-package.sh covers the payload, the metadata, the desktop files and
+# icons, hardening, the private Qt ABI, runtime modules, the launch and the
+# removal, on every release format.
 #
 # With --output, the report is also written to DIR/<package>.inspection.
 # CONTAINER_ENGINE defaults to docker. Exit status: 0 every check passed, 1 a
 # check failed, 2 usage error.
-set -euo pipefail
 
-app_id=com.canpicasoft.branch-truce
 qml_root=/usr/lib/x86_64-linux-gnu/qt6/qml
-hicolor=/usr/share/icons/hicolor
-# The shared fixture, PNG and icon-theme helpers. host_main copies them, and
-# packaging/installed-files.txt, next to this script in the container.
-inspect_dir=$(dirname -- "${BASH_SOURCE[0]}")
-source "$inspect_dir/lib/fixture.sh"
 
-usage() { echo "Usage: $0 --target kubuntu|tuxedo --package DEB [--output DIR]"; }
-usage_error() { usage >&2; exit 2; }
+usage() { echo "Usage: $0 --target <target> --package DEB [--output DIR]"; }
 
-base_for() {
-    case "$1" in
-        kubuntu) echo kubuntu26.04 ;;
-        tuxedo) echo tuxedo24.04 ;;
-        *) usage_error ;;
-    esac
-}
+# ---------------------------------------------------------------- host side
 
 host_main() {
-    local target= package= output=
-    while (($# > 0)); do
-        case "$1" in
-            -h|--help) usage; return 0 ;;
-            --target) [[ $# -ge 2 ]] || usage_error; target=$2; shift 2 ;;
-            --package) [[ $# -ge 2 ]] || usage_error; package=$2; shift 2 ;;
-            --output) [[ $# -ge 2 ]] || usage_error; output=$2; shift 2 ;;
-            *) usage_error ;;
-        esac
-    done
-    [[ -n "$target" && -f "$package" ]] || usage_error
-    local root engine base image name status
+    local root engine target package output image name status fixture
     root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+    source "$root/packaging/scripts/cli.sh"
+    source "$root/packaging/scripts/formats.sh"
+    source "$root/tools/lib/targets.sh"
+    local -A options=()
+    cli_parse options - 'target=! package=! output=' "$@" || { cli_usage $? usage; return; }
+    target=${options[target]} package=${options[package]} output=${options[output]-}
+    [[ -f "$package" ]] || { echo "error: $package is not a file" >&2; usage >&2; return 2; }
+    deb_target "$target" || { usage >&2; return 2; }
     engine=${CONTAINER_ENGINE:-docker}
-    base=$(base_for "$target")
-    image=branch-truce-artifact:${target}-${base#"$target"}-target
     package=$(cd -- "$(dirname -- "$package")" && pwd -P)/$(basename -- "$package")
     name=$(basename -- "$package" .deb)
-    "$engine" image inspect "$image" >/dev/null 2>&1 \
-        || { echo "Missing image $image; run tools/build-artifact.sh --target $target first" >&2; exit 1; }
+    image=$(target_image "$engine" "$root" "$target" "${BRANCH_TRUCE_KDE_CI_REFRESH:-}") || return 1
 
     fixture=$(mktemp -d "${TMPDIR:-/tmp}/bt-inspect.XXXXXXXX")
-    trap 'rm -rf -- "$fixture"' EXIT
-    # The QML modules the application imports, from the sources it was built from.
-    sed -n 's/^import \([A-Za-z][A-Za-z0-9.]*\).*/\1/p' "$root"/src/ui/*.qml | LC_ALL=C sort -u > "$fixture/imports.txt"
-    cp -- "$root/tools/inspect-artifact.sh" "$root/tools/artifact-baseline.sh" "$root/packaging/installed-files.txt" "$fixture/"
-    mkdir -p -- "$fixture/lib"
-    cp -- "$root/tools/lib/fixture.sh" "$fixture/lib/"
-    # The branding pack's icons, which the installed ones must equal.
-    local relative
-    while IFS= read -r relative; do
-        mkdir -p -- "$fixture/icons/${relative%/*}"
-        cp -- "$root/assets/branding/platform/linux/hicolor/$relative" "$fixture/icons/$relative"
-    done < <(icon_paths "$root/packaging/installed-files.txt")
-    build_appearance_probe "$engine" "${image%-target}-build" "$root" "$fixture/probe" \
-        || { echo "Could not build the appearance probe in ${image%-target}-build; run tools/build-artifact.sh --target $target first" >&2; exit 1; }
+    local cleanup
+    printf -v cleanup 'rm -rf -- %q' "$fixture"
+    # shellcheck disable=SC2064
+    trap "$cleanup" EXIT
+    # The container sees only this script and the QML modules the application
+    # imports, from the sources it was built from.
+    mkdir -- "$fixture/inspect"
+    sed -n 's/^import \([A-Za-z][A-Za-z0-9.]*\).*/\1/p' "$root"/src/ui/*.qml | LC_ALL=C sort -u > "$fixture/inspect/imports.txt"
+    cp -- "$root/tools/inspect-artifact.sh" "$fixture/inspect/"
 
     status=0
-    "$engine" run --rm --volume "$package:/artifact/$name.deb:ro" --volume "$fixture:/inspect:ro" \
-        "$image" /bin/bash /inspect/inspect-artifact.sh --in-container "$base" "/artifact/$name.deb" \
+    "$engine" run --rm --volume "$package:/artifact/$name.deb:ro" --volume "$fixture/inspect:/inspect:ro" \
+        "$image" /bin/bash /inspect/inspect-artifact.sh --in-container "/artifact/$name.deb" \
         > "$fixture/report" 2>&1 || status=$?
     cat -- "$fixture/report"
     if [[ -n "$output" ]]; then
@@ -114,80 +75,15 @@ host_main() {
     return "$status"
 }
 
-# Builds tests/fixtures/AppearanceProbe.cpp into DIR/lib/libappearance_probe.so
-# in the -build image of the same base, so it links the Qt the package runs on.
-# The container has no network and sees the source read-only.
-build_appearance_probe() {
-    local engine=$1 image=$2 root=$3 dir=$4 log
-    mkdir -p -- "$dir/src" "$dir/lib"
-    cp -- "$root/tests/fixtures/AppearanceProbe.cpp" "$dir/src/"
-    cat > "$dir/src/CMakeLists.txt" <<'CMAKE'
-cmake_minimum_required(VERSION 3.22)
-project(appearance_probe CXX)
-find_package(Qt6 REQUIRED COMPONENTS Gui QuickControls2)
-add_library(appearance_probe MODULE AppearanceProbe.cpp)
-target_link_libraries(appearance_probe PRIVATE Qt6::Gui Qt6::QuickControls2)
-CMAKE
-    log=$dir/build.log
-    "$engine" run --rm --network none \
-        --volume "$dir/src:/probe/src:ro" --volume "$dir/lib:/probe/lib" "$image" /bin/bash -c \
-        'cmake -S /probe/src -B /tmp/probe-build && cmake --build /tmp/probe-build \
-            && cp /tmp/probe-build/libappearance_probe.so /probe/lib/' \
-        > "$log" 2>&1 || { tail -n 20 -- "$log" >&2; return 1; }
-    [[ -f "$dir/lib/libappearance_probe.so" ]]
+# deb_target TARGET: TARGET is a validation target that takes a DEB.
+deb_target() {
+    local format family
+    format=$(target_field "$1" format) && family=$(format_field "$format" family) || return 2
+    [[ "$family" == deb ]] || { echo "error: $1 takes the $format package, not a DEB" >&2; return 2; }
 }
 
-# The icon decision: the appearance record the preloaded probe printed must say
-# the Breeze icon document-save resolved to an icon. An unset record fails too.
-check_icon_resolves() {
-    local record=$1
-    if [[ -z "$record" ]]; then
-        fail "no BRANCH_TRUCE_APPEARANCE record from the installed application"
-    elif [[ "$record" == *'"documentSave":true'* ]]; then
-        pass "QIcon::fromTheme(document-save) resolves in the installed application"
-    else
-        fail "QIcon::fromTheme(document-save) is null in the installed application; does Depends name the Qt SVG icon engine package?"
-    fi
-}
+# ------------------------------------------------------ inside the container
 
-# icon_paths INSTALLED-FILES: the application icons the package installs,
-# relative to the hicolor theme, from packaging/installed-files.txt.
-icon_paths() { sed -n 's|^share/icons/hicolor/||p' "$1"; }
-
-# The icon content decision: the installed THEME/RELATIVE must equal the branding
-# pack's EXPECTED/RELATIVE byte for byte, and a PNG must have its directory's size.
-check_app_icon() {
-    local theme=$1 expected=$2 relative=$3 size got
-    if [[ ! -f "$theme/$relative" ]]; then
-        fail "icon $relative is not installed"
-    elif ! cmp -s -- "$expected/$relative" "$theme/$relative"; then
-        fail "icon $relative differs from the branding pack"
-    elif [[ "$relative" == scalable/* ]]; then
-        pass "icon $relative is the branding pack's scalable symbol"
-    else
-        size=${relative%%/*}
-        got=$(png_size "$theme/$relative") || got="not a PNG"
-        [[ "$got" == "$size" ]] && pass "icon $relative is the branding pack's $size PNG" \
-            || fail "icon $relative is $got, not $size"
-    fi
-}
-
-# The icon lookup decision: a theme lookup searches only the directories INDEX
-# lists, at the Size and Type their sections give. RELATIVE's directory must be
-# listed, as Scalable for an SVG and at its pixel size otherwise.
-check_icon_lookup() {
-    local index=$1 relative=$2 dir=${2%/*} declared want found=false
-    declared=$(icon_lookup_ok "$index" "$relative") && found=true
-    want="${dir%%x*} Fixed or Threshold"
-    [[ "$relative" != scalable/* ]] || want=Scalable
-    if $found; then
-        pass "index.theme declares $dir ($declared)"
-    else
-        fail "index.theme does not declare $dir as $want (${declared:-not listed})"
-    fi
-}
-
-# Everything below runs as root inside the disposable target container.
 failures=0
 step() { printf '\n== %s\n' "$*"; }
 pass() { printf 'PASS %s\n' "$*"; }
@@ -195,57 +91,71 @@ fail() { printf 'FAIL %s\n' "$*"; failures=$((failures + 1)); }
 installed_set() { dpkg-query -W -f='${db:Status-Status}\t${Package}\t${Version}\n' | awk -F '\t' '$1 == "installed" {print $2 "\t" $3}' | LC_ALL=C sort; }
 # Package names in a Depends field, without versions or alternatives' order.
 depends_names() { tr ',|' '\n\n' <<<"$1" | sed 's/(.*//; s/:any//; s/[[:space:]]//g' | sed '/^$/d' | LC_ALL=C sort -u; }
-owner_of() { dpkg-query -S "$1" 2>/dev/null | head -1 | cut -d: -f1; }
+# owner_of PATH: the package that ships PATH, or nothing. A path no package
+# ships is an answer, not an error, so the merged-/usr fallbacks can run.
+owner_of() { { dpkg-query -S "$1" 2>/dev/null || true; } | head -1 | cut -d: -f1; }
 # The symbol version tags in `objdump -T` output on stdin, sorted and unique.
 # Output without any tag gives an empty list rather than grep's status 1.
 symbol_tags() {
     { grep -oE '\b(GLIBC|GLIBCXX|CXXABI|GCC|Qt)_[0-9][0-9A-Z_.]*' || (($? == 1)); } | LC_ALL=C sort -u
 }
-# Qt's private API is only stable within one Qt release, so a binary that
-# uses it must refuse any other release through an exact Depends pin.
-check_private_abi() {
-    local tags=$1 depends=$2
-    if grep -qx 'Qt_6_PRIVATE_API' <<<"$tags"; then
-        if grep -qE 'qt6-[a-z]+-private-abi \(= [^)]+\)' <<<"$depends"; then
-            pass "Qt_6_PRIVATE_API symbols with an exact Qt private ABI pin in Depends"
+
+# check_elf_closure BINARY DEPENDS: every NEEDED library of BINARY resolves and
+# comes from a package DEPENDS names. dpkg may register a library under /lib or
+# /usr/lib on merged-/usr systems, so each form is looked up.
+check_elf_closure() {
+    local binary=$1 names needed runpath lib path real owner before=$failures
+    names=$(depends_names "$2")
+    needed=$(readelf -d "$binary" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
+    runpath=$(readelf -d "$binary" | sed -n 's/.*(\(RPATH\|RUNPATH\)).*\[\(.*\)\]/\2/p')
+    echo "RUNPATH: ${runpath:-none}"
+    for lib in $needed; do
+        path=$(ldd "$binary" | awk -v lib="$lib" '$1 == lib {print $3}')
+        [[ -n "$path" && "$path" != 'not' ]] || { fail "$lib does not resolve"; continue; }
+        real=$(readlink -f "$path")
+        owner=$(owner_of "$real")
+        [[ -n "$owner" ]] || owner=$(owner_of "$path")
+        [[ -n "$owner" ]] || owner=$(owner_of "${real/#\/usr\/lib\///lib/}")
+        printf '%s\t%s\t%s\n' "$lib" "$path" "${owner:-no package}"
+        grep -qx -- "$owner" <<<"$names" || fail "$lib comes from ${owner:-no package}, which Depends does not name"
+    done
+    if ((failures == before)); then pass "$(wc -w <<<"$needed") NEEDED libraries come from packages named in Depends"; fi
+    echo "Highest required symbol versions:"
+    local tags namespace
+    tags=$(objdump -T "$binary" | symbol_tags)
+    for namespace in GLIBC GLIBCXX CXXABI GCC; do
+        grep "^${namespace}_[0-9.]*$" <<<"$tags" | sort -V | tail -1 | sed 's/^/  /' || true
+    done
+    echo "Qt symbol version tags: $(grep '^Qt_' <<<"$tags" | tr '\n' ' ' || true)"
+}
+
+# check_qml_closure IMPORTS DEPENDS: each module listed in the file IMPORTS has
+# a qmldir from a package DEPENDS names.
+check_qml_closure() {
+    local imports=$1 names module dir owner before=$failures
+    names=$(depends_names "$2")
+    while IFS= read -r module; do
+        dir=$qml_root/${module//.//}
+        if [[ -f "$dir/qmldir" ]]; then
+            owner=$(owner_of "$dir/qmldir")
+            printf '%s\t%s\t%s\n' "$module" "$dir/qmldir" "${owner:-no package}"
+            grep -qx -- "$owner" <<<"$names" || fail "QML $module comes from ${owner:-no package}, which Depends does not name"
         else
-            fail "Qt_6_PRIVATE_API symbols without an exact Qt private ABI pin in Depends"
+            fail "QML $module has no $dir/qmldir"
         fi
-    else
-        pass "no Qt_6_PRIVATE_API symbols"
-    fi
+    done < "$imports"
+    if ((failures == before)); then pass "$(wc -l < "$imports") imported QML modules come from packages named in Depends"; fi
 }
 
 container_main() {
-    local base=$1 deb=$2 binary=/usr/bin/branch-truce
+    local deb=$1 binary=/usr/bin/branch-truce package version depends before after closure
     export DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8
-
-    step "Package metadata"
-    local package version arch depends recommends
-    package=$(dpkg-deb -f "$deb" Package)
-    version=$(dpkg-deb -f "$deb" Version)
-    arch=$(dpkg-deb -f "$deb" Architecture)
-    depends=$(dpkg-deb -f "$deb" Depends)
-    recommends=$(dpkg-deb -f "$deb" Recommends)
-    printf 'Package: %s\nVersion: %s\nArchitecture: %s\nDepends: %s\nRecommends: %s\n' \
-        "$package" "$version" "$arch" "$depends" "$recommends"
-    [[ "$package" == branch-truce ]] && pass "package name" || fail "package name $package"
-    [[ "$version" == *"+$base" ]] && pass "version $version names $base" || fail "version $version lacks +$base"
-    [[ "$arch" == amd64 ]] && pass "architecture amd64" || fail "architecture $arch"
-
-    step "Package contents"
-    local files expected controls
-    files=$(dpkg-deb --fsys-tarfile "$deb" | tar -t | grep -v '/$' | LC_ALL=C sort)
-    expected=$({ installed_files "$inspect_dir/installed-files.txt" ./usr
-        printf '%s\n' ./usr/share/doc/branch-truce/changelog.gz ./usr/share/doc/branch-truce/copyright; } | LC_ALL=C sort)
-    printf '%s\n' "$files"
-    [[ "$files" == "$expected" ]] && pass "exactly $(wc -l <<<"$expected") files" || fail "file list differs"
-    controls=$(dpkg-deb --ctrl-tarfile "$deb" | tar -t | grep -v '/$' | LC_ALL=C sort | tr '\n' ' ')
-    echo "Control members: $controls"
-    [[ "$controls" == './control ./md5sums ' ]] && pass "no maintainer scripts" || fail "unexpected control members"
+    step "Package"
+    package=$(dpkg-deb -f "$deb" Package) && version=$(dpkg-deb -f "$deb" Version) \
+        && depends=$(dpkg-deb -f "$deb" Depends) || { fail "cannot read $deb"; return 1; }
+    printf 'Package: %s\nVersion: %s\nDepends: %s\n' "$package" "$version" "$depends"
 
     step "Clean install of the runtime closure"
-    local before after closure
     before=$(installed_set)
     apt-get update -q >/dev/null
     apt-get install -y -q --no-install-recommends "$deb" >/tmp/install.log 2>&1 \
@@ -254,124 +164,27 @@ container_main() {
     closure=$(LC_ALL=C comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
     printf '%s\n' "$closure"
     pass "apt installed $(wc -l <<<"$closure") packages, branch-truce included"
-    printf '%s\n' "$closure" | grep -qx "branch-truce"$'\t'"$version" || fail "branch-truce $version not installed"
-
-    step "Target runtime baseline"
-    /bin/bash /inspect/artifact-baseline.sh
-
-    apt-get install -y -q --no-install-recommends binutils desktop-file-utils appstream >/dev/null 2>&1 \
+    # The inspection tools come after the closure is recorded; they are not part of it.
+    apt-get install -y -q --no-install-recommends binutils >/dev/null 2>&1 \
         || { fail "inspection tools did not install"; return 1; }
 
     step "ELF closure of $binary"
-    local needed runpath lib path real owner names before_libs
-    names=$(depends_names "$depends")
-    needed=$(readelf -d "$binary" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
-    runpath=$(readelf -d "$binary" | sed -n 's/.*(\(RPATH\|RUNPATH\)).*\[\(.*\)\]/\2/p')
-    echo "RUNPATH: ${runpath:-none}"
-    if ldd "$binary" | grep -q 'not found'; then
-        ldd "$binary"; fail "unresolved libraries"
-    else
-        pass "all $(ldd "$binary" | grep -c '=>') linked libraries resolve"
-    fi
-    before_libs=$failures
-    for lib in $needed; do
-        path=$(ldd "$binary" | awk -v lib="$lib" '$1 == lib {print $3}')
-        real=$(readlink -f "$path")
-        # dpkg may register a library under /lib or /usr/lib on merged-/usr systems.
-        owner=$(owner_of "$real")
-        [[ -n "$owner" ]] || owner=$(owner_of "$path")
-        [[ -n "$owner" ]] || owner=$(owner_of "${real/#\/usr\/lib\///lib/}")
-        printf '%s\t%s\t%s\n' "$lib" "$path" "$owner"
-        grep -qx -- "$owner" <<<"$names" || fail "$lib comes from $owner, which Depends does not name"
-    done
-    ((failures == before_libs)) && pass "$(wc -w <<<"$needed") NEEDED libraries come from packages named in Depends"
-    echo "Highest required symbol versions:"
-    local tags namespace
-    tags=$(objdump -T "$binary" | symbol_tags)
-    for namespace in GLIBC GLIBCXX CXXABI GCC; do
-        grep "^${namespace}_[0-9.]*$" <<<"$tags" | sort -V | tail -1 | sed 's/^/  /' || true
-    done
-    echo "Qt symbol version tags: $(grep '^Qt_' <<<"$tags" | tr '\n' ' ')"
-    check_private_abi "$tags" "$depends"
-
+    check_elf_closure "$binary" "$depends"
     step "QML closure"
-    local module dir before_qml=$failures
-    while IFS= read -r module; do
-        dir=$qml_root/${module//.//}
-        if [[ -f "$dir/qmldir" ]]; then
-            owner=$(owner_of "$dir/qmldir")
-            printf '%s\t%s\t%s\n' "$module" "$dir/qmldir" "$owner"
-            grep -qx -- "$owner" <<<"$names" || fail "QML $module comes from $owner, which Depends does not name"
-        else
-            fail "QML $module has no $dir/qmldir"
-        fi
-    done < /inspect/imports.txt
-    ((failures == before_qml)) && pass "$(wc -l < /inspect/imports.txt) imported QML modules come from packages named in Depends"
-
-    step "Desktop metadata"
-    desktop-file-validate "/usr/share/applications/$app_id.desktop" && pass "desktop entry" || fail "desktop entry"
-    appstreamcli validate --no-net \
-        "/usr/share/metainfo/$app_id.metainfo.xml" && pass "metainfo" || fail "metainfo"
-
-    step "Application icon"
-    local relative
-    while IFS= read -r relative; do
-        check_app_icon "$hicolor" /inspect/icons "$relative"
-        check_icon_lookup "$hicolor/index.theme" "$relative"
-    done < <(icon_paths "$inspect_dir/installed-files.txt")
-
-    step "Installed application on a disposable merge conflict"
-    local home=/tmp/bt-home repo=/tmp/bt-repo smoke
-    local -a environment
-    fixture_home "$home"
-    fixture_gitconfig "$home"
-    mapfile -d '' environment < <(fixture_env "$home")
-    environment+=("QT_QPA_PLATFORM=offscreen" "QT_QUICK_BACKEND=software")
-    # The application runs with a deadline, so a hang fails the check.
-    isolated() { (cd "$repo" && env -i "${environment[@]}" "$@"); }
-    app() { isolated timeout --kill-after=10 60 "$@"; }
-    fixture_merge_repo "$home" "$repo" tracked.txt || fail "fixture merge did not conflict"
-    echo "git: $(isolated git --version)"
-    app branch-truce --version && pass "branch-truce --version" || fail "branch-truce --version"
-    smoke=$(app branch-truce --smoke-test "$repo" 2>&1) || fail "smoke test exited $?"
-    printf '%s\n' "$smoke"
-    if smoke_record_ready "$smoke"; then
-        pass "installed window loaded and opened the merge session"
-    else
-        fail "smoke test did not open the merge session"
-    fi
-
-    step "Icon theme in the installed application"
-    local appearance
-    # The isolated environment names no desktop, as on a bare session. The
-    # app has to name its own icon theme there, or Kirigami swaps in one that
-    # does not resolve and the icon is null.
-    appearance=$(app env LD_PRELOAD=/inspect/probe/lib/libappearance_probe.so \
-        branch-truce --smoke-test "$repo" 2>&1) || fail "smoke test with the probe exited $?"
-    appearance=$(printf '%s\n' "$appearance" | sed -n 's/^BRANCH_TRUCE_APPEARANCE=//p')
-    echo "Appearance: ${appearance:-none}"
-    echo "SVG icon engine: $(find /usr/lib -path '*/qt6/plugins/iconengines/*svg*' | head -1)"
-    check_icon_resolves "$appearance"
-
-    step "Removal"
-    apt-get remove -y -q branch-truce >/dev/null 2>&1 || fail "apt remove"
-    local left=0 file
-    while IFS= read -r file; do
-        [[ "$file" == ./usr/share/doc/* || ! -e "${file#.}" ]] || { echo "left: ${file#.}"; left=$((left + 1)); }
-    done <<<"$files"
-    ((left == 0)) && pass "no installed program files remain" || fail "$left files remain"
+    check_qml_closure /inspect/imports.txt "$depends"
 
     step "Result"
     if ((failures > 0)); then echo "FAILED: $failures checks"; return 1; fi
     echo "All inspection checks passed for $package $version"
 }
 
-# Sourcing the file defines its functions and sets the shell options above but
-# runs neither half, so tests can call the functions on their own.
+# Sourcing the file defines its functions but runs neither half, and sets no
+# shell options, so tests can call the functions on their own.
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+set -euo pipefail
 if [[ "${1:-}" == --in-container ]]; then
-    [[ $# -eq 3 ]] || usage_error
-    container_main "$2" "$3"
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    container_main "$2"
 else
     host_main "$@"
 fi

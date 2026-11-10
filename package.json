@@ -8,8 +8,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "typecheck": "tsc -p scripts/tsconfig.json",
-    "test": "node --test --test-reporter=spec 'scripts/**/*.test.ts'",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test --test-reporter=spec 'scripts/**/*.test.ts' 'packaging/**/*.test.ts' 'tools/**/*.test.ts'",
     "check:tracker-refs": "node scripts/check-tracker-refs.ts",
     "prepare": "husky"
   },

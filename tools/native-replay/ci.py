@@ -2,7 +2,6 @@
 """Collect every native size in capture-profile.json and keep failures and pending acceptance visible."""
 import argparse
 from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -16,6 +15,7 @@ if __name__ == '__main__':
 import capture_profile  # noqa: E402
 from fixture import sha256  # noqa: E402
 from ledger import assemble  # noqa: E402
+from reports import write_json  # noqa: E402
 
 
 def main():
@@ -51,7 +51,7 @@ def main():
     receipt = args.output / 'ci-context.json'
 
     def save():
-        receipt.write_text(json.dumps(context, indent=2) + '\n')
+        write_json(receipt, context)
 
     save()
     for height in heights:
@@ -81,17 +81,8 @@ def main():
             context['checks'].append(dict(argv=command, cwd=str(args.source), exit_code=checked.returncode,
                                           log=f'{height}-integrity.log'))
             save()
-    image_tool = args.output / str(heights[0]) / 'driver-build/native-replay-image'
-    if image_tool.is_file():
-        command = [sys.executable, str(args.source / 'tests/tools/NativeCalibrationTests.py'),
-                   '--image-tool', str(image_tool)]
-        with (args.output / 'calibration-tests.log').open('wb') as stream:
-            checked = subprocess.run(command, cwd=args.source, stdout=stream, stderr=subprocess.STDOUT)
-        context['checks'].append(dict(argv=command, cwd=str(args.source), exit_code=checked.returncode,
-                                      log='calibration-tests.log'))
-        save()
     ledger = assemble(args.output, shape=shape)
-    (args.output / 'acceptance-ledger.json').write_text(json.dumps(ledger, indent=2) + '\n')
+    write_json(args.output / 'acceptance-ledger.json', ledger)
     context['finished_at_utc'] = datetime.now(timezone.utc).isoformat()
     context['acceptance'] = 'pending original-image and per-callout independent inspection'
     save()

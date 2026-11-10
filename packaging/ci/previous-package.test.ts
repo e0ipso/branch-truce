@@ -13,8 +13,8 @@ import { fileURLToPath } from 'node:url';
 // asset's bytes, and marker files make a call fail.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SCRIPT = join(HERE, '..', 'packaging', 'ci', 'previous-package.sh');
-const RELEASERC = JSON.parse(readFileSync(join(HERE, '..', '.releaserc.json'), 'utf8'));
+const SCRIPT = join(HERE, '..', '..', 'packaging', 'ci', 'previous-package.sh');
+const RELEASERC = JSON.parse(readFileSync(join(HERE, '..', '..', '.releaserc.json'), 'utf8'));
 const GITHUB_ASSETS: { path: string; label: string }[] = RELEASERC.plugins.find(
   (entry: unknown) => Array.isArray(entry) && entry[0] === '@semantic-release/github',
 )[1].assets;

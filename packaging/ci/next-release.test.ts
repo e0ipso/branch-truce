@@ -2,26 +2,34 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
+import { packageable, select, UsageError } from './next-release.js';
 
 const require = createRequire(import.meta.url);
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const workflow = require('js-yaml').load(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8'));
 const selection = join(ROOT, 'packaging/ci/next-release.js');
-type Selection = { version: string; revision: string; publish: boolean };
-type SelectInput = { event?: string; revision: string; analyzedRevision?: string; analyzedVersion?: string; packageVersion: string };
-const { packageable, select, UsageError }: {
-  packageable: (version: string) => boolean;
-  select: (input: SelectInput) => Selection;
-  UsageError: new (message: string) => Error;
-} = await import(pathToFileURL(selection).href);
+const accepts = (version: string) => packageable(version, ROOT);
 const expressionForJS = (expression: string) => expression.replace(/\bneeds\.([\w-]+)/g, 'needs["$1"]');
 const formats = ['kubuntu-deb', 'fedora-rpm', 'arch-pkg'];
+// The kde matrix the select job generates from packaging/formats.tsv.
+const matrix = (): { include: { format: string; target: string; native_fidelity: string }[] } => {
+  const step = workflow.jobs.select.steps.find((item: { id?: string }) => item.id === 'formats');
+  const output = mkdtempSync(join(tmpdir(), 'branch-truce-matrix-'));
+  try {
+    execFileSync('bash', ['-euo', 'pipefail', '-c', step.run], { cwd: ROOT, env: { PATH: process.env.PATH, GITHUB_OUTPUT: join(output, 'out') } });
+    const line = readFileSync(join(output, 'out'), 'utf8').trim();
+    assert.match(line, /^matrix=/);
+    return JSON.parse(line.slice('matrix='.length));
+  } finally {
+    rmSync(output, { recursive: true, force: true });
+  }
+};
 
 function repository(t: { after: (fn: () => void) => void }) {
   const cwd = mkdtempSync(join(tmpdir(), 'branch-truce-selection-'));
@@ -30,6 +38,9 @@ function repository(t: { after: (fn: () => void) => void }) {
   git('init', '--quiet');
   git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '--allow-empty', '-m', 'chore: fixture');
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ version: '1.2.3' }));
+  // The selection reads everything from the checkout it runs in.
+  mkdirSync(join(cwd, 'packaging/scripts'), { recursive: true });
+  copyFileSync(join(ROOT, 'packaging/scripts/native-version.sh'), join(cwd, 'packaging/scripts/native-version.sh'));
   return { cwd, revision: git('rev-parse', 'HEAD') };
 }
 
@@ -63,20 +74,25 @@ test('PR and main selection bind candidate, publication intent and source revisi
 
 test('selection binds the analysed candidate and accepts only packageable versions', () => {
   const revision = 'a'.repeat(40);
-  assert.deepEqual(select({ event: 'pull_request', revision, packageVersion: '1.2.3-rc.1' }),
+  assert.deepEqual(select({ event: 'pull_request', revision, packageVersion: '1.2.3-rc.1' }, accepts),
     { version: '1.2.3-rc.1', revision, publish: false });
-  assert.deepEqual(select({ event: 'push', revision, analyzedRevision: revision, analyzedVersion: '', packageVersion: '1.2.3' }),
+  assert.deepEqual(select({ event: 'push', revision, analyzedRevision: revision, analyzedVersion: '', packageVersion: '1.2.3' }, accepts),
     { version: '1.2.3', revision, publish: false });
-  assert.deepEqual(select({ event: 'push', revision, analyzedRevision: revision, analyzedVersion: '1.3.0', packageVersion: '1.2.3' }),
+  assert.deepEqual(select({ event: 'push', revision, analyzedRevision: revision, analyzedVersion: '1.3.0', packageVersion: '1.2.3' }, accepts),
     { version: '1.3.0', revision, publish: true });
-  assert.throws(() => select({ event: 'push', revision, analyzedRevision: 'b'.repeat(40), analyzedVersion: '1.3.0', packageVersion: '1.2.3' }),
+  assert.throws(() => select({ event: 'push', revision, analyzedRevision: 'b'.repeat(40), analyzedVersion: '1.3.0', packageVersion: '1.2.3' }, accepts),
     /belongs to another revision/);
-  assert.throws(() => select({ event: 'schedule', revision, packageVersion: '1.2.3' }), UsageError);
+  assert.throws(() => select({ event: 'schedule', revision, packageVersion: '1.2.3' }, accepts), UsageError);
   for (const version of ['1.2.3-rc-1', '1.2.3-rc.0', '1.2', 'v1.2.3']) {
-    assert.equal(packageable(version), false, version);
-    assert.throws(() => select({ event: 'pull_request', revision, packageVersion: version }), /Unsupported native package version/);
+    assert.equal(packageable(version, ROOT), false, version);
+    assert.throws(() => select({ event: 'pull_request', revision, packageVersion: version }, accepts), /Unsupported native package version/);
   }
-  for (const version of ['0.0.0', '1.2.3', '1.2.3-rc', '1.2.3-rc.10']) assert.equal(packageable(version), true, version);
+  for (const version of ['0.0.0', '1.2.3', '1.2.3-rc', '1.2.3-rc.10']) assert.equal(packageable(version, ROOT), true, version);
+  // The grammar check is the caller's: select runs no process of its own.
+  const asked: string[] = [];
+  assert.deepEqual(select({ event: 'pull_request', revision, packageVersion: 'any' }, version => asked.push(version) > 0),
+    { version: 'any', revision, publish: false });
+  assert.deepEqual(asked, ['any']);
 });
 
 test('event dependency graphs retain all validation legs, fail closed on analysis errors and serialize publishing', () => {
@@ -110,7 +126,9 @@ test('event dependency graphs retain all validation legs, fail closed on analysi
   }
   const failedNeeds = { 'analyze-release': { result: 'failure', outputs: {} } };
   assert.equal(Boolean(runInNewContext(expressionForJS(jobs.select.if), { github: { event_name: 'push' }, needs: failedNeeds, cancelled: () => false })), false);
-  assert.deepEqual(jobs.kde.strategy.matrix.include.map((leg: any) => leg.format), formats);
+  assert.equal(jobs.kde.strategy.matrix, '${{ fromJSON(needs.select.outputs.matrix) }}');
+  assert.equal(jobs.select.outputs.matrix, '${{ steps.formats.outputs.matrix }}');
+  assert.deepEqual(matrix().include.map(leg => leg.format), formats);
   assert.equal(jobs['kde-release'], undefined);
   assert.deepEqual(jobs.release.needs, ['test', 'select', 'kde']);
   assert.equal(jobs.release.concurrency, 'release');
@@ -219,7 +237,8 @@ test('workflow compilation cache reaches the build and reuses compatible revisio
 test('full fidelity uses one baseline while every platform still reaches native validation', t => {
   const box = repository(t);
   const job = workflow.jobs.kde;
-  assert.deepEqual(job.strategy.matrix.include.map((entry: { format: string }) => entry.format), formats);
+  const legs = matrix().include;
+  assert.deepEqual(legs.map(entry => entry.format), formats);
   const build = job.steps.find((step: any) => step.name === 'Test, package and check');
   assert.equal(build.if, undefined, 'platform validation must remain unconditional');
   const configured = String(job.env.BRANCH_TRUCE_NATIVE_FIDELITY);
@@ -230,8 +249,9 @@ test('full fidelity uses one baseline while every platform still reaches native 
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, 'container-check.sh'), '#!/bin/bash\nset -euo pipefail\n' +
     'printf "%s %s\\n" "$FORMAT" "${BRANCH_TRUCE_NATIVE_FIDELITY:?}" >> "$TRACE"\n', { mode: 0o755 });
-  for (const format of formats) {
-    const mode = String(runInNewContext(expressionForJS(expression), { matrix: { format } }));
+  for (const leg of legs) {
+    const format = leg.format;
+    const mode = String(runInNewContext(expressionForJS(expression), { matrix: leg }));
     assert.equal(mode, format === 'kubuntu-deb' ? '1' : '0');
     execFileSync('bash', ['-euo', 'pipefail', '-c', build.run], { cwd: box.cwd, env: {
       PATH: process.env.PATH, FORMAT: format, VERSION: '1.2.3', OUTPUT: join(box.cwd, format),

@@ -67,7 +67,9 @@ step() { printf '\n== %s\n' "$*"; }
 show() { printf '+'; printf ' %q' "$@"; printf '\n'; }
 run() { show "$@"; "$@"; }
 pass() { printf 'PASS: %s\n' "$*"; }
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+# die stops the run at a failed check; fail, in the scripts that keep going,
+# only records one.
+die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 # Bounded wait for a condition; the deadline is in tenths of a second.
 wait_for() {
     local tenths=$1; shift
@@ -96,18 +98,18 @@ cache_end
 [[ "$cache_build_status" -eq 0 ]] || exit "$cache_build_status"
 run cmake --install "$build"
 run rm -rf -- "$source_dir" "$build"
-[[ ! -e "$source_dir" && ! -e "$build" ]] || fail "copied source or build tree still exists"
+[[ ! -e "$source_dir" && ! -e "$build" ]] || die "copied source or build tree still exists"
 pass "copied source and build tree deleted before launch"
 
 step "Inspect deployed files"
 mapfile -t expected < <(installed_files "$root/packaging/installed-files.txt" '' | sed 's|^/||')
 deployed=$(cd -- "$prefix" && find . \( -type f -o -type l \) -printf '%P\n' | LC_ALL=C sort)
 printf '%s\n' "$deployed"
-[[ "$deployed" == "$(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)" ]] || fail "deployed file list differs"
+[[ "$deployed" == "$(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)" ]] || die "deployed file list differs"
 pass "deployed exactly ${#expected[@]} files"
 runpath=$(readelf -d "$installed" | sed -n 's/.*(\(RPATH\|RUNPATH\)).*\[\(.*\)\]/\2/p')
 echo "RUNPATH: ${runpath:-none}"
-[[ "$runpath" != *"$fixture"* ]] || fail "RUNPATH points into the fixture"
+[[ "$runpath" != *"$fixture"* ]] || die "RUNPATH points into the fixture"
 run desktop-file-validate "$prefix/share/applications/$app_id.desktop"
 run appstreamcli validate --no-net \
     "$prefix/share/metainfo/$app_id.metainfo.xml"
@@ -116,17 +118,17 @@ pass "desktop entry and metainfo validate"
 step "Create a disposable merge conflict"
 # The session socket is $XDG_RUNTIME_DIR/branch-truce/bt-mt-<32 hex>. A longer
 # path than Qt accepts (106 bytes) moves it to /tmp/branch-truce-<uid>.
-((${#home} + 8 + 13 + 39 <= 106)) || fail "fixture path too long for the session socket: $home/runtime"
+((${#home} + 8 + 13 + 39 <= 106)) || die "fixture path too long for the session socket: $home/runtime"
 fixture_home "$home"
 fixture_gitconfig "$home"
 mapfile -d '' environment < <(fixture_env "$home")
 environment+=("PATH=$prefix/bin:/usr/bin:/bin" "XDG_DATA_DIRS=$prefix/share:/usr/share"
     "QT_QPA_PLATFORM=offscreen" "QT_QUICK_BACKEND=software")
 isolated() { (cd -- "$repo" && env -i "${environment[@]}" "$@"); }
-fixture_merge_repo "$home" "$repo" tracked.txt || fail "fixture merge did not conflict on tracked.txt"
+fixture_merge_repo "$home" "$repo" tracked.txt || die "fixture merge did not conflict on tracked.txt"
 launch_bytes=$(sha256sum < "$repo/tracked.txt")
 resolved_name=$(isolated sh -c 'command -v branch-truce')
-[[ "$resolved_name" == "$installed" ]] || fail "branch-truce resolves to $resolved_name"
+[[ "$resolved_name" == "$installed" ]] || die "branch-truce resolves to $resolved_name"
 pass "conflicted repository $repo; branch-truce resolves to $resolved_name"
 unmerged() { [[ -n "$(isolated git ls-files -u -- tracked.txt)" ]]; }
 socket_present() { compgen -G "$home/runtime/branch-truce/bt-mt-*" >/dev/null; }
@@ -135,32 +137,32 @@ no_gui() { [[ -z "$(gui_pids)" ]]; }
 stop_gui() {
     local pid
     for pid in $(gui_pids); do kill -TERM "$pid"; done
-    wait_for 100 no_gui || fail "installed GUI did not stop"
+    wait_for 100 no_gui || die "installed GUI did not stop"
 }
 # A blocked launcher still runs, MERGED keeps its launch bytes and Git still
 # reports the path unmerged.
 expect_blocked() {
     sleep 3
-    kill -0 "$1" 2>/dev/null || fail "$2 returned before a decision"
-    [[ "$(sha256sum < "$repo/tracked.txt")" == "$launch_bytes" ]] || fail "MERGED changed while blocked"
-    unmerged || fail "tracked.txt was staged while blocked"
+    kill -0 "$1" 2>/dev/null || die "$2 returned before a decision"
+    [[ "$(sha256sum < "$repo/tracked.txt")" == "$launch_bytes" ]] || die "MERGED changed while blocked"
+    unmerged || die "tracked.txt was staged while blocked"
 }
 
 step "CLI launch from the installed prefix"
 # The application runs with a deadline, so a hang fails the check.
 show env -i "${environment[@]}" branch-truce --version
-isolated timeout --kill-after=10 60 branch-truce --version || fail "installed --version exited $?"
+isolated timeout --kill-after=10 60 branch-truce --version || die "installed --version exited $?"
 show env -i "${environment[@]}" branch-truce --smoke-test "$repo"
-smoke=$(isolated timeout --kill-after=10 60 branch-truce --smoke-test "$repo") || fail "installed --smoke-test exited $?"
+smoke=$(isolated timeout --kill-after=10 60 branch-truce --smoke-test "$repo") || die "installed --smoke-test exited $?"
 printf '%s\n' "$smoke"
-smoke_record_ready "$smoke" || fail "smoke test did not open the merge session"
+smoke_record_ready "$smoke" || die "smoke test did not open the merge session"
 pass "installed CLI loaded the embedded QML and opened the merge session"
 
 step "Desktop-entry launch and direct launcher handoff"
 show env -i "${environment[@]}" gio launch "$prefix/share/applications/$app_id.desktop" "$repo"
 isolated gio launch "$prefix/share/applications/$app_id.desktop" "$repo"
-wait_for 300 socket_present || fail "desktop-launched GUI did not open a session socket"
-gui_running || fail "desktop-launched GUI is not the installed executable"
+wait_for 300 socket_present || die "desktop-launched GUI did not open a session socket"
+gui_running || die "desktop-launched GUI is not the installed executable"
 pass "desktop entry started $(gui_pids | head -1 | xargs -I{} readlink /proc/{}/exe) with a live session"
 sides="$fixture/sides"
 mkdir -p -- "$sides"
@@ -173,12 +175,12 @@ launcher=$!
 expect_blocked "$launcher" "installed launcher"
 pass "installed launcher attached to the desktop-launched GUI and is blocking"
 intakes=$(find "$home/data/branch-truce/mergetool" -mindepth 2 -maxdepth 2 -type d | wc -l)
-((intakes == 1)) || fail "expected one launcher intake, found $intakes"
+((intakes == 1)) || die "expected one launcher intake, found $intakes"
 stop_gui
 status=0; wait "$launcher" || status=$?
-((status != 0)) || fail "launcher returned success after the GUI closed"
-[[ "$(sha256sum < "$repo/tracked.txt")" == "$launch_bytes" ]] || fail "MERGED was not restored"
-unmerged || fail "tracked.txt was staged without a resolution"
+((status != 0)) || die "launcher returned success after the GUI closed"
+[[ "$(sha256sum < "$repo/tracked.txt")" == "$launch_bytes" ]] || die "MERGED was not restored"
+unmerged || die "tracked.txt was staged without a resolution"
 pass "closing the GUI released the launcher with exit $status and left tracked.txt unmerged"
 
 step "Git mergetool parent spawns the installed GUI"
@@ -191,15 +193,15 @@ git_config mergetool.keepBackup false
 show env -i "${environment[@]}" git mergetool --no-prompt --tool=truce -- tracked.txt
 isolated git --no-pager mergetool --no-prompt --tool=truce -- tracked.txt < /dev/null &
 parent=$!
-wait_for 300 gui_running || fail "launcher did not start the installed GUI"
-wait_for 300 socket_present || fail "spawned GUI did not open a session socket"
+wait_for 300 gui_running || die "launcher did not start the installed GUI"
+wait_for 300 socket_present || die "spawned GUI did not open a session socket"
 expect_blocked "$parent" "git mergetool"
 pass "launcher started $(gui_pids | head -1 | xargs -I{} readlink /proc/{}/exe) and git mergetool is blocking"
 stop_gui
 status=0; wait "$parent" || status=$?
-((status != 0)) || fail "git mergetool succeeded without a resolution"
-[[ "$(sha256sum < "$repo/tracked.txt")" == "$launch_bytes" ]] || fail "Git did not restore MERGED"
-unmerged || fail "Git staged tracked.txt without a resolution"
+((status != 0)) || die "git mergetool succeeded without a resolution"
+[[ "$(sha256sum < "$repo/tracked.txt")" == "$launch_bytes" ]] || die "Git did not restore MERGED"
+unmerged || die "Git staged tracked.txt without a resolution"
 pass "git mergetool exited $status after the GUI closed; tracked.txt stays unmerged"
 
 if [[ -n "$mergetool_tests" ]]; then

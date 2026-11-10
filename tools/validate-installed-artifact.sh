@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Installs a branch-truce .deb in a clean container of its own OS base and
+# Installs a branch-truce DEB in a clean container of a validation target and
 # exercises the installed application with the source and build trees absent.
 #
-#   tools/validate-installed-artifact.sh --target kubuntu|tuxedo --package DEB --output DIR [--wayland]
+#   tools/validate-installed-artifact.sh --target <target> --package DEB --output DIR [--wayland]
 #
-# The container comes from branch-truce-artifact:<base>-target, which
-# tools/build-artifact.sh leaves. It needs network access for the package
-# lists. Nothing is installed on the host. docs/platform-validation.md records
-# the results and what this cannot show: the container is not a desktop.
+# <target> is a row of packaging/validation-targets.tsv whose release format is
+# a DEB, such as kubuntu or tuxedo. The script builds that target image, or
+# reuses it from the engine's layer cache. The container needs network access
+# for the package lists. Nothing is installed on the host.
+# docs/platform-validation.md records the results and what this cannot show:
+# the container is not a desktop.
 #
 # Steps without a display (QT_QPA_PLATFORM=offscreen):
-#   install         apt install --no-install-recommends of the .deb, the runtime
-#                   baseline, then the validation tools, which are not part of
-#                   the closure
+#   install         apt install --no-install-recommends of the DEB, the packages
+#                   it added with their versions, then the validation tools,
+#                   which are not part of the closure
 #   layout          no source tree, build tree or loose QML file on the system
 #   cli             --version, --help and --smoke-test on a disposable merge
 #                   conflict; every QML module and Qt plugin loaded from the
@@ -46,53 +48,37 @@
 # AT-SPI tree. CONTAINER_ENGINE defaults to docker. The container is removed
 # on exit; the image stays. Exit status: 0 every check passed, 1 a check
 # failed, 2 usage error.
-set -euo pipefail
+#
+# Sourcing the file defines its functions and the constants below; it sets no
+# shell options and runs neither half, so tests can call the functions.
 
 app_id=com.canpicasoft.branch-truce
 home=/tmp/bt-home
 repo=/tmp/bt-repo
 wayland_socket=/run/bt-wayland/wayland-0
 result_text='merged é ü'
-# The shared fixture helpers. host_main copies them into /validate/lib.
-source "$(dirname -- "${BASH_SOURCE[0]}")/lib/fixture.sh"
 
-usage() { echo "Usage: $0 --target kubuntu|tuxedo --package DEB --output DIR [--wayland]"; }
-usage_error() { usage >&2; exit 2; }
-
-base_for() {
-    case "$1" in
-        kubuntu) echo kubuntu26.04 ;;
-        tuxedo) echo tuxedo24.04 ;;
-        *) usage_error ;;
-    esac
-}
+usage() { echo "Usage: $0 --target <target> --package DEB --output DIR [--wayland]"; }
 
 # ---------------------------------------------------------------- host side
 
 host_main() {
-    local target= package= output= wayland=0
-    while (($# > 0)); do
-        case "$1" in
-            -h|--help) usage; return 0 ;;
-            --target) [[ $# -ge 2 ]] || usage_error; target=$2; shift 2 ;;
-            --package) [[ $# -ge 2 ]] || usage_error; package=$2; shift 2 ;;
-            --output) [[ $# -ge 2 ]] || usage_error; output=$2; shift 2 ;;
-            --wayland) wayland=1; shift ;;
-            *) usage_error ;;
-        esac
-    done
-    [[ -n "$target" && -f "$package" && -n "$output" ]] || usage_error
-    local root base image socket=
+    local root target wayland=0 image socket=
     root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+    source "$root/packaging/scripts/cli.sh"
+    source "$root/packaging/scripts/formats.sh"
+    source "$root/tools/lib/targets.sh"
+    local -A options=()
+    cli_parse options - 'target=! package=! output=! wayland' "$@" || { cli_usage $? usage; return; }
+    target=${options[target]} package=${options[package]} output=${options[output]}
+    [[ -z "${options[wayland]-}" ]] || wayland=1
+    [[ -f "$package" ]] || { echo "error: $package is not a file" >&2; usage >&2; return 2; }
+    deb_target "$target" || { usage >&2; return 2; }
     engine=${CONTAINER_ENGINE:-docker}
-    base=$(base_for "$target")
-    image=branch-truce-artifact:${target}-${base#"$target"}-target
     package=$(cd -- "$(dirname -- "$package")" && pwd -P)/$(basename -- "$package")
     name=$(basename -- "$package" .deb)
     mkdir -p -- "$output"
     output=$(cd -- "$output" && pwd -P)
-    "$engine" image inspect "$image" >/dev/null 2>&1 \
-        || { echo "Missing image $image; run tools/build-artifact.sh --target $target first" >&2; exit 1; }
     if ((wayland)); then
         local tool
         for tool in swaymsg jq grim; do
@@ -110,12 +96,12 @@ host_main() {
             export SWAYSOCK=${found[0]}
         fi
     fi
+    image=$(target_image "$engine" "$root" "$target" "${BRANCH_TRUCE_KDE_CI_REFRESH:-}") || return 1
 
     fixture=$(mktemp -d "${TMPDIR:-/tmp}/bt-validate.XXXXXXXX")
     container=bt-validate-$target-$$
     trap host_cleanup EXIT
-    cp -- "$root/tools/validate-installed-artifact.sh" \
-        "$root/tools/artifact-baseline.sh" "$root/tools/atspi-probe.py" "$fixture/"
+    cp -- "$root/tools/validate-installed-artifact.sh" "$root/tools/atspi-probe.py" "$fixture/"
     mkdir -p -- "$fixture/lib"
     cp -- "$root/tools/lib/fixture.sh" "$fixture/lib/"
     local mounts=(--volume "$package:/artifact/$name.deb:ro" --volume "$fixture:/validate:ro")
@@ -125,13 +111,20 @@ host_main() {
     local report=$output/$name.validation status=0 failed
     # A failed install makes run_steps return 1; keep going so the summary
     # below prints on every path.
-    run_steps "$base" "$wayland" "$socket" 2>&1 | tee "$report" || status=$?
+    run_steps "$wayland" "$socket" 2>&1 | tee "$report" || status=$?
     failed=$(grep -c '^FAIL ' "$report" || true)
     echo "Report: $report"
     if ((status != 0)) || [[ "$failed" != 0 ]] || ! grep -q '^== Result' "$report"; then
         echo "Validation failed: $failed failed checks" | tee -a "$report"
         return 1
     fi
+}
+
+# deb_target TARGET: TARGET is a validation target that takes a DEB.
+deb_target() {
+    local format family
+    format=$(target_field "$1" format) && family=$(format_field "$format" family) || return 2
+    [[ "$family" == deb ]] || { echo "error: $1 takes the $format package, not a DEB" >&2; return 2; }
 }
 
 host_cleanup() {
@@ -151,12 +144,12 @@ inside() {
 }
 
 run_steps() {
-    local base=$1 wayland=$2 socket=$3
+    local wayland=$1 socket=$2
     set +e
     printf '== Artifact\nfile %s.deb\nsha256 %s\nhost kernel %s\n' "$name" \
         "$(sha256sum < "$package" | cut -d' ' -f1)" "$(uname -r)"
     # Nothing else can run without the package, so the result follows at once.
-    inside install "$base" "/artifact/$name.deb" || { printf '\n== Result\n'; return 1; }
+    inside install "/artifact/$name.deb" || { printf '\n== Result\n'; return 1; }
     inside layout
     inside cli
     inside desktop
@@ -317,22 +310,22 @@ probe() {
 }
 
 c_install() {
-    local base=$1 deb=$2 version before after
+    local deb=$1 version before after
     export DEBIAN_FRONTEND=noninteractive
-    step "Install on a clean $base container"
+    . /etc/os-release
+    step "Install on a clean ${PRETTY_NAME:-target} container"
     version=$(dpkg-deb -f "$deb" Version)
-    [[ "$version" == *"+$base" ]] && pass "version $version names $base" || fail "version $version lacks +$base"
-    before=$(dpkg-query -W -f='${Package}\n' | sort)
+    before=$(dpkg-query -W -f='${Package}\t${Version}\n' | sort)
     apt-get update -q >/dev/null
     if ! apt-get install -y -q --no-install-recommends "$deb" > /tmp/install.log 2>&1; then
         cat /tmp/install.log; fail "apt install"; return 1
     fi
-    after=$(dpkg-query -W -f='${Package}\n' | sort)
+    after=$(dpkg-query -W -f='${Package}\t${Version}\n' | sort)
     pass "apt-get install --no-install-recommends added $(comm -13 <(echo "$before") <(echo "$after") | wc -l) packages"
     [[ "$(dpkg-query -W -f='${db:Status-Status} ${Version}' branch-truce)" == "installed $version" ]] \
         && pass "branch-truce $version installed" || fail "branch-truce $version not installed"
-    step "Runtime baseline"
-    /bin/bash /validate/artifact-baseline.sh
+    step "Runtime closure"
+    comm -13 <(echo "$before") <(echo "$after")
     printf 'kernel\t%s (shared with the host)\n' "$(uname -r)"
     step "Validation tools (not part of the closure)"
     local tools=(libglib2.0-bin dbus-daemon at-spi2-core gir1.2-atspi-2.0 python3-gi wtype)
@@ -371,19 +364,32 @@ c_cli() {
     echo "session $(sed -n 's/^BRANCH_TRUCE_SESSION=//p' /tmp/smoke.log)"
     smoke_record_ready "$(cat /tmp/smoke.log)" \
         && pass "--smoke-test opened the merge session" || fail "--smoke-test did not open the session"
+    check_loaded_resources /tmp/smoke.log
+}
+
+# owner_of PATH: the package that ships PATH, or nothing. A path no package
+# ships is an answer, not an error, under set -e and pipefail.
+owner_of() { { dpkg-query -S "$1" 2>/dev/null || true; } | head -1 | cut -d: -f1; }
+
+# check_loaded_resources LOG: the application QML in LOG, the output of a run
+# with QML_IMPORT_TRACE and QT_DEBUG_PLUGINS, came from the binary's resources,
+# and every qmldir and plugin it loaded from the file system belongs to an
+# installed package. A search that finds nothing is a failed check, never an
+# early exit.
+check_loaded_resources() {
+    local log=$1 paths path owner unowned=0 embedded
     step "Installed resource lookup during --smoke-test"
-    local paths path owner unowned=0 embedded
-    embedded=$(grep -oE '(qrc)?:/qt/qml/BranchTruce/[^ "]*' /tmp/smoke.log | sort -u | tr '\n' ' ')
+    embedded=$({ grep -oE '(qrc)?:/qt/qml/BranchTruce/[^ "]*' "$log" || true; } | sort -u | tr '\n' ' ')
     echo "embedded QML: ${embedded:-none}"
     [[ -n "$embedded" ]] && pass "application QML comes from the binary's resources" || fail "no embedded BranchTruce module"
-    paths=$(grep -oE '(^|[^:A-Za-z0-9_.])/[^ "():]*(qmldir|\.so)' /tmp/smoke.log | sed 's/^[^/]*//' | sort -u)
+    paths=$({ grep -oE '(^|[^:A-Za-z0-9_.])/[^ "():]*(qmldir|\.so)' "$log" || true; } | sed 's/^[^/]*//' | sort -u)
     while IFS= read -r path; do
-        [[ -e "$path" ]] || continue
-        owner=$(dpkg-query -S "$path" 2>/dev/null | head -1 | cut -d: -f1)
-        [[ -n "$owner" ]] || owner=$(dpkg-query -S "$(readlink -f "$path")" 2>/dev/null | head -1 | cut -d: -f1)
+        [[ -n "$path" && -e "$path" ]] || continue
+        owner=$(owner_of "$path")
+        [[ -n "$owner" ]] || owner=$(owner_of "$(readlink -f "$path")")
         [[ -n "$owner" ]] || { echo "unowned $path"; unowned=$((unowned + 1)); }
     done <<<"$paths"
-    echo "loaded from the file system: $(grep -c qmldir <<<"$paths") qmldir, $(grep -c '\.so$' <<<"$paths") plugins"
+    echo "loaded from the file system: $(grep -c qmldir <<<"$paths" || true) qmldir, $(grep -c '\.so$' <<<"$paths" || true) plugins"
     grep -E '/(platforms|styles|platformthemes)/' <<<"$paths" | sed 's/^/  /' || true
     ((unowned == 0)) && pass "every loaded qmldir and plugin belongs to an installed package" \
         || fail "$unowned loaded files belong to no package"
@@ -586,13 +592,15 @@ container_main() {
         mergetool-start) c_mergetool_start ;;
         mergetool-resolve) c_mergetool_resolve ;;
         gui-stop) c_gui_stop ;;
-        *) usage_error ;;
+        *) usage >&2; exit 2 ;;
     esac
 }
 
-# Sourcing the file defines its functions but runs neither half.
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+set -euo pipefail
 if [[ "${1:-}" == --in-container ]]; then
+    # The shared fixture helpers, which host_main copies into /validate/lib.
+    source "$(dirname -- "${BASH_SOURCE[0]}")/lib/fixture.sh"
     shift
     container_main "$@"
 else

@@ -18,7 +18,8 @@ cmake --version
 c++ --version
 git --version
 version=$(git version | awk '{print $3}')
-minimum=$(awk -F '\t' '$1 == "git" { print $2 }' "$root/packaging/minimum-versions.tsv")
+source "$root/packaging/scripts/tsv.sh"
+minimum=$(tsv_field "$root/packaging/minimum-versions.tsv" git minimum) || minimum=
 [[ -n "$minimum" && "$(printf '%s\n' "$minimum" "$version" | sort -V | head -1)" == "$minimum" ]] || {
     echo "Git >= ${minimum:-?} is required (packaging/minimum-versions.tsv); found $version." >&2; exit 1;
 }

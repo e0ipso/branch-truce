@@ -11,21 +11,13 @@
 # unsupported version.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$here/cli.sh"
 source "$here/package-info.sh"
 usage() { echo "usage: $0 --format $(format_ids | paste -sd '|' -) --version <semver> --output <dir>"; }
 
-format='' version='' output=''
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h|--help) usage; exit 0 ;;
-        --format|--version|--output)
-            [ $# -ge 2 ] || { usage >&2; exit 2; }
-            case "$1" in --format) format=$2 ;; --version) version=$2 ;; --output) output=$2 ;; esac
-            shift 2 ;;
-        *) usage >&2; exit 2 ;;
-    esac
-done
-[ -n "$format" ] && [ -n "$version" ] && [ -n "$output" ] || { usage >&2; exit 2; }
+declare -A options=()
+cli_parse options - 'format=! version=! output=!' "$@" || { cli_usage $? usage; exit; }
+format=${options[format]} version=${options[version]} output=${options[output]}
 family=$(format_field "$format" family) || { usage >&2; exit 2; }
 package_filename "$format" "$version" >/dev/null || exit 2
 mkdir -p -- "$output"
