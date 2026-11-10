@@ -4,7 +4,9 @@
 #include "core/ExactLineCorrespondence.h"
 #include "core/ResourceLimits.h"
 #include <array>
+#include <atomic>
 #include <functional>
+#include <future>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -26,7 +28,7 @@ public:
             {{0, source.size()}, {0, result.size()}, source == result ? PassageKind::Equal : PassageKind::Ambiguous}};
     }
     [[nodiscard]] std::string_view identity() const noexcept override { return "whole-text"; }
-    mutable int calls = 0;
+    mutable std::atomic<int> calls{0};
 };
 
 // The algorithm contract of Correspondence.h, for any implementation.
@@ -64,7 +66,16 @@ void keepsTheContract(const CorrespondenceAlgorithm &algorithm)
 void implementationsKeepTheAlgorithmContract()
 {
     keepsTheContract(ExactLineCorrespondence{});
-    keepsTheContract(WholeTextCorrespondence{});
+    const WholeTextCorrespondence whole;
+    const ExactLineCorrespondence exact;
+    auto worker = std::async(std::launch::async, [&] {
+        keepsTheContract(whole);
+        keepsTheContract(exact);
+    });
+    keepsTheContract(whole);
+    keepsTheContract(exact);
+    worker.get();
+    CHECK(whole.calls == 30);
 }
 
 const char *name(PassageKind kind)

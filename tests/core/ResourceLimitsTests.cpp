@@ -9,6 +9,39 @@ using test_support::lines;
 using test_support::longestLines;
 
 namespace {
+// Empty results still retain decisions. Large keys test metadata accounting
+// independently from the entry cap, and publication holds survive both limits.
+void emptyHistoryIsBoundedAndKeepsProtectedRevisions(std::size_t keyBytes, std::size_t count)
+{
+    const std::string key(keyBytes, 'd');
+    FileSession file("id", "file", {"", {{key, {}}}, 0});
+    for (std::size_t i = 0; i < count; ++i) {
+        const Decision decision{i % 2 ? DecisionValue::Ignored : DecisionValue::Accepted, {}};
+        CHECK(file.replaceDraft(file.current().id, {"", {{key, decision}}, 0}) == Transition::Applied);
+        if (i == 0) {
+            CHECK(file.beginMarkResolved(2) == Transition::Applied);
+            CHECK(file.recordCheckpoint(2, Outcome::Succeeded) == Transition::Applied);
+            CHECK(file.recordWrite(2, Outcome::Succeeded) == Transition::Applied);
+            CHECK(file.recordStage(2, Outcome::Succeeded, "object", "100644") == Transition::Applied);
+        }
+        if (i == 1) CHECK(file.recordCheckpoint(3, Outcome::Succeeded) == Transition::Applied);
+    }
+    CHECK(file.revision(1) && file.revision(2) && file.revision(3) && !file.revision(4));
+    std::size_t undone = 0;
+    while (file.canUndo()) {
+        const auto before = file.current().draft;
+        CHECK(file.undo(file.current().id) == Transition::Applied);
+        CHECK(file.current().draft != before);
+        ++undone;
+    }
+    CHECK(undone > 0 && undone < count);
+    CHECK(file.redo(file.current().id) == Transition::Applied);
+    CHECK(file.discardToCheckpoint(file.current().id) == Transition::Applied);
+    CHECK(file.current().draft.decisions.at(key).value == DecisionValue::Ignored);
+    CHECK(file.discardToStaged(file.current().id) == Transition::Applied);
+    CHECK(file.current().draft.decisions.at(key).value == DecisionValue::Accepted);
+}
+
 void theLargeFileThresholdIsNotATextLimit()
 {
     CHECK(assessText(lines(kLargeFileLines - 1)).limit == TextLimit::Within);
@@ -52,5 +85,9 @@ int main()
     suite.run("lineCount counts a final line without a newline", lineCountCountsAFinalLineWithoutANewline);
     suite.run("the line limit rejects the next byte", theLineLimitRejectsTheNextByte);
     suite.run("the payload limit rejects the next line", thePayloadLimitRejectsTheNextLine);
+    suite.run("empty decision history obeys the entry cap",
+              [] { emptyHistoryIsBoundedAndKeepsProtectedRevisions(1, kMaxHistoryEntries + 16); });
+    suite.run("decision metadata consumes the byte budget before the entry cap",
+              [] { emptyHistoryIsBoundedAndKeepsProtectedRevisions(2 * 1024 * 1024, 140); });
     return suite.report();
 }

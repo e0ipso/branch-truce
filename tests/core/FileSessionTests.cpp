@@ -7,6 +7,7 @@
 #include "fixtures/ChoiceFile.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <limits>
 #include <memory>
 #include <new>
@@ -43,8 +44,8 @@ public:
         return ExactLineCorrespondence{}.compare(source, result);
     }
     [[nodiscard]] std::string_view identity() const noexcept override { return ExactLineCorrespondence{}.identity(); }
-    mutable int calls = 0;
-    int failAt;
+    mutable std::atomic<int> calls{0};
+    std::atomic<int> failAt;
 
 private:
     Failure failure_;
@@ -195,6 +196,15 @@ void wholeDraftsKeepTheTextInvariant()
 
 void onlyAcceptedDecisionsCarryAnOrder()
 {
+    for (const auto value : {DecisionValue::Undecided, DecisionValue::Ignored}) {
+        bool refused = false;
+        try {
+            FileSession invalid("plain", "plain.txt", {"text\n", {{"left", {value, 1}}}, 0});
+        } catch (const std::invalid_argument &) {
+            refused = true;
+        }
+        CHECK(refused);
+    }
     FileSession file("plain", "plain.txt", {"text\n", {}, 0});
     CHECK(file.replaceDraft(1, {"text\n", {{"left", {DecisionValue::Ignored, 1}}}, 0}) == Transition::InvalidAnchor);
     CHECK(file.replaceDraft(1, {"text\n", {{"left", {DecisionValue::Undecided, 2}}}, 0}) == Transition::InvalidAnchor);
@@ -312,7 +322,7 @@ void theSessionAlignsWithTheAlgorithmItIsGiven()
     CHECK(file.support() == Support::Supported && file.correspondence() && !file.choices().empty());
     // Three sources against the result, the two sides, and each side against the earlier version.
     CHECK(algorithm->calls >= 6);
-    const auto opened = algorithm->calls;
+    const auto opened = algorithm->calls.load();
     CHECK(file.editResult(1, {{0, 0}, "typed\n"}) == Transition::Applied);
     CHECK(algorithm->calls > opened);
 }

@@ -1,5 +1,6 @@
 // Source choice commands apply accept, ignore and combined-side decisions to a result revision.
 #include "EditingCommands.h"
+#include "SessionState.h"
 
 #include <algorithm>
 #include <array>
@@ -612,29 +613,32 @@ static WholeFilePlan planWholeFile(const FileSession &file, RevisionId expected,
 ChoicePreview previewChoice(const FileSession &file, RevisionId expected, const std::string &target,
                             ChoiceAction action)
 {
-    return planChoice(file, expected, target, action);
+    return withinMemory([&]() -> ChoicePreview { return planChoice(file, expected, target, action); });
 }
 
 NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId expected, NonConflictingScope scope)
 {
-    return planNonConflicting(file, expected, scope);
+    return withinMemory([&]() -> NonConflictingPreview { return planNonConflicting(file, expected, scope); });
 }
 
 WholeFilePreview previewWholeFile(const FileSession &file, RevisionId expected, SourceSide side)
 {
-    return planWholeFile(file, expected, side);
+    return withinMemory([&]() -> WholeFilePreview { return planWholeFile(file, expected, side); });
 }
 
 namespace {
 template <typename Preview, typename Planner>
 Transition applyPreview(FileSession &file, const Preview &preview, bool confirm, Planner planner)
 {
-    if (preview.revision != file.current().id) return Transition::StaleRevision;
-    const auto current = planner();
-    if (static_cast<const Preview &>(current) != preview) return Transition::PreviewChanged;
-    if (current.state != Transition::Applied && current.state != Transition::ConfirmationRequired) return current.state;
-    if (current.state == Transition::ConfirmationRequired && !confirm) return Transition::ConfirmationRequired;
-    return file.applyCommand(current.command(), confirm);
+    return withinMemory([&] {
+        if (preview.revision != file.current().id) return Transition::StaleRevision;
+        const auto current = planner();
+        if (static_cast<const Preview &>(current) != preview) return Transition::PreviewChanged;
+        if (current.state != Transition::Applied && current.state != Transition::ConfirmationRequired)
+            return current.state;
+        if (current.state == Transition::ConfirmationRequired && !confirm) return Transition::ConfirmationRequired;
+        return file.applyCommand(current.command(), confirm);
+    });
 }
 }
 

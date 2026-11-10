@@ -120,6 +120,8 @@ public:
     CorrespondenceMap(RevisionId revision, std::shared_ptr<const FileSnapshots> sources, std::string result,
                       std::shared_ptr<const CorrespondenceAlgorithm> algorithm);
 
+    // Conservative retained allocation estimate; shared line indexes count per map.
+    [[nodiscard]] std::size_t retainedBytes() const noexcept;
     [[nodiscard]] RevisionId revision() const noexcept { return revision_; }
     [[nodiscard]] const std::string &text() const noexcept { return text_; }
     // nullptr means unavailable; a present empty source has an alignment.

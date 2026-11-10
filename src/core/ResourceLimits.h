@@ -24,10 +24,10 @@ inline constexpr std::size_t kMaxConflictMarkerSize = 1024;
 // unmapped and only direct editing applies there. This allows 8192 lines
 // against 8192, twice the representative size in each text.
 inline constexpr std::size_t kMaxAlignmentCells = 67108864;
-// Text the undo history of one file may hold. Each revision counts its result
-// text and its correspondence's copy of it. Older undo steps go first, so
-// even a file at the recovery payload limit keeps about 16 of them.
+// Retained text and metadata estimate, including container capacity and node
+// overhead. Protected revisions survive both limits; oldest undo steps go first.
 inline constexpr std::size_t kMaxHistoryBytes = 268435456;
+inline constexpr std::size_t kMaxHistoryEntries = 1024;
 
 enum class TextLimit { Within, LineBytes, RecoveryPayload };
 

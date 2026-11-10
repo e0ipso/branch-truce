@@ -1,11 +1,12 @@
 // Navigation targets translate conflict ranges into positions the result editor can reveal.
 #pragma once
-#include "core/EditingCommands.h"
+#include "core/ChoiceCatalogue.h"
 #include <cstddef>
 #include <string>
 #include <vector>
 
 namespace branch_truce {
+class FileSession;
 // A place navigation can stop at: a byte range of the current result, or of
 // the source when the result has no mapped range for it.
 struct ScopeTarget {

@@ -3,6 +3,8 @@
 
 #include "ResourceLimits.h"
 #include <cstddef>
+#include <new>
+#include <type_traits>
 
 namespace branch_truce {
 
@@ -55,5 +57,22 @@ enum class Transition {
     // A preview to apply no longer matches the one the current revision gives.
     PreviewChanged
 };
+
+// Allocating commands construct their candidate before publishing it. Only
+// allocation failures are expected; unrelated exceptions remain defects.
+template <typename Command> auto withinMemory(Command command) -> decltype(command())
+{
+    try {
+        return command();
+    } catch (const std::bad_alloc &) {
+        if constexpr (std::is_same_v<decltype(command()), Transition>)
+            return Transition::OutOfMemory;
+        else {
+            decltype(command()) result;
+            result.state = Transition::OutOfMemory;
+            return result;
+        }
+    }
+}
 
 }

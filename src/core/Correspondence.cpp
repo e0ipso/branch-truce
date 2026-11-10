@@ -506,6 +506,23 @@ CorrespondenceMap CorrespondenceMap::recomputed(RevisionId revision, std::string
     return result;
 }
 
+std::size_t CorrespondenceMap::retainedBytes() const noexcept
+{
+    std::size_t bytes = sizeof(*this) + text_.capacity() + 1 + handEditedRanges_.capacity() * sizeof(ByteRange);
+    for (const auto &[side, passages] : passages_)
+        bytes += sizeof(decltype(passages_)::value_type) + 4 * sizeof(void *) + passages.capacity() * sizeof(Passage);
+    if (sourceLines_)
+        for (const auto &[side, lines] : *sourceLines_)
+            bytes += sizeof(decltype(sourceLines_)::element_type::value_type) + 4 * sizeof(void *)
+                + lines.capacity() * sizeof(std::size_t);
+    if (resultLines_) bytes += sizeof(*resultLines_) + resultLines_->capacity() * sizeof(std::size_t);
+    for (const auto &[id, anchor] : anchors_)
+        bytes += sizeof(decltype(anchors_)::value_type) + 4 * sizeof(void *) + id.capacity() + 1
+            + anchor.source.contributionId.capacity() + 1 + anchor.origin.sessionId.capacity() + 1
+            + anchor.origin.path.capacity() + 1 + anchor.origin.sourceObjectId.capacity() + 1;
+    return bytes;
+}
+
 std::set<std::string> CorrespondenceMap::handEditedAnchors() const
 {
     std::set<std::string> result;

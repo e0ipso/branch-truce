@@ -41,6 +41,7 @@ branch_truce_add_core_test(bulk-editing core/BulkEditingTests.cpp)
 branch_truce_add_core_test(marker-editing core/MarkerEditingTests.cpp)
 branch_truce_add_core_test(diff3-editing core/Diff3EditingTests.cpp)
 branch_truce_add_core_test(resource-limits core/ResourceLimitsTests.cpp)
+branch_truce_add_core_test(allocation-failure core/AllocationFailureTests.cpp)
 branch_truce_add_core_test(word-differences core/WordDifferencesTests.cpp)
 # The harness every suite shares: failure messages, deferred failures, skips and the case filter.
 branch_truce_add_core_test(test-harness core/TestHarnessTests.cpp)

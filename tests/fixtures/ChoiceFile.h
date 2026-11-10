@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/EditingCommands.h"
+#include "core/SessionState.h"
 #include "fixtures/FixtureGit.h"
 #include <cstdlib>
 #include <filesystem>

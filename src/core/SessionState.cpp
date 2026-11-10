@@ -40,6 +40,12 @@ bool validDecisions(const std::map<std::string, Decision> &decisions)
     });
 }
 
+// Validated ranges remove bytes from the existing result before inserting.
+bool replacementFits(std::size_t bytes, const ResultEdit &edit) noexcept
+{
+    return edit.replacement.size() <= kMaxRecoveryPayloadBytes - (bytes - (edit.range.end - edit.range.begin));
+}
+
 // The first of the result and the captured sources that is over the text
 // envelope. The result is held back whatever an adapter decided about it.
 std::optional<LoadFailure> textOverEnvelope(std::string_view result, const FileSnapshots *snapshots)
@@ -89,18 +95,6 @@ const ResultAnchor *targetOf(const EditingCommand &command, ByteRange range)
     return found == command.targets.end() ? nullptr : &*found;
 }
 
-// Runs a command whose only expected failure is running out of memory. Each
-// command builds its new revision before it changes any member, so that
-// failure leaves the session as it was. Other exceptions are defects.
-template <typename Command> Transition withinMemory(Command command)
-{
-    try {
-        return command();
-    } catch (const std::bad_alloc &) {
-        return Transition::OutOfMemory;
-    }
-}
-
 // The conflict-marker-size of a capture, or nothing when it is over the limit.
 std::optional<std::size_t> capturedMarkerSize(const FileSnapshots *snapshots)
 {
@@ -121,6 +115,7 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, FileLa
 {
     auto &snapshots = options.snapshots;
     if (id_.empty() || path_.empty()) throw std::invalid_argument("A file session needs an identity and path");
+    if (!validDecisions(initial.decisions)) throw std::invalid_argument("Invalid launch decisions");
     if (snapshots) {
         if (snapshots->path != path_ || snapshots->launchResult.text.utf8 != initial.text)
             throw std::invalid_argument("Captured sources and launch result must belong to this file session");
@@ -320,6 +315,7 @@ Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit, 
         if (support_ != Support::Supported) return Transition::Blocked;
         // The stored text already holds the invariant, so only the edit is checked.
         if (!validByteRange(current().draft.text, edit.range)) return Transition::InvalidAnchor;
+        if (!replacementFits(current().draft.text.size(), edit)) return Transition::TextTooLarge;
         if (!editableText(edit.replacement)) return Transition::InvalidText;
         auto draft = current().draft;
         draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
@@ -357,13 +353,13 @@ Transition FileSession::installAlignment(RevisionId revision, std::shared_ptr<co
     });
 }
 
-Transition FileSession::validateCommand(const EditingCommand &command, const std::vector<ResultEdit> &edits,
+Transition FileSession::validateCommand(const EditingCommand &command, const std::vector<const ResultEdit *> &edits,
                                         bool confirmReplacement) const
 {
     const bool wholeFile = command.scope == EditingScope::WholeFile;
     if (wholeFile) {
         if (!command.targets.empty() || edits.size() != 1
-            || edits.front().range != ByteRange{0, current().draft.text.size()})
+            || edits.front()->range != ByteRange{0, current().draft.text.size()})
             return Transition::InvalidAnchor;
         if (!confirmReplacement) return Transition::ConfirmationRequired;
     } else if (command.targets.empty()) {
@@ -372,8 +368,8 @@ Transition FileSession::validateCommand(const EditingCommand &command, const std
     for (const auto &target : command.targets)
         if (const auto refused = validateTarget(target); refused != Transition::Applied) return refused;
     for (std::size_t i = 0; i < edits.size(); ++i) {
-        const auto *previous = i ? &edits[i - 1] : nullptr;
-        if (const auto refused = validateEdit(command, edits[i], previous, confirmReplacement);
+        const auto *previous = i ? edits[i - 1] : nullptr;
+        if (const auto refused = validateEdit(command, *edits[i], previous, confirmReplacement);
             refused != Transition::Applied)
             return refused;
     }
@@ -419,22 +415,28 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
         if (!mapping) return Transition::InvalidAnchor;
         if (!mapping->aligned()) return Transition::Blocked;
         if (history_.nextId() == std::numeric_limits<RevisionId>::max()) return Transition::InvalidOutcome;
-        auto edits = command.edits;
+        std::vector<const ResultEdit *> edits;
+        for (const auto &edit : command.edits) edits.push_back(&edit);
         std::sort(edits.begin(), edits.end(),
-                  [](const auto &a, const auto &b) { return a.range.begin > b.range.begin; });
+                  [](const auto *a, const auto *b) { return a->range.begin > b->range.begin; });
         if (const auto refused = validateCommand(command, edits, confirmReplacement); refused != Transition::Applied)
             return refused;
+        auto bytes = current().draft.text.size();
+        for (const auto *edit : edits) {
+            if (!replacementFits(bytes, *edit)) return Transition::TextTooLarge;
+            bytes = bytes - (edit->range.end - edit->range.begin) + edit->replacement.size();
+        }
         const bool wholeFile = command.scope == EditingScope::WholeFile;
         const auto next = history_.nextId();
         auto draft = current().draft;
         for (const auto &[id, value] : command.decisions) draft.decisions[id] = value;
         auto updated = std::make_shared<CorrespondenceMap>(*mapping);
-        for (const auto &edit : edits) {
-            draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
+        for (const auto *edit : edits) {
+            draft.text.replace(edit->range.begin, edit->range.end - edit->range.begin, edit->replacement);
             if (!withinTextEnvelope(draft.text)) return Transition::TextTooLarge;
             *updated = wholeFile
                 ? updated->recomputed(next, draft.text, false)
-                : updated->edited(next, edit, false, targetOf(command, edit.range)->source.contributionId);
+                : updated->edited(next, *edit, false, targetOf(command, edit->range)->source.contributionId);
         }
         // Deciding a marker section's last contribution resolves its block in
         // this same history entry, so one undo brings the markers back.

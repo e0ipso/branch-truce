@@ -1,7 +1,7 @@
 // Conflict marker parsing identifies unresolved marker blocks in the result text.
 #pragma once
 
-#include "Correspondence.h"
+#include "ByteRanges.h"
 #include <cstddef>
 #include <optional>
 #include <string_view>

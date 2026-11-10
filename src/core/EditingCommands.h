@@ -1,9 +1,11 @@
 // Source choice commands apply accept, ignore and combined-side decisions to a result revision.
 #pragma once
 
-#include "SessionState.h"
+#include "EditingCommand.h"
+#include "Transition.h"
 
 namespace branch_truce {
+class FileSession;
 namespace detail {
 template <typename Preview> struct Planned;
 }

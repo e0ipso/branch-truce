@@ -30,7 +30,7 @@ struct Revision {
 // Only reachable revisions are kept: the history entries, the current
 // revision, the launch revision and the held ones. Others are dropped as soon
 // as they become unreachable, and the oldest entries leave the history once
-// the text all of them hold passes kMaxHistoryBytes.
+// their retained text/metadata passes kMaxHistoryBytes or the entry cap.
 class RevisionHistory {
 public:
     RevisionHistory() = default;
@@ -45,8 +45,8 @@ public:
     [[nodiscard]] bool canUndo() const noexcept { return cursor_ > 0; }
     [[nodiscard]] bool canRedo() const noexcept { return cursor_ + 1 < entries_.size(); }
     // The entries undo and redo restore copies of. Only valid when allowed.
-    [[nodiscard]] const Revision &previous() const { return *revisions_.at(entries_.at(cursor_ - 1)); }
-    [[nodiscard]] const Revision &following() const { return *revisions_.at(entries_.at(cursor_ + 1)); }
+    [[nodiscard]] const Revision &previous() const { return *revisions_.at(entries_.at(cursor_ - 1)).revision; }
+    [[nodiscard]] const Revision &following() const { return *revisions_.at(entries_.at(cursor_ + 1)).revision; }
 
     // How a published revision moves the undo cursor: an edit becomes the
     // newest entry and replaces every entry after the cursor. A joined edit
@@ -71,7 +71,13 @@ public:
 private:
     void append(RevisionId id) noexcept;
     void prune() noexcept;
-    std::map<RevisionId, std::shared_ptr<const Revision>> revisions_;
+    struct Stored {
+        explicit Stored(std::shared_ptr<const Revision> value) noexcept;
+        std::shared_ptr<const Revision> revision;
+        std::size_t bytes;
+        std::size_t references = 0;
+    };
+    std::map<RevisionId, Stored> revisions_;
     std::shared_ptr<const Revision> current_;
     std::vector<RevisionId> entries_;
     std::vector<RevisionId> held_;
