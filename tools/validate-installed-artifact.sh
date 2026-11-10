@@ -371,19 +371,32 @@ c_cli() {
     echo "session $(sed -n 's/^BRANCH_TRUCE_SESSION=//p' /tmp/smoke.log)"
     smoke_record_ready "$(cat /tmp/smoke.log)" \
         && pass "--smoke-test opened the merge session" || fail "--smoke-test did not open the session"
+    check_loaded_resources /tmp/smoke.log
+}
+
+# owner_of PATH: the package that ships PATH, or nothing. A path no package
+# ships is an answer, not an error, under set -e and pipefail.
+owner_of() { { dpkg-query -S "$1" 2>/dev/null || true; } | head -1 | cut -d: -f1; }
+
+# check_loaded_resources LOG: the application QML in LOG, the output of a run
+# with QML_IMPORT_TRACE and QT_DEBUG_PLUGINS, came from the binary's resources,
+# and every qmldir and plugin it loaded from the file system belongs to an
+# installed package. A search that finds nothing is a failed check, never an
+# early exit.
+check_loaded_resources() {
+    local log=$1 paths path owner unowned=0 embedded
     step "Installed resource lookup during --smoke-test"
-    local paths path owner unowned=0 embedded
-    embedded=$(grep -oE '(qrc)?:/qt/qml/BranchTruce/[^ "]*' /tmp/smoke.log | sort -u | tr '\n' ' ')
+    embedded=$({ grep -oE '(qrc)?:/qt/qml/BranchTruce/[^ "]*' "$log" || true; } | sort -u | tr '\n' ' ')
     echo "embedded QML: ${embedded:-none}"
     [[ -n "$embedded" ]] && pass "application QML comes from the binary's resources" || fail "no embedded BranchTruce module"
-    paths=$(grep -oE '(^|[^:A-Za-z0-9_.])/[^ "():]*(qmldir|\.so)' /tmp/smoke.log | sed 's/^[^/]*//' | sort -u)
+    paths=$({ grep -oE '(^|[^:A-Za-z0-9_.])/[^ "():]*(qmldir|\.so)' "$log" || true; } | sed 's/^[^/]*//' | sort -u)
     while IFS= read -r path; do
-        [[ -e "$path" ]] || continue
-        owner=$(dpkg-query -S "$path" 2>/dev/null | head -1 | cut -d: -f1)
-        [[ -n "$owner" ]] || owner=$(dpkg-query -S "$(readlink -f "$path")" 2>/dev/null | head -1 | cut -d: -f1)
+        [[ -n "$path" && -e "$path" ]] || continue
+        owner=$(owner_of "$path")
+        [[ -n "$owner" ]] || owner=$(owner_of "$(readlink -f "$path")")
         [[ -n "$owner" ]] || { echo "unowned $path"; unowned=$((unowned + 1)); }
     done <<<"$paths"
-    echo "loaded from the file system: $(grep -c qmldir <<<"$paths") qmldir, $(grep -c '\.so$' <<<"$paths") plugins"
+    echo "loaded from the file system: $(grep -c qmldir <<<"$paths" || true) qmldir, $(grep -c '\.so$' <<<"$paths" || true) plugins"
     grep -E '/(platforms|styles|platformthemes)/' <<<"$paths" | sed 's/^/  /' || true
     ((unowned == 0)) && pass "every loaded qmldir and plugin belongs to an installed package" \
         || fail "$unowned loaded files belong to no package"

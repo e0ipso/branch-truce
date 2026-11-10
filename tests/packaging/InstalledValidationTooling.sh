@@ -460,6 +460,36 @@ for args in '' '--target kubuntu --package /nonexistent.deb --output /nonexisten
     expect_engine_calls 0
 done
 
+# check_loaded_resources reads a --smoke-test log. A log without embedded QML
+# and a loaded file no package ships are failed checks; neither ends the step
+# early under set -e and pipefail, as an empty grep or dpkg-query once did.
+mkdir -p -- "$work/dpkg" "$work/loaded/qml/QtQuick" "$work/loaded/plugins"
+: > "$work/loaded/qml/QtQuick/qmldir"
+: > "$work/loaded/plugins/libqsvgicon.so"
+cat > "$work/dpkg/dpkg-query" <<DPKG
+#!/usr/bin/env bash
+[[ "\$2" == "$work/loaded/qml/QtQuick/qmldir" ]] || exit 1
+echo "qml6-module-qtquick:amd64: \$2"
+DPKG
+chmod +x "$work/dpkg/dpkg-query"
+printf 'BRANCH_TRUCE_SESSION={}\nqt.qml.import: addImportPath: "%s"\nLoaded "%s"\n' \
+    "$work/loaded/qml/QtQuick/qmldir" "$work/loaded/plugins/libqsvgicon.so" > "$work/loaded/plain.log"
+sourced 'PATH=$1:$PATH; check_loaded_resources "$2"; echo end' "$work/dpkg" "$work/loaded/plain.log"
+expect_status 0
+expect_output 'embedded QML: none'
+expect_output 'FAIL no embedded BranchTruce module'
+expect_output "unowned $work/loaded/plugins/libqsvgicon.so"
+expect_output 'loaded from the file system: 1 qmldir, 1 plugins'
+expect_output 'FAIL 1 loaded files belong to no package'
+expect_output $'\nend'
+printf 'Loading qrc:/qt/qml/BranchTruce/Main.qml\n' > "$work/loaded/embedded.log"
+sourced 'PATH=$1:$PATH; check_loaded_resources "$2"; echo end' "$work/dpkg" "$work/loaded/embedded.log"
+expect_status 0
+expect_output 'PASS application QML comes from the binary'"'"'s resources'
+expect_output 'loaded from the file system: 0 qmldir, 0 plugins'
+expect_output 'PASS every loaded qmldir and plugin belongs to an installed package'
+expect_no_output FAIL
+
 # The tree the probe prints for the application's accessible controls.
 if [[ -n "$python" ]]; then
     invoke -- "$python" -I -B "$root/tests/packaging/AtspiProbeFixture.py" "$probe" selftest
