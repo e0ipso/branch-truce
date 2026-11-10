@@ -258,11 +258,12 @@ int main(int argc, char **argv)
     suite.run("comparison bindings receive one complete projection per revision", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(test_support::choiceFile()));
+        auto [store, rows] = test_support::TestSession(directory.path() + "/recovery");
+        CHECK(store.appendFile(test_support::choiceFile()));
+        test_support::awaitRecovery(store);
         const NoSelectionGuard guard;
-        Selection selection(model.rows, guard);
-        SelectedFile selected(model.rows, selection);
+        Selection selection(rows, guard);
+        SelectedFile selected(rows, selection);
         CHECK(selection.select(QStringLiteral("choices")));
         QQmlEngine engine;
         engine.rootContext()->setContextProperty(QStringLiteral("selected"), &selected);
@@ -296,21 +297,21 @@ int main(int argc, char **argv)
             return complete;
         };
         CHECK(awaitAligned(
-                  model, model.editResult("choices", model.file("choices")->current().id, {{0, 0}, "manual prefix\n"}))
+                  store, store.editResult("choices", store.file("choices")->current().id, {{0, 0}, "manual prefix\n"}))
               == Transition::Applied);
         selected.sync();
         CHECK(checkPublication() != initial);
         // Status-only refreshes must not recompute the same QML projection.
         selected.sync();
         CHECK(observed.isEmpty() && focused.isEmpty());
-        CHECK(await(model.undo("choices", model.file("choices")->current().id)) == Transition::Applied);
+        CHECK(await(store.undo("choices", store.file("choices")->current().id)) == Transition::Applied);
         selected.sync();
         CHECK(checkPublication() == initial);
-        CHECK(await(model.redo("choices", model.file("choices")->current().id)) == Transition::Applied);
+        CHECK(await(store.redo("choices", store.file("choices")->current().id)) == Transition::Applied);
         selected.sync();
         CHECK(checkPublication() != initial);
         // Without files nothing is selected and the projection empties.
-        model.replaceFiles({});
+        store.replaceFiles({});
         checkPublication();
         CHECK(selected.passages().isEmpty() && selected.regions().isEmpty() && selected.handEditedLines().isEmpty()
               && selected.choices().isEmpty());
@@ -318,21 +319,22 @@ int main(int argc, char **argv)
     suite.run("background alignment refreshes the selected comparison at the same revision", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(test_support::headingFile()));
+        auto [store, rows] = test_support::TestSession(directory.path() + "/recovery");
+        CHECK(store.appendFile(test_support::headingFile()));
+        test_support::awaitRecovery(store);
         const NoSelectionGuard guard;
-        Selection selection(model.rows, guard);
-        SelectedFile selected(model.rows, selection);
+        Selection selection(rows, guard);
+        SelectedFile selected(rows, selection);
         CHECK(selection.select(QStringLiteral("choices")));
-        CHECK(model.typeResult("choices", 1, {{6, 8}, "S\n"}) == Transition::Applied);
-        const auto *file = model.file("choices");
+        CHECK(store.typeResult("choices", 1, {{6, 8}, "S\n"}) == Transition::Applied);
+        const auto *file = store.file("choices");
         const auto pending = file->pendingAlignment();
         CHECK(pending && selected.markerOrphans().size() == 1);
         const auto passages = selected.passages();
         const auto revision = selected.currentRevision();
         QSignalSpy comparison(&selected, &SelectedFile::comparisonChanged);
         CHECK(comparison.isValid());
-        CHECK(model.installAlignment("choices", file->current().id,
+        CHECK(store.installAlignment("choices", file->current().id,
                                      std::make_shared<const CorrespondenceMap>(pending->realigned()))
               == Transition::Applied);
         CHECK(selected.currentRevision() == revision);
@@ -693,18 +695,19 @@ int main(int argc, char **argv)
     suite.run("recovery replay restores hand edits cleared over a deleted line or unchanged text", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        test_support::TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(test_support::choiceFile()));
-        const auto revision = [&] { return model.file("choices")->current().id; };
+        SessionStore store(directory.path() + "/recovery");
+        CHECK(store.appendFile(test_support::choiceFile()));
+        test_support::awaitRecovery(store);
+        const auto revision = [&] { return store.file("choices")->current().id; };
         const auto edit = [&](ResultEdit value) {
-            CHECK(awaitAligned(model, model.editResult("choices", revision(), std::move(value)))
+            CHECK(awaitAligned(store, store.editResult("choices", revision(), std::move(value)))
                   == Transition::Applied);
         };
         const auto replayed = [&] {
-            const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            const auto replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
             CHECK(replay.succeeded && replay.files.size() == 1);
-            CHECK(replay.files.front().current().draft == model.file("choices")->current().draft);
-            RegionView live(*model.file("choices"));
+            CHECK(replay.files.front().current().draft == store.file("choices")->current().draft);
+            RegionView live(*store.file("choices"));
             RegionView restored(replay.files.front());
             CHECK(handEdits(restored.file()) == handEdits(live.file()));
             CHECK(regionStates(restored.file()) == regionStates(live.file()));
@@ -712,27 +715,27 @@ int main(int argc, char **argv)
         };
         const auto cleared = std::vector<bool>(handEdits(RegionView(test_support::choiceFile()).file()).size(), false);
 
-        const auto at = model.file("choices")->current().draft.text.find("left first\n");
+        const auto at = store.file("choices")->current().draft.text.find("left first\n");
         edit({{at, at + 11}, ""});
         const auto deleted = replayed();
         const auto section =
-            test_support::choiceTarget(*model.file("choices"), SourceSide::Stage2, ChoiceScope::Section)
+            test_support::choiceTarget(*store.file("choices"), SourceSide::Stage2, ChoiceScope::Section)
                 .source.contributionId;
-        CHECK(await(model.applyChoice(
-                  "choices", previewChoice(*model.file("choices"), revision(), section, ChoiceAction::Accept), true))
+        CHECK(await(store.applyChoice(
+                  "choices", previewChoice(*store.file("choices"), revision(), section, ChoiceAction::Accept), true))
               == Transition::Applied);
         CHECK(replayed() == cleared);
-        CHECK(await(model.undo("choices", revision())) == Transition::Applied);
+        CHECK(await(store.undo("choices", revision())) == Transition::Applied);
         CHECK(replayed() == deleted);
-        CHECK(await(model.redo("choices", revision())) == Transition::Applied);
+        CHECK(await(store.redo("choices", revision())) == Transition::Applied);
         CHECK(replayed() == cleared);
 
         const auto wholeLeft = [&] {
-            return await(model.applyWholeFile(
-                "choices", previewWholeFile(*model.file("choices"), revision(), SourceSide::Stage2), true));
+            return await(store.applyWholeFile(
+                "choices", previewWholeFile(*store.file("choices"), revision(), SourceSide::Stage2), true));
         };
         CHECK(wholeLeft() == Transition::Applied);
-        const auto typed = model.file("choices")->current().draft.text.find("left first") + 5;
+        const auto typed = store.file("choices")->current().draft.text.find("left first") + 5;
         edit({{typed, typed}, "X"});
         edit({{typed, typed + 1}, ""});
         const auto manual = replayed();
@@ -740,28 +743,29 @@ int main(int argc, char **argv)
         // This record repeats the previous draft and differs only in its hand edits.
         CHECK(wholeLeft() == Transition::Applied);
         CHECK(replayed() == cleared);
-        CHECK(await(model.undo("choices", revision())) == Transition::Applied);
+        CHECK(await(store.undo("choices", revision())) == Transition::Applied);
         CHECK(replayed() == manual);
-        CHECK(await(model.redo("choices", revision())) == Transition::Applied);
+        CHECK(await(store.redo("choices", revision())) == Transition::Applied);
         CHECK(replayed() == cleared);
     });
     suite.run("recovery replay restores each region's hand-edit flag with the text and decisions", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        test_support::TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(viewFile()));
-        const auto revision = [&] { return model.file("choices")->current().id; };
+        SessionStore store(directory.path() + "/recovery");
+        CHECK(store.appendFile(viewFile()));
+        test_support::awaitRecovery(store);
+        const auto revision = [&] { return store.file("choices")->current().id; };
         const auto type = [&](const std::string &near, const std::string &typed) {
-            const auto at = model.file("choices")->current().draft.text.find(near) + 5;
-            CHECK(awaitAligned(model, model.editResult("choices", revision(), {{at, at}, typed}))
+            const auto at = store.file("choices")->current().draft.text.find(near) + 5;
+            CHECK(awaitAligned(store, store.editResult("choices", revision(), {{at, at}, typed}))
                   == Transition::Applied);
         };
         // A fresh replay of the journal shows the same regions as the live model.
         const auto replayed = [&] {
-            const auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+            const auto replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
             CHECK(replay.succeeded && replay.files.size() == 1);
-            CHECK(replay.files.front().current().draft == model.file("choices")->current().draft);
-            RegionView live(*model.file("choices"));
+            CHECK(replay.files.front().current().draft == store.file("choices")->current().draft);
+            RegionView live(*store.file("choices"));
             RegionView restored(replay.files.front());
             const auto file = restored.file();
             CHECK(handEdits(file) == handEdits(live.file()) && regionStates(file) == regionStates(live.file()));
@@ -770,55 +774,56 @@ int main(int argc, char **argv)
         type("base conflict", "hand ");
         CHECK(replayed().first == conflictLineEdited);
         const auto leftConflict =
-            test_support::choiceTarget(*model.file("choices"), SourceSide::Stage2, ChoiceScope::Line, 2)
+            test_support::choiceTarget(*store.file("choices"), SourceSide::Stage2, ChoiceScope::Line, 2)
                 .source.contributionId;
         CHECK(
-            await(model.applyChoice(
-                "choices", previewChoice(*model.file("choices"), revision(), leftConflict, ChoiceAction::Accept), true))
+            await(store.applyChoice(
+                "choices", previewChoice(*store.file("choices"), revision(), leftConflict, ChoiceAction::Accept), true))
             == Transition::Applied);
         // Replay applies the choice as a whole-draft replacement, which must not count as typing.
         auto snapshot = replayed();
         CHECK(snapshot.first == noHandEdits && snapshot.second[6] == "accepted");
         type("left conflict", "hand ");
         type("base removed", "hand ");
-        CHECK(await(model.undo("choices", revision())) == Transition::Applied);
+        CHECK(await(store.undo("choices", revision())) == Transition::Applied);
         snapshot = replayed();
         CHECK(snapshot.first == conflictLineEdited && snapshot.second[6] == "manual");
-        CHECK(await(model.redo("choices", revision())) == Transition::Applied);
+        CHECK(await(store.redo("choices", revision())) == Transition::Applied);
         snapshot = replayed();
         CHECK(snapshot.first == std::vector<bool>{false, false, false, true, true, false, true, true, true, true});
     });
     suite.run("records must list their hand edits, and unknown anchors are rejected", [] {
         QTemporaryDir directory;
         CHECK(directory.isValid());
-        test_support::TestSession model(directory.path() + "/recovery");
-        CHECK(model.appendFile(viewFile()));
-        const auto at = model.file("choices")->current().draft.text.find("base conflict") + 5;
-        CHECK(awaitAligned(model, model.editResult("choices", 1, {{at, at}, "hand "})) == Transition::Applied);
-        const auto recorded = model.file("choices")->correspondence()->handEditedAnchors();
+        SessionStore store(directory.path() + "/recovery");
+        CHECK(store.appendFile(viewFile()));
+        test_support::awaitRecovery(store);
+        const auto at = store.file("choices")->current().draft.text.find("base conflict") + 5;
+        CHECK(awaitAligned(store, store.editResult("choices", 1, {{at, at}, "hand "})) == Transition::Applied);
+        const auto recorded = store.file("choices")->correspondence()->handEditedAnchors();
         CHECK(recorded.size() == 4);
-        auto replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+        auto replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
         CHECK(replay.succeeded && replay.files.size() == 1);
         CHECK(replay.files.front().correspondence()->handEditedAnchors() == recorded);
         // A record without the field is refused rather than read as having none.
-        const auto journal = test_support::readFile(model.recoveryDirectory() + "/journal");
-        test_support::rewriteLastRecoveryState(model.recoveryDirectory(), [&](QJsonObject &state) {
+        const auto journal = test_support::readFile(store.recoveryDirectory() + "/journal");
+        test_support::rewriteLastRecoveryState(store.recoveryDirectory(), [&](QJsonObject &state) {
             auto current = state.value("current").toObject();
             CHECK(current.value("handEdited").toArray().size() == static_cast<qsizetype>(recorded.size()));
             CHECK(current.value("handEditedRanges").toArray().size() == 1);
             current.remove("handEdited");
             state.insert("current", current);
         });
-        replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+        replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
         CHECK(!replay.succeeded && replay.problem.arguments.value(0).contains("hand edits"));
         // Every recorded hand edit must name an anchor of the replayed draft.
-        test_support::writeFile(model.recoveryDirectory() + "/journal", journal);
-        test_support::rewriteLastRecoveryState(model.recoveryDirectory(), [](QJsonObject &state) {
+        test_support::writeFile(store.recoveryDirectory() + "/journal", journal);
+        test_support::rewriteLastRecoveryState(store.recoveryDirectory(), [](QJsonObject &state) {
             auto current = state.value("current").toObject();
             current.insert("handEdited", QJsonArray{state.value("path")});
             state.insert("current", current);
         });
-        replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
+        replay = replayRecovery(storage::RecoveryStore(store.recoveryDirectory()));
         CHECK(!replay.succeeded && replay.files.empty());
     });
     for (const auto replacement : {"none", "revision", "session", "selection", "action", "cancel"}) {

@@ -2,7 +2,7 @@
 // repository: what start() refuses or asks before it writes, and how it records a write it cannot
 // make. Mark resolved on real repositories is in MarkResolvedTests.cpp.
 #include "TestHarness.h"
-#include "TestSession.h"
+#include "fixtures/Await.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/GitRepository.h"
 #include "publication/ResolutionPublisher.h"
@@ -21,6 +21,7 @@ struct Publishing {
     {
         CHECK(directory.isValid());
         CHECK(store.appendFile(std::move(file)));
+        test_support::awaitRecovery(store);
         QObject::connect(&publisher, &ResolutionPublisher::changed, &publisher,
                          [this](const QString &message) { messages << message; });
     }
@@ -32,7 +33,7 @@ struct Publishing {
     }
 
     QTemporaryDir directory;
-    test_support::TestSession store{directory.path() + "/recovery"};
+    SessionStore store{directory.path() + "/recovery"};
     const git::GitRunners git = git::gitAdapters({test_support::gitExecutable(), git::GitEnvironment::fromProcess()});
     QThreadPool workers;
     SessionCoordinator coordinator{store, git, workers};
