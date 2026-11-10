@@ -28,6 +28,7 @@ struct RecordedRevision {
     Draft draft;
     std::set<std::string> handEdited;
     std::vector<ByteRange> handEditedRanges;
+    RevisionId decisions = 0;
 };
 
 // How a FileSession opens its launch text.
@@ -126,6 +127,11 @@ public:
     // A stored revision: the current one, an undo history entry, the launch
     // revision or one the publication state names. Null once it is dropped.
     [[nodiscard]] const Revision *revision(RevisionId id) const noexcept { return history_.find(id); }
+    [[nodiscard]] RevisionHistory::Checkpoint checkpointHistory() const { return history_.checkpoint(); }
+    // Imports a complete retained history, rebuilding derived maps against the
+    // immutable launch. Publication is reconstructed by recovery's typed reader.
+    void restoreHistory(RevisionHistory::Checkpoint checkpoint, std::vector<RecordedRevision> revisions,
+                        PublicationState publication);
     [[nodiscard]] bool canUndo() const noexcept { return history_.canUndo(); }
     [[nodiscard]] bool canRedo() const noexcept { return history_.canRedo(); }
     [[nodiscard]] FileFacts facts() const;

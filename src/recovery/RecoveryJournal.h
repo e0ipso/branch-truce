@@ -56,7 +56,8 @@ public:
     void setLimits(Limits limits) { limits_ = limits; }
     [[nodiscard]] bool canAdmit(std::size_t additional = 0) const;
 
-    RecoveryJournal(QString directory, std::shared_ptr<const storage::FileSystem> files);
+    RecoveryJournal(QString directory, std::shared_ptr<const storage::FileSystem> files,
+                    storage::RecoveryLimits storageLimits = {});
     ~RecoveryJournal();
     RecoveryJournal(const RecoveryJournal &) = delete;
     RecoveryJournal &operator=(const RecoveryJournal &) = delete;
@@ -127,6 +128,7 @@ private:
     QString directory_;
     std::shared_ptr<const storage::FileSystem> files_;
     std::shared_ptr<storage::RecoveryLease> lease_;
+    storage::RecoveryLimits storageLimits_;
     std::deque<Record> pending_;
     std::map<std::string, Problem> failures_;
     bool userWork_ = false;

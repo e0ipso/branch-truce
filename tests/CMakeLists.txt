@@ -418,3 +418,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     set_tests_properties(desktop.startup PROPERTIES TIMEOUT 30
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 endif()
+
+# Recovery continuation and aggregate discovery exercise their own domain/storage boundary.
+if(BRANCH_TRUCE_BUILD_DESKTOP)
+    branch_truce_add_unit_test(recovery.continuation recovery/RecoveryContinuationTests.cpp
+        LIBS branch_truce_session PRIVATE_XDG)
+endif()

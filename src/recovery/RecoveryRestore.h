@@ -45,6 +45,14 @@ struct RecoveryRestore {
     std::map<std::string, SnapshotFileIdentity> copiedLaunches;
 };
 
+struct InventoryLimits {
+    qsizetype sessions = 32;
+    qsizetype entries = 65536;
+    qsizetype candidates = 16;
+    qint64 bytes = 1024 * 1024 * 1024;
+    qint64 decodedBytes = 512 * 1024 * 1024;
+};
+
 struct RestoreOptions {
     // Restored and new files align their sources with this, as loaded files do.
     std::shared_ptr<const CorrespondenceAlgorithm> correspondence;
@@ -52,6 +60,7 @@ struct RestoreOptions {
     // this time is deleted. An invalid time deletes none.
     QDateTime now;
     std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem();
+    InventoryLimits inventoryLimits = {};
 };
 
 // How long a set-aside store is kept before a later restore deletes it.

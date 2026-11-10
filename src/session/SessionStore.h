@@ -50,7 +50,7 @@ public:
     // recoveryDirectory is this session's recovery store, written through files.
     explicit SessionStore(QString recoveryDirectory,
                           std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem(),
-                          QObject *parent = nullptr);
+                          QObject *parent = nullptr, storage::RecoveryLimits recoveryLimits = {});
     // Records typed edits first, so closing a window keeps them.
     ~SessionStore() override;
 

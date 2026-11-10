@@ -2,7 +2,9 @@
 #include "recovery/RecoveryRestore.h"
 #include "recovery/SessionIdentity.h"
 #include <QDir>
+#include <QDirIterator>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QSaveFile>
 #include <algorithm>
 
@@ -10,7 +12,8 @@ namespace branch_truce {
 namespace {
 struct RecoveryCandidate {
     std::shared_ptr<storage::RecoveryLease> lease;
-    RecoveryReplay replay;
+    bool userWork = false;
+    RecoveryChoice choice;
     bool setAside = false;
     [[nodiscard]] QString name() const { return QFileInfo(lease->directory()).fileName(); }
 };
@@ -57,7 +60,13 @@ bool unrelated(const storage::RecoveryStore &store, const QString &worktree)
     const auto hint = store.read(true);
     if (!hint.succeeded || hint.transactions.empty()) return false;
     try {
-        return RecoveryRecordReader(store, hint.transactions.front().state).worktreeRoot() != worktree.toStdString();
+        auto state = hint.transactions.front().state;
+        if (state.contains("checkpointSchema")) {
+            const auto files = state.value("files").toArray();
+            if (files.empty()) return false;
+            state = files.first().toObject().value("file").toObject();
+        }
+        return RecoveryRecordReader(store, state).worktreeRoot() != worktree.toStdString();
     } catch (const RecoveryRecordError &) {
         return false; // Unknown or malformed identity gets full replay and its diagnostic.
     }
@@ -78,7 +87,29 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
     RecoveryRestore result;
     std::vector<RecoveryCandidate> candidates;
     bool chosenUnavailable = false;
-    for (const auto &entry : QDir(inventory).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+    const InventoryLimits supported;
+    auto limits = options.inventoryLimits;
+    limits.sessions = std::clamp(limits.sessions, qsizetype{0}, supported.sessions);
+    limits.entries = std::clamp(limits.entries, qsizetype{0}, supported.entries);
+    limits.candidates = std::clamp(limits.candidates, qsizetype{0}, supported.candidates);
+    limits.bytes = std::clamp(limits.bytes, qint64{0}, supported.bytes);
+    limits.decodedBytes = std::clamp(limits.decodedBytes, qint64{0}, supported.decodedBytes);
+    qsizetype sessions = 0, entries = 0;
+    qint64 bytes = 0, decoded = 0;
+    const auto incomplete = [&] {
+        RecoveryRestore refused;
+        refused.diagnostics.push_back(Problem{ProblemCode::RecoverySessionRejected,
+                                              {QStringLiteral("inventory (discovery incomplete; no session selected)")}}
+                                          .wrapping(ProblemCode::RecoveryResourceLimit));
+        return refused; // An incomplete inventory never chooses from a prefix.
+    };
+    QDirIterator inventoryEntries(inventory, QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot);
+    while (inventoryEntries.hasNext()) {
+        inventoryEntries.next();
+        if (++entries > limits.entries) return incomplete();
+        const auto entry = inventoryEntries.fileInfo();
+        if (!entry.isDir() && !entry.isSymLink()) continue;
+        if (++sessions > limits.sessions) return incomplete();
         if (entry.absoluteFilePath() == exclude) continue;
         if (entry.isSymLink() || entry.ownerId() != options.files->effectiveUser()) {
             result.diagnostics.push_back(Problem{ProblemCode::RecoveryUnsafeDirectory, {entry.fileName()}});
@@ -89,6 +120,17 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
             result.diagnostics.push_back(Problem{ProblemCode::RecoverySessionActive, {entry.fileName()}});
             chosenUnavailable = chosenUnavailable || entry.fileName() == chosenSession;
             continue;
+        }
+        // Streaming enumeration charges malformed, unrelated and expired stores
+        // too, before a reader can allocate or any prefix can be adopted.
+        QDirIterator contents(entry.absoluteFilePath(),
+                              QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
+                              QDirIterator::Subdirectories);
+        while (contents.hasNext()) {
+            contents.next();
+            const auto size = contents.fileInfo().size();
+            if (++entries > limits.entries || size < 0 || size > (limits.bytes - bytes) / 4) return incomplete();
+            bytes += 4 * size; // Hint, validation, replay and selected replay.
         }
         if (unrelated(lease->store(), repository.worktreeRoot)) continue;
         // A set-aside store returns only when the user names it, until it expires.
@@ -101,6 +143,10 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
             }
             continue;
         }
+        if (candidates.size() >= static_cast<std::size_t>(limits.candidates)) return incomplete();
+        const auto read = lease->store().read();
+        if (read.retainedBytes > (limits.decodedBytes - decoded) / 2) return incomplete();
+        decoded += 2 * read.retainedBytes; // Validation plus the possible selected replay.
         auto replay = replayRecovery(lease->store(), options.correspondence);
         if (!replay.succeeded) {
             result.diagnostics.push_back(
@@ -115,7 +161,10 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
             result.diagnostics.push_back(Problem{ProblemCode::RecoverySessionIdentity, {entry.fileName()}});
             continue;
         }
-        candidates.push_back({std::move(lease), std::move(replay), setAside});
+        RecoveryChoice choice{entry.fileName(), entry.absoluteFilePath(), lastChanged(entry.absoluteFilePath()), {}};
+        for (const auto &file : replay.files)
+            if (replay.editedFiles.contains(file.id())) choice.paths.push_back(file.path());
+        candidates.push_back({std::move(lease), replay.userWork, std::move(choice), setAside});
     }
 
     RecoveryCandidate *adopted = nullptr;
@@ -140,7 +189,7 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
     const bool lostChoice = !chosenSession.isEmpty() && !chosen;
     std::vector<RecoveryCandidate *> edited;
     for (auto &candidate : candidates)
-        if (candidate.replay.userWork) edited.push_back(&candidate);
+        if (candidate.userWork) edited.push_back(&candidate);
     if (!adopted && candidates.size() == 1 && (!lostChoice || edited.empty())) adopted = &candidates.front();
     // Stores holding only launch captures carry no work, so they cannot make
     // the choice ambiguous. Several edited stores still block.
@@ -149,20 +198,26 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
         result.diagnostics.push_back(lostChoice ? Problem{ProblemCode::RecoveryChoiceLost, {chosenSession}}
                                                 : Problem{ProblemCode::RecoveryChoicesNeeded});
         for (const auto *candidate : edited) {
-            const auto &directory = candidate->lease->directory();
-            RecoveryChoice choice{candidate->name(), directory, lastChanged(directory), {}};
-            for (const auto &file : candidate->replay.files)
-                if (candidate->replay.editedFiles.contains(file.id())) choice.paths.push_back(file.path());
+            auto choice = candidate->choice;
             result.diagnostics.push_back(Problem{ProblemCode::RecoverySessionLastChanged,
                                                  {choice.session, choice.lastChanged.toString(Qt::ISODate)}});
             result.choices.push_back(std::move(choice));
+        }
+    }
+    RecoveryReplay selected;
+    if (adopted) {
+        selected = replayRecovery(adopted->lease->store(), options.correspondence);
+        if (!selected.succeeded) {
+            result.diagnostics.push_back(
+                Problem{ProblemCode::RecoverySessionRejected, {adopted->name()}}.wrapping(selected.problem));
+            return result;
         }
     }
     int removedWithoutEdits = 0;
     for (auto &candidate : candidates) {
         if (&candidate == adopted) continue;
         // A store without app edits holds nothing to restore later.
-        if (!candidate.replay.userWork) {
+        if (!candidate.userWork) {
             if (candidate.lease->remove()) ++removedWithoutEdits;
             continue;
         }
@@ -179,7 +234,7 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
             Problem{ProblemCode::RecoveryDeletedWithoutEdits, {QString::number(removedWithoutEdits)}});
 
     if (!adopted) return result;
-    auto &replay = adopted->replay;
+    auto &replay = selected;
     const auto sessionId = firstCaptured(replay.files)->snapshots()->provenance.sessionId;
     result.found = true;
     AdoptedStore store{adopted->lease, replay.userWork, {}};

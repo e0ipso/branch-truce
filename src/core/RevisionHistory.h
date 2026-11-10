@@ -33,6 +33,16 @@ struct Revision {
 // their retained text/metadata passes kMaxHistoryBytes or the entry cap.
 class RevisionHistory {
 public:
+    struct Checkpoint {
+        std::vector<std::shared_ptr<const Revision>> revisions;
+        std::vector<RevisionId> entries;
+        std::size_t cursor = 0;
+        RevisionId current = 0, launch = 0, next = 0;
+    };
+    [[nodiscard]] Checkpoint checkpoint() const;
+    [[nodiscard]] static std::size_t retainedBytes(const Revision &revision) noexcept;
+    [[nodiscard]] static RevisionHistory restore(Checkpoint checkpoint, std::vector<RevisionId> held);
+
     RevisionHistory() = default;
     explicit RevisionHistory(Revision launch);
 

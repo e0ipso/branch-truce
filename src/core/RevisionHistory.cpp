@@ -8,16 +8,21 @@
 #include <utility>
 
 namespace branch_truce {
-RevisionHistory::Stored::Stored(std::shared_ptr<const Revision> value) noexcept : revision(std::move(value))
+std::size_t RevisionHistory::retainedBytes(const Revision &revision) noexcept
 {
-    bytes = sizeof(Stored) + sizeof(Revision) + 8 * sizeof(void *) + revision->draft.text.capacity() + 1;
-    for (const auto &[id, decision] : revision->draft.decisions)
-        bytes += sizeof(decltype(revision->draft.decisions)::value_type) + 4 * sizeof(void *) + id.capacity() + 1;
-    if (revision->correspondence) bytes += revision->correspondence->retainedBytes();
-    if (revision->markers)
-        bytes += sizeof(MarkerScan) + revision->markers->blocks.capacity() * sizeof(MarkerRange)
-            + revision->markers->orphans.capacity() * sizeof(MarkerLine);
+    auto bytes = sizeof(Stored) + sizeof(Revision) + 8 * sizeof(void *) + revision.draft.text.capacity() + 1;
+    for (const auto &[id, decision] : revision.draft.decisions)
+        bytes += sizeof(decltype(revision.draft.decisions)::value_type) + 4 * sizeof(void *) + id.capacity() + 1;
+    if (revision.correspondence) bytes += revision.correspondence->retainedBytes();
+    if (revision.markers)
+        bytes += sizeof(MarkerScan) + revision.markers->blocks.capacity() * sizeof(MarkerRange)
+            + revision.markers->orphans.capacity() * sizeof(MarkerLine);
+    return bytes;
 }
+
+RevisionHistory::Stored::Stored(std::shared_ptr<const Revision> value) noexcept
+    : revision(std::move(value)), bytes(RevisionHistory::retainedBytes(*revision))
+{}
 
 RevisionHistory::RevisionHistory(Revision launch)
     : current_(std::make_shared<const Revision>(std::move(launch))),
@@ -32,6 +37,49 @@ const Revision *RevisionHistory::find(RevisionId id) const noexcept
 {
     const auto found = revisions_.find(id);
     return found == revisions_.end() ? nullptr : found->second.revision.get();
+}
+
+RevisionHistory::Checkpoint RevisionHistory::checkpoint() const
+{
+    Checkpoint result{{}, entries_, cursor_, current_->id, launch_, next_};
+    for (const auto &[id, stored] : revisions_) result.revisions.push_back(stored.revision);
+    return result;
+}
+
+RevisionHistory RevisionHistory::restore(Checkpoint checkpoint, std::vector<RevisionId> held)
+{
+    RevisionHistory result;
+    if (checkpoint.entries.empty() || checkpoint.entries.size() > kMaxHistoryEntries
+        || checkpoint.cursor >= checkpoint.entries.size() || !checkpoint.next)
+        throw std::invalid_argument("Invalid history checkpoint");
+    for (const auto &revision : checkpoint.revisions) {
+        if (!revision || !revision->id || revision->id >= checkpoint.next || !revision->result
+            || revision->result > revision->id || !revision->decisions || revision->decisions > revision->id
+            || !result.revisions_.emplace(revision->id, revision).second)
+            throw std::invalid_argument("Invalid checkpoint revision");
+    }
+    for (auto id : checkpoint.entries)
+        if (!result.find(id)) throw std::invalid_argument("Missing checkpoint history entry");
+    for (auto id : held)
+        if (!result.find(id)) throw std::invalid_argument("Missing protected checkpoint revision");
+    if (!result.find(checkpoint.current) || !result.find(checkpoint.launch))
+        throw std::invalid_argument("Missing checkpoint current or launch revision");
+    const auto &current = *result.find(checkpoint.current);
+    const auto &entry = *result.find(checkpoint.entries[checkpoint.cursor]);
+    if (current.draft.text != entry.draft.text || current.draft.decisions != entry.draft.decisions
+        || current.result != entry.result || current.decisions != entry.decisions)
+        throw std::invalid_argument("Checkpoint cursor disagrees with current revision");
+    result.entries_ = std::move(checkpoint.entries);
+    result.cursor_ = checkpoint.cursor;
+    result.current_ = result.revisions_.at(checkpoint.current).revision;
+    result.launch_ = checkpoint.launch;
+    result.next_ = checkpoint.next;
+    result.held_ = std::move(held);
+    const auto count = result.revisions_.size(), depth = result.entries_.size();
+    result.prune();
+    if (result.revisions_.size() != count || result.entries_.size() != depth)
+        throw std::invalid_argument("Unreachable or oversized checkpoint history");
+    return result;
 }
 
 void RevisionHistory::publish(Revision revision, Step step)
