@@ -89,6 +89,16 @@ const ResultAnchor *targetOf(const EditingCommand &command, ByteRange range)
                                     [&](const auto &anchor) { return anchor.result == range; });
     return found == command.targets.end() ? nullptr : &*found;
 }
+
+// The conflict-marker-size of a capture, or nothing when it is over the limit.
+std::optional<std::size_t> capturedMarkerSize(const FileSnapshots *snapshots)
+{
+    if (!snapshots) return kDefaultConflictMarkerSize;
+    const auto &attributes = snapshots->conversion.attributes;
+    const auto attribute = attributes.find("conflict-marker-size");
+    return attribute == attributes.end() ? std::optional{kDefaultConflictMarkerSize}
+                                         : conflictMarkerSize(attribute->second);
+}
 }
 
 FileSession::FileSession(std::string id, std::string path, Draft initial, Support support, std::string supportDetail,
@@ -106,49 +116,38 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, Suppor
             throw std::invalid_argument("Captured sources and launch result must belong to this file session");
         snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
     }
-    const auto hold = [&](Support held, LoadFailure failure) {
-        support_ = held;
-        loadFailure_ = failure;
-        open(launch(1, std::move(initial), false, false));
-    };
-    if (snapshots_) {
-        const auto &attributes = snapshots_->conversion.attributes;
-        const auto attribute = attributes.find("conflict-marker-size");
-        const auto size = attribute == attributes.end() ? std::optional{kDefaultConflictMarkerSize}
-                                                        : conflictMarkerSize(attribute->second);
-        if (!size && support_ == Support::Supported) {
-            hold(Support::OutsideApp, {LoadFailureReason::MarkerSizeTooLarge});
-            return;
-        }
-        markerSize_ = size.value_or(kDefaultConflictMarkerSize);
-    }
-    if (const auto failure =
-            textOverEnvelope(initial.text, support_ == Support::Supported ? snapshots_.get() : nullptr)) {
-        hold(Support::Unreadable, *failure);
+    markerSize_ = capturedMarkerSize(snapshots_.get()).value_or(kDefaultConflictMarkerSize);
+    if (const auto hold = holdFor(initial.text, support_)) {
+        open(launch(1, std::move(initial), hold->support, hold->failure, false));
         return;
-    }
-    if (support_ == Support::Supported
-        && (!editableText(initial.text) || (snapshots_ && !editableSources(*snapshots_)))) {
-        hold(Support::Unreadable, {LoadFailureReason::InvalidText});
-        return;
-    }
-    if (snapshots_) {
-        const auto lines = sourceLines(*snapshots_, initial.text);
-        if (lines > kLargeFileLines) {
-            hold(Support::LargeFile, {LoadFailureReason::LargeFile, {}, lines});
-            return;
-        }
     }
     // Only a file the app edits is aligned: its texts passed every check above.
-    open(launch(1, std::move(initial), support_ == Support::Supported, initializeChoices));
+    open(launch(1, std::move(initial), support_, std::nullopt, initializeChoices));
 }
 
-FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool correspond,
-                                        bool initializeChoices) const
+std::optional<FileSession::Hold> FileSession::holdFor(std::string_view text, Support support) const
 {
-    Launch result{support_, loadFailure_, {}, {}, {}, {}};
+    const bool supported = support == Support::Supported;
+    if (supported && !capturedMarkerSize(snapshots_.get()))
+        return Hold{Support::OutsideApp, {LoadFailureReason::MarkerSizeTooLarge}};
+    if (const auto failure = textOverEnvelope(text, supported ? snapshots_.get() : nullptr))
+        return Hold{Support::Unreadable, *failure};
+    if (!supported) return std::nullopt;
+    if (!editableText(text) || (snapshots_ && !editableSources(*snapshots_)))
+        return Hold{Support::Unreadable, {LoadFailureReason::InvalidText}};
+    if (snapshots_) {
+        const auto lines = sourceLines(*snapshots_, text);
+        if (lines > kLargeFileLines) return Hold{Support::LargeFile, {LoadFailureReason::LargeFile, {}, lines}};
+    }
+    return std::nullopt;
+}
+
+FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, Support support,
+                                        std::optional<LoadFailure> failure, bool initializeChoices) const
+{
+    Launch result{support, std::move(failure), {}, {}, {}, {}};
     std::shared_ptr<const CorrespondenceMap> correspondence;
-    if (correspond && snapshots_) {
+    if (support == Support::Supported && snapshots_) {
         try {
             auto bound = std::make_shared<CorrespondenceMap>(revision, snapshots_, initial.text, algorithm_);
             auto choices = std::make_shared<const ChoiceCatalogue>(choiceTargets(*snapshots_, *algorithm_));
@@ -491,30 +490,49 @@ Transition FileSession::discardToStaged(RevisionId expected)
 
 Transition FileSession::setSupport(Support support, std::string detail)
 {
+    if (support == Support::LargeFile) return Transition::InvalidOutcome;
     if (support_ == support && supportDetail_ == detail && !loadFailure_) return Transition::NoChange;
+    if (support == Support::Supported && support_ != Support::Supported) {
+        // The texts of a file held back were never checked, and a captured
+        // one was never aligned, so admitting it repeats what launch does.
+        if (loadFailure_ || holdFor(current().draft.text, Support::Supported)) return Transition::Blocked;
+        if (snapshots_ && !correspondence()) {
+            auto relaunched = relaunchSupported();
+            if (!relaunched || relaunched->support != Support::Supported) return Transition::Blocked;
+            open(std::move(*relaunched));
+        }
+    }
     support_ = support;
     supportDetail_ = std::move(detail);
     loadFailure_.reset();
     return Transition::Applied;
 }
 
-Transition FileSession::loadLargeFile()
+bool FileSession::launchUntouched() const noexcept
 {
-    if (support_ != Support::LargeFile) return Transition::NoChange;
-    // Every edit and outcome is blocked until the file loads, so the launch
-    // revision is the only one. It never had choices or a correspondence.
-    if (!snapshots_ || current().id != history_.launchId() || history_.depth() != 1 || !publication_.untouched())
-        return Transition::Blocked;
+    return current().id == history_.launchId() && history_.depth() == 1 && publication_.untouched();
+}
+
+std::optional<FileSession::Launch> FileSession::relaunchSupported() const
+{
+    // Every edit and outcome is blocked while a file is held back, so the
+    // launch revision is normally the only one. It never had choices or a
+    // correspondence.
+    if (!snapshots_ || !launchUntouched()) return std::nullopt;
     const auto revision = history_.nextId();
     if (revision == std::numeric_limits<RevisionId>::max())
         throw std::overflow_error("Session revision space exhausted");
     Draft initial{current().draft.text, current().draft.decisions, 0};
-    auto loaded = launch(revision, std::move(initial), true, true);
-    if (loaded.support == Support::LargeFile) {
-        loaded.support = Support::Supported;
-        loaded.failure.reset();
-    }
-    open(std::move(loaded));
+    return launch(revision, std::move(initial), Support::Supported, std::nullopt, true);
+}
+
+Transition FileSession::loadLargeFile()
+{
+    if (support_ != Support::LargeFile) return Transition::NoChange;
+    auto loaded = relaunchSupported();
+    if (!loaded) return Transition::Blocked;
+    // An alignment that runs out of memory holds the file back as unreadable instead.
+    open(std::move(*loaded));
     return Transition::Applied;
 }
 

@@ -14,6 +14,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace branch_truce {
@@ -131,12 +132,27 @@ public:
     Transition recordStage(RevisionId revision, Outcome outcome, std::string objectId = {}, std::string mode = {},
                            std::string detail = {});
     // An adapter's own support decision, which replaces any load failure.
+    // An adapter may hold a file back as OutsideApp or Unreadable at any
+    // time. Supported admits a file it held back only if the session's own
+    // checks pass, as they do at launch, and aligns a captured file whose
+    // launch revision is still untouched; otherwise the result is Blocked.
+    // A hold the session made itself (loadFailure()) is never lifted here,
+    // and LargeFile is the session's decision, so it is InvalidOutcome.
     Transition setSupport(Support support, std::string detail = {});
     // Opens a LargeFile session as it would have opened below the line
     // threshold. The loaded text gets a fresh revision and an empty history.
     Transition loadLargeFile();
 
 private:
+    // Why the session holds a text back instead of editing it.
+    struct Hold {
+        Support support;
+        LoadFailure failure;
+    };
+    // The hold for `text` when an adapter decided `support`, or nothing when
+    // the session can open it that way. Only a file the app edits has its
+    // captures and line count checked.
+    [[nodiscard]] std::optional<Hold> holdFor(std::string_view text, Support support) const;
     // Everything opening a launch text derives, built before any member
     // changes so a failure leaves the session as it was.
     struct Launch {
@@ -147,8 +163,16 @@ private:
         std::shared_ptr<const LaunchFrames> launchFrames;
         RevisionHistory history;
     };
-    [[nodiscard]] Launch launch(RevisionId revision, Draft initial, bool correspond, bool initializeChoices) const;
+    // A Supported launch of a captured file is aligned; any other is not.
+    [[nodiscard]] Launch launch(RevisionId revision, Draft initial, Support support, std::optional<LoadFailure> failure,
+                                bool initializeChoices) const;
     void open(Launch opened) noexcept;
+    // The launch revision is the only one and no outcome was recorded, so
+    // opening the text again loses nothing.
+    [[nodiscard]] bool launchUntouched() const noexcept;
+    // The untouched launch revision of a captured file opened again as
+    // Supported and aligned, or nothing when it is no longer untouched.
+    [[nodiscard]] std::optional<Launch> relaunchSupported() const;
     // The revision after the current one with this draft. Without a mapping
     // the current one is recomputed against the new text.
     [[nodiscard]] Revision successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence = {}) const;

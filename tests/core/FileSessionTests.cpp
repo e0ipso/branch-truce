@@ -915,6 +915,41 @@ void aNewerReviewRejectsSupersededPublicationCallbacks()
     CHECK(!file.written() && !file.staged() && engaged(file.reviewed()).revision.id == newer);
 }
 
+void supportIsAdmittedOnlyThroughTheLaunchChecks()
+{
+    // A hold the session made itself stays until its own command lifts it.
+    FileSession invalid("plain", "plain.txt", {"carriage\r\nreturn\n", {}, 0});
+    CHECK(invalid.support() == Support::Unreadable);
+    CHECK(invalid.setSupport(Support::Supported) == Transition::Blocked);
+    CHECK(invalid.support() == Support::Unreadable
+          && engaged(invalid.loadFailure()).reason == LoadFailureReason::InvalidText);
+    auto large = captured(lines(kLargeFileLines + 1));
+    CHECK(large.setSupport(Support::Supported) == Transition::Blocked);
+    CHECK(large.support() == Support::LargeFile && !large.correspondence());
+    CHECK(large.setSupport(Support::LargeFile) == Transition::InvalidOutcome);
+    CHECK(large.loadLargeFile() == Transition::Applied && large.correspondence());
+    // Text an adapter held back was never checked, so admitting it checks it.
+    FileSession binary("binary", "binary.txt", {"carriage\r\nreturn\n", {}, 0}, Support::OutsideApp, "binary");
+    CHECK(binary.setSupport(Support::Supported) == Transition::Blocked && binary.support() == Support::OutsideApp);
+    // A captured file the adapter held back is aligned when it is admitted.
+    auto sources = *test_support::choiceFile().snapshots();
+    const auto text = sources.launchResult.text.utf8;
+    FileSession held("choices", sources.path, {text, {}, 0}, Support::OutsideApp, "busy", sources);
+    CHECK(!held.correspondence() && held.choices().empty());
+    CHECK(held.setSupport(Support::Supported) == Transition::Applied);
+    CHECK(held.support() == Support::Supported && held.supportDetail().empty());
+    CHECK(held.correspondence() && held.correspondence()->revision() == held.current().id);
+    CHECK(!held.choices().empty() && !held.current().draft.decisions.empty());
+    CHECK(held.editResult(held.current().id, {{0, 0}, "typed\n"}) == Transition::Applied);
+    // Once it has history, holding it back and admitting it again keeps that history.
+    CHECK(held.setSupport(Support::Unreadable, "gone") == Transition::Applied);
+    CHECK(held.setSupport(Support::Supported) == Transition::Applied && held.canUndo());
+    // An untouched capture held back is not admitted once it has outcomes.
+    FileSession saved("choices", sources.path, {text, {}, 0}, Support::OutsideApp, "busy", sources);
+    CHECK(saved.recordCheckpoint(1, Outcome::Failed, "disk full") == Transition::Applied);
+    CHECK(saved.setSupport(Support::Supported) == Transition::Blocked && saved.support() == Support::OutsideApp);
+}
+
 void aFileOverTheLineThresholdWaitsForConfirmation()
 {
     CHECK(captured(lines(kLargeFileLines - 1)).support() == Support::Supported);
@@ -1056,6 +1091,7 @@ int main()
               aNewerSuccessfulSaveDoesNotAuthorizeAnUnsuccessfulReviewCheckpoint);
     suite.run("a newer review rejects superseded publication callbacks",
               aNewerReviewRejectsSupersededPublicationCallbacks);
+    suite.run("support is admitted only through the launch checks", supportIsAdmittedOnlyThroughTheLaunchChecks);
     suite.run("a file over the line threshold waits for confirmation", aFileOverTheLineThresholdWaitsForConfirmation);
     suite.run("text over the line or payload limit is unreadable", textOutsideTheEnvelopeIsUnreadable);
     suite.run("edits stay inside the text envelope", editsStayInsideTheEnvelope);
