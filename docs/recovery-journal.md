@@ -41,7 +41,7 @@ the preceding record digest, the `transaction` ID, a payload digest array, and
 journal; a header or record with a later version is reported as written by a
 newer Branch Truce rather than as damage.
 
-State schema 2 belongs to recovery/. It names the action (`open`,
+State schema 3 belongs to recovery/. It names the action (`open`,
 `replace-draft`, `undo`, `redo`, `manual-save`, `discard-to-checkpoint`,
 `discard-to-staged`, `mark-resolved-review`, `write-outcome`, `stage-outcome`,
 `support`, `load-large`, `mutation-intent`, `mutation-observation`), the file
@@ -60,6 +60,11 @@ byte counts kept from that text and `insert` is the payload between them. Both
 counts are the longest possible, so the same two texts always give the same
 record. A keystroke therefore stores the typed bytes, not the whole file. The
 launch record's earlier text is empty, so it stores its whole text.
+
+The launch record also names, in `alignment`, the identity of the
+correspondence algorithm the session aligned with. Choice and decision IDs come
+from that algorithm's passages, so replay refuses a journal whose launch record
+names another algorithm.
 
 The checkpoint, written, reviewed and staged revisions are named by their IDs;
 replay rebuilds them from the transitions. The review records whether undecided

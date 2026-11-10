@@ -24,6 +24,7 @@ public:
         return {
             {{0, source.size()}, {0, result.size()}, source == result ? PassageKind::Equal : PassageKind::Ambiguous}};
     }
+    [[nodiscard]] std::string_view identity() const noexcept override { return "whole-text"; }
     mutable int calls = 0;
 };
 

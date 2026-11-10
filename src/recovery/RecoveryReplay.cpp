@@ -102,6 +102,8 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
                                                           record.supportDetail(), record.snapshots(), false,
                                                           correspondence))
                             .first;
+                requireRecord(found->second.algorithm().identity() == record.alignment(),
+                              "Recovery journal was aligned with another correspondence algorithm.");
             } else {
                 requireRecord(found != files.end() && found->second.path() == path,
                               "Recovery command has no matching open file.");

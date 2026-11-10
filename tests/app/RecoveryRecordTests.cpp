@@ -86,6 +86,17 @@ public:
         ++calls;
         return ExactLineCorrespondence().compare(source, result);
     }
+    [[nodiscard]] std::string_view identity() const noexcept override { return ExactLineCorrespondence{}.identity(); }
+};
+
+// The default alignment under another name, as a later version of it would be.
+class RenamedAlgorithm final : public CorrespondenceAlgorithm {
+public:
+    std::vector<Passage> compare(std::string_view source, std::string_view result) const override
+    {
+        return ExactLineCorrespondence().compare(source, result);
+    }
+    [[nodiscard]] std::string_view identity() const noexcept override { return "exact-line/renamed"; }
 };
 
 // Rewrites the journal's last state and replays it; the replay must refuse it with error.
@@ -172,6 +183,22 @@ int main()
         const auto all = states(recorder.lease->store());
         CHECK(all.front().contains("snapshots"));
         CHECK(std::none_of(all.begin() + 1, all.end(), [](const auto &state) { return state.contains("snapshots"); }));
+    });
+    suite.run("replay refuses a journal another correspondence algorithm wrote", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        Recorder recorder(directory.path() + "/store", capturedFile());
+        recorder.step(RecoveryAction::ReplaceDraft, [](FileSession &file) {
+            const auto end = file.current().draft.text.size();
+            return file.editResult(file.current().id, {{end, end}, "typed\n"});
+        });
+        const auto launch = states(recorder.lease->store()).front();
+        CHECK(RecoveryRecordReader(recorder.lease->store(), launch).alignment()
+              == ExactLineCorrespondence().identity());
+        CHECK(replayRecovery(recorder.lease->store()).succeeded);
+        const auto replay = replayRecovery(recorder.lease->store(), std::make_shared<RenamedAlgorithm>());
+        CHECK(!replay.succeeded && replay.files.empty());
+        CHECK(replay.error.contains(QStringLiteral("another correspondence algorithm")));
     });
     suite.run("a keystroke records the typed bytes, not the whole text", [] {
         QTemporaryDir directory;

@@ -67,6 +67,7 @@ public:
         }
         return ExactLineCorrespondence{}.compare(source, result);
     }
+    [[nodiscard]] std::string_view identity() const noexcept override { return ExactLineCorrespondence{}.identity(); }
     mutable std::atomic_int failures = 0;
 };
 
@@ -86,6 +87,7 @@ public:
         }
         return ExactLineCorrespondence{}.compare(source, result);
     }
+    [[nodiscard]] std::string_view identity() const noexcept override { return ExactLineCorrespondence{}.identity(); }
     void start() const
     {
         const std::lock_guard lock(mutex_);

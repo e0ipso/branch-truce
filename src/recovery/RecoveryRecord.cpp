@@ -7,14 +7,14 @@
 
 namespace branch_truce {
 namespace {
-constexpr int schema = 2;
+constexpr int schema = 3;
 
 // Field names, shared by the encoder and the reader.
 namespace field {
 constexpr QLatin1StringView schema("schema"), action("action"), fileId("fileId"), path("path"), support("support"),
     supportDetail("supportDetail"), snapshots("snapshots"), current("current"), checkpoint("checkpoint"),
     written("written"), reviewed("reviewed"), staged("staged"), checkpointOutcome("checkpointOutcome"),
-    writeOutcome("writeOutcome"), stageOutcome("stageOutcome"), mutation("mutation");
+    writeOutcome("writeOutcome"), stageOutcome("stageOutcome"), mutation("mutation"), alignment("alignment");
 constexpr QLatin1StringView id("id"), result("result"), text("text"), decisions("decisions"), value("value"),
     order("order"), handEdited("handEdited"), handEditedRanges("handEditedRanges"), begin("begin"), end("end"),
     prefix("prefix"), suffix("suffix"), insert("insert"), revision("revision"),
@@ -227,7 +227,11 @@ storage::RecoveryTransaction recoveryTransaction(const FileSession &file, Recove
              {field::checkpointOutcome, encoder.outcome(file.checkpointOutcome())},
              {field::writeOutcome, encoder.outcome(file.writeOutcome())},
              {field::stageOutcome, encoder.outcome(file.stageOutcome())}};
-    if (action == RecoveryAction::Open) state.insert(field::snapshots, encoder.snapshots(file.snapshots()));
+    if (action == RecoveryAction::Open) {
+        state.insert(field::snapshots, encoder.snapshots(file.snapshots()));
+        // Decision IDs come from this algorithm's passages.
+        state.insert(field::alignment, encoder.bytes(file.algorithm().identity()));
+    }
     if (const auto &reviewed = file.reviewed())
         state.insert(field::reviewed,
                      QJsonObject{{field::revision, Encoder::revision(&reviewed->revision)},
@@ -429,6 +433,8 @@ std::map<std::string, std::string> RecoveryRecordReader::mapping(const QJsonValu
     }
     return result;
 }
+
+std::string RecoveryRecordReader::alignment() const { return bytes(state_.value(field::alignment)); }
 
 std::optional<FileSnapshots> RecoveryRecordReader::snapshots() const
 {

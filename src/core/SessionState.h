@@ -51,6 +51,8 @@ public:
     [[nodiscard]] const std::string &id() const noexcept { return id_; }
     [[nodiscard]] const std::string &path() const noexcept { return path_; }
     [[nodiscard]] Support support() const noexcept { return support_; }
+    // The alignment the session's choices and decision IDs come from.
+    [[nodiscard]] const CorrespondenceAlgorithm &algorithm() const noexcept { return *algorithm_; }
     // The adapter's explanation of its support decision, if it gave one.
     [[nodiscard]] const std::string &supportDetail() const noexcept { return supportDetail_; }
     // Why the session itself held the file back, if it did.

@@ -60,7 +60,11 @@ length calculation.
 `CorrespondenceAlgorithm` states the contract every implementation keeps: valid
 UTF-8 input inside the text envelope, a complete ordered partition, `Ambiguous`
 where equally good alignments disagree, no state between calls, and
-`std::bad_alloc` as the only failure. `CorrespondenceMap` checks every text it
+`std::bad_alloc` as the only failure. Choice sections and their decision IDs
+come from the passages an algorithm returns, so each implementation names
+itself with `identity()`. The recovery journal records that name with the
+launch capture, and replay refuses a journal another algorithm wrote rather
+than matching its decisions to different sections. `CorrespondenceMap` checks every text it
 aligns against that input contract before the algorithm sees it, and
 `FileSession` takes the algorithm it uses as an argument, with
 `ExactLineCorrespondence` as the default. tests/core/CorrespondenceTests.cpp runs

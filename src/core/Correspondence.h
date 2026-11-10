@@ -38,10 +38,16 @@ struct Passage {
 // - compare is deterministic, keeps no state between calls and may run on
 //   several threads at once.
 // - It fails only by throwing std::bad_alloc.
+// - identity() names it. Choice and decision IDs come from the passages it
+//   returns, so recovery journals record the name and replay refuses a
+//   journal another algorithm wrote. Two implementations, or two versions of
+//   one, that can return different passages for the same texts have
+//   different names.
 class CorrespondenceAlgorithm {
 public:
     virtual ~CorrespondenceAlgorithm() = default;
     [[nodiscard]] virtual std::vector<Passage> compare(std::string_view source, std::string_view result) const = 0;
+    [[nodiscard]] virtual std::string_view identity() const noexcept = 0;
 };
 
 // Exact line LCS, retaining only matches shared by every optimal alignment.
@@ -51,6 +57,7 @@ public:
 class ExactLineCorrespondence final : public CorrespondenceAlgorithm {
 public:
     [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override;
+    [[nodiscard]] std::string_view identity() const noexcept override { return "exact-line/1"; }
 };
 
 struct SourceAnchor {

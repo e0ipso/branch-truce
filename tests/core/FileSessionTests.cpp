@@ -40,6 +40,7 @@ public:
         }
         return ExactLineCorrespondence{}.compare(source, result);
     }
+    [[nodiscard]] std::string_view identity() const noexcept override { return ExactLineCorrespondence{}.identity(); }
     mutable int calls = 0;
     int failAt;
 

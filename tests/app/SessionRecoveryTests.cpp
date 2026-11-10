@@ -402,7 +402,7 @@ int main(int argc, char **argv)
             CHECK(recovered.succeeded && !recovered.incompleteTail && recovered.transactions.size() == 5);
             const auto last = recovered.transactions.back().state;
             const auto current = last.value("current").toObject();
-            CHECK(last.value("schema").toInt() == 2 && !recovered.transactions.back().id.isEmpty());
+            CHECK(last.value("schema").toInt() == 3 && !recovered.transactions.back().id.isEmpty());
             CHECK(current.value("id") == "4" && current.value("result") == "3");
             checkDraft(test_support::recordedDrafts(reopened).back(), finalDecision());
             const auto checkpoint = last.value("checkpoint").toObject();
