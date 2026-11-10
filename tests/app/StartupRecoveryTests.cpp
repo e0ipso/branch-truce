@@ -87,9 +87,11 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
             const auto &restored = openedFile(controller);
             CHECK(controller.store()->recoveryDirectory() == location);
             CHECK(restored.current().draft == unsaved && *restored.snapshots() == *captured);
-            CHECK(restored.checkpoint() && restored.checkpoint()->draft == saved);
+            CHECK(restored.publication().checkpoint()
+                  && restored.revision(*restored.publication().checkpoint())->draft == saved);
             CHECK(restored.facts().unsaved && !restored.facts().resolved && restored.facts().needsReview);
-            CHECK(!restored.reviewed() && !restored.written() && !restored.staged());
+            CHECK(!restored.publication().reviewed() && !restored.publication().written()
+                  && !restored.publication().staged());
             CHECK(fileRole(*controller.files(), restored, SessionModel::RecoveryStateRole)
                       .value<FileStates::RecoveryState>()
                   == FileStates::RecoveryState::Restored);
@@ -825,7 +827,7 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                     CHECK(diagnostic.contains(resultPresent ? "result bytes are present"
                                                             : "cannot establish completion"));
                     CHECK(restored.current().draft.text == candidate.toStdString());
-                    CHECK(!restored.facts().resolved && !restored.staged());
+                    CHECK(!restored.facts().resolved && !restored.publication().staged());
                     CHECK(controller.store()->hasRecoveryFailure(restored.id())
                           && !controller.files()->hasPendingRecovery());
                     CHECK(fileRole(*controller.files(), restored, SessionModel::RecoveryStateRole)

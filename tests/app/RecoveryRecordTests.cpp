@@ -154,7 +154,7 @@ int main()
         recorder.step(RecoveryAction::Undo, [](FileSession &file) { return file.undo(file.current().id); });
         recorder.step(RecoveryAction::Redo, [](FileSession &file) { return file.redo(file.current().id); });
         const auto &expected = recorder.file;
-        CHECK(expected.checkpoint() && expected.checkpoint()->id != expected.current().id);
+        CHECK(expected.publication().checkpoint() && *expected.publication().checkpoint() != expected.current().id);
         CHECK(!expected.correspondence()->handEditedAnchors().empty());
 
         const auto replay = replayRecovery(recorder.lease->store(), counting);
@@ -162,11 +162,12 @@ int main()
         const auto &file = replay.files.front();
         CHECK(file.snapshots() && *file.snapshots() == *expected.snapshots());
         CHECK(file.current().id == expected.current().id && file.current().draft == expected.current().draft);
-        CHECK(file.checkpoint()->id == expected.checkpoint()->id
-              && file.checkpoint()->draft == expected.checkpoint()->draft);
+        CHECK(*file.publication().checkpoint() == *expected.publication().checkpoint()
+              && file.revision(*file.publication().checkpoint())->draft
+                  == expected.revision(*expected.publication().checkpoint())->draft);
         CHECK(file.correspondence()->handEditedAnchors() == expected.correspondence()->handEditedAnchors());
         CHECK(file.correspondence()->handEditedRanges() == expected.correspondence()->handEditedRanges());
-        CHECK(file.checkpointOutcome() && file.checkpointOutcome()->detail == "saved");
+        CHECK(file.publication().checkpointOutcome() && file.publication().checkpointOutcome()->detail == "saved");
         // The restored file aligns its sources with the algorithm the window uses.
         CHECK(counting->calls > 0);
 

@@ -119,6 +119,7 @@ FilePresentation::Progress FilePresentation::progress(std::size_t row) const
 QVariantMap FilePresentation::progressData(std::size_t row) const
 {
     const auto &file = store_.files()[row];
+    const auto &publication = file.publication();
     const auto facts = progress(row);
     return {
         {QStringLiteral("undecided"), QVariant::fromValue(static_cast<qulonglong>(facts.undecided))},
@@ -130,10 +131,11 @@ QVariantMap FilePresentation::progressData(std::size_t row) const
         {QStringLiteral("settled"), facts.settled},
         {QStringLiteral("currentRevision"), qt_text::revision(file.current().id)},
         {QStringLiteral("savedRevision"),
-         facts.saved && file.checkpoint() ? qt_text::revision(file.checkpoint()->id) : QString{}},
+         facts.saved && publication.checkpoint() ? qt_text::revision(*publication.checkpoint()) : QString{}},
         {QStringLiteral("reviewedRevision"),
-         facts.reviewed ? qt_text::revision(file.reviewed()->revision.id) : QString{}},
-        {QStringLiteral("stagedRevision"), file.staged() ? qt_text::revision(file.staged()->revision.id) : QString{}}};
+         facts.reviewed ? qt_text::revision(publication.reviewed()->revision) : QString{}},
+        {QStringLiteral("stagedRevision"),
+         publication.staged() ? qt_text::revision(publication.staged()->revision) : QString{}}};
 }
 
 StatusKind FilePresentation::statusKind(std::size_t row) const

@@ -466,8 +466,9 @@ Transition FileSession::discardToCheckpoint(RevisionId expected)
     return withinMemory([&] {
         if (expected != current().id) return Transition::StaleRevision;
         if (support_ != Support::Supported) return Transition::Blocked;
-        const auto &checkpoint = publication_.checkpoint();
-        const auto &target = checkpoint ? *checkpoint : *history_.find(history_.launchId());
+        const auto checkpoint = publication_.checkpoint();
+        // The history keeps the checkpoint and the launch revision.
+        const auto &target = *history_.find(checkpoint ? *checkpoint : history_.launchId());
         // Matching text after undo can still have pending Save callbacks from a
         // discarded revision. Only the checkpoint's own successful transaction is
         // a no-op; otherwise restore its identity and fence those callbacks below.
@@ -478,62 +479,97 @@ Transition FileSession::discardToCheckpoint(RevisionId expected)
     });
 }
 
+void FileSession::adopt(PublicationState next)
+{
+    auto held = next.held();
+    history_.hold(std::move(held));
+    publication_ = std::move(next);
+}
+
 Transition FileSession::beginMarkResolved(RevisionId expected, bool confirmUndecided)
 {
-    if (expected != current().id) return Transition::StaleRevision;
-    if (support_ != Support::Supported || current().draft.unresolvedMarkers != 0) return Transition::Blocked;
-    if (undecidedCount(current().draft) != 0 && !confirmUndecided) return Transition::ConfirmationRequired;
-    publication_.markResolved(current(), confirmUndecided);
-    return Transition::Applied;
+    return withinMemory([&] {
+        if (expected != current().id) return Transition::StaleRevision;
+        if (support_ != Support::Supported || current().draft.unresolvedMarkers != 0) return Transition::Blocked;
+        if (undecidedCount(current().draft) != 0 && !confirmUndecided) return Transition::ConfirmationRequired;
+        auto next = publication_;
+        next.markResolved(current().id, confirmUndecided);
+        adopt(std::move(next));
+        return Transition::Applied;
+    });
 }
 
 Transition FileSession::recordCheckpoint(RevisionId revision, Outcome outcome, std::string detail)
 {
-    return publication_.recordCheckpoint(history_.find(revision), revision, current().id, outcome, std::move(detail));
+    return withinMemory([&] {
+        auto next = publication_;
+        const auto recorded =
+            next.recordCheckpoint(history_.find(revision) != nullptr, revision, current().id, outcome, std::move(detail));
+        if (recorded == Transition::Applied) adopt(std::move(next));
+        return recorded;
+    });
 }
 
 Transition FileSession::recordWrite(RevisionId revision, Outcome outcome, std::string detail)
 {
-    return publication_.recordWrite(revision, current().id, outcome, std::move(detail));
+    return withinMemory([&] {
+        auto next = publication_;
+        const auto recorded = next.recordWrite(revision, current().id, outcome, std::move(detail));
+        if (recorded == Transition::Applied) adopt(std::move(next));
+        return recorded;
+    });
 }
 
 Transition FileSession::recordStage(RevisionId revision, Outcome outcome, std::string objectId, std::string mode,
                                     std::string detail)
 {
-    return publication_.recordStage(revision, current().id, outcome, std::move(objectId), std::move(mode),
-                                    std::move(detail));
+    return withinMemory([&] {
+        auto next = publication_;
+        const auto recorded = next.recordStage(revision, current().id, outcome, std::move(objectId), std::move(mode),
+                                               std::move(detail));
+        if (recorded == Transition::Applied) adopt(std::move(next));
+        return recorded;
+    });
 }
 
 Transition FileSession::discardToStaged(RevisionId expected)
 {
-    if (expected != current().id) return Transition::StaleRevision;
-    const auto &staged = publication_.staged();
-    if (support_ != Support::Supported || !staged || !publication_.stagedVerified()) return Transition::Blocked;
-    if (current().id == staged->revision.id) return Transition::NoChange;
-    const auto floor = history_.nextId();
-    history_.reopen(staged->revision);
-    publication_.discardedToStaged(floor);
-    return Transition::Applied;
+    return withinMemory([&] {
+        if (expected != current().id) return Transition::StaleRevision;
+        const auto &staged = publication_.staged();
+        if (support_ != Support::Supported || !staged || !publication_.stagedVerified()) return Transition::Blocked;
+        if (current().id == staged->revision) return Transition::NoChange;
+        auto next = publication_;
+        next.discardedToStaged(history_.nextId());
+        auto held = next.held();
+        // The history keeps the staged revision.
+        history_.reopen(*history_.find(staged->revision));
+        history_.hold(std::move(held));
+        publication_ = std::move(next);
+        return Transition::Applied;
+    });
 }
 
 Transition FileSession::setSupport(Support support, std::string detail)
 {
-    if (support == Support::LargeFile) return Transition::InvalidOutcome;
-    if (support_ == support && supportDetail_ == detail && !loadFailure_) return Transition::NoChange;
-    if (support == Support::Supported && support_ != Support::Supported) {
-        // The texts of a file held back were never checked, and a captured
-        // one was never aligned, so admitting it repeats what launch does.
-        if (loadFailure_ || holdFor(current().draft.text, Support::Supported)) return Transition::Blocked;
-        if (snapshots_ && !correspondence()) {
-            auto relaunched = relaunchSupported();
-            if (!relaunched || relaunched->support != Support::Supported) return Transition::Blocked;
-            open(std::move(*relaunched));
+    return withinMemory([&] {
+        if (support == Support::LargeFile) return Transition::InvalidOutcome;
+        if (support_ == support && supportDetail_ == detail && !loadFailure_) return Transition::NoChange;
+        if (support == Support::Supported && support_ != Support::Supported) {
+            // The texts of a file held back were never checked, and a captured
+            // one was never aligned, so admitting it repeats what launch does.
+            if (loadFailure_ || holdFor(current().draft.text, Support::Supported)) return Transition::Blocked;
+            if (snapshots_ && !correspondence()) {
+                auto relaunched = relaunchSupported();
+                if (!relaunched || relaunched->support != Support::Supported) return Transition::Blocked;
+                open(std::move(*relaunched));
+            }
         }
-    }
-    support_ = support;
-    supportDetail_ = std::move(detail);
-    loadFailure_.reset();
-    return Transition::Applied;
+        support_ = support;
+        supportDetail_ = std::move(detail);
+        loadFailure_.reset();
+        return Transition::Applied;
+    });
 }
 
 bool FileSession::launchUntouched() const noexcept
@@ -556,16 +592,20 @@ std::optional<FileSession::Launch> FileSession::relaunchSupported() const
 
 Transition FileSession::loadLargeFile()
 {
-    if (support_ != Support::LargeFile) return Transition::NoChange;
-    auto loaded = relaunchSupported();
-    if (!loaded) return Transition::Blocked;
-    // An alignment that runs out of memory holds the file back as unreadable instead.
-    open(std::move(*loaded));
-    return Transition::Applied;
+    return withinMemory([&] {
+        if (support_ != Support::LargeFile) return Transition::NoChange;
+        auto loaded = relaunchSupported();
+        if (!loaded) return Transition::Blocked;
+        // An alignment that runs out of memory holds the file back as unreadable instead.
+        open(std::move(*loaded));
+        return Transition::Applied;
+    });
 }
 
 FileFacts FileSession::facts() const
 {
-    return publication_.facts(current(), support_, undecidedCount(current().draft));
+    const auto checkpoint = publication_.checkpoint();
+    return publication_.facts(current(), checkpoint ? history_.find(*checkpoint) : nullptr, support_,
+                              undecidedCount(current().draft));
 }
 }

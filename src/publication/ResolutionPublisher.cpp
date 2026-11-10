@@ -9,11 +9,6 @@
 
 namespace branch_truce {
 namespace {
-bool succeeded(const std::optional<OperationOutcome> &outcome, RevisionId revision)
-{
-    return outcome && outcome->revision == revision && outcome->outcome == Outcome::Succeeded;
-}
-
 QString remainingMarkers(const MarkerScan &markers)
 {
     const auto blocks = static_cast<int>(markers.blocks.size());
@@ -162,7 +157,7 @@ bool ResolutionPublisher::parentOwns(const QByteArray &path) const
 }
 bool ResolutionPublisher::previouslyWritten(const FileSession &session, RevisionId revision) const
 {
-    return session.written() && session.written()->id == revision && succeeded(session.writeOutcome(), revision);
+    return session.publication().writtenAt(revision);
 }
 bool ResolutionPublisher::preserveWrite() const
 {
@@ -256,8 +251,9 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
     const auto uncertain = [&](const std::optional<OperationOutcome> &outcome) {
         return outcome && outcome->revision == expected && outcome->outcome == Outcome::Uncertain;
     };
-    if (uncertain(session->checkpointOutcome()) || uncertain(session->writeOutcome())
-        || uncertain(session->stageOutcome()))
+    const auto &publication = session->publication();
+    if (uncertain(publication.checkpointOutcome()) || uncertain(publication.writeOutcome())
+        || uncertain(publication.stageOutcome()))
         return result(Transition::Blocked,
                       tr("Outcome uncertain. Inspect the repository file and index before retrying."));
     if (session->facts().resolved) return result(Transition::NoChange, tr("Written and resolved."));
@@ -282,11 +278,7 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
         return result(review, tr("Mark resolved is blocked. The repository file is unchanged."));
     session = file(fileId);
     if (!session) return result(Transition::StaleRevision, tr("The result changed. Mark resolved was not applied."));
-    const bool checkpointed = session->checkpoint() && session->checkpoint()->id == expected
-        && session->checkpoint()->result == session->current().result
-        && session->checkpoint()->decisions == session->current().decisions
-        && succeeded(session->checkpointOutcome(), expected);
-    if (!checkpointed) {
+    if (!session->publication().checkpointed(expected)) {
         const auto saved = files_.recordCheckpoint(fileId, expected, Outcome::Succeeded);
         if (saved != Transition::Applied)
             return result(
@@ -318,7 +310,8 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
         if (!previouslyWritten(*session, expected)) return missingLaunch();
         const auto live = storage::captureDestination(repository_.worktreeRoot,
                                                       QByteArray::fromStdString(session->path()), destinations_);
-        const auto writtenBytes = serializedRevision(*session, *session->written());
+        const auto *written = session->revision(expected);
+        const auto writtenBytes = written ? serializedRevision(*session, *written) : std::nullopt;
         if (!live.destination || !writtenBytes || live.destination->bytes() != *writtenBytes
             || *writtenBytes != serialized.document->originalBytes) {
             return recordWrite(fileId, expected, Outcome::Failed,

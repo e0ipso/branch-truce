@@ -108,9 +108,8 @@ bool SessionStore::canCompleteLoad(const std::vector<FileSession> &files) const
     for (std::size_t row = 0; row < files_.size(); ++row) {
         const auto &file = files_[row];
         if (file.id() != files[row].id() || file.path() != files[row].path() || file.support() != Support::Unreadable
-            || file.snapshots() || file.current().id != 1 || file.current().draft != Draft{} || file.checkpoint()
-            || file.reviewed() || file.written() || file.staged() || file.checkpointOutcome() || file.writeOutcome()
-            || file.stageOutcome())
+            || file.snapshots() || file.current().id != 1 || file.current().draft != Draft{}
+            || !file.publication().untouched())
             return false;
     }
     return journal_.onlyOpenCapturesPending();

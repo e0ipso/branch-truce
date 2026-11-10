@@ -95,11 +95,7 @@ bool FileCommands::saveDraft(const QString &fileId, const QString &revision)
     const auto target = admit(fileId, revision, CommandCheck::CurrentSupported);
     if (!target) return false;
     const auto &[file, expected] = *target;
-    const auto saved = file->checkpoint() && file->checkpoint()->id == expected
-        && file->checkpoint()->result == file->current().result
-        && file->checkpoint()->decisions == file->current().decisions && file->checkpointOutcome()
-        && file->checkpointOutcome()->outcome == Outcome::Succeeded && file->checkpointOutcome()->revision == expected;
-    if (saved) return feedback_.report(Transition::NoChange);
+    if (file->publication().checkpointed(expected)) return feedback_.report(Transition::NoChange);
     // The recovery commit inside this call is the app checkpoint. It does not
     // write the worktree or stage a path; publication stays on Mark resolved.
     const auto result = store_.recordCheckpoint(fileId.toStdString(), expected, Outcome::Succeeded);

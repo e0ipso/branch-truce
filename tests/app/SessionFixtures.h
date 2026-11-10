@@ -139,8 +139,10 @@ inline void checkRecoveredHistory(TestSession &model, const Draft &before, const
     const auto check = [&](const Draft &expected) {
         const auto replay = replayedFile(model.recoveryDirectory());
         CHECK(replay.current().draft == expected && replay.current().id == model.file("choices")->current().id);
-        CHECK(*replay.snapshots() == captures && replay.checkpoint() && replay.checkpoint()->draft == before);
-        CHECK(!replay.reviewed() && !replay.written() && !replay.staged() && !replay.facts().resolved);
+        CHECK(*replay.snapshots() == captures && replay.publication().checkpoint()
+              && replay.revision(*replay.publication().checkpoint())->draft == before);
+        CHECK(!replay.publication().reviewed() && !replay.publication().written() && !replay.publication().staged()
+              && !replay.facts().resolved);
         CHECK(!model.hasPendingRecovery());
     };
     check(chosen);

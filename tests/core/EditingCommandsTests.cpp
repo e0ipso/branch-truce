@@ -414,7 +414,7 @@ void wholeFilePreviewsReplaceExactlyTheSelectedSource(SourceSide side)
         CHECK(contribution.after
               == Decision{contribution.source.side == side ? DecisionValue::Accepted : DecisionValue::Ignored, {}});
     }
-    CHECK(!file.reviewed() && !file.written() && !file.staged());
+    CHECK(!file.publication().reviewed() && !file.publication().written() && !file.publication().staged());
     CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before.draft);
     CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
 }

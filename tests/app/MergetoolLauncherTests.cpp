@@ -444,7 +444,7 @@ int main(int argc, char **argv)
             waitFinished(*again, 1, controller);
             CHECK(readFile(repo.path("excluded.txt")) == repo.excluded);
             CHECK(unmerged(repo, "excluded.txt"));
-            CHECK(opened(controller, "excluded.txt").checkpoint());
+            CHECK(opened(controller, "excluded.txt").publication().checkpoint());
             CHECK(!opened(controller, "excluded.txt").facts().resolved);
             CHECK(!QFileInfo::exists(secondIntake));
             CHECK(repo.git({"rev-parse", ":notes.txt"}).trimmed() == repo.notesObject);
@@ -465,7 +465,7 @@ int main(int argc, char **argv)
         waitFinished(*parent, 1, controller);
         CHECK(readFile(repo.path("tracked.txt")) == repo.tracked);
         CHECK(unmerged(repo, "tracked.txt") && unmerged(repo, "excluded.txt"));
-        CHECK(opened(controller, "tracked.txt").checkpoint());
+        CHECK(opened(controller, "tracked.txt").publication().checkpoint());
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
         CHECK(!QFileInfo::exists(intake));
     });
@@ -513,7 +513,7 @@ int main(int argc, char **argv)
         CHECK(!unmerged(repo, first));
         CHECK(unmerged(repo, second));
         CHECK(readFile(repo.path(QString::fromLatin1(second))) == secondText);
-        CHECK(opened(controller, first).checkpoint());
+        CHECK(opened(controller, first).publication().checkpoint());
         CHECK(!opened(controller, second).facts().resolved);
         CHECK(repo.git({"rev-parse", ":notes.txt"}).trimmed() == repo.notesObject);
     });

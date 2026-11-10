@@ -227,7 +227,7 @@ void copiesShareRevisionsAndDiscardedBranchesAreDropped()
     CHECK(file.editResult(4, {{0, 1}, "d"}) == Transition::Applied && file.current().id == 5);
     CHECK(file.recordCheckpoint(3, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.recordCheckpoint(4, Outcome::Succeeded) == Transition::StaleRevision);
-    CHECK(!file.checkpoint() && !file.checkpointOutcome());
+    CHECK(!file.publication().checkpoint() && !file.publication().checkpointOutcome());
     // History entries, the current revision and the launch revision remain.
     CHECK(file.recordCheckpoint(2, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.recordCheckpoint(5, Outcome::Succeeded) == Transition::Applied);
@@ -237,27 +237,62 @@ void copiesShareRevisionsAndDiscardedBranchesAreDropped()
     CHECK(copy.current().draft.text == "c\n" && copy.canUndo() && !copy.canRedo());
 }
 
-void undoReachesBackAsFarAsTheHistorySizeAllows()
+// One payload-sized text of 1024-byte lines.
+std::string payloadText()
 {
-    // Each revision holds one payload-sized text, so the history fits this many.
-    const auto fits = kMaxHistoryBytes / kMaxRecoveryPayloadBytes;
     std::string text;
     text.reserve(kMaxRecoveryPayloadBytes);
     while (text.size() < kMaxRecoveryPayloadBytes) {
         text.append(1023, 'x');
         text += '\n';
     }
-    FileSession file("plain", "plain.txt", {text, {}, 0});
-    for (std::size_t edit = 0; edit < fits + 8; ++edit)
+    return text;
+}
+
+// Edits the file `count` times, then undoes as far as the history allows.
+std::size_t undoableAfterEdits(FileSession &file, std::size_t count)
+{
+    for (std::size_t edit = 0; edit < count; ++edit)
         CHECK(file.editResult(file.current().id, {{0, 1}, edit % 2 ? "x" : "y"}) == Transition::Applied);
     std::size_t undone = 0;
     while (file.canUndo()) {
         CHECK(file.undo(file.current().id) == Transition::Applied);
         ++undone;
     }
+    return undone;
+}
+
+void undoReachesBackAsFarAsTheHistorySizeAllows()
+{
+    // Each revision holds one payload-sized text, so the history fits this many.
+    const auto fits = kMaxHistoryBytes / kMaxRecoveryPayloadBytes;
+    const auto text = payloadText();
+    FileSession file("plain", "plain.txt", {text, {}, 0});
+    const auto undone = undoableAfterEdits(file, fits + 8);
     CHECK(undone > 0 && undone < fits);
     // Discarding without a checkpoint still restores the launch text.
     CHECK(file.discardToCheckpoint(file.current().id) == Transition::Applied && file.current().draft.text == text);
+}
+
+void revisionsOutcomesNameStayStoredWithinTheHistorySize()
+{
+    const auto fits = kMaxHistoryBytes / kMaxRecoveryPayloadBytes;
+    const auto text = payloadText();
+    FileSession plain("plain", "plain.txt", {text, {}, 0});
+    const auto plainUndone = undoableAfterEdits(plain, fits + 8);
+    FileSession file("plain", "plain.txt", {text, {}, 0});
+    CHECK(file.editResult(1, {{0, 1}, "w"}) == Transition::Applied);
+    CHECK(file.beginMarkResolved(2) == Transition::Applied);
+    CHECK(file.recordCheckpoint(2, Outcome::Succeeded) == Transition::Applied);
+    CHECK(file.recordWrite(2, Outcome::Succeeded) == Transition::Applied);
+    CHECK(file.recordStage(2, Outcome::Succeeded, "object", "100644") == Transition::Applied);
+    const auto undone = undoableAfterEdits(file, fits + 7);
+    // The saved, reviewed, written and staged revision is one stored copy,
+    // kept although undo no longer reaches it, and it takes one undo step's room.
+    CHECK(file.revision(2) && file.revision(2)->draft.text.starts_with('w'));
+    CHECK(undone + 1 == plainUndone);
+    CHECK(file.discardToCheckpoint(file.current().id) == Transition::Applied);
+    CHECK(file.current().draft.text.starts_with('w') && file.current().result == 2);
 }
 
 FileSession diff3Session(std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
@@ -519,7 +554,7 @@ void saveCheckpointsOnlyAndKeepsCommandHistory()
     const auto saved = file.current();
     CHECK(file.recordCheckpoint(saved.id, Outcome::Succeeded) == Transition::Applied);
     CHECK(!file.facts().unsaved && file.facts().needsReview && !file.facts().resolved);
-    CHECK(!file.reviewed() && !file.written() && !file.staged());
+    CHECK(!file.publication().reviewed() && !file.publication().written() && !file.publication().staged());
     CHECK(file.facts().status == FileStatus::SavedDraft && file.canUndo());
     CHECK(file.replaceDraft(saved.id, draft("newer")) == Transition::Applied);
     CHECK(file.undo(file.current().id) == Transition::Applied);
@@ -527,7 +562,7 @@ void saveCheckpointsOnlyAndKeepsCommandHistory()
     CHECK(file.current().result == saved.result && file.current().decisions == saved.decisions);
     CHECK(!file.facts().unsaved && file.facts().needsReview && file.canRedo());
     CHECK(file.recordCheckpoint(saved.id - 1, Outcome::Succeeded) == Transition::StaleRevision);
-    CHECK(engaged(file.checkpoint()).id == saved.id);
+    CHECK(engaged(file.publication().checkpoint()) == saved.id);
 }
 
 void historyRestoresDecisionsAndCutsTheRedoBranch()
@@ -547,7 +582,7 @@ void historyRestoresDecisionsAndCutsTheRedoBranch()
     CHECK(file.undo(file.current().id) == Transition::Applied);
     CHECK(file.replaceDraft(file.current().id, draft("branch")) == Transition::Applied);
     CHECK(!file.canRedo() && file.redo(file.current().id) == Transition::NoChange);
-    CHECK(engaged(file.staged()).revision.draft == combined);
+    CHECK(file.revision(engaged(file.publication().staged()).revision)->draft == combined);
 }
 
 void confirmationMarkersAndSupportBlockPublication()
@@ -556,9 +591,9 @@ void confirmationMarkersAndSupportBlockPublication()
     undecided.decisions["right"] = {};
     FileSession file("id", "file", undecided);
     CHECK(file.beginMarkResolved(1) == Transition::ConfirmationRequired);
-    CHECK(file.current().draft == undecided && !file.reviewed());
+    CHECK(file.current().draft == undecided && !file.publication().reviewed());
     CHECK(file.beginMarkResolved(1, true) == Transition::Applied);
-    CHECK(engaged(file.reviewed()).confirmedUndecided && !has(file, Blocker::Undecided));
+    CHECK(engaged(file.publication().reviewed()).confirmedUndecided && !has(file, Blocker::Undecided));
     undecided.text = "<<<<<<< ours\nresult\n=======\nother\n>>>>>>> theirs\n";
     CHECK(file.replaceDraft(1, undecided) == Transition::Applied);
     CHECK(file.current().draft.unresolvedMarkers == 1);
@@ -615,7 +650,7 @@ void deletingOneMarkerLineKeepsThePublishBlocker()
         CHECK(file.current().draft.unresolvedMarkers == remaining.count());
         CHECK(file.current().draft.unresolvedMarkers != 0);
         CHECK(file.beginMarkResolved(file.current().id, true) == Transition::Blocked);
-        CHECK(has(file, Blocker::UnresolvedMarkers) && !file.reviewed());
+        CHECK(has(file, Blocker::UnresolvedMarkers) && !file.publication().reviewed());
     }
     FileSession cleared("id", "file", {text, {}, 0});
     CHECK(cleared.replaceDraft(1, {"a\nleft\nz\n", {}, 3}) == Transition::Applied);
@@ -696,7 +731,7 @@ void markerLinesGitInsertedStillBlockWholeOrOrphaned()
                            [](const auto &orphan) { return orphan.line == 1; }));
         CHECK(file.current().draft.unresolvedMarkers == 2);
         CHECK(file.beginMarkResolved(file.current().id, true) == Transition::Blocked);
-        CHECK(has(file, Blocker::UnresolvedMarkers) && !file.reviewed());
+        CHECK(has(file, Blocker::UnresolvedMarkers) && !file.publication().reviewed());
     }
 }
 
@@ -730,8 +765,8 @@ void outcomesRequireTheReviewedSavedAndWrittenTransaction()
     for (const auto outcome : {Outcome::Failed, Outcome::Uncertain}) {
         CHECK(file.recordCheckpoint(1, outcome, "save diagnostic") == Transition::Applied);
         CHECK(file.recordWrite(1, Outcome::Succeeded) == Transition::InvalidOutcome);
-        CHECK(engaged(file.reviewed()).revision.id == 1 && !file.facts().resolved);
-        CHECK(engaged(file.checkpointOutcome()).detail == "save diagnostic");
+        CHECK(engaged(file.publication().reviewed()).revision == 1 && !file.facts().resolved);
+        CHECK(engaged(file.publication().checkpointOutcome()).detail == "save diagnostic");
     }
     CHECK(file.recordCheckpoint(1, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.recordStage(1, Outcome::Succeeded, "object", "100644") == Transition::InvalidOutcome);
@@ -740,7 +775,7 @@ void outcomesRequireTheReviewedSavedAndWrittenTransaction()
     CHECK(file.recordWrite(1, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.recordStage(1, Outcome::Succeeded, "", "100644") == Transition::InvalidOutcome);
     CHECK(file.recordStage(1, Outcome::Succeeded, "object", "") == Transition::InvalidOutcome);
-    CHECK(!file.staged() && !file.facts().resolved);
+    CHECK(!file.publication().staged() && !file.facts().resolved);
     CHECK(file.recordStage(1, Outcome::Succeeded, "object", "100644") == Transition::Applied);
     CHECK(file.facts().resolved && file.facts().status == FileStatus::Resolved);
 }
@@ -754,8 +789,8 @@ void anUnsuccessfulOutcomeRetainsSnapshots(Outcome outcome, Step step)
     if (step == Step::Checkpoint) CHECK(file.recordCheckpoint(1, outcome, "diagnostic") == Transition::Applied);
     if (step == Step::Write) CHECK(file.recordWrite(1, outcome, "diagnostic") == Transition::Applied);
     if (step == Step::Stage) CHECK(file.recordStage(1, outcome, {}, {}, "diagnostic") == Transition::Applied);
-    CHECK(engaged(file.checkpoint()).id == 1 && engaged(file.written()).id == 1
-          && engaged(file.staged()).revision.id == 1);
+    CHECK(engaged(file.publication().checkpoint()) == 1 && engaged(file.publication().written()) == 1
+          && engaged(file.publication().staged()).revision == 1);
     CHECK(!file.facts().resolved);
     const std::array failures{Blocker::CheckpointFailed, Blocker::WriteFailed, Blocker::StageFailed};
     const auto index = static_cast<std::size_t>(step);
@@ -777,7 +812,7 @@ void checkpointDiscardFencesDelayedCallbacksEvenAfterUndo()
     CHECK(file.recordCheckpoint(discarded, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.recordWrite(discarded, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.recordStage(discarded, Outcome::Succeeded, "object", "100644") == Transition::StaleRevision);
-    CHECK(engaged(file.checkpoint()).id == 1 && !file.facts().unsaved && file.facts().needsReview);
+    CHECK(engaged(file.publication().checkpoint()) == 1 && !file.facts().unsaved && file.facts().needsReview);
 }
 
 void discardWithoutCheckpointRestoresInitialDraftAndRejectsDelayedSave()
@@ -787,7 +822,7 @@ void discardWithoutCheckpointRestoresInitialDraftAndRejectsDelayedSave()
     CHECK(file.replaceDraft(1, draft("discarded")) == Transition::Applied);
     const auto discarded = file.current().id;
     CHECK(file.discardToCheckpoint(discarded) == Transition::Applied);
-    CHECK(file.current().draft == draft() && !file.checkpoint());
+    CHECK(file.current().draft == draft() && !file.publication().checkpoint());
     CHECK(file.recordCheckpoint(discarded, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.facts().unsaved && !file.facts().resolved);
 }
@@ -802,7 +837,7 @@ void stagedDiscardRestoresVerifiedIdentityAndFencesNewerCallbacks()
     const auto discarded = file.current().id;
     CHECK(file.recordCheckpoint(discarded, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.discardToStaged(discarded) == Transition::Applied);
-    CHECK(file.current().id == 1 && engaged(file.checkpoint()).id == 1 && file.facts().resolved);
+    CHECK(file.current().id == 1 && engaged(file.publication().checkpoint()) == 1 && file.facts().resolved);
     CHECK(file.recordCheckpoint(discarded, Outcome::Failed) == Transition::StaleRevision);
     CHECK(file.recordWrite(discarded, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.recordStage(discarded, Outcome::Succeeded, "other", "100644") == Transition::StaleRevision);
@@ -819,7 +854,7 @@ void stagedDiscardCannotPretendANewerWriteDidNotHappen(Outcome outcome)
     CHECK(file.recordCheckpoint(newer, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.recordWrite(newer, outcome) == Transition::Applied);
     CHECK(file.discardToStaged(newer) == Transition::Blocked);
-    CHECK(file.current().id == newer && engaged(file.staged()).revision.id == 1);
+    CHECK(file.current().id == newer && engaged(file.publication().staged()).revision == 1);
 }
 
 void aDelayedReviewWriteAfterANewerSave(Outcome outcome, bool saveBeforeReview)
@@ -832,18 +867,20 @@ void aDelayedReviewWriteAfterANewerSave(Outcome outcome, bool saveBeforeReview)
     const auto newer = file.current().id;
     CHECK(file.recordCheckpoint(newer, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.recordWrite(1, outcome, "delayed write diagnostic") == Transition::Applied);
-    CHECK(engaged(file.writeOutcome()).revision == 1 && engaged(file.writeOutcome()).outcome == outcome);
-    CHECK(engaged(file.writeOutcome()).detail == "delayed write diagnostic");
-    CHECK(engaged(file.checkpoint()).id == newer && file.current().id == newer);
+    CHECK(engaged(file.publication().writeOutcome()).revision == 1
+          && engaged(file.publication().writeOutcome()).outcome == outcome);
+    CHECK(engaged(file.publication().writeOutcome()).detail == "delayed write diagnostic");
+    CHECK(engaged(file.publication().checkpoint()) == newer && file.current().id == newer);
     CHECK(!file.facts().unsaved && file.facts().needsReview && !file.facts().resolved);
-    CHECK(engaged(file.reviewed()).revision.id == 1);
+    CHECK(engaged(file.publication().reviewed()).revision == 1);
     if (outcome == Outcome::Succeeded) {
-        CHECK(engaged(file.written()).id == 1 && engaged(file.written()).draft == draft());
+        CHECK(engaged(file.publication().written()) == 1
+              && file.revision(engaged(file.publication().written()))->draft == draft());
         CHECK(file.facts().status == FileStatus::WrittenUnresolved);
         CHECK(file.recordStage(1, Outcome::Succeeded, "earlier", "100644") == Transition::Applied);
         CHECK(file.facts().earlierStaged && !file.facts().resolved);
     } else {
-        CHECK(!file.written());
+        CHECK(!file.publication().written());
         CHECK(file.facts().status
               == (outcome == Outcome::Failed ? FileStatus::WriteFailed : FileStatus::OutcomeUncertain));
     }
@@ -920,7 +957,7 @@ void aNewerSuccessfulSaveDoesNotAuthorizeAnUnsuccessfulReviewCheckpoint()
         CHECK(file.replaceDraft(1, draft("newer")) == Transition::Applied);
         CHECK(file.recordCheckpoint(file.current().id, Outcome::Succeeded) == Transition::Applied);
         CHECK(file.recordWrite(1, Outcome::Succeeded) == Transition::InvalidOutcome);
-        CHECK(!file.written() && !file.facts().resolved);
+        CHECK(!file.publication().written() && !file.facts().resolved);
     }
 }
 
@@ -934,7 +971,8 @@ void aNewerReviewRejectsSupersededPublicationCallbacks()
     CHECK(file.beginMarkResolved(newer) == Transition::Applied);
     CHECK(file.recordWrite(1, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.recordStage(1, Outcome::Succeeded, "earlier", "100644") == Transition::StaleRevision);
-    CHECK(!file.written() && !file.staged() && engaged(file.reviewed()).revision.id == newer);
+    CHECK(!file.publication().written() && !file.publication().staged()
+          && engaged(file.publication().reviewed()).revision == newer);
 }
 
 void supportIsAdmittedOnlyThroughTheLaunchChecks()
@@ -1060,6 +1098,8 @@ int main()
     suite.run("copies share revisions and discarded branches are dropped",
               copiesShareRevisionsAndDiscardedBranchesAreDropped);
     suite.run("undo reaches back as far as the history size allows", undoReachesBackAsFarAsTheHistorySizeAllows);
+    suite.run("revisions outcomes name stay stored within the history size",
+              revisionsOutcomesNameStayStoredWithinTheHistorySize);
     suite.run("the session aligns with the algorithm it is given", theSessionAlignsWithTheAlgorithmItIsGiven);
     suite.run("a failed opening leaves nothing half built", aFailedOpeningLeavesNothingHalfBuilt);
     suite.run("an edit that runs out of memory changes nothing", anEditThatRunsOutOfMemoryChangesNothing);

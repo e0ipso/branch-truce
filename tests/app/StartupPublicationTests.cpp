@@ -59,7 +59,8 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
                     CHECK(!controller.store()->hasRecoveryFailure(restored.id()));
                     CHECK(
                         fileRole(*controller.files(), restored, SessionModel::RecoveryErrorRole).toString().isEmpty());
-                    CHECK(restored.written() && restored.written()->id == restored.current().id);
+                    CHECK(restored.publication().written()
+                          && *restored.publication().written() == restored.current().id);
                     CHECK(restored.facts().resolved == staging);
                     CHECK(repo.snapshot() == repositoryBefore);
                     const auto replay = replayRecovery(storage::RecoveryStore(location));
@@ -154,9 +155,11 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             openController(controller, repo);
             const auto &restored = openedFile(controller);
             CHECK(!controller.store()->hasRecoveryFailure(restored.id()) && restored.facts().resolved);
-            CHECK(restored.staged() && restored.staged()->revision.id == revision);
-            CHECK(restored.staged()->objectId == object.toStdString() && restored.staged()->mode == "100644");
-            CHECK(restored.stageOutcome()->detail.find("verified against disk and index") != std::string::npos);
+            CHECK(restored.publication().staged() && restored.publication().staged()->revision == revision);
+            CHECK(restored.publication().staged()->objectId == object.toStdString()
+                  && restored.publication().staged()->mode == "100644");
+            CHECK(restored.publication().stageOutcome()->detail.find("verified against disk and index")
+                  != std::string::npos);
             CHECK(repo.snapshot() == before);
             const auto read = storage::RecoveryStore(location).read();
             CHECK(read.succeeded && read.transactions.size() == records + 1);
@@ -184,12 +187,15 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             CHECK(controller.store()->replaceDraft(openedFile(controller).id(), openedFile(controller).current().id,
                                                    saved)
                   == Transition::Applied);
-            CHECK(openedFile(controller).facts().unsaved && !openedFile(controller).checkpoint());
+            CHECK(openedFile(controller).facts().unsaved && !openedFile(controller).publication().checkpoint());
             CHECK(controller.commands()->saveDraft(id, QString::number(openedFile(controller).current().id)));
             baseline = openedFile(controller).current().draft;
-            CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == baseline);
-            CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).written()
-                  && !openedFile(controller).staged() && !openedFile(controller).reviewed());
+            CHECK(openedFile(controller).publication().checkpoint()
+                  && openedFile(controller).revision(*openedFile(controller).publication().checkpoint())->draft
+                      == baseline);
+            CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).publication().written()
+                  && !openedFile(controller).publication().staged()
+                  && !openedFile(controller).publication().reviewed());
             CHECK(controller.feedback()->message() == "Draft saved in Branch Truce; repository file unchanged.");
             CHECK(controller.selectedFile()->status() == "Draft saved in Branch Truce; repository file unchanged");
             CHECK(repo.snapshot() == before);
@@ -200,13 +206,15 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
                                                    edited)
                   == Transition::Applied);
             discarded = openedFile(controller).current().draft;
-            CHECK(openedFile(controller).facts().unsaved && openedFile(controller).checkpoint()->draft == baseline);
+            CHECK(openedFile(controller).facts().unsaved
+                  && openedFile(controller).revision(*openedFile(controller).publication().checkpoint())->draft
+                      == baseline);
             CHECK(controller.commands()->discardUnsaved(id, QString::number(openedFile(controller).current().id)));
             CHECK(openedFile(controller).current().draft == baseline);
             CHECK(openedFile(controller).current().draft != discarded);
             CHECK(openedFile(controller).current().draft.decisions.at("kept").value == DecisionValue::Accepted);
-            CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).written()
-                  && !openedFile(controller).staged());
+            CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).publication().written()
+                  && !openedFile(controller).publication().staged());
             CHECK(controller.feedback()->message()
                   == "Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.");
             CHECK(repo.snapshot() == before);
@@ -219,8 +227,9 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
         const auto &restored = openedFile(controller);
         CHECK(controller.store()->recoveryDirectory() == location);
         CHECK(restored.current().draft == baseline && restored.current().draft != discarded);
-        CHECK(restored.checkpoint() && restored.checkpoint()->draft == baseline);
-        CHECK(!restored.facts().unsaved && !restored.written() && !restored.staged());
+        CHECK(restored.publication().checkpoint()
+              && restored.revision(*restored.publication().checkpoint())->draft == baseline);
+        CHECK(!restored.facts().unsaved && !restored.publication().written() && !restored.publication().staged());
         CHECK(repo.snapshot() == before);
     });
     suite.run("a retried discard describes the discarded file after another file is selected", [] {
@@ -287,7 +296,9 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
                   == Transition::Applied);
             CHECK(controller.commands()->saveDraft(id, QString::number(openedFile(controller).current().id)));
             baseline = openedFile(controller).current().draft;
-            CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == baseline);
+            CHECK(openedFile(controller).publication().checkpoint()
+                  && openedFile(controller).revision(*openedFile(controller).publication().checkpoint())->draft
+                      == baseline);
             CHECK(repo.snapshot() == before);
             auto next = baseline;
             next.text += "retry me\n";
@@ -305,9 +316,11 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             CHECK(controller.feedback()->message() == "Draft save failed. The edited result is still available.");
             CHECK(openedFile(controller).current().draft == edited);
             CHECK(openedFile(controller).current().draft.decisions.at("kept").value == DecisionValue::Ignored);
-            CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == baseline);
-            CHECK(openedFile(controller).facts().unsaved && !openedFile(controller).written()
-                  && !openedFile(controller).staged());
+            CHECK(openedFile(controller).publication().checkpoint()
+                  && openedFile(controller).revision(*openedFile(controller).publication().checkpoint())->draft
+                      == baseline);
+            CHECK(openedFile(controller).facts().unsaved && !openedFile(controller).publication().written()
+                  && !openedFile(controller).publication().staged());
             CHECK(controller.selectedFile()->status() == "Draft save failed");
             CHECK(controller.selectedFile()->recoveryState() == FileStates::RecoveryState::SaveFailed);
             CHECK(!controller.selectedFile()->canEdit());
@@ -323,9 +336,11 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
             CHECK(controller.commands()->retryPendingRecovery(id));
             CHECK(!controller.files()->hasPendingRecovery());
             CHECK(openedFile(controller).current().draft == edited);
-            CHECK(openedFile(controller).checkpoint() && openedFile(controller).checkpoint()->draft == edited);
-            CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).written()
-                  && !openedFile(controller).staged());
+            CHECK(openedFile(controller).publication().checkpoint()
+                  && openedFile(controller).revision(*openedFile(controller).publication().checkpoint())->draft
+                      == edited);
+            CHECK(!openedFile(controller).facts().unsaved && !openedFile(controller).publication().written()
+                  && !openedFile(controller).publication().staged());
             CHECK(controller.selectedFile()->status() == "Draft saved in Branch Truce; repository file unchanged");
             CHECK(controller.selectedFile()->canEdit());
             const auto committed = storage::RecoveryStore(controller.store()->recoveryDirectory()).read();
@@ -343,8 +358,9 @@ void startup_routes::addPublicationCases(test_support::Suite &suite, const QStri
         CHECK(controller.store()->recoveryDirectory() == location);
         CHECK(restored.current().draft == edited && restored.current().draft != baseline);
         CHECK(restored.current().draft.decisions.at("kept").value == DecisionValue::Ignored);
-        CHECK(restored.checkpoint() && restored.checkpoint()->draft == edited);
-        CHECK(!restored.facts().unsaved && !restored.written() && !restored.staged());
+        CHECK(restored.publication().checkpoint()
+              && restored.revision(*restored.publication().checkpoint())->draft == edited);
+        CHECK(!restored.facts().unsaved && !restored.publication().written() && !restored.publication().staged());
         CHECK(repo.snapshot() == before);
     });
     suite.run("a deliberate leave keeps drafts, runs no Git command and ends the session once", [] {

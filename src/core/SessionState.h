@@ -85,22 +85,12 @@ public:
     [[nodiscard]] const std::vector<ChoiceTarget> &choices() const noexcept { return catalogue().targets(); }
     [[nodiscard]] const ChoiceCatalogue &catalogue() const noexcept;
     [[nodiscard]] const std::vector<NonConflictingTarget> &nonConflictingTargets() const noexcept;
-    [[nodiscard]] const std::optional<Revision> &checkpoint() const noexcept { return publication_.checkpoint(); }
-    [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return publication_.reviewed(); }
-    [[nodiscard]] const std::optional<Revision> &written() const noexcept { return publication_.written(); }
-    [[nodiscard]] const std::optional<StagedResult> &staged() const noexcept { return publication_.staged(); }
-    [[nodiscard]] const std::optional<OperationOutcome> &checkpointOutcome() const noexcept
-    {
-        return publication_.checkpointOutcome();
-    }
-    [[nodiscard]] const std::optional<OperationOutcome> &writeOutcome() const noexcept
-    {
-        return publication_.writeOutcome();
-    }
-    [[nodiscard]] const std::optional<OperationOutcome> &stageOutcome() const noexcept
-    {
-        return publication_.stageOutcome();
-    }
+    // The Save, review, write and stage outcomes adapters reported, naming
+    // revisions by id. Every revision it names stays stored.
+    [[nodiscard]] const PublicationState &publication() const noexcept { return publication_; }
+    // A stored revision: the current one, an undo history entry, the launch
+    // revision or one the publication state names. Null once it is dropped.
+    [[nodiscard]] const Revision *revision(RevisionId id) const noexcept { return history_.find(id); }
     [[nodiscard]] bool canUndo() const noexcept { return history_.canUndo(); }
     [[nodiscard]] bool canRedo() const noexcept { return history_.canRedo(); }
     [[nodiscard]] FileFacts facts() const;
@@ -172,6 +162,8 @@ private:
     // The launch revision is the only one and no outcome was recorded, so
     // opening the text again loses nothing.
     [[nodiscard]] bool launchUntouched() const noexcept;
+    // Makes `next` the publication state and keeps every revision it names.
+    void adopt(PublicationState next);
     // The untouched launch revision of a captured file opened again as
     // Supported and aligned, or nothing when it is no longer untouched.
     [[nodiscard]] std::optional<Launch> relaunchSupported() const;

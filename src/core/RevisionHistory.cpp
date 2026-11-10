@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace branch_truce {
 namespace {
@@ -66,10 +67,17 @@ void RevisionHistory::append(RevisionId id) noexcept
     cursor_ = entries_.size() - 1;
 }
 
-void RevisionHistory::prune()
+void RevisionHistory::hold(std::vector<RevisionId> ids) noexcept
+{
+    held_ = std::move(ids);
+    prune();
+}
+
+void RevisionHistory::prune() noexcept
 {
     const auto reachable = [&](RevisionId id) {
-        return id == launch_ || id == current_->id || std::find(entries_.begin(), entries_.end(), id) != entries_.end();
+        return id == launch_ || id == current_->id || std::find(entries_.begin(), entries_.end(), id) != entries_.end()
+            || std::find(held_.begin(), held_.end(), id) != held_.end();
     };
     const auto total = [&] {
         std::size_t bytes = 0;

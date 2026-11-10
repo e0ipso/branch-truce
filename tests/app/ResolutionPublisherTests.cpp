@@ -54,7 +54,8 @@ int main(int argc, char **argv)
             CHECK(refused.transition == Transition::StaleRevision);
             CHECK_EQ(refused.detail, QStringLiteral("The result changed. Mark resolved was not applied."));
         }
-        CHECK(!session.file().reviewed() && !session.file().writeOutcome() && !session.publisher.busy());
+        CHECK(!session.file().publication().reviewed() && !session.file().publication().writeOutcome()
+              && !session.publisher.busy());
         CHECK_EQ(session.records(), before);
     });
     suite.run("undecided choices ask for confirmation, and cancelling it leaves the file as it was", [] {
@@ -66,12 +67,12 @@ int main(int argc, char **argv)
         CHECK(session.publisher.confirmationPending());
         CHECK_EQ(session.publisher.confirmationFileId(), QStringLiteral("choices"));
         CHECK_EQ(session.publisher.confirmationRevision(), QString::number(session.revision()));
-        CHECK(!session.file().reviewed() && !session.publisher.busy());
+        CHECK(!session.file().publication().reviewed() && !session.publisher.busy());
         session.publisher.cancelConfirmation();
         CHECK(!session.publisher.confirmationPending());
         CHECK_EQ(session.messages,
                  QStringList{QStringLiteral("Resolution cancelled. The text and choices are unchanged.")});
-        CHECK(!session.file().reviewed());
+        CHECK(!session.file().publication().reviewed());
         CHECK_EQ(session.records(), before);
     });
     suite.run("conflict markers refuse Mark resolved and name the first marker line", [] {
@@ -84,7 +85,8 @@ int main(int argc, char **argv)
         CHECK(refused.detail.startsWith(QStringLiteral("Mark resolved is blocked: ")));
         CHECK(
             refused.detail.endsWith(QStringLiteral("; first at line %1. The repository file is unchanged.").arg(line)));
-        CHECK(!session.file().reviewed() && !session.file().writeOutcome() && !session.publisher.busy());
+        CHECK(!session.file().publication().reviewed() && !session.file().publication().writeOutcome()
+              && !session.publisher.busy());
     });
     suite.run("without a captured launch destination the write fails and the file stays unresolved", [] {
         Publishing session;
@@ -95,10 +97,13 @@ int main(int argc, char **argv)
             QStringLiteral("Repository write failed. No launch destination is available, and the file is unresolved.");
         CHECK_EQ(refused.detail, detail);
         // The review and the Save before the write are kept; the write is recorded as failed.
-        CHECK(session.file().reviewed() && session.file().checkpoint() && session.file().checkpoint()->id == revision);
-        CHECK(session.file().writeOutcome() && session.file().writeOutcome()->outcome == Outcome::Failed);
-        CHECK_EQ(QString::fromStdString(session.file().writeOutcome()->detail), detail);
-        CHECK(!session.file().written() && !session.file().staged() && !session.file().facts().resolved);
+        CHECK(session.file().publication().reviewed() && session.file().publication().checkpoint()
+              && *session.file().publication().checkpoint() == revision);
+        CHECK(session.file().publication().writeOutcome()
+              && session.file().publication().writeOutcome()->outcome == Outcome::Failed);
+        CHECK_EQ(QString::fromStdString(session.file().publication().writeOutcome()->detail), detail);
+        CHECK(!session.file().publication().written() && !session.file().publication().staged()
+              && !session.file().facts().resolved);
         CHECK(!session.publisher.busy() && !session.publisher.confirmationPending());
         CHECK_EQ(session.coordinator.pendingTasks(), 0);
     });

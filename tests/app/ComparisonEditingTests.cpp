@@ -316,14 +316,16 @@ void comparison_scene::addEditingCases(Groups groups)
                   ->property("text")
                   .toString()
                   .contains("Draft saved in Branch Truce; repository file unchanged"));
-        CHECK(fixture.file().checkpoint() && fixture.file().checkpoint()->draft == saved);
-        CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
+        CHECK(fixture.file().publication().checkpoint()
+              && fixture.file().revision(*fixture.file().publication().checkpoint())->draft == saved);
+        CHECK(!fixture.file().facts().unsaved && !fixture.file().publication().written()
+              && !fixture.file().publication().staged());
         // A restart sees the Save and nothing written; SessionRecoveryTests checks the records themselves.
         {
             const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
-            CHECK(replay.succeeded && replay.files.front().checkpoint()
-                  && replay.files.front().checkpoint()->draft == saved);
-            CHECK(!replay.files.front().written() && !replay.files.front().staged());
+            CHECK(replay.succeeded && replay.files.front().publication().checkpoint()
+                  && replay.files.front().revision(*replay.files.front().publication().checkpoint())->draft == saved);
+            CHECK(!replay.files.front().publication().written() && !replay.files.front().publication().staged());
         }
         auto discarded = saved;
         discarded.text += "discarded edit\n";
@@ -331,16 +333,17 @@ void comparison_scene::addEditingCases(Groups groups)
         CHECK(fixture.controller.store()->replaceDraft("choices", fixture.file().current().id, discarded)
               == Transition::Applied);
         settle([&] { return fixture.controller.selectedFile()->unsaved(); });
-        CHECK(fixture.file().checkpoint()->draft == saved);
+        CHECK(fixture.file().revision(*fixture.file().publication().checkpoint())->draft == saved);
         fixture.click("discardUnsaved");
         CHECK(fixture.file().current().draft == saved && fixture.file().current().draft != discarded);
         CHECK(fixture.file().current().draft.decisions.at("kept").value == DecisionValue::Accepted);
         CHECK(fixture.text().toStdString() == saved.text);
-        CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
+        CHECK(!fixture.file().facts().unsaved && !fixture.file().publication().written()
+              && !fixture.file().publication().staged());
         const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
         CHECK(replay.succeeded && replay.files.front().current().draft == saved);
-        CHECK(replay.files.front().current().draft != discarded && !replay.files.front().written()
-              && !replay.files.front().staged());
+        CHECK(replay.files.front().current().draft != discarded && !replay.files.front().publication().written()
+              && !replay.files.front().publication().staged());
 
         CHECK(fixture.controller.commands()->editResult("choices", QString::number(fixture.file().current().id),
                                                         static_cast<int>(QString::fromStdString(saved.text).size()),
@@ -355,7 +358,7 @@ void comparison_scene::addEditingCases(Groups groups)
             return fixture.controller.selectedFile()->recoveryState() == FileStates::RecoveryState::SaveFailed;
         });
         CHECK(fixture.file().current().draft == edited && fixture.file().facts().unsaved);
-        CHECK(fixture.file().checkpoint()->draft == saved);
+        CHECK(fixture.file().revision(*fixture.file().publication().checkpoint())->draft == saved);
         CHECK(fixture.text().toStdString() == edited.text);
         settle([&] { return fixture.item("commandMessage")->isVisible(); });
         CHECK(fixture.item("commandMessage")->property("text").toString().contains("Draft save failed"));
@@ -364,12 +367,13 @@ void comparison_scene::addEditingCases(Groups groups)
         CHECK(!fixture.item("saveDraft")->isEnabled());
         CHECK(!fixture.toolbarEnabled("discardUnsaved"));
         CHECK(!fixture.toolbarEnabled("undoCommand"));
-        CHECK(!fixture.file().written() && !fixture.file().staged());
+        CHECK(!fixture.file().publication().written() && !fixture.file().publication().staged());
         fixture.click("retrySave");
         settle([&] { return !fixture.controller.selectedFile()->unsaved(); });
-        CHECK(fixture.file().checkpoint() && fixture.file().checkpoint()->draft == edited);
+        CHECK(fixture.file().publication().checkpoint()
+              && fixture.file().revision(*fixture.file().publication().checkpoint())->draft == edited);
         CHECK(!fixture.file().facts().unsaved && !fixture.item("retrySave")->isVisible());
         CHECK(fixture.controller.selectedFile()->status() == "Draft saved in Branch Truce; repository file unchanged");
-        CHECK(!fixture.file().written() && !fixture.file().staged());
+        CHECK(!fixture.file().publication().written() && !fixture.file().publication().staged());
     });
 }

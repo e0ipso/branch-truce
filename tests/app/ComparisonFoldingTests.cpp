@@ -298,11 +298,13 @@ void comparison_scene::addFoldingCases(Groups groups)
             fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
             settle([&] { return fixture.controller.selectedFile()->unsaved(); });
             fixture.click("saveDraft");
-            CHECK(fixture.file().checkpoint());
+            CHECK(fixture.file().publication().checkpoint());
             const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
-            CHECK(replay.succeeded && replay.files.size() == 1 && replay.files.front().checkpoint());
-            const auto bytes = replay.files.front().checkpoint()->draft.text;
-            CHECK(bytes == "x" + test_support::markedText() && bytes == fixture.file().checkpoint()->draft.text);
+            CHECK(replay.succeeded && replay.files.size() == 1 && replay.files.front().publication().checkpoint());
+            const auto bytes =
+                replay.files.front().revision(*replay.files.front().publication().checkpoint())->draft.text;
+            CHECK(bytes == "x" + test_support::markedText()
+                  && bytes == fixture.file().revision(*fixture.file().publication().checkpoint())->draft.text);
             CHECK(QString::fromStdString(bytes) == fixture.text());
             if (savedBytes) CHECK(bytes == *savedBytes);
             savedBytes = bytes;
@@ -355,7 +357,7 @@ void comparison_scene::addFoldingCases(Groups groups)
         settle([&] { return notice->isVisible(); });
         CHECK(notice->isVisible() && rowLine() == QStringLiteral("Ready to mark resolved"));
         // Nothing was written or resolved.
-        CHECK(!fixture.file().facts().resolved && !fixture.file().written());
+        CHECK(!fixture.file().facts().resolved && !fixture.file().publication().written());
         CHECK(fixture.controller.commands()->undo("choices", QString::number(fixture.file().current().id)));
         settle([&] { return !notice->isVisible(); });
         CHECK(!notice->isVisible() && rowLine() != QStringLiteral("Ready to mark resolved"));

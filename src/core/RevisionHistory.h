@@ -28,9 +28,9 @@ struct Revision {
 // revision with the original.
 //
 // Only reachable revisions are kept: the history entries, the current
-// revision and the launch revision. Others are dropped as soon as they become
-// unreachable, and the oldest entries leave the history once the text the
-// history holds passes kMaxHistoryBytes.
+// revision, the launch revision and the held ones. Others are dropped as soon
+// as they become unreachable, and the oldest entries leave the history once
+// the text all of them hold passes kMaxHistoryBytes.
 class RevisionHistory {
 public:
     RevisionHistory() = default;
@@ -58,13 +58,17 @@ public:
     // Makes an earlier revision current again as a new entry, storing it
     // again if it was dropped. If it throws, the history is unchanged.
     void reopen(const Revision &revision);
+    // Keeps these revisions, if still stored, until the next call names
+    // others. Publication outcomes name revisions this way.
+    void hold(std::vector<RevisionId> ids) noexcept;
 
 private:
     void append(RevisionId id) noexcept;
-    void prune();
+    void prune() noexcept;
     std::map<RevisionId, std::shared_ptr<const Revision>> revisions_;
     std::shared_ptr<const Revision> current_;
     std::vector<RevisionId> entries_;
+    std::vector<RevisionId> held_;
     std::size_t cursor_ = 0;
     RevisionId launch_ = 0;
     RevisionId next_ = 1;
