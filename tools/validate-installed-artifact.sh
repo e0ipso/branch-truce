@@ -67,7 +67,7 @@ inside_command=()
 usage() { echo "Usage: $0 --target <target> --package DEB --output DIR [--wayland]"; }
 
 host_main() {
-    local root target package output socket='' engine name image fixture container cleanup
+    local failures=0 root target package output socket='' engine name image fixture container cleanup
     root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
     source "$root/packaging/scripts/cli.sh"
     source "$root/packaging/scripts/formats.sh"
@@ -140,7 +140,7 @@ deb_target() {
 inside() {
     local status=0
     "${inside_command[@]}" "$@" || status=$?
-    ((status == 0)) || fail "step $1 exited $status"
+    ((status == 0)) || fail failures "step $1 exited $status"
     return "$status"
 }
 
@@ -171,7 +171,7 @@ wayland_steps() {
     echo "compositor $(swaymsg -t get_version | jq -r .human_readable | sed 's/^/sway /')"
     swaymsg -t get_outputs | jq -r '.[] | "output \(.name) \(.current_mode.width)x\(.current_mode.height) scale \(.scale)"'
     if [[ -n "$(window_json)" ]]; then
-        fail "a $app_id window is already open on this session"
+        fail failures "a $app_id window is already open on this session"
         return
     fi
     inside wayland-minimal
@@ -184,26 +184,26 @@ wayland_steps() {
     step 'Editor input and accessibility (scale 1, BreezeLight)'
     inside gui-start 1 BreezeLight
     if wait_window present 60 && inside wait-ready; then
-        "${inside_command[@]}" atspi-dump > "$prefix.atspi" || fail "AT-SPI tree"
+        "${inside_command[@]}" atspi-dump > "$prefix.atspi" || fail failures "AT-SPI tree"
         echo "AT-SPI tree: $prefix.atspi ($(wc -l < "$prefix.atspi") lines)"
         inside atspi-check
         inside editor-input
         shoot "$prefix" editor-input
     else
-        fail "window for editor input did not become ready"
+        fail failures "window for editor input did not become ready"
     fi
     inside gui-stop
-    wait_window absent 30 || fail "window still open after the app stopped"
+    wait_window absent 30 || fail failures "window still open after the app stopped"
     step 'Mergetool resolve over Wayland'
     inside mergetool-start
     if wait_window present 60; then
         inside mergetool-resolve
         shoot "$prefix" mergetool-resolved
     else
-        fail "the launcher-started window did not appear"
+        fail failures "the launcher-started window did not appear"
     fi
     inside gui-stop
-    wait_window absent 30 || fail "window still open after the app stopped"
+    wait_window absent 30 || fail failures "window still open after the app stopped"
 }
 
 window_json() {
@@ -233,7 +233,7 @@ shoot() {
     if [[ -n "$geometry" ]] && grim -g "$geometry" "$file"; then
         echo "screenshot $file ($geometry)"
     else
-        fail "screenshot $2"
+        fail failures "screenshot $2"
     fi
 }
 
@@ -243,15 +243,15 @@ window_run() {
     step "Window $label"
     inside gui-start "$scale" "$scheme"
     if ! wait_window present 60; then
-        fail "$label: no window"
+        fail failures "$label: no window"
     elif inside wait-ready; then
         pass "$label: desktop-entry launch shows the merge session"
         shoot "$prefix" "$label"
     else
-        fail "$label: session not ready"
+        fail failures "$label: session not ready"
     fi
     inside gui-stop
-    wait_window absent 30 || fail "$label: window still open after the app stopped"
+    wait_window absent 30 || fail failures "$label: window still open after the app stopped"
 }
 
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0

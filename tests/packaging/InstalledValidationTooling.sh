@@ -486,10 +486,20 @@ done
 
 # A step that records a failed check exits 1, one with none exits 0, under the
 # options the script runs with.
-sourced 'set -euo pipefail; cat() { printf "%s\n" "$BT_HOME"; }; fixture_path() { :; }; c_ok() { pass fine; }; c_bad() { fail broken; pass after; }
+sourced 'set -euo pipefail; cat() { printf "%s\n" "$BT_HOME"; }; fixture_path() { :; }; c_ok() { pass fine; }; c_bad() { fail failures broken; pass after; }
     installed_checks_main ok && echo "ok exited 0"; installed_checks_main bad || echo "bad exited $?"'
 expect_status 0
 expect_only_output $'PASS fine\nok exited 0\nFAIL broken\nPASS after\nbad exited 1'
+
+# Independent accumulators and repeated runs keep their counts under either option set.
+for shell_options in 'set +eu; set +o pipefail' 'set -euo pipefail'; do
+    SCRIPT=$root/tools/lib/report.sh sourced "$shell_options; first=7; report_failures=0; failures=99
+        nested() { local first=0; fail first nested; [[ \$first == 1 ]]; }
+        fail first one; fail report_failures two; nested; fail report_failures three
+        [[ \$first == 8 && \$report_failures == 2 && \$failures == 99 ]] && echo independent"
+    expect_status 0
+    expect_only_output $'FAIL one\nFAIL two\nFAIL nested\nFAIL three\nindependent'
+done
 
 # symbol_tags lists each version tag once, sorted, and an output without
 # any tag gives an empty list instead of failing under set -e and pipefail.
