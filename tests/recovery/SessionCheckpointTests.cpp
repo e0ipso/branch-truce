@@ -89,6 +89,18 @@ int main(int argc, char **argv)
                             {.support = Support::OutsideApp});
         roundtrip(outside);
     });
+    suite.run("an older Save cannot authorize a later review during import", [] {
+        FileSession file("plain", "plain.txt", {"launch\n", {}, 0});
+        CHECK(file.recordCheckpoint(1, Outcome::Succeeded) == Transition::Applied);
+        CHECK(file.editResult(1, {{0, 0}, "later\n"}) == Transition::Applied);
+        CHECK(file.beginMarkResolved(2) == Transition::Applied);
+        roundtrip(file);
+        CHECK(file.recordWrite(2, Outcome::Succeeded) == Transition::InvalidOutcome);
+        auto checkpoint = SessionCheckpoint::capture(file);
+        auto revisions = recorded(checkpoint);
+        checkpoint.publication.reviewSaved = true;
+        refused(file, std::move(checkpoint), std::move(revisions));
+    });
     suite.run("Save and review order, failed outcomes, discard fences and later Saves survive import", [] {
         for (const bool saveFirst : {false, true}) {
             FileSession file("plain", "plain.txt", {"launch\n", {}, 0});

@@ -64,7 +64,8 @@ PublicationState PublicationState::restore(PublicationCheckpoint checkpoint, con
             valid = valid && validId((*outcome)->revision)
                 && ((*outcome)->outcome == Outcome::Succeeded || (*outcome)->outcome == Outcome::Failed
                     || (*outcome)->outcome == Outcome::Uncertain);
-    valid = valid && (!state.reviewSaved || (state.reviewed && state.checkpoint))
+    valid = valid
+        && (!state.reviewSaved || (state.reviewed && state.checkpoint && *state.checkpoint >= state.reviewed->revision))
         && (state.checkpoint.has_value() == state.checkpointOutcome.has_value()
             || (!state.checkpoint && state.checkpointOutcome && state.checkpointOutcome->outcome != Outcome::Succeeded))
         && (!state.checkpointOutcome || state.checkpointOutcome->outcome != Outcome::Succeeded
