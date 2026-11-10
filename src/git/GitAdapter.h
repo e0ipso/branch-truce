@@ -1,6 +1,7 @@
 // The Git adapter inspects repository state and performs guarded operations for conflict resolution.
 #pragma once
 
+#include "git/GitTypes.h"
 #include <QByteArray>
 #include <QHash>
 #include <QList>
@@ -8,8 +9,6 @@
 #include <QString>
 #include <functional>
 #include <memory>
-
-class QProcessEnvironment;
 
 namespace branch_truce::git {
 
@@ -54,33 +53,6 @@ struct IndexEntry {
     unsigned int stage = 0;
 };
 
-enum class RepositoryOperation { None, Merge, Rebase, Unsupported };
-struct SourceIdentity {
-    QByteArray commitId;
-    QString label;
-    QString name = {}; // A unique local branch observed pointing exactly at commitId.
-};
-struct RepositoryContext {
-    QString worktreeRoot;
-    QString gitDirectory; // Canonical per-worktree directory, including linked worktrees.
-    RepositoryOperation operation = RepositoryOperation::None;
-    // Operation identity only. Check unsupportedPaths, file types and conversion
-    // policy before editing or publishing. Reinspect before any mutation.
-    bool supported = false;
-    QString diagnostic;
-    // Exact conflict paths whose stages cannot be attributed to the operation.
-    // Keep their index entries visible without rejecting other paths.
-    QHash<QByteArray, QString> unsupportedPaths;
-    SourceIdentity stage2;
-    SourceIdentity stage3;
-    QByteArray baseCommitId; // Empty for an unavailable common earlier version.
-    // Validated rebase context; these names do not label either index side.
-    QByteArray headName;
-    QByteArray originalHead;
-    QByteArray onto;
-    QString ontoName = {};
-};
-
 struct Request {
     Operation operation = Operation::DiscoverRepository;
     QString directory;
@@ -116,23 +88,6 @@ struct Result {
     QString worktreeRoot;
     QByteArray canonicalBytes; // CanonicalizeText only. standardOutput is checkout form.
     QByteArray canonicalObjectId;
-};
-
-// The variables that choose which configuration files Git reads. The Git the
-// adapter starts reads the same files as the user's own Git and a `git
-// mergetool` parent started from the same environment. Every other variable of
-// the Git child is fixed by the adapter.
-struct GitEnvironment {
-    QString home; // HOME
-    QString configHome; // XDG_CONFIG_HOME; empty lets Git use $HOME/.config
-    QString globalConfig; // GIT_CONFIG_GLOBAL; empty when unset
-    QString systemConfig; // GIT_CONFIG_SYSTEM; empty when unset
-    QString noSystem; // GIT_CONFIG_NOSYSTEM as given; empty when unset
-    bool operator==(const GitEnvironment &) const = default;
-    // Takes each path only when it is absolute. HOME falls back to the
-    // account's home directory, as before a desktop session sets it.
-    [[nodiscard]] static GitEnvironment from(const QProcessEnvironment &environment);
-    [[nodiscard]] static GitEnvironment fromProcess();
 };
 
 // How long one request may run, from its first Git process to its result.

@@ -23,6 +23,8 @@ using detail::inspectionMs;
 using detail::killGraceMs;
 using detail::outputLimit;
 using detail::secureExecutable;
+// A larger GIT_CONFIG_COUNT is not taken at all.
+constexpr int kMaxConfigEntries = 1024;
 
 [[noreturn]] void failNativeLaunch(int fd, int error)
 {
@@ -52,6 +54,14 @@ QProcessEnvironment childEnvironment(const GitEnvironment &selected)
     set(QStringLiteral("GIT_CONFIG_GLOBAL"), selected.globalConfig);
     set(QStringLiteral("GIT_CONFIG_SYSTEM"), selected.systemConfig);
     set(QStringLiteral("GIT_CONFIG_NOSYSTEM"), selected.noSystem);
+    set(QStringLiteral("GIT_CONFIG_PARAMETERS"), selected.parameters);
+    if (!selected.entries.isEmpty()) {
+        env.insert(QStringLiteral("GIT_CONFIG_COUNT"), QString::number(selected.entries.size()));
+        for (qsizetype index = 0; index < selected.entries.size(); ++index) {
+            env.insert(QStringLiteral("GIT_CONFIG_KEY_%1").arg(index), selected.entries[index].first);
+            env.insert(QStringLiteral("GIT_CONFIG_VALUE_%1").arg(index), selected.entries[index].second);
+        }
+    }
     env.insert(QStringLiteral("GIT_TERMINAL_PROMPT"), QStringLiteral("0"));
     env.insert(QStringLiteral("GCM_INTERACTIVE"), QStringLiteral("never"));
     env.insert(QStringLiteral("GIT_OPTIONAL_LOCKS"), QStringLiteral("0"));
@@ -94,6 +104,19 @@ GitEnvironment GitEnvironment::from(const QProcessEnvironment &environment)
     selected.globalConfig = path(QStringLiteral("GIT_CONFIG_GLOBAL"));
     selected.systemConfig = path(QStringLiteral("GIT_CONFIG_SYSTEM"));
     selected.noSystem = environment.value(QStringLiteral("GIT_CONFIG_NOSYSTEM"));
+    selected.parameters = environment.value(QStringLiteral("GIT_CONFIG_PARAMETERS"));
+    bool number = false;
+    const auto count = environment.value(QStringLiteral("GIT_CONFIG_COUNT")).toInt(&number);
+    // An entry without its key or value makes the whole list unusable, as it does for Git.
+    for (int index = 0; number && count <= kMaxConfigEntries && index < count; ++index) {
+        const auto key = QStringLiteral("GIT_CONFIG_KEY_%1").arg(index);
+        const auto value = QStringLiteral("GIT_CONFIG_VALUE_%1").arg(index);
+        if (!environment.contains(key) || !environment.contains(value)) {
+            selected.entries.clear();
+            break;
+        }
+        selected.entries.append({environment.value(key), environment.value(value)});
+    }
     return selected;
 }
 GitEnvironment GitEnvironment::fromProcess() { return from(QProcessEnvironment::systemEnvironment()); }

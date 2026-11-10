@@ -1,6 +1,7 @@
 // Mergetool messages are the typed frames a launcher and a session exchange, with their framing and version check.
 #include "mergetool/MergetoolMessages.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QUuid>
@@ -40,11 +41,15 @@ bool objectId(const QByteArray &id)
 
 QJsonObject configurationObject(const git::GitEnvironment &configuration)
 {
+    QJsonArray entries;
+    for (const auto &[key, value] : configuration.entries) entries.append(QJsonArray{key, value});
     return {{QStringLiteral("home"), configuration.home},
             {QStringLiteral("configHome"), configuration.configHome},
             {QStringLiteral("globalConfig"), configuration.globalConfig},
             {QStringLiteral("systemConfig"), configuration.systemConfig},
-            {QStringLiteral("noSystem"), configuration.noSystem}};
+            {QStringLiteral("noSystem"), configuration.noSystem},
+            {QStringLiteral("parameters"), configuration.parameters},
+            {QStringLiteral("entries"), entries}};
 }
 
 std::optional<git::GitEnvironment> configurationFrom(const QJsonValue &value)
@@ -56,9 +61,17 @@ std::optional<git::GitEnvironment> configurationFrom(const QJsonValue &value)
                                      std::pair{QStringLiteral("configHome"), &configuration.configHome},
                                      std::pair{QStringLiteral("globalConfig"), &configuration.globalConfig},
                                      std::pair{QStringLiteral("systemConfig"), &configuration.systemConfig},
-                                     std::pair{QStringLiteral("noSystem"), &configuration.noSystem}}) {
+                                     std::pair{QStringLiteral("noSystem"), &configuration.noSystem},
+                                     std::pair{QStringLiteral("parameters"), &configuration.parameters}}) {
         if (!object.value(key).isString()) return std::nullopt;
         *field = object.value(key).toString();
+    }
+    const auto entries = object.value(QStringLiteral("entries"));
+    if (!entries.isArray()) return std::nullopt;
+    for (const auto &entry : entries.toArray()) {
+        const auto pair = entry.toArray();
+        if (!entry.isArray() || pair.size() != 2 || !pair[0].isString() || !pair[1].isString()) return std::nullopt;
+        configuration.entries.append({pair[0].toString(), pair[1].toString()});
     }
     return configuration;
 }

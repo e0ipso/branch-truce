@@ -1,5 +1,6 @@
 // Destination writing preserves file identity and metadata while safely publishing reviewed result bytes.
 #include "DestinationWriter.h"
+#include "storage/FileDescriptors.h"
 
 #include <QFile>
 #include <QUuid>
@@ -18,27 +19,6 @@
 
 namespace branch_truce::storage {
 namespace {
-class Descriptor {
-public:
-    explicit Descriptor(int value = -1) : fd(value) {}
-    ~Descriptor()
-    {
-        if (fd >= 0) ::close(fd);
-    }
-    Descriptor(Descriptor &&other) noexcept : fd(std::exchange(other.fd, -1)) {}
-    Descriptor &operator=(Descriptor &&other) noexcept
-    {
-        if (fd >= 0) ::close(fd);
-        fd = std::exchange(other.fd, -1);
-        return *this;
-    }
-    Descriptor(const Descriptor &) = delete;
-    Descriptor &operator=(const Descriptor &) = delete;
-    int get() const { return fd; }
-
-private:
-    int fd;
-};
 struct Directory {
     QByteArray name;
     Descriptor descriptor;

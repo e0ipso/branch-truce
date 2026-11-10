@@ -3,7 +3,7 @@
 
 #include "fixtures/EventLoop.h"
 #include "fixtures/QuickScene.h"
-#include "mergetool/MergetoolProtocol.h"
+#include "mergetool/MergetoolSocket.h"
 
 #include <QCoreApplication>
 #include <QFile>

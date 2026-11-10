@@ -2,7 +2,7 @@
 #pragma once
 
 #include "mergetool/MergetoolMessages.h"
-#include "mergetool/MergetoolProtocol.h"
+#include "mergetool/MergetoolSocket.h"
 #include <QByteArray>
 #include <QHash>
 #include <QObject>

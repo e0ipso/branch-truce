@@ -1,7 +1,7 @@
 // The Git mergetool launcher waits for the reviewed result to be handed back to its parent process.
 #pragma once
 #include "git/GitAdapter.h"
-#include "mergetool/MergetoolProtocol.h"
+#include "mergetool/MergetoolSocket.h"
 #include <QString>
 #include <QStringList>
 #include <functional>

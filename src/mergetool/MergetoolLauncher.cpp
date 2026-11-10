@@ -1,5 +1,7 @@
 // The Git mergetool launcher waits for the reviewed result to be handed back to its parent process.
 #include "mergetool/MergetoolLauncher.h"
+#include "mergetool/MergetoolFiles.h"
+#include "mergetool/MergetoolIntake.h"
 #include "mergetool/MergetoolMessages.h"
 
 #include <QCommandLineParser>

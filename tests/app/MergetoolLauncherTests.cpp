@@ -11,9 +11,11 @@
 #include "fixtures/ScopedEnvironment.h"
 #include "fixtures/ScriptGate.h"
 #include "fixtures/mergetool/GitGate.h"
+#include "mergetool/MergetoolFiles.h"
+#include "mergetool/MergetoolIntake.h"
 #include "mergetool/MergetoolLauncher.h"
 #include "mergetool/MergetoolMessages.h"
-#include "mergetool/MergetoolProtocol.h"
+#include "mergetool/MergetoolSocket.h"
 #include "recovery/RecoveryRestore.h"
 
 #include <QCoreApplication>
@@ -684,7 +686,7 @@ int main(int argc, char **argv)
         waitFinished(launcher, 0, controller);
         pump([&] { return controller.mergetool()->parentStagingPath() == QStringLiteral("tracked.txt"); },
              controller.feedback()->message());
-        const auto offer = controller.mergetool()->parentStagingOffer(id);
+        const auto offer = controller.publisher()->parentStagingOffer(id.toStdString());
         CHECK(offer && offer->path == "tracked.txt");
         CHECK(readFile(repo.path("tracked.txt")) == QByteArray::fromStdString(expected));
         // Only the parent stages the path, and the app waits for that acknowledgment.

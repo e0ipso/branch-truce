@@ -9,7 +9,7 @@
 #include "fixtures/GitOnPath.h"
 #include "fixtures/mergetool/GitGate.h"
 #include "fixtures/mergetool/RealParent.h"
-#include "mergetool/MergetoolProtocol.h"
+#include "mergetool/MergetoolSocket.h"
 
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -267,7 +267,7 @@ int main(int argc, char **argv)
         // Only an offer or a leave sends the launcher a decision, and with no offer and nothing in
         // flight neither can come.
         waitIdle(controller, QStringLiteral("after Save"));
-        CHECK(!controller.mergetool()->parentStagingOffer(select(controller, "tracked.txt")));
+        CHECK(!controller.publisher()->parentStagingOffer(select(controller, "tracked.txt").toStdString()));
         CHECK(parentBlocked(*parent, controller, "tracked.txt"));
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(repo.index() == indexBefore);
@@ -298,7 +298,7 @@ int main(int argc, char **argv)
         // The launcher returned 0; the parent now holds before its own `git add`.
         pump([&] { return repo.exits() == "tracked.txt 0\n"; },
              controller.feedback()->message() + " | launcher still waiting");
-        const auto offer = controller.mergetool()->parentStagingOffer(id);
+        const auto offer = controller.publisher()->parentStagingOffer(id.toStdString());
         CHECK(offer && offer->path == "tracked.txt");
         CHECK(offer->canonicalObjectId == repo.objectOf(expected));
         CHECK(readFile(repo.path("tracked.txt")) == expected);
@@ -315,7 +315,7 @@ int main(int argc, char **argv)
         CHECK(repo.git({"show", ":tracked.txt"}) == expected);
         CHECK(repo.unmerged("other.txt"));
         CHECK(repo.stagedObject("notes.txt") == repo.notesObject);
-        CHECK(!controller.mergetool()->parentStagingOffer(id));
+        CHECK(!controller.publisher()->parentStagingOffer(id.toStdString()));
     });
 
     // the in-window recovery choice reloads the files while

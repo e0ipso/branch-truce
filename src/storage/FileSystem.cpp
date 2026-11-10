@@ -14,6 +14,10 @@ int FileSystem::exchange(int fromDirectory, const char *from, int toDirectory, c
 {
     return ::renameat2(fromDirectory, from, toDirectory, to, RENAME_EXCHANGE);
 }
+int FileSystem::rename(int fromDirectory, const char *from, int toDirectory, const char *to) const
+{
+    return ::renameat(fromDirectory, from, toDirectory, to);
+}
 int FileSystem::unlink(int directory, const char *name, int flags) const { return ::unlinkat(directory, name, flags); }
 uid_t FileSystem::effectiveUser() const { return ::geteuid(); }
 ssize_t FileSystem::listAttributes(int fd, char *names, std::size_t size) const

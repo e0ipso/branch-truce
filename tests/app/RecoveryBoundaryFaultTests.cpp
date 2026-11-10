@@ -12,7 +12,7 @@
 #include "fixtures/RecoveryJournal.h"
 #include "fixtures/ScopedEnvironment.h"
 #include "fixtures/SyncFaults.h"
-#include "mergetool/MergetoolProtocol.h"
+#include "mergetool/MergetoolSocket.h"
 #include "recovery/RecoveryRestore.h"
 #include "storage/DestinationWriter.h"
 

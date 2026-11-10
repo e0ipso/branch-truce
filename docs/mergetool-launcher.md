@@ -59,9 +59,11 @@ the previous path's offer has been acknowledged.
 
 Frames are a 4-byte big-endian length plus one compact JSON object, at most
 65536 bytes. `src/mergetool/MergetoolMessages.h` defines every message and
-checks every field. Each frame names protocol version 2. The launcher sends
+checks every field. Each frame names protocol version 3. The launcher sends
 `attach` with its invocation, its intake and the configuration its Git reads
-(`HOME`, `XDG_CONFIG_HOME` and `GIT_CONFIG_GLOBAL`, `_SYSTEM` and `_NOSYSTEM`).
+(`HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`, `_SYSTEM` and `_NOSYSTEM`,
+and the command-line configuration in `GIT_CONFIG_PARAMETERS` and
+`GIT_CONFIG_COUNT`, which `git -c ... mergetool` passes to its tools).
 The session refuses an attach whose configuration differs from its own,
 because the parent stages with that configuration and the release preflight
 must inspect the same one. The session replies `attached` or `rejected`, and
