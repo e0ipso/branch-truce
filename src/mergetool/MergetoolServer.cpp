@@ -59,8 +59,11 @@ bool MergetoolServer::send(quint64 connection, const MergetoolMessage &message)
 {
     const auto found = connections_.find(connection);
     if (found == connections_.end() || found->socket->state() != QLocalSocket::ConnectedState) return false;
+    const auto *attached = std::get_if<AttachedMessage>(&message);
+    if (attached && (found->invocation != attached->invocation || found->expires.hasExpired())) return false;
     const auto frame = mergetoolFrame(encodeMergetoolMessage(message));
     if (frame.isEmpty() || found->socket->write(frame) != frame.size()) return false;
+    if (attached) found->deadline->stop();
     // Hands the frame to the kernel now when its buffer has room; never waits.
     found->socket->flush();
     return true;
@@ -92,13 +95,19 @@ void MergetoolServer::accept()
         socket->setParent(this);
         auto *deadline = new QTimer(this);
         deadline->setSingleShot(true);
-        connections_.insert(id, {socket, deadline, {}, false});
+        connections_.insert(id, {socket, deadline, {}, {}, QDeadlineTimer(limits_.attachDeadlineMs)});
         connect(socket, &QLocalSocket::readyRead, this, [this, id] { read(id); });
         connect(socket, &QLocalSocket::disconnected, this, [this, id] { drop(id); });
         connect(deadline, &QTimer::timeout, this, [this, id] {
             const auto found = connections_.find(id);
             if (found == connections_.end()) return;
-            found->socket->abort();
+            const auto peer = *found;
+            if (!peer.invocation.isEmpty())
+                send(id,
+                     RejectedMessage{peer.invocation,
+                                     tr("The mergetool inputs could not be checked in time. Try again.")});
+            // Flush above is best effort. Expiry must also drop a peer that stopped reading.
+            peer.socket->abort();
             drop(id);
         });
         deadline->start(limits_.attachDeadlineMs);
@@ -112,7 +121,7 @@ void MergetoolServer::read(quint64 connection)
     if (found == connections_.end()) return;
     auto &peer = *found;
     // A launcher sends one attach frame and then only waits.
-    if (peer.attached) {
+    if (!peer.invocation.isEmpty()) {
         peer.socket->abort();
         drop(connection);
         return;
@@ -137,8 +146,7 @@ void MergetoolServer::read(quint64 connection)
         refuse(connection, RejectedMessage{{}, tr("The mergetool attach message is invalid.")});
         return;
     }
-    peer.attached = true;
-    peer.deadline->stop();
+    peer.invocation = std::get<AttachMessage>(*decoded.message).invocation;
     Q_EMIT attachReceived(connection, std::get<AttachMessage>(*decoded.message));
 }
 

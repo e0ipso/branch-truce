@@ -329,6 +329,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(mergetool.protocol app/MergetoolProtocolTests.cpp LIBS branch_truce_mergetool_protocol
         PRIVATE_XDG TIMEOUT 60)
 
+    branch_truce_add_unit_test(mergetool.admission app/MergetoolAdmissionTests.cpp LIBS branch_truce_controller
+        PRIVATE_XDG TIMEOUT 30 LABELS app)
+
     add_executable(branch_truce_mergetool_tests app/MergetoolLauncherTests.cpp)
     target_include_directories(branch_truce_mergetool_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_mergetool_tests PRIVATE branch_truce_controller branch_truce_build_options)

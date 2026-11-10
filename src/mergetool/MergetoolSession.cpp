@@ -5,10 +5,12 @@
 #include "storage/OffThread.h"
 
 #include <QCryptographicHash>
+#include <QDeadlineTimer>
 #include <QThreadPool>
 #include <QTimer>
 #include <algorithm>
 #include <memory>
+#include <thread>
 #include <utility>
 
 namespace branch_truce {
@@ -30,9 +32,9 @@ MergetoolSession::MergetoolSession(ResolutionPublisher &publisher, SessionStore 
       coordinator_(coordinator),
       loadedRepository_(std::move(loadedRepository)),
       config_(std::move(config)),
-      server_(this)
+      server_(config_.limits, this)
 {
-    workers_.setMaxThreadCount(1);
+    workers_->setMaxThreadCount(1);
     acknowledgment_ = new QTimer(this);
     acknowledgment_->setSingleShot(true);
     connect(acknowledgment_, &QTimer::timeout, this, &MergetoolSession::pollAcknowledgment);
@@ -45,6 +47,15 @@ MergetoolSession::MergetoolSession(ResolutionPublisher &publisher, SessionStore 
     });
 }
 
+MergetoolSession::~MergetoolSession()
+{
+    for (const auto &[connection, active] : intakes_) *active = false;
+    // QThreadPool's destructor drains owned jobs. Never wait for a blocked read
+    // on the GUI thread; the jobs capture no session or model objects.
+    workers_->moveToThread(nullptr);
+    std::thread([workers = std::move(workers_)] {}).detach();
+}
+
 MergetoolSession::Listen MergetoolSession::listen(const git::RepositoryContext &repository, QString *error)
 {
     const auto unavailable = [error](const QString &reason) {
@@ -55,7 +66,6 @@ MergetoolSession::Listen MergetoolSession::listen(const git::RepositoryContext &
     const auto name = mergetoolServerName(config_.socketDirectory, repository);
     if (name.isEmpty()) return unavailable(tr("This operation has no mergetool session identity."));
     sessionKey_ = mergetoolSessionKey(repository);
-    repository_ = repository;
     if (Problem problem; !prepareMergetoolSocketDirectory(config_.socketDirectory, &problem))
         return unavailable(problem_text::text(problem));
     QString reason;
@@ -64,7 +74,7 @@ MergetoolSession::Listen MergetoolSession::listen(const git::RepositoryContext &
     // Copies left by launchers that were killed while they waited. Removing
     // them is file I/O, so it runs off the GUI thread, before any intake read.
     if (listening == Listen::Listening)
-        workers_.start([root = mergetoolIntakeRoot(config_.socketDirectory), key = sessionKey_] {
+        workers_->start([root = mergetoolIntakeRoot(config_.socketDirectory), key = sessionKey_] {
             pruneMergetoolIntakes(root, key);
         });
     return listening;
@@ -202,15 +212,37 @@ void MergetoolSession::attachReceived(quint64 connection, const AttachMessage &m
                   "environment."));
         return;
     }
-    // Reading and hashing up to four copies is file I/O, so it runs off the GUI thread.
+    if (pendingIntakes() >= config_.limits.maxConnections) {
+        reject(connection, message.invocation,
+               tr("Too many mergetool inputs are being checked. Try again when a check finishes."));
+        return;
+    }
+    auto active = std::make_shared<std::atomic_bool>(true);
+    intakes_.emplace(connection, active);
+    // A queued job may skip I/O, but owns admission until its completion arrives.
     runOffThread(
-        workers_, this,
-        [directory = message.intake, root = mergetoolIntakeRoot(config_.socketDirectory), key = sessionKey_] {
+        *workers_, this,
+        [directory = message.intake, root = mergetoolIntakeRoot(config_.socketDirectory), key = sessionKey_,
+         read = config_.readIntakeFile, active, deadline = QDeadlineTimer(config_.limits.attachDeadlineMs)] {
             IntakeCheck check;
-            check.intake = readMergetoolIntake(directory, root, key, &check.error);
+            if (!*active || deadline.hasExpired()) return check;
+            try {
+                check.intake = readMergetoolIntake(directory, root, key, &check.error, read);
+            } catch (...) {
+                check.error = ProblemCode::MergetoolIntakeCheckFailed;
+            }
             return check;
         },
-        [this, connection, message](const IntakeCheck &check) { intakeChecked(connection, message, check); });
+        [this, connection, message, active, generation = coordinator_.generation()](const IntakeCheck &check) {
+            intakes_.erase(connection);
+            if (!*active) return;
+            if (generation != coordinator_.generation()) {
+                reject(connection, message.invocation,
+                       tr("The open session changed while checking the mergetool inputs. Try again."));
+                return;
+            }
+            intakeChecked(connection, message, check);
+        });
 }
 
 void MergetoolSession::intakeChecked(quint64 connection, const AttachMessage &message, const IntakeCheck &check)
@@ -242,6 +274,8 @@ void MergetoolSession::intakeChecked(quint64 connection, const AttachMessage &me
 
 void MergetoolSession::closed(quint64 connection)
 {
+    const auto pending = intakes_.find(connection);
+    if (pending != intakes_.end()) *pending->second = false;
     const auto index = indexOfConnection(connection);
     if (index < 0) return;
     const bool assigned = waiters_.at(index).assigned;

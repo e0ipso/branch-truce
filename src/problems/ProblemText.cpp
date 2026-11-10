@@ -449,6 +449,8 @@ Sentence format(ProblemCode code)
         return Text::tr("The mergetool intake identity does not match this session.");
     case ProblemCode::MergetoolIntakeManifest: return Text::tr("The mergetool intake manifest is invalid.");
     case ProblemCode::MergetoolIntakePath: return Text::tr("The mergetool intake path is invalid.");
+    case ProblemCode::MergetoolIntakeCheckFailed:
+        return Text::tr("The mergetool inputs could not be checked. Try again.");
     case ProblemCode::MergetoolIntakeBytes: return Text::tr("The mergetool intake bytes do not match its manifest.");
     case ProblemCode::MergetoolNoSocketDirectory:
         return Text::tr("No private mergetool socket directory is available: XDG_RUNTIME_DIR is unset or too long, and "

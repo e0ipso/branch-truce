@@ -1,9 +1,10 @@
 // The mergetool intake keeps a waiting launcher's input copies where its window can read and check them.
 #pragma once
 
-#include "problems/Problem.h"
+#include "mergetool/MergetoolFiles.h"
 #include <QByteArray>
 #include <QString>
+#include <functional>
 #include <optional>
 
 namespace branch_truce {
@@ -41,9 +42,12 @@ struct MergetoolSources {
 // that launcher removes it when it exits.
 [[nodiscard]] QString writeMergetoolIntake(const QString &root, const QByteArray &sessionKey, const QString &invocation,
                                            const MergetoolSources &sources, Problem *error);
+using MergetoolRead = std::function<bool(const QByteArray &, QByteArray *, Problem *)>;
+
 // Re-reads that directory and checks it still sits under root and the session key.
 [[nodiscard]] std::optional<MergetoolIntake> readMergetoolIntake(const QString &directory, const QString &root,
-                                                                 const QByteArray &sessionKey, Problem *error);
+                                                                 const QByteArray &sessionKey, Problem *error,
+                                                                 const MergetoolRead &read = readMergetoolFile);
 void removeMergetoolIntake(const QString &directory);
 // Removes the session's intakes whose launcher process has ended, as after a
 // launcher was killed. A process that reuses the launcher's PID does not keep
