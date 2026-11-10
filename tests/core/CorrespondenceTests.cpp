@@ -246,8 +246,8 @@ void aDeferredEditKeepsThePassagesAroundTheEditedLines()
     CHECK(*realigned.passages(SourceSide::Stage2) == *now.passages(SourceSide::Stage2));
     CHECK(anchorOf(realigned, "c") == anchorOf(now, "c") && anchor.result == ByteRange{4, 6});
     // Every edit leaves a partition of both texts, at either end too.
-    for (const ResultEdit other : {ResultEdit{{0, 0}, "start\n"}, ResultEdit{{8, 8}, "end"}, ResultEdit{{1, 7}, ""},
-                                   ResultEdit{{0, 8}, "all new\n"}}) {
+    for (const ResultEdit &other : {ResultEdit{{0, 0}, "start\n"}, ResultEdit{{8, 8}, "end"}, ResultEdit{{1, 7}, ""},
+                                    ResultEdit{{0, 8}, "all new\n"}}) {
         const auto provisional = map.edited(2, other, true, {}, Realignment::Deferred);
         std::size_t source = 0;
         std::size_t result = 0;
