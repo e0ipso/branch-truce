@@ -17,12 +17,12 @@ struct OperationOutcome {
 };
 
 struct Review {
-    Revision revision;
+    RevisionId revision;
     bool confirmedUndecided;
 };
 
 struct StagedResult {
-    Revision revision;
+    RevisionId revision;
     std::string objectId;
     std::string mode;
     bool confirmedUndecided;
@@ -78,14 +78,20 @@ struct FileFacts {
 // The outcomes adapters report for one file's revisions, and what they mean
 // for the current revision. Revisions below the outcome floor were discarded,
 // so outcomes for them are stale unless the revision is current again.
+//
+// It names revisions by id. FileSession keeps every revision named here in
+// its history, where they count toward kMaxHistoryBytes, and resolves the
+// ids with FileSession::revision().
 class PublicationState {
 public:
     PublicationState() = default;
     explicit PublicationState(RevisionId floor) noexcept : outcomeFloor_(floor) {}
 
-    [[nodiscard]] const std::optional<Revision> &checkpoint() const noexcept { return checkpoint_; }
+    // The revision the last successful Save stored.
+    [[nodiscard]] const std::optional<RevisionId> &checkpoint() const noexcept { return checkpoint_; }
     [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return reviewed_; }
-    [[nodiscard]] const std::optional<Revision> &written() const noexcept { return written_; }
+    // The reviewed revision the last successful write put in the worktree.
+    [[nodiscard]] const std::optional<RevisionId> &written() const noexcept { return written_; }
     [[nodiscard]] const std::optional<StagedResult> &staged() const noexcept { return staged_; }
     [[nodiscard]] const std::optional<OperationOutcome> &checkpointOutcome() const noexcept
     {
@@ -95,15 +101,21 @@ public:
     [[nodiscard]] const std::optional<OperationOutcome> &stageOutcome() const noexcept { return stageOutcome_; }
     // Nothing was saved, reviewed, written or staged yet.
     [[nodiscard]] bool untouched() const noexcept;
+    // `revision` is the checkpoint and its Save is the latest one and succeeded.
+    [[nodiscard]] bool checkpointed(RevisionId revision) const noexcept;
+    // `revision` is the written revision and its write succeeded.
+    [[nodiscard]] bool writtenAt(RevisionId revision) const noexcept;
     // The current revision is the checkpoint's own successfully saved one.
     [[nodiscard]] bool savedAt(RevisionId current) const noexcept;
     // The staged revision is known written and staged, so discarding to it
     // needs no new review.
     [[nodiscard]] bool stagedVerified() const noexcept;
+    // Every revision named above, which the history must keep.
+    [[nodiscard]] std::vector<RevisionId> held() const;
 
-    void markResolved(const Revision &current, bool confirmedUndecided);
-    // `stored` is the revision with id `revision`, or nullptr when it is gone.
-    Transition recordCheckpoint(const Revision *stored, RevisionId revision, RevisionId current, Outcome outcome,
+    void markResolved(RevisionId current, bool confirmedUndecided);
+    // `stored` says whether the revision with id `revision` is still stored.
+    Transition recordCheckpoint(bool stored, RevisionId revision, RevisionId current, Outcome outcome,
                                 std::string detail);
     Transition recordWrite(RevisionId revision, RevisionId current, Outcome outcome, std::string detail);
     Transition recordStage(RevisionId revision, RevisionId current, Outcome outcome, std::string objectId,
@@ -114,7 +126,9 @@ public:
     // Discarding to the staged revision fences every revision before `floor`.
     void discardedToStaged(RevisionId floor);
 
-    [[nodiscard]] FileFacts facts(const Revision &current, Support support, std::size_t undecided) const;
+    // `checkpoint` is the revision checkpoint() names, if any.
+    [[nodiscard]] FileFacts facts(const Revision &current, const Revision *checkpoint, Support support,
+                                  std::size_t undecided) const;
 
 private:
     [[nodiscard]] bool fenced(RevisionId revision, RevisionId current) const noexcept
@@ -126,11 +140,11 @@ private:
     [[nodiscard]] FileStatus status(const FileFacts &facts, Support support, bool checkpoint) const;
 
     RevisionId outcomeFloor_ = 1;
-    std::optional<Revision> checkpoint_;
+    std::optional<RevisionId> checkpoint_;
     std::optional<Review> reviewed_;
     // The review's checkpoint outcome survives ordinary Saves of newer drafts.
     bool reviewCheckpointSucceeded_ = false;
-    std::optional<Revision> written_;
+    std::optional<RevisionId> written_;
     std::optional<StagedResult> staged_;
     std::optional<OperationOutcome> checkpointOutcome_;
     std::optional<OperationOutcome> writeOutcome_;

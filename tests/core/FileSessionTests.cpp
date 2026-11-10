@@ -1,5 +1,6 @@
 // FileSession transactions: launch, captures, history, discard, outcomes, facts and the large-file gate.
 #include "TestHarness.h"
+#include "core/ExactLineCorrespondence.h"
 #include "core/ResourceLimits.h"
 #include "core/SessionFixtures.h"
 #include "core/SessionState.h"
@@ -30,20 +31,21 @@ class CountingAlgorithm final : public CorrespondenceAlgorithm {
 public:
     enum class Failure { OutOfMemory, Defect };
     explicit CountingAlgorithm(int failAt = 0, Failure failure = Failure::OutOfMemory)
-        : failAt_(failAt), failure_(failure)
+        : failAt(failAt), failure_(failure)
     {}
     [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override
     {
-        if (++calls == failAt_) {
+        if (++calls == failAt) {
             if (failure_ == Failure::OutOfMemory) throw std::bad_alloc();
             throw std::logic_error("alignment defect");
         }
         return ExactLineCorrespondence{}.compare(source, result);
     }
+    [[nodiscard]] std::string_view identity() const noexcept override { return ExactLineCorrespondence{}.identity(); }
     mutable int calls = 0;
+    int failAt;
 
 private:
-    int failAt_;
     Failure failure_;
 };
 
@@ -142,7 +144,7 @@ FileSession captured(const std::string &text)
     sources.provenance.sessionId = "limits";
     sources.stage2 = SourceSnapshot{"source-object", "100644", text, {text, text, {}}, "source-commit", "Source"};
     sources.launchResult.text = {text, text, {}};
-    return FileSession("limit", sources.path, {text, {}, 0}, Support::Supported, {}, sources);
+    return FileSession("limit", sources.path, {text, {}, 0}, {.snapshots = sources});
 }
 
 FileSession withMarkerSize(const std::string &attribute, std::size_t size)
@@ -159,7 +161,7 @@ FileSession withMarkerSize(const std::string &attribute, std::size_t size)
     sources.stage2 = SourceSnapshot{"left-object", "100644", left, {left, left, {}}, "left-commit", "Left"};
     sources.stage3 = SourceSnapshot{"right-object", "100644", right, {right, right, {}}, "right-commit", "Right"};
     sources.launchResult.text = {result, result, {}};
-    return FileSession("marked", sources.path, {result, {}, 0}, Support::Supported, {}, sources, true);
+    return FileSession("marked", sources.path, {result, {}, 0}, {.snapshots = sources, .initializeChoices = true});
 }
 
 void discardAfterLoadingALargeFileRestoresItsLaunchText()
@@ -182,9 +184,9 @@ void wholeDraftsKeepTheTextInvariant()
     for (auto file : {captured(text), FileSession("plain", "plain.txt", {text, {}, 0})}) {
         const auto before = file.current();
         for (const auto *rejected : {"invalid \x80\n", "carriage\r\nreturn\n"})
-            CHECK(file.replaceDraft(before.id, {rejected, before.draft.decisions, 0}) == Transition::InvalidAnchor);
-        CHECK(file.editResult(before.id, {{0, 0}, "\xc3"}) == Transition::InvalidAnchor);
-        CHECK(file.editResult(before.id, {{0, 0}, "\r"}) == Transition::InvalidAnchor);
+            CHECK(file.replaceDraft(before.id, {rejected, before.draft.decisions, 0}) == Transition::InvalidText);
+        CHECK(file.editResult(before.id, {{0, 0}, "\xc3"}) == Transition::InvalidText);
+        CHECK(file.editResult(before.id, {{0, 0}, "\r"}) == Transition::InvalidText);
         CHECK(file.current().id == before.id && file.current().draft == before.draft && !file.canUndo());
         CHECK(file.editResult(before.id, {{0, 0}, "still editable\n"}) == Transition::Applied);
     }
@@ -226,7 +228,7 @@ void copiesShareRevisionsAndDiscardedBranchesAreDropped()
     CHECK(file.editResult(4, {{0, 1}, "d"}) == Transition::Applied && file.current().id == 5);
     CHECK(file.recordCheckpoint(3, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.recordCheckpoint(4, Outcome::Succeeded) == Transition::StaleRevision);
-    CHECK(!file.checkpoint() && !file.checkpointOutcome());
+    CHECK(!file.publication().checkpoint() && !file.publication().checkpointOutcome());
     // History entries, the current revision and the launch revision remain.
     CHECK(file.recordCheckpoint(2, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.recordCheckpoint(5, Outcome::Succeeded) == Transition::Applied);
@@ -236,35 +238,70 @@ void copiesShareRevisionsAndDiscardedBranchesAreDropped()
     CHECK(copy.current().draft.text == "c\n" && copy.canUndo() && !copy.canRedo());
 }
 
-void undoReachesBackAsFarAsTheHistorySizeAllows()
+// One payload-sized text of 1024-byte lines.
+std::string payloadText()
 {
-    // Each revision holds one payload-sized text, so the history fits this many.
-    const auto fits = kMaxHistoryBytes / kMaxRecoveryPayloadBytes;
     std::string text;
     text.reserve(kMaxRecoveryPayloadBytes);
     while (text.size() < kMaxRecoveryPayloadBytes) {
         text.append(1023, 'x');
         text += '\n';
     }
-    FileSession file("plain", "plain.txt", {text, {}, 0});
-    for (std::size_t edit = 0; edit < fits + 8; ++edit)
+    return text;
+}
+
+// Edits the file `count` times, then undoes as far as the history allows.
+std::size_t undoableAfterEdits(FileSession &file, std::size_t count)
+{
+    for (std::size_t edit = 0; edit < count; ++edit)
         CHECK(file.editResult(file.current().id, {{0, 1}, edit % 2 ? "x" : "y"}) == Transition::Applied);
     std::size_t undone = 0;
     while (file.canUndo()) {
         CHECK(file.undo(file.current().id) == Transition::Applied);
         ++undone;
     }
+    return undone;
+}
+
+void undoReachesBackAsFarAsTheHistorySizeAllows()
+{
+    // Each revision holds one payload-sized text, so the history fits this many.
+    const auto fits = kMaxHistoryBytes / kMaxRecoveryPayloadBytes;
+    const auto text = payloadText();
+    FileSession file("plain", "plain.txt", {text, {}, 0});
+    const auto undone = undoableAfterEdits(file, fits + 8);
     CHECK(undone > 0 && undone < fits);
     // Discarding without a checkpoint still restores the launch text.
     CHECK(file.discardToCheckpoint(file.current().id) == Transition::Applied && file.current().draft.text == text);
+}
+
+void revisionsOutcomesNameStayStoredWithinTheHistorySize()
+{
+    const auto fits = kMaxHistoryBytes / kMaxRecoveryPayloadBytes;
+    const auto text = payloadText();
+    FileSession plain("plain", "plain.txt", {text, {}, 0});
+    const auto plainUndone = undoableAfterEdits(plain, fits + 8);
+    FileSession file("plain", "plain.txt", {text, {}, 0});
+    CHECK(file.editResult(1, {{0, 1}, "w"}) == Transition::Applied);
+    CHECK(file.beginMarkResolved(2) == Transition::Applied);
+    CHECK(file.recordCheckpoint(2, Outcome::Succeeded) == Transition::Applied);
+    CHECK(file.recordWrite(2, Outcome::Succeeded) == Transition::Applied);
+    CHECK(file.recordStage(2, Outcome::Succeeded, "object", "100644") == Transition::Applied);
+    const auto undone = undoableAfterEdits(file, fits + 7);
+    // The saved, reviewed, written and staged revision is one stored copy,
+    // kept although undo no longer reaches it, and it takes one undo step's room.
+    CHECK(file.revision(2) && file.revision(2)->draft.text.starts_with('w'));
+    CHECK(undone + 1 == plainUndone);
+    CHECK(file.discardToCheckpoint(file.current().id) == Transition::Applied);
+    CHECK(file.current().draft.text.starts_with('w') && file.current().result == 2);
 }
 
 FileSession diff3Session(std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
 {
     auto sources = *test_support::underlinedBaseFile().snapshots();
     const auto text = sources.launchResult.text.utf8;
-    return FileSession("diff3", sources.path, {text, {}, 0}, Support::Supported, {}, sources, true,
-                       std::move(algorithm));
+    return FileSession("diff3", sources.path, {text, {}, 0},
+                       {.snapshots = sources, .initializeChoices = true, .algorithm = std::move(algorithm)});
 }
 
 void theSessionAlignsWithTheAlgorithmItIsGiven()
@@ -292,6 +329,27 @@ void aFailedOpeningLeavesNothingHalfBuilt()
     CHECK(file.editResult(1, {{0, 0}, "x"}) == Transition::Blocked);
 }
 
+void anEditThatRunsOutOfMemoryChangesNothing()
+{
+    const auto algorithm = std::make_shared<CountingAlgorithm>();
+    auto file = diff3Session(algorithm);
+    const auto before = file.current();
+    const auto *mapping = file.correspondence();
+    const auto unchanged = [&] {
+        return file.current().id == before.id && file.current().draft == before.draft
+            && file.correspondence() == mapping && !file.canUndo();
+    };
+    algorithm->failAt = algorithm->calls + 1;
+    CHECK(file.editResult(before.id, {{0, 0}, "typed\n"}) == Transition::OutOfMemory);
+    CHECK(unchanged());
+    algorithm->failAt = algorithm->calls + 1;
+    CHECK(file.replaceDraft(before.id, {"replaced\n", before.draft.decisions, 0}) == Transition::OutOfMemory);
+    CHECK(unchanged());
+    algorithm->failAt = 0;
+    CHECK(file.editResult(before.id, {{0, 0}, "typed\n"}) == Transition::Applied);
+    CHECK(file.current().id == before.id + 1 && file.canUndo());
+}
+
 void aDefectiveAlignmentHoldsTheFileBack()
 {
     auto file = diff3Session(std::make_shared<CountingAlgorithm>(2, CountingAlgorithm::Failure::Defect));
@@ -311,7 +369,7 @@ void commandsCheckTheirAnchorsAgainstTheCurrentRevision()
             expected, {anchor}, {{*anchor.result, std::move(replacement)}}, {{id, {DecisionValue::Accepted, {}}}}};
     };
     CHECK(file.applyCommand(command(issued, "stale\n", 0)) == Transition::StaleRevision);
-    CHECK(file.applyCommand(command(issued, "\x80", 1)) == Transition::InvalidAnchor);
+    CHECK(file.applyCommand(command(issued, "\x80", 1)) == Transition::InvalidText);
     for (int field = 0; field < 5; ++field) {
         auto forged = issued;
         if (field == 0) forged.origin.sessionId = "other session";
@@ -349,7 +407,9 @@ void launchTextOutsideTheInvariantIsUnreadable()
     const std::string block = "<<<<<<< ours\r\nleft\r\n=======\r\nright\r\n>>>>>>> theirs\r\n";
     CHECK(FileSession("id", "file", {block, {}, 0}).support() == Support::Unreadable);
     // An adapter's own diagnosis stays in place.
-    CHECK(FileSession("outside", "image.png", {"\xff", {}, 0}, Support::OutsideApp, "binary").supportDetail()
+    CHECK(FileSession("outside", "image.png", {"\xff", {}, 0},
+                      {.support = Support::OutsideApp, .supportDetail = "binary"})
+              .supportDetail()
           == "binary");
 }
 
@@ -357,7 +417,7 @@ void sourceCapturesSurviveEditsHistoryCheckpointsAndStagedDiscards()
 {
     auto input = capturedSources();
     const auto expected = input;
-    FileSession file("id", input.path, draft(input.launchResult.text.utf8), Support::Supported, {}, input);
+    FileSession file("id", input.path, draft(input.launchResult.text.utf8), {.snapshots = input});
     const auto *capture = file.snapshots();
     const auto unchanged = [&] {
         CHECK(capture != nullptr && file.snapshots() == capture);
@@ -412,7 +472,7 @@ void anUnavailableEarlierSourceRemainsDistinctFromACapturedEmptySource()
             earlier.worktree = {};
         }
         const auto expected = captured;
-        FileSession file("id", captured.path, draft(captured.launchResult.text.utf8), Support::Supported, {}, captured);
+        FileSession file("id", captured.path, draft(captured.launchResult.text.utf8), {.snapshots = captured});
         CHECK(file.snapshots() && file.snapshots()->earlier.has_value() == !missing);
         if (!missing) {
             const auto &earlier = engaged(file.snapshots()->earlier);
@@ -425,7 +485,7 @@ void anUnavailableEarlierSourceRemainsDistinctFromACapturedEmptySource()
         CHECK(file.redo(file.current().id) == Transition::Applied);
         CHECK(*file.snapshots() == expected);
     }
-    FileSession uncaptured("id", "outside", {}, Support::OutsideApp, "Missing source");
+    FileSession uncaptured("id", "outside", {}, {.support = Support::OutsideApp, .supportDetail = "Missing source"});
     CHECK(uncaptured.snapshots() == nullptr);
 }
 
@@ -437,7 +497,7 @@ void sourceCapturesRejectADifferentPathOrLaunchResult()
         try {
             FileSession invalid("id", wrongPath ? "another path" : captured.path,
                                 draft(wrongPath ? captured.launchResult.text.utf8 : "regenerated source"),
-                                Support::Supported, {}, captured);
+                                {.snapshots = captured});
         } catch (const std::invalid_argument &) {
             rejected = true;
         }
@@ -497,7 +557,7 @@ void saveCheckpointsOnlyAndKeepsCommandHistory()
     const auto saved = file.current();
     CHECK(file.recordCheckpoint(saved.id, Outcome::Succeeded) == Transition::Applied);
     CHECK(!file.facts().unsaved && file.facts().needsReview && !file.facts().resolved);
-    CHECK(!file.reviewed() && !file.written() && !file.staged());
+    CHECK(!file.publication().reviewed() && !file.publication().written() && !file.publication().staged());
     CHECK(file.facts().status == FileStatus::SavedDraft && file.canUndo());
     CHECK(file.replaceDraft(saved.id, draft("newer")) == Transition::Applied);
     CHECK(file.undo(file.current().id) == Transition::Applied);
@@ -505,7 +565,7 @@ void saveCheckpointsOnlyAndKeepsCommandHistory()
     CHECK(file.current().result == saved.result && file.current().decisions == saved.decisions);
     CHECK(!file.facts().unsaved && file.facts().needsReview && file.canRedo());
     CHECK(file.recordCheckpoint(saved.id - 1, Outcome::Succeeded) == Transition::StaleRevision);
-    CHECK(engaged(file.checkpoint()).id == saved.id);
+    CHECK(engaged(file.publication().checkpoint()) == saved.id);
 }
 
 void historyRestoresDecisionsAndCutsTheRedoBranch()
@@ -525,7 +585,7 @@ void historyRestoresDecisionsAndCutsTheRedoBranch()
     CHECK(file.undo(file.current().id) == Transition::Applied);
     CHECK(file.replaceDraft(file.current().id, draft("branch")) == Transition::Applied);
     CHECK(!file.canRedo() && file.redo(file.current().id) == Transition::NoChange);
-    CHECK(engaged(file.staged()).revision.draft == combined);
+    CHECK(file.revision(engaged(file.publication().staged()).revision)->draft == combined);
 }
 
 void confirmationMarkersAndSupportBlockPublication()
@@ -534,9 +594,9 @@ void confirmationMarkersAndSupportBlockPublication()
     undecided.decisions["right"] = {};
     FileSession file("id", "file", undecided);
     CHECK(file.beginMarkResolved(1) == Transition::ConfirmationRequired);
-    CHECK(file.current().draft == undecided && !file.reviewed());
+    CHECK(file.current().draft == undecided && !file.publication().reviewed());
     CHECK(file.beginMarkResolved(1, true) == Transition::Applied);
-    CHECK(engaged(file.reviewed()).confirmedUndecided && !has(file, Blocker::Undecided));
+    CHECK(engaged(file.publication().reviewed()).confirmedUndecided && !has(file, Blocker::Undecided));
     undecided.text = "<<<<<<< ours\nresult\n=======\nother\n>>>>>>> theirs\n";
     CHECK(file.replaceDraft(1, undecided) == Transition::Applied);
     CHECK(file.current().draft.unresolvedMarkers == 1);
@@ -593,7 +653,7 @@ void deletingOneMarkerLineKeepsThePublishBlocker()
         CHECK(file.current().draft.unresolvedMarkers == remaining.count());
         CHECK(file.current().draft.unresolvedMarkers != 0);
         CHECK(file.beginMarkResolved(file.current().id, true) == Transition::Blocked);
-        CHECK(has(file, Blocker::UnresolvedMarkers) && !file.reviewed());
+        CHECK(has(file, Blocker::UnresolvedMarkers) && !file.publication().reviewed());
     }
     FileSession cleared("id", "file", {text, {}, 0});
     CHECK(cleared.replaceDraft(1, {"a\nleft\nz\n", {}, 3}) == Transition::Applied);
@@ -674,7 +734,7 @@ void markerLinesGitInsertedStillBlockWholeOrOrphaned()
                            [](const auto &orphan) { return orphan.line == 1; }));
         CHECK(file.current().draft.unresolvedMarkers == 2);
         CHECK(file.beginMarkResolved(file.current().id, true) == Transition::Blocked);
-        CHECK(has(file, Blocker::UnresolvedMarkers) && !file.reviewed());
+        CHECK(has(file, Blocker::UnresolvedMarkers) && !file.publication().reviewed());
     }
 }
 
@@ -708,8 +768,8 @@ void outcomesRequireTheReviewedSavedAndWrittenTransaction()
     for (const auto outcome : {Outcome::Failed, Outcome::Uncertain}) {
         CHECK(file.recordCheckpoint(1, outcome, "save diagnostic") == Transition::Applied);
         CHECK(file.recordWrite(1, Outcome::Succeeded) == Transition::InvalidOutcome);
-        CHECK(engaged(file.reviewed()).revision.id == 1 && !file.facts().resolved);
-        CHECK(engaged(file.checkpointOutcome()).detail == "save diagnostic");
+        CHECK(engaged(file.publication().reviewed()).revision == 1 && !file.facts().resolved);
+        CHECK(engaged(file.publication().checkpointOutcome()).detail == "save diagnostic");
     }
     CHECK(file.recordCheckpoint(1, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.recordStage(1, Outcome::Succeeded, "object", "100644") == Transition::InvalidOutcome);
@@ -718,7 +778,7 @@ void outcomesRequireTheReviewedSavedAndWrittenTransaction()
     CHECK(file.recordWrite(1, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.recordStage(1, Outcome::Succeeded, "", "100644") == Transition::InvalidOutcome);
     CHECK(file.recordStage(1, Outcome::Succeeded, "object", "") == Transition::InvalidOutcome);
-    CHECK(!file.staged() && !file.facts().resolved);
+    CHECK(!file.publication().staged() && !file.facts().resolved);
     CHECK(file.recordStage(1, Outcome::Succeeded, "object", "100644") == Transition::Applied);
     CHECK(file.facts().resolved && file.facts().status == FileStatus::Resolved);
 }
@@ -732,8 +792,8 @@ void anUnsuccessfulOutcomeRetainsSnapshots(Outcome outcome, Step step)
     if (step == Step::Checkpoint) CHECK(file.recordCheckpoint(1, outcome, "diagnostic") == Transition::Applied);
     if (step == Step::Write) CHECK(file.recordWrite(1, outcome, "diagnostic") == Transition::Applied);
     if (step == Step::Stage) CHECK(file.recordStage(1, outcome, {}, {}, "diagnostic") == Transition::Applied);
-    CHECK(engaged(file.checkpoint()).id == 1 && engaged(file.written()).id == 1
-          && engaged(file.staged()).revision.id == 1);
+    CHECK(engaged(file.publication().checkpoint()) == 1 && engaged(file.publication().written()) == 1
+          && engaged(file.publication().staged()).revision == 1);
     CHECK(!file.facts().resolved);
     const std::array failures{Blocker::CheckpointFailed, Blocker::WriteFailed, Blocker::StageFailed};
     const auto index = static_cast<std::size_t>(step);
@@ -755,7 +815,7 @@ void checkpointDiscardFencesDelayedCallbacksEvenAfterUndo()
     CHECK(file.recordCheckpoint(discarded, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.recordWrite(discarded, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.recordStage(discarded, Outcome::Succeeded, "object", "100644") == Transition::StaleRevision);
-    CHECK(engaged(file.checkpoint()).id == 1 && !file.facts().unsaved && file.facts().needsReview);
+    CHECK(engaged(file.publication().checkpoint()) == 1 && !file.facts().unsaved && file.facts().needsReview);
 }
 
 void discardWithoutCheckpointRestoresInitialDraftAndRejectsDelayedSave()
@@ -765,7 +825,7 @@ void discardWithoutCheckpointRestoresInitialDraftAndRejectsDelayedSave()
     CHECK(file.replaceDraft(1, draft("discarded")) == Transition::Applied);
     const auto discarded = file.current().id;
     CHECK(file.discardToCheckpoint(discarded) == Transition::Applied);
-    CHECK(file.current().draft == draft() && !file.checkpoint());
+    CHECK(file.current().draft == draft() && !file.publication().checkpoint());
     CHECK(file.recordCheckpoint(discarded, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.facts().unsaved && !file.facts().resolved);
 }
@@ -780,7 +840,7 @@ void stagedDiscardRestoresVerifiedIdentityAndFencesNewerCallbacks()
     const auto discarded = file.current().id;
     CHECK(file.recordCheckpoint(discarded, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.discardToStaged(discarded) == Transition::Applied);
-    CHECK(file.current().id == 1 && engaged(file.checkpoint()).id == 1 && file.facts().resolved);
+    CHECK(file.current().id == 1 && engaged(file.publication().checkpoint()) == 1 && file.facts().resolved);
     CHECK(file.recordCheckpoint(discarded, Outcome::Failed) == Transition::StaleRevision);
     CHECK(file.recordWrite(discarded, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.recordStage(discarded, Outcome::Succeeded, "other", "100644") == Transition::StaleRevision);
@@ -797,7 +857,7 @@ void stagedDiscardCannotPretendANewerWriteDidNotHappen(Outcome outcome)
     CHECK(file.recordCheckpoint(newer, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.recordWrite(newer, outcome) == Transition::Applied);
     CHECK(file.discardToStaged(newer) == Transition::Blocked);
-    CHECK(file.current().id == newer && engaged(file.staged()).revision.id == 1);
+    CHECK(file.current().id == newer && engaged(file.publication().staged()).revision == 1);
 }
 
 void aDelayedReviewWriteAfterANewerSave(Outcome outcome, bool saveBeforeReview)
@@ -810,18 +870,20 @@ void aDelayedReviewWriteAfterANewerSave(Outcome outcome, bool saveBeforeReview)
     const auto newer = file.current().id;
     CHECK(file.recordCheckpoint(newer, Outcome::Succeeded) == Transition::Applied);
     CHECK(file.recordWrite(1, outcome, "delayed write diagnostic") == Transition::Applied);
-    CHECK(engaged(file.writeOutcome()).revision == 1 && engaged(file.writeOutcome()).outcome == outcome);
-    CHECK(engaged(file.writeOutcome()).detail == "delayed write diagnostic");
-    CHECK(engaged(file.checkpoint()).id == newer && file.current().id == newer);
+    CHECK(engaged(file.publication().writeOutcome()).revision == 1
+          && engaged(file.publication().writeOutcome()).outcome == outcome);
+    CHECK(engaged(file.publication().writeOutcome()).detail == "delayed write diagnostic");
+    CHECK(engaged(file.publication().checkpoint()) == newer && file.current().id == newer);
     CHECK(!file.facts().unsaved && file.facts().needsReview && !file.facts().resolved);
-    CHECK(engaged(file.reviewed()).revision.id == 1);
+    CHECK(engaged(file.publication().reviewed()).revision == 1);
     if (outcome == Outcome::Succeeded) {
-        CHECK(engaged(file.written()).id == 1 && engaged(file.written()).draft == draft());
+        CHECK(engaged(file.publication().written()) == 1
+              && file.revision(engaged(file.publication().written()))->draft == draft());
         CHECK(file.facts().status == FileStatus::WrittenUnresolved);
         CHECK(file.recordStage(1, Outcome::Succeeded, "earlier", "100644") == Transition::Applied);
         CHECK(file.facts().earlierStaged && !file.facts().resolved);
     } else {
-        CHECK(!file.written());
+        CHECK(!file.publication().written());
         CHECK(file.facts().status
               == (outcome == Outcome::Failed ? FileStatus::WriteFailed : FileStatus::OutcomeUncertain));
     }
@@ -870,22 +932,19 @@ void handEditsKeepTheirRangesThroughUndoRedoChoicesAndReplay()
     // Recovery replay restores the recorded ranges. A record without them,
     // as written before they were recorded, replays with none.
     auto replay = test_support::choiceFile();
-    CHECK(replay.replaceDraft(1, typed.draft, std::set<std::string>{}, {{0, 6}}) == Transition::Applied);
+    CHECK(test_support::replay(replay, typed.draft, {}, {{0, 6}}) == Transition::Applied);
     CHECK((ranges(replay) == Ranges{{0, 6}}));
-    CHECK(replay.replaceDraft(replay.current().id, typed.draft, std::set<std::string>{}, {{0, 6}})
-          == Transition::NoChange);
-    CHECK(replay.replaceDraft(replay.current().id, typed.draft, std::set<std::string>{}, {{0, 3}})
-          == Transition::Applied);
+    CHECK(test_support::replay(replay, typed.draft, {}, {{0, 6}}) == Transition::NoChange);
+    CHECK(test_support::replay(replay, typed.draft, {}, {{0, 3}}) == Transition::Applied);
     CHECK(replay.undo(replay.current().id) == Transition::Applied && (ranges(replay) == Ranges{{0, 6}}));
     auto older = test_support::choiceFile();
-    CHECK(older.replaceDraft(1, typed.draft, std::set<std::string>{}) == Transition::Applied);
+    CHECK(test_support::replay(older, typed.draft) == Transition::Applied);
     CHECK(ranges(older).empty() && older.current().draft == typed.draft);
-    // Ranges must be in order, apart and inside the text, and only replay supplies them.
+    // Ranges must be in order, apart and inside the text.
     auto refused = test_support::choiceFile();
     for (const auto &bad :
          std::vector<Ranges>{{{4, 2}}, {{0, 3}, {3, 6}}, {{3, 6}, {0, 2}}, {{0, typed.draft.text.size() + 1}}})
-        CHECK(refused.replaceDraft(1, typed.draft, std::set<std::string>{}, bad) == Transition::InvalidAnchor);
-    CHECK(refused.replaceDraft(1, typed.draft, std::nullopt, {{0, 6}}) == Transition::InvalidAnchor);
+        CHECK(test_support::replay(refused, typed.draft, {}, bad) == Transition::InvalidAnchor);
     CHECK(refused.current().id == 1 && ranges(refused).empty());
 }
 
@@ -898,7 +957,7 @@ void aNewerSuccessfulSaveDoesNotAuthorizeAnUnsuccessfulReviewCheckpoint()
         CHECK(file.replaceDraft(1, draft("newer")) == Transition::Applied);
         CHECK(file.recordCheckpoint(file.current().id, Outcome::Succeeded) == Transition::Applied);
         CHECK(file.recordWrite(1, Outcome::Succeeded) == Transition::InvalidOutcome);
-        CHECK(!file.written() && !file.facts().resolved);
+        CHECK(!file.publication().written() && !file.facts().resolved);
     }
 }
 
@@ -912,7 +971,114 @@ void aNewerReviewRejectsSupersededPublicationCallbacks()
     CHECK(file.beginMarkResolved(newer) == Transition::Applied);
     CHECK(file.recordWrite(1, Outcome::Succeeded) == Transition::StaleRevision);
     CHECK(file.recordStage(1, Outcome::Succeeded, "earlier", "100644") == Transition::StaleRevision);
-    CHECK(!file.written() && !file.staged() && engaged(file.reviewed()).revision.id == newer);
+    CHECK(!file.publication().written() && !file.publication().staged()
+          && engaged(file.publication().reviewed()).revision == newer);
+}
+
+void supportIsAdmittedOnlyThroughTheLaunchChecks()
+{
+    // A hold the session made itself stays until its own command lifts it.
+    FileSession invalid("plain", "plain.txt", {"carriage\r\nreturn\n", {}, 0});
+    CHECK(invalid.support() == Support::Unreadable);
+    CHECK(invalid.setSupport(Support::Supported) == Transition::Blocked);
+    CHECK(invalid.support() == Support::Unreadable
+          && engaged(invalid.loadFailure()).reason == LoadFailureReason::InvalidText);
+    auto large = captured(lines(kLargeFileLines + 1));
+    CHECK(large.setSupport(Support::Supported) == Transition::Blocked);
+    CHECK(large.support() == Support::LargeFile && !large.correspondence());
+    CHECK(large.setSupport(Support::LargeFile) == Transition::InvalidOutcome);
+    CHECK(large.loadLargeFile() == Transition::Applied && large.correspondence());
+    // Text an adapter held back was never checked, so admitting it checks it.
+    FileSession binary("binary", "binary.txt", {"carriage\r\nreturn\n", {}, 0},
+                       {.support = Support::OutsideApp, .supportDetail = "binary"});
+    CHECK(binary.setSupport(Support::Supported) == Transition::Blocked && binary.support() == Support::OutsideApp);
+    // A captured file the adapter held back is aligned when it is admitted.
+    auto sources = *test_support::choiceFile().snapshots();
+    const auto text = sources.launchResult.text.utf8;
+    FileSession held("choices", sources.path, {text, {}, 0},
+                     {.support = Support::OutsideApp, .supportDetail = "busy", .snapshots = sources});
+    CHECK(!held.correspondence() && held.choices().empty());
+    CHECK(held.setSupport(Support::Supported) == Transition::Applied);
+    CHECK(held.support() == Support::Supported && held.supportDetail().empty());
+    CHECK(held.correspondence() && held.correspondence()->revision() == held.current().id);
+    CHECK(!held.choices().empty() && !held.current().draft.decisions.empty());
+    CHECK(held.editResult(held.current().id, {{0, 0}, "typed\n"}) == Transition::Applied);
+    // Once it has history, holding it back and admitting it again keeps that history.
+    CHECK(held.setSupport(Support::Unreadable, "gone") == Transition::Applied);
+    CHECK(held.setSupport(Support::Supported) == Transition::Applied && held.canUndo());
+    // An untouched capture held back is not admitted once it has outcomes.
+    FileSession saved("choices", sources.path, {text, {}, 0},
+                      {.support = Support::OutsideApp, .supportDetail = "busy", .snapshots = sources});
+    CHECK(saved.recordCheckpoint(1, Outcome::Failed, "disk full") == Transition::Applied);
+    CHECK(saved.setSupport(Support::Supported) == Transition::Blocked && saved.support() == Support::OutsideApp);
+}
+
+void aRecordedRevisionReplaysInOneStep()
+{
+    // A burst of typing joined into one undo entry, which a journal records once.
+    auto live = test_support::choiceFile();
+    bool join = false;
+    for (const auto *typed : {"one\n", "two\n", "three\n"}) {
+        CHECK(live.editResult(live.current().id, {{0, 0}, typed}, {.join = join}) == Transition::Applied);
+        join = true;
+    }
+    const auto &last = live.current();
+    CHECK(last.id == 4 && !last.correspondence->handEditedRanges().empty());
+    const RecordedRevision recorded{last.id, last.result, last.draft, last.correspondence->handEditedAnchors(),
+                                    last.correspondence->handEditedRanges()};
+    auto replayed = test_support::choiceFile();
+    auto stale = recorded;
+    stale.id = 1;
+    CHECK(replayed.replayDraft(1, stale) == Transition::InvalidOutcome);
+    auto foreign = recorded;
+    foreign.result = 2;
+    CHECK(replayed.replayDraft(1, foreign) == Transition::InvalidOutcome);
+    CHECK(replayed.current().id == 1);
+    CHECK(replayed.replayDraft(1, recorded) == Transition::Applied);
+    CHECK(replayed.current().id == 4 && replayed.current().result == 4 && replayed.current().draft == last.draft);
+    CHECK(replayed.correspondence()->handEditedRanges() == last.correspondence->handEditedRanges());
+    CHECK(replayed.correspondence()->handEditedAnchors() == last.correspondence->handEditedAnchors());
+    // Undo takes back the whole burst in both, and later ids agree.
+    CHECK(live.undo(4) == Transition::Applied && replayed.undo(4) == Transition::Applied);
+    CHECK(!live.canUndo() && !replayed.canUndo() && live.current().id == 5 && replayed.current().id == 5);
+    CHECK(replayed.current().draft == live.current().draft
+          && live.current().draft.text == test_support::choiceFile().current().draft.text);
+    // The first entry, where the history starts, is never joined.
+    auto fresh = test_support::choiceFile();
+    CHECK(fresh.editResult(1, {{0, 0}, "x"}, {.join = true}) == Transition::Applied && fresh.canUndo());
+}
+
+void aDeferredEditIsAlignedLaterOnlyForItsRevision()
+{
+    auto file = test_support::choiceFile();
+    auto now = file;
+    CHECK(now.editResult(1, {{0, 0}, "typed\n"}) == Transition::Applied);
+    CHECK(!now.pendingAlignment());
+    CHECK(file.editResult(1, {{0, 0}, "typed\n"}, {.realignment = Realignment::Deferred}) == Transition::Applied);
+    const auto pending = file.pendingAlignment();
+    CHECK(pending && pending == file.current().correspondence && !pending->aligned());
+    // Anchors, hand edits and text follow the edit at once.
+    CHECK(pending->sameAnchors(*now.correspondence()));
+    CHECK(file.installAlignment(1, std::make_shared<const CorrespondenceMap>(pending->realigned()))
+          == Transition::StaleRevision);
+    CHECK(file.installAlignment(
+              2, std::make_shared<const CorrespondenceMap>(file.revision(1)->correspondence->realigned()))
+          == Transition::InvalidAnchor);
+    const auto aligned = std::make_shared<const CorrespondenceMap>(pending->realigned());
+    CHECK(file.installAlignment(2, aligned) == Transition::Applied);
+    CHECK(!file.pendingAlignment() && file.correspondence() == aligned.get() && file.current().id == 2);
+    for (const auto side : {SourceSide::Stage2, SourceSide::Stage3})
+        CHECK(*file.correspondence()->passages(side) == *now.correspondence()->passages(side));
+    CHECK(file.markers() == now.markers() && file.current().draft == now.current().draft);
+    CHECK(file.installAlignment(2, aligned) == Transition::StaleRevision);
+    // A map made for a revision a later edit replaced is never installed.
+    CHECK(file.editResult(2, {{0, 0}, "more\n"}, {.realignment = Realignment::Deferred}) == Transition::Applied);
+    const auto older = file.pendingAlignment();
+    CHECK(file.editResult(3, {{0, 0}, "again\n"}, {.realignment = Realignment::Deferred}) == Transition::Applied);
+    CHECK(file.installAlignment(3, std::make_shared<const CorrespondenceMap>(older->realigned()))
+          == Transition::StaleRevision);
+    // Mark resolved counts markers against aligned passages.
+    CHECK(file.beginMarkResolved(4, true) == Transition::Applied && !file.pendingAlignment());
 }
 
 void aFileOverTheLineThresholdWaitsForConfirmation()
@@ -945,7 +1111,7 @@ void aFileOverTheLineThresholdWaitsForConfirmation()
     largeSource.provenance.sessionId = "limits";
     largeSource.stage2 = SourceSnapshot{"source-object", "100644", text, {text, text, {}}, "source-commit", "Source"};
     largeSource.launchResult.text = {lines(10), lines(10), {}};
-    CHECK(FileSession("limit", "limit.txt", {lines(10), {}, 0}, Support::Supported, {}, largeSource).support()
+    CHECK(FileSession("limit", "limit.txt", {lines(10), {}, 0}, {.snapshots = largeSource}).support()
           == Support::LargeFile);
     // Without captures there is no correspondence to build, so nothing waits.
     CHECK(FileSession("plain", "plain.txt", {text, {}, 0}).support() == Support::Supported);
@@ -985,7 +1151,7 @@ void editsStayInsideTheEnvelope()
     CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
     const auto atLine = std::string(kMaxLineBytes, 'a');
     FileSession narrow("id", "file", {atLine, {}, 0});
-    CHECK(narrow.editResult(1, {{atLine.size(), atLine.size()}, "z"}) == Transition::Blocked);
+    CHECK(narrow.editResult(1, {{atLine.size(), atLine.size()}, "z"}) == Transition::TextTooLarge);
     CHECK(narrow.current().draft.text == atLine);
     CHECK(narrow.beginMarkResolved(1) == Transition::Applied);
 }
@@ -1003,8 +1169,11 @@ int main()
     suite.run("copies share revisions and discarded branches are dropped",
               copiesShareRevisionsAndDiscardedBranchesAreDropped);
     suite.run("undo reaches back as far as the history size allows", undoReachesBackAsFarAsTheHistorySizeAllows);
+    suite.run("revisions outcomes name stay stored within the history size",
+              revisionsOutcomesNameStayStoredWithinTheHistorySize);
     suite.run("the session aligns with the algorithm it is given", theSessionAlignsWithTheAlgorithmItIsGiven);
     suite.run("a failed opening leaves nothing half built", aFailedOpeningLeavesNothingHalfBuilt);
+    suite.run("an edit that runs out of memory changes nothing", anEditThatRunsOutOfMemoryChangesNothing);
     suite.run("a defective alignment holds the file back", aDefectiveAlignmentHoldsTheFileBack);
     suite.run("commands check their anchors against the current revision",
               commandsCheckTheirAnchorsAgainstTheCurrentRevision);
@@ -1056,6 +1225,9 @@ int main()
               aNewerSuccessfulSaveDoesNotAuthorizeAnUnsuccessfulReviewCheckpoint);
     suite.run("a newer review rejects superseded publication callbacks",
               aNewerReviewRejectsSupersededPublicationCallbacks);
+    suite.run("support is admitted only through the launch checks", supportIsAdmittedOnlyThroughTheLaunchChecks);
+    suite.run("a recorded revision replays in one step", aRecordedRevisionReplaysInOneStep);
+    suite.run("a deferred edit is aligned later only for its revision", aDeferredEditIsAlignedLaterOnlyForItsRevision);
     suite.run("a file over the line threshold waits for confirmation", aFileOverTheLineThresholdWaitsForConfirmation);
     suite.run("text over the line or payload limit is unreadable", textOutsideTheEnvelopeIsUnreadable);
     suite.run("edits stay inside the text envelope", editsStayInsideTheEnvelope);

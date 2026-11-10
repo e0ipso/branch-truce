@@ -60,7 +60,11 @@ length calculation.
 `CorrespondenceAlgorithm` states the contract every implementation keeps: valid
 UTF-8 input inside the text envelope, a complete ordered partition, `Ambiguous`
 where equally good alignments disagree, no state between calls, and
-`std::bad_alloc` as the only failure. `CorrespondenceMap` checks every text it
+`std::bad_alloc` as the only failure. Choice sections and their decision IDs
+come from the passages an algorithm returns, so each implementation names
+itself with `identity()`. The recovery journal records that name with the
+launch capture, and replay refuses a journal another algorithm wrote rather
+than matching its decisions to different sections. `CorrespondenceMap` checks every text it
 aligns against that input contract before the algorithm sees it, and
 `FileSession` takes the algorithm it uses as an argument, with
 `ExactLineCorrespondence` as the default. tests/core/CorrespondenceTests.cpp runs
@@ -70,8 +74,10 @@ The limits in ResourceLimits.h bound the input: no line over `kMaxLineBytes`
 and no text over `kMaxRecoveryPayloadBytes`. A file whose result or captured
 sources hold more than `kLargeFileLines` lines opens only after the user
 confirms it, because alignment time grows with the product of line counts.
-There is no hard bound on that product, so a confirmed file of many short lines
-can take a long time to align. If aligning runs out of memory, only that file
+`kMaxAlignmentCells` bounds that product: a source and result whose line counts
+multiply to more are one `Ambiguous` passage, so their anchors stay unmapped
+and only direct editing applies, but no alignment runs for longer than the
+budget allows. If aligning runs out of memory, only that file
 opens as unreadable, with its captured sources and launch result kept, and
 other files finish loading. Measurements of the representative 4000-line size
 are in tests/fixtures/performance/evidence.md.
@@ -112,11 +118,29 @@ A whole-file command clears it on all. A choice that only clears flags, with
 text and decisions unchanged, still records a revision, so undo and recovery
 replay bring the flags back.
 
-The existing whole-buffer `replaceDraft` API has no editor edit location. Its
+An edit can leave the alignment for later. `edited` with
+`Realignment::Deferred` moves the anchors and hand edits at once, as above, but
+does not compare the sources with the new text: the passages before and after
+the edited lines keep their alignment, shifted past the edit, and the edited
+lines with every passage they touch become one `Ambiguous` passage, so the
+partition stays complete and claims no match it has not verified.
+`realigned()` then builds the map an immediate edit would have built. It is a
+const member of an immutable map, so a worker thread may run it while the
+session goes on editing; `FileSession::installAlignment` keeps the result only
+for the revision it was made for. Undo of a pending revision restores its
+provisional passages, and Mark resolved aligns a pending revision before it
+counts markers.
+
+The whole-buffer `replaceDraft` API has no editor edit location. Its
 old-to-new comparison transforms only ranges with unambiguous correspondence.
 It never assumes a common prefix identifies the edited occurrence. Uncertain
 anchors remain uncertain through later recomputation, even when similar text
 reappears. Fresh source-to-result passages remain available for navigation.
+
+Recovery replays a recorded revision with `replayDraft`: the same comparison
+against the recorded text, then the recorded hand-edit flags and ranges, under
+the recorded revision id. One record can stand for a burst of edits that were
+joined into one undo entry (`EditOptions::join`).
 
 Mapping values belong to revision snapshots. Undo, redo and checkpoint discard
 restore text, decisions and mapping together while assigning the normal fresh

@@ -56,6 +56,25 @@ bool PublicationState::untouched() const noexcept
         && !stageOutcome_;
 }
 
+bool PublicationState::checkpointed(RevisionId revision) const noexcept
+{
+    return checkpoint_ == revision && succeeded(checkpointOutcome_, revision);
+}
+
+bool PublicationState::writtenAt(RevisionId revision) const noexcept
+{
+    return written_ == revision && succeeded(writeOutcome_, revision);
+}
+
+std::vector<RevisionId> PublicationState::held() const
+{
+    std::vector<RevisionId> result;
+    for (const auto &id : {checkpoint_, written_, reviewed_ ? std::optional{reviewed_->revision} : std::nullopt,
+                           staged_ ? std::optional{staged_->revision} : std::nullopt})
+        if (id) result.push_back(*id);
+    return result;
+}
+
 bool PublicationState::savedAt(RevisionId current) const noexcept
 {
     return !checkpointOutcome_ || succeeded(checkpointOutcome_, current);
@@ -63,31 +82,29 @@ bool PublicationState::savedAt(RevisionId current) const noexcept
 
 bool PublicationState::stagedVerified() const noexcept
 {
-    return staged_ && written_ && written_->id == staged_->revision.id && succeeded(writeOutcome_, staged_->revision.id)
-        && succeeded(stageOutcome_, staged_->revision.id);
+    return staged_ && writtenAt(staged_->revision) && succeeded(stageOutcome_, staged_->revision);
 }
 
-void PublicationState::markResolved(const Revision &current, bool confirmedUndecided)
+void PublicationState::markResolved(RevisionId current, bool confirmedUndecided)
 {
     reviewed_ = Review{current, confirmedUndecided};
-    reviewCheckpointSucceeded_ =
-        checkpoint_ && checkpoint_->id == current.id && succeeded(checkpointOutcome_, current.id);
+    reviewCheckpointSucceeded_ = checkpointed(current);
 }
 
-Transition PublicationState::recordCheckpoint(const Revision *stored, RevisionId revision, RevisionId current,
-                                              Outcome outcome, std::string detail)
+Transition PublicationState::recordCheckpoint(bool stored, RevisionId revision, RevisionId current, Outcome outcome,
+                                              std::string detail)
 {
     if (!stored || fenced(revision, current) || (checkpointOutcome_ && revision < checkpointOutcome_->revision))
         return Transition::StaleRevision;
     checkpointOutcome_ = OperationOutcome{revision, outcome, std::move(detail)};
-    if (outcome == Outcome::Succeeded) checkpoint_ = *stored;
-    if (reviewed_ && reviewed_->revision.id == revision) reviewCheckpointSucceeded_ = outcome == Outcome::Succeeded;
+    if (outcome == Outcome::Succeeded) checkpoint_ = revision;
+    if (reviewed_ && reviewed_->revision == revision) reviewCheckpointSucceeded_ = outcome == Outcome::Succeeded;
     return Transition::Applied;
 }
 
 Transition PublicationState::recordWrite(RevisionId revision, RevisionId current, Outcome outcome, std::string detail)
 {
-    if (!reviewed_ || reviewed_->revision.id != revision || fenced(revision, current)) return Transition::StaleRevision;
+    if (!reviewed_ || reviewed_->revision != revision || fenced(revision, current)) return Transition::StaleRevision;
     if (!reviewCheckpointSucceeded_) return Transition::InvalidOutcome;
     writeOutcome_ = OperationOutcome{revision, outcome, std::move(detail)};
     if (outcome == Outcome::Succeeded) written_ = reviewed_->revision;
@@ -97,8 +114,8 @@ Transition PublicationState::recordWrite(RevisionId revision, RevisionId current
 Transition PublicationState::recordStage(RevisionId revision, RevisionId current, Outcome outcome, std::string objectId,
                                          std::string mode, std::string detail)
 {
-    if (!reviewed_ || reviewed_->revision.id != revision || fenced(revision, current)) return Transition::StaleRevision;
-    if (!written_ || written_->id != revision || !succeeded(writeOutcome_, revision)) return Transition::InvalidOutcome;
+    if (!reviewed_ || reviewed_->revision != revision || fenced(revision, current)) return Transition::StaleRevision;
+    if (!writtenAt(revision)) return Transition::InvalidOutcome;
     if (outcome == Outcome::Succeeded && (objectId.empty() || mode.empty())) return Transition::InvalidOutcome;
     stageOutcome_ = OperationOutcome{revision, outcome, std::move(detail)};
     if (outcome == Outcome::Succeeded)
@@ -111,7 +128,7 @@ void PublicationState::discardedToCheckpoint(RevisionId current)
 {
     outcomeFloor_ = current;
     checkpointOutcome_ =
-        checkpoint_ ? std::optional<OperationOutcome>{{checkpoint_->id, Outcome::Succeeded, {}}} : std::nullopt;
+        checkpoint_ ? std::optional<OperationOutcome>{{*checkpoint_, Outcome::Succeeded, {}}} : std::nullopt;
 }
 
 void PublicationState::discardedToStaged(RevisionId floor)
@@ -119,27 +136,27 @@ void PublicationState::discardedToStaged(RevisionId floor)
     // Selecting this previously saved, verified state deliberately discards
     // the newer draft and checkpoint. No external state changes or new review occur.
     if (!staged_) return;
-    const auto &revision = staged_->revision;
+    const auto revision = staged_->revision;
     outcomeFloor_ = floor;
     checkpoint_ = revision;
-    checkpointOutcome_ = OperationOutcome{revision.id, Outcome::Succeeded, {}};
+    checkpointOutcome_ = OperationOutcome{revision, Outcome::Succeeded, {}};
     reviewed_ = Review{revision, staged_->confirmedUndecided};
     reviewCheckpointSucceeded_ = true;
 }
 
-FileFacts PublicationState::facts(const Revision &current, Support support, std::size_t undecided) const
+FileFacts PublicationState::facts(const Revision &current, const Revision *checkpoint, Support support,
+                                  std::size_t undecided) const
 {
-    const bool reviewed = reviewed_ && reviewed_->revision.id == current.id;
-    const bool checkpoint =
-        checkpoint_ && checkpoint_->result == current.result && checkpoint_->decisions == current.decisions;
-    const bool written = written_ && written_->id == current.id && succeeded(writeOutcome_, current.id);
-    const bool staged = staged_ && staged_->revision.id == current.id && succeeded(stageOutcome_, current.id);
+    const bool reviewed = reviewed_ && reviewed_->revision == current.id;
+    const bool saved = checkpoint && checkpoint->result == current.result && checkpoint->decisions == current.decisions;
+    const bool written = writtenAt(current.id);
+    const bool staged = staged_ && staged_->revision == current.id && succeeded(stageOutcome_, current.id);
     const bool unresolved = current.draft.unresolvedMarkers != 0;
     FileFacts facts{.undecided = undecided,
-                    .unsaved = !checkpoint,
+                    .unsaved = !saved,
                     .needsReview = !reviewed,
-                    .earlierStaged = staged_ && staged_->revision.id != current.id,
-                    .resolved = support == Support::Supported && reviewed && checkpoint && written && staged
+                    .earlierStaged = staged_ && staged_->revision != current.id,
+                    .resolved = support == Support::Supported && reviewed && saved && written && staged
                         && succeeded(checkpointOutcome_, current.id) && !unresolved,
                     .status = FileStatus::ReviewNeeded,
                     .blockers = {},
@@ -147,7 +164,7 @@ FileFacts PublicationState::facts(const Revision &current, Support support, std:
     facts.blockers = blockers(current, support, facts, written, staged);
     // Failures remain outstanding even if an earlier matching snapshot exists.
     facts.resolved = facts.resolved && facts.blockers.empty();
-    facts.status = status(facts, support, checkpoint);
+    facts.status = status(facts, support, saved);
     facts.settled = support == Support::Supported && undecided == 0 && !unresolved
         && (facts.status == FileStatus::ReviewNeeded || facts.status == FileStatus::SavedDraft);
     return facts;
@@ -163,7 +180,7 @@ std::vector<Blocker> PublicationState::blockers(const Revision &current, Support
     if (const auto blocker = supportBlocker(support)) {
         result.push_back(*blocker);
     } else {
-        const bool confirmed = reviewed_ && reviewed_->revision.id == current.id && reviewed_->confirmedUndecided;
+        const bool confirmed = reviewed_ && reviewed_->revision == current.id && reviewed_->confirmedUndecided;
         const std::array<std::pair<bool, Blocker>, 7> progress{
             {{current.draft.unresolvedMarkers != 0, Blocker::UnresolvedMarkers},
              {facts.undecided != 0 && !confirmed, Blocker::Undecided},
@@ -188,7 +205,7 @@ FileStatus PublicationState::status(const FileFacts &facts, Support support, boo
         if (std::find(facts.blockers.begin(), facts.blockers.end(), blocker) != facts.blockers.end()) return status;
     if (facts.earlierStaged) return FileStatus::EarlierStaged;
     if (facts.resolved) return FileStatus::Resolved;
-    if (written_ && succeeded(writeOutcome_, written_->id)) return FileStatus::WrittenUnresolved;
+    if (written_ && writtenAt(*written_)) return FileStatus::WrittenUnresolved;
     if (checkpoint) return FileStatus::SavedDraft;
     if (facts.undecided != 0) return FileStatus::Undecided;
     return FileStatus::ReviewNeeded;

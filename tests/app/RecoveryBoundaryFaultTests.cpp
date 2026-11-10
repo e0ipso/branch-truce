@@ -115,14 +115,17 @@ QJsonObject observation(const FileSession &file)
             {QStringLiteral("unsaved"), facts.unsaved},
             {QStringLiteral("resolved"), facts.resolved},
             {QStringLiteral("checkpoint"),
-             file.checkpoint() ? QJsonValue(QString::fromStdString(file.checkpoint()->draft.text)) : QJsonValue()},
-            {QStringLiteral("written"), file.written().has_value()},
-            {QStringLiteral("staged"), file.staged().has_value()},
+             file.publication().checkpoint()
+                 ? QJsonValue(QString::fromStdString(file.revision(*file.publication().checkpoint())->draft.text))
+                 : QJsonValue()},
+            {QStringLiteral("written"), file.publication().written().has_value()},
+            {QStringLiteral("staged"), file.publication().staged().has_value()},
             {QStringLiteral("stageObject"),
-             file.staged() ? QJsonValue(QString::fromStdString(file.staged()->objectId)) : QJsonValue()},
-            {QStringLiteral("checkpointOutcome"), outcomeName(file.checkpointOutcome())},
-            {QStringLiteral("writeOutcome"), outcomeName(file.writeOutcome())},
-            {QStringLiteral("stageOutcome"), outcomeName(file.stageOutcome())}};
+             file.publication().staged() ? QJsonValue(QString::fromStdString(file.publication().staged()->objectId))
+                                         : QJsonValue()},
+            {QStringLiteral("checkpointOutcome"), outcomeName(file.publication().checkpointOutcome())},
+            {QStringLiteral("writeOutcome"), outcomeName(file.publication().writeOutcome())},
+            {QStringLiteral("stageOutcome"), outcomeName(file.publication().stageOutcome())}};
 }
 
 void emitObservation(const char *label, const FileSession &file)
@@ -392,8 +395,9 @@ public:
         test_support::waitUntil(
             [&] {
                 return !controller->commands()->resolutionBusy()
-                    && (file().stageOutcome()
-                        || (file().writeOutcome() && file().writeOutcome()->outcome != Outcome::Succeeded));
+                    && (file().publication().stageOutcome()
+                        || (file().publication().writeOutcome()
+                            && file().publication().writeOutcome()->outcome != Outcome::Succeeded));
             },
             [&] { return "publisher did not settle: " + controller->feedback()->message().toStdString(); });
     }
@@ -663,10 +667,10 @@ public:
             const auto revision = conflict.file().current().id;
             conflict.markResolved();
             const auto &file = conflict.file();
-            CHECK(file.writeOutcome() && file.writeOutcome()->revision == revision
-                  && file.writeOutcome()->outcome == Outcome::Failed);
-            CHECK(QString::fromStdString(file.writeOutcome()->detail).contains(QLatin1String("content")));
-            CHECK(!file.written() && !file.staged() && !file.facts().resolved);
+            CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->revision == revision
+                  && file.publication().writeOutcome()->outcome == Outcome::Failed);
+            CHECK(QString::fromStdString(file.publication().writeOutcome()->detail).contains(QLatin1String("content")));
+            CHECK(!file.publication().written() && !file.publication().staged() && !file.facts().resolved);
             CHECK(file.current().draft.text == conflict.reviewed.toStdString());
             CHECK(readFile(conflict.path(QStringLiteral("result.txt"))) == external);
             CHECK(conflict.indexEntries() == conflicted);
@@ -694,13 +698,14 @@ public:
             const auto revision = conflict.file().current().id;
             conflict.markResolved();
             const auto &file = conflict.file();
-            CHECK(file.writeOutcome() && file.writeOutcome()->revision == revision
-                  && file.writeOutcome()->outcome == Outcome::Failed);
-            CHECK(QString::fromStdString(file.writeOutcome()->detail)
+            CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->revision == revision
+                  && file.publication().writeOutcome()->outcome == Outcome::Failed);
+            CHECK(QString::fromStdString(file.publication().writeOutcome()->detail)
                       .contains(QLatin1String("index no longer matches this conflict")));
-            CHECK(!file.stageOutcome() && !file.written() && !file.staged() && !file.facts().resolved);
+            CHECK(!file.publication().stageOutcome() && !file.publication().written() && !file.publication().staged()
+                  && !file.facts().resolved);
             CHECK(file.facts().status == FileStatus::WriteFailed);
-            CHECK(file.current().draft.text == conflict.reviewed.toStdString() && file.checkpoint());
+            CHECK(file.current().draft.text == conflict.reviewed.toStdString() && file.publication().checkpoint());
             CHECK(readFile(conflict.path(QStringLiteral("result.txt"))) == conflict.manual);
             CHECK(conflict.indexEntries() == replacedIndex);
             CHECK(!conflict.controller->files()->hasPendingRecovery());
@@ -709,7 +714,8 @@ public:
             const auto &restored = replay.files.front();
             CHECK(observation(restored) == observation(file));
             CHECK(observation(restored).value(QStringLiteral("writeOutcome")).toString() == QLatin1String("failed"));
-            CHECK(restored.writeOutcome() && restored.writeOutcome()->detail == file.writeOutcome()->detail);
+            CHECK(restored.publication().writeOutcome()
+                  && restored.publication().writeOutcome()->detail == file.publication().writeOutcome()->detail);
         });
         suite.run("a locked Git index fails staging after the write and replay shows the recorded stage failure", [] {
             IndexConflict conflict;
@@ -722,12 +728,13 @@ public:
             const auto revision = conflict.file().current().id;
             conflict.markResolved();
             const auto &file = conflict.file();
-            CHECK(file.writeOutcome() && file.writeOutcome()->revision == revision
-                  && file.writeOutcome()->outcome == Outcome::Succeeded);
-            CHECK(file.stageOutcome() && file.stageOutcome()->revision == revision
-                  && file.stageOutcome()->outcome == Outcome::Failed);
-            CHECK(QString::fromStdString(file.stageOutcome()->detail).contains(QLatin1String("Git exited with code")));
-            CHECK(file.written() && !file.staged() && !file.facts().resolved);
+            CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->revision == revision
+                  && file.publication().writeOutcome()->outcome == Outcome::Succeeded);
+            CHECK(file.publication().stageOutcome() && file.publication().stageOutcome()->revision == revision
+                  && file.publication().stageOutcome()->outcome == Outcome::Failed);
+            CHECK(QString::fromStdString(file.publication().stageOutcome()->detail)
+                      .contains(QLatin1String("Git exited with code")));
+            CHECK(file.publication().written() && !file.publication().staged() && !file.facts().resolved);
             CHECK(file.facts().status == FileStatus::StageFailed);
             CHECK(readFile(conflict.path(QStringLiteral("result.txt"))) == conflict.reviewed);
             CHECK(conflict.indexEntries() == conflicted);
@@ -743,7 +750,8 @@ public:
             const auto &restored = replay.files.front();
             CHECK(observation(restored) == observation(file));
             CHECK(observation(restored).value(QStringLiteral("stageOutcome")).toString() == QLatin1String("failed"));
-            CHECK(restored.stageOutcome() && restored.stageOutcome()->detail == file.stageOutcome()->detail);
+            CHECK(restored.publication().stageOutcome()
+                  && restored.publication().stageOutcome()->detail == file.publication().stageOutcome()->detail);
         });
         return suite.report();
     }

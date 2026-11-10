@@ -268,10 +268,11 @@ struct RestartedWrite {
             CHECK(first.commands()->markResolved(id, revisionOf(openedFile(first)), true));
             waitFor(first, [&] {
                 const auto &file = openedFile(first);
-                return !first.commands()->resolutionBusy() && file.writeOutcome()
-                    && file.writeOutcome()->outcome == Outcome::Succeeded && file.stageOutcome();
+                return !first.commands()->resolutionBusy() && file.publication().writeOutcome()
+                    && file.publication().writeOutcome()->outcome == Outcome::Succeeded
+                    && file.publication().stageOutcome();
             });
-            CHECK(openedFile(first).stageOutcome()->outcome != Outcome::Succeeded);
+            CHECK(openedFile(first).publication().stageOutcome()->outcome != Outcome::Succeeded);
             CHECK(!openedFile(first).facts().resolved);
             CHECK(readFile(repo.path("tracked.txt")) == edited);
         }
@@ -280,7 +281,8 @@ struct RestartedWrite {
         openController(*controller, repo);
         CHECK(controller->selection()->select(id));
         const auto &restored = openedFile(*controller);
-        CHECK(restored.written() && restored.writeOutcome() && restored.writeOutcome()->outcome == Outcome::Succeeded);
+        CHECK(restored.publication().written() && restored.publication().writeOutcome()
+              && restored.publication().writeOutcome()->outcome == Outcome::Succeeded);
         CHECK(!restored.facts().resolved);
         CHECK(readFile(repo.path("tracked.txt")) == edited);
     }
@@ -343,7 +345,7 @@ int main(int argc, char **argv)
         CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), false));
         CHECK(session.controller.commands()->resolutionConfirmation());
         CHECK(session.controller.feedback()->message().contains(QStringLiteral("intentional")));
-        CHECK(!openedFile(session.controller).reviewed());
+        CHECK(!openedFile(session.controller).publication().reviewed());
         expectUnchanged(session.repo, before);
         session.controller.commands()->cancelResolution();
         CHECK(!session.controller.commands()->resolutionConfirmation());
@@ -367,7 +369,7 @@ int main(int argc, char **argv)
         CHECK(!session.controller.commands()->markResolved(session.id, session.revision(), true));
         CHECK(session.files->failures == 1);
         CHECK(session.controller.files()->hasPendingRecovery());
-        CHECK(!openedFile(session.controller).reviewed());
+        CHECK(!openedFile(session.controller).publication().reviewed());
         expectUnchanged(session.repo, before);
         CHECK(unmerged(session.repo).contains("tracked.txt"));
     });
@@ -377,14 +379,17 @@ int main(int argc, char **argv)
         const auto before = session.repo.snapshot();
         CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
         waitFor(session.controller, [&] {
-            return !session.controller.commands()->resolutionBusy() && openedFile(session.controller).writeOutcome()
-                && openedFile(session.controller).writeOutcome()->outcome != Outcome::Succeeded;
+            return !session.controller.commands()->resolutionBusy()
+                && openedFile(session.controller).publication().writeOutcome()
+                && openedFile(session.controller).publication().writeOutcome()->outcome != Outcome::Succeeded;
         });
         // The publisher sees that the destination's permissions changed since the load and refuses
         // before it writes, so even root, which could write the file, gets a definite failure.
-        CHECK(openedFile(session.controller).writeOutcome()->outcome == Outcome::Failed);
-        CHECK(openedFile(session.controller).reviewed() && openedFile(session.controller).checkpoint());
-        CHECK(!openedFile(session.controller).facts().resolved && !openedFile(session.controller).staged());
+        CHECK(openedFile(session.controller).publication().writeOutcome()->outcome == Outcome::Failed);
+        CHECK(openedFile(session.controller).publication().reviewed()
+              && openedFile(session.controller).publication().checkpoint());
+        CHECK(!openedFile(session.controller).facts().resolved
+              && !openedFile(session.controller).publication().staged());
         CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
         expectUnchanged(session.repo, before, true);
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
@@ -413,9 +418,10 @@ int main(int argc, char **argv)
         CHECK(controller.commands()->markResolved(id, revisionOf(openedFile(controller)), true));
         waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
         const auto &file = openedFile(controller);
-        CHECK(file.writeOutcome() && file.writeOutcome()->outcome == Outcome::Succeeded);
-        CHECK(file.stageOutcome() && file.stageOutcome()->outcome == Outcome::Failed);
-        CHECK_EQ(QString::fromStdString(file.stageOutcome()->detail), QStringLiteral("Git refused to stage the file."));
+        CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Succeeded);
+        CHECK(file.publication().stageOutcome() && file.publication().stageOutcome()->outcome == Outcome::Failed);
+        CHECK_EQ(QString::fromStdString(file.publication().stageOutcome()->detail),
+                 QStringLiteral("Git refused to stage the file."));
         CHECK(file.facts().status == FileStatus::StageFailed && !file.facts().resolved);
         CHECK(readFile(repo.path("tracked.txt")) == repo.manual);
         expectUnchanged(repo, before, true);
@@ -423,10 +429,10 @@ int main(int argc, char **argv)
     });
     suite.run("Mark resolved publishes one unsaved path and leaves the other conflict", [] {
         Session session;
-        CHECK(!openedFile(session.controller).checkpoint());
+        CHECK(!openedFile(session.controller).publication().checkpoint());
         CHECK(session.controller.commands()->markResolved(session.id, session.revision(), true));
         waitFor(session.controller, [&] { return openedFile(session.controller).facts().resolved; });
-        CHECK(openedFile(session.controller).checkpoint());
+        CHECK(openedFile(session.controller).publication().checkpoint());
         CHECK(openedFile(session.controller).facts().status == FileStatus::Resolved);
         CHECK(session.controller.selectedFile()->status() == "Written and resolved");
         CHECK(session.repo.git({"show", ":tracked.txt"}) == session.repo.manual);
@@ -446,9 +452,9 @@ int main(int argc, char **argv)
             return !session.controller.commands()->resolutionBusy()
                 && session.controller.mergetool()->parentStagingOffer(session.id).has_value();
         });
-        CHECK(openedFile(session.controller).writeOutcome()
-              && openedFile(session.controller).writeOutcome()->outcome == Outcome::Succeeded);
-        CHECK(!openedFile(session.controller).stageOutcome());
+        CHECK(openedFile(session.controller).publication().writeOutcome()
+              && openedFile(session.controller).publication().writeOutcome()->outcome == Outcome::Succeeded);
+        CHECK(!openedFile(session.controller).publication().stageOutcome());
         CHECK(!openedFile(session.controller).facts().resolved);
         CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
         CHECK(unmerged(session.repo).contains("tracked.txt") && unmerged(session.repo).contains("excluded.txt"));
@@ -476,8 +482,8 @@ int main(int argc, char **argv)
                                                              revisionOf(openedFile(*restarted.controller)), true));
         waitFor(*restarted.controller, [&] { return openedFile(*restarted.controller).facts().resolved; });
         const auto &file = openedFile(*restarted.controller);
-        CHECK(file.writeOutcome() && file.writeOutcome()->outcome == Outcome::Succeeded
-              && file.writeOutcome()->revision == file.current().id);
+        CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Succeeded
+              && file.publication().writeOutcome()->revision == file.current().id);
         CHECK(file.facts().status == FileStatus::Resolved);
         CHECK(!restarted.controller->feedback()->message().contains(QStringLiteral("no longer matches")));
         CHECK(restarted.repo.git({"show", ":tracked.txt"}) == restarted.edited);
@@ -494,7 +500,7 @@ int main(int argc, char **argv)
                                                               revisionOf(openedFile(*restarted.controller)), true));
         CHECK(!restarted.controller->commands()->resolutionBusy());
         const auto &file = openedFile(*restarted.controller);
-        CHECK(file.writeOutcome() && file.writeOutcome()->outcome == Outcome::Failed);
+        CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Failed);
         CHECK(!file.facts().resolved);
         CHECK(restarted.controller->feedback()->message().contains(QStringLiteral("written revision")));
         CHECK(readFile(restarted.repo.path("tracked.txt")) == tampered);
@@ -508,8 +514,9 @@ int main(int argc, char **argv)
         const auto next = std::string("later resolved revision\n");
         publishWhileDraftChanges(session.controller, session.id, next);
         const auto &written = openedFile(session.controller);
-        CHECK(written.writeOutcome() && written.writeOutcome()->outcome == Outcome::Succeeded);
-        CHECK(written.writeOutcome()->revision != written.current().id);
+        CHECK(written.publication().writeOutcome()
+              && written.publication().writeOutcome()->outcome == Outcome::Succeeded);
+        CHECK(written.publication().writeOutcome()->revision != written.current().id);
         CHECK(written.current().draft.text == next);
         CHECK(!written.facts().resolved);
         CHECK(readFile(session.repo.path("tracked.txt")) == session.repo.manual);
@@ -591,9 +598,9 @@ int main(int argc, char **argv)
         CHECK(controller.commands()->markResolved(id, revision, true));
         waitFor(controller, [&] { return !controller.commands()->resolutionBusy(); });
         const auto &file = openedFile(controller);
-        CHECK(file.writeOutcome() && file.writeOutcome()->outcome == Outcome::Succeeded);
-        CHECK(file.stageOutcome() && file.stageOutcome()->outcome == Outcome::Uncertain);
-        CHECK_EQ(QString::fromStdString(file.stageOutcome()->detail), diagnostic);
+        CHECK(file.publication().writeOutcome() && file.publication().writeOutcome()->outcome == Outcome::Succeeded);
+        CHECK(file.publication().stageOutcome() && file.publication().stageOutcome()->outcome == Outcome::Uncertain);
+        CHECK_EQ(QString::fromStdString(file.publication().stageOutcome()->detail), diagnostic);
         CHECK(!file.facts().resolved);
         CHECK(readFile(repo.path("tracked.txt")) == "written before the time out\n");
         CHECK(unmerged(repo).contains("tracked.txt"));
@@ -613,9 +620,9 @@ int main(int argc, char **argv)
             session.controller.commands()->markResolved(session.id, revisionOf(openedFile(session.controller)), true));
         waitFor(session.controller, [&] {
             const auto &file = openedFile(session.controller);
-            return !session.controller.commands()->resolutionBusy() && file.writeOutcome()
-                && file.writeOutcome()->outcome == Outcome::Failed
-                && file.writeOutcome()->revision == file.current().id;
+            return !session.controller.commands()->resolutionBusy() && file.publication().writeOutcome()
+                && file.publication().writeOutcome()->outcome == Outcome::Failed
+                && file.publication().writeOutcome()->revision == file.current().id;
         });
         CHECK(!openedFile(session.controller).facts().resolved);
         CHECK(readFile(session.repo.path("tracked.txt")) == tampered);
@@ -658,8 +665,8 @@ int main(int argc, char **argv)
         CHECK(readFile(merged) == session.repo.manual);
         offered();
         CHECK(readFile(merged) == reviewed);
-        CHECK(openedFile(session.controller).writeOutcome()
-              && openedFile(session.controller).writeOutcome()->outcome == Outcome::Succeeded);
+        CHECK(openedFile(session.controller).publication().writeOutcome()
+              && openedFile(session.controller).publication().writeOutcome()->outcome == Outcome::Succeeded);
         CHECK(!openedFile(session.controller).facts().resolved && unmerged(session.repo).contains("tracked.txt"));
         const auto written = inode();
         offered();
@@ -671,8 +678,8 @@ int main(int argc, char **argv)
         CHECK(session.controller.commands()->markResolved(session.id, revision, true));
         waitFor(session.controller, [&] {
             const auto &file = openedFile(session.controller);
-            return !session.controller.commands()->resolutionBusy() && file.writeOutcome()
-                && file.writeOutcome()->outcome == Outcome::Failed;
+            return !session.controller.commands()->resolutionBusy() && file.publication().writeOutcome()
+                && file.publication().writeOutcome()->outcome == Outcome::Failed;
         });
         CHECK(!session.controller.mergetool()->parentStagingOffer(session.id));
         CHECK(!openedFile(session.controller).facts().resolved);
@@ -699,10 +706,11 @@ int main(int argc, char **argv)
         CHECK(session.controller.commands()->markResolved(session.id, revision, true));
         waitFor(session.controller, [&] {
             const auto &file = openedFile(session.controller);
-            return !session.controller.commands()->resolutionBusy() && file.writeOutcome()
-                && file.writeOutcome()->outcome == Outcome::Succeeded && file.stageOutcome();
+            return !session.controller.commands()->resolutionBusy() && file.publication().writeOutcome()
+                && file.publication().writeOutcome()->outcome == Outcome::Succeeded
+                && file.publication().stageOutcome();
         });
-        CHECK(openedFile(session.controller).stageOutcome()->outcome == Outcome::Failed);
+        CHECK(openedFile(session.controller).publication().stageOutcome()->outcome == Outcome::Failed);
         CHECK(readFile(merged) == reviewed && unmerged(session.repo).contains("tracked.txt"));
         // Staging would now succeed, so any git add would reach stage 0.
         CHECK(QFile::remove(hook));
@@ -711,14 +719,14 @@ int main(int argc, char **argv)
         CHECK(session.controller.commands()->markResolved(session.id, revision, true));
         waitFor(session.controller, [&] {
             const auto &file = openedFile(session.controller);
-            return !session.controller.commands()->resolutionBusy() && file.writeOutcome()
-                && file.writeOutcome()->outcome == Outcome::Failed;
+            return !session.controller.commands()->resolutionBusy() && file.publication().writeOutcome()
+                && file.publication().writeOutcome()->outcome == Outcome::Failed;
         });
         const auto &file = openedFile(session.controller);
-        CHECK(file.writeOutcome()->revision == file.current().id && !file.facts().resolved);
+        CHECK(file.publication().writeOutcome()->revision == file.current().id && !file.facts().resolved);
         CHECK(session.controller.feedback()->message().contains(
             QStringLiteral("no longer matches the written revision")));
-        CHECK(file.stageOutcome() && file.stageOutcome()->outcome == Outcome::Failed);
+        CHECK(file.publication().stageOutcome() && file.publication().stageOutcome()->outcome == Outcome::Failed);
         CHECK(readFile(merged) == external);
         const auto index = session.repo.git({"ls-files", "-s", "--", "tracked.txt"});
         CHECK(index.contains(" 1\ttracked.txt") && !index.contains(" 0\ttracked.txt"));
@@ -846,7 +854,8 @@ int main(int argc, char **argv)
         CHECK(blocker.value("count").toULongLong() == 2 && blocker.value("line").toULongLong() == 3);
         CHECK(session.controller.commands()->showFirstMarker());
         CHECK(editor.property("cursorPosition").toInt() == 13);
-        CHECK(!openedFile(session.controller).reviewed() && !openedFile(session.controller).facts().resolved);
+        CHECK(!openedFile(session.controller).publication().reviewed()
+              && !openedFile(session.controller).facts().resolved);
         replace("top\n<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\nmid\n<<<<<<< ours\nc\n=======\nd\n>>>>>>> theirs\n");
         // A newer revision retires the action until Mark resolved is refused again.
         CHECK(session.controller.feedback()->markerBlocker().isEmpty()

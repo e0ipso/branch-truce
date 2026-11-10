@@ -44,7 +44,15 @@ enum class Transition {
     Blocked,
     InvalidOutcome,
     InvalidAnchor,
-    AmbiguousTarget
+    AmbiguousTarget,
+    // The command ran out of memory and changed nothing.
+    OutOfMemory,
+    // The result would be over a limit of the text envelope (ResourceLimits.h).
+    TextTooLarge,
+    // The text is not UTF-8 with LF line endings.
+    InvalidText,
+    // A preview to apply no longer matches the one the current revision gives.
+    PreviewChanged
 };
 
 }

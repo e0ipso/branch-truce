@@ -362,8 +362,15 @@ std::vector<MarkerEdit> MarkerPlanner::edits(const Draft &draft, const Correspon
                                              const std::map<std::string, Decision> &decided,
                                              const MarkerScan *scan) const
 {
+    return edits(draft, mapping, decided, sections(draft.text, mapping, scan));
+}
+
+std::vector<MarkerEdit> MarkerPlanner::edits(const Draft &draft, const CorrespondenceMap &mapping,
+                                             const std::map<std::string, Decision> &decided,
+                                             const std::vector<MarkerSection> &sections) const
+{
     std::vector<MarkerEdit> result;
-    for (const auto &found : sections(draft.text, mapping, scan)) {
+    for (const auto &found : sections) {
         const auto edits = BlockPlan(choices_, mapping, draft, decided, found).edits();
         result.insert(result.end(), edits.begin(), edits.end());
     }

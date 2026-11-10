@@ -150,7 +150,8 @@ void checkRecovered(const ParentRepository &repo, const QMap<QByteArray, std::st
     openController(reopened, repo);
     for (auto draft = drafts.cbegin(); draft != drafts.cend(); ++draft) {
         const auto &file = opened(reopened, draft.key());
-        CHECK(file.checkpoint() && file.checkpoint()->draft.text == draft.value());
+        CHECK(file.publication().checkpoint()
+              && file.revision(*file.publication().checkpoint())->draft.text == draft.value());
         CHECK(!file.facts().resolved);
     }
 }
@@ -256,8 +257,11 @@ int main(int argc, char **argv)
         CHECK(
             controller.commands()->saveDraft(select(controller, "tracked.txt"), revisionOf(controller, "tracked.txt")));
         CHECK(controller.feedback()->message().contains(QStringLiteral("repository file unchanged")));
-        CHECK(opened(controller, "tracked.txt").checkpoint());
-        CHECK(opened(controller, "tracked.txt").checkpoint()->draft.text == draft);
+        CHECK(opened(controller, "tracked.txt").publication().checkpoint());
+        CHECK(opened(controller, "tracked.txt")
+                  .revision(*opened(controller, "tracked.txt").publication().checkpoint())
+                  ->draft.text
+              == draft);
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
         // Git is still inside the tool command; a launcher that returned would let it stage or restore.
         // Only an offer or a leave sends the launcher a decision, and with no offer and nothing in
@@ -272,7 +276,10 @@ int main(int argc, char **argv)
         waitParent(*parent, 1, controller.feedback()->message());
         CHECK(repo.index() == indexBefore);
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
-        CHECK(opened(controller, "tracked.txt").checkpoint()->draft.text == draft);
+        CHECK(opened(controller, "tracked.txt")
+                  .revision(*opened(controller, "tracked.txt").publication().checkpoint())
+                  ->draft.text
+              == draft);
     });
 
     suite.run("Git stages the launched path itself and resolution waits for the exact acknowledged object", [] {
@@ -528,7 +535,7 @@ int main(int argc, char **argv)
             },
             controller.feedback()->message());
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
-        CHECK(opened(controller, "tracked.txt").checkpoint());
+        CHECK(opened(controller, "tracked.txt").publication().checkpoint());
     });
 
     suite.run("leave restores the parent-visible file after an outside edit and keeps the saved draft", [] {
@@ -551,7 +558,10 @@ int main(int argc, char **argv)
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(repo.index() == indexBefore);
         CHECK(repo.gitTemporaries("tracked.txt").isEmpty());
-        CHECK(opened(controller, "tracked.txt").checkpoint()->draft.text == draft);
+        CHECK(opened(controller, "tracked.txt")
+                  .revision(*opened(controller, "tracked.txt").publication().checkpoint())
+                  ->draft.text
+              == draft);
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
         // The launcher removed its copies when it exited.
         CHECK(!QFileInfo::exists(intake));
@@ -578,8 +588,11 @@ int main(int argc, char **argv)
         CHECK(repo.index() == indexBefore);
         Application reopened{Application::Config{gitOnPath(), newRecoveryDirectory(), {}}};
         openController(reopened, repo);
-        CHECK(opened(reopened, "tracked.txt").checkpoint());
-        CHECK(opened(reopened, "tracked.txt").checkpoint()->draft.text == draft);
+        CHECK(opened(reopened, "tracked.txt").publication().checkpoint());
+        CHECK(opened(reopened, "tracked.txt")
+                  .revision(*opened(reopened, "tracked.txt").publication().checkpoint())
+                  ->draft.text
+              == draft);
         CHECK(!opened(reopened, "tracked.txt").facts().resolved);
     });
 
@@ -703,7 +716,10 @@ int main(int argc, char **argv)
              QStringLiteral("waiter kept after interrupt"));
         CHECK(readFile(repo.path("tracked.txt")) == "launch bytes\n");
         CHECK(repo.index() == indexBefore);
-        CHECK(opened(controller, "tracked.txt").checkpoint()->draft.text == draft);
+        CHECK(opened(controller, "tracked.txt")
+                  .revision(*opened(controller, "tracked.txt").publication().checkpoint())
+                  ->draft.text
+              == draft);
         CHECK(!opened(controller, "tracked.txt").facts().resolved);
         // Git 2.43 has no interrupt trap: its BACKUP, LOCAL, REMOTE and BASE files stay in the worktree.
         CHECK(repo.gitTemporaries("tracked.txt").size() == 4);

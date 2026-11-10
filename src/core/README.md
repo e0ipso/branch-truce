@@ -13,8 +13,13 @@ Each unit depends only on the ones listed before it.
 - `ResourceLimits.h`, `ByteRanges.h`, `RevisionId.h`, `Draft.h`,
   `FileSnapshot.h`, `Transition.h`: limits, byte ranges, drafts and decisions,
   captured sources, command results and typed load failures.
-- `Correspondence`: aligns source and result text through a
-  `CorrespondenceAlgorithm` and maps source anchors into one result revision.
+- `Utf8`: the UTF-8 and character-boundary checks every unit applies.
+- `Correspondence`: the `CorrespondenceAlgorithm` interface, and the map that
+  aligns source and result text through one and maps source anchors into one
+  result revision. `AnchorRebuild.h` holds how a choice that drops or
+  rebuilds text moves those anchors.
+- `ExactLineCorrespondence`: the default algorithm, an exact line LCS within
+  the `kMaxAlignmentCells` budget.
 - `ConflictMarkers`: recognizes marker lines of a given marker size and
   assembles blocks.
 - `ChoiceCatalogue`: the source scopes a user can accept or ignore, indexed by
@@ -52,7 +57,14 @@ change rebuilds nothing in the engine.
   time and may be moved to another thread once, as the load worker does.
   `CorrespondenceMap` and the revisions it belongs to are immutable after they
   are published, and `CorrespondenceAlgorithm::compare` may run on several
-  threads at once.
+  threads at once. An edit made with `Realignment::Deferred` leaves its map's
+  passages provisional: a worker may build `realigned()` from the shared map
+  while the owner keeps editing, and the owner installs it with
+  `FileSession::installAlignment`, which keeps it only for the revision it was
+  made for. The engine runs no event loop and starts no thread.
+- Work is bounded: no text over the envelope, no alignment over
+  `kMaxAlignmentCells`, and no undo history over `kMaxHistoryBytes`, which
+  counts every revision a publication outcome names.
 
 Translate Qt positions, file paths and process results at an adapter boundary
 instead of adding platform dependencies to the engine.

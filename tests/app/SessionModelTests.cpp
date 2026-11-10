@@ -145,15 +145,17 @@ int main(int argc, char **argv)
         CHECK(model.recordCheckpoint("first", 1, Outcome::Succeeded) == Transition::Applied);
         CHECK(!role(model, SessionModel::UnsavedRole).toBool());
         CHECK(role(model, SessionModel::ReviewNeededRole).toBool());
-        CHECK(!model.file("first")->reviewed());
-        CHECK(!model.file("first")->written());
-        CHECK(!model.file("first")->staged());
-        CHECK(model.file("first")->checkpoint()->draft.text == "result\n");
+        CHECK(!model.file("first")->publication().reviewed());
+        CHECK(!model.file("first")->publication().written());
+        CHECK(!model.file("first")->publication().staged());
+        CHECK(model.file("first")->revision(*model.file("first")->publication().checkpoint())->draft.text
+              == "result\n");
         resolve(model, "first");
         CHECK(model.canFinish() && model.resolvedFiles() == 1 && model.finishBlockers().isEmpty());
-        CHECK(model.file("first")->staged()->objectId == "verified-object");
-        CHECK(model.file("first")->staged()->mode == "100644");
-        CHECK(model.appendFile(FileSession("second", "b", draft(), Support::OutsideApp, "binary")));
+        CHECK(model.file("first")->publication().staged()->objectId == "verified-object");
+        CHECK(model.file("first")->publication().staged()->mode == "100644");
+        CHECK(model.appendFile(
+            FileSession("second", "b", draft(), {.support = Support::OutsideApp, .supportDetail = "binary"})));
         CHECK(model.totalFiles() == 2 && model.resolvedFiles() == 1 && !model.canFinish());
         CHECK(role(model, SessionModel::SupportRole, 1).value<FileStates::SupportKind>()
               == FileStates::SupportKind::OutsideApp);
@@ -169,7 +171,7 @@ int main(int argc, char **argv)
         CHECK(model.canFinish() && model.resolvedFiles() == 2);
         CHECK(model.recordCheckpoint("second", 1, Outcome::Failed, "disk full") == Transition::Applied);
         CHECK(!model.canFinish() && model.resolvedFiles() == 1);
-        CHECK(model.file("second")->checkpointOutcome()->detail == "disk full");
+        CHECK(model.file("second")->publication().checkpointOutcome()->detail == "disk full");
         CHECK(role(model, SessionModel::StatusRole, 1).toString() == "Draft save failed");
     });
     suite.run("the English catalog supplies the plural forms of numerus messages", [] {
@@ -217,7 +219,8 @@ int main(int argc, char **argv)
         CHECK(model.beginMarkResolved("failed", 1) == Transition::Applied);
         CHECK(model.recordCheckpoint("failed", 1, Outcome::Succeeded) == Transition::Applied);
         CHECK(model.recordWrite("failed", 1, Outcome::Failed, "disk full") == Transition::Applied);
-        CHECK(model.appendFile(FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+        CHECK(model.appendFile(FileSession("outside", "diagram.png", {},
+                                           {.support = Support::OutsideApp, .supportDetail = "image content"})));
         CHECK(model.appendFile(sessionFile("pending")));
         {
             const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
@@ -326,8 +329,9 @@ int main(int argc, char **argv)
         CHECK(model.appendFile(sessionFile("undecided", choices)));
         CHECK(model.appendFile(sessionFile("published")));
         resolve(model, "published");
-        CHECK(model.appendFile(FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
-        CHECK(model.appendFile(FileSession("unreadable", "broken.txt", {}, Support::Unreadable, {})));
+        CHECK(model.appendFile(FileSession("outside", "diagram.png", {},
+                                           {.support = Support::OutsideApp, .supportDetail = "image content"})));
+        CHECK(model.appendFile(FileSession("unreadable", "broken.txt", {}, {.support = Support::Unreadable})));
         const std::string bytes = std::string(":literal\t") + static_cast<char>(0xff);
         CHECK(model.appendFile(FileSession("bytes", bytes, draft())));
         const std::vector<std::string> displayOrder{"undecided", "bytes", "published", "outside", "unreadable"};
@@ -426,7 +430,7 @@ int main(int argc, char **argv)
         CHECK(role(model, SessionModel::DecisionsRole).toList()[0].toMap().value("value").toString() == "ignored");
         CHECK(model.discardToCheckpoint("id", 4) == Transition::Applied);
         CHECK(model.recordCheckpoint("id", 2, Outcome::Succeeded) == Transition::StaleRevision);
-        CHECK(model.file("id")->checkpoint()->id == 1);
+        CHECK(*model.file("id")->publication().checkpoint() == 1);
         CHECK(model.discardToStaged("id", 5) == Transition::Applied);
         CHECK(model.canFinish() && role(model, SessionModel::CurrentRevisionRole).toString() == "1");
         CHECK(model.recordCheckpoint("id", 4, Outcome::Failed) == Transition::StaleRevision);
@@ -473,10 +477,10 @@ int main(int argc, char **argv)
         int changes = 0;
         QObject::connect(&model.rows, &SessionModel::summaryChanged, &model, [&] { ++changes; });
         CHECK(model.beginMarkResolved("id", 1) == Transition::ConfirmationRequired);
-        CHECK(changes == 0 && !model.file("id")->reviewed());
+        CHECK(changes == 0 && !model.file("id")->publication().reviewed());
         CHECK(role(model, SessionModel::UndecidedRole).toULongLong() == 1);
         CHECK(model.beginMarkResolved("id", 1, true) == Transition::Applied);
-        CHECK(model.file("id")->reviewed()->confirmedUndecided);
+        CHECK(model.file("id")->publication().reviewed()->confirmedUndecided);
         undecided.text = "=======\n";
         CHECK(model.replaceDraft("id", 1, undecided) == Transition::Applied);
         CHECK(model.beginMarkResolved("id", 2, true) == Transition::Blocked);
@@ -495,7 +499,7 @@ int main(int argc, char **argv)
             QObject::connect(&model.rows, &SessionModel::summaryChanged, &model, [&] { ++changes; });
             CHECK(model.recordWrite("id", 1, outcome, "delayed diagnostic") == Transition::Applied);
             CHECK(changes == 1);
-            const auto &result = *model.file("id")->writeOutcome();
+            const auto &result = *model.file("id")->publication().writeOutcome();
             const auto status = outcome == Outcome::Succeeded ? "Written, unresolved"
                 : outcome == Outcome::Failed                  ? "Repository write failed"
                                                               : "Outcome uncertain; verification required";
@@ -503,13 +507,13 @@ int main(int argc, char **argv)
             CHECK(result.outcome == outcome && result.detail == "delayed diagnostic");
             CHECK(role(model, SessionModel::StatusRole).toString() == status);
             CHECK(role(model, SessionModel::CurrentRevisionRole).toString() == "2");
-            CHECK(model.file("id")->checkpoint()->id == 2);
-            CHECK(model.file("id")->reviewed()->revision.id == 1);
+            CHECK(*model.file("id")->publication().checkpoint() == 2);
+            CHECK(model.file("id")->publication().reviewed()->revision == 1);
             CHECK(!role(model, SessionModel::UnsavedRole).toBool()
                   && role(model, SessionModel::ReviewNeededRole).toBool());
             CHECK(!model.canFinish() && model.resolvedFiles() == 0 && !model.finishBlockers().isEmpty());
-            const auto &written = model.file("id")->written();
-            CHECK(outcome == Outcome::Succeeded ? written && written->id == 1 : !written);
+            const auto &written = model.file("id")->publication().written();
+            CHECK(outcome == Outcome::Succeeded ? written == RevisionId{1} : !written);
         });
     }
     return suite.report();

@@ -2,6 +2,7 @@
 // reports a record per metric. A worker never reports a truncated or unfinished action as
 // completed.
 #include "core/Correspondence.h"
+#include "core/ExactLineCorrespondence.h"
 #include "core/FileSnapshot.h"
 #include "fixtures/FixtureGit.h"
 #include "fixtures/performance/WorkloadText.h"
@@ -119,7 +120,8 @@ int correspondenceWorker(const WorkerArgs &args)
     bool emittedConstruct = false;
     try {
         const auto started = std::chrono::steady_clock::now();
-        branch_truce::CorrespondenceMap map(1, std::make_shared<const branch_truce::FileSnapshots>(snapshots), result);
+        branch_truce::CorrespondenceMap map(1, std::make_shared<const branch_truce::FileSnapshots>(snapshots), result,
+                                            std::make_shared<const branch_truce::ExactLineCorrespondence>());
         auto construct = record("construct");
         construct.elapsedMs = since(started);
         construct.rssKb = vmHwmKb();

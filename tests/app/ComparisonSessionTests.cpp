@@ -51,25 +51,27 @@ void comparison_scene::addSessionCases(Groups groups)
         CHECK(fixture.text().toStdString() == saved.text);
         CHECK(fixture.controller.feedback()->message()
               == "Discarded unsaved changes. Draft saved in Branch Truce; repository file unchanged.");
-        CHECK(!fixture.file().facts().unsaved && !fixture.file().written() && !fixture.file().staged());
+        CHECK(!fixture.file().facts().unsaved && !fixture.file().publication().written()
+              && !fixture.file().publication().staged());
         const auto committed = store.read();
         CHECK(committed.succeeded && committed.transactions.size() == records);
         // The retry committed the discard's one transaction, not another.
         CHECK(committed.transactions.back().id == request);
         const auto replay = replayRecovery(storage::RecoveryStore(fixture.controller.store()->recoveryDirectory()));
         CHECK(replay.succeeded && replay.files.front().current().draft == saved);
-        CHECK(!replay.files.front().written() && !replay.files.front().staged());
+        CHECK(!replay.files.front().publication().written() && !replay.files.front().publication().staged());
     });
     scenes.run("Mark resolved confirms, rejects a stale revision and keeps a failed write visible", [] {
         Fixture fixture;
         const auto text = fixture.text();
-        CHECK(fixture.file().facts().undecided > 0 && fixture.file().facts().unsaved && !fixture.file().reviewed());
+        CHECK(fixture.file().facts().undecided > 0 && fixture.file().facts().unsaved
+              && !fixture.file().publication().reviewed());
         CHECK(fixture.item("markResolved")->isVisible() && fixture.item("markResolved")->isEnabled());
         CHECK(!fixture.item("resolutionNotice")->isVisible());
         fixture.click("markResolved");
         CHECK(fixture.controller.commands()->resolutionConfirmation());
         CHECK(fixture.controller.feedback()->message().contains(QStringLiteral("intentional")));
-        CHECK(fixture.text() == text && !fixture.file().reviewed() && fixture.file().facts().unsaved);
+        CHECK(fixture.text() == text && !fixture.file().publication().reviewed() && fixture.file().facts().unsaved);
         test_support::waitForLayout(fixture.window, QStringLiteral("confirmResolution"), 60);
         test_support::waitForLayout(fixture.window, QStringLiteral("cancelResolution"), 60);
         fixture.clickLaidOut("cancelResolution");
@@ -78,14 +80,15 @@ void comparison_scene::addSessionCases(Groups groups)
         CHECK(fixture.text() == text && fixture.file().current().draft.text == text.toStdString());
         CHECK(!fixture.controller.commands()->markResolved(QStringLiteral("choices"), QStringLiteral("999"), true));
         CHECK(fixture.controller.feedback()->message().contains(QStringLiteral("changed")));
-        CHECK(fixture.text() == text && !fixture.file().reviewed() && !fixture.file().facts().resolved);
+        CHECK(fixture.text() == text && !fixture.file().publication().reviewed() && !fixture.file().facts().resolved);
         fixture.click("markResolved");
         fixture.clickLaidOut("confirmResolution");
         settle(
             [&] { return fixture.controller.selectedFile()->status() == QStringLiteral("Repository write failed"); });
         CHECK(fixture.text() == text);
-        CHECK(fixture.file().reviewed() && fixture.file().checkpoint() && !fixture.file().written());
-        CHECK(!fixture.file().facts().resolved && !fixture.file().staged());
+        CHECK(fixture.file().publication().reviewed() && fixture.file().publication().checkpoint()
+              && !fixture.file().publication().written());
+        CHECK(!fixture.file().facts().resolved && !fixture.file().publication().staged());
         settle([&] { return fixture.item("fileFailureNotice")->isVisible(); });
         CHECK(fixture.item("fileFailureNotice")
                   ->property("text")
@@ -105,7 +108,8 @@ void comparison_scene::addSessionCases(Groups groups)
         CHECK(files->recordStage("published", 1, Outcome::Succeeded, "verified-object", "100644")
               == Transition::Applied);
         CHECK(files->file("published")->facts().resolved);
-        CHECK(files->appendFile(FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+        CHECK(files->appendFile(FileSession("outside", "diagram.png", {},
+                                            {.support = Support::OutsideApp, .supportDetail = "image content"})));
 
         auto *dialog = fixture.object("handoffDialog");
         const auto opened = [&] { return dialog->property("opened").toBool(); };
@@ -208,8 +212,8 @@ void comparison_scene::addSessionCases(Groups groups)
         }();
         auto sources = *test_support::choiceFile("x\n", "x\n", large).snapshots();
         sources.path = "large.txt";
-        CHECK(fixture.controller.store()->appendFile(
-            FileSession("large", "large.txt", {large, {}, 0}, Support::Supported, {}, std::move(sources), true)));
+        CHECK(fixture.controller.store()->appendFile(FileSession(
+            "large", "large.txt", {large, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true})));
         const auto *held = fixture.controller.store()->file("large");
         CHECK(held && held->support() == Support::LargeFile && !held->correspondence());
         CHECK(fixture.controller.selection()->select(QStringLiteral("large")));
@@ -255,8 +259,8 @@ void comparison_scene::addSessionCases(Groups groups)
         auto sources = *test_support::choiceFile().snapshots();
         sources.path = path;
         const auto launch = sources.launchResult.text.utf8;
-        CHECK(fixture.controller.store()->appendFile(
-            FileSession("crafted", path, {launch, {}, 0}, Support::Supported, {}, std::move(sources), true)));
+        CHECK(fixture.controller.store()->appendFile(FileSession(
+            "crafted", path, {launch, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true})));
         const auto shown = fixture.controller.files()->displayPath("crafted");
         CHECK(shown.toStdString() == path);
         CHECK(fixture.controller.selection()->select("crafted"));

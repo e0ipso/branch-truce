@@ -4,6 +4,7 @@
 #include "ByteRanges.h"
 #include "FileSnapshot.h"
 #include "RevisionId.h"
+#include "Utf8.h"
 #include <map>
 #include <memory>
 #include <optional>
@@ -38,20 +39,21 @@ struct Passage {
 // - compare is deterministic, keeps no state between calls and may run on
 //   several threads at once.
 // - It fails only by throwing std::bad_alloc.
+// - identity() names it. Choice and decision IDs come from the passages it
+//   returns, so recovery journals record the name and replay refuses a
+//   journal another algorithm wrote. Two implementations, or two versions of
+//   one, that can return different passages for the same texts have
+//   different names.
 class CorrespondenceAlgorithm {
 public:
     virtual ~CorrespondenceAlgorithm() = default;
     [[nodiscard]] virtual std::vector<Passage> compare(std::string_view source, std::string_view result) const = 0;
+    [[nodiscard]] virtual std::string_view identity() const noexcept = 0;
 };
 
-// Exact line LCS, retaining only matches shared by every optimal alignment.
-// See Correspondence.md for the cost, conservative range policy and evidence.
-// Called directly, it also rejects text outside the contract's inputs with
-// std::invalid_argument.
-class ExactLineCorrespondence final : public CorrespondenceAlgorithm {
-public:
-    [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override;
-};
+// Throws std::invalid_argument unless `text` is valid UTF-8 inside the text
+// envelope: the input contract above.
+void requireComparable(std::string_view text);
 
 struct SourceAnchor {
     std::string contributionId;
@@ -92,6 +94,10 @@ struct ResultEdit {
     bool operator==(const ResultEdit &) const = default;
 };
 
+// When an edited map aligns its sources with the new text again: at once, or
+// later through realigned(), so the caller can do that work on another thread.
+enum class Realignment { Now, Deferred };
+
 // Part of a range a choice rebuilds: `span` without the `dropped` ranges inside
 // it, which are disjoint and in text order.
 struct KeptSpan {
@@ -99,9 +105,6 @@ struct KeptSpan {
     std::vector<ByteRange> dropped;
     bool operator==(const KeptSpan &) const = default;
 };
-
-[[nodiscard]] bool validUtf8(std::string_view text) noexcept;
-[[nodiscard]] bool validByteRange(std::string_view text, ByteRange range) noexcept;
 
 // A value snapshot, stored with its result transaction. Recomputing passage
 // navigation never reattaches an issued anchor by searching for similar text.
@@ -112,10 +115,10 @@ struct KeptSpan {
 // source texts, and const members may run on several threads at once.
 class CorrespondenceMap {
 public:
-    // Aligns each captured source with `result`. The map shares `sources`
-    // instead of copying their text.
+    // Aligns each captured source with `result` through `algorithm`. The map
+    // shares `sources` instead of copying their text.
     CorrespondenceMap(RevisionId revision, std::shared_ptr<const FileSnapshots> sources, std::string result,
-                      std::shared_ptr<const CorrespondenceAlgorithm> algorithm = {});
+                      std::shared_ptr<const CorrespondenceAlgorithm> algorithm);
 
     [[nodiscard]] RevisionId revision() const noexcept { return revision_; }
     [[nodiscard]] const std::string &text() const noexcept { return text_; }
@@ -133,8 +136,24 @@ public:
     // edge of dropped text stays ambiguous.
     void settle(SourceSide side, const std::vector<ByteRange> &dropped);
     [[nodiscard]] CorrespondenceMap atRevision(RevisionId revision) const;
+    // The map after `edit`. Its anchors, hand edits and text follow the edit
+    // at once. With Realignment::Deferred the passages are provisional
+    // instead of aligned again: those before and after the edited lines keep
+    // their alignment, shifted, and the edited lines with every passage they
+    // touch become one Ambiguous passage. That costs time in proportion to the
+    // passages, not to the product of line counts.
     [[nodiscard]] CorrespondenceMap edited(RevisionId revision, const ResultEdit &edit, bool manual = true,
-                                           const std::string &selectedAnchor = {}) const;
+                                           const std::string &selectedAnchor = {},
+                                           Realignment realignment = Realignment::Now) const;
+    // False while the passages are provisional, after a deferred edit.
+    [[nodiscard]] bool aligned() const noexcept { return aligned_; }
+    // This map with every source aligned with its text again: the map a
+    // Realignment::Now edit would have built. Const and pure, so a worker
+    // thread may run it while others read this map. Throws std::bad_alloc.
+    [[nodiscard]] CorrespondenceMap realigned() const;
+    // Whether `other` is this map with its passages aligned again: the same
+    // revision, text, anchors and hand edits.
+    [[nodiscard]] bool sameAnchors(const CorrespondenceMap &other) const;
     // A choice that replaces `range` with the text its `spans` keep, in the
     // given order. An anchor inside a span keeps its place in that span's text,
     // and one on exactly a dropped range is left empty where that range was.
@@ -160,6 +179,9 @@ public:
 
 private:
     void align();
+    // Provisional passages after `edit` replaced its range of the old text with
+    // `inserted` bytes.
+    void shiftPassages(std::string_view old, ByteRange edit, std::size_t inserted);
     RevisionId revision_;
     std::shared_ptr<const FileSnapshots> sources_;
     std::shared_ptr<const CorrespondenceAlgorithm> algorithm_;
@@ -171,6 +193,7 @@ private:
     std::shared_ptr<const std::vector<std::size_t>> resultLines_;
     std::map<std::string, ResultAnchor> anchors_;
     std::vector<ByteRange> handEditedRanges_;
+    bool aligned_ = true;
 };
 
 }

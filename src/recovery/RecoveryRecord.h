@@ -57,8 +57,12 @@ public:
     [[nodiscard]] std::string supportDetail() const;
     // The captures an open record stores; empty for a file without them.
     [[nodiscard]] std::optional<FileSnapshots> snapshots() const;
+    // The identity of the correspondence algorithm an open record's session aligned with.
+    [[nodiscard]] std::string alignment() const;
     // The current draft. previousText is the current text before this record.
     [[nodiscard]] Draft draft(std::string_view previousText) const;
+    // The current revision as the record names it, with its draft and hand edits.
+    [[nodiscard]] RecordedRevision revision(std::string_view previousText) const;
     [[nodiscard]] std::set<std::string> handEdited() const;
     [[nodiscard]] std::vector<ByteRange> handEditedRanges() const;
     [[nodiscard]] bool reviewConfirmedUndecided() const;

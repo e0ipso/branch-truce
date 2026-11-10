@@ -14,6 +14,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace branch_truce {
@@ -30,6 +31,43 @@ struct EditingCommand {
     bool operator==(const EditingCommand &) const = default;
 };
 
+// A revision a recovery journal recorded: its id, the id of the revision whose
+// result text it repeats, its draft and its hand-edited anchors and ranges.
+struct RecordedRevision {
+    RevisionId id = 0;
+    RevisionId result = 0;
+    Draft draft;
+    std::set<std::string> handEdited;
+    std::vector<ByteRange> handEditedRanges;
+};
+
+// How a FileSession opens its launch text.
+struct FileLaunch {
+    // The adapter's support decision and its explanation.
+    Support support = Support::Supported;
+    std::string supportDetail = {};
+    // The immutable captures of the sources and the launch result, if any.
+    std::optional<FileSnapshots> snapshots = std::nullopt;
+    // Adds an undecided decision for every choice scope to the launch draft,
+    // as a new load does; recovery replays the decisions it recorded instead.
+    bool initializeChoices = false;
+    // Aligns the captured sources with the result and the two sides with each
+    // other; without one, ExactLineCorrespondence does. This is the engine's
+    // only default alignment.
+    std::shared_ptr<const CorrespondenceAlgorithm> algorithm = {};
+};
+
+// How editResult records an edit.
+struct EditOptions {
+    // Deferred leaves the passages provisional for a worker to align (see
+    // FileSession).
+    Realignment realignment = Realignment::Now;
+    // Joins the edit to the current undo entry, so one undo takes back a burst
+    // of typing and a recovery journal can record the burst once. The first
+    // entry, where the history starts, is never joined.
+    bool join = false;
+};
+
 // One file's editing session: its immutable captured sources, the revisions
 // of its result and the publication outcomes adapters report. It performs no
 // I/O. Success callbacks must come from adapters that have persisted or
@@ -39,17 +77,25 @@ struct EditingCommand {
 // change once stored, so a copy costs pointers rather than text. A session is
 // not synchronized: one thread at a time may use it, and a session built on a
 // worker thread may be handed to another thread once.
+//
+// Aligning the sources with an edited result costs time in proportion to the
+// product of their line counts, so an editor can defer it. The owning thread
+// edits with Realignment::Deferred and hands pendingAlignment() to a worker.
+// That map is immutable and shared, so the worker may call realigned() on it
+// while the owner keeps editing; the worker touches no session. The owner then
+// passes the result to installAlignment(), which keeps it only if the revision
+// it was made for is still current. Until then the revision's passages are
+// provisional (see CorrespondenceMap::edited), and so are the marker scan and
+// the word differences built from them.
 class FileSession {
 public:
-    // `algorithm` aligns the captured sources with the result and the two
-    // sides with each other; without one, ExactLineCorrespondence does.
-    FileSession(std::string id, std::string path, Draft initial, Support support = Support::Supported,
-                std::string supportDetail = {}, std::optional<FileSnapshots> snapshots = std::nullopt,
-                bool initializeChoices = false, std::shared_ptr<const CorrespondenceAlgorithm> algorithm = {});
+    FileSession(std::string id, std::string path, Draft initial, FileLaunch options = {});
 
     [[nodiscard]] const std::string &id() const noexcept { return id_; }
     [[nodiscard]] const std::string &path() const noexcept { return path_; }
     [[nodiscard]] Support support() const noexcept { return support_; }
+    // The alignment the session's choices and decision IDs come from.
+    [[nodiscard]] const CorrespondenceAlgorithm &algorithm() const noexcept { return *algorithm_; }
     // The adapter's explanation of its support decision, if it gave one.
     [[nodiscard]] const std::string &supportDetail() const noexcept { return supportDetail_; }
     // Why the session itself held the file back, if it did.
@@ -76,41 +122,47 @@ public:
     // in text order. A block whose marker lines or base text no launch block
     // has is orphaned.
     [[nodiscard]] std::vector<MarkerSection> markerSections() const;
-    // True when the command decides the last open contribution of a marker
-    // section, so applying it also removes that block's marker lines.
-    [[nodiscard]] bool completesMarkers(const EditingCommand &command) const;
+    // Ties the blocks of this session's results to its choice sections. It
+    // refers to the session, so it is valid only while the session is unchanged.
+    [[nodiscard]] MarkerPlanner planner() const noexcept;
     [[nodiscard]] const std::vector<ChoiceTarget> &choices() const noexcept { return catalogue().targets(); }
     [[nodiscard]] const ChoiceCatalogue &catalogue() const noexcept;
     [[nodiscard]] const std::vector<NonConflictingTarget> &nonConflictingTargets() const noexcept;
-    [[nodiscard]] const std::optional<Revision> &checkpoint() const noexcept { return publication_.checkpoint(); }
-    [[nodiscard]] const std::optional<Review> &reviewed() const noexcept { return publication_.reviewed(); }
-    [[nodiscard]] const std::optional<Revision> &written() const noexcept { return publication_.written(); }
-    [[nodiscard]] const std::optional<StagedResult> &staged() const noexcept { return publication_.staged(); }
-    [[nodiscard]] const std::optional<OperationOutcome> &checkpointOutcome() const noexcept
-    {
-        return publication_.checkpointOutcome();
-    }
-    [[nodiscard]] const std::optional<OperationOutcome> &writeOutcome() const noexcept
-    {
-        return publication_.writeOutcome();
-    }
-    [[nodiscard]] const std::optional<OperationOutcome> &stageOutcome() const noexcept
-    {
-        return publication_.stageOutcome();
-    }
+    // The Save, review, write and stage outcomes adapters reported, naming
+    // revisions by id. Every revision it names stays stored.
+    [[nodiscard]] const PublicationState &publication() const noexcept { return publication_; }
+    // A stored revision: the current one, an undo history entry, the launch
+    // revision or one the publication state names. Null once it is dropped.
+    [[nodiscard]] const Revision *revision(RevisionId id) const noexcept { return history_.find(id); }
     [[nodiscard]] bool canUndo() const noexcept { return history_.canUndo(); }
     [[nodiscard]] bool canRedo() const noexcept { return history_.canRedo(); }
     [[nodiscard]] FileFacts facts() const;
 
     // Each editing transaction carries text and decisions together. Stale
-    // editor commands cannot overwrite a later revision. Changed ranges count
-    // as hand edits unless recovery replay supplies its recorded anchors and
-    // hand-edited result ranges. The text must be UTF-8 with LF line endings.
-    // Decision keys are the caller's recorded vocabulary and need no anchor.
-    Transition replaceDraft(RevisionId expected, const Draft &draft,
-                            const std::optional<std::set<std::string>> &handEdited = std::nullopt,
-                            std::vector<ByteRange> handEditedRanges = {});
-    Transition editResult(RevisionId expected, const ResultEdit &edit);
+    // editor commands cannot overwrite a later revision. A whole-buffer update
+    // has no edit location, so ranges its comparison changed count as hand
+    // edits. The text must be UTF-8 with LF line endings. Decision keys are
+    // the caller's recorded vocabulary and need no anchor.
+    Transition replaceDraft(RevisionId expected, const Draft &draft);
+    // Restores a revision a recovery journal recorded, in one step however
+    // many commands made it, so a journal can record only the last revision
+    // of a burst of edits. Its id is at least the next revision id; its result
+    // id is its own, or the current one's when the text is unchanged
+    // (InvalidOutcome otherwise). The recorded hand-edit flags and ranges
+    // replace the ones the comparison derives (InvalidAnchor if they do not
+    // fit). Text and decisions are checked as replaceDraft checks them.
+    Transition replayDraft(RevisionId expected, const RecordedRevision &recorded);
+    Transition editResult(RevisionId expected, const ResultEdit &edit, EditOptions options = {});
+    // The current revision's correspondence while its passages are
+    // provisional, or null. Safe to read from any thread.
+    [[nodiscard]] std::shared_ptr<const CorrespondenceMap> pendingAlignment() const noexcept;
+    // Replaces the current revision's provisional passages with `aligned`, a
+    // map pendingAlignment() returned for `revision` and realigned() built.
+    // The revision keeps its id, text, decisions and anchors; its marker scan
+    // is counted again. StaleRevision once another revision is current or the
+    // passages are no longer pending; InvalidAnchor for a map of other anchors.
+    // Recovery records hold nothing it changes.
+    Transition installAlignment(RevisionId revision, std::shared_ptr<const CorrespondenceMap> aligned);
     // Decision keys of a command must name a registered anchor.
     Transition applyCommand(const EditingCommand &command, bool confirmReplacement = false);
     Transition undo(RevisionId expected);
@@ -131,12 +183,27 @@ public:
     Transition recordStage(RevisionId revision, Outcome outcome, std::string objectId = {}, std::string mode = {},
                            std::string detail = {});
     // An adapter's own support decision, which replaces any load failure.
+    // An adapter may hold a file back as OutsideApp or Unreadable at any
+    // time. Supported admits a file it held back only if the session's own
+    // checks pass, as they do at launch, and aligns a captured file whose
+    // launch revision is still untouched; otherwise the result is Blocked.
+    // A hold the session made itself (loadFailure()) is never lifted here,
+    // and LargeFile is the session's decision, so it is InvalidOutcome.
     Transition setSupport(Support support, std::string detail = {});
     // Opens a LargeFile session as it would have opened below the line
     // threshold. The loaded text gets a fresh revision and an empty history.
     Transition loadLargeFile();
 
 private:
+    // Why the session holds a text back instead of editing it.
+    struct Hold {
+        Support support;
+        LoadFailure failure;
+    };
+    // The hold for `text` when an adapter decided `support`, or nothing when
+    // the session can open it that way. Only a file the app edits has its
+    // captures and line count checked.
+    [[nodiscard]] std::optional<Hold> holdFor(std::string_view text, Support support) const;
     // Everything opening a launch text derives, built before any member
     // changes so a failure leaves the session as it was.
     struct Launch {
@@ -147,14 +214,27 @@ private:
         std::shared_ptr<const LaunchFrames> launchFrames;
         RevisionHistory history;
     };
-    [[nodiscard]] Launch launch(RevisionId revision, Draft initial, bool correspond, bool initializeChoices) const;
+    // A Supported launch of a captured file is aligned; any other is not.
+    [[nodiscard]] Launch launch(RevisionId revision, Draft initial, Support support, std::optional<LoadFailure> failure,
+                                bool initializeChoices) const;
     void open(Launch opened) noexcept;
-    // The revision after the current one with this draft. Without a mapping
-    // the current one is recomputed against the new text.
-    [[nodiscard]] Revision successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence = {}) const;
+    // The launch revision is the only one and no outcome was recorded, so
+    // opening the text again loses nothing.
+    [[nodiscard]] bool launchUntouched() const noexcept;
+    // Makes `next` the publication state and keeps every revision it names.
+    void adopt(PublicationState next);
+    // The untouched launch revision of a captured file opened again as
+    // Supported and aligned, or nothing when it is no longer untouched.
+    [[nodiscard]] std::optional<Launch> relaunchSupported() const;
+    // The revision after the current one with this draft, numbered `id` or
+    // the next id. Without a mapping the current one is recomputed against
+    // the new text.
+    [[nodiscard]] Revision successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence = {},
+                                     std::optional<RevisionId> id = std::nullopt) const;
+    // Why a draft cannot replace the current one, or Applied.
+    [[nodiscard]] Transition validateDraft(RevisionId expected, const Draft &draft) const;
     // A fresh revision repeating `revision`'s text, decisions and mapping.
     [[nodiscard]] Revision restored(const Revision &revision) const;
-    [[nodiscard]] MarkerPlanner planner() const noexcept;
     [[nodiscard]] Transition validateCommand(const EditingCommand &command, const std::vector<ResultEdit> &edits,
                                              bool confirmReplacement) const;
     [[nodiscard]] Transition validateTarget(const ResultAnchor &target) const;

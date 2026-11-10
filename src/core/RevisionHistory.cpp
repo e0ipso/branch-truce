@@ -3,7 +3,9 @@
 #include "ResourceLimits.h"
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace branch_truce {
 namespace {
@@ -30,15 +32,22 @@ const Revision *RevisionHistory::find(RevisionId id) const noexcept
 
 void RevisionHistory::publish(Revision revision, Step step)
 {
-    if (revision.id != next_) throw std::logic_error("A published revision must take the next revision id");
+    if (revision.id < next_ || revision.id == std::numeric_limits<RevisionId>::max())
+        throw std::logic_error("A published revision must take a new revision id");
     if ((step == Step::Undo && !canUndo()) || (step == Step::Redo && !canRedo()))
         throw std::logic_error("No history entry to move to");
+    // Everything that allocates comes first, so a failure changes nothing.
     auto stored = std::make_shared<const Revision>(std::move(revision));
+    if (step == Step::Edit || step == Step::Join) entries_.reserve(cursor_ + 2);
     revisions_.emplace(stored->id, stored);
     current_ = std::move(stored);
-    ++next_;
+    next_ = current_->id + 1;
     switch (step) {
     case Step::Edit: append(current_->id); break;
+    case Step::Join:
+        if (cursor_ > 0) --cursor_;
+        append(current_->id);
+        break;
     case Step::Undo: --cursor_; break;
     case Step::Redo: ++cursor_; break;
     }
@@ -47,6 +56,7 @@ void RevisionHistory::publish(Revision revision, Step step)
 
 void RevisionHistory::reopen(const Revision &revision)
 {
+    entries_.reserve(cursor_ + 2);
     auto found = revisions_.find(revision.id);
     if (found == revisions_.end())
         found = revisions_.emplace(revision.id, std::make_shared<const Revision>(revision)).first;
@@ -55,17 +65,34 @@ void RevisionHistory::reopen(const Revision &revision)
     prune();
 }
 
-void RevisionHistory::append(RevisionId id)
+void RevisionHistory::append(RevisionId id) noexcept
 {
+    // The caller reserved room for the new entry.
     entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(cursor_ + 1), entries_.end());
     entries_.push_back(id);
     cursor_ = entries_.size() - 1;
 }
 
-void RevisionHistory::prune()
+void RevisionHistory::replaceCurrent(Revision revision)
+{
+    if (revision.id != current_->id) throw std::logic_error("A replacement must keep the current revision id");
+    auto stored = std::make_shared<const Revision>(std::move(revision));
+    revisions_.at(stored->id) = stored;
+    current_ = std::move(stored);
+    prune();
+}
+
+void RevisionHistory::hold(std::vector<RevisionId> ids) noexcept
+{
+    held_ = std::move(ids);
+    prune();
+}
+
+void RevisionHistory::prune() noexcept
 {
     const auto reachable = [&](RevisionId id) {
-        return id == launch_ || id == current_->id || std::find(entries_.begin(), entries_.end(), id) != entries_.end();
+        return id == launch_ || id == current_->id || std::find(entries_.begin(), entries_.end(), id) != entries_.end()
+            || std::find(held_.begin(), held_.end(), id) != held_.end();
     };
     const auto total = [&] {
         std::size_t bytes = 0;

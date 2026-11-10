@@ -218,8 +218,8 @@ int main(int argc, char **argv)
         CHECK(model.appendFile(recoverableFile()));
         auto captures = *recoverableFile().snapshots();
         captures.path = "other.txt";
-        CHECK(model.appendFile(FileSession("other", captures.path, draft(captures.launchResult.text.utf8),
-                                           Support::Supported, {}, captures)));
+        CHECK(model.appendFile(
+            FileSession("other", captures.path, draft(captures.launchResult.text.utf8), {.snapshots = captures})));
         preparePublication(model, "recoverable", false);
         preparePublication(model, "other", false);
         recordIntent(model, "recoverable", MutationKind::Publication);
@@ -255,8 +255,10 @@ int main(int argc, char **argv)
                 const auto replay = replayedFile(model.recoveryDirectory());
                 CHECK(replay.current().draft == expected);
                 CHECK(replay.current().id == model.file("choices")->current().id);
-                CHECK(replay.checkpoint() && replay.checkpoint()->draft == before);
-                CHECK(!replay.reviewed() && !replay.written() && !replay.staged() && !replay.facts().resolved);
+                CHECK(replay.publication().checkpoint()
+                      && replay.revision(*replay.publication().checkpoint())->draft == before);
+                CHECK(!replay.publication().reviewed() && !replay.publication().written()
+                      && !replay.publication().staged() && !replay.facts().resolved);
             };
             CHECK(chosen != before);
             check(chosen);
@@ -328,7 +330,7 @@ int main(int argc, char **argv)
                 }
                 const auto restored = replayedFile(location);
                 CHECK(restored.current().draft == retained && restored.current().draft != unsavedDraft());
-                CHECK(restored.checkpoint().has_value() == (checkpoint != 0));
+                CHECK(restored.publication().checkpoint().has_value() == (checkpoint != 0));
                 CHECK(restored.facts().resolved == (checkpoint == 2));
                 CHECK(replayedFile(location).current().draft == retained);
             });
@@ -394,15 +396,17 @@ int main(int argc, char **argv)
             const storage::RecoveryStore reopened(location);
             const auto restored = replayedFile(location);
             CHECK(restored.current().id == 4 && restored.current().draft == finalDecision());
-            CHECK(restored.checkpoint() && restored.checkpoint()->draft == savedDraft());
+            CHECK(restored.publication().checkpoint()
+                  && restored.revision(*restored.publication().checkpoint())->draft == savedDraft());
             CHECK(restored.facts().unsaved && !restored.facts().resolved);
-            CHECK(!restored.reviewed() && !restored.written() && !restored.staged());
+            CHECK(!restored.publication().reviewed() && !restored.publication().written()
+                  && !restored.publication().staged());
             CHECK(restored.current().draft.decisions.size() == 3);
             const auto recovered = reopened.read();
             CHECK(recovered.succeeded && !recovered.incompleteTail && recovered.transactions.size() == 5);
             const auto last = recovered.transactions.back().state;
             const auto current = last.value("current").toObject();
-            CHECK(last.value("schema").toInt() == 2 && !recovered.transactions.back().id.isEmpty());
+            CHECK(last.value("schema").toInt() == 3 && !recovered.transactions.back().id.isEmpty());
             CHECK(current.value("id") == "4" && current.value("result") == "3");
             checkDraft(test_support::recordedDrafts(reopened).back(), finalDecision());
             const auto checkpoint = last.value("checkpoint").toObject();
@@ -471,7 +475,7 @@ int main(int argc, char **argv)
         CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::Durable);
         CHECK(role(model, SessionModel::RecoveryErrorRole).toString().isEmpty());
-        CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->checkpoint());
+        CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().checkpoint());
         const auto after = store.read();
         CHECK(after.succeeded && after.transactions.size() == 2 && after.transactions.back().id == request);
         checkDraft(test_support::recordedDrafts(store).back(), unsavedDraft());
@@ -585,19 +589,22 @@ int main(int argc, char **argv)
         TestSession model(directory.path() + "/recovery", faults);
         CHECK(model.appendFile(recoverableFile()));
         CHECK(model.replaceDraft("recoverable", 1, savedDraft()) == Transition::Applied);
-        CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->checkpoint());
+        CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().checkpoint());
         const auto savedRevision = model.file("recoverable")->current().id;
         CHECK(model.recordCheckpoint("recoverable", savedRevision, Outcome::Succeeded) == Transition::Applied);
-        CHECK(model.file("recoverable")->checkpoint()
-              && model.file("recoverable")->checkpoint()->draft == savedDraft());
-        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->written()
-              && !model.file("recoverable")->staged() && !model.file("recoverable")->reviewed());
+        CHECK(model.file("recoverable")->publication().checkpoint()
+              && model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+                  == savedDraft());
+        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().written()
+              && !model.file("recoverable")->publication().staged()
+              && !model.file("recoverable")->publication().reviewed());
         CHECK(role(model, SessionModel::StatusRole).toString()
               == "Draft saved in Branch Truce; repository file unchanged");
         CHECK(model.replaceDraft("recoverable", savedRevision, unsavedDraft()) == Transition::Applied);
         const auto discardedRevision = model.file("recoverable")->current().id;
         CHECK(model.file("recoverable")->facts().unsaved
-              && model.file("recoverable")->checkpoint()->draft == savedDraft());
+              && model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+                  == savedDraft());
         {
             const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
             CHECK(model.discardToCheckpoint("recoverable", discardedRevision) == Transition::Blocked);
@@ -608,8 +615,8 @@ int main(int argc, char **argv)
               == FileStates::RecoveryState::Failed);
         CHECK(model.retryPendingRecovery("recoverable"));
         CHECK(model.file("recoverable")->current().draft == savedDraft());
-        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->written()
-              && !model.file("recoverable")->staged());
+        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().written()
+              && !model.file("recoverable")->publication().staged());
         storage::RecoveryStore store(model.recoveryDirectory());
         auto read = store.read();
         CHECK(read.succeeded && read.transactions.back().state.value("action") == "discard-to-checkpoint");
@@ -633,8 +640,9 @@ int main(int argc, char **argv)
         CHECK(sawManualSave && sawLaterEdit);
         const auto restored = replayedFile(model.recoveryDirectory());
         CHECK(restored.current().draft == savedDraft() && restored.current().draft != unsavedDraft());
-        CHECK(restored.checkpoint() && restored.checkpoint()->draft == savedDraft());
-        CHECK(!restored.facts().unsaved && !restored.written() && !restored.staged());
+        CHECK(restored.publication().checkpoint()
+              && restored.revision(*restored.publication().checkpoint())->draft == savedDraft());
+        CHECK(!restored.facts().unsaved && !restored.publication().written() && !restored.publication().staged());
 
         CHECK(model.replaceDraft("recoverable", model.file("recoverable")->current().id, unsavedDraft())
               == Transition::Applied);
@@ -647,7 +655,8 @@ int main(int argc, char **argv)
         }
         CHECK(model.file("recoverable")->current().id == edited.current().id);
         CHECK(model.file("recoverable")->current().draft == unsavedDraft());
-        CHECK(model.file("recoverable")->checkpoint()->draft == savedDraft());
+        CHECK(model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+              == savedDraft());
         CHECK(model.file("recoverable")->facts().unsaved);
         CHECK(role(model, SessionModel::StatusRole).toString() == "Draft save failed");
         CHECK(role(model, SessionModel::UnsavedRole).toBool());
@@ -657,12 +666,15 @@ int main(int argc, char **argv)
         CHECK(role(model, SessionModel::FinishBlockersRole)
                   .toStringList()
                   .contains("Draft save failed; the edited result is still available"));
-        CHECK(!model.file("recoverable")->written() && !model.file("recoverable")->staged());
+        CHECK(!model.file("recoverable")->publication().written()
+              && !model.file("recoverable")->publication().staged());
         CHECK(model.discardToCheckpoint("recoverable", edited.current().id) == Transition::Blocked);
         CHECK(model.retryPendingRecovery("recoverable"));
-        CHECK(!model.hasPendingRecovery() && model.file("recoverable")->checkpoint()->draft == unsavedDraft());
-        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->written()
-              && !model.file("recoverable")->staged());
+        CHECK(!model.hasPendingRecovery()
+              && model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+                  == unsavedDraft());
+        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().written()
+              && !model.file("recoverable")->publication().staged());
         CHECK(role(model, SessionModel::StatusRole).toString()
               == "Draft saved in Branch Truce; repository file unchanged");
         read = storage::RecoveryStore(model.recoveryDirectory()).read();
@@ -670,8 +682,9 @@ int main(int argc, char **argv)
         CHECK(read.transactions.back().state.value("written").isNull()
               && read.transactions.back().state.value("staged").isNull());
         const auto retried = replayedFile(model.recoveryDirectory());
-        CHECK(retried.current().draft == unsavedDraft() && retried.checkpoint()
-              && retried.checkpoint()->draft == unsavedDraft() && !retried.written() && !retried.staged());
+        CHECK(retried.current().draft == unsavedDraft() && retried.publication().checkpoint()
+              && retried.revision(*retried.publication().checkpoint())->draft == unsavedDraft()
+              && !retried.publication().written() && !retried.publication().staged());
     });
     suite.run("failed Save and discard reuse one transaction and block the session until retry", [] {
         QTemporaryDir directory;
@@ -698,7 +711,8 @@ int main(int argc, char **argv)
         }
         CHECK(model.hasPendingRecovery() && model.file("recoverable")->current().draft == unsavedDraft());
         CHECK(model.pendingDraft("recoverable") && *model.pendingDraft("recoverable") == savedDraft());
-        CHECK(model.file("recoverable")->checkpoint()->draft == savedDraft());
+        CHECK(model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+              == savedDraft());
         CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::Failed);
         CHECK(model.replaceDraft("other", otherRevision, draft("blocked other")) == Transition::Blocked);
@@ -716,7 +730,8 @@ int main(int argc, char **argv)
         CHECK(model.retryPendingRecovery("recoverable"));
         CHECK(!model.hasPendingRecovery() && model.file("recoverable")->current().draft == savedDraft());
         CHECK(model.file("recoverable")->current().draft.decisions.at("right").value == DecisionValue::Ignored);
-        CHECK(!model.file("recoverable")->written() && !model.file("recoverable")->staged());
+        CHECK(!model.file("recoverable")->publication().written()
+              && !model.file("recoverable")->publication().staged());
         {
             const auto committed = store.read();
             CHECK(committed.succeeded && committed.transactions.size() == records);
@@ -740,9 +755,10 @@ int main(int argc, char **argv)
         CHECK(model.file("recoverable")->current().id == editedRevision);
         CHECK(model.file("recoverable")->current().draft == unsavedDraft());
         CHECK(model.pendingDraft("recoverable") && *model.pendingDraft("recoverable") == unsavedDraft());
-        CHECK(model.file("recoverable")->checkpoint()->draft == savedDraft());
-        CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->written()
-              && !model.file("recoverable")->staged());
+        CHECK(model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+              == savedDraft());
+        CHECK(model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().written()
+              && !model.file("recoverable")->publication().staged());
         CHECK(role(model, SessionModel::StatusRole).toString() == "Draft save failed");
         CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
               == FileStates::RecoveryState::SaveFailed);
@@ -764,11 +780,12 @@ int main(int argc, char **argv)
         }
         CHECK(model.retryPendingRecovery("recoverable"));
         CHECK(!model.hasPendingRecovery() && model.file("recoverable")->current().draft == unsavedDraft());
-        CHECK(model.file("recoverable")->checkpoint()
-              && model.file("recoverable")->checkpoint()->draft == unsavedDraft());
+        CHECK(model.file("recoverable")->publication().checkpoint()
+              && model.file("recoverable")->revision(*model.file("recoverable")->publication().checkpoint())->draft
+                  == unsavedDraft());
         CHECK(model.file("recoverable")->current().draft.decisions.at("right").value == DecisionValue::Accepted);
-        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->written()
-              && !model.file("recoverable")->staged());
+        CHECK(!model.file("recoverable")->facts().unsaved && !model.file("recoverable")->publication().written()
+              && !model.file("recoverable")->publication().staged());
         CHECK(role(model, SessionModel::StatusRole).toString()
               == "Draft saved in Branch Truce; repository file unchanged");
         {
@@ -787,9 +804,9 @@ int main(int argc, char **argv)
         for (const auto &file : replay.files)
             if (file.id() == "recoverable") restored = &file;
         CHECK(restored != nullptr && restored->current().draft == unsavedDraft());
-        CHECK(restored->current().draft != savedDraft() && restored->checkpoint()
-              && restored->checkpoint()->draft == unsavedDraft());
-        CHECK(!restored->facts().unsaved && !restored->written() && !restored->staged());
+        CHECK(restored->current().draft != savedDraft() && restored->publication().checkpoint()
+              && restored->revision(*restored->publication().checkpoint())->draft == unsavedDraft());
+        CHECK(!restored->facts().unsaved && !restored->publication().written() && !restored->publication().staged());
     });
     return suite.report();
 }

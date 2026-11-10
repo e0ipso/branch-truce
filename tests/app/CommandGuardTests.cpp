@@ -30,7 +30,8 @@ struct Guarded {
     {
         CHECK(directory.isValid());
         CHECK(store.appendFile(test_support::choiceFile()));
-        CHECK(store.appendFile(FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+        CHECK(store.appendFile(FileSession("outside", "diagram.png", {},
+                                           {.support = Support::OutsideApp, .supportDetail = "image content"})));
         CHECK(store.editResult("choices", 1, {{0, 0}, "edited\n"}) == Transition::Applied);
         CHECK(store.file("choices")->current().id == 2);
     }

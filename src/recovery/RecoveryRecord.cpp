@@ -7,14 +7,14 @@
 
 namespace branch_truce {
 namespace {
-constexpr int schema = 2;
+constexpr int schema = 3;
 
 // Field names, shared by the encoder and the reader.
 namespace field {
 constexpr QLatin1StringView schema("schema"), action("action"), fileId("fileId"), path("path"), support("support"),
     supportDetail("supportDetail"), snapshots("snapshots"), current("current"), checkpoint("checkpoint"),
     written("written"), reviewed("reviewed"), staged("staged"), checkpointOutcome("checkpointOutcome"),
-    writeOutcome("writeOutcome"), stageOutcome("stageOutcome"), mutation("mutation");
+    writeOutcome("writeOutcome"), stageOutcome("stageOutcome"), mutation("mutation"), alignment("alignment");
 constexpr QLatin1StringView id("id"), result("result"), text("text"), decisions("decisions"), value("value"),
     order("order"), handEdited("handEdited"), handEditedRanges("handEditedRanges"), begin("begin"), end("end"),
     prefix("prefix"), suffix("suffix"), insert("insert"), revision("revision"),
@@ -205,7 +205,11 @@ public:
     }
 };
 
-const Revision *revisionOf(const std::optional<Revision> &value) { return value ? &*value : nullptr; }
+// The stored revision a publication outcome names. The session keeps every one.
+const Revision *revisionOf(const FileSession &file, std::optional<RevisionId> id)
+{
+    return id ? file.revision(*id) : nullptr;
+}
 }
 
 storage::RecoveryTransaction recoveryTransaction(const FileSession &file, RecoveryAction action,
@@ -213,6 +217,7 @@ storage::RecoveryTransaction recoveryTransaction(const FileSession &file, Recove
                                                  const std::optional<MutationFact> &mutation)
 {
     Encoder encoder;
+    const auto &publication = file.publication();
     encoder.transaction.id = transactionId;
     auto &state = encoder.transaction.state;
     state = {{field::schema, schema},
@@ -222,21 +227,25 @@ storage::RecoveryTransaction recoveryTransaction(const FileSession &file, Recove
              {field::support, nameOf(supportNames, file.support())},
              {field::supportDetail, encoder.bytes(file.supportDetail())},
              {field::current, encoder.current(file.current(), previousText)},
-             {field::checkpoint, Encoder::revision(revisionOf(file.checkpoint()))},
-             {field::written, Encoder::revision(revisionOf(file.written()))},
-             {field::checkpointOutcome, encoder.outcome(file.checkpointOutcome())},
-             {field::writeOutcome, encoder.outcome(file.writeOutcome())},
-             {field::stageOutcome, encoder.outcome(file.stageOutcome())}};
-    if (action == RecoveryAction::Open) state.insert(field::snapshots, encoder.snapshots(file.snapshots()));
-    if (const auto &reviewed = file.reviewed())
+             {field::checkpoint, Encoder::revision(revisionOf(file, publication.checkpoint()))},
+             {field::written, Encoder::revision(revisionOf(file, publication.written()))},
+             {field::checkpointOutcome, encoder.outcome(publication.checkpointOutcome())},
+             {field::writeOutcome, encoder.outcome(publication.writeOutcome())},
+             {field::stageOutcome, encoder.outcome(publication.stageOutcome())}};
+    if (action == RecoveryAction::Open) {
+        state.insert(field::snapshots, encoder.snapshots(file.snapshots()));
+        // Decision IDs come from this algorithm's passages.
+        state.insert(field::alignment, encoder.bytes(file.algorithm().identity()));
+    }
+    if (const auto &reviewed = publication.reviewed())
         state.insert(field::reviewed,
-                     QJsonObject{{field::revision, Encoder::revision(&reviewed->revision)},
+                     QJsonObject{{field::revision, Encoder::revision(revisionOf(file, reviewed->revision))},
                                  {field::confirmedUndecided, reviewed->confirmedUndecided}});
     else
         state.insert(field::reviewed, QJsonValue::Null);
-    if (const auto &staged = file.staged())
+    if (const auto &staged = publication.staged())
         state.insert(field::staged,
-                     QJsonObject{{field::revision, Encoder::revision(&staged->revision)},
+                     QJsonObject{{field::revision, Encoder::revision(revisionOf(file, staged->revision))},
                                  {field::objectId, encoder.bytes(staged->objectId)},
                                  {field::mode, encoder.bytes(staged->mode)},
                                  {field::confirmedUndecided, staged->confirmedUndecided}});
@@ -320,6 +329,13 @@ Draft RecoveryRecordReader::draft(std::string_view previousText) const
                       "Duplicate recovered decision.");
     }
     return result;
+}
+
+RecordedRevision RecoveryRecordReader::revision(std::string_view previousText) const
+{
+    const auto current = state_.value(field::current).toObject();
+    return {number(current.value(field::id)), number(current.value(field::result)), draft(previousText), handEdited(),
+            handEditedRanges()};
 }
 
 std::set<std::string> RecoveryRecordReader::handEdited() const
@@ -429,6 +445,8 @@ std::map<std::string, std::string> RecoveryRecordReader::mapping(const QJsonValu
     }
     return result;
 }
+
+std::string RecoveryRecordReader::alignment() const { return bytes(state_.value(field::alignment)); }
 
 std::optional<FileSnapshots> RecoveryRecordReader::snapshots() const
 {

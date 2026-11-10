@@ -231,7 +231,7 @@ inline FileSession namedChoiceFile(const std::string &id)
     const auto path = id + ".txt";
     sources.path = path;
     const auto text = sources.launchResult.text.utf8;
-    return FileSession(id, path, {text, {}, 0}, Support::Supported, {}, std::move(sources), true);
+    return FileSession(id, path, {text, {}, 0}, {.snapshots = std::move(sources), .initializeChoices = true});
 }
 
 inline void clickItem(Fixture &fixture, QQuickItem *target) { test_support::clickItem(fixture.window, target); }

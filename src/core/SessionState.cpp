@@ -1,5 +1,6 @@
 // Session state keeps result revisions, decisions and undo history separate from immutable sources.
 #include "SessionState.h"
+#include "ExactLineCorrespondence.h"
 #include "ResourceLimits.h"
 
 #include <algorithm>
@@ -89,66 +90,76 @@ const ResultAnchor *targetOf(const EditingCommand &command, ByteRange range)
                                     [&](const auto &anchor) { return anchor.result == range; });
     return found == command.targets.end() ? nullptr : &*found;
 }
+
+// Runs a command whose only expected failure is running out of memory. Each
+// command builds its new revision before it changes any member, so that
+// failure leaves the session as it was. Other exceptions are defects.
+template <typename Command> Transition withinMemory(Command command)
+{
+    try {
+        return command();
+    } catch (const std::bad_alloc &) {
+        return Transition::OutOfMemory;
+    }
 }
 
-FileSession::FileSession(std::string id, std::string path, Draft initial, Support support, std::string supportDetail,
-                         std::optional<FileSnapshots> snapshots, bool initializeChoices,
-                         std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
+// The conflict-marker-size of a capture, or nothing when it is over the limit.
+std::optional<std::size_t> capturedMarkerSize(const FileSnapshots *snapshots)
+{
+    if (!snapshots) return kDefaultConflictMarkerSize;
+    const auto &attributes = snapshots->conversion.attributes;
+    const auto attribute = attributes.find("conflict-marker-size");
+    return attribute == attributes.end() ? std::optional{kDefaultConflictMarkerSize}
+                                         : conflictMarkerSize(attribute->second);
+}
+}
+
+FileSession::FileSession(std::string id, std::string path, Draft initial, FileLaunch options)
     : id_(std::move(id)),
       path_(std::move(path)),
-      support_(support),
-      supportDetail_(std::move(supportDetail)),
-      algorithm_(algorithm ? std::move(algorithm) : std::make_shared<const ExactLineCorrespondence>())
+      support_(options.support),
+      supportDetail_(std::move(options.supportDetail)),
+      algorithm_(options.algorithm ? std::move(options.algorithm) : std::make_shared<const ExactLineCorrespondence>())
 {
+    auto &snapshots = options.snapshots;
     if (id_.empty() || path_.empty()) throw std::invalid_argument("A file session needs an identity and path");
     if (snapshots) {
         if (snapshots->path != path_ || snapshots->launchResult.text.utf8 != initial.text)
             throw std::invalid_argument("Captured sources and launch result must belong to this file session");
         snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
     }
-    const auto hold = [&](Support held, LoadFailure failure) {
-        support_ = held;
-        loadFailure_ = failure;
-        open(launch(1, std::move(initial), false, false));
-    };
-    if (snapshots_) {
-        const auto &attributes = snapshots_->conversion.attributes;
-        const auto attribute = attributes.find("conflict-marker-size");
-        const auto size = attribute == attributes.end() ? std::optional{kDefaultConflictMarkerSize}
-                                                        : conflictMarkerSize(attribute->second);
-        if (!size && support_ == Support::Supported) {
-            hold(Support::OutsideApp, {LoadFailureReason::MarkerSizeTooLarge});
-            return;
-        }
-        markerSize_ = size.value_or(kDefaultConflictMarkerSize);
-    }
-    if (const auto failure =
-            textOverEnvelope(initial.text, support_ == Support::Supported ? snapshots_.get() : nullptr)) {
-        hold(Support::Unreadable, *failure);
+    markerSize_ = capturedMarkerSize(snapshots_.get()).value_or(kDefaultConflictMarkerSize);
+    if (const auto hold = holdFor(initial.text, support_)) {
+        open(launch(1, std::move(initial), hold->support, hold->failure, false));
         return;
-    }
-    if (support_ == Support::Supported
-        && (!editableText(initial.text) || (snapshots_ && !editableSources(*snapshots_)))) {
-        hold(Support::Unreadable, {LoadFailureReason::InvalidText});
-        return;
-    }
-    if (snapshots_) {
-        const auto lines = sourceLines(*snapshots_, initial.text);
-        if (lines > kLargeFileLines) {
-            hold(Support::LargeFile, {LoadFailureReason::LargeFile, {}, lines});
-            return;
-        }
     }
     // Only a file the app edits is aligned: its texts passed every check above.
-    open(launch(1, std::move(initial), support_ == Support::Supported, initializeChoices));
+    open(launch(1, std::move(initial), support_, std::nullopt, options.initializeChoices));
 }
 
-FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, bool correspond,
-                                        bool initializeChoices) const
+std::optional<FileSession::Hold> FileSession::holdFor(std::string_view text, Support support) const
 {
-    Launch result{support_, loadFailure_, {}, {}, {}, {}};
+    const bool supported = support == Support::Supported;
+    if (supported && !capturedMarkerSize(snapshots_.get()))
+        return Hold{Support::OutsideApp, {LoadFailureReason::MarkerSizeTooLarge}};
+    if (const auto failure = textOverEnvelope(text, supported ? snapshots_.get() : nullptr))
+        return Hold{Support::Unreadable, *failure};
+    if (!supported) return std::nullopt;
+    if (!editableText(text) || (snapshots_ && !editableSources(*snapshots_)))
+        return Hold{Support::Unreadable, {LoadFailureReason::InvalidText}};
+    if (snapshots_) {
+        const auto lines = sourceLines(*snapshots_, text);
+        if (lines > kLargeFileLines) return Hold{Support::LargeFile, {LoadFailureReason::LargeFile, {}, lines}};
+    }
+    return std::nullopt;
+}
+
+FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, Support support,
+                                        std::optional<LoadFailure> failure, bool initializeChoices) const
+{
+    Launch result{support, std::move(failure), {}, {}, {}, {}};
     std::shared_ptr<const CorrespondenceMap> correspondence;
-    if (correspond && snapshots_) {
+    if (support == Support::Supported && snapshots_) {
         try {
             auto bound = std::make_shared<CorrespondenceMap>(revision, snapshots_, initial.text, algorithm_);
             auto choices = std::make_shared<const ChoiceCatalogue>(choiceTargets(*snapshots_, *algorithm_));
@@ -233,18 +244,10 @@ std::vector<MarkerSection> FileSession::markerSections() const
     return planner().sections(current().draft.text, *mapping, &markers());
 }
 
-bool FileSession::completesMarkers(const EditingCommand &command) const
+Revision FileSession::successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence,
+                                std::optional<RevisionId> next) const
 {
-    const auto *mapping = correspondence();
-    if (!mapping || command.scope != EditingScope::Mapped || !launchFrames_ || !choices_) return false;
-    auto draft = current().draft;
-    for (const auto &[id, value] : command.decisions) draft.decisions[id] = value;
-    return !planner().edits(draft, *mapping, command.decisions, &markers()).empty();
-}
-
-Revision FileSession::successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence) const
-{
-    const auto id = history_.nextId();
+    const auto id = next.value_or(history_.nextId());
     if (id == std::numeric_limits<RevisionId>::max()) throw std::overflow_error("Session revision space exhausted");
     const auto &previous = current();
     if (!correspondence && previous.correspondence)
@@ -278,52 +281,102 @@ Revision FileSession::restored(const Revision &revision) const
     return copy;
 }
 
-Transition FileSession::replaceDraft(RevisionId expected, const Draft &draft,
-                                     const std::optional<std::set<std::string>> &handEdited,
-                                     std::vector<ByteRange> handEditedRanges)
+Transition FileSession::validateDraft(RevisionId expected, const Draft &draft) const
 {
     if (expected != current().id) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
-    if (exceedsEnvelope(draft.text)) return Transition::Blocked;
-    if (!editableText(draft.text) || !validDecisions(draft.decisions)) return Transition::InvalidAnchor;
-    if (!handEdited && !handEditedRanges.empty()) return Transition::InvalidAnchor;
-    // The marker count follows from the text, so a supplied count changes nothing.
-    const bool unchanged = draft.text == current().draft.text && draft.decisions == current().draft.decisions;
-    std::shared_ptr<const CorrespondenceMap> mapping;
-    if (handEdited && correspondence()) {
-        auto replayed = correspondence()->recomputed(history_.nextId(), draft.text);
-        if (!replayed.restoreHandEdits(*handEdited) || !replayed.restoreHandEditedRanges(std::move(handEditedRanges)))
-            return Transition::InvalidAnchor;
-        // A recorded choice can change only the hand-edit flags and ranges.
-        if (unchanged && replayed.handEditedAnchors() == correspondence()->handEditedAnchors()
-            && replayed.handEditedRanges() == correspondence()->handEditedRanges())
-            return Transition::NoChange;
-        mapping = std::make_shared<const CorrespondenceMap>(std::move(replayed));
-    } else if (unchanged) {
-        return Transition::NoChange;
-    } else if (handEdited && (!handEdited->empty() || !handEditedRanges.empty())) {
-        return Transition::InvalidAnchor;
-    }
-    history_.publish(successor(draft, std::move(mapping)), RevisionHistory::Step::Edit);
+    if (exceedsEnvelope(draft.text)) return Transition::TextTooLarge;
+    if (!editableText(draft.text)) return Transition::InvalidText;
+    if (!validDecisions(draft.decisions)) return Transition::InvalidAnchor;
     return Transition::Applied;
 }
 
-Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit)
+Transition FileSession::replaceDraft(RevisionId expected, const Draft &draft)
 {
-    if (expected != current().id) return Transition::StaleRevision;
-    if (support_ != Support::Supported) return Transition::Blocked;
-    // The stored text already holds the invariant, so only the edit is checked.
-    if (!validByteRange(current().draft.text, edit.range) || !editableText(edit.replacement))
-        return Transition::InvalidAnchor;
-    auto draft = current().draft;
-    draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
-    if (exceedsEnvelope(draft.text)) return Transition::Blocked;
-    if (draft == current().draft) return Transition::NoChange;
-    auto mapping = correspondence()
-        ? std::make_shared<const CorrespondenceMap>(correspondence()->edited(history_.nextId(), edit))
-        : nullptr;
-    history_.publish(successor(std::move(draft), std::move(mapping)), RevisionHistory::Step::Edit);
-    return Transition::Applied;
+    return withinMemory([&] {
+        if (const auto refused = validateDraft(expected, draft); refused != Transition::Applied) return refused;
+        // The marker count follows from the text, so a supplied count changes nothing.
+        if (draft.text == current().draft.text && draft.decisions == current().draft.decisions)
+            return Transition::NoChange;
+        history_.publish(successor(draft), RevisionHistory::Step::Edit);
+        return Transition::Applied;
+    });
+}
+
+Transition FileSession::replayDraft(RevisionId expected, const RecordedRevision &recorded)
+{
+    return withinMemory([&] {
+        const auto &draft = recorded.draft;
+        if (const auto refused = validateDraft(expected, draft); refused != Transition::Applied) return refused;
+        const bool sameText = draft.text == current().draft.text;
+        if (recorded.id < history_.nextId()
+            || (recorded.result != recorded.id && (!sameText || recorded.result != current().result)))
+            return Transition::InvalidOutcome;
+        const bool unchanged = sameText && draft.decisions == current().draft.decisions;
+        std::shared_ptr<const CorrespondenceMap> mapping;
+        if (const auto *now = correspondence()) {
+            auto replayed = now->recomputed(recorded.id, draft.text);
+            if (!replayed.restoreHandEdits(recorded.handEdited)
+                || !replayed.restoreHandEditedRanges(recorded.handEditedRanges))
+                return Transition::InvalidAnchor;
+            // A recorded choice can change only the hand-edit flags and ranges.
+            if (unchanged && replayed.handEditedAnchors() == now->handEditedAnchors()
+                && replayed.handEditedRanges() == now->handEditedRanges())
+                return Transition::NoChange;
+            mapping = std::make_shared<const CorrespondenceMap>(std::move(replayed));
+        } else if (!recorded.handEdited.empty() || !recorded.handEditedRanges.empty()) {
+            return Transition::InvalidAnchor;
+        } else if (unchanged) {
+            return Transition::NoChange;
+        }
+        auto revision = successor(draft, std::move(mapping), recorded.id);
+        revision.result = recorded.result;
+        history_.publish(std::move(revision), RevisionHistory::Step::Edit);
+        return Transition::Applied;
+    });
+}
+
+Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit, EditOptions options)
+{
+    return withinMemory([&] {
+        if (expected != current().id) return Transition::StaleRevision;
+        if (support_ != Support::Supported) return Transition::Blocked;
+        // The stored text already holds the invariant, so only the edit is checked.
+        if (!validByteRange(current().draft.text, edit.range)) return Transition::InvalidAnchor;
+        if (!editableText(edit.replacement)) return Transition::InvalidText;
+        auto draft = current().draft;
+        draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
+        if (exceedsEnvelope(draft.text)) return Transition::TextTooLarge;
+        if (draft == current().draft) return Transition::NoChange;
+        auto mapping = correspondence() ? std::make_shared<const CorrespondenceMap>(correspondence()->edited(
+                                              history_.nextId(), edit, true, {}, options.realignment))
+                                        : nullptr;
+        history_.publish(successor(std::move(draft), std::move(mapping)),
+                         options.join ? RevisionHistory::Step::Join : RevisionHistory::Step::Edit);
+        return Transition::Applied;
+    });
+}
+
+std::shared_ptr<const CorrespondenceMap> FileSession::pendingAlignment() const noexcept
+{
+    const auto &mapping = current().correspondence;
+    return mapping && !mapping->aligned() ? mapping : nullptr;
+}
+
+Transition FileSession::installAlignment(RevisionId revision, std::shared_ptr<const CorrespondenceMap> aligned)
+{
+    return withinMemory([&] {
+        const auto &now = current();
+        if (now.id != revision || !pendingAlignment()) return Transition::StaleRevision;
+        if (!aligned || !aligned->aligned() || !now.correspondence->sameAnchors(*aligned))
+            return Transition::InvalidAnchor;
+        auto draft = now.draft;
+        auto scan = resultMarkers(draft.text, markerSize_, aligned.get(), launchFrames_.get());
+        draft.unresolvedMarkers = scan.count();
+        history_.replaceCurrent(Revision{now.id, now.result, now.decisions, std::move(draft), std::move(aligned),
+                                         std::make_shared<const MarkerScan>(std::move(scan))});
+        return Transition::Applied;
+    });
 }
 
 Transition FileSession::validateCommand(const EditingCommand &command, const std::vector<ResultEdit> &edits,
@@ -367,8 +420,8 @@ Transition FileSession::validateTarget(const ResultAnchor &target) const
 Transition FileSession::validateEdit(const EditingCommand &command, const ResultEdit &edit, const ResultEdit *previous,
                                      bool confirmReplacement) const
 {
-    if (!validByteRange(current().draft.text, edit.range) || !editableText(edit.replacement))
-        return Transition::InvalidAnchor;
+    if (!validByteRange(current().draft.text, edit.range)) return Transition::InvalidAnchor;
+    if (!editableText(edit.replacement)) return Transition::InvalidText;
     if (previous && (edit.range.end > previous->range.begin || edit.range.begin == previous->range.begin))
         return Transition::AmbiguousTarget;
     if (command.scope == EditingScope::WholeFile) return Transition::Applied;
@@ -381,145 +434,222 @@ Transition FileSession::validateEdit(const EditingCommand &command, const Result
 
 Transition FileSession::applyCommand(const EditingCommand &command, bool confirmReplacement)
 {
-    if (command.expected != current().id) return Transition::StaleRevision;
-    if (support_ != Support::Supported) return Transition::Blocked;
-    const auto *mapping = correspondence();
-    if (!mapping) return Transition::InvalidAnchor;
-    auto edits = command.edits;
-    std::sort(edits.begin(), edits.end(), [](const auto &a, const auto &b) { return a.range.begin > b.range.begin; });
-    if (const auto refused = validateCommand(command, edits, confirmReplacement); refused != Transition::Applied)
-        return refused;
-    const bool wholeFile = command.scope == EditingScope::WholeFile;
-    const auto next = history_.nextId();
-    auto draft = current().draft;
-    for (const auto &[id, value] : command.decisions) draft.decisions[id] = value;
-    auto updated = std::make_shared<CorrespondenceMap>(*mapping);
-    for (const auto &edit : edits) {
-        draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
-        if (exceedsEnvelope(draft.text)) return Transition::Blocked;
-        *updated = wholeFile ? updated->recomputed(next, draft.text, false)
-                             : updated->edited(next, edit, false, targetOf(command, edit.range)->source.contributionId);
-    }
-    // Deciding a marker section's last contribution resolves its block in
-    // this same history entry, so one undo brings the markers back.
-    if (!wholeFile && launchFrames_ && choices_) {
-        for (const auto &edit : planner().edits(draft, *updated, command.decisions)) {
-            *updated = edit.rebuilt ? updated->rebuilt(next, edit.range, *edit.rebuilt)
-                                    : updated->edited(next, {edit.range, {}}, false, edit.anchor);
-            draft.text = updated->text();
+    return withinMemory([&] {
+        if (command.expected != current().id) return Transition::StaleRevision;
+        if (support_ != Support::Supported) return Transition::Blocked;
+        const auto *mapping = correspondence();
+        if (!mapping) return Transition::InvalidAnchor;
+        auto edits = command.edits;
+        std::sort(edits.begin(), edits.end(),
+                  [](const auto &a, const auto &b) { return a.range.begin > b.range.begin; });
+        if (const auto refused = validateCommand(command, edits, confirmReplacement); refused != Transition::Applied)
+            return refused;
+        const bool wholeFile = command.scope == EditingScope::WholeFile;
+        const auto next = history_.nextId();
+        auto draft = current().draft;
+        for (const auto &[id, value] : command.decisions) draft.decisions[id] = value;
+        auto updated = std::make_shared<CorrespondenceMap>(*mapping);
+        for (const auto &edit : edits) {
+            draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
+            if (exceedsEnvelope(draft.text)) return Transition::TextTooLarge;
+            *updated = wholeFile
+                ? updated->recomputed(next, draft.text, false)
+                : updated->edited(next, edit, false, targetOf(command, edit.range)->source.contributionId);
         }
-    }
-    // Choosing the text a hand edit left unchanged still replaces that edit.
-    if (draft == current().draft && updated->handEditedAnchors() == mapping->handEditedAnchors()
-        && updated->handEditedRanges() == mapping->handEditedRanges())
-        return Transition::NoChange;
-    history_.publish(successor(std::move(draft), std::make_shared<const CorrespondenceMap>(updated->atRevision(next))),
-                     RevisionHistory::Step::Edit);
-    return Transition::Applied;
+        // Deciding a marker section's last contribution resolves its block in
+        // this same history entry, so one undo brings the markers back.
+        if (!wholeFile && launchFrames_ && choices_) {
+            for (const auto &edit : planner().edits(draft, *updated, command.decisions)) {
+                *updated = edit.rebuilt ? updated->rebuilt(next, edit.range, *edit.rebuilt)
+                                        : updated->edited(next, {edit.range, {}}, false, edit.anchor);
+                draft.text = updated->text();
+            }
+        }
+        // Choosing the text a hand edit left unchanged still replaces that edit.
+        if (draft == current().draft && updated->handEditedAnchors() == mapping->handEditedAnchors()
+            && updated->handEditedRanges() == mapping->handEditedRanges())
+            return Transition::NoChange;
+        history_.publish(
+            successor(std::move(draft), std::make_shared<const CorrespondenceMap>(updated->atRevision(next))),
+            RevisionHistory::Step::Edit);
+        return Transition::Applied;
+    });
 }
 
 Transition FileSession::undo(RevisionId expected)
 {
-    if (expected != current().id) return Transition::StaleRevision;
-    if (support_ != Support::Supported) return Transition::Blocked;
-    if (!canUndo()) return Transition::NoChange;
-    history_.publish(restored(history_.previous()), RevisionHistory::Step::Undo);
-    return Transition::Applied;
+    return withinMemory([&] {
+        if (expected != current().id) return Transition::StaleRevision;
+        if (support_ != Support::Supported) return Transition::Blocked;
+        if (!canUndo()) return Transition::NoChange;
+        history_.publish(restored(history_.previous()), RevisionHistory::Step::Undo);
+        return Transition::Applied;
+    });
 }
 
 Transition FileSession::redo(RevisionId expected)
 {
-    if (expected != current().id) return Transition::StaleRevision;
-    if (support_ != Support::Supported) return Transition::Blocked;
-    if (!canRedo()) return Transition::NoChange;
-    history_.publish(restored(history_.following()), RevisionHistory::Step::Redo);
-    return Transition::Applied;
+    return withinMemory([&] {
+        if (expected != current().id) return Transition::StaleRevision;
+        if (support_ != Support::Supported) return Transition::Blocked;
+        if (!canRedo()) return Transition::NoChange;
+        history_.publish(restored(history_.following()), RevisionHistory::Step::Redo);
+        return Transition::Applied;
+    });
 }
 
 Transition FileSession::discardToCheckpoint(RevisionId expected)
 {
-    if (expected != current().id) return Transition::StaleRevision;
-    if (support_ != Support::Supported) return Transition::Blocked;
-    const auto &checkpoint = publication_.checkpoint();
-    const auto &target = checkpoint ? *checkpoint : *history_.find(history_.launchId());
-    // Matching text after undo can still have pending Save callbacks from a
-    // discarded revision. Only the checkpoint's own successful transaction is
-    // a no-op; otherwise restore its identity and fence those callbacks below.
-    if (target.id == current().id && publication_.savedAt(target.id)) return Transition::NoChange;
-    history_.publish(restored(target), RevisionHistory::Step::Edit);
-    publication_.discardedToCheckpoint(current().id);
-    return Transition::Applied;
+    return withinMemory([&] {
+        if (expected != current().id) return Transition::StaleRevision;
+        if (support_ != Support::Supported) return Transition::Blocked;
+        const auto checkpoint = publication_.checkpoint();
+        // The history keeps the checkpoint and the launch revision.
+        const auto &target = *history_.find(checkpoint ? *checkpoint : history_.launchId());
+        // Matching text after undo can still have pending Save callbacks from a
+        // discarded revision. Only the checkpoint's own successful transaction is
+        // a no-op; otherwise restore its identity and fence those callbacks below.
+        if (target.id == current().id && publication_.savedAt(target.id)) return Transition::NoChange;
+        history_.publish(restored(target), RevisionHistory::Step::Edit);
+        publication_.discardedToCheckpoint(current().id);
+        return Transition::Applied;
+    });
+}
+
+void FileSession::adopt(PublicationState next)
+{
+    auto held = next.held();
+    history_.hold(std::move(held));
+    publication_ = std::move(next);
 }
 
 Transition FileSession::beginMarkResolved(RevisionId expected, bool confirmUndecided)
 {
-    if (expected != current().id) return Transition::StaleRevision;
-    if (support_ != Support::Supported || current().draft.unresolvedMarkers != 0) return Transition::Blocked;
-    if (undecidedCount(current().draft) != 0 && !confirmUndecided) return Transition::ConfirmationRequired;
-    publication_.markResolved(current(), confirmUndecided);
-    return Transition::Applied;
+    return withinMemory([&] {
+        if (expected != current().id) return Transition::StaleRevision;
+        // Provisional passages can hide a marker line, so review counts
+        // markers against the aligned ones.
+        if (const auto pending = pendingAlignment())
+            if (const auto installed =
+                    installAlignment(expected, std::make_shared<const CorrespondenceMap>(pending->realigned()));
+                installed != Transition::Applied)
+                return installed;
+        if (support_ != Support::Supported || current().draft.unresolvedMarkers != 0) return Transition::Blocked;
+        if (undecidedCount(current().draft) != 0 && !confirmUndecided) return Transition::ConfirmationRequired;
+        auto next = publication_;
+        next.markResolved(current().id, confirmUndecided);
+        adopt(std::move(next));
+        return Transition::Applied;
+    });
 }
 
 Transition FileSession::recordCheckpoint(RevisionId revision, Outcome outcome, std::string detail)
 {
-    return publication_.recordCheckpoint(history_.find(revision), revision, current().id, outcome, std::move(detail));
+    return withinMemory([&] {
+        auto next = publication_;
+        const auto recorded = next.recordCheckpoint(history_.find(revision) != nullptr, revision, current().id, outcome,
+                                                    std::move(detail));
+        if (recorded == Transition::Applied) adopt(std::move(next));
+        return recorded;
+    });
 }
 
 Transition FileSession::recordWrite(RevisionId revision, Outcome outcome, std::string detail)
 {
-    return publication_.recordWrite(revision, current().id, outcome, std::move(detail));
+    return withinMemory([&] {
+        auto next = publication_;
+        const auto recorded = next.recordWrite(revision, current().id, outcome, std::move(detail));
+        if (recorded == Transition::Applied) adopt(std::move(next));
+        return recorded;
+    });
 }
 
 Transition FileSession::recordStage(RevisionId revision, Outcome outcome, std::string objectId, std::string mode,
                                     std::string detail)
 {
-    return publication_.recordStage(revision, current().id, outcome, std::move(objectId), std::move(mode),
-                                    std::move(detail));
+    return withinMemory([&] {
+        auto next = publication_;
+        const auto recorded =
+            next.recordStage(revision, current().id, outcome, std::move(objectId), std::move(mode), std::move(detail));
+        if (recorded == Transition::Applied) adopt(std::move(next));
+        return recorded;
+    });
 }
 
 Transition FileSession::discardToStaged(RevisionId expected)
 {
-    if (expected != current().id) return Transition::StaleRevision;
-    const auto &staged = publication_.staged();
-    if (support_ != Support::Supported || !staged || !publication_.stagedVerified()) return Transition::Blocked;
-    if (current().id == staged->revision.id) return Transition::NoChange;
-    const auto floor = history_.nextId();
-    history_.reopen(staged->revision);
-    publication_.discardedToStaged(floor);
-    return Transition::Applied;
+    return withinMemory([&] {
+        if (expected != current().id) return Transition::StaleRevision;
+        const auto &staged = publication_.staged();
+        if (support_ != Support::Supported || !staged || !publication_.stagedVerified()) return Transition::Blocked;
+        if (current().id == staged->revision) return Transition::NoChange;
+        auto next = publication_;
+        next.discardedToStaged(history_.nextId());
+        auto held = next.held();
+        // The history keeps the staged revision.
+        history_.reopen(*history_.find(staged->revision));
+        history_.hold(std::move(held));
+        publication_ = std::move(next);
+        return Transition::Applied;
+    });
 }
 
 Transition FileSession::setSupport(Support support, std::string detail)
 {
-    if (support_ == support && supportDetail_ == detail && !loadFailure_) return Transition::NoChange;
-    support_ = support;
-    supportDetail_ = std::move(detail);
-    loadFailure_.reset();
-    return Transition::Applied;
+    return withinMemory([&] {
+        if (support == Support::LargeFile) return Transition::InvalidOutcome;
+        if (support_ == support && supportDetail_ == detail && !loadFailure_) return Transition::NoChange;
+        if (support == Support::Supported && support_ != Support::Supported) {
+            // The texts of a file held back were never checked, and a captured
+            // one was never aligned, so admitting it repeats what launch does.
+            if (loadFailure_ || holdFor(current().draft.text, Support::Supported)) return Transition::Blocked;
+            if (snapshots_ && !correspondence()) {
+                auto relaunched = relaunchSupported();
+                if (!relaunched || relaunched->support != Support::Supported) return Transition::Blocked;
+                open(std::move(*relaunched));
+            }
+        }
+        support_ = support;
+        supportDetail_ = std::move(detail);
+        loadFailure_.reset();
+        return Transition::Applied;
+    });
 }
 
-Transition FileSession::loadLargeFile()
+bool FileSession::launchUntouched() const noexcept
 {
-    if (support_ != Support::LargeFile) return Transition::NoChange;
-    // Every edit and outcome is blocked until the file loads, so the launch
-    // revision is the only one. It never had choices or a correspondence.
-    if (!snapshots_ || current().id != history_.launchId() || history_.depth() != 1 || !publication_.untouched())
-        return Transition::Blocked;
+    return current().id == history_.launchId() && history_.depth() == 1 && publication_.untouched();
+}
+
+std::optional<FileSession::Launch> FileSession::relaunchSupported() const
+{
+    // Every edit and outcome is blocked while a file is held back, so the
+    // launch revision is normally the only one. It never had choices or a
+    // correspondence.
+    if (!snapshots_ || !launchUntouched()) return std::nullopt;
     const auto revision = history_.nextId();
     if (revision == std::numeric_limits<RevisionId>::max())
         throw std::overflow_error("Session revision space exhausted");
     Draft initial{current().draft.text, current().draft.decisions, 0};
-    auto loaded = launch(revision, std::move(initial), true, true);
-    if (loaded.support == Support::LargeFile) {
-        loaded.support = Support::Supported;
-        loaded.failure.reset();
-    }
-    open(std::move(loaded));
-    return Transition::Applied;
+    return launch(revision, std::move(initial), Support::Supported, std::nullopt, true);
+}
+
+Transition FileSession::loadLargeFile()
+{
+    return withinMemory([&] {
+        if (support_ != Support::LargeFile) return Transition::NoChange;
+        auto loaded = relaunchSupported();
+        if (!loaded) return Transition::Blocked;
+        // An alignment that runs out of memory holds the file back as unreadable instead.
+        open(std::move(*loaded));
+        return Transition::Applied;
+    });
 }
 
 FileFacts FileSession::facts() const
 {
-    return publication_.facts(current(), support_, undecidedCount(current().draft));
+    const auto checkpoint = publication_.checkpoint();
+    return publication_.facts(current(), checkpoint ? history_.find(*checkpoint) : nullptr, support_,
+                              undecidedCount(current().draft));
 }
 }

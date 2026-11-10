@@ -39,7 +39,7 @@ FileSession viewFile()
         SourceSnapshot{"earlier-object",        "100644", earlier, test_support::choiceText(earlier), "earlier-commit",
                        "Common earlier version"};
     sources.launchResult.text = test_support::choiceText(earlier);
-    return FileSession("choices", sources.path, {earlier, {}, 0}, Support::Supported, {}, sources, true);
+    return FileSession("choices", sources.path, {earlier, {}, 0}, {.snapshots = sources, .initializeChoices = true});
 }
 
 // The UTF-16 offset where a 1-based line starts, found without the controller.

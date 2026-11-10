@@ -94,14 +94,16 @@ QString recoverStaging(FileSession &file, std::vector<RecoveryMutation> &mutatio
 {
     for (const auto &mutation : mutations) {
         if (mutation.completed || mutation.kind != MutationKind::Staging || mutation.target.id() != file.id()
-            || untouched(mutation) || !file.written() || file.written()->id != mutation.target.current().id)
+            || untouched(mutation) || file.publication().written() != mutation.target.current().id)
             continue;
         const auto *captured = file.snapshots();
-        const auto bytes = serializedRevision(file, *file.written());
-        const auto objectId = stagedIdentity(file, *file.written(), index, repository, probe);
+        const auto *written = file.revision(*file.publication().written());
+        if (!written) continue;
+        const auto bytes = serializedRevision(file, *written);
+        const auto objectId = stagedIdentity(file, *written, index, repository, probe);
         if (!bytes || !objectId || *bytes != diskBytes || !modeMatches(diskMode, captured->resultMode)) continue;
         auto candidate = file;
-        if (candidate.recordStage(file.written()->id, Outcome::Succeeded, objectId->toStdString(), captured->resultMode,
+        if (candidate.recordStage(written->id, Outcome::Succeeded, objectId->toStdString(), captured->resultMode,
                                   "Recovered staging completion verified against disk and index")
             != Transition::Applied)
             continue;
@@ -111,8 +113,9 @@ QString recoverStaging(FileSession &file, std::vector<RecoveryMutation> &mutatio
         if (!committed.succeeded)
             return QStringLiteral("Staging evidence matched, but recovery could not retain its completion: %1")
                 .arg(committed.error);
+        const auto revision = written->id;
         file = std::move(candidate);
-        completeMutations(mutations, file.id(), MutationKind::Staging, file.written()->id);
+        completeMutations(mutations, file.id(), MutationKind::Staging, revision);
     }
     return {};
 }
@@ -163,19 +166,22 @@ Reconciliation reconcile(FileSession &file, std::vector<RecoveryMutation> &mutat
     bool diskMatches = launchMatches && destination.identity() == launch.identity && launchBytes;
     // The loaded capture must already show the copy, so nothing changed it
     // between that capture and this one.
-    const bool copiedLaunch = !diskMatches && !file.written() && sourcesMatch && launchBytes
+    const auto &publication = file.publication();
+    const bool copiedLaunch = !diskMatches && !publication.written() && sourcesMatch && launchBytes
         && liveCapture->launchResult.text == launch.text && liveCapture->launchResult.identity == destination.identity()
         && sameFileCopy(launch.identity, destination.identity());
-    if (file.written()) {
-        const auto bytes = serializedRevision(file, *file.written());
+    if (const auto written = publication.written()) {
+        const auto *revision = file.revision(*written);
+        const auto bytes = revision ? serializedRevision(file, *revision) : std::nullopt;
         diskMatches = bytes && *bytes == destination.bytes();
     }
     bool indexMatches = matchesCapturedConflict(index.indexEntries, *captured);
-    if (file.staged()) {
-        const auto &staged = *file.staged();
-        const auto objectId = stagedIdentity(file, staged.revision, index.indexEntries, repository, probe);
+    if (const auto &staged = publication.staged()) {
+        const auto *revision = file.revision(staged->revision);
+        const auto objectId =
+            revision ? stagedIdentity(file, *revision, index.indexEntries, repository, probe) : std::nullopt;
         policyMatches = objectId.has_value();
-        indexMatches = objectId && objectId->toStdString() == staged.objectId && staged.mode == captured->resultMode;
+        indexMatches = objectId && objectId->toStdString() == staged->objectId && staged->mode == captured->resultMode;
     }
     for (const auto &mutation : mutations) {
         if (mutation.completed || mutation.target.id() != file.id() || untouched(mutation)) continue;

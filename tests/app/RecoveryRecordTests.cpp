@@ -1,5 +1,6 @@
 #include "TestHarness.h"
 #include "core/EditingCommands.h"
+#include "core/ExactLineCorrespondence.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/RecoveryJournal.h"
 #include "recovery/RecoveryRecord.h"
@@ -36,8 +37,9 @@ FileSession capturedFile()
     captured.launchResult.identity = {11, 22, 0100644, 64, 33, 44, 55, 66};
     const auto text = captured.launchResult.text.utf8;
     const auto path = captured.path;
-    return FileSession("choices", path, {text, {}, 0}, Support::Supported, "captured at launch", std::move(captured),
-                       true);
+    return FileSession(
+        "choices", path, {text, {}, 0},
+        {.supportDetail = "captured at launch", .snapshots = std::move(captured), .initializeChoices = true});
 }
 
 // Appends records the way SessionStore does: each one encodes the file after its command, with
@@ -86,6 +88,17 @@ public:
         ++calls;
         return ExactLineCorrespondence().compare(source, result);
     }
+    [[nodiscard]] std::string_view identity() const noexcept override { return ExactLineCorrespondence{}.identity(); }
+};
+
+// The default alignment under another name, as a later version of it would be.
+class RenamedAlgorithm final : public CorrespondenceAlgorithm {
+public:
+    std::vector<Passage> compare(std::string_view source, std::string_view result) const override
+    {
+        return ExactLineCorrespondence().compare(source, result);
+    }
+    [[nodiscard]] std::string_view identity() const noexcept override { return "exact-line/renamed"; }
 };
 
 // Rewrites the journal's last state and replays it; the replay must refuse it with error.
@@ -143,7 +156,7 @@ int main()
         recorder.step(RecoveryAction::Undo, [](FileSession &file) { return file.undo(file.current().id); });
         recorder.step(RecoveryAction::Redo, [](FileSession &file) { return file.redo(file.current().id); });
         const auto &expected = recorder.file;
-        CHECK(expected.checkpoint() && expected.checkpoint()->id != expected.current().id);
+        CHECK(expected.publication().checkpoint() && *expected.publication().checkpoint() != expected.current().id);
         CHECK(!expected.correspondence()->handEditedAnchors().empty());
 
         const auto replay = replayRecovery(recorder.lease->store(), counting);
@@ -151,11 +164,12 @@ int main()
         const auto &file = replay.files.front();
         CHECK(file.snapshots() && *file.snapshots() == *expected.snapshots());
         CHECK(file.current().id == expected.current().id && file.current().draft == expected.current().draft);
-        CHECK(file.checkpoint()->id == expected.checkpoint()->id
-              && file.checkpoint()->draft == expected.checkpoint()->draft);
+        CHECK(*file.publication().checkpoint() == *expected.publication().checkpoint()
+              && file.revision(*file.publication().checkpoint())->draft
+                  == expected.revision(*expected.publication().checkpoint())->draft);
         CHECK(file.correspondence()->handEditedAnchors() == expected.correspondence()->handEditedAnchors());
         CHECK(file.correspondence()->handEditedRanges() == expected.correspondence()->handEditedRanges());
-        CHECK(file.checkpointOutcome() && file.checkpointOutcome()->detail == "saved");
+        CHECK(file.publication().checkpointOutcome() && file.publication().checkpointOutcome()->detail == "saved");
         // The restored file aligns its sources with the algorithm the window uses.
         CHECK(counting->calls > 0);
 
@@ -172,6 +186,40 @@ int main()
         const auto all = states(recorder.lease->store());
         CHECK(all.front().contains("snapshots"));
         CHECK(std::none_of(all.begin() + 1, all.end(), [](const auto &state) { return state.contains("snapshots"); }));
+    });
+    suite.run("one record replays a burst of edits", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        Recorder recorder(directory.path() + "/store", capturedFile());
+        const auto before = recorder.file.current().draft.text;
+        bool join = false;
+        for (const auto *typed : {"one\n", "two\n", "three\n"}) {
+            CHECK(recorder.file.editResult(recorder.file.current().id, {{0, 0}, typed}, {.join = join})
+                  == Transition::Applied);
+            join = true;
+        }
+        recorder.commit(RecoveryAction::ReplaceDraft, before);
+        recorder.step(RecoveryAction::Undo, [](FileSession &file) { return file.undo(file.current().id); });
+        const auto replay = replayRecovery(recorder.lease->store());
+        CHECK(replay.succeeded && replay.files.size() == 1);
+        const auto &file = replay.files.front();
+        CHECK(file.current().id == recorder.file.current().id && file.current().draft == recorder.file.current().draft);
+    });
+    suite.run("replay refuses a journal another correspondence algorithm wrote", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        Recorder recorder(directory.path() + "/store", capturedFile());
+        recorder.step(RecoveryAction::ReplaceDraft, [](FileSession &file) {
+            const auto end = file.current().draft.text.size();
+            return file.editResult(file.current().id, {{end, end}, "typed\n"});
+        });
+        const auto launch = states(recorder.lease->store()).front();
+        CHECK(RecoveryRecordReader(recorder.lease->store(), launch).alignment()
+              == ExactLineCorrespondence().identity());
+        CHECK(replayRecovery(recorder.lease->store()).succeeded);
+        const auto replay = replayRecovery(recorder.lease->store(), std::make_shared<RenamedAlgorithm>());
+        CHECK(!replay.succeeded && replay.files.empty());
+        CHECK(replay.error.contains(QStringLiteral("another correspondence algorithm")));
     });
     suite.run("a keystroke records the typed bytes, not the whole text", [] {
         QTemporaryDir directory;

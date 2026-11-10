@@ -68,27 +68,29 @@ void comparison_scene::addNavigationCases(Groups groups)
         fixture.click("saveDraft");
         CHECK(fixture.controller.feedback()->message()
               == QStringLiteral("Draft saved in Branch Truce; repository file unchanged."));
-        CHECK(fixture.file().checkpoint() && fixture.file().checkpoint()->id == revision);
-        CHECK(!fixture.file().written() && !fixture.file().staged() && !fixture.file().reviewed());
+        CHECK(fixture.file().publication().checkpoint() && *fixture.file().publication().checkpoint() == revision);
+        CHECK(!fixture.file().publication().written() && !fixture.file().publication().staged()
+              && !fixture.file().publication().reviewed());
         expectProgress(fixture, true, false, false, false, QStringLiteral("1"), QStringLiteral("1"), {}, {}, 4);
 
         // Progress keeps the review, write and stage revisions separate.
         CHECK(fixture.controller.store()->beginMarkResolved("choices", revision, true) == Transition::Applied);
-        CHECK(fixture.file().reviewed() && fixture.file().reviewed()->revision.id == revision);
-        CHECK(!fixture.file().written() && !fixture.file().staged() && !fixture.file().facts().resolved);
+        CHECK(fixture.file().publication().reviewed() && fixture.file().publication().reviewed()->revision == revision);
+        CHECK(!fixture.file().publication().written() && !fixture.file().publication().staged()
+              && !fixture.file().facts().resolved);
         expectProgress(fixture, true, true, false, false, QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"),
                        {}, 4);
         CHECK(fixture.controller.store()->recordWrite("choices", revision, Outcome::Succeeded) == Transition::Applied);
         CHECK(fixture.controller.store()->recordStage("choices", revision, Outcome::Succeeded, "verified-object",
                                                       "100644")
               == Transition::Applied);
-        CHECK(fixture.file().facts().resolved && fixture.file().staged()->revision.id == revision);
+        CHECK(fixture.file().facts().resolved && fixture.file().publication().staged()->revision == revision);
         CHECK(fixture.text().toStdString() == result);
         expectProgress(fixture, true, true, true, false, QStringLiteral("1"), QStringLiteral("1"), QStringLiteral("1"),
                        QStringLiteral("1"), 4);
 
-        CHECK(fixture.controller.store()->appendFile(
-            FileSession("outside", "diagram.png", {}, Support::OutsideApp, "image content")));
+        CHECK(fixture.controller.store()->appendFile(FileSession(
+            "outside", "diagram.png", {}, {.support = Support::OutsideApp, .supportDetail = "image content"})));
         CHECK(fixture.controller.files()->outsideAppFiles() == 1);
         CHECK(fixture.file().facts().resolved);
         fixture.click("nextUnfinished");
@@ -122,7 +124,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         newer.text += "newer\n";
         CHECK(fixture.controller.store()->replaceDraft("choices", revision, newer) == Transition::Applied);
         CHECK(fixture.file().current().id == revision + 1);
-        CHECK(fixture.file().staged() && fixture.file().staged()->revision.id == revision);
+        CHECK(fixture.file().publication().staged() && fixture.file().publication().staged()->revision == revision);
         CHECK(fixture.file().facts().earlierStaged && !fixture.file().facts().resolved
               && fixture.file().facts().unsaved);
         settle([&] { return fixture.text().toStdString() == newer.text; });
@@ -358,7 +360,8 @@ void comparison_scene::addNavigationCases(Groups groups)
                                          earlier,          test_support::choiceText(earlier),
                                          "earlier-commit", "Common earlier version"};
         const auto launch = sources.launchResult.text.utf8;
-        Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
+        Fixture fixture(
+            FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
         fixture.click("showEarlier");
         auto *left = fixture.item("stage2Viewport");
         auto *earlierView = fixture.item("earlierViewport");
@@ -376,7 +379,8 @@ void comparison_scene::addNavigationCases(Groups groups)
                                          earlier,          test_support::choiceText(earlier),
                                          "earlier-commit", "Common earlier version"};
         const auto launch = sources.launchResult.text.utf8;
-        Fixture fixture(FileSession("choices", sources.path, {launch, {}, 0}, Support::Supported, {}, sources, true));
+        Fixture fixture(
+            FileSession("choices", sources.path, {launch, {}, 0}, {.snapshots = sources, .initializeChoices = true}));
         auto *left = fixture.item("stage2Viewport");
         auto *earlierView = fixture.item("earlierViewport");
         auto *editor = fixture.item("resultText");

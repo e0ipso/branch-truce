@@ -261,8 +261,10 @@ void SessionLoader::classified(const git::ConflictClassificationResult &result)
     if (result.outcome != git::Outcome::Success || !repository_.supported) {
         std::vector<FileSession> files;
         for (const auto &file : result.conflicts) {
-            files.emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), Draft{}, supportFor(file),
-                               file.reason.isEmpty() ? result.diagnostic.toStdString() : file.reason.toStdString());
+            files.emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), Draft{},
+                               FileLaunch{.support = supportFor(file),
+                                          .supportDetail = file.reason.isEmpty() ? result.diagnostic.toStdString()
+                                                                                 : file.reason.toStdString()});
         }
         if (!files.empty())
             session_.coordinator.replaceSession(repository_.worktreeRoot, QStringLiteral("unsupported"),
@@ -286,12 +288,14 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
         if (file.launchSize >= 0) launchSizes_.insert(QString::fromLatin1(file.path.toHex()), file.launchSize);
     std::vector<FileSession> pending;
     for (const auto &file : conflicts) {
-        pending.emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), Draft{}, Support::Unreadable,
-                             "Opening the classified conflict");
+        pending.emplace_back(
+            file.path.toHex().toStdString(), file.path.toStdString(), Draft{},
+            FileLaunch{.support = Support::Unreadable, .supportDetail = "Opening the classified conflict"});
     }
     if (pending.empty())
-        pending.emplace_back("recovery-inventory", "recovery-inventory", Draft{}, Support::Unreadable,
-                             "Inspecting app-owned recovery records");
+        pending.emplace_back(
+            "recovery-inventory", "recovery-inventory", Draft{},
+            FileLaunch{.support = Support::Unreadable, .supportDetail = "Inspecting app-owned recovery records"});
     // The fence key names the operation by its enum, never by display text.
     const auto identity = QString::number(static_cast<int>(repository_.operation)) + QLatin1Char(':')
         + QString::fromLatin1(repository_.stage2.commitId) + QLatin1Char(':')
@@ -330,7 +334,11 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                                             "result snapshots; reopen the session.");
                 }
                 loaded->emplace_back(file.path.toHex().toStdString(), file.path.toStdString(), std::move(draft),
-                                     support, detail.toStdString(), std::move(snapshots), true, correspondence);
+                                     FileLaunch{.support = support,
+                                                .supportDetail = detail.toStdString(),
+                                                .snapshots = std::move(snapshots),
+                                                .initializeChoices = true,
+                                                .algorithm = correspondence});
             }
             *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, executable, chosen,
                                         {correspondence, QDateTime::currentDateTimeUtc()});

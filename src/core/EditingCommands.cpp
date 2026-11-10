@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <array>
+#include <optional>
 #include <set>
+#include <vector>
 
 namespace branch_truce {
 namespace {
@@ -42,21 +44,36 @@ ChoicePreview failed(ChoicePreview preview, Transition state, ChoiceNote note)
 }
 
 // A scope the user selected, with everything a choice on it reads. Its anchor
-// is mapped, which previewChoice checks before building one.
+// is mapped, which previewChoice checks before building one. The marker
+// sections of the current result are listed once per preview.
 struct Selection {
-    const FileSession &file;
+    const FileSnapshots &snapshots;
     const CorrespondenceMap &mapping;
     const ChoiceCatalogue &choices;
     const Draft &draft;
     const ChoiceTarget &target;
     const ResultAnchor &anchor;
     ByteRange range;
+    MarkerPlanner planner;
+    std::vector<MarkerSection> sections;
 
-    [[nodiscard]] bool marked() const
+    // The marker section that encloses the selected scope's section, if any.
+    [[nodiscard]] const MarkerSection *block() const
     {
-        const auto sections = file.markerSections();
-        return std::any_of(sections.begin(), sections.end(),
-                           [&](const auto &section) { return section.encloses(target.section); });
+        const auto found = std::find_if(sections.begin(), sections.end(),
+                                        [&](const auto &section) { return section.encloses(target.section); });
+        return found == sections.end() ? nullptr : &*found;
+    }
+    [[nodiscard]] bool marked() const { return block() != nullptr; }
+
+    // True when the command decides the last open contribution of a marker
+    // section, so applying it also removes that block's marker lines.
+    [[nodiscard]] bool completesMarkers(const EditingCommand &command) const
+    {
+        if (command.scope != EditingScope::Mapped || sections.empty()) return false;
+        auto decided = draft;
+        for (const auto &[id, value] : command.decisions) decided.decisions[id] = value;
+        return !planner.edits(decided, mapping, command.decisions, sections).empty();
     }
 };
 
@@ -126,7 +143,7 @@ Refusal unselectedContribution(const Selection &selected, const EditingCommand &
 std::vector<ResultEdit> combinationEdits(const Selection &selected, const Competitor &other, bool split,
                                          const std::string &replacement)
 {
-    const auto &snapshots = *selected.file.snapshots();
+    const auto &snapshots = selected.snapshots;
     const auto mine = selected.range;
     const auto theirs = other.range;
     // Joining the two scopes of a split block would move text across the
@@ -144,24 +161,18 @@ std::vector<ResultEdit> combinationEdits(const Selection &selected, const Compet
     return {{mineFirst ? mine : theirs, replacement}, {mineFirst ? theirs : mine, {}}};
 }
 
-ChoicePreview previewCombination(ChoicePreview preview, const Selection &selected)
+ChoicePreview previewCombination(ChoicePreview preview, const Selection &selected, SourceSide firstSide)
 {
     // The two sides of a marker section sit apart, across its separator line.
     // In a block Git wrote around lines both sides share, the other sections'
     // scopes and those shared lines sit between them as well.
-    const auto markers = selected.file.markerSections();
-    const auto block = selected.target.scope != ChoiceScope::Section
-        ? markers.end()
-        : std::find_if(markers.begin(), markers.end(),
-                       [&](const auto &found) { return found.encloses(selected.target.section); });
-    const bool marked = block != markers.end();
+    const auto *block = selected.target.scope == ChoiceScope::Section ? selected.block() : nullptr;
+    const bool marked = block != nullptr;
     const bool split = marked && block->sections.size() > 1;
     const auto other = competitor(selected, marked);
     if (other.matches > 1)
         return failed(std::move(preview), Transition::AmbiguousTarget, ChoiceNote::SeveralCompetitors);
     if (!other.target) return failed(std::move(preview), Transition::AmbiguousTarget, ChoiceNote::NoCompetitor);
-    const bool leftFirst = preview.action == ChoiceAction::CombineLeftFirst;
-    const auto firstSide = leftFirst ? SourceSide::Stage2 : SourceSide::Stage3;
     const auto *first = selected.target.source.side == firstSide ? &selected.target : other.target;
     const auto *second = first == &selected.target ? other.target : &selected.target;
     preview.sourceOrder = {first->source, second->source};
@@ -174,7 +185,7 @@ ChoicePreview previewCombination(ChoicePreview preview, const Selection &selecte
                 return failed(std::move(preview), Transition::Blocked, ChoiceNote::NoRecordedChoices);
             preview.command.decisions[id] = {DecisionValue::Accepted, order};
         }
-        preview.replacement += sourceText(*selected.file.snapshots(), target->source);
+        preview.replacement += sourceText(selected.snapshots, target->source);
         ++order;
     }
     const auto theirs = other.range;
@@ -192,7 +203,7 @@ ChoicePreview previewCombination(ChoicePreview preview, const Selection &selecte
     // new ordering of a decided scope after subsequent manual editing.
     preview.state = Transition::ConfirmationRequired;
     preview.note = ChoiceNote::Combine;
-    if (selected.file.completesMarkers(preview.command))
+    if (selected.completesMarkers(preview.command))
         preview.markers = MarkerEffect::Removed;
     else if (split)
         preview.markers = MarkerEffect::KeptUntilDecided;
@@ -238,7 +249,7 @@ Refusal planReplacement(const Selection &selected, ChoicePreview &preview)
     const auto range = *replaced->result;
     preview.before = std::string(slice(selected.draft.text, range));
     preview.affectedRange = range;
-    preview.replacement = sourceText(*selected.file.snapshots(), selected.target.source);
+    preview.replacement = sourceText(selected.snapshots, selected.target.source);
     preview.command.edits.push_back({range, preview.replacement});
     for (const auto &target : selected.choices.targets()) {
         if (target.scope != ChoiceScope::Line || target.source.side == selected.target.source.side
@@ -277,35 +288,43 @@ Refusal planCompetitors(const Selection &selected, ChoicePreview &preview)
     return std::nullopt;
 }
 
-// What each single-side action plans beyond deciding its own scope.
-Refusal planAction(const Selection &selected, ChoicePreview &preview)
+// Resolving with a side accepts it and ignores its competitors.
+Refusal planResolution(const Selection &selected, ChoicePreview &preview)
 {
-    switch (preview.action) {
-    case ChoiceAction::Ignore: return std::nullopt;
-    case ChoiceAction::Accept: return planReplacement(selected, preview);
-    case ChoiceAction::ResolveUsingSide: {
-        if (auto refusal = planReplacement(selected, preview)) return refusal;
-        return planCompetitors(selected, preview);
-    }
-    case ChoiceAction::CombineLeftFirst:
-    case ChoiceAction::CombineRightFirst: break;
-    }
-    return {{Transition::InvalidAnchor, ChoiceNote::UnknownScope}};
+    if (auto refusal = planReplacement(selected, preview)) return refusal;
+    return planCompetitors(selected, preview);
 }
 
-ChoiceNote actionNote(ChoiceAction action)
+// What each action is: a combination, which orders both sides' scopes, or a
+// single-side action that decides its scope one way and plans the rest. Each
+// action has one row, so a new action is one row and its planner.
+struct ActionRule {
+    ChoiceAction action;
+    ChoiceNote note;
+    // Single-side actions: the decision and the planner, if any.
+    DecisionValue decision = DecisionValue::Accepted;
+    Refusal (*plan)(const Selection &, ChoicePreview &) = nullptr;
+    // Combinations: the side whose scope comes first.
+    std::optional<SourceSide> first = std::nullopt;
+};
+
+constexpr std::array kActionRules{
+    ActionRule{ChoiceAction::Ignore, ChoiceNote::Ignore, DecisionValue::Ignored},
+    ActionRule{ChoiceAction::Accept, ChoiceNote::Accept, DecisionValue::Accepted, planReplacement},
+    ActionRule{ChoiceAction::ResolveUsingSide, ChoiceNote::ResolveUsingSide, DecisionValue::Accepted, planResolution},
+    ActionRule{ChoiceAction::CombineLeftFirst, ChoiceNote::Combine, DecisionValue::Accepted, nullptr,
+               SourceSide::Stage2},
+    ActionRule{ChoiceAction::CombineRightFirst, ChoiceNote::Combine, DecisionValue::Accepted, nullptr,
+               SourceSide::Stage3}};
+
+const ActionRule *ruleOf(ChoiceAction action) noexcept
 {
-    switch (action) {
-    case ChoiceAction::Ignore: return ChoiceNote::Ignore;
-    case ChoiceAction::Accept: return ChoiceNote::Accept;
-    case ChoiceAction::ResolveUsingSide: return ChoiceNote::ResolveUsingSide;
-    case ChoiceAction::CombineLeftFirst:
-    case ChoiceAction::CombineRightFirst: break;
-    }
-    return ChoiceNote::Combine;
+    const auto found =
+        std::find_if(kActionRules.begin(), kActionRules.end(), [&](const auto &rule) { return rule.action == action; });
+    return found == kActionRules.end() ? nullptr : &*found;
 }
 
-ChoicePreview previewSingleSide(ChoicePreview preview, const Selection &selected)
+ChoicePreview previewSingleSide(ChoicePreview preview, const Selection &selected, const ActionRule &rule)
 {
     for (const auto &id : selected.target.decisions) {
         if (!selected.draft.decisions.contains(id))
@@ -313,20 +332,20 @@ ChoicePreview previewSingleSide(ChoicePreview preview, const Selection &selected
         if (decision(selected.draft, id).value != DecisionValue::Undecided)
             return failed(std::move(preview), Transition::Blocked, ChoiceNote::AlreadyDecided);
     }
-    const bool ignore = preview.action == ChoiceAction::Ignore;
+    const bool ignore = rule.decision == DecisionValue::Ignored;
     preview.command.expected = preview.revision;
     preview.command.targets.push_back(selected.anchor);
-    for (const auto &id : selected.target.decisions)
-        preview.command.decisions[id] = {ignore ? DecisionValue::Ignored : DecisionValue::Accepted, {}};
-    if (auto refusal = planAction(selected, preview))
-        return failed(std::move(preview), refusal->first, refusal->second);
+    for (const auto &id : selected.target.decisions) preview.command.decisions[id] = {rule.decision, {}};
+    if (rule.plan)
+        if (auto refusal = rule.plan(selected, preview))
+            return failed(std::move(preview), refusal->first, refusal->second);
     const bool confirmation = !ignore
         && std::any_of(preview.command.targets.begin(), preview.command.targets.end(),
                        [](const auto &value) { return value.manualOverlap; });
     preview.replacesManual = confirmation;
     preview.state = confirmation ? Transition::ConfirmationRequired : Transition::Applied;
-    preview.note = actionNote(preview.action);
-    if (selected.file.completesMarkers(preview.command)) preview.markers = MarkerEffect::Removed;
+    preview.note = rule.note;
+    if (selected.completesMarkers(preview.command)) preview.markers = MarkerEffect::Removed;
     return preview;
 }
 }
@@ -353,17 +372,19 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected, const 
                       anchor && anchor->state == AnchorState::Ambiguous ? Transition::AmbiguousTarget
                                                                         : Transition::InvalidAnchor,
                       ChoiceNote::UnmappedScope);
-    const Selection selected{file, *mapping, file.catalogue(), file.current().draft, *found, *anchor, *range};
-    if (action == ChoiceAction::CombineLeftFirst || action == ChoiceAction::CombineRightFirst)
-        return previewCombination(std::move(preview), selected);
-    return previewSingleSide(std::move(preview), selected);
+    const auto *rule = ruleOf(action);
+    if (!rule) return failed(std::move(preview), Transition::InvalidAnchor, ChoiceNote::UnknownScope);
+    const Selection selected{*file.snapshots(), *mapping, file.catalogue(), file.current().draft, *found,
+                             *anchor,           *range,   file.planner(),   file.markerSections()};
+    if (rule->first) return previewCombination(std::move(preview), selected, *rule->first);
+    return previewSingleSide(std::move(preview), selected, *rule);
 }
 
 Transition applyChoice(FileSession &file, const ChoicePreview &preview, bool confirmReplacement)
 {
     if (preview.revision != file.current().id) return Transition::StaleRevision;
     const auto current = previewChoice(file, preview.revision, preview.target, preview.action);
-    if (current != preview) return Transition::InvalidAnchor;
+    if (current != preview) return Transition::PreviewChanged;
     if (current.state != Transition::Applied && current.state != Transition::ConfirmationRequired) return current.state;
     if (current.state == Transition::ConfirmationRequired && !confirmReplacement)
         return Transition::ConfirmationRequired;
@@ -535,7 +556,7 @@ Transition applyNonConflicting(FileSession &file, const NonConflictingPreview &p
 {
     if (preview.revision != file.current().id) return Transition::StaleRevision;
     const auto current = previewNonConflicting(file, preview.revision, preview.scope);
-    if (current != preview) return Transition::InvalidAnchor;
+    if (current != preview) return Transition::PreviewChanged;
     if (current.state != Transition::ConfirmationRequired) return current.state;
     if (!confirm) return Transition::ConfirmationRequired;
     return file.applyCommand(current.command);
@@ -600,7 +621,7 @@ Transition applyWholeFile(FileSession &file, const WholeFilePreview &preview, bo
 {
     if (preview.revision != file.current().id) return Transition::StaleRevision;
     const auto current = previewWholeFile(file, preview.revision, preview.side);
-    if (current != preview) return Transition::InvalidAnchor;
+    if (current != preview) return Transition::PreviewChanged;
     if (current.state != Transition::ConfirmationRequired) return current.state;
     if (!confirm) return Transition::ConfirmationRequired;
     return file.applyCommand(current.command, true);

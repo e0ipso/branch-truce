@@ -28,9 +28,9 @@ struct Revision {
 // revision with the original.
 //
 // Only reachable revisions are kept: the history entries, the current
-// revision and the launch revision. Others are dropped as soon as they become
-// unreachable, and the oldest entries leave the history once the text the
-// history holds passes kMaxHistoryBytes.
+// revision, the launch revision and the held ones. Others are dropped as soon
+// as they become unreachable, and the oldest entries leave the history once
+// the text all of them hold passes kMaxHistoryBytes.
 class RevisionHistory {
 public:
     RevisionHistory() = default;
@@ -49,21 +49,32 @@ public:
     [[nodiscard]] const Revision &following() const { return *revisions_.at(entries_.at(cursor_ + 1)); }
 
     // How a published revision moves the undo cursor: an edit becomes the
-    // newest entry and replaces every entry after the cursor, while undo and
-    // redo move to the entry their revision copies.
-    enum class Step { Edit, Undo, Redo };
-    // Makes `revision`, whose id must be nextId(), current.
+    // newest entry and replaces every entry after the cursor. A joined edit
+    // does the same and also takes the place of the entry at the cursor,
+    // unless that is the first one. Undo and redo move to the entry their
+    // revision copies.
+    enum class Step { Edit, Join, Undo, Redo };
+    // Makes `revision` current. Its id must be nextId() or later; ids in
+    // between are never used. If it throws,
+    // std::bad_alloc included, the history is unchanged.
     void publish(Revision revision, Step step);
     // Makes an earlier revision current again as a new entry, storing it
-    // again if it was dropped.
+    // again if it was dropped. If it throws, the history is unchanged.
     void reopen(const Revision &revision);
+    // Stores `revision` in place of the current revision, which has the same
+    // id. If it throws, the history is unchanged.
+    void replaceCurrent(Revision revision);
+    // Keeps these revisions, if still stored, until the next call names
+    // others. Publication outcomes name revisions this way.
+    void hold(std::vector<RevisionId> ids) noexcept;
 
 private:
-    void append(RevisionId id);
-    void prune();
+    void append(RevisionId id) noexcept;
+    void prune() noexcept;
     std::map<RevisionId, std::shared_ptr<const Revision>> revisions_;
     std::shared_ptr<const Revision> current_;
     std::vector<RevisionId> entries_;
+    std::vector<RevisionId> held_;
     std::size_t cursor_ = 0;
     RevisionId launch_ = 0;
     RevisionId next_ = 1;
