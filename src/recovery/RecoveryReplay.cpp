@@ -79,7 +79,7 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
     std::map<std::string, FileSession> files;
     try {
         for (const auto &stored : read.transactions) {
-            const RecoveryRecordReader record(store, stored.state);
+            const RecoveryRecordReader record(store, stored.state, stored.retainedBytes);
             const auto action = record.action();
             const auto id = record.fileId();
             const auto path = record.path();
@@ -123,10 +123,9 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
                     requireRecord(entry != result.mutations.end() && entry->kind == mutation->kind
                                       && !entry->observation,
                                   "Recovery mutation observation has no intent or repeats one.");
-                    requireRecord(recoveryTransaction(entry->target, action, stored.id,
-                                                      entry->target.current().draft.text, mutation)
-                                          .state
-                                      == stored.state,
+                    const auto expected = recoveryTransaction(entry->target, action, stored.id,
+                                                              entry->target.current().draft.text, mutation);
+                    requireRecord(expected.state == stored.state && expected.retainedBytes == stored.retainedBytes,
                                   "Recovery mutation observation changed its original target.");
                     entry->observation = mutation->observation;
                     continue; // An old completion never replaces a newer draft or discard.
@@ -140,8 +139,8 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
                     result.mutations.push_back({mutation->id, mutation->kind, {}, found->second});
                 }
             }
-            const auto encoded = recoveryTransaction(found->second, action, stored.id, previousText, mutation).state;
-            requireRecord(encoded == stored.state,
+            const auto encoded = recoveryTransaction(found->second, action, stored.id, previousText, mutation);
+            requireRecord(encoded.state == stored.state && encoded.retainedBytes == stored.retainedBytes,
                           "Recovery state schema or transition does not match the acknowledged record.");
             if (action == RecoveryAction::WriteOutcome || action == RecoveryAction::StageOutcome) {
                 const auto kind =
@@ -166,8 +165,14 @@ RecoveryReplay replayRecovery(const storage::RecoveryStore &store,
             result.files.push_back(std::move(file));
         }
         result.succeeded = true;
+    } catch (const RecoveryRecordError &error) {
+        result.problem = error.problem.isEmpty()
+            ? Problem{ProblemCode::RecoveryRecordInvalid, {QString::fromUtf8(error.what())}}
+            : error.problem;
     } catch (const std::exception &error) {
         result.problem = {ProblemCode::RecoveryRecordInvalid, {QString::fromUtf8(error.what())}};
+    }
+    if (!result.succeeded) {
         result.files.clear();
         result.mutations.clear();
         result.editedFiles.clear();

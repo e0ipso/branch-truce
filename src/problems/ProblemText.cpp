@@ -119,6 +119,9 @@ Sentence format(ProblemCode code)
     case ProblemCode::SystemSyncPublished: return Text::tr("Cannot sync published destination: %1");
     case ProblemCode::RecoveryPayloadTooLarge:
         return Text::tr("Recovery payload of %1 bytes exceeds the %2 byte limit; pending input is retained.");
+    case ProblemCode::RecoveryResourceLimit:
+        return Text::tr("Recovery exceeds a supported resource limit. Existing history is kept; the rejected change "
+                        "was not committed. Keep pending input before leaving this session.");
     case ProblemCode::RecoveryPayloadUnsafe: return Text::tr("Recovery payload is missing or unsafe.");
     case ProblemCode::RecoveryPayloadIntegrity: return Text::tr("Recovery payload integrity check failed.");
     case ProblemCode::RecoveryJournalUnsafe: return Text::tr("Recovery journal is unavailable or unsafe.");

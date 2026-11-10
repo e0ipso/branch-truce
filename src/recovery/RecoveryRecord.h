@@ -38,6 +38,8 @@ struct MutationFact {
 class RecoveryRecordError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
+    explicit RecoveryRecordError(Problem value) : std::runtime_error(""), problem(std::move(value)) {}
+    Problem problem;
 };
 
 // Throws RecoveryRecordError with detail unless condition holds.
@@ -49,7 +51,8 @@ void requireRecord(bool condition, const char *detail);
 // names a value this build does not know or names a missing payload.
 class RecoveryRecordReader {
 public:
-    RecoveryRecordReader(const storage::RecoveryStore &store, const QJsonObject &state);
+    RecoveryRecordReader(const storage::RecoveryStore &store, const QJsonObject &state,
+                         qint64 retainedBytes = 256 * 1024 * 1024);
     [[nodiscard]] RecoveryAction action() const;
     [[nodiscard]] std::string fileId() const;
     [[nodiscard]] std::string path() const;
@@ -57,6 +60,9 @@ public:
     [[nodiscard]] std::string supportDetail() const;
     // The captures an open record stores; empty for a file without them.
     [[nodiscard]] std::optional<FileSnapshots> snapshots() const;
+    // Reads only the captured root payload, for inventory filtering. Full replay
+    // still validates all captures, operations and session identities.
+    [[nodiscard]] std::string worktreeRoot() const;
     // The identity of the correspondence algorithm an open record's session aligned with.
     [[nodiscard]] std::string alignment() const;
     // The current draft. previousText is the current text before this record.
@@ -84,5 +90,6 @@ private:
     [[nodiscard]] std::map<std::string, std::string> mapping(const QJsonValue &value) const;
     const storage::RecoveryStore &store_;
     const QJsonObject &state_;
+    mutable qint64 remainingBytes_;
 };
 }

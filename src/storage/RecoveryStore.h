@@ -28,12 +28,14 @@ struct RecoveryTransaction {
     QString id;
     QJsonObject state;
     QMap<QByteArray, QByteArray> payloads; // SHA-256 hex -> exact bytes.
+    qint64 retainedBytes = 0; // Decoded domain state, checked by its reader.
 };
 
 // A record as read back from the journal.
 struct StoredTransaction {
     QString id;
     QJsonObject state;
+    qint64 retainedBytes = 0;
     bool operator==(const StoredTransaction &) const = default;
 };
 
@@ -46,6 +48,7 @@ struct RecoveryRead {
     bool incompleteTail = false;
     qint64 validBytes = 0;
     QByteArray lastDigest;
+    qint64 retainedBytes = 0;
 };
 
 struct RecoveryCommit {
@@ -53,15 +56,31 @@ struct RecoveryCommit {
     Problem problem;
 };
 
+// Hard admission limits, also used by readers. Smaller values allow boundary tests.
+// Exhaustion retains history and refuses new work; no acknowledged record is pruned.
+struct RecoveryLimits {
+    qint64 frameBytes = 4 * 1024 * 1024;
+    qint64 journalBytes = 32 * 1024 * 1024;
+    qint64 stateBytes = 16 * 1024 * 1024;
+    qint64 expandedBytes = 256 * 1024 * 1024;
+    qint64 transactions = 8192;
+    qint64 payloadFiles = 32768;
+    qint64 storeBytes = 256 * 1024 * 1024;
+};
+
 // App-owned data only. Reading validates frames and payloads, but neither the
 // state inside them nor a repository; the recovery layer owns both. Reads may
 // run on any thread; commits may too, and run one at a time.
 class RecoveryStore {
 public:
-    explicit RecoveryStore(QString directory, std::shared_ptr<const FileSystem> files = systemFileSystem());
+    explicit RecoveryStore(QString directory, std::shared_ptr<const FileSystem> files = systemFileSystem(),
+                           RecoveryLimits limits = {});
     [[nodiscard]] const QString &directory() const { return directory_; }
-    [[nodiscard]] RecoveryRead read() const;
-    [[nodiscard]] QByteArray payload(const QByteArray &digest, Problem *problem = nullptr) const;
+    // firstRecordOnly checks at most 64 KiB of the first frame, without reading
+    // payloads or scanning retention. It is a hint for inventory filtering only.
+    [[nodiscard]] RecoveryRead read(bool firstRecordOnly = false) const;
+    [[nodiscard]] QByteArray payload(const QByteArray &digest, Problem *problem = nullptr,
+                                     qint64 maxBytes = 8388608) const;
     [[nodiscard]] static QByteArray digest(const QByteArray &bytes);
 
 private:
@@ -85,6 +104,8 @@ private:
         std::optional<FileStamp> stamp;
         qint64 size = 0;
         qsizetype records = 0;
+        qint64 stateBytes = 0;
+        qint64 retainedBytes = 0;
         QByteArray lastDigest;
         // Every committed transaction ID and the digest of its state.
         std::map<QString, QByteArray> committed;
@@ -96,12 +117,15 @@ private:
     [[nodiscard]] RecoveryCommit commit(const RecoveryTransaction &transaction);
     [[nodiscard]] RecoveryCommit append(const RecoveryTransaction &transaction);
     [[nodiscard]] bool openJournal(QFile &file, RecoveryRead &result) const;
-    [[nodiscard]] RecoveryRead parse(QIODevice &journal, std::set<QByteArray> *payloads = nullptr) const;
+    [[nodiscard]] RecoveryRead parse(QIODevice &journal, std::set<QByteArray> &payloads, bool firstRecordOnly = false,
+                                     qint64 *stateBytes = nullptr) const;
+    [[nodiscard]] Problem retention(qint64 journalBytes, const QMap<QByteArray, QByteArray> &additional = {}) const;
     [[nodiscard]] const JournalEnd *refreshEnd(Problem *problem);
     [[nodiscard]] std::optional<FileStamp> stampOf(const QFile &file) const;
 
     QString directory_;
     std::shared_ptr<const FileSystem> files_;
+    RecoveryLimits limits_;
     // Held for each commit, so commits from several threads run one at a time.
     std::mutex commits_;
     std::optional<JournalEnd> end_;
@@ -123,7 +147,7 @@ public:
     // another window or process holds it.
     [[nodiscard]] static std::shared_ptr<RecoveryLease>
     acquire(const QString &directory, std::shared_ptr<const FileSystem> files = systemFileSystem(),
-            Failure *failure = nullptr);
+            Failure *failure = nullptr, RecoveryLimits limits = {});
     ~RecoveryLease();
     RecoveryLease(const RecoveryLease &) = delete;
     RecoveryLease &operator=(const RecoveryLease &) = delete;
@@ -136,7 +160,7 @@ public:
     bool remove();
 
 private:
-    RecoveryLease(QString directory, std::shared_ptr<const FileSystem> files);
+    RecoveryLease(QString directory, std::shared_ptr<const FileSystem> files, RecoveryLimits limits);
     std::unique_ptr<QLockFile> lock_;
     RecoveryStore store_;
     bool removed_ = false;
