@@ -4,6 +4,7 @@
 #include "performance/Workload.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <csignal>
 #include <cstdlib>
 #include <fcntl.h>
@@ -13,6 +14,7 @@
 #include <map>
 #include <poll.h>
 #include <sstream>
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -80,13 +82,33 @@ std::uint64_t maxLineOf(const Spec &spec)
     return spec.mode == "long" ? spec.bytes : test_support::kWorkloadLineWidth;
 }
 
+// Ends every process in the worker's group, such as a Git child of a killed worker, so nothing
+// writes into the scratch directory while it is removed, then reaps the worker. Only an unreaped
+// worker keeps its process ID, and with it the group ID, from being reused, so this runs before
+// the worker is reaped.
+int endGroup(pid_t group)
+{
+    if (::kill(-group, SIGKILL) != 0 && errno != ESRCH) ::kill(group, SIGKILL);
+    int status = 0;
+    while (::waitpid(group, &status, 0) == -1 && errno == EINTR) {}
+    return status;
+}
+
+// Whether the worker has exited, without reaping it.
+bool exited(pid_t pid)
+{
+    siginfo_t info{};
+    return ::waitid(P_PID, static_cast<id_t>(pid), &info, WEXITED | WNOHANG | WNOWAIT) == 0 && info.si_pid == pid;
+}
+
 // One run of `spec` in a worker process: the records it reported, with a record for each
-// expected name it did not report when it was killed or crashed.
-std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std::string *problem)
+// expected name it did not report when it was killed or crashed. Cleanup failures are appended
+// to `problems`.
+std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std::vector<std::string> *problems)
 {
     const std::string scratch = makeScratch();
     if (scratch.empty()) {
-        *problem = "could not create a scratch directory in " + scratchBase();
+        problems->push_back("could not create a scratch directory in " + scratchBase());
         return {};
     }
     std::vector<std::string> args{executable,
@@ -111,13 +133,17 @@ std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std
     pointers.push_back(nullptr);
     int pipefd[2];
     if (pipe(pipefd) != 0) {
-        std::vector<std::string> failures;
-        removeScratch(scratch, &failures);
-        *problem = "pipe failed";
+        problems->push_back("pipe failed");
+        removeScratch(scratch, problems);
         return {};
     }
+    const pid_t parent = getpid();
     const pid_t pid = fork();
     if (pid == 0) {
+        // The worker leads its own process group, so a kill reaches the Git processes it starts,
+        // and it dies with the supervisor, which a CTest timeout kills.
+        setpgid(0, 0);
+        if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() != parent) _exit(127);
         if (dup2(pipefd[1], STDOUT_FILENO) < 0) _exit(127);
         ::close(pipefd[0]);
         ::close(pipefd[1]);
@@ -126,48 +152,43 @@ std::vector<Record> runOnce(const Spec &spec, const std::string &executable, std
         execv(executable.c_str(), pointers.data());
         _exit(127);
     }
+    if (pid > 0) setpgid(pid, pid);
     ::close(pipefd[1]);
+    if (pid < 0) {
+        ::close(pipefd[0]);
+        problems->push_back("fork failed");
+        removeScratch(scratch, problems);
+        return {};
+    }
     fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
     std::string output;
     bool resource = false;
     bool timedOut = false;
     const auto started = std::chrono::steady_clock::now();
-    int status = 0;
-    bool reaped = false;
-    while (!reaped) {
-        const pid_t got = waitpid(pid, &status, WNOHANG);
+    for (;;) {
+        const bool done = exited(pid);
         char buffer[1024];
         const ssize_t count = ::read(pipefd[0], buffer, sizeof buffer);
         if (count > 0) output.append(buffer, static_cast<std::size_t>(count));
-        if (got == pid) {
-            reaped = true;
-            break;
-        }
+        if (done) break;
         if (currentRssKb(pid) > kRssKillKb) {
             resource = true;
-            kill(pid, SIGKILL);
-            waitpid(pid, &status, 0);
-            reaped = true;
             break;
         }
         if (since(started) > static_cast<std::uint64_t>(spec.timeoutMs)) {
             timedOut = true;
-            kill(pid, SIGKILL);
-            waitpid(pid, &status, 0);
-            reaped = true;
             break;
         }
         pollfd ready{pipefd[0], POLLIN, 0};
         poll(&ready, 1, 50);
     }
+    const int status = endGroup(pid);
     char buffer[1024];
     ssize_t count = 0;
     while ((count = ::read(pipefd[0], buffer, sizeof buffer)) > 0)
         output.append(buffer, static_cast<std::size_t>(count));
     ::close(pipefd[0]);
-    std::vector<std::string> failures;
-    removeScratch(scratch, &failures);
-    if (!failures.empty()) *problem = failures.front();
+    removeScratch(scratch, problems);
     // A worker that reported and then failed on its own, by exit status or by a signal the
     // supervisor did not send, cannot vouch for what it reported.
     std::string failedExit;
@@ -240,7 +261,7 @@ std::string scratchBase()
     return "/var/tmp";
 }
 
-std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::string *problem)
+std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::vector<std::string> *problems)
 {
     const std::string executable = selfPath();
     std::map<std::string, bool> halted;
@@ -282,7 +303,7 @@ std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::string *prob
         }
         bool stall = false;
         for (int repeat = 0; repeat < spec.repeats; ++repeat) {
-            const auto records = runOnce(spec, executable, problem);
+            const auto records = runOnce(spec, executable, problems);
             for (const auto &record : records) {
                 auto &item = findOrAdd(record, spec.group);
                 if (!item.ranked || outcomeRank(record.outcome) < outcomeRank(item.outcome))

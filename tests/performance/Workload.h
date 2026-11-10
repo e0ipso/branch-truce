@@ -148,9 +148,9 @@ std::optional<std::uint64_t> medianOf(std::vector<std::uint64_t> values);
 // fsync reaches a disk as the application data directory's would.
 std::string scratchBase();
 
-// Runs every spec in its own worker processes and aggregates the repeats. A cleanup failure is
-// left in `problem`.
-std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::string *problem);
+// Runs every spec in its own worker processes and aggregates the repeats. Every cleanup failure is
+// appended to `problems`.
+std::vector<Aggregate> measure(const std::vector<Spec> &specs, std::vector<std::string> *problems);
 
 // The sizes a run supports under the decision rule, one per product limit in
 // core/ResourceLimits.h. Each is empty when no measured size qualified.
@@ -174,8 +174,10 @@ std::vector<LimitComparison> compareWithLimits(const Envelope &envelope);
 // Empty, with the reason in `error`, when the file cannot be read or a row is malformed.
 std::vector<Aggregate> readEvidenceRows(const std::string &path, std::string *error);
 
-// Writes the evidence report to `path` and its rows next to it with a .tsv extension.
-void writeReports(const std::string &path, const std::vector<Aggregate> &results, const std::string &cleanup);
+// Writes the evidence report to `path` and its rows next to it with a .tsv extension. Returns
+// false, with the reason in `error`, when either file could not be written in full.
+bool writeReports(const std::string &path, const std::vector<Aggregate> &results, const std::string &cleanup,
+                  std::string *error);
 
 // The worker entry point, selected by --worker on the command line.
 int workerMain(int argc, char **argv);

@@ -3,7 +3,9 @@
 // this file holds the two profiles and what each one expects.
 //
 //   --profile gate      the small end of the matrix and the failure probes; the CTest entry.
-//   --profile evidence  the full matrix, written to --report and a .tsv beside it.
+//   --profile evidence  the full matrix, written to --report PATH and a .tsv beside it. PATH is
+//                       required, since the run takes long and a relative default would land
+//                       wherever it was started.
 //
 // Every size that matters to the product comes from core/ResourceLimits.h: the matrix measures
 // each limit itself, and each over-limit probe sits one byte past its limit.
@@ -189,13 +191,21 @@ int main(int argc, char **argv)
             return 0;
         }
     }
-    std::string problem;
     const bool evidence = profile == "evidence";
-    const auto results = workload::measure(evidence ? evidenceProfile() : gateProfile(), &problem);
-    const std::string cleanup = problem.empty() ? "scratch directories removed" : problem;
+    if (evidence && report.empty()) {
+        std::cerr << "the evidence profile needs --report PATH\n";
+        return 2;
+    }
+    std::vector<std::string> problems;
+    const auto results = workload::measure(evidence ? evidenceProfile() : gateProfile(), &problems);
+    std::string cleanup = problems.empty() ? "scratch directories removed" : "";
+    for (const auto &problem : problems) cleanup += (cleanup.empty() ? "" : "; ") + problem;
     if (evidence) {
-        if (report.empty()) report = "tests/fixtures/performance/evidence.md";
-        workload::writeReports(report, results, cleanup);
+        std::string error;
+        if (!workload::writeReports(report, results, cleanup, &error)) {
+            std::cerr << "report not written: " << error << '\n';
+            return 1;
+        }
         std::cout << "report " << report << '\n';
     }
     std::vector<Expectation> expectations = evidence ? kHonesty : kGate;

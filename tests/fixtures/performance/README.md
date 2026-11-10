@@ -21,7 +21,7 @@ QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
   --profile evidence --report tests/fixtures/performance/evidence.md
 ```
 
-The registered check is `performance.workloads`. It runs `--profile gate` under `QT_QPA_PLATFORM=offscreen` and `QT_QUICK_BACKEND=software`.
+The evidence profile refuses to run without `--report`. The registered check is `performance.workloads`. It runs `--profile gate` under `QT_QPA_PLATFORM=offscreen` and `QT_QUICK_BACKEND=software`.
 
 ## Decision rule
 

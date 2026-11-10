@@ -234,9 +234,14 @@ std::vector<Aggregate> readEvidenceRows(const std::string &path, std::string *er
     return rows;
 }
 
-void writeReports(const std::string &path, const std::vector<Aggregate> &results, const std::string &cleanup)
+bool writeReports(const std::string &path, const std::vector<Aggregate> &results, const std::string &cleanup,
+                  std::string *error)
 {
     std::ofstream markdown(path);
+    if (!markdown.is_open()) {
+        *error = "cannot open " + path;
+        return false;
+    }
     utsname system{};
     uname(&system);
     const auto mount = capture({"findmnt", "-T", scratchBase(), "-n", "-o", "FSTYPE,SOURCE"});
@@ -268,6 +273,10 @@ void writeReports(const std::string &path, const std::vector<Aggregate> &results
     else
         tsvPath.replace(dot, std::string::npos, ".tsv");
     std::ofstream table(tsvPath);
+    if (!table.is_open()) {
+        *error = "cannot open " + tsvPath;
+        return false;
+    }
     table << "kind\tname\tmetric\tgroup\toutcome\tbytes\tlines\tmax_line\tsamples\tmin_ms\tmedian_ms\tmax_ms\trss_"
              "kb\tdetail\n";
     for (const auto &item : results) {
@@ -345,6 +354,11 @@ void writeReports(const std::string &path, const std::vector<Aggregate> &results
              << "input method, or KDE compositor. Correspondence cost is quadratic in line count. A long line is "
              << "interned once and is not the quadratic case. RSS is the process high-water mark and later work in "
              << "the same process can only raise it. Cleanup: " << cleanup << "\n";
+    markdown.close();
+    table.close();
+    if (markdown.fail()) *error = "could not write all of " + path;
+    if (table.fail()) *error = "could not write all of " + tsvPath;
+    return !markdown.fail() && !table.fail();
 }
 
 } // namespace workload
