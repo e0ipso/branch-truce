@@ -151,6 +151,15 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
         LIBS branch_truce_storage TIMEOUT 30)
 
     find_package(Qt6 6.6 REQUIRED COMPONENTS Test QuickTest)
+    if(Python3_Interpreter_FOUND)
+        add_library(branch_truce_native_replay_driver MODULE tools/NativeReplayDriver.cpp)
+        target_link_libraries(branch_truce_native_replay_driver PRIVATE
+            Qt6::Core Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Network Qt6::Test branch_truce_build_options)
+        add_test(NAME tooling.native-driver-main
+            COMMAND ${private_xdg} "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/NativeDriverIntegration.py"
+                --app $<TARGET_FILE:branch-truce> --driver $<TARGET_FILE:branch_truce_native_replay_driver>)
+        set_tests_properties(tooling.native-driver-main PROPERTIES TIMEOUT 120 LABELS tooling)
+    endif()
     # The app suites build sessions whose default recovery store, mergetool socket and Qt settings
     # live under the XDG directories, so every one runs through with-private-xdg.sh.
     branch_truce_add_unit_test(app.session-model app/SessionModelTests.cpp LIBS branch_truce_controller

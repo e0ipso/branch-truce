@@ -1,4 +1,5 @@
 // External preload driver: observe the real scene and send native Qt input only.
+#include "../../src/app/FileStates.h"
 #include <QAccessible>
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -103,14 +104,30 @@ QJsonValue value(const QVariant &variant)
 {
     if (variant.metaType() == QMetaType::fromType<QJSValue>())
         return QJsonValue::fromVariant(variant.value<QJSValue>().toVariant());
+    if (variant.metaType().flags().testFlag(QMetaType::IsEnumeration)) return variant.toInt();
     return QJsonValue::fromVariant(variant);
 }
-QObject *controller() { return window ? window->property("controller").value<QObject *>() : nullptr; }
-QObject *selected()
-{
-    auto *owner = controller();
-    return owner ? owner->property("selectedFile").value<QObject *>() : nullptr;
-}
+// Main's required service objects are the app boundary, also used for discovery.
+struct WindowBinding {
+    QObject *selectedFile, *loader, *commands, *files;
+    static std::optional<WindowBinding> bind(QQuickWindow *candidate)
+    {
+        WindowBinding binding{
+            candidate->property("selectedFile").value<QObject *>(), candidate->property("loader").value<QObject *>(),
+            candidate->property("commands").value<QObject *>(), candidate->property("files").value<QObject *>()};
+        if (!binding.selectedFile || !binding.loader || !binding.commands || !binding.files) return {};
+        return binding;
+    }
+    bool ready() const
+    {
+        const auto recovery = selectedFile->property("recoveryState");
+        return recovery.isValid() && !selectedFile->property("path").toString().isEmpty()
+            && !loader->property("opening").toBool() && !commands->property("resolutionBusy").toBool()
+            && !selectedFile->property("pendingInput").toBool()
+            && recovery.toInt() == int(branch_truce::FileStates::RecoveryState::Durable);
+    }
+};
+std::optional<WindowBinding> binding() { return window ? WindowBinding::bind(window) : std::nullopt; }
 bool reachable(QQuickItem *item)
 {
     if (!item || !item->isVisible() || item->width() <= 0 || item->height() <= 0) return false;
@@ -303,23 +320,14 @@ QJsonObject snapshot()
     state["width"] = window->width();
     state["height"] = window->height();
     state["profile"] = profile();
-    if (auto *file = selected())
+    if (const auto app = binding())
         for (const auto *key :
              {"path", "status", "unsaved", "undecided", "progress", "regions", "choices", "decisions", "resultText",
               "passages", "markerBlocks", "pendingInput", "recoveryState", "supportDetail"})
-            state[key] = value(file->property(key));
+            state[key] = value(app->selectedFile->property(key));
     return state;
 }
 
-bool loaded()
-{
-    auto *owner = controller();
-    auto *file = selected();
-    if (!owner || !file || file->property("path").toString().isEmpty()) return false;
-    auto *loader = owner->property("loader").value<QObject *>();
-    return loader && !loader->property("opening").toBool() && !owner->property("resolutionBusy").toBool()
-        && !file->property("pendingInput").toBool() && file->property("recoveryState").toString() == "durable";
-}
 QPoint centre(QQuickItem *item) { return item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint(); }
 
 Outcome finish(const Request &, Progress &, QQuickItem *) { return Outcome::done(); }
@@ -565,17 +573,18 @@ void tick()
     if (!window) {
         for (auto *candidate : QGuiApplication::topLevelWindows()) {
             auto *quick = qobject_cast<QQuickWindow *>(candidate);
-            if (quick && quick->property("controller").isValid()) {
+            if (quick && WindowBinding::bind(quick)) {
                 window = quick;
                 break;
             }
         }
     }
-    if (!window || !window->isExposed() || !loaded()) {
+    const auto app = binding();
+    if (!app || !window->isExposed() || !app->ready()) {
         progress.stable.restart();
         return;
     }
-    if (!request.path.isEmpty() && selected()->property("path").toString() != request.path) {
+    if (!request.path.isEmpty() && app->selectedFile->property("path").toString() != request.path) {
         progress.stable.restart();
         return;
     }

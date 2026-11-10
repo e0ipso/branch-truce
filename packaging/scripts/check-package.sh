@@ -92,11 +92,22 @@ check_previous() {
     printf '%s\n' "$version"
 }
 
+# An empty expected version requires confirmed absence, never a failed database query.
+check_installed_version() {
+    local actual status=0
+    actual=$(pkg_installed_version) || status=$?
+    case "$status" in
+        0) [ "$actual" = "$1" ] || die "installed version is '$actual', expected '$1'" ;;
+        1) [ -z "$1" ] || die "branch-truce is not installed, expected '$1'" ;;
+        *) die 'cannot inspect the installed package database' ;;
+    esac
+}
+
 # check_installed_files WANT PAYLOAD-FILE: the package manager reports
 # version WANT installed, every payload file exists and none changed.
 check_installed_files() {
     local want=$1 payload=$2 path
-    [ "$(pkg_installed_version)" = "$want" ] || die "installed version is '$(pkg_installed_version)', expected $want"
+    check_installed_version "$want"
     while IFS= read -r path; do [ -f "$path" ] || die "missing installed file $path"; done < "$payload"
     pkg_verify_installed || die 'the package manager reports changed installed files'
 }
@@ -187,9 +198,9 @@ check_installed() {
 remove_and_check() {
     local home=$1 payload=$2 before path suffix extras
     before=$(user_files "$home")
-    step "remove $(pkg_installed_version)"
+    step "remove branch-truce"
     pkg_remove || die 'the package manager did not remove branch-truce'
-    [ -z "$(pkg_installed_version)" ] || die 'branch-truce is still installed'
+    check_installed_version ''
     while IFS= read -r path; do
         [ ! -e "$path" ] && [ ! -L "$path" ] || die "removal left $path"
         for suffix in $(pkg_leftover_suffixes); do
@@ -236,7 +247,7 @@ check_main() {
 
     [ "$(id -u)" -eq 0 ] || die 'run as root in a disposable target container'
     pkg_target_ready
-    [ -z "$(pkg_installed_version)" ] || die 'branch-truce is already installed; use a clean target'
+    check_installed_version ''
     work=$(fixture_root)
     local cleanup
     printf -v cleanup 'rm -rf -- %q' "$work"
@@ -255,7 +266,7 @@ check_main() {
     if [ -n "$previous" ]; then
         step "install $previous_native, then upgrade to $native"
         pkg_install "$previous"
-        [ "$(pkg_installed_version)" = "$previous_native" ] || die "the previous package installed '$(pkg_installed_version)'"
+        check_installed_version "$previous_native"
         pkg_install "$package"
         check_installed "$native" "$version" "$work/home" "$work"
         remove_and_check "$work/home" "$work/payload"

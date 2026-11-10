@@ -44,7 +44,7 @@ grep -qF 'written by the application' "$work/home/data/Branch Truce/recovery/unr
 # Removal: the payload must be gone and the user home unchanged.
 mkdir -p "$work/installed"
 printf '%s\n' "$work/installed/branch-truce" > "$work/payload"
-stubs="pkg_installed_version() { :; }; pkg_leftover_suffixes() { echo .save; }; pkg_extra_files() { :; }"
+stubs="pkg_installed_version() { return 1; }; pkg_leftover_suffixes() { echo .save; }; pkg_extra_files() { :; }"
 (source "$root/packaging/scripts/check-package.sh"; eval "$stubs"
     pkg_remove() { :; }
     remove_and_check "$work/home" "$work/payload") > "$work/result" || { cat "$work/result" >&2; fail 'a clean removal failed'; }
@@ -64,8 +64,11 @@ touch "$work/installed/branch-truce.save"
 expect_death "removal left $work/installed/branch-truce.save" "$stubs
     pkg_remove() { :; }
     remove_and_check \"$work/home\" \"$work/payload\""
-expect_death 'branch-truce is still installed' "$stubs
+expect_death "installed version is '1.2.3', expected ''" "$stubs
     pkg_remove() { :; }; pkg_installed_version() { echo 1.2.3; }
+    remove_and_check \"$work/home\" \"$work/payload\""
+expect_death 'cannot inspect the installed package database' "$stubs
+    pkg_remove() { :; }; pkg_installed_version() { return 2; }
     remove_and_check \"$work/home\" \"$work/payload\""
 # A validator that rejects a file fails the check without the caller's errexit.
 mkdir -p "$work/bin"

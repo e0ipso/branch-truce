@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -83,7 +83,7 @@ test('selection binds the analysed candidate and accepts only packageable versio
   assert.throws(() => select({ event: 'push', revision, analyzedRevision: 'b'.repeat(40), analyzedVersion: '1.3.0', packageVersion: '1.2.3' }, accepts),
     /belongs to another revision/);
   assert.throws(() => select({ event: 'schedule', revision, packageVersion: '1.2.3' }, accepts), UsageError);
-  for (const version of ['1.2.3-rc-1', '1.2.3-rc.0', '1.2', 'v1.2.3']) {
+  for (const version of ['1.2.3-rc-1', '1.2.3-rc.0', '1.2', 'v1.2.3', '--help', '-h']) {
     assert.equal(packageable(version, ROOT), false, version);
     assert.throws(() => select({ event: 'pull_request', revision, packageVersion: version }, accepts), /Unsupported native package version/);
   }
@@ -260,4 +260,18 @@ test('full fidelity uses one baseline while every platform still reaches native 
   }
   assert.deepEqual(readFileSync(trace, 'utf8').trim().split('\n'),
     ['kubuntu-deb 1', 'fedora-rpm 0', 'arch-pkg 0']);
+});
+
+
+test('validator launch and infrastructure failures remain errors', t => {
+  const { cwd } = repository(t);
+  const validator = join(cwd, 'packaging/scripts/native-version.sh');
+  for (const body of ['#!/bin/sh\nexit 1\n', '#!/bin/sh\nkill -TERM $$\n']) {
+    writeFileSync(validator, body);
+    assert.throws(() => packageable('1.2.3', cwd));
+  }
+  chmodSync(validator, 0o644);
+  assert.throws(() => packageable('1.2.3', cwd), { code: 'EACCES' });
+  rmSync(validator);
+  assert.throws(() => packageable('1.2.3', cwd), { code: 'ENOENT' });
 });

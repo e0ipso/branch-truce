@@ -30,9 +30,12 @@ TAGS
 cat > "$work/bin/dpkg-deb" <<'DPKG'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${STUB_INSPECT_FAIL:-0}" != 1 || "$1" != --ctrl-tarfile ]] || { echo "inspection refused" >&2; exit 42; }
 case "$1" in
     -f) sed -n "s/^$3=//p" "$2/tags" ;;
+    --fsys-tarfile)
+        mkdir -p "$STUB_TMP/payload/usr/bin"
+        touch "$STUB_TMP/payload/usr/bin/branch-truce"
+        tar -C "$STUB_TMP/payload" -cf - . ;;
     --ctrl-tarfile)
         mkdir -p "$STUB_TMP/control"
         rm -rf "${STUB_TMP:?}/control/"*
@@ -45,29 +48,31 @@ esac
 DPKG
 cat > "$work/bin/dpkg-query" <<'DPKG'
 #!/usr/bin/env bash
-[ "$*" = '-W -f ${Status} ${Version}\n branch-truce' ] || exit 9
-[ -n "${STUB_INSTALLED:-}" ] || { echo 'dpkg-query: no packages found matching branch-truce' >&2; exit 1; }
-printf 'install ok installed %s\n' "$(sed -n 's/^Version=//p' "$STUB_INSTALLED/tags")"
+[ "$*" = '-W -f ${Package}|${Status}|${Version}\n' ] || exit 9
+[ "${STUB_DB_FAIL:-0}" = 0 ] || { echo 'database damaged' >&2; exit 42; }
+[ "${STUB_DB_BAD:-0}" = 0 ] || { echo 'branch-truce|install ok installed'; exit 0; }
+[ -n "${STUB_INSTALLED:-}" ] || exit 0
+printf 'branch-truce|install ok installed|%s\n' "$(sed -n 's/^Version=//p' "$STUB_INSTALLED/tags")"
 DPKG
 cat > "$work/bin/rpm" <<'RPM'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${STUB_INSPECT_FAIL:-0}" != 1 || "$2" != --scripts ]] || { echo "inspection refused" >&2; exit 42; }
 case "$1 $2" in
-    '-qp --qf') stub-tags "$4" "$3" ;;
+    '-qp --qf')
+        if [[ "$3" == *FILENAMES* ]]; then echo '/usr/bin/branch-truce -rwxr-xr-x'; else stub-tags "$4" "$3"; fi ;;
+    '-qpR '*) echo 'git >= 2.43' ;;
     '-qp --scripts') if [ -s "$4/scripts" ]; then echo 'postinstall scriptlet (using /bin/sh):'; fi ;;
     '-qp --configfiles') cat "$3/configs" ;;
-    '-q branch-truce') [ -n "${STUB_INSTALLED:-}" ] || { echo 'package branch-truce is not installed'; exit 1; } ;;
-    '-q --qf')
-        [ "$4" = branch-truce ] && [ -n "${STUB_INSTALLED:-}" ] || exit 1
-        stub-tags "$STUB_INSTALLED" "$3" ;;
+    '-qa --qf')
+        [ "${STUB_DB_FAIL:-0}" = 0 ] || { echo 'database damaged' >&2; exit 42; }
+        [ "${STUB_DB_BAD:-0}" = 0 ] || { echo 'branch-truce|0'; exit 0; }
+        [ -z "${STUB_INSTALLED:-}" ] || stub-tags "$STUB_INSTALLED" "$3" ;;
     *) exit 9 ;;
 esac
 RPM
 cat > "$work/bin/bsdtar" <<'BSDTAR'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${STUB_INSPECT_FAIL:-0}" != 1 || "$1" != -tf ]] || { echo "inspection refused" >&2; exit 42; }
 case "$1" in
     -xOf) [ "$3" = .PKGINFO ] || exit 9; sed 's/^\([a-z]*\)=/\1 = /' "$2/tags" ;;
     -tf) printf '.PKGINFO\n.MTREE\n'; if [ -s "$2/scripts" ]; then echo .INSTALL; fi; cat "$2/files" ;;
@@ -76,10 +81,28 @@ esac
 BSDTAR
 cat > "$work/bin/pacman" <<'PACMAN'
 #!/usr/bin/env bash
-[ "$*" = '-Q branch-truce' ] || exit 9
-[ -n "${STUB_INSTALLED:-}" ] || { echo "error: package 'branch-truce' was not found" >&2; exit 1; }
+[ "$*" = '-Q' ] || exit 9
+[ "${STUB_DB_FAIL:-0}" = 0 ] || { echo 'database damaged' >&2; exit 42; }
+[ "${STUB_DB_BAD:-0}" = 0 ] || { echo branch-truce; exit 0; }
+[ -n "${STUB_INSTALLED:-}" ] || exit 0
 printf 'branch-truce %s\n' "$(sed -n 's/^pkgver=//p' "$STUB_INSTALLED/tags")"
 PACMAN
+# Return native-looking output and then fail, or fail with empty/truncated output.
+for tool in dpkg-deb rpm bsdtar; do
+    mv "$work/bin/$tool" "$work/bin/$tool.real"
+    cat > "$work/bin/$tool" <<'FAULT'
+#!/usr/bin/env bash
+if [ "${STUB_INSPECT_FAIL:-0}" != 0 ]; then
+    "$0.real" "$@" > "$STUB_TMP/partial" || true
+    case "$STUB_INSPECT_FAIL" in
+        1) cat "$STUB_TMP/partial" ;;
+        truncated) head -c 64 "$STUB_TMP/partial" ;;
+    esac
+    echo 'inspection refused' >&2; exit 42
+fi
+exec "$0.real" "$@"
+FAULT
+done
 chmod +x "$work/bin/"*
 export STUB_TMP=$work/tmp
 mkdir -p -- "$STUB_TMP"
@@ -98,10 +121,10 @@ package() {
     local evr=$version
     [ "$epoch" = 0 ] || evr=$epoch:$version
     case "$family" in
-        deb) printf 'Package=%s\nVersion=%s\nArchitecture=amd64\n' "$name" "$evr" > "$dir/tags" ;;
+        deb) printf 'Package=%s\nVersion=%s\nArchitecture=amd64\nDepends=git (>= 2.43)\n' "$name" "$evr" > "$dir/tags" ;;
         rpm) printf 'NAME=%s\nEPOCHNUM=%s\nVERSION=%s\nRELEASE=1.fc44\nARCH=x86_64\nLICENSE=GPL-3.0-or-later AND CC0-1.0\n' \
             "$name" "$epoch" "$version" > "$dir/tags" ;;
-        arch) printf 'pkgname=%s\npkgver=%s-1\narch=x86_64\nlicense=GPL-3.0-or-later\nlicense=CC0-1.0\n' \
+        arch) printf 'pkgname=%s\npkgver=%s-1\narch=x86_64\nlicense=GPL-3.0-or-later\nlicense=CC0-1.0\ndepend=git>=2.43\n' \
             "$name" "$evr" > "$dir/tags" ;;
     esac
     local extra
@@ -121,10 +144,11 @@ package() {
 adapter() {
     local family=$1 code=$2
     shift 2
-    PATH="$work/bin:$PATH" bash -c 'set -euo pipefail; source "$1"; shift; '"$code" bash \
+    PATH="$work/bin:$PATH" bash -c 'set -eu; set '"$pipefail"' pipefail; before=$(set +o); trap '"'"'[ "$(set +o)" = "$before" ] || exit 99'"'"' EXIT; source "$1"; shift; '"$code" bash \
         "$root/packaging/scripts/pkg-$family.sh" "$@"
 }
 
+for pipefail in +o -o; do
 for family in deb rpm arch; do
     for epoch in 0 2; do
         plain=$(package "$family" branch-truce "$epoch" 1.2.3)
@@ -145,9 +169,17 @@ for family in deb rpm arch; do
         [ "$installed" = "$version" ] || fail "$family installed version '$installed', identity version '$version'"
         pass
     done
-    # Nothing installed is an empty answer, not a failure.
-    installed=$(adapter "$family" 'pkg_installed_version') || fail "$family installed version failed with nothing installed"
-    [ -z "$installed" ] || fail "$family reports '$installed' with nothing installed"
+    adapter "$family" 'status=0; output=$(pkg_installed_version) || status=$?; [ "$status" = 1 ] && [ -z "$output" ]' \
+        || fail "$family did not confirm absence"
+    pass
+    for fault in STUB_DB_FAIL STUB_DB_BAD; do
+        export "$fault=1"
+        adapter "$family" 'status=0; pkg_installed_version || status=$?; [ "$status" = 2 ]' 2> "$work/error" \
+            || fail "$family hid $fault"
+        unset "$fault"
+        pass
+    done
+    adapter "$family" '[ "$(pkg_files "$1")" = /usr/bin/branch-truce ]; [ "$(pkg_depends "$1")" = git ]' "$plain" || fail "$family inspector output"
     pass
     # Scripts, triggers and configuration files all count; a plain payload does not.
     adapter "$family" 'status=0; pkg_has_scripts "$1" || status=$?; [ "$status" = 1 ]' "$(package "$family" branch-truce 0 1.2.3)" \
@@ -162,9 +194,17 @@ for family in deb rpm arch; do
     adapter "$family" 'pkg_check_metadata "$1"' "$(package "$family" branch-truce 0 1.2.3)" \
         || fail "$family rejects the expected metadata"
     pass
-    STUB_INSPECT_FAIL=1 adapter "$family" 'status=0; pkg_has_scripts "$1" || status=$?; [ "$status" = 2 ]' "$plain" \
-        2> "$work/error" || fail "$family lost the inspection failure status"
-    grep -q 'inspection refused' "$work/error" || fail "$family lost the inspection diagnostic"
+    for fault in 1 empty truncated; do
+        for operation in pkg_identity pkg_check_metadata pkg_files pkg_depends pkg_has_scripts; do
+            [ "$family:$operation" != deb:pkg_check_metadata ] || continue
+            STUB_INSPECT_FAIL=$fault adapter "$family" 'status=0; "$1" "$2" || status=$?; if [ "$1" = pkg_has_scripts ]; then [ "$status" = 2 ]; else [ "$status" != 0 ]; fi' \
+                "$operation" "$plain" > "$work/output" 2> "$work/error" || fail "$family $operation hid $fault inspection failure"
+            grep -q 'inspection refused' "$work/error" || fail "$family lost the inspection diagnostic"
+            pass
+        done
+    done
+    adapter "$family" 'status=0; pkg_recipe_depends "$1" || status=$?; [ "$status" != 0 ]' "$work/missing" \
+        2> "$work/error" || fail "$family hid an unreadable recipe"
     pass
     # Every adapter defines the whole contract.
     adapter "$family" 'declare -F pkg_identity pkg_check_metadata pkg_files pkg_extra_files pkg_has_scripts \
@@ -172,6 +212,7 @@ for family in deb rpm arch; do
         pkg_installed_version pkg_verify_installed pkg_runtime_versions pkg_qt_root pkg_leftover_suffixes >/dev/null' \
         || fail "$family lacks part of the adapter contract"
     pass
+done
 done
 
 # pkg_older with the family's real comparator, where the host has it: release

@@ -6,7 +6,7 @@ family is the `family` column of [`../formats.tsv`](../formats.tsv).
 [`check-package.sh`](check-package.sh) and
 [`package-identity.sh`](package-identity.sh) source the adapter of the format
 they check. Sourcing an adapter defines the functions below and nothing else:
-no shell options, no global variables, no commands. Names that start with
+no shell options, no global variables, no commands. Inspector pipelines preserve upstream failures with either caller `pipefail` setting. Names that start with
 `_pkg_` are private to one adapter.
 
 Every adapter defines every function, and the functions behave the same in
@@ -45,7 +45,7 @@ change it. `check-package.sh` calls them only after every read check passed.
 | `pkg_refresh` | Brings the package lists up to date, so `pkg_install` resolves against the current repositories. On Arch, a rolling release that does not support partial upgrades, it also upgrades the installed packages. |
 | `pkg_install FILE` | Installs or upgrades from a local file, with the dependencies from the target's repositories. |
 | `pkg_remove` | Removes branch-truce completely, configuration included. |
-| `pkg_installed_version` | The installed native version in the form `pkg_identity` gives, or nothing, with status 0, when branch-truce is not installed. |
+| `pkg_installed_version` | Status 0 and the installed native version in the form `pkg_identity` gives; status 1 and no output for confirmed absence; status 2 for a failed database query or malformed installed record. |
 | `pkg_verify_installed` | The package manager's integrity check of the installed files. |
 | `pkg_runtime_versions` | Prints the installed Qt, KDE Frameworks and Git packages, for the report. |
 | `pkg_qt_root` | The Qt 6 directory that holds `qml/` and `plugins/`. |

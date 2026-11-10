@@ -48,10 +48,11 @@ export async function analyze() {
  */
 export function packageable(version, root) {
   try {
-    execFileSync(join(root, 'packaging/scripts/native-version.sh'), [version], { stdio: 'ignore' });
+    execFileSync(join(root, 'packaging/scripts/native-version.sh'), ['--style', 'tilde', version], { stdio: 'ignore' });
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof Error && 'status' in error && error.status === 2 && 'signal' in error && !error.signal) return false;
+    throw error;
   }
 }
 

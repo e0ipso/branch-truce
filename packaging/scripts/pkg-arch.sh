@@ -5,9 +5,9 @@
 # with _pkg_ are private to this file.
 
 # _pkg_arch_values FILE KEY: every value of KEY in the package's .PKGINFO.
-_pkg_arch_values() {
+_pkg_arch_values() ( set -o pipefail;
     bsdtar -xOf "$1" .PKGINFO | awk -v key="$2" 'index($0, key " = ") == 1 { print substr($0, length(key) + 4) }'
-}
+)
 # _pkg_arch_value FILE KEY: the single value of KEY; duplicates are not hidden.
 _pkg_arch_value() {
     local value
@@ -28,9 +28,9 @@ pkg_check_metadata() {
         grep -qxF "$license" <<<"$licenses" || { echo "missing license $license" >&2; return 1; }
     done
 }
-pkg_files() {
+pkg_files() ( set -o pipefail;
     bsdtar -tf "$1" | sed 's|^\./||; /\/$/d' | awk '!/^\.(PKGINFO|BUILDINFO|MTREE)$/ { print "/" $0 }' | LC_ALL=C sort
-}
+)
 pkg_extra_files() { echo /usr/share/licenses/branch-truce/LICENSE; }
 # An install script, or a backup= configuration file that pacman saves as
 # .pacsave on removal. The listing is read whole: grep -q could end the pipe
@@ -40,16 +40,16 @@ pkg_has_scripts() {
     members=$(bsdtar -tf "$1") && backup=$(_pkg_arch_values "$1" backup) || return 2
     grep -xE '(\./)?\.INSTALL' <<<"$members" >/dev/null || [ -n "$backup" ]
 }
-pkg_depends() { _pkg_arch_values "$1" depend | sed 's/[<>=].*//' | LC_ALL=C sort -u; }
+pkg_depends() ( set -o pipefail; _pkg_arch_values "$1" depend | sed 's/[<>=].*//' | LC_ALL=C sort -u; )
 # pkg_recipe_depends ROOT: the PKGBUILD's depends array, read in a subshell.
-pkg_recipe_depends() {
+pkg_recipe_depends() ( set -o pipefail;
     (
         BRANCH_TRUCE_ARCH_PKGVER=0 BRANCH_TRUCE_VERSION=0.0.0
         # shellcheck disable=SC1091
-        source "$1/packaging/arch/PKGBUILD"
+        source "$1/packaging/arch/PKGBUILD" || exit 1
         printf '%s\n' "${depends[@]}"
     ) | sed 's/[<>=].*//' | LC_ALL=C sort -u
-}
+)
 pkg_older() { [ "$(vercmp "$1" "$2")" -lt 0 ]; }
 pkg_target_ready() { command -v pacman vercmp >/dev/null || { echo 'error: use an Arch Linux target' >&2; return 1; }; }
 # Refresh the whole rolling base; never perform a partial upgrade.
@@ -65,7 +65,12 @@ pkg_install() {
     pacman -S --needed --noconfirm -- "${required[@]}" && pacman -U --noconfirm -- "$1"
 }
 pkg_remove() { pacman -Rn --noconfirm branch-truce; }
-pkg_installed_version() { { pacman -Q branch-truce 2>/dev/null || true; } | awk '{ print $2 }'; }
+pkg_installed_version() {
+    local packages
+    packages=$(pacman -Q) || return 2
+    awk '$1 == "branch-truce" { if (NF != 2) bad=1; version=$2; found++ }
+        END { if (bad || found > 1) exit 2; if (!found) exit 1; print version }' <<<"$packages"
+}
 pkg_verify_installed() { pacman -Qkk branch-truce; }
 pkg_runtime_versions() { pacman -Q git qt6-base qt6-declarative kirigami syntax-highlighting pacman; }
 pkg_qt_root() { echo /usr/lib/qt6; }

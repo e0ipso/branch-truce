@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the approved fixture or replay its real native controls on private sway."""
 import argparse
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
 import json
@@ -10,12 +10,10 @@ import os
 from pathlib import Path
 import selectors
 import re
-import threading
 import signal
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 
 if __name__ == '__main__':
@@ -27,7 +25,7 @@ from calibration import (ImageTool, build_provenance, capture_inputs, cleanup_co
 import capture_profile  # noqa: E402
 from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged  # noqa: E402
 from reports import write_json  # noqa: E402
-from processes import stop_group  # noqa: E402
+from processes import OwnedResources, interrupt, run  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 COLOUR_SCHEMES = Path('/usr/share/color-schemes')
@@ -50,74 +48,6 @@ def replay_lock(path=None):
         yield
     finally:
         os.close(fd)
-
-
-class OwnedResources:
-    """Own only this invocation's private directory and process groups.
-
-    The directory goes under base_dir, which defaults to /var/tmp: a short path keeps the private
-    Wayland and sway sockets under the AF_UNIX length limit, whatever TMPDIR says.
-    """
-    def __init__(self, cleanup_receipt=None, base_dir=Path('/var/tmp')):
-        self.cleanup_receipt = cleanup_receipt
-        self.streams = ExitStack()
-        self.root = Path(self.streams.enter_context(tempfile.TemporaryDirectory(prefix='bt-r-', dir=base_dir)))
-        self.processes = []
-        self.threads = []
-        self.reader_errors = []
-
-    def spawn(self, argv, *, env, log, pass_fds=(), pipe=False):
-        stream = self.streams.enter_context(Path(log).open('wb'))
-        process = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE if pipe else stream,
-                                   stderr=subprocess.STDOUT, start_new_session=True,
-                                   pass_fds=pass_fds)
-        self.processes.append(process)
-        if process.stdout:
-            self.streams.enter_context(process.stdout)
-        return process, stream
-
-    def start_reader(self, target, *args):
-        def run():
-            try:
-                target(*args)
-            except Exception as error:
-                self.reader_errors.append(error)
-        reader = threading.Thread(target=run, daemon=True)
-        reader.start()
-        self.threads.append(reader)
-        return reader
-
-    def _stop_processes(self):
-        for process in reversed(self.processes):
-            stop_group(process)
-        for thread in self.threads:
-            thread.join(timeout=5)
-            require(not thread.is_alive(), "Owned log reader did not finish")
-
-    def close(self):
-        """Stop the owned processes and readers, close their streams and remove the private directory.
-
-        The streams are closed and the directory removed even when stopping a process or a reader
-        fails; that failure is raised afterwards.
-        """
-        try:
-            self._stop_processes()
-        finally:
-            self.streams.close()
-        require(not self.root.exists(), f'Private replay directory survived cleanup: {self.root}')
-        if self.cleanup_receipt:
-            write_json(self.cleanup_receipt, dict(private_root=str(self.root),
-                private_root_removed=not self.root.exists(),
-                owned_processes_reaped=all(process.returncode is not None for process in self.processes)))
-        require(not self.reader_errors, 'Owned log reader failed: ' + '; '.join(
-            f'{type(error).__name__}: {error}' for error in self.reader_errors))
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
-        self.close()
 
 
 def private_environment(root):
@@ -149,7 +79,7 @@ def await_compositor(process, log, timeout=30):
                 raise RuntimeError('Private sway exited before publishing a Wayland display')
             log.write(chunk)
             log.flush()
-            observed += chunk
+            observed = (observed + chunk)[-65536:]
             match = re.search(rb"Running compositor on wayland display '([^']+)'", observed)
             if match:
                 return match[1].decode()
@@ -328,8 +258,6 @@ def write_kdeglobals(config_home, scheme, scheme_dir, fonts):
 @dataclass(frozen=True)
 class Compositor:
     """A private headless sway, its single output and the environment that reaches it."""
-    process: subprocess.Popen
-    drain: threading.Thread
     env: dict
     output: dict
 
@@ -350,24 +278,16 @@ def boot_compositor(owned, env, size, log_path):
         while chunk := source.read(65536):
             destination.write(chunk)
             destination.flush()
-    drain_thread = owned.start_reader(drain, process.stdout, log)
+    owned.start_reader(drain, process.stdout, log)
     sockets = list(Path(env['XDG_RUNTIME_DIR']).glob('sway-ipc.*.sock'))
     require(len(sockets) == 1, 'Expected one private sway socket')
     env = dict(env, WAYLAND_DISPLAY=str(Path(env['XDG_RUNTIME_DIR']) / display),
                SWAYSOCK=str(sockets[0]), QT_QPA_PLATFORM='wayland')
-    outputs = json.loads(subprocess.check_output(['swaymsg', '-t', 'get_outputs', '-r'], env=env))
+    outputs = json.loads(run(['swaymsg', '-t', 'get_outputs', '-r'], env=env,
+                             timeout=10, max_output=1024 * 1024, check=True).stdout)
     require(len(outputs) == 1 and outputs[0]['active'] and outputs[0]['rect']['width'] == size[0]
             and outputs[0]['rect']['height'] == size[1], 'Private output geometry differs')
-    return Compositor(process, drain_thread, env, outputs[0])
-
-
-def stop_compositor(compositor):
-    # Stop the owned compositor before joining its log reader and deleting private paths.
-    if compositor.process.poll() is None:
-        compositor.process.terminate()
-    compositor.process.wait(timeout=10)
-    compositor.drain.join(timeout=5)
-    require(not compositor.drain.is_alive(), 'Compositor log reader did not finish')
+    return Compositor(env, outputs[0])
 
 
 def run_journey(client, repo, out):
@@ -415,48 +335,21 @@ def show_binary(client, out):
     client.command('escape')
 
 
-@dataclass(frozen=True)
-class Replay:
-    """What every shot of one clean replay records about its inputs and environment."""
-    theme: str
-    repeat: int
-    size: tuple
-    fixture: dict
-    fixture_sha256: str
-    executable_sha256: str
-    driver_sha256: str
-    scheme: str
-    kdeglobals: Path
-    output: dict
-
-    def metadata(self, kind, shot, decoded_sha256):
-        return dict(theme=self.theme, kind=kind, repeat=self.repeat, height=self.size[1],
-                    fixture=self.fixture, fixture_sha256=self.fixture_sha256,
-                    executable_sha256=self.executable_sha256, driver_sha256=self.driver_sha256,
-                    capture_sha256=sha256(shot), decoded_sha256=decoded_sha256,
-                    capture_environment=dict(colour_scheme=self.scheme, kdeglobals_sha256=sha256(self.kdeglobals),
-                                             output=self.output, renderer='pixman', quick_backend='software',
-                                             os_release=Path('/etc/os-release').read_text(), physical_desktop=False,
-                                             scheme_roles=colour_scheme(self.kdeglobals)),
-                    reference_provenance_sha256=sha256(REFERENCE / 'provenance.json'),
-                    capture_profile_sha256=sha256(capture_profile.PROFILE),
-                    reference_contract_sha256=sha256(HERE / 'reference-contract.json'))
-
-
-def capture_shot(client, replay, kind, *, repo, env, tool, source, out):
+def capture_shot(client, context, kind, *, repo, compositor, tool, source, out):
     """Wait for settled frames, shoot the private output and keep the shot's evidence."""
     state = client.command('capture-ready', path=SHOT_PATHS[kind])
     if kind == 'text':
         verify_text(state, repo)
     else:
         verify_binary(state)
-    require((state['width'], state['height']) == tuple(replay.size), 'Window geometry differs')
-    name = f'{replay.theme}-{kind}'
+    require((state['width'], state['height']) == tuple(context['size']), 'Window geometry differs')
+    name = f'{context["theme"]}-{kind}'
     shot = out / f'{name}.png'
-    subprocess.run(['grim', '-o', replay.output['name'], str(shot)], env=env, check=True)
+    run(['grim', '-o', compositor.output['name'], str(shot)], env=compositor.env,
+        timeout=15, max_output=65536, check=True)
     image = tool.decode(shot)
-    require((image['width'], image['height']) == tuple(replay.size), 'Capture geometry differs')
-    metadata = replay.metadata(kind, shot, image['decoded_sha256'])
+    require((image['width'], image['height']) == tuple(context['size']), 'Capture geometry differs')
+    metadata = dict(context, kind=kind, capture_sha256=sha256(shot), decoded_sha256=image['decoded_sha256'])
     validate_profile(state, metadata)
     write_json(out / f'{name}-state.json', dict(metadata=metadata, state=state))
     callout_closeups(state, shot, tool, out / f'{name}-callouts')
@@ -464,7 +357,7 @@ def capture_shot(client, replay, kind, *, repo, env, tool, source, out):
     return dict(file=str(shot), **metadata)
 
 
-def drive_app(owned, compositor, replay, *, app, driver, tool, repo, source, out):
+def drive_app(owned, compositor, context, *, app, driver, tool, repo, source, out):
     """Run the app under the preload driver, replay the journey and capture each kind of shot."""
     captures = []
     parent, child = socket.socketpair()
@@ -478,17 +371,20 @@ def drive_app(owned, compositor, replay, *, app, driver, tool, repo, source, out
         for kind in KINDS:
             if kind == 'binary':
                 show_binary(client, out)
-            captures.append(capture_shot(client, replay, kind, repo=repo, env=compositor.env, tool=tool,
+            captures.append(capture_shot(client, context, kind, repo=repo, compositor=compositor, tool=tool,
                                          source=source, out=out))
         client.command('quit')
         require(process.wait(timeout=10) == 0, 'Application exit failed')
     except BaseException as error:
         # Keep the actual failing scene even when a semantic/readiness check
         # stops the replay before its normal capture boundary.
-        failure = subprocess.run(['grim', '-o', compositor.output['name'], str(out / 'failure.png')],
-                                 env=compositor.env, capture_output=True)
-        write_json(out / 'failure.json', dict(error=str(error), capture_exit=failure.returncode,
-            capture_stderr=failure.stderr.decode(errors='replace'),
+        try:
+            failure = run(['grim', '-o', compositor.output['name'], str(out / 'failure.png')],
+                          env=compositor.env, timeout=15, max_output=65536)
+            evidence = dict(capture_exit=failure.returncode, capture_stderr=failure.stderr.decode(errors='replace'))
+        except (OSError, subprocess.SubprocessError) as capture_error:
+            evidence = dict(capture_exit=None, capture_error=str(capture_error))
+        write_json(out / 'failure.json', dict(error=str(error), **evidence,
             scene='actual private output at failure; not an approved final state'))
         raise
     finally:
@@ -507,13 +403,17 @@ def replay_once(*, app, driver, tool, source, out, theme, scheme, repeat, size, 
         write_json(out / 'fixture.json', fixture)
         kdeglobals = write_kdeglobals(env['XDG_CONFIG_HOME'], scheme, scheme_dir, fonts)
         compositor = boot_compositor(owned, env, size, out / 'compositor.log')
-        replay = Replay(theme=theme, repeat=repeat, size=size, fixture=fixture,
-                        fixture_sha256=sha256(out / 'fixture.json'), executable_sha256=sha256(app),
-                        driver_sha256=sha256(driver), scheme=scheme, kdeglobals=kdeglobals,
-                        output=compositor.output)
-        captures = drive_app(owned, compositor, replay, app=app, driver=driver, tool=tool, repo=repo,
+        context = dict(theme=theme, repeat=repeat, size=size, height=size[1], fixture=fixture,
+            fixture_sha256=sha256(out / 'fixture.json'), executable_sha256=sha256(app), driver_sha256=sha256(driver),
+            capture_environment=dict(colour_scheme=scheme, kdeglobals_sha256=sha256(kdeglobals),
+                output=compositor.output, renderer='pixman', quick_backend='software',
+                os_release=Path('/etc/os-release').read_text(), physical_desktop=False,
+                scheme_roles=colour_scheme(kdeglobals)),
+            reference_provenance_sha256=sha256(REFERENCE / 'provenance.json'),
+            capture_profile_sha256=sha256(capture_profile.PROFILE),
+            reference_contract_sha256=sha256(HERE / 'reference-contract.json'))
+        captures = drive_app(owned, compositor, context, app=app, driver=driver, tool=tool, repo=repo,
                              source=source, out=out)
-        stop_compositor(compositor)
     return captures
 
 
@@ -524,10 +424,8 @@ def documentation_preview(*, app, source, docs, size):
         compositor = boot_compositor(owned, env, size, docs / 'compositor.log')
         preview_env = dict(compositor.env, PREVIEW_FILE='notes.md', PREVIEW_SIZE='1440x900',
                            PREVIEW_OUTPUT=str(docs))
-        with (docs / 'preview.log').open('wb') as preview_log:
-            subprocess.run([str(source / 'tools/preview-app.sh'), str(app)],
-                           env=preview_env, stdout=preview_log, stderr=subprocess.STDOUT, check=True)
-        stop_compositor(compositor)
+        run([str(source / 'tools/preview-app.sh'), str(app)], env=preview_env,
+            timeout=120, max_output=4 * 1024 * 1024, check=True, log=docs / 'preview.log')
     write_json(docs / 'provenance.json', dict(
         command=['tools/preview-app.sh', str(app)],
         environment={key: preview_env[key] for key in ('PREVIEW_FILE', 'PREVIEW_SIZE')},
@@ -540,8 +438,10 @@ def documentation_preview(*, app, source, docs, size):
 
 def build_driver(directory):
     """Build the preload driver and image tool outside the app build. Returns both paths."""
-    subprocess.run(['cmake', '-S', str(HERE), '-B', str(directory)], check=True)
-    subprocess.run(['cmake', '--build', str(directory), '--parallel', '2'], check=True)
+    run(['cmake', '-S', str(HERE), '-B', str(directory)],
+        timeout=120, max_output=4 * 1024 * 1024, check=True, log=directory.parent / 'driver-configure.log')
+    run(['cmake', '--build', str(directory), '--parallel', '2'],
+        timeout=300, max_output=4 * 1024 * 1024, check=True, log=directory.parent / 'driver-build.log')
     return directory / 'libnative_replay.so', ImageTool(directory / 'native-replay-image')
 
 
@@ -614,9 +514,7 @@ def main():
     native.add_argument('--repeat', type=int, default=shape.repeat,
                         help='clean replays per theme, at least 2 (default %(default)s)')
     args = parser.parse_args()
-    def interrupted(signum, _frame):
-        raise SystemExit(128 + signum)
-    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGTERM, interrupt)
     if args.mode == 'fixture':
         print(json.dumps(make_fixture(args.output.resolve()), indent=2))
     else:

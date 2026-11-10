@@ -91,7 +91,19 @@ function fixture(t: { after: (fn: () => void) => void }, releases: Release[], ta
     });
     writeFileSync(join(data, 'releases', `${release.tag}.json`), JSON.stringify({ assets }));
   }
-  const mark = (name: 'fail-list' | 'fail-download' | 'partial') => writeFileSync(join(data, name), '');
+  writeFileSync(join(bin, 'timeout'), `#!/bin/bash
+printf '%s\\n' "$*" >> "$FIXTURE/deadlines"
+[ "$1" = --kill-after=5s ] || exit 99
+shift
+case "$*" in
+    "30s gh release list"*|"30s gh release view"*|"120s gh release download"*) ;;
+    *) exit 99 ;;
+esac
+shift
+[ ! -e "$FIXTURE/timeout-$3" ] || exit 124
+exec "$@"
+`, { mode: 0o755 });
+  const mark = (name: 'fail-list' | 'fail-download' | 'partial' | 'timeout-list' | 'timeout-view' | 'timeout-download') => writeFileSync(join(data, name), '');
   const forget = (tag: string) => rmSync(join(data, 'releases', `${tag}.json`));
   const run = (format: 'kubuntu-deb' | 'fedora-rpm' | 'arch-pkg', version: string, path = `${bin}:${process.env.PATH}`) => {
     const result = spawnSync(SCRIPT, ['--format', format, '--version', version, '--output', output], {
@@ -243,14 +255,15 @@ for (const [what, asset] of [
   });
 }
 
-test('removes a stale file of the same name when the download does not verify', (t) => {
+test('preserves a stale file of the same name when the download does not verify', (t) => {
   const box = fixture(t, [{ tag: 'v1.2.2', assets: [kubuntu('1.2.2', { size: 999 })] }]);
   const output = join(box.root, 'previous');
   mkdirSync(output);
   writeFileSync(join(output, 'branch-truce_1.2.2_amd64-ubuntu26.04.deb'), 'stale');
   const result = box.run('kubuntu-deb', '1.2.3');
   assert.equal(result.status, 1);
-  assert.deepEqual(result.left, []);
+  assert.deepEqual(result.left, ['branch-truce_1.2.2_amd64-ubuntu26.04.deb']);
+  assert.equal(readFileSync(join(output, result.left[0]!), 'utf8'), 'stale');
 });
 
 for (const format of ['fedora-rpm', 'arch-pkg'] as const) {
@@ -279,5 +292,25 @@ for (const format of ['fedora-rpm', 'arch-pkg'] as const) {
     assert.doesNotMatch(corrupt.stderr, FALLBACK);
     assert.deepEqual(corrupt.left, []);
     assertFallback(fixture(t, []).run(format, '1.3.0'), /no published release older/);
+  });
+}
+
+
+for (const failure of ['fail-download', 'partial', 'size', 'digest', 'timeout-list', 'timeout-view', 'timeout-download', 'success'] as const) {
+  test(`existing predecessor survives ${failure} until a verified atomic replacement`, t => {
+    const asset = kubuntu('1.2.2', failure === 'size' ? { size: 999 } :
+      failure === 'digest' ? { digest: `sha256:${sha256('wrong')}` } : {});
+    const box = fixture(t, [{ tag: 'v1.2.2', assets: [asset] }]);
+    const output = join(box.root, 'previous');
+    mkdirSync(output);
+    const destination = join(output, asset.name);
+    writeFileSync(destination, 'previous verified bytes');
+    if (failure === 'partial') { box.mark('fail-download'); box.mark('partial'); }
+    else if (failure !== 'size' && failure !== 'digest' && failure !== 'success') box.mark(failure);
+    const result = box.run('kubuntu-deb', '1.2.3');
+    assert.equal(result.status, failure === 'size' || failure === 'digest' ? 1 : 0, result.stderr);
+    assert.equal(readFileSync(destination, 'utf8'), failure === 'success' ? `v1.2.2 ${asset.name}` : 'previous verified bytes');
+    assert.deepEqual(result.left, [asset.name]);
+    assert.ok(readFileSync(join(result.data, 'deadlines'), 'utf8').includes('--kill-after=5s 30s gh release list'));
   });
 }
