@@ -4,9 +4,9 @@
 dependency. `session/SessionStore.h` holds each file's session and its recovery
 journal and runs every command on them; `app/SessionModel.h` lists the store's
 files as a Qt list model for the window. `session/SessionCoordinator.h` owns
-session replacement and background execution. Repository loading, storage and editor
-integration still need their adapters. This change
-does not make the startup window a working conflict resolver.
+session replacement and background execution. `Application` composes repository
+loading, recovery, guarded publication, comparison and editor adapters for the
+working desktop window.
 
 ## Revisions and history
 
@@ -37,9 +37,12 @@ manually saved while still requiring Mark resolved again. Save keeps history.
 Editing after undo cuts only the redo branch; old snapshots remain available
 for completed or pending operation outcomes.
 
-All snapshots are retained for the lifetime of this in-memory file session.
-History persistence and a bounded storage policy are separate work. Do not use
-a returned model file pointer across row insertion, which can move the values.
+History keeps up to 1024 undo entries within a 256 MiB retained-byte budget,
+pruning the oldest undo prefix while protecting launch, current and
+publication-held revisions. Complete recovery checkpoints preserve the retained
+history and cursor across continuation. See [recovery-journal.md](recovery-journal.md)
+for durable acknowledgment and admission. Do not use a returned model file pointer
+across row insertion, which can move the values.
 
 ## Recording outcomes
 
@@ -140,9 +143,10 @@ a rollback. An inspection exception or missing observation retains uncertainty.
 The recovery journal keeps the original task's evidence across session
 replacement, and `taskFinished` reports every outcome, including fenced ones.
 An uncertain outcome remains outstanding and needs further adapter inspection.
-Closing the window waits up to `kShutdownGraceMs` for an admitted mutation, so
-its observation reaches the journal; one still running is left to the next
-start's reconciler.
+Shutdown cancels work that has not entered mutation admission and drains owned
+admitted mutation workers through inspection and durable observation. It has no
+artificial deadline that could abandon a write. An interrupted Git intent stays
+available to the next start's reconciler.
 
 `submitGit` keeps Git on asynchronous QProcess signals. Stage requests use the
 same mutation queue through the adapter's final index inspection. The controller
@@ -153,9 +157,10 @@ writer. Git's locks and mutation-time baseline checks remain required.
 
 Different worktrees can proceed independently. This queue coordinates one
 application controller, not other processes. Workers cooperate with cancellation;
-the coordinator never waits on them on the GUI thread. Destruction cancels
-controls and disconnects delivery. In-flight mutations may still finish, so a
-normal close must settle them and retain outcomes before destroying the controller.
+normal dispatch and completion keep the GUI thread free. Destruction cancels
+controls, disconnects delivery and waits only for its owned admitted workers.
+A blocked filesystem can therefore delay shutdown. A normal close settles mutations
+and retains their outcomes before destroying the controller.
 Mark resolved publishes and verifies one reviewed revision.
 
 `canFinish` requires at least one loaded file and current verified resolution

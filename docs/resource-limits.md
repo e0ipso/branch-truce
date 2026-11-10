@@ -19,7 +19,11 @@ is not recovered work.
 | --- | ---: | --- |
 | Longest line | 262144 bytes | the edit is refused and the previous buffer stays in place |
 | Git process output | 4194304 bytes | `OutputLimit`, with an incomplete captured prefix |
-| Recovery payload | 8388608 bytes | the commit fails, the prior journal record stays acknowledged, and the new payload is not published |
+| Result text / recovery payload | 8388608 bytes | the commit fails, the prior journal record stays acknowledged, and the new payload is not published |
+| Indexed lines | 65536 | the edit is refused and the previous buffer stays in place |
+| Revision history | 1024 undo entries, 268435456 retained bytes | oldest undo entries are pruned; current, launch and publication-held revisions remain protected |
+| Metadata | 65536 entries, 16777216 bytes | derived decisions, ranges or command candidates are refused before exceeding admission |
+| Destination read | 16908291 raw bytes | publication refuses the changed or oversized destination before reading it into memory |
 | Line alignment | 67108864 line pairs (source lines times result lines) | that source and result are one ambiguous passage: no choice in it is mapped and only direct editing applies |
 
 Each Git phase, including the canonical blob read and the checkout read, gets
@@ -27,6 +31,16 @@ its own 4194304-byte budget. Stdout and stderr share the budget of that phase.
 Preflight output does not reduce a later read. A worktree file read stops at the 8388608-byte
 recovery ceiling, and a complete read still has to fit the line and text-size
 limits before it becomes editable.
+
+Destination reads compare the launch identity before allocating a buffer, then
+read bounded chunks and check for growth and identity changes. The raw ceiling
+allows the canonical text envelope expanded to UTF-16 with CRLF and a BOM.
+Deferred large-file loads retain the same destination baseline; an outside edit
+continues to block publication after loading.
+
+Recovery storage, continuation and inventory limits are documented in
+[the recovery journal contract](recovery-journal.md#continuation-and-bounded-discovery).
+They retain pending input on refusal and never report partial recovery as success.
 
 An edit that would cross a line or text-size limit is not acknowledged.
 The editor does not load that text. Mark resolved of a result that is already

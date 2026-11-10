@@ -1,4 +1,4 @@
-# Recovery journal version 2
+# Recovery journal version 3
 
 The `RecoveryJournal` that each `SessionStore` owns keeps automatic recovery under
 `<GenericDataLocation>/Branch Truce/recovery/v1/<session-uuid>/`, normally
@@ -32,12 +32,13 @@ after a new store, the store after its journal, and `payloads/` after new
 payloads. A durable record therefore never refers to an entry a power loss can
 drop.
 
-`journal` starts with `Branch Truce recovery journal v2` and a newline. Every
+`journal` starts with `Branch Truce recovery journal v3` and a newline. Every
 following newline-terminated JSON frame has `record` containing canonical
 base64 and `sha256` containing the decoded record's SHA-256 hex digest. The
-decoded JSON record has version 2, a decimal-string sequence starting at 1,
+decoded JSON record has version 3, a decimal-string sequence starting at 1,
 the preceding record digest, the `transaction` ID, a payload digest array, and
-`state`. Storage checks only this frame. A transaction ID appears once per
+`state`, plus the decoded retained-byte charge. Storage validates the frame,
+payload references and resource admission; recovery validates the domain state. A transaction ID appears once per
 journal; a header or record with a later version is reported as written by a
 newer Branch Truce rather than as damage.
 
@@ -151,16 +152,18 @@ A crash can therefore lose only typing that is not yet acknowledged: the burst
 being typed, at most 2 seconds of it, plus bursts whose records are still being
 written. A slow disk makes that second part longer, never the acknowledged
 part. Closing the window, replacing the session, starting a new store, Save,
-undo and every other command first write the waiting records on the interface
-thread, so they are never dropped silently; the window's close also refuses to
-end while one of them failed.
+undo and every other command first queue the waiting records on the serial
+journal worker. Normal operation keeps the interface thread free while command
+computation, encoding and persistence run there. Closing drains admitted writes;
+a failed record keeps pending input visible and prevents a successful close.
+The owned worker has no hard shutdown deadline, so a blocked filesystem can delay
+shutdown.
 
 If a typed record fails, the file returns to its acknowledged state, the
 failed record keeps its error, and every later typed record of that file, the
 current burst included, joins it in the file's pending queue untried. Retry
 appends them in their original order under their original transaction IDs, so
-nothing is reordered, dropped or appended twice. Synchronous commands that fail
-use the same queue.
+nothing is reordered, dropped or appended twice. Other commands that fail use the same queue.
 
 ### Failure and retry
 
@@ -312,7 +315,7 @@ honours fsync on files and directories. Termination before acknowledgment may
 recover a complete candidate whose notification had not yet occurred. An
 interrupted trailing record is pending, never an acknowledged command. Orphan
 payloads left before a record commit are harmless and stay until their store
-is deleted.
+is deleted or a successful continuation reclaims it.
 
 Before each append the store compares the journal's `fstat` (device, inode,
 size, and modification and change times to the nanosecond) with what it saw
@@ -330,8 +333,39 @@ A recovery payload larger than `kMaxRecoveryPayloadBytes` (8388608 bytes) is
 refused before it is written. The prior acknowledged record stays in the
 journal, and the failure says that pending input is retained.
 
-Commits of commands other than typing run on the interface thread and are
-acknowledged only once durable; typed bursts are written on a worker as
-described above. A record costs one journal sync, plus a payload sync and a
-directory sync when the action added text. Journals grow by about one small
-frame per command or burst of typing.
+Commands and typing use one serial worker queue. A command is acknowledged
+only after its candidate and encoded transaction commit; the owner thread then
+publishes it. Admission bounds both the number of retained jobs and their
+conservative byte charge. Refused typing stays pending for retry. A record costs
+one journal sync, plus payload and directory syncs when the action adds bytes.
+
+## Continuation and bounded discovery
+
+Before admission exhausts a journal, the domain encodes a complete live checkpoint
+and storage publishes it as a new authoritative head. Checkpoint schema 2 retains
+immutable captures, every retained history revision, undo/redo cursor, publication
+references and outcomes, discard fence, exact review Save eligibility, edited-file
+identities and unresolved mutation targets. Import validates text and metadata
+before rebuilding maps, including supported files without correspondence. The
+configured correspondence algorithm remains owned by pending transactions and is
+used for replay and checkpoint self-validation; an identity mismatch is refused.
+A checkpoint cannot authorize a review with an older Save.
+
+The replacement preserves retry receipts for uncertain transactions. Payloads and
+the new head are synchronized before unreachable payloads are reclaimed. A failed
+rename, sync or cleanup retains the prior acknowledgment boundary and pending input;
+retry uses the original transaction ID. At most two admitted payload generations
+can coexist. If the complete live checkpoint itself exceeds admission, continuation
+fails visibly instead of pruning history or dropping unfinished work.
+
+Default per-store limits are 4 MiB per frame, 32 MiB of journal, 16 MiB of retained
+record state, 256 MiB of expanded domain state, 8192 transactions, 32768 payload
+files and 256 MiB of logical retained storage. Readers enforce the same ceilings.
+The current format is version 3; older formats are refused rather than silently
+converted.
+
+Discovery streams the inventory with limits of 32 sessions, 65536 directory entries,
+16 retained candidates, 1 GiB of physical bytes and 512 MiB of decoded state.
+An integrity-checked first-frame hint can exclude another worktree without loading
+its payloads. An incomplete or over-budget inventory is refused as a whole;
+it never adopts a matching prefix while overlooking another candidate.
