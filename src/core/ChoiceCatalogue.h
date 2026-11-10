@@ -31,8 +31,8 @@ struct NonConflictingTarget {
 // Stable, immutable source scopes. A section groups the differing passages
 // between the two captured sides; its line decisions are shared with line
 // picks. `compare` aligns the left side with the right side.
-[[nodiscard]] std::vector<ChoiceTarget> choiceTargets(const FileSnapshots &snapshots,
-                                                      const CorrespondenceAlgorithm &compare);
+[[nodiscard]] std::vector<ChoiceTarget>
+choiceTargets(const FileSnapshots &snapshots, const CorrespondenceAlgorithm &compare, MetadataBudget budget = {});
 
 // Only exact, non-competing changes relative to an available earlier capture.
 // Decision IDs belong to the existing scoped-choice vocabulary.

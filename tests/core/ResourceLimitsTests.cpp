@@ -42,6 +42,49 @@ void emptyHistoryIsBoundedAndKeepsProtectedRevisions(std::size_t keyBytes, std::
     CHECK(file.current().draft.decisions.at(key).value == DecisionValue::Accepted);
 }
 
+void metadataAdmissionHasIndependentCountAndByteBoundaries()
+{
+    const std::string dense(kMaxIndexedLines, '\n');
+    CHECK(partsFit(std::array{std::string_view(dense)}));
+    CHECK(!partsFit(std::array{std::string_view(dense), std::string_view("x")}));
+    CHECK(!partsFit(std::array{std::string_view(dense), std::string_view("\n")}));
+    const auto file = test_support::choiceFile("left\n", "right\n");
+    const auto &sources = *file.snapshots();
+    const auto bytes = 16
+        * (512 + sources.path.size() + sources.provenance.sessionId.size() + sources.stage2->objectId.size()
+           + sources.stage3->objectId.size());
+    CHECK(choiceTargets(sources, file.algorithm(), {16, bytes}).size() == 4);
+    for (const auto budget : {MetadataBudget{15, bytes}, MetadataBudget{16, bytes - 1}}) {
+        bool refused = false;
+        try {
+            (void)choiceTargets(sources, file.algorithm(), budget);
+        } catch (const std::length_error &) {
+            refused = true;
+        }
+        CHECK(refused);
+    }
+    std::map<std::string, Decision> decisions;
+    for (std::size_t i = 0; i <= kMaxMetadataEntries; ++i) decisions.emplace(std::to_string(i), Decision{});
+    FileSession held("metadata", "metadata", {"kept\n", std::move(decisions), 0});
+    CHECK(held.support() == Support::OutsideApp && held.current().draft.text == "kept\n");
+    CHECK(held.loadFailure() == LoadFailure{LoadFailureReason::MetadataTooLarge});
+    CHECK(held.current().draft.decisions.size() == kMaxMetadataEntries + 1 && held.markers().count() == 0);
+}
+
+void denseCapturesKeepTheirBytesWhenComparisonMetadataIsRefused()
+{
+    const auto left = std::string(8200, '\n');
+    const auto right = test_support::lines(8200);
+    auto file = test_support::choiceFile(left, right);
+    CHECK(file.support() == Support::LargeFile && file.markers().count() == 0);
+    CHECK(file.loadLargeFile() == Transition::Applied && file.support() == Support::OutsideApp);
+    CHECK(file.loadFailure() == LoadFailure{LoadFailureReason::MetadataTooLarge});
+    CHECK(file.current().draft.text == left && file.snapshots()->launchResult.text.utf8 == left);
+    CHECK(file.snapshots()->stage2->worktree.bytes == left && file.snapshots()->stage3->worktree.bytes == right);
+    CHECK(file.choices().empty() && !file.correspondence() && file.markers().count() == 0);
+    CHECK(file.editResult(file.current().id, {{0, 0}, "manual"}) == Transition::Blocked);
+}
+
 void theLargeFileThresholdIsNotATextLimit()
 {
     CHECK(assessText(lines(kLargeFileLines - 1)).limit == TextLimit::Within);
@@ -81,6 +124,9 @@ void thePayloadLimitRejectsTheNextLine()
 int main()
 {
     test_support::Suite suite("ResourceLimitsTests");
+    suite.run("metadata count and bytes are admitted independently",
+              metadataAdmissionHasIndependentCountAndByteBoundaries);
+    suite.run("dense captures survive metadata refusal", denseCapturesKeepTheirBytesWhenComparisonMetadataIsRefused);
     suite.run("text around the large-file threshold stays within the envelope", theLargeFileThresholdIsNotATextLimit);
     suite.run("lineCount counts a final line without a newline", lineCountCountsAFinalLineWithoutANewline);
     suite.run("the line limit rejects the next byte", theLineLimitRejectsTheNextByte);

@@ -74,13 +74,50 @@ The limits in ResourceLimits.h bound the input: no line over `kMaxLineBytes`
 and no text over `kMaxRecoveryPayloadBytes`. A file whose result or captured
 sources hold more than `kLargeFileLines` lines opens only after the user
 confirms it, because alignment time grows with the product of line counts.
-`kMaxAlignmentCells` bounds that product: a source and result whose line counts
-multiply to more are one `Ambiguous` passage, so their anchors stay unmapped
-and only direct editing applies, but no alignment runs for longer than the
-budget allows. If aligning runs out of memory, only that file
-opens as unreadable, with its captured sources and launch result kept, and
-other files finish loading. Measurements of the representative 4000-line size
-are in tests/fixtures/performance/evidence.md.
+Before allocating tokens or line records, `ExactLineCorrespondence` counts both
+texts. More than `kMaxIndexedLines` lines in either, or a product greater than
+`kMaxAlignmentCells`, yields one `Ambiguous` passage. Identical texts need no
+workspace. A map shares that cell budget across its different sources; a
+whole-buffer recomputation also charges its old-to-new comparison to it.
+The algorithm identity is `exact-line/2`; older journals are refused rather
+than replayed with different passages.
+
+Metadata has independent limits of 65536 entries and a conservative 16 MiB byte
+estimate. Choice construction preflights each differing passage's line picks
+and sections, reserving four entries per pick or section and 512 bytes plus
+capture identity lengths per entry for choices, indexes, decision identifiers
+and anchors. Non-conflicting targets preflight the same estimates against a
+separate budget before generating IDs. Anchor binding separately charges its actual identity lengths
+before copying them. Initial and replacement decision maps are bounded by
+entry count and aggregate identifier bytes before copying; initialization
+reserves the generated IDs before copying the initial map. Line indexes and
+supported edited results are capped at 65536 lines, independently of the text
+byte envelope. The 4000-line confirmation cannot waive these limits.
+
+If comparison metadata cannot be admitted, the file opens as `OutsideApp`
+with `MetadataTooLarge`. The current launch text, decisions and immutable raw
+and converted captures remain available through the read APIs, with support
+facts and the diagnostic for inspection and outside-app handoff. App editing,
+choices, undo/redo, discards and Mark resolved stay blocked. The file stays
+outstanding; no choices are truncated and no anchors are guessed. A rejected
+or deferred large-file launch has an empty marker scan and no launch frames.
+Confirming a large file retries full admission and either opens it or retains
+this explicit fallback. Allocation failures open only that file as unreadable.
+Measurements of the representative 4000-line size are in
+tests/fixtures/performance/evidence.md.
+
+Commands validate the complete ordered edit set and stream its final fragments
+through the shared text/index policy before copying the draft. A shared
+`kMaxAlignmentCells` work allowance charges each edit's text bytes and anchor
+visits, request metadata and subsequent marker-cleanup edits. Oversized
+commands return `TextTooLarge` without publishing a revision. Decision admission
+is conservative and counts both current and submitted entries, including
+repeated IDs. `edited` and `rebuilt` consume an unpublished map; callers copy
+an immutable map explicitly, then move the candidate through its edits. Source
+alignment runs only for the final candidate. Marker cleanup uses only original
+result-owned marker lines that survive those edits, so inserted source text
+cannot acquire marker ownership from provisional passages. Final alignment or
+allocation failure leaves history and publication unchanged.
 
 `SourceAnchor` carries the caller's stable contribution ID, immutable source
 side/range and insertion affinity. `ResultAnchor` adds captured session, path and
@@ -118,7 +155,9 @@ A whole-file command clears it on all. A choice that only clears flags, with
 text and decisions unchanged, still records a revision, so undo and recovery
 replay bring the flags back.
 
-An edit can leave the alignment for later. `edited` with
+Immediate and deferred edits check the total bytes, joined line lengths and
+result line count before mutating text or anchors. An edit can leave the
+alignment for later. `edited` with
 `Realignment::Deferred` moves the anchors and hand edits at once, as above, but
 does not compare the sources with the new text: the passages before and after
 the edited lines keep their alignment, shifted past the edit, and the edited

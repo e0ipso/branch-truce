@@ -33,17 +33,19 @@ bool editableSources(const FileSnapshots &snapshots) noexcept
 }
 
 // Only an accepted contribution has a place in a combination order.
-bool validDecisions(const std::map<std::string, Decision> &decisions)
+bool validDecisions(const std::map<std::string, Decision> &decisions, MetadataBudget &budget)
 {
-    return std::none_of(decisions.begin(), decisions.end(), [](const auto &entry) {
-        return entry.second.order && entry.second.value != DecisionValue::Accepted;
+    if (decisions.size() > budget.entries) return false;
+    return std::all_of(decisions.begin(), decisions.end(), [&](const auto &entry) {
+        return budget.take(1, sizeof(entry) + 4 * sizeof(void *) + entry.first.size())
+            && (!entry.second.order || entry.second.value == DecisionValue::Accepted);
     });
 }
 
-// Validated ranges remove bytes from the existing result before inserting.
-bool replacementFits(std::size_t bytes, const ResultEdit &edit) noexcept
+bool validDecisions(const std::map<std::string, Decision> &decisions)
 {
-    return edit.replacement.size() <= kMaxRecoveryPayloadBytes - (bytes - (edit.range.end - edit.range.begin));
+    MetadataBudget budget;
+    return validDecisions(decisions, budget);
 }
 
 // The first of the result and the captured sources that is over the text
@@ -95,6 +97,35 @@ const ResultAnchor *targetOf(const EditingCommand &command, ByteRange range)
     return found == command.targets.end() ? nullptr : &*found;
 }
 
+// Only marker lines already owned by the result can trigger automatic cleanup.
+// A choice may insert marker-looking source text while passages are provisional.
+MarkerScan retainedMarkers(MarkerScan scan, std::string_view text, const std::vector<const ResultEdit *> &edits)
+{
+    scan.orphans.clear();
+    for (const auto *edit : edits) {
+        const auto removed = edit->range.end - edit->range.begin;
+        const auto inserted = edit->replacement.size();
+        const auto before = slice(text, edit->range);
+        const auto removedLines = static_cast<std::size_t>(std::count(before.begin(), before.end(), '\n'));
+        const auto insertedLines =
+            static_cast<std::size_t>(std::count(edit->replacement.begin(), edit->replacement.end(), '\n'));
+        const auto keep = [&](MarkerLine &line) {
+            if (edit->range.end <= line.bytes.begin) {
+                line.bytes = {line.bytes.begin - removed + inserted, line.bytes.end - removed + inserted};
+                line.line = line.line - removedLines + insertedLines;
+                return true;
+            }
+            return edit->range.begin >= line.bytes.end;
+        };
+        auto retained = scan.blocks.begin();
+        for (auto block : scan.blocks)
+            if (keep(block.begin) && (!block.base || keep(*block.base)) && keep(block.separator) && keep(block.end))
+                *retained++ = std::move(block);
+        scan.blocks.erase(retained, scan.blocks.end());
+    }
+    return scan;
+}
+
 // The conflict-marker-size of a capture, or nothing when it is over the limit.
 std::optional<std::size_t> capturedMarkerSize(const FileSnapshots *snapshots)
 {
@@ -115,11 +146,19 @@ FileSession::FileSession(std::string id, std::string path, Draft initial, FileLa
 {
     auto &snapshots = options.snapshots;
     if (id_.empty() || path_.empty()) throw std::invalid_argument("A file session needs an identity and path");
-    if (!validDecisions(initial.decisions)) throw std::invalid_argument("Invalid launch decisions");
+    if (initial.decisions.size() <= kMaxMetadataEntries)
+        for (const auto &[id, decision] : initial.decisions)
+            if (decision.order && decision.value != DecisionValue::Accepted)
+                throw std::invalid_argument("Invalid launch decisions");
     if (snapshots) {
         if (snapshots->path != path_ || snapshots->launchResult.text.utf8 != initial.text)
             throw std::invalid_argument("Captured sources and launch result must belong to this file session");
         snapshots_ = std::make_shared<const FileSnapshots>(std::move(*snapshots));
+    }
+    if (!validDecisions(initial.decisions)) {
+        open(launch(1, std::move(initial), Support::OutsideApp, LoadFailure{LoadFailureReason::MetadataTooLarge},
+                    false));
+        return;
     }
     markerSize_ = capturedMarkerSize(snapshots_.get()).value_or(kDefaultConflictMarkerSize);
     if (const auto hold = holdFor(initial.text, support_)) {
@@ -152,7 +191,11 @@ FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, Supp
 {
     Launch result{.support = support, .failure = std::move(failure)};
     std::shared_ptr<const CorrespondenceMap> correspondence;
-    if (support == Support::Supported && snapshots_) {
+    if (support == Support::Supported && lineCount(initial.text) > kMaxIndexedLines) {
+        result.support = Support::OutsideApp;
+        result.failure = LoadFailure{LoadFailureReason::MetadataTooLarge};
+    }
+    if (result.support == Support::Supported && snapshots_) {
         try {
             auto bound = std::make_shared<CorrespondenceMap>(revision, snapshots_, initial.text, algorithm_);
             auto choices = std::make_shared<const ChoiceCatalogue>(choiceTargets(*snapshots_, *algorithm_));
@@ -160,12 +203,25 @@ FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, Supp
                 branch_truce::nonConflictingTargets(*snapshots_, choices->targets(), *algorithm_));
             bindTargets(*bound, *choices, *nonConflicting);
             settleLaunchAnchors(*bound, initial.text, markerSize_);
-            if (initializeChoices)
+            if (initializeChoices) {
+                MetadataBudget budget;
+                if (!validDecisions(initial.decisions, budget)) throw std::length_error("Decision metadata limit");
                 for (const auto &target : choices->targets())
-                    for (const auto &id : target.decisions) initial.decisions.try_emplace(id);
+                    for (const auto &id : target.decisions)
+                        if (!budget.take(1, sizeof(Decision) + sizeof(std::string) + 4 * sizeof(void *) + id.size()))
+                            throw std::length_error("Decision metadata limit");
+                auto decisions = initial.decisions;
+                for (const auto &target : choices->targets())
+                    for (const auto &id : target.decisions) decisions.try_emplace(id);
+                if (!validDecisions(decisions)) throw std::length_error("Decision metadata limit");
+                initial.decisions = std::move(decisions);
+            }
             correspondence = std::move(bound);
             result.choices = std::move(choices);
             result.nonConflictingTargets = std::move(nonConflicting);
+        } catch (const std::length_error &) {
+            result.support = Support::OutsideApp;
+            result.failure = LoadFailure{LoadFailureReason::MetadataTooLarge};
         } catch (const std::bad_alloc &) {
             result.support = Support::Unreadable;
             result.failure = LoadFailure{LoadFailureReason::OutOfMemory};
@@ -177,10 +233,12 @@ FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, Supp
             result.failure = LoadFailure{LoadFailureReason::AlignmentFailed};
         }
     }
-    auto scan = resultMarkers(initial.text, markerSize_, correspondence.get());
-    if (snapshots_) result.launchFrames = std::make_shared<const LaunchFrames>(launchFrames(initial.text, scan));
-    // Counted again with the launch frames, as every later revision is.
-    scan = resultMarkers(initial.text, markerSize_, correspondence.get(), result.launchFrames.get());
+    MarkerScan scan;
+    if (result.support == Support::Supported) {
+        scan = resultMarkers(initial.text, markerSize_, correspondence.get());
+        if (snapshots_) result.launchFrames = std::make_shared<const LaunchFrames>(launchFrames(initial.text, scan));
+        scan = resultMarkers(initial.text, markerSize_, correspondence.get(), result.launchFrames.get());
+    }
     initial.unresolvedMarkers = scan.count();
     result.history =
         RevisionHistory(Revision{revision, revision, revision, std::move(initial), std::move(correspondence),
@@ -256,7 +314,7 @@ Transition FileSession::validateDraft(RevisionId expected, const Draft &draft) c
 {
     if (expected != current().id) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
-    if (!withinTextEnvelope(draft.text)) return Transition::TextTooLarge;
+    if (!partsFit(std::array{std::string_view(draft.text)})) return Transition::TextTooLarge;
     if (!editableText(draft.text)) return Transition::InvalidText;
     if (!validDecisions(draft.decisions)) return Transition::InvalidAnchor;
     return Transition::Applied;
@@ -315,16 +373,16 @@ Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit, 
         if (support_ != Support::Supported) return Transition::Blocked;
         // The stored text already holds the invariant, so only the edit is checked.
         if (!validByteRange(current().draft.text, edit.range)) return Transition::InvalidAnchor;
-        if (!replacementFits(current().draft.text.size(), edit)) return Transition::TextTooLarge;
+        if (!replacementFits(current().draft.text, edit.range, edit.replacement)) return Transition::TextTooLarge;
         if (!editableText(edit.replacement)) return Transition::InvalidText;
         auto draft = current().draft;
         draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
-        if (!withinTextEnvelope(draft.text)) return Transition::TextTooLarge;
         if (draft == current().draft) return Transition::NoChange;
         if (history_.nextId() == std::numeric_limits<RevisionId>::max()) return Transition::InvalidOutcome;
-        auto mapping = correspondence() ? std::make_shared<const CorrespondenceMap>(correspondence()->edited(
-                                              history_.nextId(), edit, true, {}, options.realignment))
-                                        : nullptr;
+        auto mapping = correspondence()
+            ? std::make_shared<const CorrespondenceMap>(
+                  CorrespondenceMap(*correspondence()).edited(history_.nextId(), edit, true, {}, options.realignment))
+            : nullptr;
         history_.publish(successor(std::move(draft), std::move(mapping)),
                          options.join ? RevisionHistory::Step::Join : RevisionHistory::Step::Edit);
         return Transition::Applied;
@@ -415,40 +473,65 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
         if (!mapping) return Transition::InvalidAnchor;
         if (!mapping->aligned()) return Transition::Blocked;
         if (history_.nextId() == std::numeric_limits<RevisionId>::max()) return Transition::InvalidOutcome;
+        if (command.edits.size() > kMaxMetadataEntries || command.targets.size() > kMaxMetadataEntries)
+            return Transition::TextTooLarge;
         std::vector<const ResultEdit *> edits;
         for (const auto &edit : command.edits) edits.push_back(&edit);
         std::sort(edits.begin(), edits.end(),
                   [](const auto *a, const auto *b) { return a->range.begin > b->range.begin; });
+        MetadataBudget work{kMaxAlignmentCells, kMaxAlignmentCells};
+        if (!work.take(edits.size(), mapping->anchorCount() + current().draft.text.size()))
+            return Transition::TextTooLarge;
+        MetadataBudget decisions;
+        if (!validDecisions(current().draft.decisions, decisions) || !validDecisions(command.decisions, decisions))
+            return Transition::InvalidAnchor;
+        for (const auto *edit : edits)
+            if (!work.take(1, sizeof(*edit) + edit->replacement.size())) return Transition::TextTooLarge;
+        for (const auto &target : command.targets)
+            if (!work.take(1,
+                           sizeof(target) + target.source.contributionId.size() + target.origin.path.size()
+                               + target.origin.sessionId.size() + target.origin.sourceObjectId.size()))
+                return Transition::TextTooLarge;
         if (const auto refused = validateCommand(command, edits, confirmReplacement); refused != Transition::Applied)
             return refused;
-        auto bytes = current().draft.text.size();
-        for (const auto *edit : edits) {
-            if (!replacementFits(bytes, *edit)) return Transition::TextTooLarge;
-            bytes = bytes - (edit->range.end - edit->range.begin) + edit->replacement.size();
+        std::vector<std::string_view> parts;
+        std::size_t from = 0;
+        for (auto it = edits.rbegin(); it != edits.rend(); ++it) {
+            parts.push_back(std::string_view(current().draft.text).substr(from, (*it)->range.begin - from));
+            parts.push_back((*it)->replacement);
+            from = (*it)->range.end;
         }
+        parts.push_back(std::string_view(current().draft.text).substr(from));
+        if (!partsFit(parts)) return Transition::TextTooLarge;
         const bool wholeFile = command.scope == EditingScope::WholeFile;
         const auto next = history_.nextId();
         auto draft = current().draft;
         for (const auto &[id, value] : command.decisions) draft.decisions[id] = value;
         auto updated = std::make_shared<CorrespondenceMap>(*mapping);
         for (const auto *edit : edits) {
-            draft.text.replace(edit->range.begin, edit->range.end - edit->range.begin, edit->replacement);
-            if (!withinTextEnvelope(draft.text)) return Transition::TextTooLarge;
+            if (!replacementFits(updated->text(), edit->range, edit->replacement)) return Transition::TextTooLarge;
             *updated = wholeFile
-                ? updated->recomputed(next, draft.text, false)
-                : updated->edited(next, *edit, false, targetOf(command, edit->range)->source.contributionId);
+                ? updated->recomputed(next, edit->replacement, false)
+                : std::move(*updated).edited(next, *edit, false, targetOf(command, edit->range)->source.contributionId,
+                                             Realignment::Deferred);
         }
+        draft.text = updated->text();
         // Deciding a marker section's last contribution resolves its block in
         // this same history entry, so one undo brings the markers back.
         if (!wholeFile) {
             const auto markers = planner();
-            for (const auto &edit :
-                 markers.edits(draft, *updated, command.decisions, markers.sections(draft.text, *updated))) {
-                *updated = edit.rebuilt ? updated->rebuilt(next, edit.range, *edit.rebuilt)
-                                        : updated->edited(next, {edit.range, {}}, false, edit.anchor);
+            const auto scan = retainedMarkers(this->markers(), current().draft.text, edits);
+            const auto cleanup =
+                markers.edits(draft, *updated, command.decisions, markers.sections(draft.text, *updated, &scan));
+            if (!work.take(cleanup.size(), mapping->anchorCount() + draft.text.size())) return Transition::TextTooLarge;
+            for (const auto &edit : cleanup) {
+                *updated = edit.rebuilt
+                    ? std::move(*updated).rebuilt(next, edit.range, *edit.rebuilt, Realignment::Deferred)
+                    : std::move(*updated).edited(next, {edit.range, {}}, false, edit.anchor, Realignment::Deferred);
                 draft.text = updated->text();
             }
         }
+        if (!updated->aligned()) *updated = updated->realigned();
         // Choosing the text a hand edit left unchanged still replaces that edit.
         if (draft == current().draft && updated->handEditedAnchors() == mapping->handEditedAnchors()
             && updated->handEditedRanges() == mapping->handEditedRanges())

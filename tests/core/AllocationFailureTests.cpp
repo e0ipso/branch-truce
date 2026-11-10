@@ -1,5 +1,6 @@
 // Allocation fault injection is confined to this executable and the guarded call.
 #include "TestHarness.h"
+#include "core/ExactLineCorrespondence.h"
 #include "core/SessionFixtures.h"
 #include "core/SessionState.h"
 #include <algorithm>
@@ -89,6 +90,27 @@ void previewAndApplyFailuresAreTyped()
     CHECK(defect);
 }
 
+void denseAlignmentAndRejectedLaunchesDoNotBuildLineMetadata()
+{
+    const std::string dense(kMaxIndexedLines + 1, '\n');
+    for (const auto other : {std::string_view{}, std::string_view{"x\n"}}) {
+        std::vector<Passage> passages;
+        {
+            Fault fault(-1);
+            passages = ExactLineCorrespondence{}.compare(dense, other);
+        }
+        CHECK(largest <= sizeof(Passage) && passages.size() == 1);
+        CHECK(passages.front().kind == PassageKind::Ambiguous);
+    }
+    const auto text = std::string(kMaxLineBytes + 1, 'x') + "\n<<<<<<< rejected\n";
+    FileSession held("held", "held", {text, {}, 0});
+    CHECK(held.support() == Support::Unreadable && held.markers().count() == 0);
+    CHECK(held.current().draft.text == text && held.current().draft.unresolvedMarkers == 0);
+    const auto base = markedFile();
+    everyAllocationFailureIsAtomic(
+        base, [](auto &file) { return choose(file, SourceSide::Stage2, ChoiceAction::ResolveUsingSide); });
+}
+
 void oversizedEditsAreRejectedBeforeCopyingText()
 {
     auto file = choiceFile();
@@ -122,6 +144,8 @@ int main()
 {
     Suite suite("AllocationFailureTests");
     suite.run("preview and apply allocation failures are typed and atomic", previewAndApplyFailuresAreTyped);
+    suite.run("dense alignment and failed launches keep metadata bounded",
+              denseAlignmentAndRejectedLaunchesDoNotBuildLineMetadata);
     suite.run("oversized edits are refused before copying text", oversizedEditsAreRejectedBeforeCopyingText);
     return suite.report();
 }

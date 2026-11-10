@@ -327,6 +327,50 @@ void theSessionAlignsWithTheAlgorithmItIsGiven()
     CHECK(algorithm->calls > opened);
 }
 
+void multiEditAndMarkerCleanupCommandsAlignOnlyTheirFinalText()
+{
+    for (const bool marked : {false, true}) {
+        const auto fixture = marked ? test_support::underlinedBaseFile() : test_support::choiceFile();
+        const auto algorithm = std::make_shared<CountingAlgorithm>();
+        FileSession file(fixture.id(), fixture.path(), {fixture.current().draft.text, {}, 0},
+                         {.snapshots = *fixture.snapshots(), .initializeChoices = true, .algorithm = algorithm});
+        const auto before = file.current();
+        EditingCommand command;
+        command.expected = before.id;
+        for (const auto &target : file.choices()) {
+            if (target.scope != ChoiceScope::Section) continue;
+            const auto *anchor = file.correspondence()->anchor(target.source.contributionId);
+            if (target.source.side == (marked ? SourceSide::Stage2 : SourceSide::Stage3)) {
+                CHECK(anchor && anchor->result);
+                command.targets.push_back(*anchor);
+                command.edits.push_back({*anchor->result,
+                                         std::string(slice(file.snapshots()->source(target.source.side)->worktree.utf8,
+                                                           target.source.range))});
+            }
+            for (const auto &id : target.decisions)
+                command.decisions[id] = {target.source.side == (marked ? SourceSide::Stage2 : SourceSide::Stage3)
+                                             ? DecisionValue::Accepted
+                                             : DecisionValue::Ignored,
+                                         {}};
+        }
+        const auto calls = algorithm->calls.load();
+        algorithm->failAt = calls + 2;
+        CHECK(file.applyCommand(command, true) == Transition::OutOfMemory);
+        CHECK(file.current().id == before.id && file.current().draft == before.draft && !file.canUndo());
+        algorithm->failAt = 0;
+        const auto start = algorithm->calls.load();
+        CHECK(file.applyCommand(command, true) == Transition::Applied);
+        CHECK(algorithm->calls - start == (marked ? 3 : 2));
+        CHECK(file.current().draft.text
+              == file.snapshots()->source(marked ? SourceSide::Stage2 : SourceSide::Stage3)->worktree.utf8);
+        CHECK(file.markers().count() == 0 && file.correspondence()->aligned());
+        const auto chosen = file.current().draft;
+        CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before.draft);
+        CHECK(file.redo(file.current().id) == Transition::Applied && file.current().draft == chosen);
+        CHECK(algorithm->calls - start == (marked ? 3 : 2));
+    }
+}
+
 void aFailedOpeningLeavesNothingHalfBuilt()
 {
     // Calls 1 to 3 align the sources, 4 builds the choices and 5 fails while
@@ -1223,6 +1267,8 @@ void editsStayInsideTheEnvelope()
 int main()
 {
     test_support::Suite suite("FileSessionTests");
+    suite.run("multi-edit and marker cleanup align only final candidates",
+              multiEditAndMarkerCleanupCommandsAlignOnlyTheirFinalText);
     suite.run("discarding after loading a large file restores its launch text",
               discardAfterLoadingALargeFileRestoresItsLaunchText);
     suite.run("whole drafts and edits keep UTF-8 text with LF line endings", wholeDraftsKeepTheTextInvariant);

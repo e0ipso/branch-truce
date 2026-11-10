@@ -1,5 +1,7 @@
 // The choice catalogue lists the source scopes a user can accept or ignore.
 #include "ChoiceCatalogue.h"
+#include "ResourceLimits.h"
+#include <stdexcept>
 
 #include <algorithm>
 #include <set>
@@ -21,6 +23,15 @@ const char *sideToken(SourceSide side) noexcept
 std::string rangeId(SourceSide side, ByteRange range)
 {
     return std::string(sideToken(side)) + "/" + std::to_string(range.begin) + "/" + std::to_string(range.end);
+}
+
+void reserveMetadata(MetadataBudget &budget, std::size_t scopes, const FileSnapshots &snapshots)
+{
+    const auto identities = snapshots.path.size() + snapshots.provenance.sessionId.size()
+        + (snapshots.stage2 ? snapshots.stage2->objectId.size() : 0)
+        + (snapshots.stage3 ? snapshots.stage3->objectId.size() : 0)
+        + (snapshots.earlier ? snapshots.earlier->objectId.size() : 0);
+    if (!budget.take(scopes * 4, 512 + identities)) throw std::length_error("Comparison metadata limit");
 }
 
 // One line pick per line of `range`, or one empty pick for an empty range.
@@ -84,21 +95,32 @@ struct SideChanges {
             const auto id = "non-conflicting/" + rangeId(side, passage.result);
             NonConflictingTarget target{
                 {id + "/earlier", SourceSide::Earlier, passage.source}, {id, side, passage.result}, {}};
-            for (const auto &line : lines(side, text, passage.result))
-                if (decisions.contains(line.contributionId)) target.decisions.push_back(line.contributionId);
+            if (!decisions.empty())
+                for (const auto &line : lines(side, text, passage.result))
+                    if (decisions.contains(line.contributionId)) target.decisions.push_back(line.contributionId);
             result.push_back(std::move(target));
         }
     }
 };
 }
 
-std::vector<ChoiceTarget> choiceTargets(const FileSnapshots &snapshots, const CorrespondenceAlgorithm &compare)
+std::vector<ChoiceTarget> choiceTargets(const FileSnapshots &snapshots, const CorrespondenceAlgorithm &compare,
+                                        MetadataBudget budget)
 {
     if (!snapshots.stage2 || !snapshots.stage3) return {};
     const auto &left = snapshots.stage2->worktree.utf8;
     const auto &right = snapshots.stage3->worktree.utf8;
+    const auto passages = compare.compare(left, right);
+    // Reserve choices, indexes, repeated decision IDs and their anchors before
+    // constructing them. Non-conflicting targets reserve their own budget.
+    for (const auto &passage : passages) {
+        if (passage.kind == PassageKind::Equal) continue;
+        const auto picks = std::max(std::size_t{1}, lineCount(slice(left, passage.source)))
+            + std::max(std::size_t{1}, lineCount(slice(right, passage.result))) + 2;
+        reserveMetadata(budget, picks, snapshots);
+    }
     std::vector<ChoiceTarget> result;
-    for (const auto &passage : compare.compare(left, right)) {
+    for (const auto &passage : passages) {
         if (passage.kind == PassageKind::Equal) continue;
         const auto section =
             "region/" + rangeId(SourceSide::Stage2, passage.source) + "/" + rangeId(SourceSide::Stage3, passage.result);
@@ -120,6 +142,11 @@ std::vector<NonConflictingTarget> nonConflictingTargets(const FileSnapshots &sna
     const auto &right = snapshots.stage3->worktree.utf8;
     const auto a = compare.compare(earlier, left);
     const auto b = compare.compare(earlier, right);
+    MetadataBudget budget;
+    for (const auto &[passages, text] : {std::pair{&a, std::string_view(left)}, std::pair{&b, std::string_view(right)}})
+        for (const auto &passage : *passages)
+            if (passage.kind != PassageKind::Equal && passage.kind != PassageKind::Ambiguous)
+                reserveMetadata(budget, 2 + (choices.empty() ? 0 : lineCount(slice(text, passage.result))), snapshots);
     std::set<std::string, std::less<>> decisions;
     for (const auto &choice : choices) decisions.insert(choice.decisions.begin(), choice.decisions.end());
     std::vector<NonConflictingTarget> result;

@@ -299,8 +299,8 @@ std::vector<Passage> shifted(const std::vector<Passage> &passages, std::string_v
 
 void requireComparable(std::string_view text)
 {
-    if (!validUtf8(text)) throw std::invalid_argument("Correspondence requires valid UTF-8 text");
     if (!withinTextEnvelope(text)) throw std::invalid_argument("Correspondence text is outside the supported envelope");
+    if (!validUtf8(text)) throw std::invalid_argument("Correspondence requires valid UTF-8 text");
 }
 
 CorrespondenceMap::CorrespondenceMap(RevisionId revision, std::shared_ptr<const FileSnapshots> sources,
@@ -310,10 +310,12 @@ CorrespondenceMap::CorrespondenceMap(RevisionId revision, std::shared_ptr<const 
     if (!sources_) throw std::invalid_argument("Correspondence needs captured sources");
     if (!algorithm_) throw std::invalid_argument("Correspondence needs an alignment algorithm");
     requireComparable(text_);
+    if (lineCount(text_) > kMaxIndexedLines) throw std::length_error("Comparison line index limit");
     std::map<SourceSide, std::vector<std::size_t>> starts;
     for (const auto side : kSides) {
         if (const auto *text = source(side)) {
             requireComparable(*text);
+            if (lineCount(*text) > kMaxIndexedLines) throw std::length_error("Comparison line index limit");
             starts.emplace(side, lineStarts(*text));
         }
     }
@@ -321,12 +323,19 @@ CorrespondenceMap::CorrespondenceMap(RevisionId revision, std::shared_ptr<const 
     align();
 }
 
-void CorrespondenceMap::align()
+void CorrespondenceMap::align(std::size_t cells)
 {
     requireComparable(text_);
     resultLines_.reset();
+    MetadataBudget work{cells, cells};
+    const auto count = lineCount(text_);
     for (const auto side : kSides)
-        if (const auto *text = source(side)) passages_[side] = algorithm_->compare(*text, text_);
+        if (const auto *text = source(side)) {
+            if (*text == text_ || work.take(lineCount(*text), count))
+                passages_[side] = algorithm_->compare(*text, text_);
+            else
+                passages_[side] = {{{0, text->size()}, {0, text_.size()}, PassageKind::Ambiguous}};
+        }
     aligned_ = true;
 }
 
@@ -371,12 +380,18 @@ const ResultAnchor *CorrespondenceMap::anchor(const std::string &id) const noexc
     return found == anchors_.end() ? nullptr : &found->second;
 }
 
-bool CorrespondenceMap::bind(SourceAnchor source)
+bool CorrespondenceMap::bind(const SourceAnchor &source)
 {
     const auto &captured = sources_->source(source.side);
     if (source.contributionId.empty() || !captured || !validByteRange(captured->worktree.utf8, source.range)
         || anchors_.contains(source.contributionId))
         return false;
+    auto budget = anchorBudget_;
+    if (!budget.take(1,
+                     sizeof(ResultAnchor) + 4 * sizeof(void *) + 2 * source.contributionId.size()
+                         + sources_->path.size() + sources_->provenance.sessionId.size() + captured->objectId.size())
+        || (!resultLines_ && lineCount(text_) > kMaxIndexedLines))
+        throw std::length_error("Anchor metadata limit");
     if (!resultLines_) resultLines_ = std::make_shared<const std::vector<std::size_t>>(lineStarts(text_));
     const LinePairing pairing{sourceLines_->at(source.side), *resultLines_};
     const auto projected = project(passages_.at(source.side), source.range, source.affinity, &pairing);
@@ -386,8 +401,9 @@ bool CorrespondenceMap::bind(SourceAnchor source)
     // but nobody has edited it by hand yet.
     anchors_.emplace(
         id,
-        ResultAnchor{origin, std::move(source), revision_, projected.state, projected.range,
+        ResultAnchor{origin, source, revision_, projected.state, projected.range,
                      projected.changed && projected.range && projected.range->begin != projected.range->end, false});
+    anchorBudget_ = budget;
     return true;
 }
 
@@ -426,19 +442,24 @@ CorrespondenceMap CorrespondenceMap::atRevision(RevisionId revision) const
 }
 
 CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdit &edit, bool manual,
-                                            const std::string &selectedAnchor, Realignment realignment) const
+                                            const std::string &selectedAnchor, Realignment realignment) &&
 {
-    if (!validByteRange(text_, edit.range) || !validUtf8(edit.replacement))
-        throw std::invalid_argument("Result edit must use UTF-8 character boundaries");
-    auto result = atRevision(revision);
-    result.text_.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
+    if (!validByteRange(text_, edit.range)) throw std::invalid_argument("Result edit must use UTF-8 boundaries");
+    if (!replacementFits(text_, edit.range, edit.replacement))
+        throw std::invalid_argument("Result edit is outside the supported envelope");
+    if (!validUtf8(edit.replacement)) throw std::invalid_argument("Result edit must use UTF-8 text");
+    auto &result = *this;
+    result.revision_ = revision;
+    const bool changed = slice(text_, edit.range) != edit.replacement;
     const auto *selected = manual ? nullptr : anchor(selectedAnchor);
     std::optional<std::vector<std::size_t>> lines;
+    const bool indexed = resultLines_ || lineCount(text_) <= kMaxIndexedLines;
     // A competing line loses its range when the result line it pairs with is
     // deleted by hand. Where its source pairs in the text before this choice
     // tells whether the choice replaced that place.
     const auto replaced = [&](const SourceAnchor &source) {
         if (edit.range.begin == edit.range.end) return false;
+        if (!indexed) return false;
         if (!resultLines_ && !lines) lines = lineStarts(text_);
         const LinePairing pairing{sourceLines_->at(source.side), resultLines_ ? *resultLines_ : *lines};
         const auto projected = project(passages_.at(source.side), source.range, source.affinity, &pairing);
@@ -450,33 +471,41 @@ CorrespondenceMap CorrespondenceMap::edited(RevisionId revision, const ResultEdi
         if (selected && value.state != AnchorState::Mapped && value.handEdited
             && (within(selected->source, value.source) || replaced(value.source)))
             value.handEdited = false;
+        value.revision = revision;
         transform(value, edit, manual, id == selectedAnchor, selected && sibling(selected->source, value.source));
     }
     result.handEditedRanges_ = editedRanges(handEditedRanges_, edit.range, edit.replacement.size(), manual);
-    if (realignment == Realignment::Deferred)
-        result.shiftPassages(text_, edit.range, edit.replacement.size());
-    else
-        result.align();
-    return result;
+    if (changed) result.shiftPassages(text_, edit.range, edit.replacement.size());
+    result.text_.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
+    if (realignment == Realignment::Now && !result.aligned_) result.align();
+    return std::move(result);
 }
 
-CorrespondenceMap CorrespondenceMap::rebuilt(RevisionId revision, ByteRange range,
-                                             const std::vector<KeptSpan> &spans) const
+CorrespondenceMap CorrespondenceMap::rebuilt(RevisionId revision, ByteRange range, const std::vector<KeptSpan> &spans,
+                                             Realignment realignment) &&
 {
     const Rebuild rebuild(text_, range, spans);
-    auto result = atRevision(revision);
+    if (!replacementFits(text_, range, rebuild.replacement()))
+        throw std::invalid_argument("Rebuilt result is outside the supported envelope");
+    auto &result = *this;
+    result.revision_ = revision;
     for (auto &[id, anchor] : result.anchors_) {
         (void)id;
+        anchor.revision = revision;
         rebuild.move(anchor);
     }
     result.handEditedRanges_ = rebuild.handEdits(handEditedRanges_);
+    result.shiftPassages(text_, range, rebuild.replacement().size());
     result.text_.replace(range.begin, range.end - range.begin, rebuild.replacement());
-    result.align();
-    return result;
+    if (realignment == Realignment::Now) result.align();
+    return std::move(result);
 }
 
 CorrespondenceMap CorrespondenceMap::recomputed(RevisionId revision, std::string text, bool manual) const
 {
+    if (!partsFit(std::array{std::string_view(text)}))
+        throw std::invalid_argument("Result text is outside the supported envelope");
+    requireComparable(text);
     auto result = atRevision(revision);
     if (!manual) {
         for (auto &[id, anchor] : result.anchors_) {
@@ -486,8 +515,10 @@ CorrespondenceMap CorrespondenceMap::recomputed(RevisionId revision, std::string
         result.handEditedRanges_.clear();
     }
     if (text_ == text) return result;
-    requireComparable(text);
-    const auto changes = algorithm_->compare(text_, text);
+    MetadataBudget work{kMaxAlignmentCells, kMaxAlignmentCells};
+    const auto changes = work.take(lineCount(text_), lineCount(text))
+        ? algorithm_->compare(text_, text)
+        : std::vector<Passage>{{{0, text_.size()}, {0, text.size()}, PassageKind::Ambiguous}};
     if (manual) result.handEditedRanges_ = recomputedRanges(handEditedRanges_, changes, text.size());
     for (auto &[id, anchor] : result.anchors_) {
         (void)id;
@@ -502,7 +533,7 @@ CorrespondenceMap CorrespondenceMap::recomputed(RevisionId revision, std::string
             invalidate(anchor, AnchorState::Invalidated);
     }
     result.text_ = std::move(text);
-    result.align();
+    result.align(work.bytes);
     return result;
 }
 

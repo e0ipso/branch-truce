@@ -23,6 +23,8 @@ enum class LoadFailureReason {
     LargeFile,
     // A conflict-marker-size over kMaxConflictMarkerSize.
     MarkerSizeTooLarge,
+    // Derived comparison or decision metadata exceeds its independent budget.
+    MetadataTooLarge,
     // Aligning the sources with the result ran out of memory.
     OutOfMemory,
     // The alignment failed for any other reason. The texts were checked
