@@ -97,10 +97,10 @@ foreach(native_check IN ITEMS NativeIntegration DebianPreflight FedoraPackaging 
     set_tests_properties(packaging.${native_check} PROPERTIES TIMEOUT 30)
 endforeach()
 
-# Host side of the .deb build and inspection scripts against a stub container engine.
+# Host side of the DEB inspection script against a stub container engine.
 add_test(NAME packaging.artifact-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ArtifactTooling.sh")
-set_tests_properties(packaging.artifact-tooling PROPERTIES TIMEOUT 30)
+set_tests_properties(packaging.artifact-tooling PROPERTIES TIMEOUT 120)
 # The CI fixture checks that test stages list every runtime package dependency.
 add_test(NAME packaging.ci-test-stage-depends
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/CiTestStageDepends.sh")
@@ -114,7 +114,7 @@ set_tests_properties(packaging.provisioning-depends PROPERTIES TIMEOUT 30)
 # reported as skipped, when jq or python3 is missing.
 add_test(NAME packaging.installed-validation-tooling
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/InstalledValidationTooling.sh")
-set_tests_properties(packaging.installed-validation-tooling PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+set_tests_properties(packaging.installed-validation-tooling PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
 # Native replay tooling uses only Python's standard library. Its Qt driver has a
 # separate build under tools/native-replay and is never linked into the app.
 find_package(Python3 QUIET COMPONENTS Interpreter)

@@ -53,6 +53,17 @@ test('the release assets and the CI matrix are the formats of formats.tsv', () =
   assert.equal(FORMATS.filter((format) => format.native_fidelity === '1').length, 1, 'one calibrated native replay leg');
 });
 
+test('validation targets name a DEB release format and a Dockerfile with a target stage', () => {
+  const targets = rows('packaging/validation-targets.tsv');
+  assert.deepEqual(header('packaging/validation-targets.tsv'), ['target', 'format', 'dockerfile', 'label']);
+  assert.ok(targets.length > 0);
+  for (const [target, format, dockerfile, label] of targets) {
+    assert.ok(label, `${target} has every column`);
+    assert.equal(FORMATS.find((row) => row.id === format)?.family, 'deb', `${target} installs a DEB format`);
+    assert.match(read(`packaging/${dockerfile}`), /^FROM \S+ AS target$/m, `${target}: packaging/${dockerfile} has a target stage`);
+  }
+});
+
 test('the RPM file list is installed-files.txt', () => {
   const spec = read('packaging/rpm/branch-truce.spec');
   const files = spec.slice(spec.indexOf('%files')).split('\n').slice(1)
