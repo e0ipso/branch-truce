@@ -44,7 +44,9 @@ enum class Transition {
     Blocked,
     InvalidOutcome,
     InvalidAnchor,
-    AmbiguousTarget
+    AmbiguousTarget,
+    // The command ran out of memory and changed nothing.
+    OutOfMemory
 };
 
 }

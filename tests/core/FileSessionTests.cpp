@@ -30,20 +30,20 @@ class CountingAlgorithm final : public CorrespondenceAlgorithm {
 public:
     enum class Failure { OutOfMemory, Defect };
     explicit CountingAlgorithm(int failAt = 0, Failure failure = Failure::OutOfMemory)
-        : failAt_(failAt), failure_(failure)
+        : failAt(failAt), failure_(failure)
     {}
     [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override
     {
-        if (++calls == failAt_) {
+        if (++calls == failAt) {
             if (failure_ == Failure::OutOfMemory) throw std::bad_alloc();
             throw std::logic_error("alignment defect");
         }
         return ExactLineCorrespondence{}.compare(source, result);
     }
     mutable int calls = 0;
+    int failAt;
 
 private:
-    int failAt_;
     Failure failure_;
 };
 
@@ -290,6 +290,27 @@ void aFailedOpeningLeavesNothingHalfBuilt()
     CHECK(file.current().draft.decisions.empty() && file.markerSections().empty());
     CHECK(file.snapshots() && file.current().draft.text == file.snapshots()->launchResult.text.utf8);
     CHECK(file.editResult(1, {{0, 0}, "x"}) == Transition::Blocked);
+}
+
+void anEditThatRunsOutOfMemoryChangesNothing()
+{
+    const auto algorithm = std::make_shared<CountingAlgorithm>();
+    auto file = diff3Session(algorithm);
+    const auto before = file.current();
+    const auto *mapping = file.correspondence();
+    const auto unchanged = [&] {
+        return file.current().id == before.id && file.current().draft == before.draft
+            && file.correspondence() == mapping && !file.canUndo();
+    };
+    algorithm->failAt = algorithm->calls + 1;
+    CHECK(file.editResult(before.id, {{0, 0}, "typed\n"}) == Transition::OutOfMemory);
+    CHECK(unchanged());
+    algorithm->failAt = algorithm->calls + 1;
+    CHECK(file.replaceDraft(before.id, {"replaced\n", before.draft.decisions, 0}) == Transition::OutOfMemory);
+    CHECK(unchanged());
+    algorithm->failAt = 0;
+    CHECK(file.editResult(before.id, {{0, 0}, "typed\n"}) == Transition::Applied);
+    CHECK(file.current().id == before.id + 1 && file.canUndo());
 }
 
 void aDefectiveAlignmentHoldsTheFileBack()
@@ -1040,6 +1061,7 @@ int main()
     suite.run("undo reaches back as far as the history size allows", undoReachesBackAsFarAsTheHistorySizeAllows);
     suite.run("the session aligns with the algorithm it is given", theSessionAlignsWithTheAlgorithmItIsGiven);
     suite.run("a failed opening leaves nothing half built", aFailedOpeningLeavesNothingHalfBuilt);
+    suite.run("an edit that runs out of memory changes nothing", anEditThatRunsOutOfMemoryChangesNothing);
     suite.run("a defective alignment holds the file back", aDefectiveAlignmentHoldsTheFileBack);
     suite.run("commands check their anchors against the current revision",
               commandsCheckTheirAnchorsAgainstTheCurrentRevision);

@@ -26,6 +26,7 @@ bool CommandFeedback::report(Transition result)
     case Transition::ConfirmationRequired: show(tr("Inspect and confirm the exact replacement first.")); break;
     case Transition::AmbiguousTarget: show(tr("The target is ambiguous. Edit the result directly.")); break;
     case Transition::InvalidAnchor: show(tr("The target is no longer valid. Select the scope again.")); break;
+    case Transition::OutOfMemory: show(tr("Not enough memory to complete the command. Nothing changed.")); break;
     default: show(tr("Command not completed. Check pending recovery and the selected scope.")); break;
     }
     return result == Transition::Applied || result == Transition::NoChange;

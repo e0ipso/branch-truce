@@ -52,14 +52,15 @@ public:
     // newest entry and replaces every entry after the cursor, while undo and
     // redo move to the entry their revision copies.
     enum class Step { Edit, Undo, Redo };
-    // Makes `revision`, whose id must be nextId(), current.
+    // Makes `revision`, whose id must be nextId(), current. If it throws,
+    // std::bad_alloc included, the history is unchanged.
     void publish(Revision revision, Step step);
     // Makes an earlier revision current again as a new entry, storing it
-    // again if it was dropped.
+    // again if it was dropped. If it throws, the history is unchanged.
     void reopen(const Revision &revision);
 
 private:
-    void append(RevisionId id);
+    void append(RevisionId id) noexcept;
     void prune();
     std::map<RevisionId, std::shared_ptr<const Revision>> revisions_;
     std::shared_ptr<const Revision> current_;

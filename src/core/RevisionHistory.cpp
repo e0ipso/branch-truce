@@ -33,7 +33,9 @@ void RevisionHistory::publish(Revision revision, Step step)
     if (revision.id != next_) throw std::logic_error("A published revision must take the next revision id");
     if ((step == Step::Undo && !canUndo()) || (step == Step::Redo && !canRedo()))
         throw std::logic_error("No history entry to move to");
+    // Everything that allocates comes first, so a failure changes nothing.
     auto stored = std::make_shared<const Revision>(std::move(revision));
+    if (step == Step::Edit) entries_.reserve(cursor_ + 2);
     revisions_.emplace(stored->id, stored);
     current_ = std::move(stored);
     ++next_;
@@ -47,6 +49,7 @@ void RevisionHistory::publish(Revision revision, Step step)
 
 void RevisionHistory::reopen(const Revision &revision)
 {
+    entries_.reserve(cursor_ + 2);
     auto found = revisions_.find(revision.id);
     if (found == revisions_.end())
         found = revisions_.emplace(revision.id, std::make_shared<const Revision>(revision)).first;
@@ -55,8 +58,9 @@ void RevisionHistory::reopen(const Revision &revision)
     prune();
 }
 
-void RevisionHistory::append(RevisionId id)
+void RevisionHistory::append(RevisionId id) noexcept
 {
+    // The caller reserved room for the new entry.
     entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(cursor_ + 1), entries_.end());
     entries_.push_back(id);
     cursor_ = entries_.size() - 1;
