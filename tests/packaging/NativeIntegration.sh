@@ -75,7 +75,7 @@ case "$1" in
                             fixture="${argument%:/fixture:ro}"
                             [ -f "$fixture/assets/branding/platform/linux/hicolor/scalable/apps/com.canpicasoft.branch-truce.svg" ]
                             [ -f "$fixture/packaging/scripts/check-package.sh" ]
-                            [ -f "$fixture/packaging/formats.tsv" ] && [ -f "$fixture/tools/lib/fixture.sh" ]
+                            [ -f "$fixture/packaging/formats.tsv" ] && [ -f "$fixture/tools/lib/fixture.sh" ] && [ -f "$fixture/tools/lib/report.sh" ]
                             [ ! -e "$fixture/src" ] && [ ! -e "$fixture/build" ] && [ ! -e "$fixture/cmake" ] ;;
                     esac
                 done

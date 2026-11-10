@@ -84,7 +84,7 @@ assemble_runtime_fixture() {
         mkdir -p "$fixture/packaging/${recipe%/*}"
         cp -- "$packaging_dir/$recipe" "$fixture/packaging/$recipe"
     done
-    cp -- "$root_dir/tools/lib/fixture.sh" "$fixture/tools/lib/"
+    cp -- "$root_dir/tools/lib/fixture.sh" "$root_dir/tools/lib/report.sh" "$fixture/tools/lib/"
     cp -r -- "$root_dir/assets/branding/platform/linux/hicolor" "$fixture/assets/branding/platform/linux/"
 }
 

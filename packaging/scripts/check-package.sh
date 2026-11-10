@@ -8,7 +8,8 @@
 # repositories configured and no source or build tree. Never run it on a
 # desktop. The directory two levels up must hold packaging/ (formats.tsv,
 # installed-files.txt, runtime-modules.txt, the recipe of the format and these
-# scripts), tools/lib/fixture.sh and the branding pack's hicolor icons;
+# scripts), tools/lib/fixture.sh, tools/lib/report.sh and the branding pack's
+# hicolor icons;
 # packaging/scripts/container-check.sh assembles that tree.
 #
 # Every format runs the same checks. The package manager calls live in
@@ -23,14 +24,12 @@ root=$(cd -- "$here/../.." && pwd)
 source "$here/cli.sh"
 source "$here/package-info.sh"
 source "$root/tools/lib/fixture.sh"
+source "$root/tools/lib/report.sh"
 app_binary=/usr/bin/branch-truce
 
 usage() {
     echo "usage: $0 --format $(format_ids | paste -sd '|' -) --version <semver> --package <file> [--previous <file>]"
 }
-die() { echo "error: $*" >&2; exit 1; }
-ok() { echo "ok: $*"; }
-step() { printf '\n== %s\n' "$*"; }
 
 # seed_user_home HOME: a private home with files the user already has. The
 # installed binary runs with it, so the removal checks also cover what the
@@ -65,18 +64,18 @@ check_metadata() {
     [ "$got" = "branch-truce|$native|$architecture" ] \
         || die "candidate identity $got differs from branch-truce|$native|$architecture"
     reason=$(pkg_check_metadata "$file" 2>&1) || die "candidate metadata: $reason"
-    ok "candidate is branch-truce $native for $architecture"
+    pass "candidate is branch-truce $native for $architecture"
     got=$(pkg_files "$file")
     [ "$got" = "$expected" ] || die "payload differs from the expected files:
 $(diff <(printf '%s\n' "$expected") <(printf '%s\n' "$got") || true)"
-    ok "payload is exactly the $(wc -l <<<"$expected") expected files"
+    pass "payload is exactly the $(wc -l <<<"$expected") expected files"
     ! pkg_has_scripts "$file" || die 'the package has scripts, triggers or configuration files'
-    ok 'no package scripts, triggers or configuration files'
+    pass 'no package scripts, triggers or configuration files'
     declared=$(pkg_depends "$file")
     while IFS= read -r dependency; do
         grep -qxF -- "$dependency" <<<"$declared" || die "the package does not declare the recipe dependency $dependency"
     done < <(pkg_recipe_depends "$root")
-    ok 'the package declares every dependency of its recipe'
+    pass 'the package declares every dependency of its recipe'
 }
 
 # check_previous FILE NATIVE ARCHITECTURE: prints the previous package's native
@@ -177,7 +176,7 @@ check_installed() {
     check_binary "$work"
     check_runtime_modules "$(pkg_qt_root)"
     check_launch "$version" "$home" "$work"
-    ok "installed $want: files, integrity, icons, metadata, libraries, hardening, runtime modules, --version and --smoke-test"
+    pass "installed $want: files, integrity, icons, metadata, libraries, hardening, runtime modules, --version and --smoke-test"
 }
 
 # remove_and_check HOME PAYLOAD-FILE: removes the package completely; nothing
@@ -198,7 +197,7 @@ remove_and_check() {
         [ ! -e "${path%/*}" ] || die "removal left ${path%/*}"
     done < <(pkg_extra_files)
     [ "$(user_files "$home")" = "$before" ] || die 'removal changed files in the user home'
-    ok 'complete removal; the user home is unchanged'
+    pass 'complete removal; the user home is unchanged'
 }
 
 check_main() {
@@ -225,7 +224,7 @@ check_main() {
     check_metadata "$package" "$native" "$architecture" "$expected"
     if [ -n "$previous" ]; then
         previous_native=$(check_previous "$previous" "$native" "$architecture")
-        ok "previous package branch-truce $previous_native is older than $native"
+        pass "previous package branch-truce $previous_native is older than $native"
     fi
 
     [ "$(id -u)" -eq 0 ] || die 'run as root in a disposable target container'

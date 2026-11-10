@@ -1,8 +1,9 @@
 # shellcheck shell=bash
 # The report lines of the tools that run a series of checks:
-# tools/validate-installed-artifact.sh, tools/installed-checks.sh and
-# tools/verify-install-prefix.sh. Sourcing defines the functions below; it
-# sets no shell options and runs nothing.
+# tools/validate-installed-artifact.sh, tools/installed-checks.sh,
+# tools/verify-install-prefix.sh and packaging/scripts/check-package.sh.
+# Sourcing defines the functions below; it sets no shell options and runs
+# nothing.
 #
 #   step TITLE...   a blank line, then "== TITLE", on stdout
 #   pass TEXT...    "PASS TEXT" on stdout
