@@ -22,7 +22,11 @@ checked=0
 failures=0
 for script in "${scripts[@]}"; do
     [[ -f "$script" ]] || continue
-    bash -n "$script"
+    # A syntax error fails this script but never stops the check of the others.
+    if ! bash -n "$script"; then
+        printf '%s: syntax error\n' "${script#"$root/"}" >&2
+        failures=$((failures + 1))
+    fi
     # A here-document can hold such a line as data; those scripts are not exempt,
     # so keep generated scripts free of it too.
     if negated=$(grep -nE '^[[:space:]]*![[:space:]]' "$script" | grep -v '||'); then
