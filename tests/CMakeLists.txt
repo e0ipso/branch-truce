@@ -254,26 +254,33 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
 
     # PRD observable acceptance examples, driven through the real Main scene and a real Git merge.
     # Entry point and coverage notes: tests/acceptance/README.md.
-    add_executable(branch_truce_journey_acceptance_tests acceptance/JourneyAcceptanceTests.cpp)
+    add_executable(branch_truce_journey_acceptance_tests acceptance/JourneyAcceptanceTests.cpp
+        acceptance/JourneyScene.cpp acceptance/JourneySteps.cpp acceptance/WindowChecks.cpp
+        acceptance/ReviewJourneys.cpp acceptance/HandoffJourneys.cpp acceptance/WindowJourneys.cpp
+        acceptance/PlatformJourneys.cpp)
     target_include_directories(branch_truce_journey_acceptance_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_journey_acceptance_tests PRIVATE branch_truce_controller branch_truce_uiplugin
         Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
-    # The executable takes "review", "handoff" or "window"; with no argument it runs every journey.
+    # The executable takes a group name, "review", "handoff", "window" or "platform", and runs every
+    # journey without one. Each journey prints a TIME line with its wall time. Platform covers a
+    # right-to-left layout, a 1.5 scale factor, accessible roles and the keyboard focus chain.
     # Review covers panes, choices, editing, search and Save. Handoff covers staged drafts,
     # startup recovery and mergetool completion. Window covers fit, navigation and the close guard.
-    # Each timeout must be at least twice the slowest measured run.
-    add_test(NAME acceptance.journeys-review
-        COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_journey_acceptance_tests> review)
-    add_test(NAME acceptance.journeys-handoff
-        COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_journey_acceptance_tests> handoff)
-    add_test(NAME acceptance.journeys-window
-        COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_journey_acceptance_tests> window)
-    foreach(journey_group review handoff window)
+    # Each timeout must be at least twice the slowest measured run. The private XDG wrapper keeps
+    # Qt's own settings and caches out of the real home and fails the run if anything reaches the
+    # real recovery root; each journey's Git, recovery root and socket directory are its own.
+    foreach(journey_group review handoff window platform)
+        add_test(NAME acceptance.journeys-${journey_group}
+            COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_journey_acceptance_tests> ${journey_group})
         set_tests_properties(acceptance.journeys-${journey_group} PROPERTIES TIMEOUT 120 LABELS acceptance
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;LC_ALL=C.UTF-8")
     endforeach()
-    set_tests_properties(acceptance.journeys-window PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QUICK_CONTROLS_STYLE=org.kde.desktop")
+    # The handoff group runs two more mergetool and recovery journeys than when 120 s was set.
+    set_tests_properties(acceptance.journeys-handoff PROPERTIES TIMEOUT 180)
+    set_tests_properties(acceptance.journeys-window PROPERTIES ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;LC_ALL=C.UTF-8;QT_QUICK_CONTROLS_STYLE=org.kde.desktop")
+    set_tests_properties(acceptance.journeys-platform PROPERTIES ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;LC_ALL=C.UTF-8;QT_QUICK_CONTROLS_STYLE=org.kde.desktop;QT_SCALE_FACTOR=1.5")
 
     # One executable from the startup route files; StartupRouteTests.cpp selects the group, and each
     # group is its own CTest entry so they can run in parallel.
@@ -347,27 +354,21 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(git.user-config-isolation git/UserConfigIsolationTests.cpp LIBS branch_truce_git
         PRIVATE_XDG)
 
-    # The standalone editor fixture checks native text selection, editing and scrolling without product targets.
-    set(editor_fixture "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/editor")
-    add_executable(branch_truce_editor_tests "${editor_fixture}/main.cpp")
-    target_link_libraries(branch_truce_editor_tests PRIVATE Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
-    qt_add_resources(branch_truce_editor_tests editor_scene PREFIX "/" BASE "${editor_fixture}"
-        FILES "${editor_fixture}/Editor.qml")
-    add_test(NAME editor.baseline COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_editor_tests> --baseline)
-    add_test(NAME editor.regression COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_editor_tests>)
-    set_tests_properties(editor.baseline editor.regression PROPERTIES TIMEOUT 30
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
-
     # Gate profile classifies outcomes. The evidence profile publishes timings.
-    add_executable(branch_truce_workload_measurements performance/WorkloadMeasurements.cpp)
-    target_link_libraries(branch_truce_workload_measurements PRIVATE branch_truce_core
-        branch_truce_storage branch_truce_git Qt6::Quick Qt6::QuickControls2 branch_truce_build_options)
+    # The editor workload loads the real Main scene, so the measurement links the controller and the UI.
+    add_executable(branch_truce_workload_measurements performance/WorkloadMeasurements.cpp performance/Workload.cpp
+        performance/Workers.cpp performance/EditorWorker.cpp performance/Supervisor.cpp performance/Report.cpp)
+    target_include_directories(branch_truce_workload_measurements PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(branch_truce_workload_measurements PRIVATE branch_truce_controller branch_truce_uiplugin
+        branch_truce_core branch_truce_storage branch_truce_git Qt6::Widgets Qt6::Quick Qt6::QuickControls2
+        branch_truce_build_options)
     target_compile_definitions(branch_truce_workload_measurements PRIVATE
-        "BRANCH_TRUCE_MEASUREMENT_BUILD=\"${CMAKE_BUILD_TYPE}\"")
-    qt_add_resources(branch_truce_workload_measurements workload_editor PREFIX "/" BASE "${editor_fixture}"
-        FILES "${editor_fixture}/Editor.qml")
+        "BRANCH_TRUCE_MEASUREMENT_BUILD=\"${CMAKE_BUILD_TYPE}\""
+        "BRANCH_TRUCE_SOURCE_DIR=\"${PROJECT_SOURCE_DIR}\""
+        "BRANCH_TRUCE_EVIDENCE_TSV=\"${CMAKE_CURRENT_SOURCE_DIR}/fixtures/performance/evidence.tsv\"")
     add_test(NAME performance.workloads COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_workload_measurements> --profile gate)
-    # Wall-clock budgets must not compete with other CTest processes.
+    # The gate holds each completed sample to its wall-clock budget, four times it in a Debug
+    # build, so it must not compete with other CTest processes.
     set_tests_properties(performance.workloads PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS performance
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
