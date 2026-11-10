@@ -271,11 +271,14 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
 
     # PRD observable acceptance examples, driven through the real Main scene and a real Git merge.
     # Entry point and coverage notes: tests/acceptance/README.md.
-    add_executable(branch_truce_journey_acceptance_tests acceptance/JourneyAcceptanceTests.cpp)
+    add_executable(branch_truce_journey_acceptance_tests acceptance/JourneyAcceptanceTests.cpp
+        acceptance/JourneyScene.cpp acceptance/JourneySteps.cpp acceptance/WindowChecks.cpp
+        acceptance/ReviewJourneys.cpp acceptance/HandoffJourneys.cpp acceptance/WindowJourneys.cpp)
     target_include_directories(branch_truce_journey_acceptance_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_journey_acceptance_tests PRIVATE branch_truce_controller branch_truce_uiplugin
         Qt6::Widgets Qt6::QuickControls2 Qt6::Test branch_truce_build_options)
-    # The executable takes "review", "handoff" or "window"; with no argument it runs every journey.
+    # The executable takes a group name, "review", "handoff" or "window", and runs every journey
+    # without one. Each journey prints a TIME line with its wall time.
     # Review covers panes, choices, editing, search and Save. Handoff covers staged drafts,
     # startup recovery and mergetool completion. Window covers fit, navigation and the close guard.
     # Each timeout must be at least twice the slowest measured run. The private XDG wrapper keeps
