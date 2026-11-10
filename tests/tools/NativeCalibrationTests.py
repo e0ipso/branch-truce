@@ -15,29 +15,36 @@ import zlib
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/native-replay'))
-from calibration import (build_provenance, compare, load_contract, native_regions, rect_argument, validate_contract,
+from calibration import (ImageTool, build_provenance, compare, load_contract, native_regions, rect_argument, validate_contract,
                          validate_profile)
 from fixture import png, sha256
 
 
 class ContractTests(unittest.TestCase):
     def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
         self.contract = load_contract(ROOT)
+        self.profile = json.loads((ROOT / 'tools/native-replay/capture-profile.json').read_text())
+
+    def profile_state(self, scheme='BreezeLight', palette=None):
+        profile = self.profile
+        return {'profile': dict(profile['pinned_observations'], fonts=profile['pinned_fonts'],
+                                configuredColourScheme=scheme, palette=self.profile['pinned_palettes'][scheme] if palette is None else palette)}
 
     def test_all_four_png_and_html_references_are_hash_pinned(self):
         self.assertEqual(set(self.contract['references']), {f'{t}-{k}.{ext}' for t in ('light', 'dark')
             for k in ('text', 'binary') for ext in ('png', 'html')})
 
     def test_reference_tampering_is_rejected_without_rewriting_it(self):
-        with tempfile.TemporaryDirectory() as directory:
-            source = Path(directory)
-            shutil.copytree(ROOT / 'docs/ui-mockup', source / 'docs/ui-mockup')
-            victim = source / 'docs/ui-mockup/light-text.png'
-            victim.write_bytes(victim.read_bytes()+b'changed')
-            before = victim.read_bytes()
-            with self.assertRaisesRegex(ValueError, 'reference changed'):
-                load_contract(source)
-            self.assertEqual(victim.read_bytes(), before)
+        shutil.copytree(ROOT / 'docs/ui-mockup', self.root / 'docs/ui-mockup')
+        victim = self.root / 'docs/ui-mockup/light-text.png'
+        victim.write_bytes(victim.read_bytes()+b'changed')
+        before = victim.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'reference changed'):
+            load_contract(self.root)
+        self.assertEqual(victim.read_bytes(), before)
 
     def test_each_exception_requires_region_hash_value_reason_and_rule(self):
         for entry in self.contract['exceptions']:
@@ -69,9 +76,7 @@ class ContractTests(unittest.TestCase):
                 validate_contract(candidate)
 
     def test_profile_rejects_style_dpr_scheme_and_font_drift(self):
-        profile = json.loads((ROOT / 'tools/native-replay/capture-profile.json').read_text())
-        state = {'profile': dict(profile['pinned_observations'], fonts=profile['pinned_fonts'],
-                                 configuredColourScheme='BreezeLight', palette=profile['pinned_palettes']['BreezeLight'])}
+        state = self.profile_state()
         metadata = {'capture_environment': {'output': {'scale': 1}, 'colour_scheme': 'BreezeLight'}}
         self.assertTrue(validate_profile(state, metadata))
         for key, value in [('devicePixelRatio', 2), ('quickControlsStyle', 'Fusion'), ('configuredColourScheme', 'BreezeDark')]:
@@ -85,27 +90,22 @@ class ContractTests(unittest.TestCase):
             validate_profile(changed, metadata)
 
     def test_profile_accepts_recorded_light_and_dark_palettes(self):
-        profile = json.loads((ROOT / 'tools/native-replay/capture-profile.json').read_text())
-        for scheme, palette in profile['pinned_palettes'].items():
+        for scheme, palette in self.profile['pinned_palettes'].items():
             with self.subTest(scheme=scheme):
-                state = {'profile': dict(profile['pinned_observations'], fonts=profile['pinned_fonts'],
-                                         configuredColourScheme=scheme, palette=palette)}
+                state = self.profile_state(scheme, palette)
                 metadata = {'capture_environment': {'output': {'scale': 1}, 'colour_scheme': scheme}}
                 self.assertTrue(validate_profile(state, metadata))
 
     def test_profile_rejects_wrong_palette_when_configured_name_matches(self):
-        profile = json.loads((ROOT / 'tools/native-replay/capture-profile.json').read_text())
         for requested, observed in [('BreezeLight', 'BreezeDark'), ('BreezeDark', 'BreezeLight')]:
             with self.subTest(requested=requested):
-                state = {'profile': dict(profile['pinned_observations'], fonts=profile['pinned_fonts'],
-                                         configuredColourScheme=requested, palette=profile['pinned_palettes'][observed])}
+                state = self.profile_state(requested, self.profile['pinned_palettes'][observed])
                 metadata = {'capture_environment': {'output': {'scale': 1}, 'colour_scheme': requested}}
                 with self.assertRaisesRegex(ValueError, 'Observed application palette'):
                     validate_profile(state, metadata)
 
     def test_profile_requires_all_pinned_observed_palette_roles(self):
-        profile = json.loads((ROOT / 'tools/native-replay/capture-profile.json').read_text())
-        palette = profile['pinned_palettes']['BreezeLight']
+        palette = self.profile['pinned_palettes']['BreezeLight']
         metadata = {'capture_environment': {'output': {'scale': 1}, 'colour_scheme': 'BreezeLight'}}
         for role in palette:
             for value in [None, '#000000']:
@@ -115,8 +115,7 @@ class ContractTests(unittest.TestCase):
                         del changed[role]
                     else:
                         changed[role] = value
-                    state = {'profile': dict(profile['pinned_observations'], fonts=profile['pinned_fonts'],
-                                             configuredColourScheme='BreezeLight', palette=changed)}
+                    state = self.profile_state(palette=changed)
                     with self.assertRaisesRegex(ValueError, 'Observed application palette'):
                         validate_profile(state, metadata)
 
@@ -131,16 +130,14 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(regions['file_header'], [253, 48, 1027, 34])
 
     def test_build_provenance_does_not_invent_a_compiled_revision(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / 'src/app').mkdir(parents=True)
-            executable = root / 'src/app/branch-truce'
-            executable.write_bytes(b'fixture executable identity')
-            observed = build_provenance(root, root)
-            self.assertEqual(observed['executable_sha256'], sha256(executable))
-            self.assertIsNone(observed['source_head_observed'])
-            self.assertFalse(observed['current_src_matches_build_source'])
-            self.assertIn('not observed', observed['embedded_build_identity'])
+        (self.root / 'src/app').mkdir(parents=True)
+        executable = self.root / 'src/app/branch-truce'
+        executable.write_bytes(b'fixture executable identity')
+        observed = build_provenance(self.root, self.root)
+        self.assertEqual(observed['executable_sha256'], sha256(executable))
+        self.assertIsNone(observed['source_head_observed'])
+        self.assertFalse(observed['current_src_matches_build_source'])
+        self.assertIn('not observed', observed['embedded_build_identity'])
 
     def write_cache(self, root, **entries):
         (root / 'src/app').mkdir(parents=True)
@@ -150,21 +147,17 @@ class ContractTests(unittest.TestCase):
         (root / 'CMakeCache.txt').write_text('\n'.join(lines) + '\n')
 
     def test_build_provenance_records_the_syntax_highlighting_option(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            self.write_cache(root, CMAKE_HOME_DIRECTORY=root, CMAKE_BUILD_TYPE='Debug',
-                             CMAKE_CXX_COMPILER='/usr/bin/c++', BRANCH_TRUCE_SYNTAX_HIGHLIGHTING='OFF')
-            observed = build_provenance(root, root)
-            self.assertEqual(observed['cmake_observations'], dict(
-                CMAKE_BUILD_TYPE='Debug', CMAKE_CXX_COMPILER='/usr/bin/c++', BRANCH_TRUCE_SYNTAX_HIGHLIGHTING='OFF'))
+        self.write_cache(self.root, CMAKE_HOME_DIRECTORY=self.root, CMAKE_BUILD_TYPE='Debug',
+                         CMAKE_CXX_COMPILER='/usr/bin/c++', BRANCH_TRUCE_SYNTAX_HIGHLIGHTING='OFF')
+        observed = build_provenance(self.root, self.root)
+        self.assertEqual(observed['cmake_observations'], dict(
+            CMAKE_BUILD_TYPE='Debug', CMAKE_CXX_COMPILER='/usr/bin/c++', BRANCH_TRUCE_SYNTAX_HIGHLIGHTING='OFF'))
 
     def test_build_provenance_rejects_a_cache_without_an_observed_option(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            self.write_cache(root, CMAKE_HOME_DIRECTORY=root, CMAKE_BUILD_TYPE='Debug',
-                             CMAKE_CXX_COMPILER='/usr/bin/c++', BRANCH_TRUCE_WITH_SYNTAX_HIGHLIGHTING='ON')
-            with self.assertRaisesRegex(KeyError, 'CMakeCache.txt lacks BRANCH_TRUCE_SYNTAX_HIGHLIGHTING'):
-                build_provenance(root, root)
+        self.write_cache(self.root, CMAKE_HOME_DIRECTORY=self.root, CMAKE_BUILD_TYPE='Debug',
+                         CMAKE_CXX_COMPILER='/usr/bin/c++', BRANCH_TRUCE_WITH_SYNTAX_HIGHLIGHTING='ON')
+        with self.assertRaisesRegex(KeyError, 'CMakeCache.txt lacks BRANCH_TRUCE_SYNTAX_HIGHLIGHTING'):
+            build_provenance(self.root, self.root)
 
     def test_changed_reference_scale_requires_review(self):
         changed = copy.deepcopy(self.contract)
@@ -342,7 +335,7 @@ class PixelTests(unittest.TestCase):
             dict(name='fileToolBar', x=x, y=y, width=width, height=height),
             dict(name='fileFacts', x=0, y=size[1]-1, width=size[0], height=1, text='fixture')])
         with mock.patch('calibration.load_contract', return_value=contract):
-            report = compare(source, shot, state, IMAGE_TOOL, root / 'comparison')
+            report = compare(source, shot, state, ImageTool(IMAGE_TOOL), root / 'comparison')
         self.assertEqual([sha256(reference), sha256(shot)], originals)
         return report['regions']['file_header']
 

@@ -1,4 +1,5 @@
 """Fixture integrity, readiness protocol, serialization and resource ownership."""
+from contextlib import contextmanager, nullcontext
 import io
 import json
 import os
@@ -12,30 +13,54 @@ import sys
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import zlib
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/native-replay'))
 from NativeCalibrationTests import ContractTests
-from calibration import cleanup_confirmed
+from calibration import cleanup_confirmed, collect_shot
 import capture_profile
 from ledger import assemble
 from fixture import PATHS, GitError, git, make_fixture, png, reference_bytes, unmerged
 import reports
 from processes import OutputLimitError, OwnedResources, run
-from replay import (NativeClient, await_compositor, item, private_environment, replay_lock,
-                    write_kdeglobals)
+from collection import replay_lock
+from desktop import NativeClient, application, await_compositor, private_environment, write_kdeglobals
+from scene import item, verify_line_cue
 
 
-class FixtureTests(unittest.TestCase):
+class PrivateBaseTestCase(unittest.TestCase):
+    """Keeps every owned private directory and receipt under a temporary base directory."""
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.base = Path(directory.name)
 
+    def owned(self, cleanup_receipt=None):
+        return OwnedResources(cleanup_receipt, base_dir=self.base)
+
+    @contextmanager
+    def client_reply(self, response, diagnostics=None):
+        parent, child = socket.socketpair()
+        client, requests = NativeClient(parent, diagnostics), []
+        def respond():
+            with child, child.makefile('rb') as reader:
+                requests.append(json.loads(reader.readline()))
+                child.sendall(response)
+        worker = threading.Thread(target=respond)
+        worker.start()
+        try:
+            yield client, requests
+        finally:
+            client.close()
+            worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+
+
+class FixtureTests(PrivateBaseTestCase):
     def test_exact_source_and_result_bytes(self):
-        fixture = self.root / 'fixture with $ and spaces'
+        fixture = self.base / 'fixture with $ and spaces'
         make_fixture(fixture)
         for side, lines in [('left', 24), ('right', 25), ('result', 30)]:
             data = (fixture / f'expected-{side}.cpp').read_bytes()
@@ -48,10 +73,10 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(sorted(unmerged(repo)), sorted(PATHS))
 
     def test_history_is_reproducible_and_truthful(self):
-        first = make_fixture(self.root / 'one')
-        second = make_fixture(self.root / 'two')
+        first = make_fixture(self.base / 'one')
+        second = make_fixture(self.base / 'two')
         self.assertEqual(first, second)
-        repo = self.root / 'one/retry-service'
+        repo = self.base / 'one/retry-service'
         for branch, key in [('main', 'main'), ('feature/backoff', 'incoming')]:
             self.assertEqual(git(repo, 'rev-parse', branch).stdout.decode().strip(), first[key])
             self.assertEqual(git(repo, 'rev-parse', branch + '^').stdout.decode().strip(), first['base'])
@@ -62,14 +87,13 @@ class FixtureTests(unittest.TestCase):
 
     def test_failed_git_command_reports_its_stderr(self):
         with self.assertRaisesRegex(GitError, 'git rev-parse HEAD in .* exited 128: fatal: not a git repository'):
-            git(self.root, 'rev-parse', 'HEAD')
-        self.assertEqual(git(self.root, 'rev-parse', 'HEAD', check=False).returncode, 128)
+            git(self.base, 'rev-parse', 'HEAD')
+        self.assertEqual(git(self.base, 'rev-parse', 'HEAD', check=False).returncode, 128)
 
     def test_png_chunks_crc_dimensions_and_decoded_pixels(self):
         for colour in [(100, 100, 100), (61, 174, 233), (39, 174, 96)]:
             image = png(colour)
-            self.assertEqual(len(image), 18637)
-            self.assertEqual(image[:8], b'\x89PNG\r\n\x1a\n')
+            self.assertEqual((len(image), image[:8]), (18637, b'\x89PNG\r\n\x1a\n'))
             offset = 8
             decoded = b''
             kinds = []
@@ -88,13 +112,13 @@ class FixtureTests(unittest.TestCase):
             self.assertEqual(decoded, (b'\x00' + bytes(colour) * 64) * 64)
 
     def test_entry_point_keeps_sources_unchanged_from_another_cwd(self):
-        source = self.root / 'tool source with spaces'
+        source = self.base / 'tool source with spaces'
         original = Path(__file__).resolve().parents[2] / 'tools/native-replay'
         shutil.copytree(original, source, ignore=shutil.ignore_patterns('__pycache__'))
         before = {str(p.relative_to(source)): p.read_bytes() for p in source.rglob('*') if p.is_file()}
         env = {k: v for k, v in os.environ.items() if k != 'PYTHONDONTWRITEBYTECODE'}
         run = subprocess.run([sys.executable, str(source / 'replay.py'), 'fixture',
-                              '--output', str(self.root / 'new fixture')],
+                              '--output', str(self.base / 'new fixture')],
                              cwd='/', env=env, capture_output=True)
         self.assertEqual(run.returncode, 0, run.stderr)
         after = {str(p.relative_to(source)): p.read_bytes() for p in source.rglob('*') if p.is_file()}
@@ -102,53 +126,42 @@ class FixtureTests(unittest.TestCase):
         self.assertFalse(list(source.rglob('__pycache__')))
 
     def test_existing_output_is_never_reused_or_removed(self):
-        sentinel = self.root / 'sentinel'
+        sentinel = self.base / 'sentinel'
         sentinel.write_bytes(b'untouched')
         with self.assertRaises(FileExistsError):
-            make_fixture(self.root)
+            make_fixture(self.base)
         self.assertEqual(sentinel.read_bytes(), b'untouched')
 
     def test_invoking_git_settings_and_repository_are_ignored(self):
-        sentinel = self.root / 'sentinel'
+        sentinel = self.base / 'sentinel'
         sentinel.write_bytes(b'untouched')
-        attrs = self.root / 'git/attributes'
+        attrs = self.base / 'git/attributes'
         attrs.parent.mkdir()
         attrs.write_text('*.cpp merge=union\n')
-        config = self.root / 'config'
+        config = self.base / 'config'
         config.write_text('[init]\n defaultBranch = hostile\n')
-        env = dict(GIT_DIR=str(self.root / 'unrelated.git'), GIT_WORK_TREE=str(self.root),
+        env = dict(GIT_DIR=str(self.base / 'unrelated.git'), GIT_WORK_TREE=str(self.base),
                    GIT_CONFIG_GLOBAL=str(config), GIT_CONFIG_COUNT='1',
-                   GIT_CONFIG_KEY_0='core.hooksPath', GIT_CONFIG_VALUE_0=str(self.root),
-                   XDG_CONFIG_HOME=str(self.root))
+                   GIT_CONFIG_KEY_0='core.hooksPath', GIT_CONFIG_VALUE_0=str(self.base),
+                   XDG_CONFIG_HOME=str(self.base))
         with patch.dict(os.environ, env):
-            make_fixture(self.root / 'fixture')
+            make_fixture(self.base / 'fixture')
             self.assertEqual(os.environ['GIT_DIR'], env['GIT_DIR'])
         self.assertEqual(config.read_text(), '[init]\n defaultBranch = hostile\n')
         self.assertEqual(sentinel.read_bytes(), b'untouched')
-        self.assertFalse((self.root / 'unrelated.git').exists())
+        self.assertFalse((self.base / 'unrelated.git').exists())
 
 
     def test_git_bounds_fail_with_its_typed_error_and_diagnostic(self):
         with patch('fixture.run', side_effect=subprocess.TimeoutExpired(['git'], 30, b'partial', b'git diagnostic')):
             with self.assertRaisesRegex(GitError, 'timed out.*git diagnostic'):
-                git(self.root, 'status', check=False)
+                git(self.base, 'status', check=False)
         with patch('fixture.run', side_effect=OutputLimitError(1024, (b'', b'output diagnostic'))):
             with self.assertRaisesRegex(GitError, 'output bytes.*output diagnostic'):
-                git(self.root, 'status')
+                git(self.base, 'status')
 
 
-class PrivateBaseTestCase(unittest.TestCase):
-    """Keeps every owned private directory and receipt under a temporary base directory."""
-    def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.base = Path(directory.name)
-
-    def owned(self, cleanup_receipt=None):
-        return OwnedResources(cleanup_receipt, base_dir=self.base)
-
-
-class ProcessTests(unittest.TestCase):
+class ProcessTests(PrivateBaseTestCase):
     def test_capture_preserves_bytes_status_and_stderr(self):
         result = run([sys.executable, '-c', 'import sys; print("€"); print("diagnostic", file=sys.stderr); sys.exit(17)'],
                      env=dict(os.environ))
@@ -163,14 +176,13 @@ class ProcessTests(unittest.TestCase):
             run([sys.executable, '-c', 'import os; os.write(1, b"x" * 65536)'], env=dict(os.environ), max_output=1024)
 
     def test_checked_failure_keeps_bounded_log_and_working_directory(self):
-        with tempfile.TemporaryDirectory() as directory:
-            log = Path(directory) / 'helper.log'
-            with self.assertRaises(subprocess.CalledProcessError) as failure:
-                run([sys.executable, '-c', 'import os,sys; print(os.getcwd()); print("failed", file=sys.stderr); sys.exit(17)'],
-                    cwd=directory, timeout=5, max_output=1024, check=True, log=log)
-            self.assertEqual(failure.exception.returncode, 17)
-            self.assertEqual(failure.exception.stdout, (directory + '\n').encode())
-            self.assertEqual(log.read_bytes(), failure.exception.stdout + b'failed\n')
+        log = self.base / 'helper.log'
+        with self.assertRaises(subprocess.CalledProcessError) as failure:
+            run([sys.executable, '-c', 'import os,sys; print(os.getcwd()); print("failed", file=sys.stderr); sys.exit(17)'],
+                cwd=self.base, timeout=5, max_output=1024, check=True, log=log)
+        self.assertEqual(failure.exception.returncode, 17)
+        self.assertEqual(failure.exception.stdout, (str(self.base) + '\n').encode())
+        self.assertEqual(log.read_bytes(), failure.exception.stdout + b'failed\n')
 
     def test_cancellation_reaps_the_started_process(self):
         with patch('processes.selectors.DefaultSelector.select', side_effect=KeyboardInterrupt), \
@@ -237,8 +249,7 @@ with OwnedResources(base_dir=Path(sys.argv[1])) as owned:
 
     def test_private_directory_lives_under_the_given_base(self):
         with self.owned() as owned:
-            self.assertEqual(owned.root.parent, self.base)
-            self.assertTrue(owned.root.name.startswith('bt-r-'))
+            self.assertEqual((owned.root.parent, owned.root.name.startswith('bt-r-')), (self.base, True))
         self.assertFalse(owned.root.exists())
         self.assertEqual(list(self.base.iterdir()), [])
 
@@ -282,18 +293,14 @@ with OwnedResources(base_dir=Path(sys.argv[1])) as owned:
             with patch('processes.stop_group', side_effect=stop), self.assertRaisesRegex(RuntimeError, 'stop refused'):
                 owned.close()
             self.assertIsNotNone(first.returncode)
-            self.assertIsNone(second.poll())
-            self.assertFalse(reader.is_alive())
-            self.assertFalse(stream.closed)
-            self.assertTrue(owned.root.exists())
+            self.assertEqual((second.poll(), reader.is_alive(), stream.closed, owned.root.exists()),
+                             (None, False, False, True))
             evidence = json.loads(receipt.read_text())
-            self.assertFalse(evidence['owned_processes_reaped'])
-            self.assertFalse(evidence['private_root_removed'])
+            self.assertEqual((evidence['owned_processes_reaped'], evidence['private_root_removed']), (False, False))
             self.assertIn('stop refused', evidence['errors'][0])
         finally:
             owned.close()
-        self.assertTrue(stream.closed)
-        self.assertFalse(owned.root.exists())
+        self.assertEqual((stream.closed, owned.root.exists()), (True, False))
 
     def test_private_environment_does_not_modify_parent(self):
         before = dict(os.environ)
@@ -303,8 +310,7 @@ with OwnedResources(base_dir=Path(sys.argv[1])) as owned:
             self.assertTrue(all(Path(env[key]).is_relative_to(owned.root)
                                 for key in ('HOME', 'TMPDIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
                                             'XDG_CACHE_HOME', 'XDG_RUNTIME_DIR')))
-            self.assertNotIn('SWAYSOCK', env)
-            self.assertNotIn('LD_PRELOAD', env)
+            self.assertTrue({'SWAYSOCK', 'LD_PRELOAD'}.isdisjoint(env))
         self.assertEqual(dict(os.environ), before)
         self.assertFalse(owned.root.exists())
 
@@ -329,10 +335,8 @@ with OwnedResources(base_dir=Path(sys.argv[1])) as owned:
                 self.assertLess(len(env['XDG_RUNTIME_DIR'] + '/branch-truce/bt-mt-' + 'f' * 32), 107)
 
     def test_replay_lock_excludes_other_processes_and_releases(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        lock = Path(directory.name) / 'replay.lock'
-        script = ('import sys\nfrom replay import replay_lock\n'
+        lock = self.base / 'replay.lock'
+        script = ('import sys\nfrom collection import replay_lock\n'
                   'with replay_lock(sys.argv[1]):\n print("acquired")\n')
         env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / 'tools/native-replay'))
         with replay_lock(lock):
@@ -374,8 +378,7 @@ class ReportTests(PrivateBaseTestCase):
                 worker.start()
             for worker in workers:
                 worker.join(timeout=10)
-        self.assertFalse(errors)
-        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertEqual((errors, any(worker.is_alive() for worker in workers)), ([], False))
         self.assertEqual(len(set(partials)), 2)
         self.assertIn(path.read_text(), ('a' * 10000, 'b' * 10000))
         self.assertEqual(path.stat().st_mode & 0o777, 0o640)
@@ -402,10 +405,8 @@ class CaptureProfileTests(unittest.TestCase):
         shape = capture_profile.run_shape(capture_profile.load())
         self.assertEqual(shape.schemes, {'light': 'BreezeLight', 'dark': 'BreezeDark'})
         self.assertEqual(shape.sizes, ((1280, 720), (1280, 800)))
-        self.assertEqual(shape.heights, (720, 800))
-        self.assertEqual(shape.size(800), (1280, 800))
-        self.assertEqual(shape.repeat, 2)
-        self.assertEqual(list(shape.kdeglobals_fonts), ['font', 'fixed'])
+        self.assertEqual((shape.heights, shape.size(800)), ((720, 800), (1280, 800)))
+        self.assertEqual((shape.repeat, list(shape.kdeglobals_fonts)), (2, ['font', 'fixed']))
         with self.assertRaisesRegex(ValueError, '900 is not a logical height'):
             shape.size(900)
 
@@ -466,25 +467,13 @@ class ReadinessTests(PrivateBaseTestCase):
         for response, exception in [(b'{"error":"not durable"}\n', RuntimeError),
                                     (b'{"error":""}', RuntimeError),
                                     (b'{"error":"","state":{"ready":true}}\n', None)]:
-            parent, child = socket.socketpair()
-            client = NativeClient(parent)
-            def responder():
-                with child, child.makefile('rb') as reader:
-                    request = json.loads(reader.readline())
-                    self.assertEqual(request['path'], 'src/net/retry.cpp')
-                    child.sendall(response)
-            worker = threading.Thread(target=responder)
-            worker.start()
-            try:
+            with self.client_reply(response) as (client, requests):
                 if exception:
                     with self.assertRaises(exception):
                         client.command(path='src/net/retry.cpp')
                 else:
                     self.assertEqual(client.command(path='src/net/retry.cpp'), {'ready': True})
-            finally:
-                client.close()
-                worker.join(timeout=5)
-            self.assertFalse(worker.is_alive())
+            self.assertEqual(requests[0]['path'], 'src/net/retry.cpp')
 
 
 class AcceptanceEvidenceTests(PrivateBaseTestCase):
@@ -497,58 +486,69 @@ class AcceptanceEvidenceTests(PrivateBaseTestCase):
         with self.assertRaisesRegex(RuntimeError, 'expected one reachable control'):
             item(dict(items=[visible, visible]), 'saveDraft')
 
+    def test_line_cues_reject_missing_duplicate_and_filled_ignored_ranges(self):
+        glyph = dict(line=20, kind='ignored', ancestors=['stage3GutterMarkerSlot'])
+        fill = dict(glyph, ancestors=['stage3BackgroundsLines'])
+        for details, valid in [([glyph], True), ([], False), ([glyph, glyph], False), ([glyph, fill], False)]:
+            with self.subTest(details=details), nullcontext() if valid else self.assertRaises(RuntimeError):
+                verify_line_cue(dict(renderedDetails=details), 'stage3', 20, 'ignored', fill=False)
+
+    def test_artifact_collection_keeps_originals_metadata_crops_and_residuals(self):
+        profile = capture_profile.load()
+        state = dict(width=1280, height=720, profile=dict(profile['pinned_observations'], fonts=profile['pinned_fonts'],
+            configuredColourScheme='BreezeLight', palette=profile['pinned_palettes']['BreezeLight']), items=[
+            dict(name='Page', x=0, y=48, width=1280, height=641),
+            dict(name='fileList', x=-0.5, y=48, width=252, height=641),
+            dict(name='fileToolBar', x=253, y=48, width=1027, height=34),
+            dict(name='fileFacts', x=1100, y=698, width=180, height=15, text='fixture')])
+        context = dict(size=[1280, 720], theme='light', capture_environment=dict(output=dict(scale=1), colour_scheme='BreezeLight'))
+        tool = Mock()
+        tool.decode.side_effect = [dict(width=1280, height=720, decoded_sha256='decoded'), dict(width=1920, height=1080)]
+        tool.artifacts.return_value = dict(differing_pixels=3)
+        record = collect_shot(state, context, 'binary', shoot=lambda path: path.write_bytes(b'original'), tool=tool,
+                              source=Path(__file__).resolve().parents[2], out=self.base)
+        self.assertEqual(Path(record['file']).read_bytes(), b'original')
+        self.assertEqual(json.loads((self.base / 'light-binary-state.json').read_text()), dict(state=state, metadata={
+            key: value for key, value in record.items() if key != 'file'}))
+        tool.crop.assert_any_call(Path(record['file']), self.base / 'light-binary-callouts/fileList.png', [0, 48, 252, 641])
+        comparison = json.loads((self.base / 'light-binary-comparison/comparison.json').read_text())
+        self.assertTrue(comparison['regions'] and all(row['status'] == 'outstanding' and row['differing_pixels'] == 3
+                                                      for row in comparison['regions'].values()))
+
     def test_failed_native_action_retains_request_and_full_reply(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            parent, child = socket.socketpair()
-            client = NativeClient(parent, root)
-            response = dict(error='control clipped', state=dict(width=1280, height=720))
-            def respond():
-                with child, child.makefile('rb') as reader:
-                    reader.readline()
-                    child.sendall(json.dumps(response).encode() + b'\n')
-            worker = threading.Thread(target=respond)
-            worker.start()
-            try:
-                with self.assertRaisesRegex(RuntimeError, 'control clipped'):
-                    client.toolbar('undoCommand')
-            finally:
-                client.close()
-                worker.join(timeout=5)
-            self.assertFalse(worker.is_alive())
-            self.assertEqual(json.loads((root / 'last-reply.json').read_text()), response)
-            request = json.loads((root / 'last-request.json').read_text())
-            self.assertEqual((request['action'], request['target']), ('toolbar-click', 'undoCommand'))
+        response = dict(error='control clipped', state=dict(width=1280, height=720))
+        with self.client_reply(json.dumps(response).encode() + b'\n', self.base) as (client, _):
+            with self.assertRaisesRegex(RuntimeError, 'control clipped'):
+                client.command('toolbar-click', target='undoCommand')
+        self.assertEqual(json.loads((self.base / 'last-reply.json').read_text()), response)
+        request = json.loads((self.base / 'last-request.json').read_text())
+        self.assertEqual((request['action'], request['target']), ('toolbar-click', 'undoCommand'))
 
     def test_failure_capture_timeout_keeps_the_original_failure_receipt(self):
-        from replay import Compositor, drive_app
-        with self.owned() as owned:
-            with patch('replay.run_journey', side_effect=RuntimeError('primary action failure')), \
-                 patch('replay.run', side_effect=subprocess.TimeoutExpired(['grim'], 15)), \
-                 self.assertRaisesRegex(RuntimeError, 'primary action failure'):
-                drive_app(owned, Compositor(dict(os.environ), dict(name='private')), {},
-                          app=Path('/bin/true'), driver=self.base / 'unused.so', tool=None,
-                          repo=self.base, source=self.base, out=self.base)
+        def shoot(path, *, check):
+            raise subprocess.TimeoutExpired(['grim'], 15)
+        with self.owned() as owned, self.assertRaisesRegex(RuntimeError, 'primary action failure'):
+            with application(owned, dict(os.environ), app=Path('/bin/true'), driver=self.base / 'unused.so',
+                             repo=self.base, out=self.base, shoot=shoot):
+                raise RuntimeError('primary action failure')
         evidence = json.loads((self.base / 'failure.json').read_text())
         self.assertEqual(evidence['error'], 'primary action failure')
         self.assertIsNone(evidence['capture_exit'])
         self.assertIn('timed out', evidence['capture_error'])
 
     def test_ledger_keeps_missing_runs_and_measured_residuals_outstanding(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            comparison = root / '720/replay-1-light/light-text-comparison'
-            comparison.mkdir(parents=True)
-            (comparison / 'comparison.json').write_text(json.dumps(dict(regions=dict(
-                syntax=dict(status='outstanding', differing_pixels=12, native_rect=[0, 0, 4, 3],
-                            reference_logical_rect=[0, 0, 4, 3], count_unit='common-grid cells')))))
-            ledger = assemble(root)
-            self.assertFalse(ledger['originals_inspected'])
-            self.assertTrue(all(row['outcome'] == 'pending-independent-inspection' for row in ledger['callouts']))
-            row = next(row for row in ledger['callouts'] if row['behavior'] == 'passage-kinds')
-            self.assertEqual(row['residuals'][0]['differing_pixels'], 12)
-            self.assertEqual(len(row['missing_evidence']), 2)
-            self.assertIsNone(row['original_inspection'])
+        comparison = self.base / '720/replay-1-light/light-text-comparison'
+        comparison.mkdir(parents=True)
+        (comparison / 'comparison.json').write_text(json.dumps(dict(regions=dict(
+            syntax=dict(status='outstanding', differing_pixels=12, native_rect=[0, 0, 4, 3],
+                        reference_logical_rect=[0, 0, 4, 3], count_unit='common-grid cells')))))
+        ledger = assemble(self.base)
+        self.assertFalse(ledger['originals_inspected'])
+        self.assertTrue(all(row['outcome'] == 'pending-independent-inspection' for row in ledger['callouts']))
+        row = next(row for row in ledger['callouts'] if row['behavior'] == 'passage-kinds')
+        self.assertEqual(row['residuals'][0]['differing_pixels'], 12)
+        self.assertEqual(len(row['missing_evidence']), 2)
+        self.assertIsNone(row['original_inspection'])
 
     def write_verification(self, root, height, repeat, captures=None, **changes):
         themes, kinds = ['light', 'dark'], ['text', 'binary']
@@ -561,30 +561,27 @@ class AcceptanceEvidenceTests(PrivateBaseTestCase):
         (root / str(height) / 'verification.json').write_text(json.dumps(report))
 
     def test_ledger_expects_every_theme_kind_and_repeat_the_report_records(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            self.write_verification(root, 720, 3)
-            self.write_verification(root, 800, 2)
-            self.assertTrue(all(row['missing_evidence'] == [] for row in assemble(root)['callouts']
-                                if row['calibrated_regions']))
-            # Three repeats need twelve shots and eight comparisons; eight and four are not enough.
-            self.write_verification(root, 720, 3, captures=8, comparisons=[dict(differing_pixels=0)] * 4)
-            self.write_verification(root, 800, 2, themes=['light'])
-            missing = next(row for row in assemble(root)['callouts'] if row['calibrated_regions'])['missing_evidence']
-            self.assertEqual(missing, ['720: successful complete replay receipt unavailable',
-                                       '800: successful complete replay receipt unavailable'])
+        self.write_verification(self.base, 720, 3)
+        self.write_verification(self.base, 800, 2)
+        self.assertTrue(all(row['missing_evidence'] == [] for row in assemble(self.base)['callouts']
+                            if row['calibrated_regions']))
+        # Three repeats need twelve shots and eight comparisons; eight and four are not enough.
+        self.write_verification(self.base, 720, 3, captures=8, comparisons=[dict(differing_pixels=0)] * 4)
+        self.write_verification(self.base, 800, 2, themes=['light'])
+        missing = next(row for row in assemble(self.base)['callouts'] if row['calibrated_regions'])['missing_evidence']
+        self.assertEqual(missing, ['720: successful complete replay receipt unavailable',
+                                   '800: successful complete replay receipt unavailable'])
 
     def test_error_cleanup_publishes_only_actual_owned_disposition(self):
-        with tempfile.TemporaryDirectory() as directory:
-            receipt = Path(directory) / 'cleanup.json'
-            with self.assertRaisesRegex(RuntimeError, 'interrupted replay'):
-                with self.owned(receipt) as owned:
-                    private = owned.root
-                    raise RuntimeError('interrupted replay')
-            evidence = json.loads(receipt.read_text())
-            self.assertFalse(private.exists())
-            self.assertEqual(evidence, dict(private_root=str(private), private_root_removed=True,
-                                            owned_processes_reaped=True, owned_readers_stopped=True, errors=[]))
+        receipt = self.base / 'cleanup.json'
+        with self.assertRaisesRegex(RuntimeError, 'interrupted replay'):
+            with self.owned(receipt) as owned:
+                private = owned.root
+                raise RuntimeError('interrupted replay')
+        evidence = json.loads(receipt.read_text())
+        self.assertFalse(private.exists())
+        self.assertEqual(evidence, dict(private_root=str(private), private_root_removed=True,
+                                        owned_processes_reaped=True, owned_readers_stopped=True, errors=[]))
 
     def test_cleanup_is_confirmed_only_by_complete_receipts(self):
         receipts = []

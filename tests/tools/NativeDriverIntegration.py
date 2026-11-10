@@ -9,7 +9,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/native-replay'))
 from fixture import make_fixture
 from processes import OwnedResources, interrupt
-from replay import NativeClient, private_environment
+from desktop import NativeClient, private_environment
 
 
 def main():

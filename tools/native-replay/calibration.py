@@ -16,6 +16,7 @@ import capture_profile  # noqa: E402
 from fixture import sha256  # noqa: E402
 from processes import interrupt, run  # noqa: E402
 from reports import write_json  # noqa: E402
+from scene import require  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 CONTRACT = HERE / 'reference-contract.json'
@@ -194,9 +195,8 @@ def native_regions(state):
     return result
 
 
-def compare(source, shot, state, image_tool, output):
+def compare(source, shot, state, tool, output):
     contract = load_contract(source)
-    tool = ImageTool(image_tool)
     output.mkdir(exist_ok=False)
     name = shot.name
     reference = source / 'docs/ui-mockup' / name
@@ -265,6 +265,47 @@ def validate_profile(state, metadata):
             observed_palette.get(role) != value for role, value in expected_palette.items()):
         raise ValueError(f'Observed application palette differs from pinned {requested_scheme}')
     return True
+
+
+def callout_closeups(state, shot, tool, output):
+    output.mkdir()
+    regions = {}
+    for name in ('fileList', 'selectedPath', 'fileToolBar', 'stage2Identity', 'stage3Identity',
+                 'stage2Gutter', 'resultGutter', 'stage3Gutter', 'stage2Bands', 'stage3Bands',
+                 'stage2Viewport', 'stage3Viewport', 'selectedProblem'):
+        matches = [row for row in state['items'] if row['name'] == name]
+        if len(matches) != 1:
+            continue
+        row = matches[0]
+        x, y = max(0, math.floor(row['x'])), max(0, math.floor(row['y']))
+        right = min(state['width'], math.ceil(row['x'] + row['width']))
+        bottom = min(state['height'], math.ceil(row['y'] + row['height']))
+        if right <= x or bottom <= y:
+            continue
+        rect = [x, y, right-x, bottom-y]
+        destination = output / f'{name}.png'
+        tool.crop(shot, destination, rect)
+        regions[name] = dict(observed_scene_rect=[row[key] for key in ('x', 'y', 'width', 'height')],
+                             native_pixel_crop=rect, file=destination.name,
+                             acceptance='pending original-image inspection; native diagnostic only')
+    write_json(output / 'callout-regions.json', dict(original=str(shot), regions=regions,
+               transforms='exact native pixels, no scaling, overlays or target substitution'))
+
+
+def collect_shot(state, context, kind, *, shoot, tool, source, out):
+    """Capture a validated scene and retain its original, profile, crops and comparisons."""
+    require((state['width'], state['height']) == tuple(context['size']), 'Window geometry differs')
+    name = f'{context["theme"]}-{kind}'
+    shot = out / f'{name}.png'
+    shoot(shot)
+    image = tool.decode(shot)
+    require((image['width'], image['height']) == tuple(context['size']), 'Capture geometry differs')
+    metadata = dict(context, kind=kind, capture_sha256=sha256(shot), decoded_sha256=image['decoded_sha256'])
+    validate_profile(state, metadata)
+    write_json(out / f'{name}-state.json', dict(metadata=metadata, state=state))
+    callout_closeups(state, shot, tool, out / f'{name}-callouts')
+    compare(source, shot, state, tool, out / f'{name}-comparison')
+    return dict(file=str(shot), **metadata)
 
 
 def capture_inputs(source):
