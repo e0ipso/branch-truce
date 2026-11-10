@@ -1,6 +1,7 @@
 // File commands change the selected file's result, Save it, discard it or Mark it resolved.
 #pragma once
 #include "CommandGuard.h"
+#include "core/Correspondence.h"
 #include <QObject>
 #include <QString>
 #include <QtQml/qqmlregistration.h>
@@ -35,7 +36,14 @@ public:
     [[nodiscard]] bool resolutionBusy() const;
 
     // Editor offsets are UTF-16 units and must identify scalar boundaries.
+    // A cut, paste or drop: one command, acknowledged once durable.
     bool editResult(const QString &fileId, const QString &revision, int begin, int end, const QString &replacement);
+    // Typing: applied at once and recorded behind the editor
+    // (SessionStore::typeResult).
+    bool typeResult(const QString &fileId, const QString &revision, int begin, int end, const QString &replacement);
+    // Writes typed edits that wait for their record now, as closing the window
+    // needs. False when one could not be kept and waits for retry.
+    Q_INVOKABLE bool recordTyping();
     Q_INVOKABLE bool undo(const QString &fileId, const QString &revision);
     Q_INVOKABLE bool redo(const QString &fileId, const QString &revision);
     // Save checkpoints the current text and decisions in the app store only.
@@ -62,6 +70,8 @@ Q_SIGNALS:
 private:
     // The command target for the current revision of a supported file, or a shown refusal.
     std::optional<CommandTarget> admit(const QString &fileId, const QString &revision, CommandCheck check);
+    // The byte edit an editor change makes to the target's current text, or a shown refusal.
+    std::optional<ResultEdit> resultEdit(const CommandTarget &target, int begin, int end, const QString &replacement);
     [[nodiscard]] QString discardedMessage(const FileSession &file) const;
     [[nodiscard]] static QString stagedDiscardMessage();
     // A discard whose commit failed completes when its file's pending input commits.

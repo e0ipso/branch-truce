@@ -151,6 +151,8 @@ public:
             }
             if (job->mutation && queues.at(job->input.stamp.worktree).front() != id) continue;
             if (job->mutation) {
+                // The intent records the file as typed so far, after the typed records.
+                store.recordTyping();
                 const auto *file = store.file(job->input.stamp.fileId);
                 const auto leaseError = store.ensureRecoveryLease();
                 if (!file || store.hasPendingRecovery() || store.hasRecoveryFailure(file->id())
@@ -371,7 +373,11 @@ bool SessionCoordinator::completeRecoveryLoad(const TaskStamp &stamp, std::vecto
 bool SessionCoordinator::replaceSession(const QString &worktree, const QString &operation,
                                         std::vector<FileSession> files, bool completingLoad, RecoveryRestore *restore)
 {
-    if (!d->owningThread() || d->replacing || (!completingLoad && d->store.hasPendingRecovery()) || operation.isEmpty()
+    if (!d->owningThread() || d->replacing) return false;
+    // Typed edits reach the journal before the session can move on, and a
+    // failed one keeps it here as pending input.
+    d->store.recordTyping();
+    if ((!completingLoad && d->store.hasPendingRecovery()) || operation.isEmpty()
         || d->generation == std::numeric_limits<quint64>::max()
         || files.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
         return false;

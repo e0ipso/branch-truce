@@ -6,7 +6,11 @@
 #include "recovery/RecoveryJournal.h"
 #include <QObject>
 #include <QString>
+#include <QTimer>
+#include <chrono>
 #include <cstddef>
+#include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -20,11 +24,28 @@ struct RecoveryRestore;
 // journal and every command that changes them. A command runs on a copy of the
 // file and is acknowledged only after its journal transaction commits; a
 // failed commit keeps the candidate as the file's pending input until retry.
+// Acknowledged always means durable.
+//
+// Typing is the exception to commit-before-apply: typeResult() applies a typed
+// edit at once and records it behind the editor. Typed edits of one file form
+// a burst that one undo takes back and one journal record holds; a burst ends
+// after kTypingPause without typing, kTypingBurst after it began, at a typed
+// line break, and before any other command. Its record is written on a worker
+// and the burst is acknowledged once that record is durable; until then
+// recording() is true. A crash can lose only typed edits that are not yet
+// acknowledged: the current burst and records still being written. A failed
+// record rolls the file back to its acknowledged state and keeps every typed
+// edit after it as pending input, in order, until retry. Every other command
+// first writes the typed records, so the journal keeps the order of the edits.
+//
 // Views read the store and listen to its signals; the store knows nothing of
 // presentation order or text. Used on one thread, the one it lives on.
 class SessionStore : public QObject {
     Q_OBJECT
 public:
+    static constexpr std::chrono::milliseconds kTypingPause{500};
+    static constexpr std::chrono::milliseconds kTypingBurst{2000};
+
     // The journal record each command writes. Replay dispatches on the same
     // value, so a new command is one enum value and one replay case.
     using Action = RecoveryAction;
@@ -37,6 +58,8 @@ public:
     explicit SessionStore(QString recoveryDirectory,
                           std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem(),
                           QObject *parent = nullptr);
+    // Records typed edits first, so closing a window keeps them.
+    ~SessionStore() override;
 
     [[nodiscard]] std::size_t size() const { return files_.size(); }
     // Files in discovery order; a storage row indexes this and facts().
@@ -57,8 +80,14 @@ public:
     // The command whose commit failed and is waiting for retry, or nothing.
     [[nodiscard]] std::optional<Action> pendingAction(const std::string &id) const;
     [[nodiscard]] QString pendingError(const std::string &id) const;
-    // The draft of a file's pending input, which the editor shows until retry.
+    // The draft of a file's newest pending input, which the editor shows until retry.
     [[nodiscard]] const Draft *pendingDraft(const std::string &id) const;
+    // Whether typed edits of the file, or of any file, are applied but not yet acknowledged.
+    [[nodiscard]] bool recording(const std::string &id) const { return typing_.contains(id); }
+    [[nodiscard]] bool recording() const { return !typing_.empty(); }
+    // Ends every burst and writes the typed edits' records now, on this
+    // thread. Returns whether nothing waits for recovery afterwards.
+    bool recordTyping();
     // Records a recovery error that blocks the file until it is settled.
     void recordRecoveryFailure(const std::string &id, const QString &error);
     // Replaces a file's recovery error only while it is still exactly
@@ -75,14 +104,15 @@ public:
     [[nodiscard]] storage::RecoveryCommit commitRecord(const storage::RecoveryTransaction &transaction);
     // Deletes the recovery store once nothing in it is needed: no input is
     // pending and no file has a recovery error. A finished session calls it.
-    bool discardRecoveryStore() { return journal_.discardStore(); }
-    // Whether the store holds a record other than a launch capture.
-    [[nodiscard]] bool holdsUserWork() const { return journal_.holdsUserWork(); }
+    bool discardRecoveryStore();
+    // Whether the store holds, or is recording, work other than a launch capture.
+    [[nodiscard]] bool holdsUserWork() const { return journal_.holdsUserWork() || recording(); }
     // Moves recovery to a new store beside the current one and releases the
     // current store's lease, so a repeated load never records over captures
     // already in it. Refused while pending input waits for this store.
-    bool startNewRecoveryStore() { return journal_.startNewStore(); }
-    // Commits a file's pending input under its original transaction.
+    bool startNewRecoveryStore();
+    // Commits a file's pending input in order under its original transactions.
+    // Applied once none is left; Blocked when a commit failed again.
     Transition retryRecovery(const std::string &id);
 
     // Whether files may complete the current load: every file is still the
@@ -98,7 +128,22 @@ public:
     bool appendFile(FileSession file);
 
     Transition replaceDraft(const std::string &id, RevisionId expected, Draft draft);
+    // One edit, such as a paste or a drop, as its own command: aligned at once
+    // and acknowledged once durable.
     Transition editResult(const std::string &id, RevisionId expected, ResultEdit edit);
+    // A typed edit: applied at once, joined to the file's burst and recorded
+    // behind (see the class comment). Its passages stay provisional until
+    // installAlignment() or settleAlignment().
+    Transition typeResult(const std::string &id, RevisionId expected, ResultEdit edit);
+    // Installs a map that CorrespondenceMap::realigned() built from the file's
+    // pending alignment for `revision`, if that revision is still current.
+    // Recovery records hold nothing it changes, so it writes none.
+    Transition installAlignment(const std::string &id, RevisionId revision,
+                                std::shared_ptr<const CorrespondenceMap> aligned);
+    // Aligns the file's current revision on this thread if its passages are
+    // still provisional, for work that needs exact passages, such as a choice
+    // preview. NoChange when they are exact already.
+    Transition settleAlignment(const std::string &id);
     Transition applyChoice(const std::string &id, const ChoicePreview &preview, bool confirmReplacement = false);
     Transition applyNonConflicting(const std::string &id, const NonConflictingPreview &preview, bool confirm = false);
     Transition applyWholeFile(const std::string &id, const WholeFilePreview &preview, bool confirm = false);
@@ -127,10 +172,27 @@ Q_SIGNALS:
     void fileChanged(int row);
 
 private:
+    // Typed edits of one file that are not yet acknowledged.
+    struct Typing {
+        // The file as its last durable record left it; a failed record rolls back to it.
+        FileSession acknowledged;
+        // The file as its last queued record leaves it; the next record is a change from its text.
+        FileSession recorded;
+        // Records queued behind and not yet settled.
+        int queued = 0;
+        // Whether the file holds typed edits no record covers yet. They form
+        // the current burst, and the next typed edit joins its undo entry.
+        bool open = false;
+    };
     template <typename Command> Transition update(const std::string &id, Action action, Command command);
     bool commitCandidate(std::size_t row, FileSession candidate, Action action);
     void commitOpen(std::size_t row);
     void notify(std::size_t row, std::optional<Action> action);
+    // Ends the file's burst and queues its record behind the editor.
+    void endBurst(const std::string &id);
+    void endBursts();
+    // The outcome of a typed record that leaves the file as `candidate`.
+    void typedRecordWritten(const std::string &id, const FileSession &candidate, RecoveryJournal::Written written);
 
     std::vector<FileSession> files_;
     // facts_[row] is files_[row].facts(), recomputed whenever a row is stored.
@@ -138,5 +200,9 @@ private:
     std::unordered_map<std::string, std::size_t> rows_;
     RecoveryJournal journal_;
     std::set<std::string> restored_;
+    std::map<std::string, Typing> typing_;
+    // End every burst after a pause in typing, and at the latest kTypingBurst after one began.
+    QTimer pause_;
+    QTimer limit_;
 };
 }

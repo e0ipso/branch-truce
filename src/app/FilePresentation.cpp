@@ -153,6 +153,7 @@ FileStates::RecoveryState FilePresentation::recoveryState(std::size_t row) const
     if (store_.hasRecoveryFailure(id)) return RecoveryState::Blocked;
     if (const auto action = store_.pendingAction(id))
         return *action == SessionStore::Action::ManualSave ? RecoveryState::SaveFailed : RecoveryState::Failed;
+    if (store_.recording(id)) return RecoveryState::Recording;
     return store_.restored(id) ? RecoveryState::Restored : RecoveryState::Durable;
 }
 

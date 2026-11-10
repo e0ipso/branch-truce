@@ -356,6 +356,8 @@ void comparison_scene::addLayoutCases(Groups groups)
         {
             const test_support::ArmedFault fault(*fixture.faults, test_support::SyncFaults::Point::JournalSync);
             fixture.key(Qt::Key_A, Qt::NoModifier, "a");
+            // Typing is recorded behind the editor, once the burst ends.
+            settle([&] { return fixture.controller.files()->hasPendingRecovery(); });
             CHECK_EQ(fixture.faults->failures.load(), 1);
         }
         settle([&] { return fixture.controller.files()->hasPendingRecovery(); });
@@ -504,9 +506,9 @@ void comparison_scene::addLayoutCases(Groups groups)
     });
     scenes.run("a named command overflows as a menu item and closes after one activation", [] {
         Fixture fixture(test_support::choiceFile("left\n", "right\n", "original\n"));
-        fixture.key(Qt::Key_A, Qt::NoModifier, "a");
-        const auto onceTyped = fixture.file().current();
-        fixture.key(Qt::Key_B, Qt::NoModifier, "b");
+        // Both keys are one burst of typing, which one undo takes back.
+        const auto beforeTyping = fixture.file().current();
+        fixture.type("ab");
         auto *actions = fixture.object("resultEditActions");
         auto *undo = actions->property("undo").value<QObject *>();
         CHECK(undo);
@@ -535,7 +537,7 @@ void comparison_scene::addLayoutCases(Groups groups)
         clickItem(fixture, entry);
         settle([&] { return !menu->property("visible").toBool(); });
         CHECK(triggered.count() == 1);
-        CHECK(fixture.file().current().draft == onceTyped.draft);
+        CHECK(fixture.file().current().draft == beforeTyping.draft);
     });
     scenes.run("resizing earlier context and collapsed choices preserve current sources and manual work", [] {
         Fixture fixture;

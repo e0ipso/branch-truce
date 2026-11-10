@@ -5,6 +5,7 @@
 #include "TestSession.h"
 #include "app/Translations.h"
 #include "fixtures/ApplicationIdentity.h"
+#include "fixtures/EventLoop.h"
 #include "fixtures/RecoveryJournal.h"
 #include "fixtures/SyncFaults.h"
 #include <QCoreApplication>
@@ -23,6 +24,20 @@ using namespace branch_truce;
 using namespace session_fixtures;
 
 namespace {
+// Types `text` into the file one character at a time from byte `at`, as the editor sends keys.
+void typeInto(TestSession &model, const std::string &id, std::size_t at, const std::string &text)
+{
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        const auto revision = model.file(id)->current().id;
+        CHECK(model.typeResult(id, revision, {{at + index, at + index}, text.substr(index, 1)}) == Transition::Applied);
+    }
+}
+
+qsizetype records(const TestSession &model)
+{
+    return storage::RecoveryStore(model.recoveryDirectory()).read().transactions.size();
+}
+
 int acknowledgeAndCrash(const QString &directory)
 {
     TestSession model(directory);
@@ -807,6 +822,140 @@ int main(int argc, char **argv)
         CHECK(restored->current().draft != savedDraft() && restored->publication().checkpoint()
               && restored->revision(*restored->publication().checkpoint())->draft == unsavedDraft());
         CHECK(!restored->facts().unsaved && !restored->publication().written() && !restored->publication().staged());
+    });
+    suite.run("typed edits apply at once, one undo takes back their burst and one record holds it", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        TestSession model(directory.path() + "/recovery");
+        CHECK(model.appendFile(test_support::choiceFile()));
+        const auto launch = model.file("choices")->current();
+        const auto before = records(model);
+        typeInto(model, "choices", 0, "abc");
+        const auto typed = model.file("choices")->current();
+        CHECK(typed.id == launch.id + 3 && typed.draft.text == "abc" + launch.draft.text);
+        // Applied, aligned later and not yet acknowledged.
+        CHECK(model.file("choices")->pendingAlignment() != nullptr);
+        CHECK(model.recording("choices") && model.holdsUserWork() && records(model) == before);
+        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+              == FileStates::RecoveryState::Recording);
+        // The burst ends after a pause, and its record is written behind the editor.
+        test_support::waitUntil([&] { return !model.recording(); }, "the typed burst was not recorded");
+        CHECK(records(model) == before + 1 && !model.hasPendingRecovery());
+        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+              == FileStates::RecoveryState::Durable);
+        const auto replayed = replayedFile(model.recoveryDirectory());
+        CHECK(replayed.current().id == typed.id && replayed.current().draft.text == typed.draft.text);
+        CHECK(model.undo("choices", typed.id) == Transition::Applied);
+        CHECK(model.file("choices")->current().draft.text == launch.draft.text && !model.file("choices")->canUndo());
+        CHECK(replayedFile(model.recoveryDirectory()).current().draft.text == launch.draft.text);
+    });
+    suite.run("a typed line break starts a new undo step", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        TestSession model(directory.path() + "/recovery");
+        CHECK(model.appendFile(test_support::choiceFile()));
+        const auto launch = model.file("choices")->current().draft.text;
+        typeInto(model, "choices", 0, "a\nb");
+        CHECK(model.recordTyping() && !model.recording());
+        CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+        CHECK(model.file("choices")->current().draft.text == "a" + launch);
+        CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+        CHECK(model.file("choices")->current().draft.text == launch);
+        const auto drafts = test_support::recordedDrafts(storage::RecoveryStore(model.recoveryDirectory()));
+        CHECK(drafts.size() == 5);
+        CHECK(drafts[1].text == "a" + launch && drafts[2].text == "a\nb" + launch);
+    });
+    suite.run("a command records the typing before it, so the journal keeps the order of edits", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        TestSession model(directory.path() + "/recovery");
+        CHECK(model.appendFile(test_support::choiceFile()));
+        const auto before = records(model);
+        typeInto(model, "choices", 0, "saved ");
+        const auto typed = model.file("choices")->current();
+        CHECK(model.recordCheckpoint("choices", typed.id, Outcome::Succeeded) == Transition::Applied);
+        CHECK(!model.recording() && records(model) == before + 2);
+        const auto replayed = replayedFile(model.recoveryDirectory());
+        CHECK(replayed.publication().checkpoint() == typed.id);
+        CHECK(replayed.revision(typed.id)->draft.text == typed.draft.text);
+        // The next key starts a new burst rather than joining the one the Save recorded.
+        typeInto(model, "choices", 0, "x");
+        CHECK(model.undo("choices", model.file("choices")->current().id) == Transition::Applied);
+        CHECK(model.file("choices")->current().draft.text == typed.draft.text);
+    });
+    suite.run("typing that puts every recorded field back leaves no record and no undo step", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        TestSession model(directory.path() + "/recovery");
+        CHECK(model.appendFile(test_support::choiceFile()));
+        CHECK(model.editResult("choices", 1, {{0, 0}, "hand "}) == Transition::Applied);
+        const auto edited = model.file("choices")->current();
+        const auto before = records(model);
+        typeInto(model, "choices", 2, "q");
+        const auto revision = model.file("choices")->current().id;
+        CHECK(model.typeResult("choices", revision, {{2, 3}, ""}) == Transition::Applied);
+        // Inside the hand-edited range, so text, decisions, hand-edit flags and ranges are as they
+        // were: the file is back at the revision before the burst at once.
+        CHECK(model.file("choices")->current().id == edited.id && !model.recording());
+        CHECK(model.file("choices")->correspondence()->handEditedRanges() == edited.correspondence->handEditedRanges());
+        CHECK(model.recordTyping() && records(model) == before);
+        const auto replayed = replayedFile(model.recoveryDirectory());
+        CHECK(replayed.current().id == edited.id && replayed.current().draft.text == edited.draft.text);
+        CHECK(model.undo("choices", edited.id) == Transition::Applied && !model.file("choices")->canUndo());
+    });
+    suite.run("a failed typed record keeps every later typed edit pending in order until one retry", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto faults = std::make_shared<test_support::SyncFaults>();
+        TestSession model(directory.path() + "/recovery", faults);
+        CHECK(model.appendFile(test_support::choiceFile()));
+        const auto launch = model.file("choices")->current();
+        const auto before = records(model);
+        {
+            const test_support::ArmedFault fault(*faults, test_support::SyncFaults::Point::JournalSync);
+            // The line break ends the first burst, whose record goes to the worker; the rest of
+            // the typing is applied before its outcome arrives.
+            typeInto(model, "choices", 0, "a\nb");
+            CHECK(model.file("choices")->current().draft.text == "a\nb" + launch.draft.text);
+            CHECK(!model.recordTyping());
+            CHECK_EQ(faults->failures.load(), 1);
+        }
+        // The file shows its acknowledged state and the editor the newest pending draft.
+        CHECK(model.hasPendingRecovery() && !model.recording());
+        CHECK(model.file("choices")->current().id == launch.id
+              && model.file("choices")->current().draft.text == launch.draft.text);
+        CHECK(model.pendingDraft("choices") && model.pendingDraft("choices")->text == "a\nb" + launch.draft.text);
+        CHECK(model.pendingAction("choices") == SessionStore::Action::ReplaceDraft);
+        CHECK(!model.pendingError("choices").isEmpty());
+        CHECK(role(model, SessionModel::RecoveryStateRole).value<FileStates::RecoveryState>()
+              == FileStates::RecoveryState::Failed);
+        CHECK(model.typeResult("choices", launch.id, {{0, 0}, "z"}) == Transition::Blocked);
+        CHECK(model.retryPendingRecovery("choices"));
+        CHECK(!model.hasPendingRecovery() && !model.pendingDraft("choices"));
+        const auto typed = model.file("choices")->current();
+        CHECK(typed.draft.text == "a\nb" + launch.draft.text);
+        // Each record once, in the order typed.
+        const auto drafts = test_support::recordedDrafts(storage::RecoveryStore(model.recoveryDirectory()));
+        CHECK(records(model) == before + 2);
+        CHECK(drafts[drafts.size() - 2].text == "a" + launch.draft.text && drafts.back().text == typed.draft.text);
+        const auto replayed = replayedFile(model.recoveryDirectory());
+        CHECK(replayed.current().id == typed.id && replayed.current().draft.text == typed.draft.text);
+        CHECK(model.undo("choices", typed.id) == Transition::Applied);
+        CHECK(model.file("choices")->current().draft.text == "a" + launch.draft.text);
+    });
+    suite.run("closing the store records the typing it holds", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        const auto location = directory.path() + "/recovery";
+        std::string typed;
+        {
+            TestSession model(location);
+            CHECK(model.appendFile(test_support::choiceFile()));
+            typeInto(model, "choices", 0, "kept ");
+            typed = model.file("choices")->current().draft.text;
+            CHECK(model.recording());
+        }
+        CHECK(replayedFile(location).current().draft.text == typed);
     });
     return suite.report();
 }

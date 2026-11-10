@@ -32,6 +32,7 @@ FileCommands::FileCommands(SessionStore &store, const Selection &selection, Resu
       mergetool_(mergetool),
       feedback_(feedback)
 {
+    connect(&editor_, &ResultEditorAdapter::typed, this, &FileCommands::typeResult);
     connect(&editor_, &ResultEditorAdapter::edited, this, &FileCommands::editResult);
     connect(&editor_, &ResultEditorAdapter::editRejected, this,
             [this] { feedback_.report(Transition::InvalidAnchor); });
@@ -63,20 +64,37 @@ std::optional<CommandTarget> FileCommands::admit(const QString &fileId, const QS
     return std::get<CommandTarget>(checked);
 }
 
+std::optional<ResultEdit> FileCommands::resultEdit(const CommandTarget &target, int begin, int end,
+                                                   const QString &replacement)
+{
+    const auto old = utf8(target.file->current().draft.text);
+    if (begin > end || !scalarBoundary(old, begin) || !scalarBoundary(old, end)
+        || QString::fromUtf8(replacement.toUtf8()) != replacement) {
+        feedback_.report(Transition::InvalidAnchor);
+        return std::nullopt;
+    }
+    return ResultEdit{{static_cast<std::size_t>(old.left(begin).toUtf8().size()),
+                       static_cast<std::size_t>(old.left(end).toUtf8().size())},
+                      replacement.toUtf8().toStdString()};
+}
+
 bool FileCommands::editResult(const QString &fileId, const QString &revision, int begin, int end,
                               const QString &replacement)
 {
     const auto target = admit(fileId, revision, CommandCheck::Edit);
-    if (!target) return false;
-    const auto old = utf8(target->file->current().draft.text);
-    if (begin > end || !scalarBoundary(old, begin) || !scalarBoundary(old, end)
-        || QString::fromUtf8(replacement.toUtf8()) != replacement)
-        return feedback_.report(Transition::InvalidAnchor);
-    return feedback_.report(store_.editResult(fileId.toStdString(), target->revision,
-                                              {{static_cast<std::size_t>(old.left(begin).toUtf8().size()),
-                                                static_cast<std::size_t>(old.left(end).toUtf8().size())},
-                                               replacement.toUtf8().toStdString()}));
+    const auto edit = target ? resultEdit(*target, begin, end, replacement) : std::nullopt;
+    return edit && feedback_.report(store_.editResult(fileId.toStdString(), target->revision, *edit));
 }
+
+bool FileCommands::typeResult(const QString &fileId, const QString &revision, int begin, int end,
+                              const QString &replacement)
+{
+    const auto target = admit(fileId, revision, CommandCheck::Edit);
+    const auto edit = target ? resultEdit(*target, begin, end, replacement) : std::nullopt;
+    return edit && feedback_.report(store_.typeResult(fileId.toStdString(), target->revision, *edit));
+}
+
+bool FileCommands::recordTyping() { return store_.recordTyping(); }
 
 bool FileCommands::undo(const QString &fileId, const QString &revision)
 {

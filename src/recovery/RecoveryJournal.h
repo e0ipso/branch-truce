@@ -5,7 +5,12 @@
 #include "recovery/RecoveryNames.h"
 #include "storage/RecoveryStore.h"
 #include <QCoreApplication>
+#include <QFuture>
+#include <QObject>
 #include <QString>
+#include <QThreadPool>
+#include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -23,9 +28,18 @@ struct AdoptedStore {
 };
 
 // One session's recovery store and what waits on it: the store's lease,
-// input whose commit failed and per-file recovery errors. Callers acknowledge
-// input only after its transaction commits. A failed commit keeps the encoded
-// transaction, so a retry appends it at most once.
+// records written behind the caller, input whose commit failed and per-file
+// recovery errors. Callers acknowledge input only after its transaction
+// commits. A failed commit keeps the encoded transaction, so a retry appends it
+// at most once.
+//
+// Each file has one pending queue, oldest first. A failed record waits there
+// with its error, and every later record of that file joins it without being
+// tried, so retry appends them in their original order and nothing is dropped
+// or reordered. Records written behind go to a worker one at a time, in the
+// order they were queued; any other commit first writes them on the calling
+// thread, so the journal keeps the order in which the caller made them.
+// Used on one thread, the one that made it.
 class RecoveryJournal {
     Q_DECLARE_TR_FUNCTIONS(RecoveryJournal)
 public:
@@ -33,10 +47,21 @@ public:
         FileSession candidate;
         RecoveryAction action;
         storage::RecoveryTransaction transaction;
+        // Why the commit failed; empty for a record held behind a failed one.
         QString error;
     };
+    // How a record written behind ended: durable, failed and kept pending, or
+    // kept pending untried behind an earlier failed record of its file.
+    enum class Written { Committed, Failed, Held };
+    using Callback = std::function<void(Written)>;
 
     RecoveryJournal(QString directory, std::shared_ptr<const storage::FileSystem> files);
+    // Waits for the record a worker is writing. Records still queued behind
+    // are dropped; callers write them first with finishBehind().
+    ~RecoveryJournal();
+    RecoveryJournal(const RecoveryJournal &) = delete;
+    RecoveryJournal &operator=(const RecoveryJournal &) = delete;
+
     [[nodiscard]] const QString &directory() const { return directory_; }
     // Takes the store's session lease on first use. Empty while the lease is
     // held, otherwise the reason the store is unavailable.
@@ -48,13 +73,26 @@ public:
     // under the lease, without retaining anything on failure.
     [[nodiscard]] storage::RecoveryCommit commit(const storage::RecoveryTransaction &transaction);
     // Commits the candidate as a new transaction. previousText is the file's
-    // current text before the action. On failure the candidate becomes the
-    // file's pending input, replacing any earlier one, and this returns false.
+    // text as the journal's last record of it left it. On failure the
+    // candidate joins the file's pending queue and this returns false.
     [[nodiscard]] bool commitCandidate(const FileSession &candidate, RecoveryAction action,
                                        std::string_view previousText);
-    // Commits a file's pending input under its original transaction and
-    // returns it. Empty when nothing is pending or the commit failed again;
-    // a failure keeps the input with the new error.
+    // Queues the candidate's record to be written on a worker and returns at
+    // once; previousText is as for commitCandidate. `written` runs on this
+    // journal's thread once the record is durable or kept pending, in the
+    // order records were queued, and may queue more records.
+    void commitBehind(const FileSession &candidate, RecoveryAction action, std::string_view previousText,
+                      Callback written);
+    // Writes every record queued behind now, on this thread, after the one a
+    // worker is writing, and runs their callbacks.
+    void finishBehind();
+    // Whether a record queued behind is not yet durable or kept pending.
+    [[nodiscard]] bool writingBehind() const { return !behind_.empty(); }
+    // Commits a file's pending queue in order under the records' original
+    // transactions and returns the file as the last committed record left it.
+    // Empty when nothing was pending or the first commit failed again. A
+    // failure keeps that record, with the new error, and every later one
+    // pending; pending() tells whether the whole queue committed.
     [[nodiscard]] std::optional<FileSession> retryPending(const std::string &id);
     // Moves to a new store beside the current one and releases the current
     // store's lease. Refused while input is pending.
@@ -73,7 +111,11 @@ public:
     bool discardStore();
 
     [[nodiscard]] bool hasPending() const { return !pending_.empty(); }
+    // The oldest pending record of a file, whose action and error stand for
+    // its queue, or null.
     [[nodiscard]] const Pending *pending(const std::string &id) const;
+    // The file as its newest pending record would leave it, or null.
+    [[nodiscard]] const FileSession *pendingCandidate(const std::string &id) const;
     // Whether every pending input is a launch capture.
     [[nodiscard]] bool onlyOpenCapturesPending() const;
     [[nodiscard]] bool hasFailures() const { return !failures_.empty(); }
@@ -84,13 +126,43 @@ public:
     bool settleFailure(const std::string &id, const QString &expected, const QString &replacement);
 
 private:
+    struct Behind {
+        Pending record;
+        Callback written;
+    };
     [[nodiscard]] storage::RecoveryCommit commitUnderLease(const storage::RecoveryTransaction &transaction);
+    // Notes a durable record of action.
+    void committed(RecoveryAction action);
+    // Starts the next record queued behind on the worker, unless one is being
+    // written or finishBehind() is writing them.
+    void writeNext();
+    // Settles the oldest record queued behind with result and runs its callback.
+    void settleBehind(const storage::RecoveryCommit &result);
+    // Moves the oldest record queued behind to its file's pending queue
+    // untried, because an earlier record of that file is pending.
+    void holdBehind();
+    // The worker's outcome of the record it was given as `ticket`.
+    void wroteBehind(quint64 ticket);
 
     QString directory_;
     std::shared_ptr<const storage::FileSystem> files_;
     std::shared_ptr<storage::RecoveryLease> lease_;
-    std::map<std::string, Pending> pending_;
+    std::map<std::string, std::deque<Pending>> pending_;
     std::map<std::string, QString> failures_;
     bool userWork_ = false;
+    // Records written behind, oldest first. The worker writes the first one
+    // while `writing_` names it.
+    std::deque<Behind> behind_;
+    struct Writing {
+        quint64 ticket;
+        QFuture<storage::RecoveryCommit> result;
+    };
+    std::optional<Writing> writing_;
+    quint64 nextTicket_ = 1;
+    bool finishing_ = false;
+    // Receives the worker's outcomes on this journal's thread. Declared before
+    // the worker so the worker is gone before it.
+    QObject context_;
+    QThreadPool worker_;
 };
 }

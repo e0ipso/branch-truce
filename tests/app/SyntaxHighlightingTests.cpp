@@ -268,6 +268,8 @@ public:
             QCoreApplication::sendEvent(editor, &key);
             settle([&] { return fixture.file().current().id != before.id; });
             CHECK(fixture.file().current().draft.text == "x" + before.draft.text);
+            // Typing is recorded once its burst ends.
+            settle([&] { return !fixture.controller.store()->recording(); });
             CHECK(fixture.transactions() == transactions + 1);
             CHECK(result->toPlainText() == QStringLiteral("x") + text);
             checkPythonColours(result);
@@ -334,6 +336,8 @@ public:
             QKeyEvent key(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
             QCoreApplication::sendEvent(editor, &key);
             settle([&] { return fixture.file().current().id != before.id; });
+            // Typing is recorded once its burst ends.
+            settle([&] { return !fixture.controller.store()->recording(); });
             CHECK(fixture.transactions() == transactions + 1);
             settle([&] { return decorated(QStringLiteral("return ")); });
             CHECK(formatAt(result, static_cast<int>(hello)).underlineStyle() == QTextCharFormat::NoUnderline);

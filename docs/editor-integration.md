@@ -158,8 +158,11 @@ drift apart wherever one side has extra lines.
 The result supports pointer selection, native copy/paste shortcuts, toolbar
 copy/paste and a context menu. Undo and redo use the shared text-and-decision
 history. The adapter observes completed native key, IME and clipboard operations
-as commands, keeping intermediate document notifications out of the journal.
-Recovery must commit before the model acknowledges each command. A failed commit
+as edits, keeping intermediate document notifications out of the journal. A
+cut, paste or drop is one command, acknowledged once its record is durable. Key
+presses and IME commits are typing: they apply at once, join a burst that one
+undo takes back, and are acknowledged once the burst's record, written behind
+the editor, is durable (docs/recovery-journal.md, Typing). A failed commit
 keeps the pending input visible and blocks further edits until recovery is retried.
 Source comparisons and view changes do not replace that pending draft.
 

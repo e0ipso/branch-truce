@@ -33,10 +33,11 @@ Q_ENUM_NS(StatusKind)
 enum class SupportKind { Supported, OutsideApp, Unreadable, LargeFile };
 Q_ENUM_NS(SupportKind)
 
-// Where a file's edits stand in the recovery store. Failed is pending input
-// whose commit failed, SaveFailed the same for a Save, and Blocked a recovery
-// error that keeps the file from changing.
-enum class RecoveryState { Durable, Restored, Failed, SaveFailed, Blocked };
+// Where a file's edits stand in the recovery store. Recording is typing that
+// is applied but not yet durable, Failed is pending input whose commit failed,
+// SaveFailed the same for a Save, and Blocked a recovery error that keeps the
+// file from changing.
+enum class RecoveryState { Durable, Restored, Recording, Failed, SaveFailed, Blocked };
 Q_ENUM_NS(RecoveryState)
 
 // The handoff group a file belongs to, in the order the handoff lists them.

@@ -4,7 +4,9 @@
 #include "TestSession.h"
 #include "app/SessionModel.h"
 #include "app/Translations.h"
+#include "fixtures/EventLoop.h"
 #include "fixtures/SyncFaults.h"
+#include "session/BackgroundAlignment.h"
 #include <QCoreApplication>
 #include <QMap>
 #include <QPersistentModelIndex>
@@ -516,5 +518,45 @@ int main(int argc, char **argv)
             CHECK(outcome == Outcome::Succeeded ? written == RevisionId{1} : !written);
         });
     }
+    suite.run("typed edits are aligned on a worker as an immediate alignment would be", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        TestSession model(directory.path() + "/recovery");
+        const BackgroundAlignment alignment(model);
+        CHECK(model.appendFile(test_support::choiceFile()));
+        auto expected = *model.file("choices");
+        CHECK(expected.editResult(1, {{0, 0}, "a"}) == Transition::Applied);
+        CHECK(expected.editResult(2, {{1, 1}, "b"}) == Transition::Applied);
+        CHECK(model.typeResult("choices", 1, {{0, 0}, "a"}) == Transition::Applied);
+        CHECK(model.typeResult("choices", 2, {{1, 1}, "b"}) == Transition::Applied);
+        CHECK(model.file("choices")->pendingAlignment() != nullptr);
+        test_support::waitUntil([&] { return !model.file("choices")->pendingAlignment(); },
+                                "the typed edits were not aligned");
+        // Whichever revision the worker began with, only the current one's map is installed.
+        const auto &typed = *model.file("choices");
+        CHECK(typed.current().id == expected.current().id && typed.correspondence()->aligned());
+        CHECK(typed.correspondence()->revision() == typed.current().id);
+        for (const auto side : {SourceSide::Stage2, SourceSide::Stage3})
+            CHECK(*typed.correspondence()->passages(side) == *expected.correspondence()->passages(side));
+        CHECK(typed.markers() == expected.markers());
+        CHECK(typed.current().draft.unresolvedMarkers == expected.current().draft.unresolvedMarkers);
+    });
+    suite.run("a map made for an earlier revision is dropped, and settling aligns the current one", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        TestSession model(directory.path() + "/recovery");
+        CHECK(model.appendFile(test_support::choiceFile()));
+        CHECK(model.typeResult("choices", 1, {{0, 0}, "a"}) == Transition::Applied);
+        const auto earlier = model.file("choices")->pendingAlignment();
+        CHECK(earlier != nullptr);
+        const auto stale = std::make_shared<const CorrespondenceMap>(earlier->realigned());
+        CHECK(model.typeResult("choices", 2, {{1, 1}, "b"}) == Transition::Applied);
+        CHECK(model.installAlignment("choices", 2, stale) == Transition::StaleRevision);
+        CHECK(model.file("choices")->pendingAlignment() != nullptr);
+        CHECK(model.settleAlignment("choices") == Transition::Applied);
+        CHECK(!model.file("choices")->pendingAlignment() && model.file("choices")->correspondence()->aligned());
+        CHECK(model.settleAlignment("choices") == Transition::NoChange);
+        CHECK(model.settleAlignment("missing") == Transition::StaleRevision);
+    });
     return suite.report();
 }

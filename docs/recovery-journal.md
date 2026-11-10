@@ -98,35 +98,79 @@ pending open records. Recovery retry then commits the captured sources and
 result, rather than the placeholders. Pending edits still prevent session
 replacement.
 
-For every applied model command:
+For every applied model command other than typing:
 
 1. Apply the domain command to a private candidate, retaining the acknowledged
    model state. Text and decisions are one candidate, including undo and redo.
-2. Commit and validate all referenced payloads, then synchronize the
+2. Write every typed record that is still waiting (see below), so the journal
+   keeps the order in which the edits were made.
+3. Commit and validate all referenced payloads, then synchronize the
    directories that gained an entry.
-3. Append one complete journal frame under the store's lease. Flush and
+4. Append one complete journal frame under the store's lease. Flush and
    synchronize the journal file.
-4. Publish the candidate to the model, emit change notifications and return
+5. Publish the candidate to the model, emit change notifications and return
    `Transition::Applied`. This is the acknowledgment boundary.
 
-No editor mutation is acknowledged through this model before step 3 succeeds.
-Exact manual edits, scoped choices and mapped editing commands serialize their
-complete resulting draft as `replace-draft` records. Replay therefore rebuilds
-the same action order before applying durable undo and redo records. A draft
-replacement cannot tell typing from a choice, so replay takes each revision's
-hand-edit flags and hand-edited ranges from its record.
-Committed IME input uses that same acknowledgment boundary. Composition/pre-edit
-stays in the editor as visibly pending input until it becomes a command.
-Undo grouping cannot defer persistence. The desktop editor routes document
-changes through this boundary, and its native undo stack is disabled so editing
-and scoped choices share application history.
+No such command is acknowledged before step 4 succeeds. Acknowledged always
+means durable. Exact manual edits such as a paste, cut or drop, scoped choices
+and mapped editing commands serialize their complete resulting draft as
+`replace-draft` records. Replay therefore rebuilds the same action order before
+applying durable undo and redo records. A draft replacement cannot tell typing
+from a choice, so replay takes each revision's hand-edit flags and hand-edited
+ranges from its record. Composition/pre-edit stays in the editor as visibly
+pending input until it is committed. The desktop editor routes document changes
+through the store, and its native undo stack is disabled so editing and scoped
+choices share application history.
+
+### Typing
+
+Key presses and committed input-method text are applied before they are
+durable and recorded behind the editor (`SessionStore::typeResult`):
+
+1. The edit is applied to the file at once, with its passages left provisional
+   (`Realignment::Deferred`). A worker aligns them and installs the map only
+   while the revision it was made for is current; work that needs exact
+   passages, such as a choice preview, applying a choice or Mark resolved,
+   aligns the current revision first.
+2. Typed edits of one file form a burst. Every edit after the first joins the
+   burst's undo entry (`EditOptions::join`), so one undo takes back the burst.
+   A burst ends 500 ms after the last key, 2 seconds after it began, at a typed
+   line break (which starts the next burst), and before any other command.
+3. When a burst ends, one `replace-draft` record holds its last revision. A
+   worker appends the records one at a time, in the order the bursts ended,
+   with the same payload, directory and journal syncs as any other record.
+   Replay restores the burst in one step with `FileSession::replayDraft`, so
+   the recovered history has the same undo entries. A burst that puts back
+   everything a record holds, such as a letter and Backspace inside earlier
+   hand edits, is dropped with its undo entry, because replay could not make
+   that entry.
+4. The burst is acknowledged once its record is durable. Until then the
+   file's `recoveryState` is `Recording`.
+
+A crash can therefore lose only typing that is not yet acknowledged: the burst
+being typed, at most 2 seconds of it, plus bursts whose records are still being
+written. A slow disk makes that second part longer, never the acknowledged
+part. Closing the window, replacing the session, starting a new store, Save,
+undo and every other command first write the waiting records on the interface
+thread, so they are never dropped silently; the window's close also refuses to
+end while one of them failed.
+
+If a typed record fails, the file returns to its acknowledged state, the
+failed record keeps its error, and every later typed record of that file, the
+current burst included, joins it in the file's pending queue untried. Retry
+appends them in their original order under their original transaction IDs, so
+nothing is reordered, dropped or appended twice. Synchronous commands that fail
+use the same queue.
+
+### Failure and retry
 
 On failure the acknowledged revision stays unchanged. `pendingInput`,
 `pendingText`, `pendingDecisions`, `recoveryState` and `recoveryError` expose the
-retained candidate and failure separately. `resultText` and revision roles
+retained candidate and failure separately: the newest pending draft, and the
+action and error of the oldest pending record. `resultText` and revision roles
 continue to describe the acknowledged state. Further commands across the model
 are blocked until `retryRecovery` or QML's `retryPendingRecovery` commits every
-pending candidate.
+pending candidate of the file in order.
 A stable transaction UUID prevents duplicate appends when a failed flush left
 a complete record, even when other records followed it before the retry: the
 store remembers every transaction in its journal, syncs the journal again for
@@ -286,10 +330,8 @@ A recovery payload larger than `kMaxRecoveryPayloadBytes` (8388608 bytes) is
 refused before it is written. The prior acknowledged record stays in the
 journal, and the failure says that pending input is retained.
 
-Commits run on the interface thread and are acknowledged only once durable.
-A record costs one journal sync, plus a payload sync and a directory sync when
-the action added text. Records are not coalesced or written behind: replay
-repeats one domain transition per record, and the engine has no way to rebuild
-a file's history from a saved state, so a record that stood for several edits
-could not replay to the revision IDs later records refer to. Journals grow by
-about one small frame per acknowledged command.
+Commits of commands other than typing run on the interface thread and are
+acknowledged only once durable; typed bursts are written on a worker as
+described above. A record costs one journal sync, plus a payload sync and a
+directory sync when the action added text. Journals grow by about one small
+frame per command or burst of typing.
