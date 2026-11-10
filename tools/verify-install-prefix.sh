@@ -9,18 +9,19 @@
 # Exit status: 0 passed, 1 a check failed, 2 usage error.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+source "$root/packaging/scripts/cli.sh"
 source "$root/tools/lib/fixture.sh"
+source "$root/tools/lib/report.sh"
 source "$root/packaging/scripts/compiler-cache.sh"
 app_id=com.canpicasoft.branch-truce
-mergetool_tests=
-case "${1:-}" in
-    '') ;;
-    -h|--help) echo "Usage: $0 [--mergetool-tests PATH]"; exit 0 ;;
-    --mergetool-tests)
-        [[ $# -eq 2 && -x "$2" ]] || { echo "Usage: $0 [--mergetool-tests PATH]" >&2; exit 2; }
-        mergetool_tests=$(cd -- "$(dirname -- "$2")" && pwd -P)/$(basename -- "$2") ;;
-    *) echo "Usage: $0 [--mergetool-tests PATH]" >&2; exit 2 ;;
-esac
+usage() { echo "Usage: $0 [--mergetool-tests PATH]"; }
+declare -A options=()
+cli_parse options - 'mergetool-tests=' "$@" || { cli_usage $? usage; exit; }
+mergetool_tests=${options[mergetool-tests]-}
+if [[ -n "$mergetool_tests" ]]; then
+    [[ -x "$mergetool_tests" ]] || { echo "error: $mergetool_tests is not executable" >&2; usage >&2; exit 2; }
+    mergetool_tests=$(cd -- "$(dirname -- "$mergetool_tests")" && pwd -P)/$(basename -- "$mergetool_tests")
+fi
 for tool in cmake c++ make git tar gio desktop-file-validate appstreamcli readelf; do
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool" >&2; exit 1; }
 done
@@ -63,13 +64,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step() { printf '\n== %s\n' "$*"; }
 show() { printf '+'; printf ' %q' "$@"; printf '\n'; }
 run() { show "$@"; "$@"; }
-pass() { printf 'PASS: %s\n' "$*"; }
-# die stops the run at a failed check; fail, in the scripts that keep going,
-# only records one.
-die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 # Bounded wait for a condition; the deadline is in tenths of a second.
 wait_for() {
     local tenths=$1; shift

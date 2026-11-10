@@ -1,6 +1,5 @@
 # Clean OS containers that install a release package beyond packaging/scripts/check-package.sh:
-# tools/inspect-artifact.sh and tools/validate-installed-artifact.sh take one of these targets,
-# through tools/lib/targets.sh. Columns are tab-separated and named by the header line. format
+# tools/validate-installed-artifact.sh takes one of these targets, through tools/lib/targets.sh. Columns are tab-separated and named by the header line. format
 # is the packaging/formats.tsv row of the package the target installs; dockerfile, relative to
 # packaging/, has a stage named target that holds the clean OS base.
 target	format	dockerfile	label

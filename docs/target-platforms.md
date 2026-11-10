@@ -234,8 +234,9 @@ which also runs the desktop suite and the package checks:
 
 ```sh
 packaging/scripts/container-check.sh --format kubuntu-deb --version 1.2.3 --output "$out"
-tools/inspect-artifact.sh --target kubuntu --package "$out/branch-truce_1.2.3_amd64-ubuntu26.04.deb" --output "$out"
-tools/inspect-artifact.sh --target tuxedo --package "$out/branch-truce_1.2.3_amd64-ubuntu26.04.deb" --output "$out/tuxedo"
+deb="$out/branch-truce_1.2.3_amd64-ubuntu26.04.deb"
+tools/validate-installed-artifact.sh --target kubuntu --package "$deb" --output "$out/kubuntu"
+tools/validate-installed-artifact.sh --target tuxedo --package "$deb" --output "$out/tuxedo"
 ```
 
 `--target` names a row of
@@ -250,9 +251,9 @@ cache. Set `BRANCH_TRUCE_KDE_CI_REFRESH` to a new value to fetch the archives
 again instead of reusing cached layers. Remove the images with
 `docker image rm`.
 
-`inspect-artifact.sh` starts a throwaway container from that image, which
-needs network access for the package lists, and makes the checks
-`packaging/scripts/check-package.sh` does not:
+`validate-installed-artifact.sh` starts a throwaway container from that image,
+which needs network access for the package lists, and makes the checks
+`packaging/scripts/check-package.sh` does not. Among them:
 
 1. `apt-get install --no-install-recommends` of the `.deb`. The packages it
    adds are the runtime closure and are printed with their versions.
@@ -261,9 +262,11 @@ needs network access for the package lists, and makes the checks
 3. Each QML module imported by `src/ui` has a `qmldir` from a package named in
    `Depends`.
 
-`check-package.sh` checks the payload, metadata, desktop files, icons,
-hardening, the private Qt ABI, the runtime QML modules and Qt plugins, the
-launch and the removal on every release format; the CI `kde` job runs it.
+[platform-validation.md](platform-validation.md) describes the other steps and
+the `--wayland` run. `check-package.sh` checks the payload, metadata, desktop
+files, icons, hardening, the private Qt ABI, the runtime QML modules and Qt
+plugins, the launch and the removal on every release format; the CI `kde` job
+runs it.
 
 ## Results on 2026-10-25
 
@@ -288,7 +291,7 @@ On both bases the install pulled the four declared QML modules and, through
 their own dependencies, `qml6-module-qtqml`, `-qtqml-models`,
 `-qtqml-workerscript`, `-qt-labs-qmlmodels`, `-qtquick-shapes`,
 `-qtquick-templates` and `-qtquick-window`, all at the base's Qt 6.10.2.
-Kirigami came in at 6.24.0 with its private libraries. The `.inspection`
+Kirigami came in at 6.24.0 with its private libraries. The inspection
 report kept beside each artifact lists the full closure with versions.
 `appstreamcli` reported three infos, `cid-maybe-not-rdns`,
 `url-homepage-missing` and `developer-info-missing`, which stay open until the
