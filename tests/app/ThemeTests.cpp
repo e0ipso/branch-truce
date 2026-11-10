@@ -19,6 +19,7 @@
 // file that names a missing icon, and pass that list.
 #include "TestHarness.h"
 #include "app/AppPaths.h"
+#include "app/Appearance.h"
 #include "app/Application.h"
 #include "app/Translations.h"
 #include "fixtures/ChoiceFile.h"
@@ -78,26 +79,6 @@ constexpr int kRepeats = 3;
 constexpr int kKeysPerRepeat = 6;
 constexpr int kNotchesPerRepeat = 15;
 #endif
-
-// As src/app/main.cpp: the KDE style when it is installed, with Fusion for the controls it lacks,
-// and otherwise Fusion. QT_QUICK_CONTROLS_STYLE wins.
-void selectControlsStyle(const QQmlEngine &engine)
-{
-    if (!qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE")) return;
-    const auto paths = engine.importPathList();
-    const bool kdeStyle = std::any_of(paths.cbegin(), paths.cend(), [](const QString &path) {
-        return QFileInfo::exists(path + QStringLiteral("/org/kde/desktop/qmldir"));
-    });
-    QQuickStyle::setStyle(kdeStyle ? QStringLiteral("org.kde.desktop") : QStringLiteral("Fusion"));
-    if (kdeStyle) QQuickStyle::setFallbackStyle(QStringLiteral("Fusion"));
-}
-
-// As src/app/main.cpp: Breeze as the fallback icon theme, and hicolor when the platform names none.
-void selectIconThemes()
-{
-    QIcon::setFallbackThemeName(QStringLiteral("breeze"));
-    if (QIcon::themeName().isEmpty()) QIcon::setThemeName(QStringLiteral("hicolor"));
-}
 
 class Scene {
 public:

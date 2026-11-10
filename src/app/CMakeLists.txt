@@ -1,4 +1,4 @@
-add_library(branch_truce_controller STATIC Application.cpp Application.h AppPaths.cpp AppPaths.h
+add_library(branch_truce_controller STATIC Application.cpp Application.h AppPaths.cpp AppPaths.h Appearance.cpp Appearance.h
     ChoicePreviewFlow.cpp ChoicePreviewFlow.h CommandFeedback.cpp CommandFeedback.h CommandGuard.cpp CommandGuard.h
     EngineText.cpp EngineText.h FileCommands.cpp FileCommands.h FileNavigator.cpp FileNavigator.h
     FilePresentation.cpp FilePresentation.h FileStates.h MergetoolStatus.cpp MergetoolStatus.h
@@ -18,7 +18,7 @@ target_include_directories(branch_truce_controller PUBLIC "${CMAKE_CURRENT_SOURC
 target_link_libraries(branch_truce_controller PUBLIC Qt6::Core Qt6::Network Qt6::Qml Qt6::Quick
     branch_truce_core branch_truce_git branch_truce_recovery branch_truce_session
     branch_truce_publication branch_truce_mergetool branch_truce_highlighting
-    PRIVATE branch_truce_storage branch_truce_build_info branch_truce_build_options)
+    PRIVATE Qt6::QuickControls2 branch_truce_storage branch_truce_build_info branch_truce_build_options)
 # Message catalogs, compiled and embedded under :/branch-truce/i18n. The English
 # catalog holds only the plural forms of numerus messages; installTranslations
 # loads it first and the user's language over it. After adding or changing a
