@@ -266,13 +266,19 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     set_tests_properties(acceptance.journeys-window PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software;QT_QUICK_CONTROLS_STYLE=org.kde.desktop")
 
-    add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp)
+    # One executable from the startup route files; StartupRouteTests.cpp selects the group, and each
+    # group is its own CTest entry so they can run in parallel.
+    add_executable(branch_truce_startup_route_tests app/StartupRouteTests.cpp app/StartupPublicationTests.cpp
+        app/StartupRecoveryTests.cpp app/StartupCaptureTests.cpp app/StartupLaunchTests.cpp)
     target_include_directories(branch_truce_startup_route_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(branch_truce_startup_route_tests PRIVATE branch_truce_controller branch_truce_build_options)
     add_dependencies(branch_truce_startup_route_tests branch-truce)
-    add_test(NAME app.startup-routes COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_startup_route_tests> $<TARGET_FILE:branch-truce>)
-    # The timeout must be at least twice the slowest measured run.
-    set_tests_properties(app.startup-routes PROPERTIES TIMEOUT 1000)
+    foreach(startup_group publication recovery capture launch)
+        add_test(NAME app.startup-routes.${startup_group} COMMAND ${private_xdg}
+            $<TARGET_FILE:branch_truce_startup_route_tests> $<TARGET_FILE:branch-truce> ${startup_group})
+        # The whole suite's measured budget, which each group stays within.
+        set_tests_properties(app.startup-routes.${startup_group} PROPERTIES TIMEOUT 1000 LABELS app)
+    endforeach()
 
     # Preloaded into the real binary to report its style and icon theme state.
     add_library(branch_truce_appearance_probe MODULE fixtures/AppearanceProbe.cpp)
