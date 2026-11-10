@@ -46,8 +46,10 @@ inline bool commandResult(branch_truce::Application &application, bool accepted)
 {
     waitUntil([&] { return !application.store()->recording(); }, "GUI command did not settle");
     if (!accepted || application.store()->hasPendingRecovery()) return false;
-    for (const auto &file : application.store()->files())
-        await(application.store()->awaitAlignment(file.id(), file.current().id));
+    for (const auto &file : application.store()->files()) {
+        const auto aligned = await(application.store()->awaitAlignment(file.id(), file.current().id));
+        if (aligned != branch_truce::Transition::Applied && aligned != branch_truce::Transition::NoChange) return false;
+    }
     return true;
 }
 
