@@ -22,9 +22,15 @@ void fileBatchesApplyOnlyEligibleContributionsAfterConfirmation(NonConflictingSc
     expected += "bridge two\nbase conflict\ntail\n";
     CHECK(chosen.text == expected);
     for (const auto &change : preview.changes)
-        for (const auto &source : change.sources)
-            for (const auto &id : file.catalogue().find(source.contributionId)->decisions)
+        for (const auto &source : change.sources) {
+            const auto &targets = file.nonConflictingTargets();
+            const auto target = std::find_if(targets.begin(), targets.end(), [&](const auto &value) {
+                return value.source.contributionId == source.contributionId;
+            });
+            CHECK(target != targets.end());
+            for (const auto &id : target->decisions)
                 CHECK(chosen.decisions.at(id) == Decision{DecisionValue::Accepted, {}});
+        }
     const auto competing = test_support::choiceTarget(file, SourceSide::Stage2, ChoiceScope::Section, 2);
     for (const auto &id : competing.decisions) CHECK(chosen.decisions.at(id).value == DecisionValue::Undecided);
     CHECK(file.undo(file.current().id) == Transition::Applied && file.current().draft == before.draft);

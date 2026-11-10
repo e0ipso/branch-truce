@@ -30,7 +30,11 @@ inline branch_truce::Transition choose(branch_truce::FileSession &file, branch_t
                                        std::size_t occurrence = 0)
 {
     const auto &target = choiceTarget(file, side, scope, occurrence);
-    return applyChoice(file, previewChoice(file, file.current().id, target.source.contributionId, action), true);
+    const auto preview = previewChoice(file, file.current().id, target.source.contributionId, action);
+    if (preview.state != branch_truce::Transition::Applied
+        && preview.state != branch_truce::Transition::ConfirmationRequired)
+        return preview.state;
+    return applyChoice(file, preview, true);
 }
 
 // Replays `draft` the way recovery does, as the revision after the current

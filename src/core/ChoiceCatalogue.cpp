@@ -160,7 +160,7 @@ ChoiceCatalogue::ChoiceCatalogue(std::vector<ChoiceTarget> targets) : targets_(s
     for (std::size_t i = 0; i < targets_.size(); ++i) {
         const auto &target = targets_[i];
         byContribution_.emplace(target.source.contributionId, i);
-        if (target.scope == ChoiceScope::Section) sections_.emplace(std::pair{target.section, target.source.side}, i);
+        if (target.scope == ChoiceScope::Section) sections_[target.section].emplace(target.source.side, i);
     }
 }
 
@@ -172,8 +172,10 @@ const ChoiceTarget *ChoiceCatalogue::find(const std::string &contributionId) con
 
 const ChoiceTarget *ChoiceCatalogue::section(const std::string &section, SourceSide side) const noexcept
 {
-    const auto found = sections_.find(std::pair{section, side});
-    return found == sections_.end() ? nullptr : &targets_[found->second];
+    const auto found = sections_.find(section);
+    if (found == sections_.end()) return nullptr;
+    const auto target = found->second.find(side);
+    return target == found->second.end() ? nullptr : &targets_[target->second];
 }
 
 const ChoiceTarget *ChoiceCatalogue::opposite(const ChoiceTarget &target) const noexcept

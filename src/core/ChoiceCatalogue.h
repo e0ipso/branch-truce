@@ -57,7 +57,7 @@ public:
 private:
     std::vector<ChoiceTarget> targets_;
     std::map<std::string, std::size_t, std::less<>> byContribution_;
-    std::map<std::pair<std::string, SourceSide>, std::size_t> sections_;
+    std::map<std::string, std::map<SourceSide, std::size_t>, std::less<>> sections_;
 };
 
 }
