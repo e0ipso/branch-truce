@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Install this checkout into a disposable prefix and launch only installed files.
-# The copied sources and build tree are deleted before any launch. Nothing is
-# installed into the system or the caller's home; the fixture is removed on exit.
+# The sources are the package build inputs of packaging/scripts/stage-source.sh
+# and package.json, for the version; they and the build tree are deleted before
+# any launch. Nothing is installed into the system or the caller's home; the
+# fixture is removed on exit.
 #
 # Usage: tools/verify-install-prefix.sh [--mergetool-tests PATH]
 # PATH is a built branch_truce_mergetool_tests binary. When given, it runs
@@ -75,11 +77,8 @@ wait_for() {
     done
 }
 
-step "Copy tracked and untracked non-ignored files outside the checkout"
-mkdir -p -- "$source_dir"
-(cd -- "$root" && git ls-files -z --cached --others --exclude-standard) |
-    while IFS= read -r -d '' file; do [[ -e "$root/$file" ]] && printf '%s\0' "$file"; done |
-    tar -C "$root" --null -T - -cf - | tar -C "$source_dir" -xf -
+step "Copy the package build inputs and package.json outside the checkout"
+"$root/packaging/scripts/stage-source.sh" --tracked --from "$root" --to "$source_dir" package.json
 echo "Copied source: $source_dir (from $root at $(git -C "$root" rev-parse --short HEAD))"
 
 cache_begin install-prefix-Release "$fixture"
