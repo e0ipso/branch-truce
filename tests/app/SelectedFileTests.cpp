@@ -743,7 +743,7 @@ int main(int argc, char **argv)
             state.insert("current", current);
         });
         replay = replayRecovery(storage::RecoveryStore(model.recoveryDirectory()));
-        CHECK(!replay.succeeded && replay.error.contains("hand edits"));
+        CHECK(!replay.succeeded && replay.problem.arguments.value(0).contains("hand edits"));
         // Every recorded hand edit must name an anchor of the replayed draft.
         test_support::writeFile(model.recoveryDirectory() + "/journal", journal);
         test_support::rewriteLastRecoveryState(model.recoveryDirectory(), [](QJsonObject &state) {

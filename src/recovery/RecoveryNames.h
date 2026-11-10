@@ -22,7 +22,6 @@ enum class RecoveryAction {
     MarkResolvedReview,
     WriteOutcome,
     StageOutcome,
-    Support,
     LoadLarge,
     MutationIntent,
     MutationObservation
@@ -65,7 +64,6 @@ inline constexpr NameTable<RecoveryAction, 14> recoveryActionNames{{
     {RecoveryAction::MarkResolvedReview, "mark-resolved-review"},
     {RecoveryAction::WriteOutcome, "write-outcome"},
     {RecoveryAction::StageOutcome, "stage-outcome"},
-    {RecoveryAction::Support, "support"},
     {RecoveryAction::LoadLarge, "load-large"},
     {RecoveryAction::MutationIntent, "mutation-intent"},
     {RecoveryAction::MutationObservation, "mutation-observation"},

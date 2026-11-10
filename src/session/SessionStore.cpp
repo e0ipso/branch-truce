@@ -30,8 +30,7 @@ bool SessionStore::repositions(Action action)
     case Action::Open:
     case Action::StageOutcome:
     case Action::DiscardToStaged:
-    case Action::DiscardToCheckpoint:
-    case Action::Support: return true;
+    case Action::DiscardToCheckpoint: return true;
     case Action::ReplaceDraft:
     case Action::Undo:
     case Action::Redo:
@@ -87,10 +86,10 @@ std::optional<SessionStore::Action> SessionStore::pendingAction(const std::strin
     return pending ? std::optional<Action>(pending->action) : std::nullopt;
 }
 
-QString SessionStore::pendingError(const std::string &id) const
+Problem SessionStore::pendingError(const std::string &id) const
 {
     const auto *pending = journal_.pending(id);
-    return pending ? pending->error : QString{};
+    return pending ? pending->problem : Problem{};
 }
 
 const Draft *SessionStore::pendingDraft(const std::string &id) const
@@ -158,13 +157,13 @@ void SessionStore::typedRecordWritten(const std::string &id, const FileSession &
     notify(row, std::nullopt);
 }
 
-void SessionStore::recordRecoveryFailure(const std::string &id, const QString &error)
+void SessionStore::recordRecoveryFailure(const std::string &id, const Problem &problem)
 {
-    journal_.recordFailure(id, error);
+    journal_.recordFailure(id, problem);
     if (const auto row = rowOf(id); row >= 0) notify(static_cast<std::size_t>(row), std::nullopt);
 }
 
-bool SessionStore::settleRecoveryFailure(const std::string &id, const QString &expected, const QString &replacement)
+bool SessionStore::settleRecoveryFailure(const std::string &id, const Problem &expected, const Problem &replacement)
 {
     if (!journal_.settleFailure(id, expected, replacement)) return false;
     if (const auto row = rowOf(id); row >= 0) notify(static_cast<std::size_t>(row), std::nullopt);
@@ -432,10 +431,6 @@ Transition SessionStore::recordStage(const std::string &id, RevisionId revision,
     return update(id, Action::StageOutcome, [&](auto &file) {
         return file.recordStage(revision, outcome, std::move(objectId), std::move(mode), std::move(detail));
     });
-}
-Transition SessionStore::setSupport(const std::string &id, Support support, std::string detail)
-{
-    return update(id, Action::Support, [&](auto &file) { return file.setSupport(support, std::move(detail)); });
 }
 Transition SessionStore::loadLargeFile(const std::string &id)
 {

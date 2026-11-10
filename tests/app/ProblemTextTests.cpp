@@ -1,7 +1,7 @@
-// Every problem code has a sentence, survives encoding, and reads the same wherever the app shows it.
+// Every problem code has a sentence, survives encoding, and reads the same wherever it is shown.
 #include "TestHarness.h"
-#include "app/ProblemText.h"
-#include "storage/Problem.h"
+#include "problems/Problem.h"
+#include "problems/ProblemText.h"
 
 #include <QCoreApplication>
 
@@ -67,20 +67,15 @@ int main(int argc, char **argv)
                  QStringLiteral("Outside app: stage 2 cannot be edited: filter attributes do not match the requested "
                                 "path: fatal: no"));
     });
-    suite.run("details translate encoded problems where they stand and leave other text alone", [] {
-        const auto store = Problem(ProblemCode::RecoveryCommitFailed).encoded();
-        CHECK_EQ(problem_text::detail(QStringLiteral("plain words")), QStringLiteral("plain words"));
-        CHECK_EQ(problem_text::detail(store),
-                 QStringLiteral("Recovery commit failed; pending input is retained for retry."));
-        // A layer that cannot translate joins a problem with words of its own.
-        CHECK_EQ(problem_text::detail(QStringLiteral("Blocked: ") + store + QStringLiteral("; retry later")),
-                 QStringLiteral("Blocked: Recovery commit failed; pending input is retained for retry.; retry later"));
-        // An argument may hold an encoded problem of its own.
-        const auto rejected = Problem(ProblemCode::RecoverySessionRejected, {QStringLiteral("s1"), store});
+    suite.run("a recovery problem reads the store problem it wraps", [] {
+        const auto store = Problem(ProblemCode::RecoveryCommitFailed);
+        const auto rejected = Problem(ProblemCode::RecoverySessionRejected, {QStringLiteral("s1")}).wrapping(store);
         CHECK_EQ(problem_text::text(rejected),
                  QStringLiteral("Recovery s1 rejected: Recovery commit failed; pending input is retained for retry."));
-        CHECK_EQ(problem_text::detail(QStringLiteral("{\"arguments\":[] not json")),
-                 QStringLiteral("{\"arguments\":[] not json"));
+        const auto task = Problem(ProblemCode::TaskUnverified).wrapping(ProblemCode::TaskNotAdmitted);
+        CHECK_EQ(problem_text::text(task),
+                 QStringLiteral("The change did not reach admission.; the outcome of the "
+                                "change could not be verified"));
     });
     suite.run("arguments that look like placeholders stay as they are", [] {
         const auto problem = Problem(ProblemCode::GitCustomFilter, {QStringLiteral("%2"), QStringLiteral("a%1b")});

@@ -1,8 +1,9 @@
 // Engine text turns the merge engine's typed statuses, failures and preview notes into translated sentences.
 #include "EngineText.h"
-#include "ProblemText.h"
+#include "problems/ProblemText.h"
 
 #include <QCoreApplication>
+#include <QMimeDatabase>
 
 namespace branch_truce::engine_text {
 namespace {
@@ -181,8 +182,24 @@ QString loadFailure(const LoadFailure &failure)
 
 QString supportDetail(const FileSession &file)
 {
-    const auto &failure = file.loadFailure();
-    return failure ? loadFailure(*failure) : problem_text::detail(utf8(file.supportDetail()));
+    if (const auto &failure = file.loadFailure()) return loadFailure(*failure);
+    const auto problem = Problem::decode(utf8(file.supportDetail()));
+    return problem ? problem_text::text(*problem) : utf8(file.supportDetail());
+}
+
+bool binaryExcluded(const FileSession &file)
+{
+    auto problem = Problem::decode(utf8(file.supportDetail()));
+    if (file.support() != Support::OutsideApp || !problem) return false;
+    if (problem->code == ProblemCode::ClassificationStageNotEditable && problem->cause) problem = *problem->cause;
+    if (problem->cause) return false;
+    if (problem->code == ProblemCode::TextControlCharacters) return true;
+    if (problem->code != ProblemCode::TextInvalidUtf8) return false;
+    // Invalid UTF-8 in a text or unknown type does not prove that it is binary.
+    const auto name = utf8(file.path());
+    if (name.toUtf8() != QByteArray::fromStdString(file.path())) return false;
+    const auto mime = QMimeDatabase().mimeTypeForFile(name, QMimeDatabase::MatchExtension);
+    return mime.isValid() && !mime.isDefault() && !mime.inherits(QStringLiteral("text/plain"));
 }
 
 QString choice(const ChoicePreview &preview)

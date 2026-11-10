@@ -1,7 +1,6 @@
 #include "TestHarness.h"
 #include "app/AppPaths.h"
 #include "app/Application.h"
-#include "app/ProblemText.h"
 #include "app/Translations.h"
 #include "fixtures/AppSession.h"
 #include "fixtures/ConflictedRepository.h"
@@ -17,6 +16,7 @@
 #include "mergetool/MergetoolLauncher.h"
 #include "mergetool/MergetoolMessages.h"
 #include "mergetool/MergetoolSocket.h"
+#include "problems/ProblemText.h"
 #include "recovery/RecoveryRestore.h"
 
 #include <QCoreApplication>
@@ -370,7 +370,6 @@ int runChildLauncher(int argc, char **argv)
     QCoreApplication application(argc, argv);
     MergetoolLauncherOptions options;
     options.startWindow = {};
-    options.describe = problem_text::detail;
     // The session socket then looks answered by a different user.
     if (std::strcmp(argv[1], kForeignPeerLauncher) == 0) options.peerIsCurrentUser = [](qintptr) { return false; };
     if (std::strcmp(argv[1], kShortReplyLauncher) == 0) options.replyWaitMs = kShortReplyWaitMs;
@@ -718,7 +717,8 @@ int main(int argc, char **argv)
                 CHECK(QFile::remove(target + ".moved"));
                 Application controller{test_support::windowConfig()};
                 openController(controller, repo);
-                CHECK(recoveryError(controller, "tracked.txt") == problem_text::detail(copiedLaunchFailure()));
+                CHECK(recoveryError(controller, "tracked.txt")
+                      == problem_text::text(ProblemCode::RecoveryCopiedLaunch));
                 if (change == QStringLiteral("staged")) repo.git({"add", "--", "tracked.txt"});
                 if (change == QStringLiteral("autocrlf")) repo.git({"config", "core.autocrlf", "true"});
                 QTemporaryDir sides;
@@ -731,7 +731,8 @@ int main(int argc, char **argv)
                      controller.feedback()->message());
                 pump(
                     [&] {
-                        return recoveryError(controller, "tracked.txt") != problem_text::detail(copiedLaunchFailure());
+                        return recoveryError(controller, "tracked.txt")
+                            != problem_text::text(ProblemCode::RecoveryCopiedLaunch);
                     },
                     change + QStringLiteral(": the attach did not settle the copied launch"));
                 select(controller, "tracked.txt");
@@ -804,7 +805,7 @@ int main(int argc, char **argv)
             const auto target = repo.path("tracked.txt");
             Application controller{test_support::windowConfig()};
             openController(controller, repo);
-            CHECK(recoveryError(controller, "tracked.txt") == problem_text::detail(copiedLaunchFailure()));
+            CHECK(recoveryError(controller, "tracked.txt") == problem_text::text(ProblemCode::RecoveryCopiedLaunch));
             if (change == QStringLiteral("copied"))
                 copyInPlace(target);
             else
@@ -816,7 +817,8 @@ int main(int argc, char **argv)
             if (change == QStringLiteral("copied")) {
                 pump(
                     [&] {
-                        return recoveryError(controller, "tracked.txt") != problem_text::detail(copiedLaunchFailure());
+                        return recoveryError(controller, "tracked.txt")
+                            != problem_text::text(ProblemCode::RecoveryCopiedLaunch);
                     },
                     change + QStringLiteral(": the attach did not settle the copied launch"));
                 CHECK(recoveryError(controller, "tracked.txt")
@@ -825,7 +827,8 @@ int main(int argc, char **argv)
                 // The launcher's MERGED digest is not the launch bytes, so the attach started no
                 // check: with no task in flight, nothing can clear the error later.
                 CHECK_EQ(controller.coordinator()->pendingTasks(), 0);
-                CHECK(recoveryError(controller, "tracked.txt") == problem_text::detail(copiedLaunchFailure()));
+                CHECK(recoveryError(controller, "tracked.txt")
+                      == problem_text::text(ProblemCode::RecoveryCopiedLaunch));
             }
             checkCopiedLaunchRefused(controller, launcher, target, expected, expected);
         }
@@ -850,7 +853,7 @@ int main(int argc, char **argv)
                 gate.releaseAll();
             });
             openController(controller, repo);
-            CHECK(recoveryError(controller, "tracked.txt") == problem_text::detail(copiedLaunchFailure()));
+            CHECK(recoveryError(controller, "tracked.txt") == problem_text::text(ProblemCode::RecoveryCopiedLaunch));
             gate.close(QStringLiteral("ls-files"));
             QTemporaryDir sides;
             QProcess launcher;
@@ -861,13 +864,16 @@ int main(int argc, char **argv)
             CHECK(held.size() == 1);
             CHECK(gate.arguments(held.front()).contains("ls-files --stage -z -- tracked.txt"));
             gate.open();
-            CHECK(recoveryError(controller, "tracked.txt") == problem_text::detail(copiedLaunchFailure()));
+            CHECK(recoveryError(controller, "tracked.txt") == problem_text::text(ProblemCode::RecoveryCopiedLaunch));
             if (change == QStringLiteral("edited")) writeFile(target, "written by another editor\n");
             if (change == QStringLiteral("copied")) copyInPlace(target);
             const auto outside = readFile(target);
             gate.release(held.front());
             pump(
-                [&] { return recoveryError(controller, "tracked.txt") != problem_text::detail(copiedLaunchFailure()); },
+                [&] {
+                    return recoveryError(controller, "tracked.txt")
+                        != problem_text::text(ProblemCode::RecoveryCopiedLaunch);
+                },
                 change + QStringLiteral(": the revalidation did not settle the copied launch"));
             if (change == QStringLiteral("none")) {
                 CHECK(!controller.store()->hasRecoveryFailure(QByteArray("tracked.txt").toHex().toStdString()));

@@ -23,8 +23,7 @@ Kirigami.ApplicationWindow {
     // Hiding the file list keeps the selected file, the editor location and the unsaved result.
     property bool fileListVisible: true
     readonly property bool supportedSelection: selectedFile.supported
-    readonly property bool binarySelection: OutsideAppText.binaryExcluded(
-        selectedFile.support === FileStates.SupportKind.OutsideApp, selectedFile.supportDetail, selectedFile.pathBytes)
+    readonly property bool binarySelection: selectedFile.binaryExcluded
     readonly property string selectedAddCommand: OutsideAppText.gitAddCommand(selectedFile.pathBytes)
     // Fills %1, %2 and so on in one pass, so repository text in a value is never
     // read as another placeholder.

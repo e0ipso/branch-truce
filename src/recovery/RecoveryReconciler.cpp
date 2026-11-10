@@ -98,7 +98,7 @@ Problem recoverStaging(FileSession &file, std::vector<RecoveryMutation> &mutatio
         const auto committed = lease.commit(recoveryTransaction(candidate, RecoveryAction::StageOutcome,
                                                                 QUuid::createUuid().toString(QUuid::WithoutBraces),
                                                                 file.current().draft.text));
-        if (!committed.succeeded) return {ProblemCode::RecoveryStagingNotRetained, {committed.error}};
+        if (!committed.succeeded) return Problem{ProblemCode::RecoveryStagingNotRetained}.wrapping(committed.problem);
         const auto revision = written->id;
         file = std::move(candidate);
         completeMutations(mutations, file.id(), MutationKind::Staging, revision);
@@ -106,8 +106,6 @@ Problem recoverStaging(FileSession &file, std::vector<RecoveryMutation> &mutatio
     return {};
 }
 }
-
-QString copiedLaunchFailure() { return Problem{ProblemCode::RecoveryCopiedLaunch}.encoded(); }
 
 Reconciliation reconcile(FileSession &file, std::vector<RecoveryMutation> &mutations,
                          const std::vector<FileSession> &observed, const git::RepositoryContext &repository,

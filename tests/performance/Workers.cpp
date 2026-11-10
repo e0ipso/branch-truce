@@ -397,10 +397,10 @@ int recoveryWorker(const WorkerArgs &args)
     const auto lease = branch_truce::storage::RecoveryLease::acquire(directory);
     const auto committed = lease
         ? lease->commit(transaction)
-        : branch_truce::storage::RecoveryCommit{false, QStringLiteral("recovery store is held")};
+        : branch_truce::storage::RecoveryCommit{false, branch_truce::ProblemCode::RecoveryStoreHeld};
     const auto commitMs = since(started);
     const auto listing = store.read();
-    QString payloadError;
+    branch_truce::Problem payloadError;
     const auto loaded = store.payload(hash, &payloadError);
     const bool acknowledged =
         committed.succeeded && listing.succeeded && listing.transactions.size() == 1 && loaded == payload;
@@ -411,7 +411,7 @@ int recoveryWorker(const WorkerArgs &args)
     std::ostringstream detail;
     detail << "acknowledged=" << (acknowledged ? 1 : 0) << " transactions=" << listing.transactions.size()
            << " incompleteTail=" << (listing.incompleteTail ? 1 : 0)
-           << " error=" << sanitize((committed.succeeded ? payloadError : committed.error).toStdString());
+           << " error=" << sanitize((committed.succeeded ? payloadError : committed.problem).encoded().toStdString());
     record.detail = detail.str();
     if (badDigest || overload) {
         record.outcome = acknowledged ? "fabricated-success" : "explicit-failure";
@@ -435,7 +435,7 @@ int recoveryWorker(const WorkerArgs &args)
     const auto reloadStarted = std::chrono::steady_clock::now();
     branch_truce::storage::RecoveryStore again(directory);
     const auto reread = again.read();
-    QString againError;
+    branch_truce::Problem againError;
     const auto againBytes = again.payload(hash, &againError);
     auto reload = baseRecord("recovery", name + "-reload", "reload", static_cast<std::uint64_t>(payload.size()), 1,
                              static_cast<std::uint64_t>(payload.size()));

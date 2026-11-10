@@ -494,8 +494,7 @@ public:
                       == (scenario == 0       ? MutationObservation::NotAttempted
                               : scenario == 1 ? MutationObservation::ObservedChanged
                                               : MutationObservation::Uncertain));
-                CHECK(!f.finished[0].result.diagnostic.isEmpty()
-                      && f.finished[1].result.status == TaskStatus::Succeeded);
+                CHECK(!f.finished[0].result.problem.isEmpty() && f.finished[1].result.status == TaskStatus::Succeeded);
                 CHECK(f.coordinator->mutationOutcomes().size() == 2);
             }
         });

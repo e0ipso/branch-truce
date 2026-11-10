@@ -3,6 +3,7 @@
 #include "mergetool/MergetoolFiles.h"
 #include "mergetool/MergetoolIntake.h"
 #include "mergetool/MergetoolMessages.h"
+#include "problems/ProblemText.h"
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
@@ -107,7 +108,7 @@ QString resolvedRefusal(const git::GitProgram &git, const QByteArray &mergedPath
 {
     QByteArray bytes;
     Problem error;
-    if (!readMergetoolFile(mergedPath, &bytes, &error)) return error.encoded();
+    if (!readMergetoolFile(mergedPath, &bytes, &error)) return problem_text::text(error);
     git::Request request;
     request.operation = git::Operation::CanonicalizeText;
     request.directory = QDir::currentPath();
@@ -225,9 +226,6 @@ int runMergetoolLauncher(const QStringList &arguments, const git::GitProgram &gi
         waitMs = static_cast<qint64>(seconds * 1000);
     }
     const auto startWindow = parser.isSet(noWindow) ? MergetoolWindowStarter{} : options.startWindow;
-    const auto refuse = [&options](const QString &detail) {
-        return fail(options.describe ? options.describe(detail) : detail);
-    };
     const auto mergedPath = qgetenv("MERGED");
     const auto repositoryPath = mergetoolRepositoryPath(mergedPath);
     if (!repositoryPath) return fail(Text::tr("MERGED is missing or is not a repository path."));
@@ -239,14 +237,14 @@ int runMergetoolLauncher(const QStringList &arguments, const git::GitProgram &gi
     const auto discovered = git::runBlocking(git, request);
     if (discovered.outcome != git::Outcome::Success || !discovered.repository.supported) {
         const auto reason = !discovered.problem.isEmpty() ? discovered.problem : discovered.repository.problem;
-        return refuse(!reason.isEmpty() ? reason.encoded()
-                                        : Text::tr("This repository operation cannot join a mergetool session."));
+        return fail(!reason.isEmpty() ? problem_text::text(reason)
+                                      : Text::tr("This repository operation cannot join a mergetool session."));
     }
 
     MergetoolSources sources;
     sources.path = *repositoryPath;
     Problem error;
-    if (!readMergetoolFile(mergedPath, &sources.merged, &error)) return refuse(error.encoded());
+    if (!readMergetoolFile(mergedPath, &sources.merged, &error)) return fail(problem_text::text(error));
     const auto readSide = [&](const char *name, QByteArray *bytes, bool *present) {
         const auto path = qgetenv(name);
         if (path.isEmpty()) return true;
@@ -256,16 +254,16 @@ int runMergetoolLauncher(const QStringList &arguments, const git::GitProgram &gi
     if (!readSide("BASE", &sources.base, &sources.basePresent)
         || !readSide("LOCAL", &sources.local, &sources.localPresent)
         || !readSide("REMOTE", &sources.remote, &sources.remotePresent))
-        return refuse(error.encoded());
+        return fail(problem_text::text(error));
 
     // The window and every launcher of this user meet in one private directory.
     const auto directory = mergetoolSocketDirectory(qgetenv("XDG_RUNTIME_DIR"));
-    if (!prepareMergetoolSocketDirectory(directory, &error)) return refuse(error.encoded());
+    if (!prepareMergetoolSocketDirectory(directory, &error)) return fail(problem_text::text(error));
     const auto key = mergetoolSessionKey(discovered.repository);
     const auto invocation = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const auto intake = writeMergetoolIntake(mergetoolIntakeRoot(directory), key, invocation, sources, &error);
     if (intake.isEmpty())
-        return refuse(error.isEmpty() ? Text::tr("The mergetool inputs could not be kept.") : error.encoded());
+        return fail(error.isEmpty() ? Text::tr("The mergetool inputs could not be kept.") : problem_text::text(error));
     // The session reads the copies when it accepts the attach; nothing needs them after this launcher.
     const auto removeIntake = qScopeGuard([&intake] { removeMergetoolIntake(intake); });
 
@@ -274,7 +272,7 @@ int runMergetoolLauncher(const QStringList &arguments, const git::GitProgram &gi
     bool connected = connectSession(&socket, server, 5);
     if (!connected && startWindow) {
         if (const auto refusal = startWindow(discovered.repository.worktreeRoot, sources.path); !refusal.isEmpty())
-            return refuse(refusal);
+            return fail(refusal);
         connected = connectUntilDeadline(&socket, server, waitMs);
     }
     if (!connected) return fail(Text::tr("No Branch Truce session is listening for this repository."));
@@ -287,7 +285,7 @@ int runMergetoolLauncher(const QStringList &arguments, const git::GitProgram &gi
     QByteArray buffer;
     if (const auto refusal = attachRefusal(readReply(socket, buffer, options.replyWaitMs), invocation);
         !refusal.isEmpty())
-        return refuse(refusal);
+        return fail(refusal);
 
     const auto decision = readReply(socket, buffer, -1);
     const auto *resolved = decision.message ? std::get_if<ResolvedMessage>(&*decision.message) : nullptr;
@@ -300,7 +298,7 @@ int runMergetoolLauncher(const QStringList &arguments, const git::GitProgram &gi
         outcome = !decision.failure.isEmpty() ? decision.failure
                                               : Text::tr("The launcher closed before an explicit decision.");
     }
-    if (!restoreMergetoolFile(mergedPath, sources.merged, &error)) return refuse(error.encoded());
-    return outcome.isEmpty() ? 1 : refuse(outcome);
+    if (!restoreMergetoolFile(mergedPath, sources.merged, &error)) return fail(problem_text::text(error));
+    return outcome.isEmpty() ? 1 : fail(outcome);
 }
 }

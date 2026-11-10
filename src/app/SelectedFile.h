@@ -40,6 +40,7 @@ class SelectedFile : public QObject {
     // Shorthand for support == Supported.
     Q_PROPERTY(bool supported READ supported NOTIFY statusChanged)
     Q_PROPERTY(QString supportDetail READ supportDetail NOTIFY statusChanged)
+    Q_PROPERTY(bool binaryExcluded READ binaryExcluded NOTIFY statusChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(branch_truce::FileStates::StatusKind statusKind READ statusKind NOTIFY statusChanged)
     Q_PROPERTY(bool unsaved READ unsaved NOTIFY statusChanged)
@@ -93,6 +94,7 @@ public:
     }
     [[nodiscard]] bool supported() const { return support() == FileStates::SupportKind::Supported; }
     [[nodiscard]] QString supportDetail() const { return role(SessionModel::SupportDetailRole).toString(); }
+    [[nodiscard]] bool binaryExcluded() const { return role(SessionModel::BinaryExcludedRole).toBool(); }
     [[nodiscard]] QString status() const { return role(SessionModel::StatusRole).toString(); }
     // Unreadable without a selected file.
     [[nodiscard]] FileStates::StatusKind statusKind() const

@@ -1,5 +1,6 @@
 // Resolution publishing writes a reviewed result and verifies its Git staging or parent handoff.
 #include "publication/ResolutionPublisher.h"
+#include "problems/ProblemText.h"
 #include "recovery/SessionIdentity.h"
 
 #include <QHash>
@@ -79,7 +80,7 @@ ResolutionPublisher::readBaselines(const QString &worktreeRoot, const std::vecto
             storage::captureDestination(worktreeRoot, QByteArray::fromStdString(session.path()), destinations);
         const auto &launch = session.snapshots()->launchResult;
         if (!captured.destination)
-            baseline.diagnostic = captured.problem.encoded();
+            baseline.diagnostic = problem_text::text(captured.problem);
         else if (captured.destination->identity() != launch.identity
                  || captured.destination->bytes().toStdString() != launch.text.bytes) {
             baseline.diagnostic = tr("The repository file no longer matches the captured launch result.");
@@ -293,7 +294,7 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
         return recordWrite(fileId, expected, Outcome::Failed,
                            serialized.problem.isEmpty()
                                ? tr("Repository write failed. The saved draft is still available.")
-                               : serialized.problem.encoded());
+                               : problem_text::text(serialized.problem));
     auto baseline = baselines_.find(fileId);
     if (baseline == baselines_.end() || !baseline->second.destination) {
         const auto missingLaunch = [&] {
@@ -317,7 +318,7 @@ ResolutionPublisher::StartResult ResolutionPublisher::start(const std::string &f
                                    ? tr("The repository file no longer matches the written revision.")
                                    : (live.problem.isEmpty() ? tr("Repository write failed. No launch destination "
                                                                   "is available, and the file is unresolved.")
-                                                             : live.problem.encoded()));
+                                                             : problem_text::text(live.problem)));
         }
         if (baseline == baselines_.end())
             baselines_.emplace(fileId, Baseline{std::move(live.destination), QString{}});
@@ -417,7 +418,7 @@ void ResolutionPublisher::prepared(const git::TextConversionResult &result)
         fail(uncertain ? Outcome::Uncertain : Outcome::Failed,
              result.problem.isEmpty()
                  ? tr("Repository write failed. The saved draft is still available, and the file is unresolved.")
-                 : result.problem.encoded(),
+                 : problem_text::text(result.problem),
              preserveWrite());
         return;
     }
@@ -499,7 +500,7 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
         && (!current.destination || current.destination->bytes() != attempt_->serialized)) {
         fail(Outcome::Failed,
              current.problem.isEmpty() ? tr("The repository file no longer matches the written revision.")
-                                       : current.problem.encoded(),
+                                       : problem_text::text(current.problem),
              false);
         return;
     }
@@ -531,7 +532,7 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
             fail(Outcome::Failed,
                  live.problem.isEmpty()
                      ? tr("The repository file changed while Git was waiting. The draft was not published.")
-                     : live.problem.encoded(),
+                     : problem_text::text(live.problem),
                  false);
             return;
         }
@@ -549,14 +550,12 @@ void ResolutionPublisher::indexed(const TaskCompletion &completion)
         [evidence, baseline, bytes, mode](const TaskInput &, const TaskControl &control) {
             *evidence = storage::publishDestination(*baseline, bytes, mode, [&] { return control.beginMutation(); });
             TaskResult result;
-            result.diagnostic = evidence->problem.encoded();
+            result.problem = evidence->problem;
             if (evidence->state == storage::PublicationState::Published
                 && evidence->failure == storage::DestinationFailure::None && evidence->destination)
                 result.status = TaskStatus::Succeeded;
             else
                 result.status = TaskStatus::Failed;
-            if (evidence->state == storage::PublicationState::Uncertain)
-                result.diagnostic = evidence->problem.encoded();
             return result;
         },
         [baseline, bytes, files = destinations_](const TaskInput &) {
@@ -591,9 +590,9 @@ void ResolutionPublisher::published(const TaskCompletion &completion, const stor
         || (completion.result.mutation != MutationObservation::ObservedChanged
             && completion.result.mutation != MutationObservation::ObservedUnchanged)) {
         fail(uncertain ? Outcome::Uncertain : Outcome::Failed,
-             completion.result.diagnostic.isEmpty()
+             completion.result.problem.isEmpty()
                  ? tr("Repository write failed. The saved draft is still available, and the file is unresolved.")
-                 : completion.result.diagnostic,
+                 : problem_text::text(completion.result.problem),
              false);
         return;
     }
@@ -627,7 +626,9 @@ void ResolutionPublisher::staged(const TaskCompletion &completion)
     const auto outcome = failedObservation(completion.result);
     if (completion.result.status != TaskStatus::Succeeded || outcome == Outcome::Uncertain) {
         fail(outcome,
-             completion.result.diagnostic.isEmpty() ? tr("Written, unresolved.") : completion.result.diagnostic, true);
+             completion.result.problem.isEmpty() ? tr("Written, unresolved.")
+                                                 : problem_text::text(completion.result.problem),
+             true);
         return;
     }
     startVerify();
@@ -639,8 +640,8 @@ void ResolutionPublisher::parentPreflight(const TaskCompletion &completion)
     if (completion.result.status != TaskStatus::Succeeded || !completion.result.gitResult
         || completion.result.gitResult->outcome != git::Outcome::Success) {
         fail(failedObservation(completion.result),
-             completion.result.diagnostic.isEmpty() ? tr("Written, unresolved. Git cannot stage this path yet.")
-                                                    : completion.result.diagnostic,
+             completion.result.problem.isEmpty() ? tr("Written, unresolved. Git cannot stage this path yet.")
+                                                 : problem_text::text(completion.result.problem),
              true);
         return;
     }
@@ -668,7 +669,7 @@ void ResolutionPublisher::verified(const git::TextConversionResult &result)
     }
     fail(result.outcome == git::Outcome::TimedOut ? Outcome::Uncertain : Outcome::Failed,
          result.problem.isEmpty() ? tr("Written, unresolved. The staged result does not match the reviewed revision.")
-                                  : result.problem.encoded(),
+                                  : problem_text::text(result.problem),
          true);
 }
 

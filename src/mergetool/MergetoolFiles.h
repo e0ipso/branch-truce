@@ -1,8 +1,8 @@
 // Mergetool files are the paths Git hands a launcher: read without following links and restored whole.
 #pragma once
 
+#include "problems/Problem.h"
 #include "storage/FileSystem.h"
-#include "storage/Problem.h"
 #include <QByteArray>
 #include <QString>
 #include <optional>

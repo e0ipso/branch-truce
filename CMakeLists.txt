@@ -54,6 +54,7 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     # Reverse-DNS form of the organization domain canpicasoft.com. It names
     # the desktop entry, metainfo and icon, and the Wayland app id.
     set(BRANCH_TRUCE_APP_ID "com.canpicasoft.branch-truce")
+    add_subdirectory(src/problems)
     add_subdirectory(src/git)
     add_subdirectory(src/storage)
     add_subdirectory(src/recovery)

@@ -43,7 +43,7 @@ public:
     MergetoolSession(ResolutionPublisher &publisher, SessionStore &files, SessionCoordinator &coordinator,
                      std::function<git::RepositoryContext()> loadedRepository, Config config,
                      QObject *parent = nullptr);
-    // error gets a translated sentence or an encoded Problem.
+    // error gets why the session cannot listen, translated.
     Listen listen(const git::RepositoryContext &repository, QString *error);
     [[nodiscard]] bool listening() const { return server_.listening(); }
     [[nodiscard]] bool parentSessionActive() const { return parentSession_; }
@@ -120,7 +120,7 @@ private:
     [[nodiscard]] qsizetype indexOfConnection(quint64 connection) const;
     [[nodiscard]] qsizetype indexOfPath(const QByteArray &path) const;
     [[nodiscard]] bool launchedWithCapturedBytes(const FileSession &file) const;
-    void settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity, const QString &failure);
+    void settleCopiedLaunch(const std::string &fileId, const SnapshotFileIdentity &identity, const Problem &failure);
 
     ResolutionPublisher &publisher_;
     SessionStore &files_;

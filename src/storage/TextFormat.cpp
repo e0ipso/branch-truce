@@ -44,7 +44,7 @@ QByteArray encode(const QString &text, const TextFormat &format)
     }
     return bytes;
 }
-TextResult failure(TextFailure reason, Problem problem) { return {std::nullopt, reason, std::move(problem)}; }
+TextResult failure(Problem problem) { return {std::nullopt, std::move(problem)}; }
 } // namespace
 
 QByteArray encodingName(Encoding encoding)
@@ -103,20 +103,19 @@ TextResult decodeText(const QByteArray &bytes, const QByteArray &workingTreeEnco
             content.remove(0, 3);
         }
         text = QString::fromUtf8(content);
-        if (text.toUtf8() != content) return failure(TextFailure::InvalidUtf8, ProblemCode::TextInvalidUtf8);
+        if (text.toUtf8() != content) return failure(ProblemCode::TextInvalidUtf8);
     } else if (name == "UTF16" || name == "UTF16LE" || name == "UTF16BE") {
         const bool littleBom = content.startsWith(QByteArray::fromHex("fffe"));
         const bool bigBom = content.startsWith(QByteArray::fromHex("feff"));
-        if (name == "UTF16" && !littleBom && !bigBom)
-            return failure(TextFailure::MissingByteOrderMark, ProblemCode::TextMissingByteOrderMark);
+        if (name == "UTF16" && !littleBom && !bigBom) return failure(ProblemCode::TextMissingByteOrderMark);
         if ((name == "UTF16LE" && bigBom) || (name == "UTF16BE" && littleBom)) {
-            return failure(TextFailure::ContradictoryByteOrderMark, ProblemCode::TextContradictoryByteOrderMark);
+            return failure(ProblemCode::TextContradictoryByteOrderMark);
         }
         format.encoding =
             name == "UTF16BE" || (name == "UTF16" && bigBom) ? Encoding::Utf16BigEndian : Encoding::Utf16LittleEndian;
         format.bom = littleBom || bigBom;
         if (format.bom) content.remove(0, 2);
-        if (content.size() % 2 != 0) return failure(TextFailure::TruncatedUtf16, ProblemCode::TextTruncatedUtf16);
+        if (content.size() % 2 != 0) return failure(ProblemCode::TextTruncatedUtf16);
         std::u16string units;
         for (qsizetype i = 0; i < content.size(); i += 2) {
             const auto a = static_cast<unsigned char>(content[i]);
@@ -127,45 +126,44 @@ TextResult decodeText(const QByteArray &bytes, const QByteArray &workingTreeEnco
         for (std::size_t i = 0; i < units.size(); ++i) {
             if (QChar::isHighSurrogate(units[i])) {
                 if (++i == units.size() || !QChar::isLowSurrogate(units[i]))
-                    return failure(TextFailure::InvalidSurrogate, ProblemCode::TextInvalidSurrogatePair);
+                    return failure(ProblemCode::TextInvalidSurrogatePair);
             } else if (QChar::isLowSurrogate(units[i]))
-                return failure(TextFailure::InvalidSurrogate, ProblemCode::TextUnpairedSurrogate);
+                return failure(ProblemCode::TextUnpairedSurrogate);
         }
         text = QString::fromUtf16(units.data(), static_cast<qsizetype>(units.size()));
     } else {
-        return failure(TextFailure::UnsupportedEncoding,
-                       Problem{ProblemCode::TextUnsupportedEncoding, {QString::fromLatin1(workingTreeEncoding)}});
+        return failure(Problem{ProblemCode::TextUnsupportedEncoding, {QString::fromLatin1(workingTreeEncoding)}});
     }
-    if (!textCharacters(text)) return failure(TextFailure::ControlCharacters, ProblemCode::TextControlCharacters);
+    if (!textCharacters(text)) return failure(ProblemCode::TextControlCharacters);
     bool lf = false;
     bool crlf = false;
     for (qsizetype i = 0; i < text.size(); ++i) {
         if (text[i] == QLatin1Char('\r')) {
             if (i + 1 == text.size() || text[++i] != QLatin1Char('\n'))
-                return failure(TextFailure::BareCarriageReturn, ProblemCode::TextBareCarriageReturn);
+                return failure(ProblemCode::TextBareCarriageReturn);
             crlf = true;
         } else if (text[i] == QLatin1Char('\n'))
             lf = true;
     }
-    if (lf && crlf) return failure(TextFailure::MixedNewlines, ProblemCode::TextMixedNewlines);
+    if (lf && crlf) return failure(ProblemCode::TextMixedNewlines);
     format.newline = crlf ? Newline::CrLf : Newline::Lf;
     format.finalNewline = text.endsWith(QLatin1Char('\n'));
-    if (encode(text, format) != bytes) return failure(TextFailure::NoRoundTrip, ProblemCode::TextNoRoundTrip);
+    if (encode(text, format) != bytes) return failure(ProblemCode::TextNoRoundTrip);
     text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-    return {TextDocument{text.toUtf8(), bytes, format}, TextFailure::None, {}};
+    return {TextDocument{text.toUtf8(), bytes, format}, {}};
 }
 
 TextResult serializeText(const QByteArray &utf8, const TextFormat &format)
 {
     auto text = QString::fromUtf8(utf8);
     if (text.toUtf8() != utf8 || !textCharacters(text) || text.contains(QLatin1Char('\r'))) {
-        return failure(TextFailure::InvalidEditableText, ProblemCode::TextInvalidEditable);
+        return failure(ProblemCode::TextInvalidEditable);
     }
     if (format.newline == Newline::CrLf) text.replace(QStringLiteral("\n"), QStringLiteral("\r\n"));
     const auto bytes = encode(text, format);
     auto decoded = decodeText(bytes, encodingName(format.encoding));
     if (!decoded.document || decoded.document->utf8 != utf8 || decoded.document->format.bom != format.bom) {
-        return failure(TextFailure::NoRoundTrip, ProblemCode::TextSerializedNoRoundTrip);
+        return failure(ProblemCode::TextSerializedNoRoundTrip);
     }
     // A file without line separators still retains the selected newline policy.
     decoded.document->format.newline = format.newline;

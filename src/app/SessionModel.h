@@ -46,6 +46,7 @@ public:
         CurrentRevisionRole,
         SupportRole,
         SupportDetailRole,
+        BinaryExcludedRole,
         UndecidedRole,
         UnsavedRole,
         ReviewNeededRole,

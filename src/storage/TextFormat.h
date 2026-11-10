@@ -2,7 +2,7 @@
 #pragma once
 
 #include "core/FileSnapshot.h"
-#include "storage/Problem.h"
+#include "problems/Problem.h"
 #include <QByteArray>
 #include <QString>
 #include <optional>
@@ -19,25 +19,9 @@ struct TextDocument {
     QByteArray originalBytes;
     TextFormat format;
 };
-// Why text could not be decoded, serialized or given a result format.
-enum class TextFailure {
-    None,
-    InvalidUtf8,
-    UnsupportedEncoding,
-    MissingByteOrderMark,
-    ContradictoryByteOrderMark,
-    TruncatedUtf16,
-    InvalidSurrogate,
-    ControlCharacters,
-    BareCarriageReturn,
-    MixedNewlines,
-    NoRoundTrip,
-    InvalidEditableText,
-    UnsupportedEol
-};
+// The document, or why text could not be decoded or serialized.
 struct TextResult {
     std::optional<TextDocument> document;
-    TextFailure failure = TextFailure::None;
     Problem problem;
 };
 

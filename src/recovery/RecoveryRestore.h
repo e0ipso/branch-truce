@@ -39,7 +39,7 @@ struct RecoveryRestore {
     // device, index entries and conversion policy still match the launch
     // capture, only the inode and timestamps changed, as when git mergetool
     // moves MERGED aside and copies it back. Each keeps its entry in the
-    // adopted store's failures (copiedLaunchFailure) with the identity
+    // adopted store's failures (RecoveryCopiedLaunch) with the identity
     // validation observed; only a waiting launcher whose MERGED copy holds the
     // launch bytes may clear it.
     std::map<std::string, SnapshotFileIdentity> copiedLaunches;

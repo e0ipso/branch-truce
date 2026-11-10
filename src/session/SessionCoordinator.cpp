@@ -1,5 +1,6 @@
 // The session coordinator schedules guarded save and publication work and reconciles cancelled mutations.
 #include "session/SessionCoordinator.h"
+#include "problems/ProblemText.h"
 #include "recovery/RecoveryRestore.h"
 #include <QDir>
 #include <QFileInfo>
@@ -141,11 +142,7 @@ public:
             if (!jobs.contains(id) || job->running) continue;
             if (disposition(*job) != TaskDisposition::Current) {
                 finish(job,
-                       {TaskStatus::Cancelled,
-                        MutationObservation::NotAttempted,
-                        {},
-                        QStringLiteral("Task cancelled or superseded before execution"),
-                        {}});
+                       {TaskStatus::Cancelled, MutationObservation::NotAttempted, {}, ProblemCode::TaskSuperseded, {}});
                 if (!alive) return;
                 continue;
             }
@@ -157,12 +154,10 @@ public:
                 const auto leaseError = store.ensureRecoveryLease();
                 if (!file || store.hasPendingRecovery() || store.hasRecoveryFailure(file->id())
                     || !leaseError.isEmpty()) {
-                    finish(job,
-                           {TaskStatus::Failed,
-                            MutationObservation::NotAttempted,
-                            {},
-                            QStringLiteral("Mutation blocked by unavailable recovery storage: ") + leaseError,
-                            {}});
+                    const auto blocked = leaseError.isEmpty()
+                        ? Problem{ProblemCode::TaskRecoveryBlocked}
+                        : Problem{ProblemCode::TaskRecoveryUnavailable}.wrapping(leaseError);
+                    finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, blocked, {}});
                     if (!alive) return;
                     continue;
                 }
@@ -171,8 +166,8 @@ public:
                                           {}};
                 const auto committed = store.commitRecord(mutationRecoveryTransaction(*file, intent));
                 if (!committed.succeeded) {
-                    store.recordRecoveryFailure(file->id(), committed.error);
-                    finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, committed.error, {}});
+                    store.recordRecoveryFailure(file->id(), committed.problem);
+                    finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, committed.problem, {}});
                     if (!alive) return;
                     continue;
                 }
@@ -198,12 +193,12 @@ public:
                 result = job->work(job->input, job->control);
         } catch (...) {
             result.status = TaskStatus::Failed;
-            result.diagnostic = QStringLiteral("Background task threw an exception");
+            result.problem = ProblemCode::TaskThrew;
         }
         result.mutation = MutationObservation::NotAttempted;
         if (job->mutation && !job->control.mutationStarted() && result.status == TaskStatus::Succeeded) {
             result.status = TaskStatus::Failed;
-            result.diagnostic = QStringLiteral("Mutation did not reach admission");
+            result.problem = ProblemCode::TaskNotAdmitted;
         }
         if (job->control.mutationStarted()) {
             result.mutation = MutationObservation::Uncertain;
@@ -211,13 +206,13 @@ public:
                 const auto observed = job->inspect(job->input);
                 if (observed != MutationObservation::NotAttempted) result.mutation = observed;
             } catch (...) {
-                result.diagnostic += QStringLiteral("; mutation inspection failed, outcome uncertain");
+                result.problem = Problem{ProblemCode::TaskInspectionFailed}.wrapping(result.problem);
             }
         }
         if (job->control.cancellationRequested()) result.status = TaskStatus::Cancelled;
         if (result.status == TaskStatus::Succeeded && result.mutation == MutationObservation::Uncertain) {
             result.status = TaskStatus::Failed;
-            result.diagnostic += QStringLiteral("; mutation outcome could not be verified");
+            result.problem = Problem{ProblemCode::TaskUnverified}.wrapping(result.problem);
         }
         return result;
     }
@@ -254,7 +249,7 @@ public:
             case git::Mutation::Uncertain: result.mutation = MutationObservation::Uncertain; break;
             }
             result.data = value.standardOutput;
-            result.diagnostic = value.problem.encoded();
+            result.problem = value.problem;
             result.gitResult = value;
             job->adapter = nullptr;
             adapter->deleteLater();
@@ -263,12 +258,7 @@ public:
         if (!adapter->start(*job->gitRequest)) {
             job->adapter = nullptr;
             adapter->deleteLater();
-            finish(job,
-                   {TaskStatus::Failed,
-                    MutationObservation::NotAttempted,
-                    {},
-                    QStringLiteral("Git adapter rejected task admission"),
-                    {}});
+            finish(job, {TaskStatus::Failed, MutationObservation::NotAttempted, {}, ProblemCode::GitStartRefused, {}});
         }
     }
     void finish(const std::shared_ptr<Job> &job, TaskResult result)
@@ -286,10 +276,11 @@ public:
                 result.status = TaskStatus::Failed;
                 if (result.mutation != MutationObservation::NotAttempted)
                     result.mutation = MutationObservation::Uncertain;
-                result.diagnostic +=
-                    QStringLiteral("; recovery could not retain the mutation outcome: ") + committed.error;
+                result.problem =
+                    Problem{ProblemCode::TaskOutcomeNotRetained, {problem_text::text(committed.problem)}}.wrapping(
+                        result.problem);
                 if (job->input.stamp.worktree == worktree && lease == store.recoveryLease())
-                    store.recordRecoveryFailure(job->input.stamp.fileId, result.diagnostic);
+                    store.recordRecoveryFailure(job->input.stamp.fileId, result.problem);
             }
         }
         const auto id = job->input.stamp.id;

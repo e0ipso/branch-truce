@@ -1,9 +1,9 @@
 // The session model lists the store's files for the window, unresolved files first.
 #include "SessionModel.h"
 #include "EngineText.h"
-#include "ProblemText.h"
 #include "QtText.h"
 #include "git/GitAdapter.h"
+#include "problems/ProblemText.h"
 #include <QMimeDatabase>
 #include <algorithm>
 #include <numeric>
@@ -148,6 +148,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case CurrentRevisionRole: return qt_text::revision(file.current().id);
     case SupportRole: return QVariant::fromValue(FilePresentation::supportKind(file.support()));
     case SupportDetailRole: return engine_text::supportDetail(file);
+    case BinaryExcludedRole: return engine_text::binaryExcluded(file);
     case UndecidedRole: return QVariant::fromValue(static_cast<qulonglong>(facts.undecided));
     case ConflictCountRole: return QVariant::fromValue(static_cast<qulonglong>(file.conflictCount()));
     case UnsavedRole: return presentation_.unsaved(row);
@@ -161,7 +162,7 @@ QVariant SessionModel::data(const QModelIndex &index, int role) const
     case PendingInputRole: return pendingInput;
     case PendingTextRole: return pendingInput ? utf8(pendingDraft->text) : QString{};
     case RecoveryStateRole: return QVariant::fromValue(presentation_.recoveryState(row));
-    case RecoveryErrorRole: return problem_text::detail(recoveryFailed ? *failure : store_.pendingError(file.id()));
+    case RecoveryErrorRole: return problem_text::text(recoveryFailed ? *failure : store_.pendingError(file.id()));
     case ProgressRole: return presentation_.progressData(row);
     case StatusIconRole: return FilePresentation::categoryIcon(presentation_.route(row).category);
     case StatusLineRole: return presentation_.statusLine(row);
@@ -187,6 +188,7 @@ QHash<int, QByteArray> SessionModel::roleNames() const
             {CurrentRevisionRole, "currentRevision"},
             {SupportRole, "support"},
             {SupportDetailRole, "supportDetail"},
+            {BinaryExcludedRole, "binaryExcluded"},
             {UndecidedRole, "undecidedCount"},
             {UnsavedRole, "unsaved"},
             {ReviewNeededRole, "reviewNeeded"},

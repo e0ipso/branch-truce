@@ -205,7 +205,7 @@ void startup_routes::addCaptureCases(test_support::Suite &suite, const QString &
                     const auto &state = recovered.transactions[row].state;
                     const auto sources = state.value("snapshots").toObject();
                     CHECK(!sources.isEmpty() && state.value("support") == "supported");
-                    QString error;
+                    Problem error;
                     // A launch record inserts its whole text.
                     const auto encodedText = state.value("current")
                                                  .toObject()

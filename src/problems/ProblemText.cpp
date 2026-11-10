@@ -2,8 +2,6 @@
 #include "ProblemText.h"
 
 #include <QCoreApplication>
-#include <QJsonDocument>
-#include <QJsonParseError>
 
 namespace branch_truce::problem_text {
 namespace {
@@ -28,7 +26,13 @@ Wrap wrap(ProblemCode code)
     case ProblemCode::ClassificationUnsupportedOperation:
     case ProblemCode::ClassificationStageNotEditable:
     case ProblemCode::RecoveryStagingNotRetained:
-    case ProblemCode::RecoveryFileUnvalidated: return Wrap::Argument;
+    case ProblemCode::RecoveryFileUnvalidated:
+    case ProblemCode::RecoverySessionRejected:
+    case ProblemCode::RecoverySetAsideFailed:
+    case ProblemCode::TaskRecoveryUnavailable: return Wrap::Argument;
+    case ProblemCode::TaskInspectionFailed:
+    case ProblemCode::TaskUnverified:
+    case ProblemCode::TaskOutcomeNotRetained:
     case ProblemCode::GitCleanupFailed:
     case ProblemCode::GitReinspectionTimedOut:
     case ProblemCode::GitExecutableChangedBeforeReinspection:
@@ -230,6 +234,9 @@ QString format(ProblemCode code)
         return Text::tr("Could not sync recovery storage; pending input is retained for retry.");
     case ProblemCode::RecoveryCommitFailed:
         return Text::tr("Recovery commit failed; pending input is retained for retry.");
+    case ProblemCode::RecoveryStoreHeld:
+        return Text::tr("Recovery session is already open or unavailable; close its other window before retrying.");
+    case ProblemCode::RecoveryStoreUnavailable: return Text::tr("Recovery storage is unavailable or unsafe.");
     case ProblemCode::GitInvalidRequest:
         return Text::tr("An absolute directory and trusted executable outside it are required");
     case ProblemCode::GitUnknownOperation: return Text::tr("Unknown Git operation");
@@ -477,6 +484,25 @@ QString format(ProblemCode code)
         return Text::tr("Operation identity changed during recovery validation; work remains outstanding.");
     case ProblemCode::RecoveryMarkerPermissions:
         return Text::tr("Could not restrict the set-aside marker permissions.");
+    case ProblemCode::RecoveryMarkerWrite: return Text::tr("The set-aside marker could not be written: %1");
+    // The record's own validation detail, which is not translated.
+    case ProblemCode::RecoveryRecordInvalid: return QStringLiteral("%1");
+    case ProblemCode::TaskSuperseded: return Text::tr("The task was cancelled or superseded before it ran.");
+    case ProblemCode::TaskRecoveryBlocked:
+        return Text::tr("The change waits until pending recovery input or a recovery error is settled.");
+    case ProblemCode::TaskRecoveryUnavailable: return Text::tr("The change is blocked: %1");
+    case ProblemCode::TaskThrew: return Text::tr("The background task failed unexpectedly.");
+    case ProblemCode::TaskNotAdmitted: return Text::tr("The change did not reach admission.");
+    case ProblemCode::TaskInspectionFailed:
+        return Text::tr("the change could not be inspected, so its outcome is uncertain");
+    case ProblemCode::TaskUnverified: return Text::tr("the outcome of the change could not be verified");
+    case ProblemCode::TaskOutcomeNotRetained:
+        return Text::tr("recovery could not retain the outcome of the change: %1");
+    case ProblemCode::LoadOpening: return Text::tr("Opening the classified conflict");
+    case ProblemCode::LoadInspectingRecovery: return Text::tr("Inspecting app-owned recovery records");
+    case ProblemCode::LoadIncomplete:
+        return Text::tr("Load error: conflict inspection did not provide complete source and result snapshots; "
+                        "reopen the session.");
     case ProblemCode::MergetoolPathEmpty: return Text::tr("The mergetool path is empty.");
     case ProblemCode::MergetoolPathLeaves: return Text::tr("The mergetool path leaves its directory.");
     case ProblemCode::MergetoolPathUnopenable: return Text::tr("The mergetool path could not be opened.");
@@ -529,9 +555,7 @@ bool leads(const Problem &problem)
 // The sentence without its "Outside app: " lead.
 QString body(const Problem &problem)
 {
-    QStringList values;
-    // An argument can hold an encoded problem of its own, such as a store's error.
-    for (const auto &argument : problem.arguments) values.push_back(detail(argument));
+    auto values = problem.arguments;
     const auto inner = !problem.cause ? QString{} : leads(problem) ? body(*problem.cause) : text(*problem.cause);
     switch (wrap(problem.code)) {
     case Wrap::None: break;
@@ -550,35 +574,5 @@ QString text(const Problem &problem)
 {
     const auto sentence = body(problem);
     return leads(problem) ? Text::tr("Outside app: %1").arg(sentence) : sentence;
-}
-
-QString detail(const QString &detail)
-{
-    // Layers that cannot translate join an encoded problem with text of their
-    // own, so every encoded problem in detail is replaced where it stands.
-    const auto bytes = detail.toUtf8();
-    const QByteArray start("{\"arguments\":");
-    QString shown;
-    qsizetype done = 0;
-    for (auto at = bytes.indexOf(start); at >= 0; at = bytes.indexOf(start, at + 1)) {
-        QJsonParseError error{};
-        QJsonDocument::fromJson(bytes.mid(at), &error);
-        const auto length = error.error == QJsonParseError::NoError ? bytes.size() - at
-            : error.error == QJsonParseError::GarbageAtEnd          ? qsizetype{error.offset}
-                                                                    : qsizetype{0};
-        const auto problem = length > 0 ? Problem::decode(QString::fromUtf8(bytes.mid(at, length))) : std::nullopt;
-        if (!problem) continue;
-        shown += QString::fromUtf8(bytes.mid(done, at - done)) + text(*problem);
-        done = at + length;
-        at = done - 1;
-    }
-    return done == 0 ? detail : shown + QString::fromUtf8(bytes.mid(done));
-}
-
-QString details(const QStringList &details)
-{
-    QStringList lines;
-    for (const auto &line : details) lines.push_back(detail(line));
-    return lines.join(QLatin1Char('\n'));
 }
 }

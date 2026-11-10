@@ -4,7 +4,6 @@
 #include "core/SessionState.h"
 #include "recovery/RecoveryNames.h"
 #include "storage/RecoveryStore.h"
-#include <QCoreApplication>
 #include <QFuture>
 #include <QObject>
 #include <QString>
@@ -24,7 +23,7 @@ namespace branch_truce {
 struct AdoptedStore {
     std::shared_ptr<storage::RecoveryLease> lease;
     bool userWork = false;
-    std::map<std::string, QString> failures;
+    std::map<std::string, Problem> failures;
 };
 
 // One session's recovery store and what waits on it: the store's lease,
@@ -41,14 +40,13 @@ struct AdoptedStore {
 // thread, so the journal keeps the order in which the caller made them.
 // Used on one thread, the one that made it.
 class RecoveryJournal {
-    Q_DECLARE_TR_FUNCTIONS(RecoveryJournal)
 public:
     struct Pending {
         FileSession candidate;
         RecoveryAction action;
         storage::RecoveryTransaction transaction;
         // Why the commit failed; empty for a record held behind a failed one.
-        QString error;
+        Problem problem;
     };
     // How a record written behind ended: durable, failed and kept pending, or
     // kept pending untried behind an earlier failed record of its file.
@@ -65,7 +63,7 @@ public:
     [[nodiscard]] const QString &directory() const { return directory_; }
     // Takes the store's session lease on first use. Empty while the lease is
     // held, otherwise the reason the store is unavailable.
-    QString ensureLease();
+    Problem ensureLease();
     // The held lease, or null. A writer that must finish in this store after
     // the journal moves on, such as a running mutation, keeps it.
     [[nodiscard]] std::shared_ptr<storage::RecoveryLease> lease() const { return lease_; }
@@ -119,11 +117,11 @@ public:
     // Whether every pending input is a launch capture.
     [[nodiscard]] bool onlyOpenCapturesPending() const;
     [[nodiscard]] bool hasFailures() const { return !failures_.empty(); }
-    [[nodiscard]] const QString *failure(const std::string &id) const;
-    void recordFailure(const std::string &id, const QString &error);
+    [[nodiscard]] const Problem *failure(const std::string &id) const;
+    void recordFailure(const std::string &id, const Problem &problem);
     // Replaces a file's error only while it is still exactly expected; an
     // empty replacement clears it. Returns whether it changed.
-    bool settleFailure(const std::string &id, const QString &expected, const QString &replacement);
+    bool settleFailure(const std::string &id, const Problem &expected, const Problem &replacement);
 
 private:
     struct Behind {
@@ -148,7 +146,7 @@ private:
     std::shared_ptr<const storage::FileSystem> files_;
     std::shared_ptr<storage::RecoveryLease> lease_;
     std::map<std::string, std::deque<Pending>> pending_;
-    std::map<std::string, QString> failures_;
+    std::map<std::string, Problem> failures_;
     bool userWork_ = false;
     // Records written behind, oldest first. The worker writes the first one
     // while `writing_` names it.

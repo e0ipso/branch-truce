@@ -23,8 +23,7 @@ class ResolutionPublisher final : public QObject {
 public:
     using Offer = ParentOffer;
     // The repository file a supported file publishes over, as captured before
-    // any edit, or why it cannot be used: a translated sentence or an encoded
-    // Problem, which the window shows translated.
+    // any edit, or why it cannot be used, as a translated sentence.
     struct Baseline {
         std::optional<storage::DestinationSnapshot> destination;
         QString diagnostic;

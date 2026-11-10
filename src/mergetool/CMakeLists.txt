@@ -1,5 +1,5 @@
 # The launcher protocol: messages, framing, socket and intake paths, and the session's listener.
-# It needs Git's repository identity and storage's file helpers only, so the launcher and the protocol tests
+# It needs Git's repository identity, storage's file helpers and problems only, so the launcher and the protocol tests
 # link it alone.
 add_library(branch_truce_mergetool_protocol STATIC MergetoolMessages.cpp MergetoolMessages.h MergetoolSocket.cpp
     MergetoolSocket.h MergetoolIntake.cpp MergetoolIntake.h MergetoolFiles.cpp MergetoolFiles.h MergetoolServer.cpp

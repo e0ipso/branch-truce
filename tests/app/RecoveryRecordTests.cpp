@@ -121,7 +121,8 @@ template <typename Mutate> void rejected(const QString &directory, Mutate mutate
     test_support::rewriteLastRecoveryState(store, mutate);
     const auto replay = replayRecovery(storage::RecoveryStore(store));
     CHECK(!replay.succeeded && replay.files.empty());
-    if (!replay.error.contains(error)) throw test_support::Failure(replay.error.toStdString());
+    const auto detail = replay.problem.arguments.value(0);
+    if (!detail.contains(error)) throw test_support::Failure(detail.toStdString());
 }
 }
 
@@ -160,7 +161,7 @@ int main()
         CHECK(!expected.correspondence()->handEditedAnchors().empty());
 
         const auto replay = replayRecovery(recorder.lease->store(), counting);
-        CHECK(replay.succeeded && replay.error.isEmpty() && replay.userWork && replay.files.size() == 1);
+        CHECK(replay.succeeded && replay.problem.isEmpty() && replay.userWork && replay.files.size() == 1);
         const auto &file = replay.files.front();
         CHECK(file.snapshots() && *file.snapshots() == *expected.snapshots());
         CHECK(file.current().id == expected.current().id && file.current().draft == expected.current().draft);
@@ -219,7 +220,7 @@ int main()
         CHECK(replayRecovery(recorder.lease->store()).succeeded);
         const auto replay = replayRecovery(recorder.lease->store(), std::make_shared<RenamedAlgorithm>());
         CHECK(!replay.succeeded && replay.files.empty());
-        CHECK(replay.error.contains(QStringLiteral("another correspondence algorithm")));
+        CHECK(replay.problem.arguments.value(0).contains(QStringLiteral("another correspondence algorithm")));
     });
     suite.run("a keystroke records the typed bytes, not the whole text", [] {
         QTemporaryDir directory;

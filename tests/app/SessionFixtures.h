@@ -94,7 +94,7 @@ inline QMap<QString, QVariantMap> handoffEntries(const QVariantMap &summary)
 }
 inline QByteArray payload(const storage::RecoveryStore &store, const QJsonValue &reference)
 {
-    QString error;
+    Problem error;
     const auto bytes = store.payload(reference.toString().toLatin1(), &error);
     CHECK(error.isEmpty());
     return bytes;
@@ -128,8 +128,8 @@ inline Draft finalDecision()
 inline FileSession replayedFile(const QString &directory)
 {
     const auto replay = replayRecovery(storage::RecoveryStore(directory));
-    if (!replay.succeeded) throw std::runtime_error("recovery replay: " + replay.error.toStdString());
-    CHECK(replay.succeeded && replay.error.isEmpty() && replay.files.size() == 1);
+    if (!replay.succeeded) throw std::runtime_error("recovery replay: " + replay.problem.encoded().toStdString());
+    CHECK(replay.succeeded && replay.problem.isEmpty() && replay.files.size() == 1);
     return replay.files.front();
 }
 inline void checkRecoveredHistory(TestSession &model, const Draft &before, const Draft &chosen)

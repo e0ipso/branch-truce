@@ -281,7 +281,7 @@ std::string RecoveryRecordReader::supportDetail() const { return bytes(state_.va
 std::string RecoveryRecordReader::bytes(const QJsonValue &value) const
 {
     requireRecord(value.isString(), "Missing recovery payload reference.");
-    QString error;
+    Problem error;
     const auto result = store_.payload(value.toString().toLatin1(), &error);
     requireRecord(error.isEmpty(), "Recovery payload is missing, unsafe or corrupt.");
     return result.toStdString();
