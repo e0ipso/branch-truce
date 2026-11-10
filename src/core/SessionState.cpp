@@ -18,13 +18,6 @@ std::size_t undecidedCount(const Draft &draft)
                       [](const auto &entry) { return entry.second.value == DecisionValue::Undecided; }));
 }
 
-// The engine's text invariant, as TextSnapshot::utf8 documents it: UTF-8 with
-// LF line endings. Adapters decode and convert line endings before this.
-bool editableText(std::string_view text) noexcept
-{
-    return text.find('\r') == std::string_view::npos && validUtf8(text);
-}
-
 bool editableSources(const FileSnapshots &snapshots) noexcept
 {
     for (const auto *source : {&snapshots.earlier, &snapshots.stage2, &snapshots.stage3})

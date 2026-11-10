@@ -17,11 +17,13 @@
 
 namespace branch_truce {
 SessionLoader::SessionLoader(Session session, git::GitRunners git, QObject *parent,
-                             std::shared_ptr<const CorrespondenceAlgorithm> correspondence)
+                             std::shared_ptr<const CorrespondenceAlgorithm> correspondence,
+                             std::shared_ptr<const storage::FileSystem> files)
     : QObject(parent),
       session_(session),
       git_(std::move(git)),
       correspondence_(std::move(correspondence)),
+      files_(std::move(files)),
       classifier_(git_, this)
 {
     connect(&classifier_, &git::ConflictClassifier::finished, this, &SessionLoader::classified);
@@ -159,14 +161,6 @@ bool SessionLoader::chooseRecoverySession(const QString &session)
         return false;
     };
     if (const auto refusal = choiceRefusal(session, state_); !refusal.isEmpty()) return refuse(refusal);
-    // These locks are released before the reload. If another window takes the
-    // chosen session in between, the restore adopts no other edited session.
-    for (const auto &choice : recoveryChoices_) {
-        if (!storage::RecoveryLease::acquire(choice.directory))
-            return refuse(
-                tr("Recovery session %1 is open in another Branch Truce window. Close that window, then choose again.")
-                    .arg(choice.session));
-    }
     // Reading this window's store waits on the disk, so the worker reads it,
     // fenced by session and revision like the initial load. The window shows
     // the reload opening meanwhile.
@@ -174,21 +168,29 @@ bool SessionLoader::chooseRecoverySession(const QString &session)
     const auto anchor = file ? file->id() : std::string{};
     const auto directory = session_.store.recoveryDirectory();
     auto own = std::make_shared<RecoveryReplay>();
-    const auto task = !file
-        ? 0
-        : session_.coordinator.submit(
-              anchor, file->current().id,
-              [directory, own, correspondence = correspondence_](const TaskInput &, const TaskControl &) {
-                  *own = replayRecovery(storage::RecoveryStore(directory), correspondence);
-                  return TaskResult{};
-              },
-              [this, session, directory, own](const TaskCompletion &completion) {
-                  if (completion.result.status != TaskStatus::Succeeded) {
-                      own->succeeded = false;
-                      own->problem = completion.result.problem;
-                  }
-                  ownStoreRead(session, directory, *own);
-              });
+    const auto task = !file ? 0
+                            : session_.coordinator.submit(
+                                  anchor, file->current().id,
+                                  [directory, own, correspondence = correspondence_, files = files_,
+                                   choices = recoveryChoices_](const TaskInput &, const TaskControl &) {
+                                      // Locks are checked on the worker. Restore checks again before
+                                      // adoption if another window takes a choice in between.
+                                      for (const auto &choice : choices) {
+                                          if (!storage::RecoveryLease::acquire(choice.directory, files)) {
+                                              own->problem = ProblemCode::RecoverySessionActive;
+                                              return TaskResult{TaskStatus::Failed, {}, {}, own->problem, {}};
+                                          }
+                                      }
+                                      *own = replayRecovery(storage::RecoveryStore(directory, files), correspondence);
+                                      return TaskResult{};
+                                  },
+                                  [this, session, directory, own](const TaskCompletion &completion) {
+                                      if (completion.result.status != TaskStatus::Succeeded) {
+                                          own->succeeded = false;
+                                          own->problem = completion.result.problem;
+                                      }
+                                      ownStoreRead(session, directory, *own);
+                                  });
     if (task == 0) return refuse(tr("Choose a recovery session after the session finishes loading."));
     choiceTask_ = task;
     choiceSession_ = session;
@@ -321,7 +323,8 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
         anchor, 1,
         [files = std::move(conflicts), repository = repository_, sessionId, loaded, recovery, recoveryDirectory,
          recoveryInventory, git = git_, correspondence = correspondence_, chosen = recoverySession_, baselines,
-         destinations = session_.publisher.destinations()](const TaskInput &, const TaskControl &control) {
+         destinations = session_.publisher.destinations(),
+         recoveryFiles = files_](const TaskInput &, const TaskControl &control) {
             for (const auto &file : files) {
                 if (control.cancellationRequested()) return TaskResult{TaskStatus::Cancelled, {}, {}, {}, {}};
                 Draft draft;
@@ -344,7 +347,7 @@ void SessionLoader::loadWorkingFiles(QList<git::Conflict> conflicts)
                                                 .algorithm = correspondence});
             }
             *recovery = restoreRecovery(recoveryInventory, recoveryDirectory, repository, *loaded, git, chosen,
-                                        {correspondence, QDateTime::currentDateTimeUtc()});
+                                        {correspondence, QDateTime::currentDateTimeUtc(), recoveryFiles});
             // Reading every destination waits on the disk, so it happens here too.
             if (repository.supported)
                 *baselines = ResolutionPublisher::readBaselines(

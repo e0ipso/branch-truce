@@ -92,6 +92,7 @@ public:
     bool completeRecoveryLoad(const TaskStamp &stamp, std::vector<FileSession> observed, RecoveryRestore restore);
     [[nodiscard]] quint64 generation() const;
     [[nodiscard]] int pendingTasks() const;
+    void setExecutionLimits(RecoveryJournal::Limits limits);
     // Zero rejects invalid/stale requests. Accepted requests finish once,
     // asynchronously. Work owns expensive computation/serialization only;
     // use submitMutation for any app-owned filesystem/index side effect.

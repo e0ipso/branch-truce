@@ -37,10 +37,24 @@ public:
         storage::RecoveryTransaction transaction;
         // The commit failure, or why an earlier failed record held this one.
         Problem problem;
+        Transition transition = Transition::Applied;
+        RevisionId inputRevision = 0;
+        std::function<void(Pending &)> prepare;
     };
     // A durable record, or input retained after a failed or held transaction.
-    enum class Written { Committed, Failed };
-    using Callback = std::function<void(Written)>;
+    using Record = std::shared_ptr<Pending>;
+    using Callback = std::function<void(const Record &, Transition)>;
+    using Command = std::function<Transition(FileSession &)>;
+    struct Limits {
+        std::size_t count = 32;
+        std::size_t bytes = std::size_t{4} * 1024 * 1024 * 1024;
+    };
+    // History, protected revisions, captures, derived maps and encoding copies.
+    // Shared storage is charged again: this deliberately overestimates retention.
+    static constexpr std::size_t retainedBytes =
+        kMaxHistoryBytes + 16 * kMaxMetadataBytes + 32 * kMaxRecoveryPayloadBytes;
+    void setLimits(Limits limits) { limits_ = limits; }
+    [[nodiscard]] bool canAdmit(std::size_t additional = 0) const;
 
     RecoveryJournal(QString directory, std::shared_ptr<const storage::FileSystem> files);
     ~RecoveryJournal();
@@ -54,9 +68,11 @@ public:
         std::shared_ptr<storage::RecoveryLease> lease;
     };
     using CommitCallback = std::function<void(Receipt)>;
-    void commit(storage::RecoveryTransaction transaction, CommitCallback written);
-    void commitBehind(const FileSession &candidate, RecoveryAction action, std::string_view previousText,
-                      Callback written);
+    void commit(std::function<storage::RecoveryTransaction()> transaction, CommitCallback written);
+    // Refusal happens before copying a snapshot or encoding it. The caller
+    // retains uncommitted typing and retries admission when capacity returns.
+    Record commitBehind(const FileSession &candidate, RecoveryAction action, const FileSession *previous,
+                        Callback written, Command command = {}, Record predecessor = {});
     void retryPending(const std::string &id, std::function<void(FileSession, RecoveryAction)> acknowledged,
                       std::function<void()> written);
     [[nodiscard]] bool recording(const std::string &id) const;
@@ -97,9 +113,12 @@ public:
 
 private:
     struct Behind {
-        std::optional<Pending> record;
+        Record record;
+        std::string id;
+        std::function<storage::RecoveryTransaction()> prepare;
         storage::RecoveryTransaction transaction;
         std::function<void(storage::RecoveryCommit)> written;
+        std::shared_ptr<const FileSession> visible = {};
     };
     void writeNext();
     void settleBehind(Receipt result);
@@ -108,15 +127,19 @@ private:
     QString directory_;
     std::shared_ptr<const storage::FileSystem> files_;
     std::shared_ptr<storage::RecoveryLease> lease_;
-    std::deque<Pending> pending_;
+    std::deque<Record> pending_;
     std::map<std::string, Problem> failures_;
     bool userWork_ = false;
     // Records written behind, oldest first. The worker writes the first one
     // while `writing_` names it.
-    std::deque<Behind> behind_;
+    std::deque<std::shared_ptr<Behind>> behind_;
+    Limits limits_;
+    std::size_t retained_ = 0;
+    std::size_t entries_ = 0;
     struct Writing {
         quint64 ticket;
         QFuture<Receipt> result;
+        std::shared_ptr<Receipt> terminal;
     };
     std::optional<Writing> writing_;
     quint64 nextTicket_ = 1;

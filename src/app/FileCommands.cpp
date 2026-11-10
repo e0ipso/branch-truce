@@ -59,9 +59,10 @@ bool FileCommands::acknowledge(QFuture<Transition> result, const QString &failur
     if (result.isFinished()) return feedback_.report(result.result());
     feedback_.show(tr("Command pending. Waiting for durable recovery."));
     result.then(this, [this, failure](Transition outcome) {
-        if (outcome != Transition::Applied && !failure.isEmpty())
+        if (outcome != Transition::Applied && outcome != Transition::NoChange && !failure.isEmpty())
             feedback_.show(failure);
-        else if (outcome != Transition::Applied)
+        else if (outcome != Transition::Applied
+                 || feedback_.message() == tr("Command pending. Waiting for durable recovery."))
             feedback_.report(outcome);
     });
     return true;
