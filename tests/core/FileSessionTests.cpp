@@ -184,9 +184,9 @@ void wholeDraftsKeepTheTextInvariant()
     for (auto file : {captured(text), FileSession("plain", "plain.txt", {text, {}, 0})}) {
         const auto before = file.current();
         for (const auto *rejected : {"invalid \x80\n", "carriage\r\nreturn\n"})
-            CHECK(file.replaceDraft(before.id, {rejected, before.draft.decisions, 0}) == Transition::InvalidAnchor);
-        CHECK(file.editResult(before.id, {{0, 0}, "\xc3"}) == Transition::InvalidAnchor);
-        CHECK(file.editResult(before.id, {{0, 0}, "\r"}) == Transition::InvalidAnchor);
+            CHECK(file.replaceDraft(before.id, {rejected, before.draft.decisions, 0}) == Transition::InvalidText);
+        CHECK(file.editResult(before.id, {{0, 0}, "\xc3"}) == Transition::InvalidText);
+        CHECK(file.editResult(before.id, {{0, 0}, "\r"}) == Transition::InvalidText);
         CHECK(file.current().id == before.id && file.current().draft == before.draft && !file.canUndo());
         CHECK(file.editResult(before.id, {{0, 0}, "still editable\n"}) == Transition::Applied);
     }
@@ -369,7 +369,7 @@ void commandsCheckTheirAnchorsAgainstTheCurrentRevision()
             expected, {anchor}, {{*anchor.result, std::move(replacement)}}, {{id, {DecisionValue::Accepted, {}}}}};
     };
     CHECK(file.applyCommand(command(issued, "stale\n", 0)) == Transition::StaleRevision);
-    CHECK(file.applyCommand(command(issued, "\x80", 1)) == Transition::InvalidAnchor);
+    CHECK(file.applyCommand(command(issued, "\x80", 1)) == Transition::InvalidText);
     for (int field = 0; field < 5; ++field) {
         auto forged = issued;
         if (field == 0) forged.origin.sessionId = "other session";
@@ -1146,7 +1146,7 @@ void editsStayInsideTheEnvelope()
     CHECK(file.beginMarkResolved(file.current().id) == Transition::Applied);
     const auto atLine = std::string(kMaxLineBytes, 'a');
     FileSession narrow("id", "file", {atLine, {}, 0});
-    CHECK(narrow.editResult(1, {{atLine.size(), atLine.size()}, "z"}) == Transition::Blocked);
+    CHECK(narrow.editResult(1, {{atLine.size(), atLine.size()}, "z"}) == Transition::TextTooLarge);
     CHECK(narrow.current().draft.text == atLine);
     CHECK(narrow.beginMarkResolved(1) == Transition::Applied);
 }

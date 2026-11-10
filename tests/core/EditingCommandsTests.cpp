@@ -261,7 +261,7 @@ void overlappingManualWorkIsDisplayedAndPreservedByStaleOrAlteredPreviews()
     CHECK(applyChoice(file, preview) == Transition::ConfirmationRequired);
     auto altered = preview;
     altered.replacement += "undisplayed\n";
-    CHECK(applyChoice(file, altered, true) == Transition::InvalidAnchor);
+    CHECK(applyChoice(file, altered, true) == Transition::PreviewChanged);
     CHECK(file.current().id == before.id && file.current().draft == before.draft);
     CHECK(file.editResult(before.id, {{0, 0}, "newer edit\n"}) == Transition::Applied);
     const auto newer = file.current();
@@ -348,7 +348,7 @@ void absentEarlierContextStaleAndAlteredBatchesNeverApply()
     const auto preview = previewNonConflicting(file, 1);
     auto altered = preview;
     altered.changes.front().replacement = "not displayed";
-    CHECK(applyNonConflicting(file, altered, true) == Transition::InvalidAnchor && file.current().id == 1);
+    CHECK(applyNonConflicting(file, altered, true) == Transition::PreviewChanged && file.current().id == 1);
     CHECK(file.editResult(1, {{0, 0}, "manual\n"}) == Transition::Applied);
     const auto current = file.current();
     CHECK(applyNonConflicting(file, preview, true) == Transition::StaleRevision);
@@ -430,7 +430,7 @@ void alteredOrStaleWholeFileConfirmationCannotChangeTheDraft()
         if (field == 1) altered.before = "different displayed result";
         if (field == 2) altered.contributions.front().after = {DecisionValue::Undecided, {}};
         if (field == 3) altered.command.edits.front().replacement = "hidden command";
-        CHECK(applyWholeFile(file, altered, true) == Transition::InvalidAnchor);
+        CHECK(applyWholeFile(file, altered, true) == Transition::PreviewChanged);
         CHECK(file.current().id == before.id && file.current().draft == before.draft);
     }
     CHECK(file.editResult(before.id, {{0, 0}, "new manual edit\n"}) == Transition::Applied);
@@ -658,7 +658,7 @@ void staleAmbiguousAndCancelledCommandsLeaveTextAndDecisionsUntouched()
     expectUnchanged(combination, combinedBefore);
     auto altered = combined;
     altered.replacement += "undisplayed\n";
-    CHECK(applyChoice(combination, altered, true) == Transition::InvalidAnchor);
+    CHECK(applyChoice(combination, altered, true) == Transition::PreviewChanged);
     expectUnchanged(combination, combinedBefore);
 
     auto batch = test_support::batchFile();

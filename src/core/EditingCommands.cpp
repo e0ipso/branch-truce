@@ -384,7 +384,7 @@ Transition applyChoice(FileSession &file, const ChoicePreview &preview, bool con
 {
     if (preview.revision != file.current().id) return Transition::StaleRevision;
     const auto current = previewChoice(file, preview.revision, preview.target, preview.action);
-    if (current != preview) return Transition::InvalidAnchor;
+    if (current != preview) return Transition::PreviewChanged;
     if (current.state != Transition::Applied && current.state != Transition::ConfirmationRequired) return current.state;
     if (current.state == Transition::ConfirmationRequired && !confirmReplacement)
         return Transition::ConfirmationRequired;
@@ -556,7 +556,7 @@ Transition applyNonConflicting(FileSession &file, const NonConflictingPreview &p
 {
     if (preview.revision != file.current().id) return Transition::StaleRevision;
     const auto current = previewNonConflicting(file, preview.revision, preview.scope);
-    if (current != preview) return Transition::InvalidAnchor;
+    if (current != preview) return Transition::PreviewChanged;
     if (current.state != Transition::ConfirmationRequired) return current.state;
     if (!confirm) return Transition::ConfirmationRequired;
     return file.applyCommand(current.command);
@@ -621,7 +621,7 @@ Transition applyWholeFile(FileSession &file, const WholeFilePreview &preview, bo
 {
     if (preview.revision != file.current().id) return Transition::StaleRevision;
     const auto current = previewWholeFile(file, preview.revision, preview.side);
-    if (current != preview) return Transition::InvalidAnchor;
+    if (current != preview) return Transition::PreviewChanged;
     if (current.state != Transition::ConfirmationRequired) return current.state;
     if (!confirm) return Transition::ConfirmationRequired;
     return file.applyCommand(current.command, true);

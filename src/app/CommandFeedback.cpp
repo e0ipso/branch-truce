@@ -25,7 +25,12 @@ bool CommandFeedback::report(Transition result)
     case Transition::StaleRevision: show(tr("The result changed. Select the scope again.")); break;
     case Transition::ConfirmationRequired: show(tr("Inspect and confirm the exact replacement first.")); break;
     case Transition::AmbiguousTarget: show(tr("The target is ambiguous. Edit the result directly.")); break;
-    case Transition::InvalidAnchor: show(tr("The target is no longer valid. Select the scope again.")); break;
+    case Transition::InvalidAnchor:
+    case Transition::PreviewChanged: show(tr("The target is no longer valid. Select the scope again.")); break;
+    case Transition::TextTooLarge: show(tr("The result would be over the supported size. Nothing changed.")); break;
+    case Transition::InvalidText:
+        show(tr("The text is not valid UTF-8 with LF line endings. Nothing changed."));
+        break;
     case Transition::OutOfMemory: show(tr("Not enough memory to complete the command. Nothing changed.")); break;
     default: show(tr("Command not completed. Check pending recovery and the selected scope.")); break;
     }

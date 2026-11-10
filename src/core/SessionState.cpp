@@ -286,8 +286,9 @@ Transition FileSession::validateDraft(RevisionId expected, const Draft &draft) c
 {
     if (expected != current().id) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
-    if (exceedsEnvelope(draft.text)) return Transition::Blocked;
-    if (!editableText(draft.text) || !validDecisions(draft.decisions)) return Transition::InvalidAnchor;
+    if (exceedsEnvelope(draft.text)) return Transition::TextTooLarge;
+    if (!editableText(draft.text)) return Transition::InvalidText;
+    if (!validDecisions(draft.decisions)) return Transition::InvalidAnchor;
     return Transition::Applied;
 }
 
@@ -342,11 +343,11 @@ Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit, 
         if (expected != current().id) return Transition::StaleRevision;
         if (support_ != Support::Supported) return Transition::Blocked;
         // The stored text already holds the invariant, so only the edit is checked.
-        if (!validByteRange(current().draft.text, edit.range) || !editableText(edit.replacement))
-            return Transition::InvalidAnchor;
+        if (!validByteRange(current().draft.text, edit.range)) return Transition::InvalidAnchor;
+        if (!editableText(edit.replacement)) return Transition::InvalidText;
         auto draft = current().draft;
         draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
-        if (exceedsEnvelope(draft.text)) return Transition::Blocked;
+        if (exceedsEnvelope(draft.text)) return Transition::TextTooLarge;
         if (draft == current().draft) return Transition::NoChange;
         auto mapping = correspondence()
             ? std::make_shared<const CorrespondenceMap>(
@@ -421,8 +422,8 @@ Transition FileSession::validateTarget(const ResultAnchor &target) const
 Transition FileSession::validateEdit(const EditingCommand &command, const ResultEdit &edit, const ResultEdit *previous,
                                      bool confirmReplacement) const
 {
-    if (!validByteRange(current().draft.text, edit.range) || !editableText(edit.replacement))
-        return Transition::InvalidAnchor;
+    if (!validByteRange(current().draft.text, edit.range)) return Transition::InvalidAnchor;
+    if (!editableText(edit.replacement)) return Transition::InvalidText;
     if (previous && (edit.range.end > previous->range.begin || edit.range.begin == previous->range.begin))
         return Transition::AmbiguousTarget;
     if (command.scope == EditingScope::WholeFile) return Transition::Applied;
@@ -452,7 +453,7 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
         auto updated = std::make_shared<CorrespondenceMap>(*mapping);
         for (const auto &edit : edits) {
             draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
-            if (exceedsEnvelope(draft.text)) return Transition::Blocked;
+            if (exceedsEnvelope(draft.text)) return Transition::TextTooLarge;
             *updated = wholeFile
                 ? updated->recomputed(next, draft.text, false)
                 : updated->edited(next, edit, false, targetOf(command, edit.range)->source.contributionId);
