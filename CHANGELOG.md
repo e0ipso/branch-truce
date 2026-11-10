@@ -1,3 +1,9 @@
+## [1.5.0](https://github.com/e0ipso/branch-truce/compare/v1.4.0...v1.5.0) (2026-11-09)
+
+### Features
+
+* **ui:** resolve the current conflict from the source headers ([#9](https://github.com/e0ipso/branch-truce/issues/9)) ([d33deab](https://github.com/e0ipso/branch-truce/commit/d33deabb401c16eedc33749a3edb219c5bf811ef))
+
 ## [1.4.0](https://github.com/e0ipso/branch-truce/compare/v1.3.2...v1.4.0) (2026-11-09)
 
 ### Features
