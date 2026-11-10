@@ -126,8 +126,8 @@ public:
     bool appendFile(FileSession file);
 
     Transition replaceDraft(const std::string &id, RevisionId expected, Draft draft);
-    // One edit, such as a paste or a drop, as its own command: aligned at once
-    // and acknowledged once durable.
+    // One edit, such as a paste or a drop, as its own command: acknowledged
+    // once durable, with its passages aligned behind it as for typing.
     Transition editResult(const std::string &id, RevisionId expected, ResultEdit edit);
     // A typed edit: applied at once, joined to the file's burst and recorded
     // behind (see the class comment). Its passages stay provisional until

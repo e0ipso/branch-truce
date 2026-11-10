@@ -301,7 +301,9 @@ Transition SessionStore::replaceDraft(const std::string &id, RevisionId expected
 }
 Transition SessionStore::editResult(const std::string &id, RevisionId expected, ResultEdit edit)
 {
-    return update(id, Action::ReplaceDraft, [&](auto &file) { return file.editResult(expected, std::move(edit)); });
+    return update(id, Action::ReplaceDraft, [&](auto &file) {
+        return file.editResult(expected, std::move(edit), {.realignment = Realignment::Deferred});
+    });
 }
 Transition SessionStore::typeResult(const std::string &id, RevisionId expected, ResultEdit edit)
 {
