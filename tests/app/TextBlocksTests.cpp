@@ -131,8 +131,8 @@ int main(int argc, char **argv)
         const auto gap = pane.blocks.between(middleOfGap, middleOfGap + 1);
         CHECK(gap.size() == 1 && gap.first().toMap().value("number").toInt() == 1);
         const auto afterFormat = changes.count();
-        QCoreApplication::processEvents();
-        QCoreApplication::processEvents();
+        // Every queued spacing or hiding pass has run once the posted events are delivered.
+        QCoreApplication::sendPostedEvents();
         CHECK(changes.count() == afterFormat);
         auto font = pane.editor->property("font").value<QFont>();
         font.setPointSizeF(font.pointSizeF() * 1.5);

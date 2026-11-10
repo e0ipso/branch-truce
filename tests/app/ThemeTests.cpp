@@ -267,7 +267,7 @@ int checkRoles(const QString &scheme, const QString &other)
     }
     scene.showEarlier();
     // Let the gutters and backgrounds lay out before the frame is taken.
-    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+    test_support::waitForFrames(scene.window, "the panes are laid out");
     const auto frame = scene.window->grabWindow();
     std::cout << "scheme " << scheme.toStdString() << ": View background " << describe(*view) << ", "
               << other.toStdString() << " " << describe(*otherView) << '\n';
@@ -337,7 +337,7 @@ int checkCues()
             auto *slot = scene.item(gutter->objectName() + QStringLiteral("MarkerSlot"));
             test_support::settleFor(std::string("the ") + pane + " gutter rows",
                                     [&] { return gutter->property("rows").toList().size() > 0; });
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            test_support::waitForFrames(scene.window, std::string("the ") + pane + " glyphs are drawn");
             const auto lines = colouredLines(backgrounds);
             const auto glyphs = glyphLines(slot);
             std::ostringstream shown;

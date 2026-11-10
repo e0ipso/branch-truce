@@ -4,6 +4,7 @@
 #include "app/Application.h"
 #include "app/Translations.h"
 #include "fixtures/ChoiceFile.h"
+#include "fixtures/EventLoop.h"
 #include "fixtures/Files.h"
 #include "fixtures/GitOnPath.h"
 #include "fixtures/GitRepository.h"
@@ -12,7 +13,6 @@
 #include "session/SessionCoordinator.h"
 #include <QCoreApplication>
 #include <QDir>
-#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
@@ -33,27 +33,26 @@ using namespace branch_truce;
 namespace {
 Draft draft(std::string text = "before\n") { return {std::move(text), {{"left", {DecisionValue::Accepted, 1}}}, 0}; }
 
-template <typename Predicate> bool until(Predicate predicate)
-{
-    QElapsedTimer timer;
-    timer.start();
-    while (!predicate() && timer.elapsed() < 5000) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
-        QThread::msleep(1);
-    }
-    return predicate();
-}
+using test_support::waitUntil;
 
 // Release barriers during unwinding too. Worker lambdas keep shared state,
 // never references to a fixture or its model, even when an assertion fails.
 struct Gate {
+    // Where the worker is: not at the gate yet, waiting at it, let through, or given up on it.
+    enum class Phase { Before, Waiting, Released, TimedOut };
     struct State {
         std::atomic_bool entered{false};
+        std::atomic<Phase> phase{Phase::Before};
         QSemaphore release;
         void pause()
         {
+            phase = Phase::Waiting;
             entered = true;
-            if (!release.tryAcquire(1, 5000)) throw std::runtime_error("worker barrier timed out");
+            if (!release.tryAcquire(1, 5000)) {
+                phase = Phase::TimedOut;
+                throw std::runtime_error("worker barrier timed out");
+            }
+            phase = Phase::Released;
         }
     };
     std::shared_ptr<State> state = std::make_shared<State>();
@@ -61,7 +60,7 @@ struct Gate {
     void open() const { state->release.release(); }
     void wait() const
     {
-        CHECK(until([&] { return state->entered.load(); }));
+        waitUntil([&] { return state->entered.load(); }, "the worker did not reach the gate");
     }
 };
 
@@ -313,7 +312,8 @@ public:
     }
     void wait(std::size_t count)
     {
-        CHECK(until([&] { return finished.size() == count && coordinator->pendingTasks() == 0; }));
+        waitUntil([&] { return finished.size() == count && coordinator->pendingTasks() == 0; },
+                  "the coordinator did not finish " + std::to_string(count) + " tasks");
         QCoreApplication::processEvents();
         CHECK(finished.size() == count);
     }
@@ -840,7 +840,7 @@ public:
             CHECK(id != 0 && f.coordinator->pendingTasks() == 1 && f.finished.empty() && applied == 0);
             gate.wait();
             QTimer::singleShot(0, &f.model, [&] { timerFired = true; });
-            CHECK(until([&] { return timerFired; }));
+            waitUntil([&] { return timerFired; }, "the event loop did not run while the worker waited");
             CHECK(workerThread->load() && f.finished.empty() && f.coordinator->pendingTasks() == 1);
             gate.open();
             f.wait(1);
@@ -965,7 +965,7 @@ public:
             inspect.wait();
             CHECK(f.coordinator->submit("file", 1, [](const TaskInput &, const TaskControl &) { return TaskResult{}; })
                   != 0);
-            CHECK(until([&] { return f.finished.size() == 1; }));
+            waitUntil([&] { return f.finished.size() == 1; }, "the first task did not finish");
             CHECK(f.finished[0].result.mutation == MutationObservation::NotAttempted);
             CHECK(f.git({"ls-files", "--stage", "-z"}) == original);
             inspect.open();
@@ -1010,7 +1010,7 @@ public:
             const auto queued =
                 f.coordinator->submitMutation("file", 1, work, changed, [&](const TaskCompletion &) { ++applied; });
             CHECK(f.coordinator->cancel(queued));
-            CHECK(until([&] { return f.finished.size() == 2; }));
+            waitUntil([&] { return f.finished.size() == 2; }, "the second task did not finish");
             CHECK(f.finished[1].stamp.id == queued
                   && f.finished[1].result.mutation == MutationObservation::NotAttempted);
             CHECK(calls->load() == 0 && applied == 0);
@@ -1206,10 +1206,10 @@ public:
                     CHECK(f.coordinator->submit("file", 1, work, [&](const TaskCompletion &) { ++applied; }) != 0);
                 }
                 gate.wait();
-                QElapsedTimer timer;
-                timer.start();
                 f.coordinator.reset();
-                CHECK(timer.elapsed() < 500);
+                // Destruction returned while the worker still waits at the gate, so it did not wait
+                // for the worker.
+                CHECK(gate.state->phase.load() == Gate::Phase::Waiting);
                 gate.open();
                 CHECK(QThreadPool::globalInstance()->waitForDone(5000));
                 QCoreApplication::processEvents();
@@ -1280,7 +1280,7 @@ public:
                               }
                           })
                       != 0);
-                CHECK(until([&] { return destroyed; }));
+                waitUntil([&] { return destroyed; }, "the coordinator was not destroyed");
                 QCoreApplication::processEvents();
                 CHECK(!f.coordinator && f.finished.size() == (inCompletion ? 0U : 1U));
             }

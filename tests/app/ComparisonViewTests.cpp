@@ -8,6 +8,7 @@
 #include "fixtures/GuiState.h"
 #include "fixtures/QuickScene.h"
 #include "fixtures/RecoveryFaults.h"
+#include "fixtures/WarningCapture.h"
 #include "recovery/RecoveryRestore.h"
 #include "storage/TextFormat.h"
 #include "ui/TextBlocks.h"
@@ -53,49 +54,6 @@ using test_support::paintedMarkers;
 using test_support::settle;
 using test_support::settleFor;
 using test_support::visualLines;
-
-std::atomic_bool recursiveHeaderWarning{false};
-QtMessageHandler previousHeaderHandler = nullptr;
-
-void headerWarningHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
-{
-    if (message.contains(QStringLiteral("Detected recursive rearrange"))) recursiveHeaderWarning = true;
-    if (previousHeaderHandler) previousHeaderHandler(type, context, message);
-}
-
-class HeaderWarningCapture {
-public:
-    HeaderWarningCapture()
-    {
-        recursiveHeaderWarning = false;
-        previousHeaderHandler = qInstallMessageHandler(headerWarningHandler);
-    }
-    ~HeaderWarningCapture() { qInstallMessageHandler(previousHeaderHandler); }
-};
-
-std::atomic_int gutterAnchorErrors{0};
-QtMessageHandler previousGutterHandler = nullptr;
-
-void gutterWarningHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
-{
-    if (message.contains(QStringLiteral("LineGutter.qml"))
-        && message.contains(QStringLiteral("Cannot read property 'right' of null")))
-        ++gutterAnchorErrors;
-    if (previousGutterHandler)
-        previousGutterHandler(type, context, message);
-    else
-        std::fprintf(stderr, "%s\n", qPrintable(message));
-}
-
-class GutterWarningCapture {
-public:
-    GutterWarningCapture()
-    {
-        gutterAnchorErrors = 0;
-        previousGutterHandler = qInstallMessageHandler(gutterWarningHandler);
-    }
-    ~GutterWarningCapture() { qInstallMessageHandler(previousGutterHandler); }
-};
 
 class Fixture {
 public:
@@ -476,14 +434,14 @@ void placeResultCursor(Fixture &fixture, const QString &marker, qreal top)
     fixture.select(offset, offset);
     editor->forceActiveFocus();
     CHECK(result->setProperty("contentY", top));
-    for (int turn = 0; turn < 10; ++turn) QCoreApplication::processEvents();
+    test_support::waitForFrames(fixture.window, "the result is scrolled to its start");
     CHECK(editor->property("cursorPosition").toInt() == offset && contentY(result) == top);
 }
 
 // Lets the replaced text lay out before reading the panes.
-void settleReplacement()
+void settleReplacement(Fixture &fixture)
 {
-    for (int turn = 0; turn < 10; ++turn) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    test_support::waitForFrames(fixture.window, "the replaced text is laid out");
 }
 
 // A cursor rectangle within the result viewport.
@@ -648,14 +606,11 @@ std::string describeMarks(const PaneMarks &marks)
 
 void expectMarks(Fixture &fixture, const std::string &when, const std::string &pane, const PaneMarks &expected)
 {
-    QElapsedTimer deadline;
-    deadline.start();
-    while (paintedMarks(fixture, pane) != expected && deadline.elapsed() < 5000)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    const auto painted = paintedMarks(fixture, pane);
-    if (painted != expected)
-        throw std::runtime_error(when + ", " + pane + " paints " + describeMarks(painted) + ", not "
-                                 + describeMarks(expected));
+    test_support::waitUntil([&] { return paintedMarks(fixture, pane) == expected; },
+                            [&] {
+                                return when + ", " + pane + " paints " + describeMarks(paintedMarks(fixture, pane))
+                                    + ", not " + describeMarks(expected);
+                            });
     if (pane != "stage2" && pane != "stage3") return;
     // The remaining number/state gutter shares the full viewport's row fills,
     // including accepted rows and after history changes.
@@ -790,15 +745,12 @@ void expectBands(Fixture &fixture, const std::string &when, const std::string &s
         }
         return {};
     };
-    QElapsedTimer deadline;
-    deadline.start();
-    while (!misplaced().empty() && deadline.elapsed() < 5000)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    if (const auto problem = misplaced(); !problem.empty()) {
-        std::string drawn;
-        for (const auto &line : bandLines(fixture, side)) drawn += " " + line;
-        throw std::runtime_error(when + ", the " + side + " handle draws " + problem + ":" + drawn);
-    }
+    test_support::waitUntil([&] { return misplaced().empty(); },
+                            [&] {
+                                std::string drawn;
+                                for (const auto &line : bandLines(fixture, side)) drawn += " " + line;
+                                return when + ", the " + side + " handle draws " + misplaced() + ":" + drawn;
+                            });
 }
 
 // The result's document, whose blocks the view folds.
@@ -905,24 +857,24 @@ MarkerLook markedFolded()
 
 void expectLook(Fixture &fixture, const std::string &when, const MarkerLook &expected)
 {
-    QElapsedTimer deadline;
-    deadline.start();
-    while (markerLook(fixture) != expected && deadline.elapsed() < 5000)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    const auto look = markerLook(fixture);
-    if (look != expected)
-        throw std::runtime_error(when + ", the result shows " + describeLook(look) + ", not " + describeLook(expected));
+    test_support::waitUntil([&] { return markerLook(fixture) == expected; },
+                            [&] {
+                                return when + ", the result shows " + describeLook(markerLook(fixture)) + ", not "
+                                    + describeLook(expected);
+                            });
 }
 
 // Waits for the result's cursor to come to rest at position.
 void expectCursor(Fixture &fixture, const std::string &when, int position)
 {
     auto *editor = fixture.item("resultText");
-    QElapsedTimer deadline;
-    deadline.start();
-    while (editor->property("cursorPosition").toInt() != position && deadline.elapsed() < 2000)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    for (int turn = 0; turn < 5; ++turn) QCoreApplication::processEvents();
+    const auto describe = [&] {
+        return when + ": the cursor is at " + std::to_string(editor->property("cursorPosition").toInt()) + ", not "
+            + std::to_string(position);
+    };
+    test_support::waitUntil([&] { return editor->property("cursorPosition").toInt() == position; }, describe);
+    // At rest: nothing queued moves it on.
+    test_support::waitForFrames(fixture.window, when);
     const int at = editor->property("cursorPosition").toInt();
     if (at != position)
         throw std::runtime_error(when + ": the cursor is at " + std::to_string(at) + ", not "
@@ -1111,13 +1063,15 @@ public:
             checkUnchanged(fixture, before);
         });
         suite.run("pane headers do not rearrange recursively", [] {
-            HeaderWarningCapture capture;
+            const test_support::WarningCapture rearranges([](const QString &message) {
+                return message.contains(QStringLiteral("Detected recursive rearrange"));
+            });
             Fixture fixture;
             fixture.window->resize(960, 540);
             settle([&] { return fixture.item("stage2Label")->width() > 0; });
             fixture.window->resize(1500, 1100);
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-            CHECK(!recursiveHeaderWarning.load());
+            test_support::waitForFrames(fixture.window, "the resized headers are laid out");
+            CHECK_EQ(rearranges.count(), 0);
         });
         suite.run("source headers resolve the current conflict from their side", [] {
             Fixture fixture(test_support::markedFile());
@@ -1634,9 +1588,10 @@ public:
             closeMenu();
             // Another modifier with F10 is not a menu request.
             editor->forceActiveFocus(Qt::TabFocusReason);
+            QSignalSpy shown(menu, SIGNAL(aboutToShow()));
             QTest::keyClick(fixture.window, Qt::Key_F10, Qt::ShiftModifier | Qt::ControlModifier);
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-            CHECK(!menu->property("visible").toBool());
+            test_support::waitForFrames(fixture.window, "the Ctrl+Shift+F10 press is handled");
+            CHECK(shown.isEmpty() && !menu->property("visible").toBool());
             const auto point = editor->mapToScene(QPointF(editor->width() / 2, 10)).toPoint();
             QTest::mouseClick(fixture.window, Qt::RightButton, Qt::NoModifier, point);
             settle([&] { return menu->property("opened").toBool(); });
@@ -2083,9 +2038,18 @@ public:
             // Theme fonts may arrive after creation or change while the window is open.
             auto larger = fixture.item("resultText")->property("font").value<QFont>();
             larger.setPointSizeF(larger.pointSizeF() + 3);
+            const auto smaller = columnOffset(fixture.item("resultText"), QStringLiteral("abcde\n"), 4);
             for (const auto *name : {"stage2Text", "resultText", "stage3Text"})
                 CHECK(fixture.item(name)->setProperty("font", larger));
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            // Measure only once every pane has laid out its text in the larger font.
+            test_support::waitUntil(
+                [&] {
+                    for (const auto *name : {"stage2Text", "resultText", "stage3Text"})
+                        if (columnOffset(fixture.item(name), QStringLiteral("abcde\n"), 4) <= smaller + 0.5)
+                            return false;
+                    return true;
+                },
+                "the panes did not lay out the larger font");
             checkTabs();
         });
         suite.run("code and line numbers use the theme's fixed-width font", [] {
@@ -2221,7 +2185,10 @@ public:
             CHECK(ignoredTinted());
         });
         suite.run("gutter delegates detach without anchor errors", [] {
-            GutterWarningCapture warnings;
+            const test_support::WarningCapture anchorErrors([](const QString &message) {
+                return message.contains(QStringLiteral("LineGutter.qml"))
+                    && message.contains(QStringLiteral("Cannot read property 'right' of null"));
+            });
             {
                 Fixture fixture;
                 settlePanes(fixture);
@@ -2234,8 +2201,10 @@ public:
                 settleFor("gutter rows restored",
                           [&] { return qmlValue(gutter, QStringLiteral("rowSlots.count")).toInt() > 0; });
             }
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-            CHECK(gutterAnchorErrors == 0);
+            // The scene's delegates detach as the deferred deletes run.
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            QCoreApplication::sendPostedEvents();
+            CHECK_EQ(anchorErrors.count(), 0);
         });
         suite.run(
             "a hand edit outside every region shows the neutral background, one m glyph and inspectable provenance",
@@ -3255,7 +3224,7 @@ public:
                 for (int step = 1; step <= 10; ++step)
                     QTest::mouseMove(fixture.window, QPoint(from.x() + (to - from.x()) * step / 10, from.y()));
                 QTest::mouseRelease(fixture.window, Qt::LeftButton, Qt::NoModifier, QPoint(to, from.y()));
-                for (int turn = 0; turn < 10; ++turn) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                test_support::waitForFrames(fixture.window, "the split is laid out after the drag");
             };
             const auto start = sidebar->width();
             CHECK(start >= minimum && start + 80 < maximum());
@@ -3293,7 +3262,7 @@ public:
             CHECK(std::abs(contentY(right) - contentY(result)) < 1);
             // Nothing scrolls on once the movement has ended.
             const std::array<qreal, 3> settled{contentY(left), contentY(result), contentY(right)};
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            test_support::waitForFrames(fixture.window, "the scrolled panes are drawn");
             CHECK((std::array<qreal, 3>{contentY(left), contentY(result), contentY(right)}) == settled);
 
             // Five new lines at the top of the result move the mapping with them.
@@ -3320,7 +3289,7 @@ public:
                 // Read before any event is processed: the other panes moved in the same turn.
                 CHECK(std::abs(contentY(result) - (top + 30 * line)) < 1);
                 CHECK(std::abs(contentY(right) - (top + 30 * line)) < 1);
-                for (int turn = 0; turn < 10; ++turn) QCoreApplication::processEvents();
+                test_support::waitForFrames(fixture.window, "the synchronised panes are drawn");
                 CHECK(contentY(left) == top);
                 CHECK(std::abs(contentY(result) - (top + 30 * line)) < 1);
                 CHECK(std::abs(contentY(right) - (top + 30 * line)) < 1);
@@ -3328,7 +3297,7 @@ public:
             // A pane the user is not scrolling does not lead the others.
             const auto held = contentY(left);
             CHECK(right->setProperty("contentY", contentY(right) + 10 * line));
-            for (int turn = 0; turn < 10; ++turn) QCoreApplication::processEvents();
+            test_support::waitForFrames(fixture.window, "the right pane's scroll is drawn");
             CHECK(contentY(left) == held);
             CHECK(std::abs(contentY(result) - (held + 30 * line)) < 1);
         });
@@ -3437,7 +3406,7 @@ public:
             fixture.click("findPassage");
             auto *found = fixture.item("stage2Text");
             CHECK(found->property("selectedText").toString() == "shared 300");
-            settleReplacement();
+            settleReplacement(fixture);
             // The left source shows the passage, and the others the lines mapped to it.
             const auto cursor = found->property("cursorRectangle").toRectF();
             const auto shown = found->y() + cursor.top() - contentY(left);
@@ -3464,7 +3433,7 @@ public:
             for (int click = 0; click < 5 && editor->property("selectionStart").toInt() != late; ++click)
                 fixture.clickMenuEntry("navigateMenu", "nextDifference");
             CHECK(editor->property("selectionStart").toInt() == late);
-            settleReplacement();
+            settleReplacement(fixture);
             CHECK(cursorInView(fixture));
             CHECK(contentY(result) > 250 * line);
             // Past the insertion the left source is 30 lines behind; the right source equals the result.
@@ -3482,7 +3451,7 @@ public:
             const auto offset = editor->property("cursorPosition").toInt();
             fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
             settle([&] { return fixture.file().current().draft.text.find("xshared 20\n") != std::string::npos; });
-            settleReplacement();
+            settleReplacement(fixture);
             CHECK(editor->property("cursorPosition").toInt() == offset + 1);
             const std::array<QQuickItem *, 3> panes{left, result, right};
             const std::array<qreal, 3> typed{contentY(left), contentY(result), contentY(right)};
@@ -3490,7 +3459,7 @@ public:
 
             fixture.key(Qt::Key_Z, Qt::ControlModifier);
             CHECK(fixture.file().current().draft.text.find("xshared") == std::string::npos);
-            settleReplacement();
+            settleReplacement(fixture);
             CHECK(editor->property("cursorPosition").toInt() == offset);
             CHECK(editor->property("selectionStart").toInt() == editor->property("selectionEnd").toInt());
             // No pane follows the replaced text to its end.
@@ -3499,7 +3468,7 @@ public:
 
             fixture.key(Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
             CHECK(fixture.file().current().draft.text.find("xshared 20\n") != std::string::npos);
-            settleReplacement();
+            settleReplacement(fixture);
             // The cursor follows the restored insertion, as it did when the character was typed.
             CHECK(editor->property("cursorPosition").toInt() == offset + 1);
             for (std::size_t pane = 0; pane < panes.size(); ++pane)
@@ -3517,7 +3486,7 @@ public:
             CHECK(cursorInView(fixture));
             fixture.key(Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
             settle([&] { return fixture.file().current().draft.text.find("xshared 200\n") != std::string::npos; });
-            settleReplacement();
+            settleReplacement(fixture);
             const auto typed = contentY(result);
             CHECK(std::abs(typed - 220 * line) < 1);
             int frames = 0;
@@ -3530,7 +3499,7 @@ public:
                 return frames >= 3;
             });
             QObject::disconnect(counter);
-            settleReplacement();
+            settleReplacement(fixture);
             CHECK(editor->property("cursorPosition").toInt() == offset);
             CHECK(cursorInView(fixture));
             if (std::abs(contentY(result) - typed) >= 1)
@@ -3557,7 +3526,7 @@ public:
             const auto selected = static_cast<int>(fixture.text().indexOf(QStringLiteral("shared 22")));
             fixture.select(selected + 9, selected);
             fixture.key(Qt::Key_Z, Qt::ControlModifier);
-            settleReplacement();
+            settleReplacement(fixture);
             CHECK(fixture.text().indexOf(QStringLiteral("shared 22")) == selected - 1);
             CHECK(editor->property("selectionStart").toInt() == selected - 1);
             CHECK(editor->property("selectionEnd").toInt() == selected + 8);
@@ -3579,7 +3548,7 @@ public:
                                                               ChoicePreviewFlow::Action::ResolveUsingSide));
             CHECK(fixture.controller.choices()->applyChoice(true));
             CHECK(fixture.text() != before && !fixture.text().contains(QStringLiteral("right only")));
-            settleReplacement();
+            settleReplacement(fixture);
             CHECK(editor->property("cursorPosition").toInt() == offset);
             CHECK(std::abs(contentY(result) - 10 * line) < 1);
         });
@@ -3596,7 +3565,7 @@ public:
                                                               ChoicePreviewFlow::Action::ResolveUsingSide));
             CHECK(fixture.controller.choices()->applyChoice(true));
             CHECK(!fixture.text().contains(QStringLiteral("right only")));
-            settleReplacement();
+            settleReplacement(fixture);
             // The removed lines took the cursor's line out of the kept view, so the view follows it.
             CHECK(editor->property("cursorPosition").toInt() == fixture.text().indexOf(QStringLiteral("shared 120\n")));
             CHECK(cursorInView(fixture));
@@ -3616,7 +3585,7 @@ public:
             placeResultCursor(fixture, marker, 140 * line);
             const auto revision = [&] { return QString::number(fixture.file().current().id); };
             const auto kept = [&] {
-                settleReplacement();
+                settleReplacement(fixture);
                 CHECK(editor->property("cursorPosition").toInt() == fixture.text().indexOf(marker));
                 CHECK(editor->property("selectionStart").toInt() == editor->property("selectionEnd").toInt());
                 CHECK(std::abs(contentY(result) - 140 * line) < 1);

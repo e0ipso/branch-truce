@@ -3,6 +3,7 @@
 // Offscreen Qt Quick helpers shared by the comparison view tests and the
 // journey acceptance suite. Both load the real BranchTruce Main scene.
 #include "TestHarness.h"
+#include "fixtures/EventLoop.h"
 #include <QAccessible>
 #include <QCoreApplication>
 #include <QDir>
@@ -34,20 +35,27 @@
 #include <string>
 
 namespace test_support {
-template <typename Predicate> void settle(Predicate ready)
-{
-    QElapsedTimer deadline;
-    deadline.start();
-    while (!ready() && deadline.elapsed() < 5000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    CHECK(ready());
-}
-
+// Runs the event loop until ready() holds, as waitUntil does.
 template <typename Predicate> void settleFor(const std::string &what, Predicate ready)
 {
-    QElapsedTimer deadline;
-    deadline.start();
-    while (!ready() && deadline.elapsed() < 5000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-    if (!ready()) throw std::runtime_error("timed out waiting for " + what);
+    waitUntil(ready, "timed out waiting for " + what);
+}
+
+template <typename Predicate> void settle(Predicate ready) { settleFor("a scene condition", ready); }
+
+// Runs the event loop until the window has rendered two more frames. The scene graph polishes
+// every item before it renders, so the layout, bindings and queued calls that earlier events
+// started have run by then. Wait for this before checking that something did not happen.
+inline void waitForFrames(QQuickWindow *window, const std::string &what)
+{
+    QSignalSpy frames(window, &QQuickWindow::frameSwapped);
+    window->update();
+    waitUntil(
+        [&] {
+            if (frames.count() < 2) window->update();
+            return frames.count() >= 2;
+        },
+        "no frame rendered before " + what);
 }
 
 // Optional CI originals of the actual offscreen Qt scene, without a reference

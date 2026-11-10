@@ -306,7 +306,8 @@ public:
             const auto transactions = fixture.transactions();
             CHECK(transactions > 0);
             const auto unchanged = [&] {
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+                // An edit capture the pass queued would have run before the next frame.
+                test_support::waitForFrames(fixture.window, "the format pass has run");
                 CHECK(fixture.file().current().id == before.id);
                 CHECK(fixture.file().current().draft == before.draft);
                 CHECK(fixture.file().canUndo() == canUndo);
@@ -343,7 +344,8 @@ public:
             document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
             PaneHighlighter highlighter(&document);
             highlighter.attach();
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            // Runs the highlighter's queued first pass.
+            QCoreApplication::sendPostedEvents();
             document.setModified(false);
             const auto text = document.toPlainText();
             const auto undo = document.isUndoAvailable();
@@ -400,7 +402,7 @@ public:
             highlighter->setDecorations({});
             CHECK(highlighter->decorations().isEmpty());
             // Let a queued edit capture run, if the pass started one.
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            test_support::waitForFrames(fixture.window, "the decoration pass has run");
             CHECK(fixture.file("notes").current().id == before.id);
             CHECK(fixture.file("notes").current().draft == before.draft);
             CHECK(fixture.file("notes").canUndo() == canUndo);
@@ -418,7 +420,8 @@ public:
             document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
             PaneHighlighter highlighter(&document);
             highlighter.attach();
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            // Runs the highlighter's queued first pass.
+            QCoreApplication::sendPostedEvents();
             const QList<QTextBlock> decorated{document.findBlockByNumber(4), document.findBlockByNumber(9),
                                               document.findBlockByNumber(14)};
             const auto ranges = [&] {
@@ -530,7 +533,8 @@ public:
             document.setPlainText(QStringLiteral("plain text line\n").repeated(32));
             PaneHighlighter highlighter(&document);
             highlighter.attach();
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            // Runs the highlighter's queued first pass.
+            QCoreApplication::sendPostedEvents();
             auto block = document.findBlockByNumber(4);
             QTextLayout::FormatRange word;
             word.start = block.position() + 2;

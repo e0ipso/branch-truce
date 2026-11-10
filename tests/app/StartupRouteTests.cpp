@@ -13,7 +13,6 @@
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
-#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -2125,10 +2124,12 @@ public:
                                  });
                 const auto calls = readFile(trace);
                 CHECK(controller.completion()->leave());
-                // Give any Git child the leave could have started time to record its argv.
-                QElapsedTimer settle;
-                settle.start();
-                while (settle.elapsed() < 500) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                // Git runs only as a coordinator task, so a leave that started one would leave it
+                // pending once the calls the leave queued have run.
+                QCoreApplication::sendPostedEvents();
+                CHECK_EQ(controller.coordinator()->pendingTasks(), 0);
+                for (const auto *process : controller.findChildren<QProcess *>())
+                    CHECK(process->state() == QProcess::NotRunning);
                 CHECK(readFile(trace) == calls);
                 CHECK(ended == 1 && !clean);
                 CHECK(outcome

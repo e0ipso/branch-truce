@@ -4,7 +4,8 @@
 // predicate that throws, or an EXPECT that fails in a slot, stops the wait and the failure is
 // raised after the loop returns.
 //
-//   waitUntil(ready, detail)         runs the loop until ready() holds.
+//   waitUntil(ready, detail)         runs the loop until ready() holds; detail may be a callable
+//                                    that describes the state when the wait fails.
 //   AsyncCompletion(service, signal) drives one request of a start()/busy()/finished() service.
 //   WhenCreated(path, action)        runs action from the event loop once a file appears.
 
@@ -17,9 +18,11 @@
 #include <QObject>
 #include <QTimer>
 
+#include <concepts>
 #include <exception>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace test_support {
@@ -30,10 +33,10 @@ inline constexpr int kWaitDeadlineMs = 25000;
 inline constexpr int kRequestDeadlineMs = 10000;
 
 // Runs the event loop until `ready` returns true, re-evaluating it every `pulseMs`. Fails the case
-// with `detail` after `deadlineMs`. Stops early when ready() throws or an EXPECT fails, and
-// raises that failure here.
-template <typename Predicate>
-void waitUntil(Predicate ready, const std::string &detail, int deadlineMs = kWaitDeadlineMs, int pulseMs = 10)
+// with `describe()` after `deadlineMs`; build that message from the state at the deadline. Stops
+// early when ready() throws or an EXPECT fails, and raises that failure here.
+template <typename Predicate, std::invocable Describe>
+void waitUntil(Predicate ready, Describe describe, int deadlineMs = kWaitDeadlineMs, int pulseMs = 10)
 {
     std::exception_ptr error;
     bool satisfied = false;
@@ -61,7 +64,14 @@ void waitUntil(Predicate ready, const std::string &detail, int deadlineMs = kWai
     }
     if (error) std::rethrow_exception(error);
     throwPending();
-    if (!satisfied) throw Failure(detail);
+    if (!satisfied) throw Failure(std::string(describe()));
+}
+
+// As above, failing with the fixed message `detail`.
+template <typename Predicate>
+void waitUntil(Predicate ready, const std::string &detail, int deadlineMs = kWaitDeadlineMs, int pulseMs = 10)
+{
+    waitUntil(std::move(ready), [&detail] { return detail; }, deadlineMs, pulseMs);
 }
 
 // Collects the results one service emits. run() checks the service's request contract: start()

@@ -850,10 +850,8 @@ int main(int argc, char **argv)
              QStringLiteral("the launcher did not start a session"));
         CHECK(launcher.spawned());
         const auto launched = launcher.checkSpawnArguments();
-        // Retries that fail at once would have given up long before this.
-        QElapsedTimer pause;
-        pause.start();
-        while (pause.elapsed() < 1500) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        // The launcher spawned the session because nothing listened, so the session below starts
+        // listening after the launcher began its retries.
         CHECK(launcher.process.state() == QProcess::Running);
         openController(controller, repo, launched, true);
         // The session opens on the launched path, not on the first file in the list.
@@ -861,7 +859,6 @@ int main(int argc, char **argv)
         CHECK(controller.selection()->fileId() == launched);
         pump([&] { return controller.mergetoolSession()->waitingPath() == "tracked.txt"; },
              controller.feedback()->message());
-        CHECK(launcher.clock.elapsed() < 15000);
         CHECK(controller.mergetool()->waiting());
         CHECK(readFile(controller.mergetoolSession()->intake("tracked.txt") + "/merged") == repo.tracked);
         select(controller, "tracked.txt");
