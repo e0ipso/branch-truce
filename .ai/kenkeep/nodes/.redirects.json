@@ -1,0 +1,24 @@
+{
+  "map-branch-truce-desktop-implementation-baseline": [
+    "map-desktop-platform-and-implementation-stack",
+    "map-desktop-comparison-and-workflow-integration",
+    "map-installed-desktop-application",
+    "map-editing-and-recovery-resource-envelope"
+  ],
+  "map-mergetool-session-socket-and-real-git-parent": [
+    "map-mergetool-socket-lookup-and-access",
+    "map-mergetool-launcher-decisions-and-reloads",
+    "map-real-git-parent-compatibility-and-fixture-isolation"
+  ],
+  "map-per-base-debian-artifacts-and-container-inspection": [
+    "map-developer-debian-artifact-builds-and-inspection",
+    "map-runtime-qml-and-plugin-package-dependencies",
+    "map-native-release-package-artifact-flow"
+  ],
+  "map-recovery-journal-and-acknowledgment-boundary": [
+    "map-recovery-journal-format-and-validation",
+    "map-recovery-acknowledgment-and-retained-input",
+    "map-recovery-store-selection-and-failure-scope",
+    "map-recovery-of-copied-launches-and-interrupted-publication"
+  ]
+}
