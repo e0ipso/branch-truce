@@ -110,6 +110,7 @@ inline bool partsFit(std::span<const std::string_view> parts) noexcept
 
 inline bool replacementFits(std::string_view text, ByteRange range, std::string_view replacement) noexcept
 {
+    if (range.begin > range.end || range.end > text.size()) return false;
     return partsFit(std::array{text.substr(0, range.begin), replacement, text.substr(range.end)});
 }
 

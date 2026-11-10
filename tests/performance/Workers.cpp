@@ -140,7 +140,8 @@ int correspondenceWorker(const WorkerArgs &args)
         emitRecord(construct);
         emittedConstruct = true;
         const auto editStarted = std::chrono::steady_clock::now();
-        const auto edited = map.edited(2, branch_truce::ResultEdit{branch_truce::ByteRange{0, 0}, "X"});
+        const auto edited = branch_truce::CorrespondenceMap(map).edited(
+            2, branch_truce::ResultEdit{branch_truce::ByteRange{0, 0}, "X"});
         auto edit = record("edit");
         edit.elapsedMs = since(editStarted);
         edit.rssKb = vmHwmKb();

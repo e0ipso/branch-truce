@@ -44,6 +44,8 @@ void emptyHistoryIsBoundedAndKeepsProtectedRevisions(std::size_t keyBytes, std::
 
 void metadataAdmissionHasIndependentCountAndByteBoundaries()
 {
+    CHECK(!replacementFits("x", {0, 2}, {}));
+    CHECK(!replacementFits("x", {1, 0}, {}));
     const std::string dense(kMaxIndexedLines, '\n');
     CHECK(partsFit(std::array{std::string_view(dense)}));
     CHECK(!partsFit(std::array{std::string_view(dense), std::string_view("x")}));
