@@ -3,13 +3,14 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import BranchTruce.App
 import org.kde.kirigami as Kirigami
 
 Item {
     id: lane
     required property SourcePane pane
-    // The pane's choice rows: {line, choice, extras}, from ComparisonView.choiceRowsFor.
-    required property var rows
+    // Joined section commands and their precise line scopes.
+    required property list<comparisonRow> rows
     required property real rowHeight
     // Whether the file takes choices now: it can be edited and no input is composing.
     required property bool choosing

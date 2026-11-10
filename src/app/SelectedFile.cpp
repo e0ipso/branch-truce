@@ -26,12 +26,6 @@ QVariantMap sourceData(const std::optional<SourceSnapshot> &source)
             {QStringLiteral("mode"), utf8(source->mode)}};
 }
 
-void insertUnmapped(QVariantMap &map, const QString &prefix)
-{
-    for (const auto *key : {"LineBegin", "LineEnd", "Utf16Begin", "Utf16End"})
-        map.insert(prefix + QLatin1String(key), -1);
-}
-
 // A marker line of the result: its 1-based line and its text without the line ending.
 QVariantMap markerLine(const MarkerLine &marker, std::string_view result, const TextPositions &positions)
 {
@@ -128,13 +122,10 @@ void SelectedFile::sync()
         initialResult_ =
             snapshots ? QVariantMap{{QStringLiteral("text"), utf8(snapshots->launchResult.text.utf8)}} : QVariantMap{};
         sourcePositions_.clear();
-        sourceTexts_.clear();
         if (snapshots) {
             for (const auto side : {SourceSide::Stage2, SourceSide::Stage3, SourceSide::Earlier}) {
                 if (const auto &source = snapshotFor(*snapshots, side)) {
-                    auto [entry, inserted] = sourceTexts_.emplace(side, source->worktree.utf8);
-                    (void)inserted;
-                    sourcePositions_.emplace(side, TextPositions(entry->second));
+                    sourcePositions_.emplace(side, TextPositions(source->worktree.utf8));
                 }
             }
         }
@@ -157,15 +148,12 @@ void SelectedFile::sync()
     }
     // Every status property reads one of these roles, plus canEdit's session-wide recovery.
     QVariantList status;
-    for (const auto role :
-         {SessionModel::SupportRole,       SessionModel::SupportDetailRole,  SessionModel::StatusRole,
-          SessionModel::StatusKindRole,    SessionModel::UnsavedRole,        SessionModel::ReviewNeededRole,
-          SessionModel::ResolvedRole,      SessionModel::UndecidedRole,      SessionModel::ConflictCountRole,
-          SessionModel::PendingInputRole,  SessionModel::PendingTextRole,    SessionModel::RecoveryStateRole,
-          SessionModel::RecoveryErrorRole, SessionModel::FinishBlockersRole, SessionModel::CurrentRevisionRole,
-          SessionModel::CanUndoRole,       SessionModel::CanRedoRole,        SessionModel::ProgressRole,
-          SessionModel::StatusIconRole,    SessionModel::StatusLineRole,     SessionModel::ChipsRole,
-          SessionModel::SummaryRole})
+    for (const auto role : {SessionModel::SupportRole, SessionModel::SupportDetailRole, SessionModel::StatusRole,
+                            SessionModel::StatusKindRole, SessionModel::UnsavedRole, SessionModel::ResolvedRole,
+                            SessionModel::UndecidedRole, SessionModel::PendingInputRole, SessionModel::PendingTextRole,
+                            SessionModel::RecoveryStateRole, SessionModel::RecoveryErrorRole,
+                            SessionModel::CurrentRevisionRole, SessionModel::CanUndoRole, SessionModel::CanRedoRole,
+                            SessionModel::ProgressRole, SessionModel::StatusIconRole})
         status.push_back(this->role(role));
     status.push_back(canEdit());
     if (status != status_ || selectionChanged) {
@@ -176,12 +164,16 @@ void SelectedFile::sync()
 void SelectedFile::project(const FileSession *file)
 {
     if (!file) {
-        publishProjection({});
+        comparison_.publish({});
         return;
     }
     const auto *mapping = file->correspondence();
     const auto resultPositions = mapping ? std::optional<TextPositions>(std::in_place, mapping->text()) : std::nullopt;
-    QVariantList passages;
+    ComparisonPresentation::Data projection;
+    projection.fileId = fileId_;
+    projection.revision = currentRevision();
+    projection.correspondence = correspondenceIdentity(*file);
+    auto &passages = projection.passages;
     if (mapping && file->support() == Support::Supported) {
         for (const auto side : {SourceSide::Stage2, SourceSide::Stage3, SourceSide::Earlier}) {
             const auto *list = mapping->passages(side);
@@ -199,7 +191,7 @@ void SelectedFile::project(const FileSession *file)
     }
     // Result lines editor changes wrote, inside choice regions or not. A
     // deletion marks the line it joined, or the last line after a final newline.
-    QVariantList handEditedLines;
+    auto &handEditedLines = projection.handEditedLines;
     if (mapping && file->support() == Support::Supported) {
         const auto &draft = mapping->text();
         for (auto range : mapping->handEditedRanges()) {
@@ -210,8 +202,7 @@ void SelectedFile::project(const FileSession *file)
             handEditedLines.push_back(entry);
         }
     }
-    QVariantList choices;
-    QVariantList regions;
+
     // A marker block tied to choice sections stays in the result until
     // confirmed choices decide every section it encloses.
     const auto sections = file->support() == Support::Supported ? file->markerSections() : std::vector<MarkerSection>{};
@@ -223,16 +214,12 @@ void SelectedFile::project(const FileSession *file)
         if (std::any_of(target.decisions.begin(), target.decisions.end(),
                         [&](const auto &id) { return !file->current().draft.decisions.contains(id); }))
             continue;
-        const auto &source =
-            target.source.side == SourceSide::Stage2 ? file->snapshots()->stage2 : file->snapshots()->stage3;
-        const auto &sourceText = source->worktree.utf8;
         const auto &positions = sourcePositions_.at(target.source.side);
         const auto line = positions.line(target.source.range.begin);
         const auto last =
             positions.line(target.source.range.end > target.source.range.begin ? target.source.range.end - 1
                                                                                : target.source.range.end);
-        QStringList states;
-        QStringList decisionIds;
+        QStringList states, decisionIds;
         bool undecided = true;
         bool anyUndecided = target.decisions.empty();
         bool ignored = !target.decisions.empty();
@@ -248,7 +235,6 @@ void SelectedFile::project(const FileSession *file)
                                                                    : tr("undecided"));
             decisionIds.push_back(utf8(id));
         }
-        states.removeDuplicates();
         const auto *anchor =
             file->correspondence() ? file->correspondence()->anchor(target.source.contributionId) : nullptr;
         const bool mapped = anchor && anchor->state == AnchorState::Mapped && anchor->result;
@@ -256,48 +242,49 @@ void SelectedFile::project(const FileSession *file)
         const bool resultMapped = mapped && resultPositions->contains(*anchor->result);
         // Only editor changes set this, never text that differed at launch.
         const bool handEdited = anchor && anchor->handEdited;
-        // Any undecided line keeps the region undecided, so outstanding work stays visible.
-        QVariantMap region{{QStringLiteral("id"), utf8(target.source.contributionId)},
-                           {QStringLiteral("side"), sideName(target.source.side)},
-                           {QStringLiteral("scope"),
-                            target.scope == ChoiceScope::Section ? QStringLiteral("section") : QStringLiteral("line")},
-                           {QStringLiteral("section"), utf8(target.section)},
-                           {QStringLiteral("decisionIds"), decisionIds},
-                           {QStringLiteral("state"),
-                            anyUndecided     ? QStringLiteral("undecided")
-                                : handEdited ? QStringLiteral("manual")
-                                : ignored    ? QStringLiteral("ignored")
-                                             : QStringLiteral("accepted")},
-                           {QStringLiteral("handEdited"), handEdited},
-                           {QStringLiteral("markersRemain"), markedSections.contains(target.section)},
-                           {QStringLiteral("mapped"), resultMapped}};
-        positions.insert(region, QStringLiteral("source"), target.source.range);
+        ComparisonContribution contribution;
+        contribution.id = utf8(target.source.contributionId);
+        contribution.side = sideName(target.source.side);
+        contribution.scope = target.scope == ChoiceScope::Section ? QStringLiteral("section") : QStringLiteral("line");
+        contribution.section = utf8(target.section);
+        contribution.decisionIds = decisionIds;
+        states.removeDuplicates();
+        contribution.decisionState = states.join(QStringLiteral(", "));
+        contribution.state = anyUndecided ? QStringLiteral("undecided")
+            : handEdited                  ? QStringLiteral("manual")
+            : ignored                     ? QStringLiteral("ignored")
+                                          : QStringLiteral("accepted");
+        contribution.handEdited = handEdited;
+        contribution.markersRemain = markedSections.contains(target.section);
+        contribution.mapped = resultMapped;
+        const auto range = [](const TextPositions &positions, ByteRange bytes, int &first, int &end, int &beginUtf,
+                              int &endUtf) {
+            first = positions.line(bytes.begin);
+            end = bytes.end > bytes.begin ? positions.line(bytes.end - 1) + 1 : first;
+            beginUtf = positions.utf16(bytes.begin);
+            endUtf = positions.utf16(bytes.end);
+        };
+        range(positions, target.source.range, contribution.sourceLineBegin, contribution.sourceLineEnd,
+              contribution.sourceUtf16Begin, contribution.sourceUtf16End);
         if (resultMapped)
-            resultPositions->insert(region, QStringLiteral("result"), *anchor->result);
-        else
-            insertUnmapped(region, QStringLiteral("result"));
-        regions.push_back(region);
+            range(*resultPositions, *anchor->result, contribution.resultLineBegin, contribution.resultLineEnd,
+                  contribution.resultUtf16Begin, contribution.resultUtf16End);
         const bool left = target.source.side == SourceSide::Stage2;
-        const auto label = target.scope == ChoiceScope::Section
+        contribution.label = target.scope == ChoiceScope::Section
             ? (left ? tr("Left section, lines %1–%2") : tr("Right section, lines %1–%2")).arg(line).arg(last)
             : (left ? tr("Left line %1") : tr("Right line %1")).arg(line);
-        choices.push_back(QVariantMap{
-            {QStringLiteral("id"), utf8(target.source.contributionId)},
-            {QStringLiteral("label"), label},
-            {QStringLiteral("state"), states.join(QStringLiteral(", "))},
-            {QStringLiteral("sourceText"),
-             utf8(sourceText.substr(target.source.range.begin, target.source.range.end - target.source.range.begin))},
-            {QStringLiteral("available"), available},
-            {QStringLiteral("combinationAvailable"), mapped},
-            {QStringLiteral("detail"),
-             !undecided ? tr("Preview both to replace this scope, or undo intervening actions to change its decision.")
-                 : !mapped ? tr("This scope cannot be mapped safely. Edit the result directly.")
-                           : QString{}}});
+        contribution.available = available;
+        contribution.combinationAvailable = mapped;
+        contribution.detail = !undecided
+            ? tr("Preview both to replace this scope, or undo intervening actions to change its decision.")
+            : !mapped ? tr("This scope cannot be mapped safely. Edit the result directly.")
+                      : QString{};
+        projection.contributions.append(std::move(contribution));
     }
     // Fold recognized blocks independently of whether a choice can safely
     // target them. A pending editor draft has different lines, so it gets none.
-    QVariantList markerBlocks;
-    QVariantList markerOrphans;
+    auto &markerBlocks = projection.markerBlocks;
+    auto &markerOrphans = projection.markerOrphans;
     if (file->support() == Support::Supported && !files_.store().pendingDraft(file->id())) {
         const auto &draft = file->current().draft.text;
         const TextPositions lines(draft);
@@ -319,40 +306,9 @@ void SelectedFile::project(const FileSession *file)
         }
         for (const auto &orphan : scan.orphans) markerOrphans.push_back(markerLine(orphan, draft, lines));
     }
-    const auto notice = choices.empty() && !file->choices().empty()
+    projection.choiceNotice = projection.contributions.empty() && !file->choices().empty()
         ? tr("Scoped choices are unavailable for this earlier draft. Direct editing remains available.")
         : QString{};
-    publishProjection({std::move(passages), std::move(handEditedLines), std::move(choices), std::move(regions),
-                       std::move(markerBlocks), std::move(markerOrphans), notice});
-}
-
-void SelectedFile::publishProjection(Projection projection)
-{
-    const bool passages = passages_ != projection.passages;
-    const bool handEditedLines = handEditedLines_ != projection.handEditedLines;
-    const bool choices = choices_ != projection.choices || choiceNotice_ != projection.choiceNotice;
-    const bool regions = regions_ != projection.regions;
-    const bool markerBlocks = markerBlocks_ != projection.markerBlocks;
-    const bool markerOrphans = markerOrphans_ != projection.markerOrphans;
-    if (!passages && !handEditedLines && !choices && !regions && !markerBlocks && !markerOrphans) return;
-
-    // A QML binding often reads several of these fields. Install the complete
-    // revision first, then invalidate that binding once through a shared notifier.
-    passages_ = std::move(projection.passages);
-    handEditedLines_ = std::move(projection.handEditedLines);
-    choices_ = std::move(projection.choices);
-    choiceNotice_ = std::move(projection.choiceNotice);
-    regions_ = std::move(projection.regions);
-    markerBlocks_ = std::move(projection.markerBlocks);
-    markerOrphans_ = std::move(projection.markerOrphans);
-    Q_EMIT comparisonChanged();
-
-    // Preserve focused observers, with the same coherent state as QML receives.
-    if (passages) Q_EMIT passagesChanged();
-    if (handEditedLines) Q_EMIT handEditedLinesChanged();
-    if (choices) Q_EMIT choicesChanged();
-    if (regions) Q_EMIT regionsChanged();
-    if (markerBlocks) Q_EMIT markerBlocksChanged();
-    if (markerOrphans) Q_EMIT markerOrphansChanged();
+    comparison_.publish(std::move(projection));
 }
 }

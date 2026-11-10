@@ -27,6 +27,30 @@ using namespace comparison_scene;
 void comparison_scene::addLayoutCases(Groups groups)
 {
     auto &scenes = groups.scenes;
+    scenes.run("unchanged comparison rows retain the real source control and keyboard focus", [] {
+        Application controller(test_support::windowConfig());
+        Fixture fixture(controller, test_support::markedFile());
+        settlePanes(fixture);
+        const auto row = controller.selectedFile()->comparison()->leftRows().first();
+        const auto name = ("choiceAccept-" + row.choice.id).toUtf8();
+        QPointer<QQuickItem> control = fixture.item(name.constData());
+        control->forceActiveFocus(Qt::TabFocusReason);
+        CHECK(test_support::requireAccessible(control, name.constData()));
+        controller.selectedFile()->sync();
+        controller.selectedFile()->sync();
+        CHECK(control && fixture.item(name.constData()) == control && control->hasActiveFocus());
+        auto *presentation = controller.selectedFile()->comparison();
+        const auto stale = presentation->choiceTarget(row.choice.id);
+        CHECK(controller.store()->appendFile(namedChoiceFile("other")));
+        test_support::awaitRecovery(*controller.store());
+        for (const auto *id : {"other", "choices", "other", "choices"}) {
+            CHECK(controller.selection()->select(id));
+            CHECK(presentation->fileId() == QLatin1String(id) && !presentation->accepts(stale));
+            CHECK(!presentation->leftRows().isEmpty() && !presentation->rightRows().isEmpty());
+        }
+        settlePanes(fixture);
+        CHECK(fixture.item("stage2Text")->property("text") == controller.selectedFile()->stage2().value("text"));
+    });
     scenes.run("accessibility evidence rejects missing controls and visible text without a name", [] {
         const bool wasActive = QAccessible::isActive();
         QAccessible::setActive(true);
@@ -293,18 +317,17 @@ void comparison_scene::addLayoutCases(Groups groups)
         };
         // The two sections in result order, and each side's decision on one.
         QStringList sections;
-        for (const auto &entry : controller.selectedFile()->regions()) {
-            const auto region = entry.toMap();
-            const auto id = region.value("section").toString();
-            if (region.value("scope").toString() == "section" && !sections.contains(id)) sections.push_back(id);
+        for (const auto &entry : controller.selectedFile()->comparison()->contributions()) {
+            const auto &region = entry;
+            const auto id = region.section;
+            if (region.scope == "section" && !sections.contains(id)) sections.push_back(id);
         }
         CHECK(sections.size() == 2);
         const auto state = [&](const QString &section, const char *side) {
-            for (const auto &entry : controller.selectedFile()->regions()) {
-                const auto region = entry.toMap();
-                if (region.value("section").toString() == section && region.value("scope").toString() == "section"
-                    && region.value("side").toString() == QLatin1String(side))
-                    return region.value("state").toString();
+            for (const auto &entry : controller.selectedFile()->comparison()->contributions()) {
+                const auto &region = entry;
+                if (region.section == section && region.scope == "section" && region.side == QLatin1String(side))
+                    return region.state;
             }
             return QString();
         };
@@ -326,7 +349,7 @@ void comparison_scene::addLayoutCases(Groups groups)
               == QStringLiteral("Resolve the current conflict using Right"));
         clickItem(fixture, button("stage3"));
         settleFor("the first conflict resolved using Right", [&] { return decided(sections[0], "stage3", "stage2"); });
-        CHECK(controller.selectedFile()->markerBlocks().isEmpty());
+        CHECK(controller.selectedFile()->comparison()->markerBlocks().isEmpty());
         CHECK(fixture.text() == QStringLiteral("header\nright first\nright second\nbridge\nleft later\ntail\n"));
         // With no undecided conflict left, neither header can resolve one.
         settleFor("nothing left to resolve", [&] { return enabled(false, false); });

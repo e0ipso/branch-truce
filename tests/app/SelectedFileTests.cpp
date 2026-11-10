@@ -95,6 +95,15 @@ void checkRange(const QVariantMap &entry, const QString &prefix, const QString &
     CHECK(entry.value(prefix + "Utf16End").toInt() == lineOffset(text, end));
 }
 
+void checkRange(const ComparisonContribution &entry, const QString &prefix, const QString &text, int begin, int end)
+{
+    const bool source = prefix == QLatin1String("source");
+    CHECK((source ? entry.sourceLineBegin : entry.resultLineBegin) == begin);
+    CHECK((source ? entry.sourceLineEnd : entry.resultLineEnd) == end);
+    CHECK((source ? entry.sourceUtf16Begin : entry.resultUtf16Begin) == lineOffset(text, begin));
+    CHECK((source ? entry.sourceUtf16End : entry.resultUtf16End) == lineOffset(text, end));
+}
+
 struct ExpectedPassage {
     const char *side;
     const char *kind;
@@ -111,7 +120,7 @@ void checkPassages(const SelectedFile *file, const std::vector<ExpectedPassage> 
         const auto source = file->property(side).toMap().value("text").toString();
         int sourceLine = 1;
         int resultLine = 1;
-        for (const auto &value : file->passages()) {
+        for (const auto &value : file->comparison()->passages()) {
             const auto passage = value.toMap();
             if (passage.value("side").toString() != QLatin1String(side)) continue;
             CHECK(passage.value("sourceLineBegin").toInt() == sourceLine);
@@ -143,21 +152,22 @@ struct ExpectedRegion {
     int sourceBegin, sourceEnd, resultBegin, resultEnd;
 };
 
-// Regions follow the scoped choices one for one, in the same order.
+// Every joined contribution exposes its command and range in the same value.
 void checkRegions(const SelectedFile *file, const std::vector<ExpectedRegion> &expected)
 {
-    const auto regions = file->regions();
-    const auto choices = file->choices();
-    CHECK(regions.size() == static_cast<qsizetype>(expected.size()) && choices.size() == regions.size());
+    const auto regions = file->comparison()->contributions();
+    CHECK(regions.size() == static_cast<qsizetype>(expected.size()));
+    QSet<QString> ids;
     for (std::size_t i = 0; i < expected.size(); ++i) {
-        const auto region = regions[static_cast<qsizetype>(i)].toMap();
+        const auto &region = regions[static_cast<qsizetype>(i)];
         const auto &want = expected[i];
-        CHECK(region.value("id") == choices[static_cast<qsizetype>(i)].toMap().value("id"));
-        CHECK(region.value("side").toString() == QLatin1String(want.side));
-        CHECK(region.value("scope").toString() == QLatin1String(want.scope));
-        CHECK(region.value("state").toString() == QLatin1String(want.state));
-        CHECK(region.value("mapped").toBool() && !region.value("section").toString().isEmpty());
-        CHECK(region.value("decisionIds").toStringList().size() == 1);
+        CHECK(!region.id.isEmpty() && !ids.contains(region.id));
+        ids.insert(region.id);
+        CHECK(region.side == QLatin1String(want.side));
+        CHECK(region.scope == QLatin1String(want.scope));
+        CHECK(region.state == QLatin1String(want.state));
+        CHECK(region.mapped && !region.section.isEmpty());
+        CHECK(region.decisionIds.size() == 1);
         checkRange(region, "source", file->property(want.side).toMap().value("text").toString(), want.sourceBegin,
                    want.sourceEnd);
         checkRange(region, "result", file->resultText(), want.resultBegin, want.resultEnd);
@@ -166,12 +176,11 @@ void checkRegions(const SelectedFile *file, const std::vector<ExpectedRegion> &e
 
 QString regionId(const SelectedFile *file, const char *side, const char *scope, int sourceLine)
 {
-    for (const auto &value : file->regions()) {
-        const auto region = value.toMap();
-        if (region.value("side").toString() == QLatin1String(side)
-            && region.value("scope").toString() == QLatin1String(scope)
-            && region.value("sourceLineBegin").toInt() == sourceLine)
-            return region.value("id").toString();
+    for (const auto &value : file->comparison()->contributions()) {
+        const auto &region = value;
+        if (region.side == QLatin1String(side) && region.scope == QLatin1String(scope)
+            && region.sourceLineBegin == sourceLine)
+            return region.id;
     }
     throw std::runtime_error("fixture has no such region");
 }
@@ -180,25 +189,24 @@ QString regionId(const SelectedFile *file, const char *side, const char *scope, 
 std::vector<bool> handEdits(const SelectedFile *file)
 {
     std::vector<bool> result;
-    for (const auto &value : file->regions()) {
-        const auto flag = value.toMap().value("handEdited");
-        CHECK(flag.typeId() == QMetaType::Bool);
-        result.push_back(flag.toBool());
+    for (const auto &value : file->comparison()->contributions()) {
+        static_assert(std::is_same_v<decltype(value.handEdited), bool>);
+        result.push_back(value.handEdited);
     }
     return result;
 }
 
-QVariantMap region(const SelectedFile *file, const QString &id)
+ComparisonContribution region(const SelectedFile *file, const QString &id)
 {
-    for (const auto &value : file->regions())
-        if (value.toMap().value("id").toString() == id) return value.toMap();
+    for (const auto &value : file->comparison()->contributions())
+        if (value.id == id) return value;
     throw std::runtime_error("fixture has no such region");
 }
 
 QStringList regionStates(const SelectedFile *file)
 {
     QStringList result;
-    for (const auto &value : file->regions()) result.push_back(value.toMap().value("state").toString());
+    for (const auto &value : file->comparison()->contributions()) result.push_back(value.state);
     return result;
 }
 
@@ -269,10 +277,12 @@ int main(int argc, char **argv)
         engine.rootContext()->setContextProperty(QStringLiteral("selected"), &selected);
         QQmlExpression binding(
             engine.rootContext(), nullptr,
-            QStringLiteral("JSON.stringify({passages:selected.passages, regions:selected.regions, "
-                           "handEditedLines:selected.handEditedLines, choices:selected.choices, "
-                           "markerBlocks:selected.markerBlocks, markerOrphans:selected.markerOrphans, "
-                           "choiceNotice:selected.choiceNotice})"));
+            QStringLiteral(
+                "JSON.stringify({passages:selected.comparison.passages, "
+                "contributions:selected.comparison.contributions, "
+                "handEditedLines:selected.comparison.handEditedLines, "
+                "markerBlocks:selected.comparison.markerBlocks, markerOrphans:selected.comparison.markerOrphans, "
+                "choiceNotice:selected.comparison.choiceNotice})"));
         binding.setNotifyOnValueChanged(true);
         const auto read = [&] {
             const auto value = binding.evaluate().toString();
@@ -283,9 +293,9 @@ int main(int argc, char **argv)
         QStringList observed, focused;
         QObject::connect(&binding, &QQmlExpression::valueChanged, [&] { observed.push_back(read()); });
         const auto observeFocused = [&] { focused.push_back(read()); };
-        QObject::connect(&selected, &SelectedFile::passagesChanged, observeFocused);
-        QObject::connect(&selected, &SelectedFile::regionsChanged, observeFocused);
-        QObject::connect(&selected, &SelectedFile::handEditedLinesChanged, observeFocused);
+        QObject::connect(selected.comparison(), &ComparisonPresentation::changed, observeFocused);
+        QObject::connect(selected.comparison(), &ComparisonPresentation::leftRowsChanged, observeFocused);
+        QObject::connect(selected.comparison(), &ComparisonPresentation::rightRowsChanged, observeFocused);
         const auto checkPublication = [&] {
             const auto complete = read();
             CHECK(observed.size() == 1);
@@ -313,8 +323,9 @@ int main(int argc, char **argv)
         // Without files nothing is selected and the projection empties.
         store.replaceFiles({});
         checkPublication();
-        CHECK(selected.passages().isEmpty() && selected.regions().isEmpty() && selected.handEditedLines().isEmpty()
-              && selected.choices().isEmpty());
+        CHECK(selected.comparison()->passages().isEmpty() && selected.comparison()->contributions().isEmpty()
+              && selected.comparison()->handEditedLines().isEmpty() && selected.comparison()->leftRows().isEmpty()
+              && selected.comparison()->rightRows().isEmpty());
     });
     suite.run("background alignment refreshes the selected comparison at the same revision", [] {
         QTemporaryDir directory;
@@ -329,16 +340,16 @@ int main(int argc, char **argv)
         CHECK(store.typeResult("choices", 1, {{6, 8}, "S\n"}) == Transition::Applied);
         const auto *file = store.file("choices");
         const auto pending = file->pendingAlignment();
-        CHECK(pending && selected.markerOrphans().size() == 1);
-        const auto passages = selected.passages();
+        CHECK(pending && selected.comparison()->markerOrphans().size() == 1);
+        const auto passages = selected.comparison()->passages();
         const auto revision = selected.currentRevision();
-        QSignalSpy comparison(&selected, &SelectedFile::comparisonChanged);
+        QSignalSpy comparison(selected.comparison(), &ComparisonPresentation::changed);
         CHECK(comparison.isValid());
         CHECK(store.installAlignment("choices", file->current().id,
                                      std::make_shared<const CorrespondenceMap>(pending->realigned()))
               == Transition::Applied);
         CHECK(selected.currentRevision() == revision);
-        CHECK(selected.passages() != passages && selected.markerOrphans().isEmpty());
+        CHECK(selected.comparison()->passages() != passages && selected.comparison()->markerOrphans().isEmpty());
         CHECK(comparison.count() == 1);
         selected.sync();
         CHECK(comparison.count() == 1);
@@ -369,9 +380,9 @@ int main(int argc, char **argv)
                       {"stage2", "line", "undecided", 6, 7, 5, 6},
                       {"stage3", "section", "undecided", 4, 5, 5, 6},
                       {"stage3", "line", "undecided", 4, 5, 5, 6}});
-        const auto choices = file->choices();
-        CHECK(choices[6].toMap().value("label").toString() == QString::fromUtf8("Left section, lines 6–6"));
-        CHECK(choices[6].toMap().value("state").toString() == "undecided");
+        const auto choices = file->comparison()->contributions();
+        CHECK(choices[6].label == QString::fromUtf8("Left section, lines 6–6"));
+        CHECK(choices[6].decisionState == "undecided");
     });
     suite.run("selected file notifies changed parts without re-emitting sources on edits", [] {
         Application controller{test_support::windowConfig()};
@@ -503,15 +514,13 @@ int main(int argc, char **argv)
               == Transition::Applied);
         file = controller.selectedFile();
         CHECK(file->currentRevision() == "5");
-        const auto regions = file->regions();
-        CHECK(regions[6].toMap().value("state").toString() == "manual"
-              && regions[7].toMap().value("state").toString() == "manual");
-        CHECK(regions[8].toMap().value("state").toString() == "undecided"
-              && regions[9].toMap().value("state").toString() == "undecided");
-        checkRange(regions[6].toMap(), "result", file->resultText(), 6, 7);
+        const auto regions = file->comparison()->contributions();
+        CHECK(regions[6].state == "manual" && regions[7].state == "manual");
+        CHECK(regions[8].state == "undecided" && regions[9].state == "undecided");
+        checkRange(regions[6], "result", file->resultText(), 6, 7);
         CHECK(await(controller.store()->undo("choices", revision())) == Transition::Applied);
         file = controller.selectedFile();
-        CHECK(file->regions()[6].toMap().value("state").toString() == "accepted");
+        CHECK(file->comparison()->contributions()[6].state == "accepted");
         CHECK(file->resultText().contains("\nleft conflict\n"));
     });
     suite.run("no region reports a hand edit at launch, even where the result already differs", [] {
@@ -529,9 +538,9 @@ int main(int argc, char **argv)
             CHECK(!edits.empty() && std::none_of(edits.begin(), edits.end(), [](bool edited) { return edited; }));
             CHECK(!regionStates(file).contains("manual"));
             // Replacing launch text that differs from its source still needs confirmation.
-            for (const auto &value : file->regions()) {
-                const auto *anchor = view.controller.store()->file("choices")->correspondence()->anchor(
-                    value.toMap().value("id").toString().toStdString());
+            for (const auto &value : file->comparison()->contributions()) {
+                const auto *anchor =
+                    view.controller.store()->file("choices")->correspondence()->anchor(value.id.toStdString());
                 if (anchor && anchor->manualOverlap) ++overlapping;
             }
         }
@@ -557,7 +566,7 @@ int main(int argc, char **argv)
         const auto resolved = QStringLiteral("header\nleft first\nleft second\nbridge\n"
                                              "<<<<<<< ours\nleft later\n=======\nright later\n>>>>>>> theirs\ntail\n");
         CHECK(file->resultText() == resolved);
-        CHECK(region(file, regionId(file, "stage2", "section", 2)).value("state").toString() == "accepted");
+        CHECK(region(file, regionId(file, "stage2", "section", 2)).state == "accepted");
         CHECK(view.controller.store()->file("choices")->current().draft.unresolvedMarkers == 1);
         CHECK(await(view.undo())->resultText() == QString::fromStdString(test_support::markedText()));
         CHECK(await(view.redo())->resultText() == resolved);
@@ -616,8 +625,8 @@ int main(int argc, char **argv)
         const auto at = crossing.text().find("two\nleft conflict");
         CHECK(at != std::string::npos);
         file = crossing.edit({{at, at + 8}, "2\nright"});
-        const auto regions = file->regions();
-        CHECK(handEdits(file) == conflictLineEdited && !regions[6].toMap().value("mapped").toBool());
+        const auto regions = file->comparison()->contributions();
+        CHECK(handEdits(file) == conflictLineEdited && !regions[6].mapped);
         CHECK(regionStates(file)[6] == "manual" && regionStates(file)[8] == "undecided");
 
         RegionView view;
@@ -662,13 +671,13 @@ int main(int argc, char **argv)
         const auto line = regionId(file, "stage2", "line", 2);
         const auto at = deleted.text().find("left first\n");
         file = deleted.edit({{at, at + 11}, ""});
-        CHECK(region(file, line).value("handEdited").toBool() && !region(file, line).value("mapped").toBool());
+        CHECK(region(file, line).handEdited && !region(file, line).mapped);
         file = deleted.choose(regionId(file, "stage2", "section", 2), ChoiceAction::Accept);
-        CHECK(deleted.text() == left && none(file) && region(file, line).value("state") == "accepted");
+        CHECK(deleted.text() == left && none(file) && region(file, line).state == "accepted");
         file = deleted.undo();
-        CHECK(region(file, line).value("handEdited").toBool() && region(file, line).value("state") == "undecided");
+        CHECK(region(file, line).handEdited && region(file, line).state == "undecided");
         file = deleted.redo();
-        CHECK(none(file) && region(file, line).value("state") == "accepted");
+        CHECK(none(file) && region(file, line).state == "accepted");
 
         RegionView unchanged(test_support::choiceFile());
         auto &files = *unchanged.controller.store();

@@ -15,6 +15,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
+#include <QMetaProperty>
 #include <QPalette>
 #include <QPointer>
 #include <QQmlComponent>
@@ -25,6 +26,7 @@
 #include <QQuickWindow>
 #include <QRegularExpression>
 #include <QScreen>
+#include <QSequentialIterable>
 #include <QSettings>
 #include <QStringList>
 #include <QTest>
@@ -105,6 +107,20 @@ QJsonValue value(const QVariant &variant)
     if (variant.metaType() == QMetaType::fromType<QJSValue>())
         return QJsonValue::fromVariant(variant.value<QJSValue>().toVariant());
     if (variant.metaType().flags().testFlag(QMetaType::IsEnumeration)) return variant.toInt();
+    if (variant.metaType().flags().testFlag(QMetaType::IsGadget)) {
+        QJsonObject object;
+        const auto *meta = variant.metaType().metaObject();
+        for (int i = 0; i < meta->propertyCount(); ++i) {
+            const auto property = meta->property(i);
+            object[property.name()] = value(property.readOnGadget(variant.constData()));
+        }
+        return object;
+    }
+    if (variant.canConvert<QSequentialIterable>()) {
+        QJsonArray array;
+        for (const auto &entry : variant.value<QSequentialIterable>()) array.append(value(entry));
+        return array;
+    }
     return QJsonValue::fromVariant(variant);
 }
 // Main's required service objects are the app boundary, also used for discovery.
@@ -320,11 +336,24 @@ QJsonObject snapshot()
     state["width"] = window->width();
     state["height"] = window->height();
     state["profile"] = profile();
-    if (const auto app = binding())
-        for (const auto *key :
-             {"path", "status", "unsaved", "undecided", "progress", "regions", "choices", "decisions", "resultText",
-              "passages", "markerBlocks", "pendingInput", "recoveryState", "supportDetail"})
+    if (const auto app = binding()) {
+        for (const auto *key : {"path", "status", "unsaved", "undecided", "progress", "decisions", "resultText",
+                                "pendingInput", "recoveryState", "supportDetail"})
             state[key] = value(app->selectedFile->property(key));
+        if (auto *comparison = app->selectedFile->property("comparison").value<QObject *>()) {
+            for (const auto *key : {"passages", "markerBlocks"}) state[key] = value(comparison->property(key));
+            // Replay's scene observations retain their names; both read the joined value.
+            const auto contributions = value(comparison->property("contributions")).toArray();
+            state["regions"] = contributions;
+            QJsonArray choices;
+            for (const auto &entry : contributions) {
+                auto choice = entry.toObject();
+                choice["state"] = choice.value("decisionState");
+                choices.append(choice);
+            }
+            state["choices"] = choices;
+        }
+    }
     return state;
 }
 

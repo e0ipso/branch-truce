@@ -1,6 +1,7 @@
 // Computes connector passages and their visible geometry for a pair of panes.
 #pragma once
 #include "TextBlocks.h"
+#include "app/ComparisonPresentation.h"
 #include <QObject>
 #include <QVariant>
 #include <QtQmlIntegration/qqmlintegration.h>
@@ -12,7 +13,7 @@ class ConnectorBands : public QObject {
 #define BAND_PROPERTY(type, name, Name) Q_PROPERTY(type name READ name WRITE set##Name NOTIFY inputsChanged)
     BAND_PROPERTY(QString, side, Side)
     BAND_PROPERTY(QVariantList, passages, Passages)
-    BAND_PROPERTY(QVariantList, regions, Regions)
+    BAND_PROPERTY(QList<branch_truce::ComparisonContribution>, contributions, Contributions)
     BAND_PROPERTY(QVariantList, markerBlocks, MarkerBlocks)
     BAND_PROPERTY(QVariantList, current, Current)
     BAND_PROPERTY(QVariantMap, fold, Fold)
@@ -45,7 +46,7 @@ public:
     }
     BAND_ACCESSORS(QString, side, Side)
     BAND_ACCESSORS(QVariantList, passages, Passages)
-    BAND_ACCESSORS(QVariantList, regions, Regions)
+    BAND_ACCESSORS(QList<ComparisonContribution>, contributions, Contributions)
     BAND_ACCESSORS(QVariantList, markerBlocks, MarkerBlocks)
     BAND_ACCESSORS(QVariantMap, fold, Fold)
 #undef BAND_ACCESSORS
@@ -92,7 +93,8 @@ Q_SIGNALS:
 private:
     void update();
     QString side_;
-    QVariantList passages_, regions_, markerBlocks_, current_, bands_, visibleBands_;
+    QVariantList passages_, markerBlocks_, current_, bands_, visibleBands_;
+    QList<ComparisonContribution> contributions_;
     QVariantMap fold_;
     bool projectionDirty_ = true;
     qreal sourceParentY_ = 0, resultParentY_ = 0, sourceEditorY_ = 0, resultEditorY_ = 0;

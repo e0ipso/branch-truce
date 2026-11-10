@@ -116,7 +116,7 @@ struct PaneRange {
     bool operator==(const PaneRange &) const = default;
 };
 
-// One scoped-choice region of the selected file, from SelectedFile::regions().
+// One scoped contribution from the selected file comparison.
 struct Region {
     QString id;
     QString side;

@@ -214,61 +214,61 @@ void comparison_scene::addMarkCases(Groups groups)
         for (const auto &choice : choices) {
             // regionMarks gives an ignored line a tinted text and no background,
             // so undo also checks that the tint goes.
-            scenes.run("a scoped " + choice.name.toStdString()
-                           + " repaints all three panes and inspected provenance, and undo restores them",
-                       [choice, launchLetters] {
-                           Application controller(test_support::windowConfig());
-                           Fixture fixture(controller);
-                           settlePanes(fixture);
-                           expectMarks(fixture, "at launch", "stage2", regionMarks("changed", {}, "conflict"));
-                           expectMarks(fixture, "at launch", "result",
-                                       regionMarks("changed", "changed", "conflict", launchLetters));
-                           expectMarks(fixture, "at launch", "stage3", regionMarks({}, "changed", "conflict"));
-                           const auto before = fixture.text();
-                           const auto &target =
-                               test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
-                           CHECK(controller.choices()->previewChoice(
-                               "choices", QString::number(fixture.file().current().id),
-                               QString::fromStdString(target.source.contributionId), choice.action));
-                           CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
-                           CHECK((fixture.text() != before) == choice.resultChanges);
-                           if (choice.resultChanges) CHECK(fixture.text().contains(QStringLiteral("\nleft only\n")));
-                           // Both scopes of a region share its decisions, so they end in the same state.
-                           int chosen = 0;
-                           for (const auto &entry : controller.selectedFile()->regions()) {
-                               const auto region = entry.toMap();
-                               const bool left = region.value("side").toString() == "stage2";
-                               const bool here = region.value("sourceLineBegin").toInt() == 2;
-                               chosen += left && here;
-                               const auto expected = !here ? QStringLiteral("undecided")
-                                   : left                  ? choice.leftState
-                                                           : choice.rightState;
-                               if (region.value("state").toString() != expected)
-                                   throw std::runtime_error(region.value("id").toString().toStdString() + " is "
-                                                            + region.value("state").toString().toStdString() + ", not "
-                                                            + expected.toStdString());
-                           }
-                           CHECK(chosen == 2);
-                           if (choice.name == "resolve")
-                               CHECK(qmlValue(fixture.item("comparisonView"),
-                                              QStringLiteral("resultSections.decisions[2].label"))
-                                         .toString()
-                                     == "Left accepted, Right ignored");
-                           const auto when = "after " + choice.name.toStdString();
-                           expectMarks(fixture, when, "stage2", choice.stage2);
-                           expectMarks(fixture, when, "result", choice.result);
-                           expectMarks(fixture, when, "stage3", choice.stage3);
-                           // Undo returns every pane to the undecided look of launch.
-                           CHECK(commandResult(
-                               controller,
-                               controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
-                           CHECK(fixture.text() == before);
-                           const auto undone = "after undoing " + choice.name.toStdString();
-                           expectMarks(fixture, undone, "stage2", regionMarks("changed", {}, "conflict"));
-                           expectMarks(fixture, undone, "result",
-                                       regionMarks("changed", "changed", "conflict", launchLetters));
-                           expectMarks(fixture, undone, "stage3", regionMarks({}, "changed", "conflict"));
-                       });
+            scenes.run(
+                "a scoped " + choice.name.toStdString()
+                    + " repaints all three panes and inspected provenance, and undo restores them",
+                [choice, launchLetters] {
+                    Application controller(test_support::windowConfig());
+                    Fixture fixture(controller);
+                    settlePanes(fixture);
+                    expectMarks(fixture, "at launch", "stage2", regionMarks("changed", {}, "conflict"));
+                    expectMarks(fixture, "at launch", "result",
+                                regionMarks("changed", "changed", "conflict", launchLetters));
+                    expectMarks(fixture, "at launch", "stage3", regionMarks({}, "changed", "conflict"));
+                    const auto before = fixture.text();
+                    const auto &target =
+                        test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
+                    CHECK(controller.choices()->previewChoice("choices", QString::number(fixture.file().current().id),
+                                                              QString::fromStdString(target.source.contributionId),
+                                                              choice.action));
+                    CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
+                    CHECK((fixture.text() != before) == choice.resultChanges);
+                    if (choice.resultChanges) CHECK(fixture.text().contains(QStringLiteral("\nleft only\n")));
+                    // Both scopes of a region share its decisions, so they end in the same state.
+                    int chosen = 0;
+                    for (const auto &entry : controller.selectedFile()->comparison()->contributions()) {
+                        const auto &region = entry;
+                        const bool left = region.side == "stage2";
+                        const bool here = region.sourceLineBegin == 2;
+                        chosen += left && here;
+                        const auto expected = !here ? QStringLiteral("undecided")
+                            : left                  ? choice.leftState
+                                                    : choice.rightState;
+                        if (region.state != expected)
+                            throw std::runtime_error(region.id.toStdString() + " is " + region.state.toStdString()
+                                                     + ", not " + expected.toStdString());
+                    }
+                    CHECK(chosen == 2);
+                    if (choice.name == "resolve")
+                        CHECK(qmlValue(fixture.item("comparisonView"),
+                                       QStringLiteral("resultSections.decisions[2].label"))
+                                  .toString()
+                              == "Left accepted, Right ignored");
+                    const auto when = "after " + choice.name.toStdString();
+                    expectMarks(fixture, when, "stage2", choice.stage2);
+                    expectMarks(fixture, when, "result", choice.result);
+                    expectMarks(fixture, when, "stage3", choice.stage3);
+                    // Undo returns every pane to the undecided look of launch.
+                    CHECK(commandResult(
+                        controller,
+                        controller.commands()->undo("choices", QString::number(fixture.file().current().id))));
+                    CHECK(fixture.text() == before);
+                    const auto undone = "after undoing " + choice.name.toStdString();
+                    expectMarks(fixture, undone, "stage2", regionMarks("changed", {}, "conflict"));
+                    expectMarks(fixture, undone, "result",
+                                regionMarks("changed", "changed", "conflict", launchLetters));
+                    expectMarks(fixture, undone, "stage3", regionMarks({}, "changed", "conflict"));
+                });
         }
     }
     scenes.run("each non-equal passage gets a band from its source lines to its result lines", [] {

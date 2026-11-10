@@ -13,7 +13,6 @@ ColumnLayout {
     id: resultPane
     spacing: 0
     required property ResultEditorAdapter editorAdapter
-    required property SelectedFile file
     required property EditActions edits
     // Line marks for the gutter and backgrounds, and the navigation target's line ranges.
     required property var marks

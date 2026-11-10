@@ -115,7 +115,7 @@ void comparison_scene::addFoldingCases(Groups groups)
         Fixture fixture(controller, test_support::underlinedBaseFile(false));
         settlePanes(fixture);
         CHECK(fixture.file().markers().blocks.size() == 1 && fixture.file().markerSections().empty());
-        const auto blocks = controller.selectedFile()->markerBlocks();
+        const auto blocks = controller.selectedFile()->comparison()->markerBlocks();
         CHECK(blocks.size() == 1 && blocks.front().toMap().value("folded").toBool());
         CHECK(blocks.front().toMap().value("sections").toStringList().isEmpty());
         settle([&] { return foldedLines(fixture) == numbers(3, 15); });
@@ -300,10 +300,9 @@ void comparison_scene::addFoldingCases(Groups groups)
     scenes.run("deciding a section removes its fold and markersRemain, and Save writes the buffer either way", [] {
         const auto remaining = [](const SelectedFile &selected) {
             QStringList found;
-            for (const auto &entry : selected.regions()) {
-                const auto region = entry.toMap();
-                found << region.value("side").toString() + ":" + region.value("section").toString() + "="
-                        + (region.value("markersRemain").toBool() ? "remain" : "gone");
+            for (const auto &entry : selected.comparison()->contributions()) {
+                const auto &region = entry;
+                found << region.side + ":" + region.section + "=" + (region.markersRemain ? "remain" : "gone");
             }
             found.sort();
             return found;
@@ -338,7 +337,7 @@ void comparison_scene::addFoldingCases(Groups groups)
         settlePanes(fixture);
         const auto atLaunch = remaining(*controller.selectedFile());
         CHECK(atLaunch.size() >= 4 && atLaunch.filter("=gone").isEmpty());
-        CHECK(controller.selectedFile()->markerBlocks().size() == 2);
+        CHECK(controller.selectedFile()->comparison()->markerBlocks().size() == 2);
         // Resolving the first section with the left side removes its markers, so only the
         // second block stays folded and only its regions still have markers.
         const auto &first = test_support::choiceTarget(fixture.file(), SourceSide::Stage2, ChoiceScope::Section);
@@ -348,7 +347,7 @@ void comparison_scene::addFoldingCases(Groups groups)
                                                   ChoicePreviewFlow::Action::ResolveUsingSide));
         CHECK(commandResult(controller, controller.choices()->applyChoice(true)));
         CHECK(!fixture.text().contains(QStringLiteral(">>>>>>> theirs\nbridge")));
-        CHECK(controller.selectedFile()->markerBlocks().size() == 1);
+        CHECK(controller.selectedFile()->comparison()->markerBlocks().size() == 1);
         for (const auto &entry : remaining(*controller.selectedFile()))
             CHECK(entry.endsWith(entry.contains(":" + section + "=") ? "=gone" : "=remain"));
         // The second block, now lines 5-9, folds into its row on line 5.
@@ -402,12 +401,12 @@ void comparison_scene::addFoldingCases(Groups groups)
         // Whether each region still has markers, in the controller's order.
         const auto remain = [&] {
             QList<bool> found;
-            for (const auto &entry : controller.selectedFile()->regions())
-                found.push_back(entry.toMap().value("markersRemain").toBool());
+            for (const auto &entry : controller.selectedFile()->comparison()->contributions())
+                found.push_back(entry.markersRemain);
             return found;
         };
         const auto folded = [&] {
-            const auto blocks = controller.selectedFile()->markerBlocks();
+            const auto blocks = controller.selectedFile()->comparison()->markerBlocks();
             return blocks.size() == 1 && blocks.front().toMap().value("folded").toBool();
         };
         const auto atLaunch = remain();
@@ -427,7 +426,7 @@ void comparison_scene::addFoldingCases(Groups groups)
         // Deciding the second removes the block, so nothing folds and no region has markers.
         resolve(SourceSide::Stage3, 1);
         CHECK(fixture.text() == QStringLiteral("header\nleft one\nshared\nright two\ntail\n"));
-        CHECK(controller.selectedFile()->markerBlocks().isEmpty());
+        CHECK(controller.selectedFile()->comparison()->markerBlocks().isEmpty());
         CHECK(remain().size() == atLaunch.size() && !remain().contains(true));
         settle([&] { return foldedLines(fixture).isEmpty(); });
         // One undo brings back the block and its fold.
