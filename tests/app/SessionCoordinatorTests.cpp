@@ -143,8 +143,8 @@ public:
                                       {}};
                 },
                 [&](const TaskCompletion &completion) {
-                    CHECK(QThread::currentThread() == guiThread);
-                    CHECK(completion.disposition == TaskDisposition::Current);
+                    EXPECT(QThread::currentThread() == guiThread);
+                    EXPECT(completion.disposition == TaskDisposition::Current);
                     ++applied;
                 });
             CHECK(id != 0 && f.coordinator->pendingTasks() == 1 && f.finished.empty() && applied == 0);
