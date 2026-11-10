@@ -10,7 +10,7 @@ Row {
     id: buttons
     // {line, choice, extras}: the range's section and all its precise line scopes.
     // Each is a scoped choice with its region's undecided flag.
-    required property var modelData
+    required property comparisonRow modelData
     // The pane edge that faces the result: "right" in the left pane, "left" in the right one.
     required property string edge
     readonly property bool pointsRight: edge === "right"
@@ -27,7 +27,7 @@ Row {
     signal chosen(target: string, action: int)
     signal hovered(target: string)
     signal focused(target: string, active: bool)
-    readonly property var choice: modelData.choice
+    readonly property comparisonContribution choice: modelData.choice
     readonly property real iconSize: Math.min(Kirigami.Units.iconSizes.small, rowHeight)
     // The menu entries: this scope's two-sided choices, then each other scope's choices.
     readonly property var entries: {
@@ -62,7 +62,7 @@ Row {
     // fully decided range loses its overlay controls. An unavailable owner
     // still needs a keyboard/touch target for its available mapped lines.
     readonly property bool rangeUndecided: !!choice.undecided
-        || (modelData.extras || []).some(extra => !!extra.undecided)
+        || modelData.extras.some(extra => !!extra.undecided)
     readonly property bool menuOnly: rangeUndecided && hasEntries && (!choice.undecided || !choice.available)
     readonly property string menuLabel: qsTr("More choices for %1").arg(choice.label)
     readonly property string menuHint: qsTr("Right-click, hold, or press Menu or Shift+F10 for more choices.")

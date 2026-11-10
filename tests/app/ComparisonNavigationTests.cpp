@@ -350,7 +350,7 @@ void comparison_scene::addNavigationCases(Groups groups)
         Application controller(test_support::windowConfig());
         Fixture fixture(controller, test_support::choiceFile(left, result, result));
         bool ambiguous = false;
-        for (const auto &value : controller.selectedFile()->passages()) {
+        for (const auto &value : controller.selectedFile()->comparison()->passages()) {
             const auto passage = value.toMap();
             ambiguous = ambiguous
                 || (passage.value("side") == "stage2" && passage.value("kind") == "ambiguous"

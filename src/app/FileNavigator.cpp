@@ -1,5 +1,6 @@
 // File and conflict navigation keeps the selected file and result cursor on the requested work.
 #include "FileNavigator.h"
+#include "ComparisonPresentation.h"
 #include "FilePresentation.h"
 #include "NavigationTargets.h"
 #include "ResultEditorAdapter.h"
@@ -191,6 +192,8 @@ bool FileNavigator::navigateWithinFile(Mode mode, int direction)
                     .arg(static_cast<qulonglong>(target.byteEnd));
     }
     target_ = {
+        {QStringLiteral("revision"), QString::number(file->current().id)},
+        {QStringLiteral("correspondence"), correspondenceIdentity(*file)},
         {QStringLiteral("mode"), modeName(mode)},
         {QStringLiteral("fileId"), selectedFileId},
         {QStringLiteral("scope"), target.resultRange ? QStringLiteral("result") : QStringLiteral("unmapped-source")},

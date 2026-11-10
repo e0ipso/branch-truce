@@ -2,7 +2,7 @@ add_library(branch_truce_controller STATIC Application.cpp Application.h AppPath
     ChoicePreviewFlow.cpp ChoicePreviewFlow.h CommandFeedback.cpp CommandFeedback.h CommandGuard.cpp CommandGuard.h
     EngineText.cpp EngineText.h FileCommands.cpp FileCommands.h FileNavigator.cpp FileNavigator.h
     FilePresentation.cpp FilePresentation.h FileStates.h MergetoolStatus.cpp MergetoolStatus.h
-    NavigationTargets.cpp NavigationTargets.h TextPositions.h SelectedFile.cpp SelectedFile.h Selection.cpp Selection.h
+    NavigationTargets.cpp NavigationTargets.h ComparisonPresentation.cpp ComparisonPresentation.h TextPositions.h SelectedFile.cpp SelectedFile.h Selection.cpp Selection.h
     SessionCompletion.cpp SessionCompletion.h SessionHandoff.cpp SessionHandoff.h SessionModel.cpp SessionModel.h
     ResultEditorAdapter.cpp ResultEditorAdapter.h TextChange.cpp TextChange.h
     SessionLoader.cpp SessionLoader.h StartupReport.cpp StartupReport.h Translations.cpp Translations.h QtText.h
@@ -10,7 +10,7 @@ add_library(branch_truce_controller STATIC Application.cpp Application.h AppPath
 qt_add_qml_module(branch_truce_controller
     URI BranchTruce.App VERSION 1.0
     OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/BranchTruce/App"
-    SOURCES SelectedFile.h Selection.h SessionModel.h FileStates.h CommandFeedback.h FileCommands.h
+    SOURCES ComparisonPresentation.h SelectedFile.h Selection.h SessionModel.h FileStates.h CommandFeedback.h FileCommands.h
         SessionCompletion.h MergetoolStatus.h ResultEditorAdapter.h SessionLoader.h FileNavigator.h
         ChoicePreviewFlow.h)
 set_target_properties(branch_truce_controller PROPERTIES QT_QMLCACHEGEN_ARGUMENTS "--only-bytecode")

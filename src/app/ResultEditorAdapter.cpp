@@ -1,5 +1,6 @@
 // The result editor adapter journals text edits and connects native editing actions to file history.
 #include "ResultEditorAdapter.h"
+#include "ComparisonPresentation.h"
 #include "EngineText.h"
 #include "NavigationTargets.h"
 #include "QtText.h"
@@ -413,6 +414,10 @@ void ResultEditorAdapter::restoreLocation()
 QVariantMap ResultEditorAdapter::firstUndecidedPlacement(const FileSession *file, const QString &loaded) const
 {
     QVariantMap placement{{QStringLiteral("fileId"), fileId_}, {QStringLiteral("count"), 0}};
+    if (file) {
+        placement.insert(QStringLiteral("revision"), QString::number(file->current().id));
+        placement.insert(QStringLiteral("correspondence"), correspondenceIdentity(*file));
+    }
     const auto targets = file ? undecidedTargets(*file) : std::vector<ScopeTarget>{};
     if (targets.empty() || loaded != utf8(file->current().draft.text)) return placement;
     const auto &first = targets.front();

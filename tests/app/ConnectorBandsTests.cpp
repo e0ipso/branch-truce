@@ -34,8 +34,12 @@ int main(int argc, char **argv)
                                        {"sourceLineEnd", 10},
                                        {"resultLineBegin", 9},
                                        {"resultLineEnd", 10}}});
-        bands.setRegions(
-            {QVariantMap{{"side", "stage2"}, {"state", "accepted"}, {"sourceLineBegin", 2}, {"sourceLineEnd", 3}}});
+        branch_truce::ComparisonContribution accepted;
+        accepted.side = "stage2";
+        accepted.state = "accepted";
+        accepted.sourceLineBegin = 2;
+        accepted.sourceLineEnd = 3;
+        bands.setContributions({accepted});
         CHECK(bands.bands().size() == 2);
         CHECK(bands.visibleBands().size() == 1);
         CHECK(bands.visibleBands().first().toMap().value("kind").toString() == "accepted");

@@ -18,27 +18,31 @@ int main(int argc, char **argv)
                                                 {"resultLineEnd", 5},
                                                 {"sourceLineBegin", 1},
                                                 {"sourceLineEnd", 5}}};
-        const QVariantList regions{QVariantMap{{"side", "stage2"},
-                                               {"state", "undecided"},
-                                               {"mapped", true},
-                                               {"markersRemain", true},
-                                               {"resultLineBegin", 2},
-                                               {"resultLineEnd", 4},
-                                               {"sourceLineBegin", 2},
-                                               {"sourceLineEnd", 4}}};
+        const auto contributions = [] {
+            branch_truce::ComparisonContribution c;
+            c.side = "stage2";
+            c.state = "undecided";
+            c.markersRemain = true;
+            c.mapped = true;
+            c.sourceLineBegin = 2;
+            c.sourceLineEnd = 4;
+            c.resultLineBegin = 2;
+            c.resultLineEnd = 4;
+            return QList<branch_truce::ComparisonContribution>{c};
+        }();
         const QVariantList blocks{QVariantMap{{"resultLineBegin", 3},
                                               {"resultLineEnd", 4},
                                               {"folded", true},
                                               {"markerLines",
                                                QVariantList{QVariantMap{{"line", 3}, {"text", "<<<<<<<"}},
                                                             QVariantMap{{"line", 4}, {"text", ">>>>>>>"}}}}}};
-        const auto result = marks.marks("result", passages, regions, {}, blocks, {});
+        const auto result = marks.marks("result", passages, contributions, {}, blocks, {});
         const auto lines = result.value("lines").toMap();
         CHECK(lines.value("1").toString() == "changed");
         CHECK(lines.value("2").toString() == "conflict");
         CHECK(lines.value("3").toString() == "markers");
         CHECK(lines.value("4").toString() == "changed");
-        const auto source = marks.marks("stage2", passages, regions, {}, blocks, {}).value("lines").toMap();
+        const auto source = marks.marks("stage2", passages, contributions, {}, blocks, {}).value("lines").toMap();
         CHECK(source.value("2").toString() == "conflict");
         CHECK(marks.folds(blocks, false).value("hidden").toList().size() == 1);
         CHECK(marks.folds(blocks, true).value("hidden").toList().isEmpty());
@@ -56,17 +60,21 @@ int main(int argc, char **argv)
                                                 {"resultLineEnd", 3},
                                                 {"sourceLineBegin", 2},
                                                 {"sourceLineEnd", 3}}};
-        const QVariantList regions{QVariantMap{{"side", "stage2"},
-                                               {"state", "undecided"},
-                                               {"mapped", true},
-                                               {"resultLineBegin", 2},
-                                               {"resultLineEnd", 3},
-                                               {"sourceLineBegin", 2},
-                                               {"sourceLineEnd", 3}}};
+        const auto contributions = [] {
+            branch_truce::ComparisonContribution c;
+            c.side = "stage2";
+            c.state = "undecided";
+            c.mapped = true;
+            c.sourceLineBegin = 2;
+            c.sourceLineEnd = 3;
+            c.resultLineBegin = 2;
+            c.resultLineEnd = 3;
+            return QList<branch_truce::ComparisonContribution>{c};
+        }();
         for (const auto &pane : {QStringLiteral("stage2"), QStringLiteral("result")})
-            CHECK(marks.marks(pane, passages, regions, {}, {}, {}).value("lines").toMap().value("2").toString()
+            CHECK(marks.marks(pane, passages, contributions, {}, {}, {}).value("lines").toMap().value("2").toString()
                   == "changed");
-        CHECK(regions.first().toMap().value("state").toString() == "undecided");
+        CHECK(contributions.first().state == "undecided");
     });
     return suite.report();
 }

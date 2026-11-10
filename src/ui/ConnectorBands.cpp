@@ -86,13 +86,12 @@ void ConnectorBands::update()
                 states[line] = kind;
         };
         const auto conflicts = PaneMarks::conflictingLines(passages_);
-        for (const auto &value : PaneMarks::stylingRegions(regions_)) {
-            const auto region = value.toMap();
-            if (string(region, "side") != side_) continue;
-            const auto state = string(region, "state");
+        for (const auto &region : PaneMarks::stylingRegions(contributions_)) {
+            if (region.side != side_) continue;
+            const auto state = region.state;
             if (state == QLatin1String("undecided") && !PaneMarks::conflictingRegion(region, conflicts)) continue;
             const auto kind = state == QLatin1String("undecided") ? QStringLiteral("conflict") : state;
-            const int begin = number(region, "sourceLineBegin"), end = number(region, "sourceLineEnd");
+            const int begin = region.sourceLineBegin, end = region.sourceLineEnd;
             if (begin == end) decide(boundaries, begin, kind);
             for (int line = begin; line < end; ++line) decide(lines, line, kind);
         }

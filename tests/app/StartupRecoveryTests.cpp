@@ -811,8 +811,8 @@ void startup_routes::addRecoveryCases(test_support::Suite &suite, const QString 
                 == Transition::Blocked);
             const auto id = QString::fromStdString(restored.id());
             CHECK(controller.selection()->select(id) && controller.selectedFile()->canEdit());
-            CHECK(controller.selectedFile()->choices().isEmpty());
-            CHECK(!controller.selectedFile()->choiceNotice().isEmpty());
+            CHECK(controller.selectedFile()->comparison()->contributions().isEmpty());
+            CHECK(!controller.selectedFile()->comparison()->choiceNotice().isEmpty());
             CHECK(!controller.choices()->previewChoice(id, QString::number(restored.current().id),
                                                        QString::fromStdString(target.source.contributionId),
                                                        ChoicePreviewFlow::Action::Accept));

@@ -1,5 +1,6 @@
 // SelectedFile exposes the selected row and publishes coherent comparison projections.
 #pragma once
+#include "ComparisonPresentation.h"
 #include "FileStates.h"
 #include "SessionModel.h"
 #include "TextPositions.h"
@@ -28,15 +29,9 @@ class SelectedFile : public QObject {
     Q_PROPERTY(QVariantMap stage3 READ stage3 NOTIFY sourcesChanged)
     Q_PROPERTY(QVariantMap earlier READ earlier NOTIFY sourcesChanged)
     Q_PROPERTY(QVariantMap initialResult READ initialResult NOTIFY sourcesChanged)
+    Q_PROPERTY(branch_truce::ComparisonPresentation *comparison READ comparison CONSTANT)
     Q_PROPERTY(QString resultText READ resultText NOTIFY resultTextChanged)
     Q_PROPERTY(QVariantList decisions READ decisions NOTIFY decisionsChanged)
-    Q_PROPERTY(QVariantList passages READ passages NOTIFY comparisonChanged)
-    Q_PROPERTY(QVariantList handEditedLines READ handEditedLines NOTIFY comparisonChanged)
-    Q_PROPERTY(QVariantList choices READ choices NOTIFY comparisonChanged)
-    Q_PROPERTY(QString choiceNotice READ choiceNotice NOTIFY comparisonChanged)
-    Q_PROPERTY(QVariantList regions READ regions NOTIFY comparisonChanged)
-    Q_PROPERTY(QVariantList markerBlocks READ markerBlocks NOTIFY comparisonChanged)
-    Q_PROPERTY(QVariantList markerOrphans READ markerOrphans NOTIFY comparisonChanged)
     Q_PROPERTY(branch_truce::FileStates::SupportKind support READ support NOTIFY statusChanged)
     // Shorthand for support == Supported.
     Q_PROPERTY(bool supported READ supported NOTIFY statusChanged)
@@ -45,23 +40,17 @@ class SelectedFile : public QObject {
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(branch_truce::FileStates::StatusKind statusKind READ statusKind NOTIFY statusChanged)
     Q_PROPERTY(bool unsaved READ unsaved NOTIFY statusChanged)
-    Q_PROPERTY(bool reviewNeeded READ reviewNeeded NOTIFY statusChanged)
     Q_PROPERTY(bool resolved READ resolved NOTIFY statusChanged)
     Q_PROPERTY(int undecided READ undecided NOTIFY statusChanged)
-    Q_PROPERTY(int conflicts READ conflicts NOTIFY statusChanged)
     Q_PROPERTY(bool pendingInput READ pendingInput NOTIFY statusChanged)
     Q_PROPERTY(QString pendingText READ pendingText NOTIFY statusChanged)
     Q_PROPERTY(branch_truce::FileStates::RecoveryState recoveryState READ recoveryState NOTIFY statusChanged)
     Q_PROPERTY(QString recoveryError READ recoveryError NOTIFY statusChanged)
-    Q_PROPERTY(QStringList finishBlockers READ finishBlockers NOTIFY statusChanged)
     Q_PROPERTY(QString currentRevision READ currentRevision NOTIFY statusChanged)
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY statusChanged)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY statusChanged)
     Q_PROPERTY(QVariantMap progress READ progress NOTIFY statusChanged)
     Q_PROPERTY(QString statusIcon READ statusIcon NOTIFY statusChanged)
-    Q_PROPERTY(QString statusLine READ statusLine NOTIFY statusChanged)
-    Q_PROPERTY(QVariantList chips READ chips NOTIFY statusChanged)
-    Q_PROPERTY(QString summary READ summary NOTIFY statusChanged)
     Q_PROPERTY(bool canEdit READ canEdit NOTIFY statusChanged)
 public:
     SelectedFile(const SessionModel &files, const Selection &selection, QObject *parent = nullptr);
@@ -80,13 +69,8 @@ public:
     [[nodiscard]] QVariantMap initialResult() const { return initialResult_; }
     [[nodiscard]] QString resultText() const { return resultText_; }
     [[nodiscard]] QVariantList decisions() const { return decisions_; }
-    [[nodiscard]] QVariantList passages() const { return passages_; }
-    [[nodiscard]] QVariantList handEditedLines() const { return handEditedLines_; }
-    [[nodiscard]] QVariantList choices() const { return choices_; }
-    [[nodiscard]] QString choiceNotice() const { return choiceNotice_; }
-    [[nodiscard]] QVariantList regions() const { return regions_; }
-    [[nodiscard]] QVariantList markerBlocks() const { return markerBlocks_; }
-    [[nodiscard]] QVariantList markerOrphans() const { return markerOrphans_; }
+    ComparisonPresentation *comparison() { return &comparison_; }
+    const ComparisonPresentation *comparison() const { return &comparison_; }
     // Unreadable without a selected file.
     [[nodiscard]] FileStates::SupportKind support() const
     {
@@ -104,10 +88,8 @@ public:
         return kind.isValid() ? kind.value<FileStates::StatusKind>() : FileStates::StatusKind::Unreadable;
     }
     [[nodiscard]] bool unsaved() const { return role(SessionModel::UnsavedRole).toBool(); }
-    [[nodiscard]] bool reviewNeeded() const { return role(SessionModel::ReviewNeededRole).toBool(); }
     [[nodiscard]] bool resolved() const { return role(SessionModel::ResolvedRole).toBool(); }
     [[nodiscard]] int undecided() const { return role(SessionModel::UndecidedRole).toInt(); }
-    [[nodiscard]] int conflicts() const { return role(SessionModel::ConflictCountRole).toInt(); }
     [[nodiscard]] bool pendingInput() const { return role(SessionModel::PendingInputRole).toBool(); }
     [[nodiscard]] QString pendingText() const { return role(SessionModel::PendingTextRole).toString(); }
     // Durable without a selected file.
@@ -117,49 +99,29 @@ public:
         return state.isValid() ? state.value<FileStates::RecoveryState>() : FileStates::RecoveryState::Durable;
     }
     [[nodiscard]] QString recoveryError() const { return role(SessionModel::RecoveryErrorRole).toString(); }
-    [[nodiscard]] QStringList finishBlockers() const { return role(SessionModel::FinishBlockersRole).toStringList(); }
     [[nodiscard]] QString currentRevision() const { return role(SessionModel::CurrentRevisionRole).toString(); }
     [[nodiscard]] bool canUndo() const { return role(SessionModel::CanUndoRole).toBool(); }
     [[nodiscard]] bool canRedo() const { return role(SessionModel::CanRedoRole).toBool(); }
     [[nodiscard]] QVariantMap progress() const { return role(SessionModel::ProgressRole).toMap(); }
     [[nodiscard]] QString statusIcon() const { return role(SessionModel::StatusIconRole).toString(); }
-    [[nodiscard]] QString statusLine() const { return role(SessionModel::StatusLineRole).toString(); }
-    [[nodiscard]] QVariantList chips() const { return role(SessionModel::ChipsRole).toList(); }
-    [[nodiscard]] QString summary() const { return role(SessionModel::SummaryRole).toString(); }
     [[nodiscard]] bool canEdit() const;
 Q_SIGNALS:
     void identityChanged();
     void sourcesChanged();
     void resultTextChanged();
     void decisionsChanged();
-    void comparisonChanged();
-    void passagesChanged();
-    void handEditedLinesChanged();
-    void choicesChanged();
-    void regionsChanged();
-    void markerBlocksChanged();
-    void markerOrphansChanged();
     void statusChanged();
 
 private:
-    struct Projection {
-        QVariantList passages;
-        QVariantList handEditedLines;
-        QVariantList choices;
-        QVariantList regions;
-        QVariantList markerBlocks;
-        QVariantList markerOrphans;
-        QString choiceNotice;
-    };
     [[nodiscard]] QVariant role(int role) const;
     void project(const FileSession *file);
-    void publishProjection(Projection projection);
     template <typename T> void update(T &stored, const T &next, void (SelectedFile::*changed)())
     {
         if (stored == next) return;
         stored = next;
         Q_EMIT(this->*changed)();
     }
+    ComparisonPresentation comparison_;
     const SessionModel &files_;
     const Selection &selection_;
     const FileSnapshots *sourceIdentity_ = nullptr;
@@ -170,7 +132,6 @@ private:
     std::shared_ptr<const CorrespondenceMap> projectedCorrespondence_;
     Support projectedSupport_ = Support::Unreadable;
     bool projectedPending_ = false;
-    std::map<SourceSide, std::string> sourceTexts_;
     std::map<SourceSide, TextPositions> sourcePositions_;
     QString fileId_;
     QString path_;
@@ -182,12 +143,5 @@ private:
     QVariantMap initialResult_;
     QString resultText_;
     QVariantList decisions_;
-    QVariantList passages_;
-    QVariantList handEditedLines_;
-    QVariantList choices_;
-    QString choiceNotice_;
-    QVariantList regions_;
-    QVariantList markerBlocks_;
-    QVariantList markerOrphans_;
 };
 }

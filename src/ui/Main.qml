@@ -493,8 +493,8 @@ Kirigami.ApplicationWindow {
                             onPlainTextRequested: item => window.showPlainText(item)
                             type: Kirigami.MessageType.Information
                             visible: window.supportedSelection && fileToolBar.showSourceChoices
-                                && !!window.selectedFile.choiceNotice
-                            text: window.selectedFile.choiceNotice || ""
+                                && !!window.selectedFile.comparison.choiceNotice
+                            text: window.selectedFile.comparison.choiceNotice || ""
                         }
                         ComparisonView {
                             id: comparison

@@ -33,14 +33,6 @@ QVariant required(const QVariantMap &map, const char *key, const char *what)
     return *found;
 }
 
-PaneRange paneRange(const QVariantMap &map, const QString &prefix)
-{
-    const auto field = [&](const char *suffix) {
-        const auto key = (prefix + QLatin1String(suffix)).toLatin1();
-        return required(map, key.constData(), "region").toInt();
-    };
-    return {field("LineBegin"), field("LineEnd"), field("Utf16Begin"), field("Utf16End")};
-}
 } // namespace
 
 QString fileId(const char *path) { return QString::fromLatin1(QByteArray(path).toHex()); }
@@ -234,26 +226,26 @@ Progress Scene::progress() const
 std::vector<Region> Scene::regions() const
 {
     std::vector<Region> regions;
-    for (const auto &value : controller_->selectedFile()->regions()) {
-        const auto map = value.toMap();
-        const auto field = [&](const char *key) { return required(map, key, "region"); };
-        regions.push_back({field("id").toString(), field("side").toString(), field("scope").toString(),
-                           field("section").toString(), field("state").toString(), field("decisionIds").toStringList(),
-                           field("handEdited").toBool(), field("markersRemain").toBool(), field("mapped").toBool(),
-                           paneRange(map, QStringLiteral("source")), paneRange(map, QStringLiteral("result"))});
-    }
+    for (const auto &c : controller_->selectedFile()->comparison()->contributions())
+        regions.push_back({c.id,
+                           c.side,
+                           c.scope,
+                           c.section,
+                           c.state,
+                           c.decisionIds,
+                           c.handEdited,
+                           c.markersRemain,
+                           c.mapped,
+                           {c.sourceLineBegin, c.sourceLineEnd, c.sourceUtf16Begin, c.sourceUtf16End},
+                           {c.resultLineBegin, c.resultLineEnd, c.resultUtf16Begin, c.resultUtf16End}});
     return regions;
 }
 
 std::vector<ChoiceRow> Scene::choiceRows() const
 {
     std::vector<ChoiceRow> rows;
-    for (const auto &value : controller_->selectedFile()->choices()) {
-        const auto map = value.toMap();
-        const auto field = [&](const char *key) { return required(map, key, "choice row"); };
-        rows.push_back({field("id").toString(), field("label").toString(), field("state").toString(),
-                        field("detail").toString(), field("available").toBool()});
-    }
+    for (const auto &c : controller_->selectedFile()->comparison()->contributions())
+        rows.push_back({c.id, c.label, c.decisionState, c.detail, c.available});
     return rows;
 }
 
@@ -275,7 +267,7 @@ Region Scene::regionFor(const QString &label) const
 std::vector<MarkerBlock> Scene::markerBlocks() const
 {
     std::vector<MarkerBlock> blocks;
-    for (const auto &value : controller_->selectedFile()->markerBlocks()) {
+    for (const auto &value : controller_->selectedFile()->comparison()->markerBlocks()) {
         const auto map = value.toMap();
         const auto field = [&](const char *key) { return required(map, key, "marker block"); };
         blocks.push_back({field("resultLineBegin").toInt(), field("resultLineEnd").toInt(), field("folded").toBool()});
