@@ -316,11 +316,13 @@ SessionCoordinator::~SessionCoordinator()
     // to its end. Waiting for it a bounded time records its observation now;
     // one still running is left to the next start's reconciler. No completion
     // runs: the objects it would reach may be gone.
+    bool admitted = false;
     for (const auto &[id, job] : d->jobs) {
         (void)id;
         job->control.cancel();
+        admitted = admitted || job->control.mutationStarted();
     }
-    d->workers.waitForDone(kShutdownGraceMs);
+    if (admitted) d->workers.waitForDone(kShutdownGraceMs);
     for (const auto &[id, job] : d->jobs) {
         (void)id;
         if (!job->control.mutationStarted() || !job->future.isFinished()) continue;
