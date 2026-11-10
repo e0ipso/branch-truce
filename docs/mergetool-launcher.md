@@ -75,7 +75,10 @@ offer until the index shows whether Git staged it.
 
 ## Lifecycle
 
-The launcher blocks until that reply. It returns 0 only for `resolved`. Save
+The launcher blocks until that reply. It returns 0 only for `resolved`, and
+only while `MERGED` still holds the object that reply names: it asks Git to
+clean-convert the current `MERGED` bytes, as `git add` will, and compares the
+object id. Any other bytes restore the launch snapshot and return 1. Save
 never writes `MERGED` or the index. Before the tool runs, installed Git moves
 `MERGED` aside and copies those bytes back. Mark resolved writes that copy when
 the bytes are still the launch snapshot, refuses a different file, and leaves
@@ -102,8 +105,9 @@ in the attach frame, with the hidden `--mergetool-path` option, so the window
 opens on that file. The started GUI's standard input, output and error go to
 `/dev/null`, so it writes nothing into the `git mergetool` terminal. It waits
 15 seconds for that window to listen; `--session-wait <seconds>` after
-`--mergetool` changes the wait. `BRANCH_TRUCE_MERGETOOL_NO_SPAWN` disables
-that start.
+`--mergetool` changes the wait. `--no-window` after `--mergetool` disables
+that start. The session has 15 seconds to answer the attach; no answer, an
+invalid frame or an answer for another invocation returns 1.
 
 On leave the launcher writes the captured bytes to a temporary file next to
 `MERGED` with the same permission bits, then renames it over `MERGED`, so a

@@ -58,7 +58,13 @@ int main(int argc, char *argv[])
     // Git's mergetool command line names the launcher mode first. Only that
     // position selects it, so a repository or option value spelled
     // --mergetool still opens the window.
-    if (argc > 1 && qstrcmp(argv[1], "--mergetool") == 0) return branch_truce::runMergetoolLauncher(argc, argv, git);
+    if (argc > 1 && qstrcmp(argv[1], "--mergetool") == 0) {
+        QCoreApplication launcher(argc, argv);
+        QCoreApplication::setApplicationName(QStringLiteral("Branch Truce"));
+        QCoreApplication::setOrganizationDomain(QStringLiteral("canpicasoft.com"));
+        branch_truce::installTranslations(launcher);
+        return branch_truce::runMergetoolLauncher(QCoreApplication::arguments(), git);
+    }
     // QApplication rather than QGuiApplication: the org.kde.desktop style draws its
     // controls through QApplication::style(). See docs/platform-validation.md.
     QApplication application(argc, argv);

@@ -25,10 +25,15 @@
 // through Application::Config, and every child process gets its environment from the fixture.
 int main(int argc, char **argv)
 {
-    // Child mode: git mergetool starts this binary as the real launcher.
-    if (argc == 2 && std::strcmp(argv[1], "--mergetool") == 0)
+    // Child mode: git mergetool starts this binary as the real launcher. The session in the
+    // suite's process already listens, so the launcher never starts another window.
+    if (argc == 2 && std::strcmp(argv[1], "--mergetool") == 0) {
+        QCoreApplication launcher(argc, argv);
         return branch_truce::runMergetoolLauncher(
-            argc, argv, branch_truce::git::GitProgram{gitOnPath(), branch_truce::git::GitEnvironment::fromProcess()});
+            QCoreApplication::arguments(),
+            branch_truce::git::GitProgram{gitOnPath(), branch_truce::git::GitEnvironment::fromProcess()},
+            {.startWindow = {}});
+    }
     const auto arguments = test_support::configure(argc, argv);
     QApplication application(argc, argv);
     // The English catalog supplies the plural forms these checks read.

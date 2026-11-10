@@ -56,7 +56,8 @@ struct ConflictPath {
 
 class ParentRepository {
 public:
-    // The documented tool: assign Git's unexported variables, then run the launcher.
+    // The documented tool: assign Git's unexported variables, then run the launcher. The session
+    // runs in the test process, so the launcher gets --no-window and never starts another one.
     static constexpr const char *Tool = "truce";
     // The same command, then the parent waits for release() before it stages or restores.
     static constexpr const char *GatedTool = "truce-gated";
@@ -78,7 +79,6 @@ public:
         CHECK(QFile::setPermissions(runtime_.path(),
                                     QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
         environment.insert("XDG_RUNTIME_DIR", runtime_.path());
-        environment.insert("BRANCH_TRUCE_MERGETOOL_NO_SPAWN", "1");
         releaseGate_ = std::make_unique<test_support::ScriptGate>(releaseFile());
         configureGlobal(launcher);
         createConflict();
@@ -133,7 +133,7 @@ private:
     void configureGlobal(const QString &launcher)
     {
         const auto invoke = QStringLiteral("MERGED=\"$MERGED\" BASE=\"$BASE\" LOCAL=\"$LOCAL\" REMOTE=\"$REMOTE\" ")
-            + shellQuote(launcher) + QStringLiteral(" --mergetool");
+            + shellQuote(launcher) + QStringLiteral(" --mergetool --no-window");
         const auto gated = invoke + QStringLiteral("; status=$?; printf '%s %s\\n' \"$MERGED\" \"$status\" >> ")
             + shellQuote(exitsFile()) + QStringLiteral("; read -r line < ") + shellQuote(releaseFile())
             + QStringLiteral("; exit $status");

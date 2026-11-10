@@ -167,10 +167,9 @@ pass "desktop entry started $(gui_pids | head -1 | xargs -I{} readlink /proc/{}/
 sides="$fixture/sides"
 mkdir -p -- "$sides"
 printf 'base\n' > "$sides/base"; printf 'main\n' > "$sides/local"; printf 'side\n' > "$sides/remote"
-launcher_env=("MERGED=tracked.txt" "BASE=$sides/base" "LOCAL=$sides/local" "REMOTE=$sides/remote"
-    "BRANCH_TRUCE_MERGETOOL_NO_SPAWN=1")
-show env -i "${environment[@]}" "${launcher_env[@]}" branch-truce --mergetool
-isolated env "${launcher_env[@]}" branch-truce --mergetool &
+launcher_env=("MERGED=tracked.txt" "BASE=$sides/base" "LOCAL=$sides/local" "REMOTE=$sides/remote")
+show env -i "${environment[@]}" "${launcher_env[@]}" branch-truce --mergetool --no-window
+isolated env "${launcher_env[@]}" branch-truce --mergetool --no-window &
 launcher=$!
 expect_blocked "$launcher" "installed launcher"
 pass "installed launcher attached to the desktop-launched GUI and is blocking"

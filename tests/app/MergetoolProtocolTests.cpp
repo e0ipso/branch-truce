@@ -387,6 +387,27 @@ void connectionsBeyondTheCapAreClosedAtOnce()
     CHECK(!fourth.closed);
 }
 
+void aPeerOfAnotherUserIsClosedAtOnce()
+{
+    SocketDirectory directory;
+    MergetoolServer::Limits limits;
+    qintptr checked = -1;
+    limits.peerIsCurrentUser = [&checked](qintptr descriptor) {
+        checked = descriptor;
+        return false;
+    };
+    MergetoolServer server(limits, nullptr);
+    QString error;
+    CHECK(server.listen(directory.socket(), &error) == MergetoolServer::Listen::Listening);
+    Attaches attaches(server);
+    Peer peer(directory.socket());
+    peer.waitClosed();
+    CHECK(checked >= 0);
+    CHECK_EQ(server.connections(), 0);
+    CHECK(attaches.messages.isEmpty() && attaches.connections.isEmpty());
+    CHECK(peer.received.isEmpty());
+}
+
 void oneListenerOwnsTheSocketAndAStaleOneIsReplaced()
 {
     SocketDirectory directory;
@@ -545,6 +566,7 @@ int main(int argc, char **argv)
     suite.run("misbehaving and stalled peers are closed", misbehavingPeersAreClosed);
     suite.run("a byte after the attach closes the connection", aByteAfterTheAttachClosesTheConnection);
     suite.run("connections beyond the cap are closed at once", connectionsBeyondTheCapAreClosedAtOnce);
+    suite.run("a peer of another user is closed at once", aPeerOfAnotherUserIsClosedAtOnce);
     suite.run("one listener owns the socket and a stale one is replaced",
               oneListenerOwnsTheSocketAndAStaleOneIsReplaced);
     suite.run("the socket directory ignores temporary directories", theSocketDirectoryIgnoresTemporaryDirectories);
