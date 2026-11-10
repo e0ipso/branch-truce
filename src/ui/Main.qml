@@ -48,16 +48,19 @@ Kirigami.ApplicationWindow {
             [guidance, selectedAddCommand]);
     }
     function choose(target: string, action: int): void {
+        choices.cancel();
         window.previewRequested = true;
         const accepted = choices.previewChoice(selectedFile.fileId, selectedFile.currentRevision, target, action);
         window.previewRequested = accepted && choices.previewPending;
     }
     function chooseNonConflicting(scope: int): void {
+        choices.cancel();
         window.previewRequested = true;
         const accepted = choices.previewNonConflicting(selectedFile.fileId, selectedFile.currentRevision, scope);
         window.previewRequested = accepted && choices.previewPending;
     }
     function chooseWholeFile(side: int): void {
+        choices.cancel();
         window.previewRequested = true;
         const accepted = choices.previewWholeFile(selectedFile.fileId, selectedFile.currentRevision, side);
         window.previewRequested = accepted && choices.previewPending;

@@ -250,6 +250,27 @@ void comparison_scene::addEditingCases(Groups groups)
                            CHECK(file.current().draft == fixture.controller.store()->file(file.id())->current().draft);
                    });
     }
+    scenes.run("an immediately ready replacement opens after cancelling a pending preview", [] {
+        Fixture fixture;
+        auto &store = *fixture.controller.store();
+        CHECK(store.typeResult("choices", fixture.file().current().id, {{0, 0}, "typed "}) == Transition::Applied);
+        const auto revision = fixture.file().current().id;
+        const auto pending = fixture.file().pendingAlignment();
+        CHECK(pending);
+        CHECK(QMetaObject::invokeMethod(fixture.window, "chooseWholeFile",
+                                        Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Side::LeftSide))));
+        CHECK(fixture.controller.choices()->previewPending());
+        CHECK(!fixture.object("wholeFileDialog")->property("visible").toBool());
+        // No event-loop turn delivers the first request's completion before its replacement.
+        CHECK(
+            store.installAlignment("choices", revision, std::make_shared<const CorrespondenceMap>(pending->realigned()))
+            == Transition::Applied);
+        CHECK(QMetaObject::invokeMethod(fixture.window, "chooseWholeFile",
+                                        Q_ARG(int, static_cast<int>(ChoicePreviewFlow::Side::RightSide))));
+        CHECK(fixture.object("wholeFileDialog")->property("visible").toBool());
+        CHECK(fixture.controller.choices()->wholeFilePreview().value("side").toString() == "Right");
+        CHECK(QMetaObject::invokeMethod(fixture.object("wholeFileDialog"), "reject"));
+    });
     for (const int operation : {0, 1, 2}) {
         scenes.run(
             std::string("confirmation, cancellation and a stale application preserve the draft: ")
