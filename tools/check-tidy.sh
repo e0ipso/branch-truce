@@ -21,7 +21,9 @@ version=$(clang-tidy --version | sed -n 's/.*LLVM version \([0-9.]*\).*/\1/p')
     echo "clang-tidy $required is required, found ${version:-an unknown version}." >&2
     exit 1
 }
-mapfile -d '' files < <(python3 -I - "$build/compile_commands.json" "$root" <<'PY'
+manifest=$(mktemp)
+trap 'rm -f -- "$manifest"' EXIT
+python3 -I - "$build/compile_commands.json" "$root" > "$manifest" <<'PY' || exit $?
 import json, os, sys
 entries = json.load(open(sys.argv[1]))
 root = sys.argv[2].rstrip("/") + "/"
@@ -33,7 +35,7 @@ for entry in entries:
         seen.add(path)
         sys.stdout.write(path + "\0")
 PY
-)
+mapfile -d '' files < "$manifest"
 ((${#files[@]} > 0)) || { echo "No project sources in $build/compile_commands.json." >&2; exit 1; }
 printf '%s\0' "${files[@]}" | xargs -0 -P "$jobs" -n 1 clang-tidy -p "$build" --quiet
 printf '%s files passed clang-tidy %s\n' "${#files[@]}" "$required"

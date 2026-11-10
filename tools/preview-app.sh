@@ -46,13 +46,9 @@
 #
 # Needs WAYLAND_DISPLAY and XDG_RUNTIME_DIR from a sway session (SWAYSOCK or
 # $XDG_RUNTIME_DIR/sway-ipc.*.sock), plus git, swaymsg, jq, grim and comm. The
-# fixture, home and logs live in one private directory, /tmp/bt-preview-fixture
-# (not under $TMPDIR, which varies between sessions). The script creates it
-# exclusively and removes it on every exit, so a second run that starts while
-# the first is active stops with an error instead of sharing it; serialise runs
-# with flock. A run killed with SIGKILL leaves the directory behind, and the
-# next run names it in its error. The checkout and $HOME are not written. Only
-# the app this script started is stopped.
+# fixture, home and logs live in an invocation-owned /tmp/bt-fixture.* directory,
+# removed on exit. The checkout and $HOME are not written. Only the app this
+# script started is stopped. Serialise desktop captures with flock.
 set -euo pipefail
 
 schemes=(BreezeLight BreezeDark)
@@ -110,12 +106,9 @@ else
     output=$(mktemp -d "${TMPDIR:-/tmp}/bt-preview-shots.XXXXXXXX")
     made_output=1
 fi
-# The fixed fixture directory. $work stays empty until this run has created the
-# directory, so the exit handler never removes one that belongs to another run.
-fixture_dir=/tmp/bt-preview-fixture
 work=
-home=$fixture_dir/home
-repo=$fixture_dir/repo
+home=
+repo=
 app_pid=
 scheme=
 log=
@@ -188,13 +181,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 cd /
 
-# mkdir without -p fails if the path exists, even as a symlink, so only one run
-# owns the directory and nobody else can have prepared it.
-if [[ -e "$fixture_dir" || -L "$fixture_dir" ]]; then
-    die "$fixture_dir exists: another preview run is active, or one was killed; remove it if none is"
-fi
-mkdir -m 700 -- "$fixture_dir" || die "could not create $fixture_dir"
-work=$fixture_dir
+work=$(fixture_root) || die "could not create fixture root"
+home=$work/home
+repo=$work/repo
 
 # The isolated environment of the app. fixture_merge_repo gives the fixture's
 # Git commands the same one, plus fixed commit dates; with the fixed identity
@@ -233,8 +222,8 @@ capture() {
     local colors=/usr/share/color-schemes/$scheme.colors file=$output/branch-truce-$scheme${size:+-$size}.png
     log=$work/$scheme.log
     local deadline rect=
-    fixture_home "$home" && fixture_gitconfig "$home" "$app" \
-        && fixture_merge_repo "$home" "$repo" "${fixture_files[@]}" || die "the fixture merge did not stop on a conflict"
+    fixture_home "$work" "$home" && fixture_gitconfig "$work" "$home" "$app" \
+        && fixture_merge_repo "$work" "$home" "$repo" "${fixture_files[@]}" || die "the fixture merge did not stop on a conflict"
     { cat "$colors"; printf '\n[General]\nColorScheme=%s\n' "$scheme"; } > "$home/config/kdeglobals"
     # A new window opens on the focused workspace.
     if [[ -n "$screen" ]]; then

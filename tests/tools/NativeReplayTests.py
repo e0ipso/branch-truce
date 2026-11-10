@@ -22,6 +22,7 @@ import capture_profile
 from ledger import assemble
 from fixture import PATHS, GitError, git, make_fixture, png, reference_bytes, unmerged
 import reports
+from processes import OutputLimitError, run
 from replay import (NativeClient, OwnedResources, await_compositor, item, private_environment, replay_lock,
                     write_kdeglobals)
 
@@ -126,6 +127,15 @@ class FixtureTests(unittest.TestCase):
         self.assertFalse((self.root / 'unrelated.git').exists())
 
 
+    def test_git_bounds_fail_with_its_typed_error_and_diagnostic(self):
+        with patch('fixture.run', side_effect=subprocess.TimeoutExpired(['git'], 30, b'partial', b'git diagnostic')):
+            with self.assertRaisesRegex(GitError, 'timed out.*git diagnostic'):
+                git(self.root, 'status', check=False)
+        with patch('fixture.run', side_effect=OutputLimitError(1024, (b'', b'output diagnostic'))):
+            with self.assertRaisesRegex(GitError, 'output bytes.*output diagnostic'):
+                git(self.root, 'status')
+
+
 class PrivateBaseTestCase(unittest.TestCase):
     """Keeps every owned private directory and receipt under a temporary base directory."""
     def setUp(self):
@@ -137,7 +147,44 @@ class PrivateBaseTestCase(unittest.TestCase):
         return OwnedResources(cleanup_receipt, base_dir=self.base)
 
 
+class ProcessTests(unittest.TestCase):
+    def test_capture_preserves_bytes_status_and_stderr(self):
+        result = run([sys.executable, '-c', 'import sys; print("€"); print("diagnostic", file=sys.stderr); sys.exit(17)'],
+                     env=dict(os.environ))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (17, '€\n'.encode(), b'diagnostic\n'))
+
+    def test_timeout_and_output_limits_are_bounded(self):
+        with self.assertRaises(subprocess.TimeoutExpired) as failure:
+            run([sys.executable, '-c', 'import sys,time; print("before timeout", file=sys.stderr, flush=True); time.sleep(60)'],
+                env=dict(os.environ), timeout=0.2)
+        self.assertEqual(failure.exception.stderr, b'before timeout\n')
+        with self.assertRaises(OutputLimitError):
+            run([sys.executable, '-c', 'import os; os.write(1, b"x" * 65536)'], env=dict(os.environ), max_output=1024)
+
+    def test_cancellation_reaps_the_started_process(self):
+        with patch('processes.selectors.DefaultSelector.select', side_effect=KeyboardInterrupt), \
+             patch('processes.stop_group', wraps=__import__('processes').stop_group) as stop:
+            with self.assertRaises(KeyboardInterrupt):
+                run([sys.executable, '-c', 'import time; time.sleep(60)'], env=dict(os.environ))
+        self.assertIsNotNone(stop.call_args.args[0].returncode)
+
+
 class ResourceTests(PrivateBaseTestCase):
+    def test_exited_leader_does_not_hide_a_surviving_child(self):
+        unrelated = subprocess.Popen([sys.executable, '-c', 'import signal; signal.pause()'])
+        self.addCleanup(lambda: (unrelated.terminate(), unrelated.wait()))
+        with self.owned() as owned:
+            process, _ = owned.spawn([sys.executable, '-c',
+                'import os,signal; child=os.fork(); '
+                'signal.signal(signal.SIGTERM, signal.SIG_IGN) if child == 0 else None; '
+                'os._exit(0) if child else (print("child ready", flush=True), signal.pause())'],
+                env=dict(os.environ), log=owned.root / 'log', pipe=True)
+            self.assertEqual(process.stdout.readline(), b'child ready\n')
+            self.assertEqual(process.wait(timeout=5), 0)
+            owned.start_reader(lambda: process.stdout.read())
+        self.assertIsNone(unrelated.poll())
+        self.assertFalse(any(thread.is_alive() for thread in owned.threads))
+
     def test_private_directory_lives_under_the_given_base(self):
         with self.owned() as owned:
             self.assertEqual(owned.root.parent, self.base)
@@ -235,6 +282,42 @@ class ReportTests(PrivateBaseTestCase):
         reports.write_json(path, dict(second=[1, 2]))
         self.assertEqual(path.read_text(), '{\n  "second": [\n    1,\n    2\n  ]\n}\n')
         self.assertEqual(sorted(p.name for p in self.base.iterdir()), ['verification.json'])
+
+    def test_concurrent_reports_use_distinct_temporaries_and_keep_modes(self):
+        path = self.base / 'shared.txt'
+        path.write_text('previous')
+        path.chmod(0o640)
+        barrier = threading.Barrier(2)
+        replace = os.replace
+        partials, errors = [], []
+        def publish(partial, destination):
+            partials.append(partial)
+            barrier.wait(timeout=5)
+            replace(partial, destination)
+        def writer(value):
+            try:
+                reports.write_text(path, value)
+            except BaseException as error:
+                errors.append(error)
+        with patch('reports.os.replace', side_effect=publish):
+            workers = [threading.Thread(target=writer, args=(value,)) for value in ('a' * 10000, 'b' * 10000)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(timeout=10)
+        self.assertFalse(errors)
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertEqual(len(set(partials)), 2)
+        self.assertIn(path.read_text(), ('a' * 10000, 'b' * 10000))
+        self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(list(self.base.iterdir()), [path])
+
+    def test_temporary_collision_preserves_the_other_writers_file(self):
+        partial = self.base / '.report.occupied.partial'
+        partial.write_text('another writer')
+        with patch('reports.secrets.token_hex', return_value='occupied'), self.assertRaises(FileExistsError):
+            reports.write_text(self.base / 'report', 'mine')
+        self.assertEqual(partial.read_text(), 'another writer')
 
     def test_failed_write_keeps_the_previous_report(self):
         path = self.base / 'ci-context.json'

@@ -31,14 +31,14 @@ usage() {
     echo "usage: $0 --format $(format_ids | paste -sd '|' -) --version <semver> --package <file> [--previous <file>]"
 }
 
-# seed_user_home HOME: a private home with files the user already has. The
+# seed_user_home ROOT HOME: a private home with files the user already has. The
 # installed binary runs with it, so the removal checks also cover what the
 # application itself wrote there.
 seed_user_home() {
-    fixture_home "$1" && fixture_gitconfig "$1" || return 1
-    mkdir -p "$1/data/Branch Truce/recovery/unrelated"
-    printf '[General]\nwrapLines=true\n' > "$1/config/branch-trucerc"
-    head -c 256 /dev/urandom > "$1/data/Branch Truce/recovery/unrelated/journal"
+    fixture_home "$1" "$2" && fixture_gitconfig "$1" "$2" || return 1
+    mkdir -p "$2/data/Branch Truce/recovery/unrelated"
+    printf '[General]\nwrapLines=true\n' > "$2/config/branch-trucerc"
+    head -c 256 /dev/urandom > "$2/data/Branch Truce/recovery/unrelated/journal"
 }
 
 # run_app HOME DIRECTORY ARGUMENT...: the installed binary in DIRECTORY with
@@ -55,22 +55,28 @@ user_files() { (cd -- "$1" && find . -path ./runtime -prune -o -type f -print0 |
 # about itself, before anything on the target changes. PAYLOAD lists the
 # expected files, sorted.
 check_metadata() {
-    local file=$1 native=$2 architecture=$3 expected=$4 got reason declared dependency
+    local file=$1 native=$2 architecture=$3 expected=$4 got reason declared dependency status=0 recipe
     got=$(pkg_identity "$file") || die "cannot read the identity of $file"
     [ "$got" = "branch-truce|$native|$architecture" ] \
         || die "candidate identity $got differs from branch-truce|$native|$architecture"
     reason=$(pkg_check_metadata "$file" 2>&1) || die "candidate metadata: $reason"
     pass "candidate is branch-truce $native for $architecture"
-    got=$(pkg_files "$file")
+    got=$(pkg_files "$file") || die "cannot read payload of $file"
     [ "$got" = "$expected" ] || die "payload differs from the expected files:
 $(diff <(printf '%s\n' "$expected") <(printf '%s\n' "$got") || true)"
     pass "payload is exactly the $(wc -l <<<"$expected") expected files"
-    ! pkg_has_scripts "$file" || die 'the package has scripts, triggers or configuration files'
+    pkg_has_scripts "$file" || status=$?
+    case "$status" in
+        0) die 'the package has scripts, triggers or configuration files' ;;
+        1) ;;
+        *) die "cannot inspect package scripts in $file (exit $status)" ;;
+    esac
     pass 'no package scripts, triggers or configuration files'
-    declared=$(pkg_depends "$file")
+    declared=$(pkg_depends "$file") || die "cannot read dependencies of $file"
+    recipe=$(pkg_recipe_depends "$root") || die "cannot read recipe dependencies"
     while IFS= read -r dependency; do
         grep -qxF -- "$dependency" <<<"$declared" || die "the package does not declare the recipe dependency $dependency"
-    done < <(pkg_recipe_depends "$root")
+    done <<<"$recipe"
     pass 'the package declares every dependency of its recipe'
 }
 
@@ -98,7 +104,8 @@ check_installed_files() {
 # check_icons: each installed icon is the branding pack's file, its directory
 # is declared at its size in hicolor's index.theme, and a PNG has that size.
 check_icons() {
-    local branding=$root/assets/branding/platform/linux/hicolor relative path size got
+    local branding=$root/assets/branding/platform/linux/hicolor relative path size got icons
+    icons=$(installed_files "$root/packaging/installed-files.txt" '' | sed -n 's|^/share/icons/hicolor/||p') || die "cannot read icon list"
     while IFS= read -r relative; do
         path=/usr/share/icons/hicolor/$relative
         cmp -s -- "$branding/$relative" "$path" || die "icon $relative differs from the branding pack"
@@ -109,7 +116,7 @@ check_icons() {
             got=$(png_size "$path") || got='not a PNG'
             [ "$got" = "$size" ] || die "icon $relative is $got, expected $size"
         fi
-    done < <(installed_files "$root/packaging/installed-files.txt" '' | sed -n 's|^/share/icons/hicolor/||p')
+    done <<<"$icons"
 }
 
 # check_desktop_files: the desktop entry and the AppStream metainfo validate.
@@ -157,7 +164,7 @@ check_launch() {
     local version=$1 home=$2 work=$3 got
     got=$(run_app "$home" / --version) || die "installed --version exited $?"
     [ "$got" = "Branch Truce $version" ] || die "installed --version reports '$got'"
-    fixture_merge_repo "$home" "$work/repo" tracked.txt || die 'the fixture merge did not conflict'
+    fixture_merge_repo "$work" "$home" "$work/repo" tracked.txt || die 'the fixture merge did not conflict'
     got=$(run_app "$home" "$work/repo" --smoke-test "$work/repo") || die "installed --smoke-test exited $?: $got"
     smoke_record_ready "$got" || die "installed --smoke-test did not open the merge session: $got"
 }
@@ -178,7 +185,7 @@ check_installed() {
 # remove_and_check HOME PAYLOAD-FILE: removes the package completely; nothing
 # it installed and nothing in HOME may remain changed.
 remove_and_check() {
-    local home=$1 payload=$2 before path suffix
+    local home=$1 payload=$2 before path suffix extras
     before=$(user_files "$home")
     step "remove $(pkg_installed_version)"
     pkg_remove || die 'the package manager did not remove branch-truce'
@@ -189,9 +196,11 @@ remove_and_check() {
             [ ! -e "$path$suffix" ] || die "removal left $path$suffix"
         done
     done < "$payload"
+    extras=$(pkg_extra_files) || die "cannot read extra package files"
     while IFS= read -r path; do
+        [ -n "$path" ] || continue
         [ ! -e "${path%/*}" ] || die "removal left ${path%/*}"
-    done < <(pkg_extra_files)
+    done <<<"$extras"
     [ "$(user_files "$home")" = "$before" ] || die 'removal changed files in the user home'
     pass 'complete removal; the user home is unchanged'
 }
@@ -215,8 +224,10 @@ check_main() {
     [ -z "$previous" ] || previous=$(realpath -e -- "$previous")
 
     step "inspect $(basename "$package")"
-    local expected
-    expected=$({ installed_files "$root/packaging/installed-files.txt" /usr; pkg_extra_files; } | LC_ALL=C sort)
+    local expected extras
+    expected=$(installed_files "$root/packaging/installed-files.txt" /usr) || die 'cannot read expected payload'
+    extras=$(pkg_extra_files) || die 'cannot read extra package files'
+    expected=$(printf '%s\n' "$expected" "$extras" | sed '/^$/d' | LC_ALL=C sort) || die 'cannot sort expected payload'
     check_metadata "$package" "$native" "$architecture" "$expected"
     if [ -n "$previous" ]; then
         previous_native=$(check_previous "$previous" "$native" "$architecture")
@@ -226,13 +237,13 @@ check_main() {
     [ "$(id -u)" -eq 0 ] || die 'run as root in a disposable target container'
     pkg_target_ready
     [ -z "$(pkg_installed_version)" ] || die 'branch-truce is already installed; use a clean target'
-    work=$(mktemp -d /tmp/bt-package-check.XXXXXX)
+    work=$(fixture_root)
     local cleanup
     printf -v cleanup 'rm -rf -- %q' "$work"
     # shellcheck disable=SC2064
     trap "$cleanup" EXIT
     printf '%s\n' "$expected" > "$work/payload"
-    seed_user_home "$work/home"
+    seed_user_home "$work" "$work/home"
     step 'refresh the package lists'
     pkg_refresh
 

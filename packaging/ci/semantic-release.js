@@ -7,7 +7,7 @@
  * packaging/scripts/package-info.sh, and every package's own metadata is read
  * by packaging/scripts/package-identity.sh, as the builders do.
  */
-import { execFileSync, spawn } from 'node:child_process';
+import { run } from './metadata-command.js';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,6 +20,7 @@ const OUTPUT_DIR = 'dist/kde';
  * @property {string} cwd the checkout being released
  * @property {Record<string, string | undefined>} env
  * @property {{ version: string }} nextRelease
+ * @property {AbortSignal} [signal]
  * @property {{ dryRun?: boolean }} [options]
  * @property {{ log: (...args: unknown[]) => void }} logger
  *
@@ -33,44 +34,13 @@ const OUTPUT_DIR = 'dist/kde';
  */
 
 /**
- * The format ids of packaging/formats.tsv under the checkout at cwd, from its one reader,
- * packaging/scripts/formats.sh.
- * @param {string} cwd
- * @returns {string[]}
- */
-export function formatIds(cwd) {
-  return execFileSync(join(cwd, 'packaging', 'scripts', 'formats.sh'), ['ids'], { encoding: 'utf8' })
-    .split('\n').filter(Boolean);
-}
-
-/**
- * Runs COMMAND in the checkout and resolves to its trimmed stdout; rejects when it fails.
- * @param {string} command
- * @param {string[]} args
- * @param {Pick<Context, 'cwd' | 'env'>} context
- * @returns {Promise<string>}
- */
-function run(command, args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'inherit'] });
-    let stdout = '';
-    child.stdout.on('data', (/** @type {Buffer} */ chunk) => { stdout += chunk; });
-    child.on('error', reject);
-    child.on('close', code => {
-      if (code === 0) resolve(stdout.trim());
-      else reject(new Error(`${command} ${args.join(' ')} exited with ${code}`));
-    });
-  });
-}
-
-/**
  * @param {string} version
  * @param {Context} context
  * @returns {Promise<Identity[]>}
  */
 async function identities(version, context) {
   const info = [];
-  for (const format of formatIds(context.cwd)) {
+  for (const format of (await run('packaging/scripts/formats.sh', ['ids'], context)).split('\n').filter(Boolean)) {
     info.push(JSON.parse(await run('packaging/scripts/package-info.sh', ['--format', format, '--version', version], context)));
   }
   return info;

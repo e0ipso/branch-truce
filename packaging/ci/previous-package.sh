@@ -47,7 +47,9 @@ while read -r tag; do
     [ "$native" != "$next" ] && [ "$(printf '%s\n' "$native" "$next" | sort -V | head -n 1)" = "$native" ] || continue
     candidates+=("$native $tag")
 done <<<"$tags"
-mapfile -t candidates < <(printf '%s\n' "${candidates[@]}" | sed '/^$/d' | sort -r -V -k1,1)
+ordered=$(printf '%s\n' "${candidates[@]}" | sed '/^$/d' | sort -r -V -k1,1) || exit 1
+candidates=()
+[ -z "$ordered" ] || mapfile -t candidates <<<"$ordered"
 
 # asset_of TAG: the release's single uploaded asset with this format's file
 # name and label and a SHA-256 digest, as JSON, or nothing.

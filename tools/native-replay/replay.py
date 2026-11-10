@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the approved fixture or replay its real native controls on private sway."""
 import argparse
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 import fcntl
 import json
@@ -27,6 +27,7 @@ from calibration import (ImageTool, build_provenance, capture_inputs, cleanup_co
 import capture_profile  # noqa: E402
 from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged  # noqa: E402
 from reports import write_json  # noqa: E402
+from processes import stop_group  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 COLOUR_SCHEMES = Path('/usr/share/color-schemes')
@@ -59,21 +60,21 @@ class OwnedResources:
     """
     def __init__(self, cleanup_receipt=None, base_dir=Path('/var/tmp')):
         self.cleanup_receipt = cleanup_receipt
-        self.directory = tempfile.TemporaryDirectory(prefix='bt-r-', dir=base_dir)
-        self.root = Path(self.directory.name)
+        self.streams = ExitStack()
+        self.root = Path(self.streams.enter_context(tempfile.TemporaryDirectory(prefix='bt-r-', dir=base_dir)))
         self.processes = []
-        self.logs = []
         self.threads = []
         self.reader_errors = []
 
     def spawn(self, argv, *, env, log, pass_fds=(), pipe=False):
-        stream = Path(log).open('wb')
-        self.logs.append(stream)
+        stream = self.streams.enter_context(Path(log).open('wb'))
         process = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE if pipe else stream,
                                    stderr=subprocess.STDOUT, start_new_session=True,
                                    pass_fds=pass_fds)
         self.processes.append(process)
+        if process.stdout:
+            self.streams.enter_context(process.stdout)
         return process, stream
 
     def start_reader(self, target, *args):
@@ -89,19 +90,7 @@ class OwnedResources:
 
     def _stop_processes(self):
         for process in reversed(self.processes):
-            if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    process.wait(timeout=5)
+            stop_group(process)
         for thread in self.threads:
             thread.join(timeout=5)
             require(not thread.is_alive(), "Owned log reader did not finish")
@@ -115,12 +104,7 @@ class OwnedResources:
         try:
             self._stop_processes()
         finally:
-            for process in self.processes:
-                if process.stdout:
-                    process.stdout.close()
-            for log in self.logs:
-                log.close()
-            self.directory.cleanup()
+            self.streams.close()
         require(not self.root.exists(), f'Private replay directory survived cleanup: {self.root}')
         if self.cleanup_receipt:
             write_json(self.cleanup_receipt, dict(private_root=str(self.root),

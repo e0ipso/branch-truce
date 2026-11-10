@@ -10,8 +10,7 @@
 # CTest reports as skipped rather than passed.
 #
 # Not covered here: the container steps themselves (apt, dpkg, gio, git
-# mergetool, wtype on a real compositor), which use the fixed paths /tmp/bt-home
-# and /tmp/bt-repo; and wait_window's 60 and 30 second timeouts, which have no
+# mergetool, wtype on a real compositor), which use an owned disposable fixture root; and wait_window's 60 and 30 second timeouts, which have no
 # override.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
@@ -487,7 +486,7 @@ done
 
 # A step that records a failed check exits 1, one with none exits 0, under the
 # options the script runs with.
-sourced 'set -euo pipefail; c_ok() { pass fine; }; c_bad() { fail broken; pass after; }
+sourced 'set -euo pipefail; cat() { printf "%s\n" "$BT_HOME"; }; fixture_path() { :; }; c_ok() { pass fine; }; c_bad() { fail broken; pass after; }
     installed_checks_main ok && echo "ok exited 0"; installed_checks_main bad || echo "bad exited $?"'
 expect_status 0
 expect_only_output $'PASS fine\nok exited 0\nFAIL broken\nPASS after\nbad exited 1'

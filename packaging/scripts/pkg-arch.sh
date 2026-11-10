@@ -55,12 +55,13 @@ pkg_target_ready() { command -v pacman vercmp >/dev/null || { echo 'error: use a
 # Refresh the whole rolling base; never perform a partial upgrade.
 pkg_refresh() { pacman -Syu --noconfirm; }
 pkg_install() {
-    local dependency
+    local dependencies
     local -a required=()
     # pacman -U does not fetch missing dependencies from the sync repositories.
     # Resolve them with repository signatures on, then install the local file,
     # which the default LocalFileSigLevel=Optional accepts unsigned.
-    while IFS= read -r dependency; do required+=("$dependency"); done < <(pkg_depends "$1")
+    dependencies=$(pkg_depends "$1") || return 1
+    [ -z "$dependencies" ] || mapfile -t required <<<"$dependencies"
     pacman -S --needed --noconfirm -- "${required[@]}" && pacman -U --noconfirm -- "$1"
 }
 pkg_remove() { pacman -Rn --noconfirm branch-truce; }

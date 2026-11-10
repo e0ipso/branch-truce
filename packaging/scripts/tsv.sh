@@ -15,36 +15,32 @@
 # stderr and returns 2 for an unreadable table, an unknown key or an unknown
 # column.
 
-tsv_keys() {
-    [[ -r "${1-}" ]] || { echo "error: cannot read the table '${1-}'" >&2; return 2; }
-    awk -F '\t' '/^#/ || !NF { next } !header { header = 1; next } { print $1 }' "$1"
-}
-
-tsv_field() {
-    local table=${1-} key=${2-} column=${3-} status=0
-    [[ -r "$table" ]] || { echo "error: cannot read the table '$table'" >&2; return 2; }
-    awk -F '\t' -v key="$key" -v name="$column" '
+_tsv_read() {
+    local table=${1-} mode=$2 key=$3 column=$4 status=0
+    [[ -f "$table" && -r "$table" ]] || { echo "error: cannot read the table '$table'" >&2; return 2; }
+    awk -F '\t' -v mode="$mode" -v key="$key" -v name="$column" '
         /^#/ || !NF { next }
-        !header { header = 1; for (i = 1; i <= NF; i++) if ($i == name) want = i; if (!want) exit 3; next }
-        $1 == key { print $want; found = 1; exit }
-        END { if (!want) exit 3; if (!found) exit 4 }' "$table" || status=$?
+        !header { header = NF; for (i = 1; i <= NF; i++) {
+            if (!$i || columns[$i]++) invalid = 1; if ($i == name) want = i
+        } next }
+        NF != header || seen[$1]++ { invalid = 1; next }
+        { for (i = 1; i <= NF; i++) if ($i == "") invalid = 1; keys[++count] = $1; values[$1] = $want }
+        END {
+            if (!header || !count || invalid) exit 5
+            if (mode != "keys" && !want) exit 3
+            if (mode == "field") { if (!(key in values)) exit 4; print values[key] }
+            else for (i = 1; i <= count; i++)
+                print keys[i] (mode == "column" ? "\t" values[keys[i]] : "")
+        }' "$table" || status=$?
     case "$status" in
         0) return 0 ;;
         3) echo "error: ${table##*/} has no column '$column'" >&2 ;;
         4) echo "error: ${table##*/} has no row '$key'; use one of: $(tsv_keys "$table" | paste -sd ' ' -)" >&2 ;;
-        *) echo "error: cannot read the table '$table'" >&2 ;;
+        *) echo "error: cannot read the table '$table': malformed or empty" >&2 ;;
     esac
     return 2
 }
 
-tsv_column() {
-    local table=${1-} column=${2-} status=0
-    [[ -r "$table" ]] || { echo "error: cannot read the table '$table'" >&2; return 2; }
-    awk -F '\t' -v name="$column" '
-        /^#/ || !NF { next }
-        !header { header = 1; for (i = 1; i <= NF; i++) if ($i == name) want = i; if (!want) exit 3; next }
-        { print $1 "\t" $want }' "$table" || status=$?
-    ((status == 0)) && return 0
-    echo "error: ${table##*/} has no column '$column'" >&2
-    return 2
-}
+tsv_keys() { _tsv_read "${1-}" keys '' ''; }
+tsv_field() { _tsv_read "${1-}" field "${2-}" "${3-}"; }
+tsv_column() { _tsv_read "${1-}" column '' "${2-}"; }

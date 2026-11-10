@@ -28,7 +28,7 @@ for tool in cmake c++ make git tar gio desktop-file-validate appstreamcli readel
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool" >&2; exit 1; }
 done
 
-fixture=$(mktemp -d "${TMPDIR:-/tmp}/bt-install.XXXXXXXX")
+fixture=$(fixture_root)
 source_dir="$fixture/source"
 build="$fixture/build"
 prefix="$fixture/prefix"
@@ -89,7 +89,8 @@ run rm -rf -- "$source_dir" "$build"
 pass "copied source and build tree deleted before launch"
 
 step "Inspect deployed files"
-mapfile -t expected < <(installed_files "$root/packaging/installed-files.txt" '' | sed 's|^/||')
+expected_files=$(installed_files "$root/packaging/installed-files.txt" '' | sed 's|^/||') || die "cannot read installed files"
+mapfile -t expected <<<"$expected_files"
 deployed=$(cd -- "$prefix" && find . \( -type f -o -type l \) -printf '%P\n' | LC_ALL=C sort)
 printf '%s\n' "$deployed"
 [[ "$deployed" == "$(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)" ]] || die "deployed file list differs"
@@ -106,13 +107,13 @@ step "Create a disposable merge conflict"
 # The session socket is $XDG_RUNTIME_DIR/branch-truce/bt-mt-<32 hex>. A longer
 # path than Qt accepts (106 bytes) moves it to /tmp/branch-truce-<uid>.
 ((${#home} + 8 + 13 + 39 <= 106)) || die "fixture path too long for the session socket: $home/runtime"
-fixture_home "$home"
-fixture_gitconfig "$home"
+fixture_home "$fixture" "$home"
+fixture_gitconfig "$fixture" "$home"
 mapfile -d '' environment < <(fixture_env "$home")
 environment+=("PATH=$prefix/bin:/usr/bin:/bin" "XDG_DATA_DIRS=$prefix/share:/usr/share"
     "QT_QPA_PLATFORM=offscreen" "QT_QUICK_BACKEND=software")
 isolated() { (cd -- "$repo" && env -i "${environment[@]}" "$@"); }
-fixture_merge_repo "$home" "$repo" tracked.txt || die "fixture merge did not conflict on tracked.txt"
+fixture_merge_repo "$fixture" "$home" "$repo" tracked.txt || die "fixture merge did not conflict on tracked.txt"
 launch_bytes=$(sha256sum < "$repo/tracked.txt")
 resolved_name=$(isolated sh -c 'command -v branch-truce')
 [[ "$resolved_name" == "$installed" ]] || die "branch-truce resolves to $resolved_name"

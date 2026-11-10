@@ -16,10 +16,12 @@ dockerfile=$(format_field "$format" dockerfile) || { usage >&2; exit 2; }
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-mapfile -t sources < <(awk '
+copied=$(awk '
     toupper($1) == "COPY" {
         for (i = 2; i < NF; i++) print $i
-    }' "$dockerfile")
+    }' "$dockerfile") || exit 1
+sources=()
+[ -z "$copied" ] || mapfile -t sources <<<"$copied"
 for source in "${sources[@]}"; do
     case "$source" in
         -*|*'*'*|*'?'*|*'['*)

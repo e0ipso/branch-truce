@@ -18,7 +18,10 @@ version=$(clang-format --version | sed -n 's/.*clang-format version \([0-9.]*\).
     echo "clang-format $required is required, found ${version:-an unknown version}." >&2
     exit 1
 }
-mapfile -d '' files < <(git -C "$root" ls-files -z -- '*.cpp' '*.h')
+manifest=$(mktemp)
+trap 'rm -f -- "$manifest"' EXIT
+git -C "$root" ls-files -z -- '*.cpp' '*.h' > "$manifest" || exit 1
+mapfile -d '' files < "$manifest"
 ((${#files[@]} > 0)) || { echo 'No C++ sources found.' >&2; exit 1; }
 cd "$root"
 clang-format "${mode[@]}" -- "${files[@]}"
