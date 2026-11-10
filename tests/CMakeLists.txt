@@ -199,6 +199,13 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(app.text-blocks app/TextBlocksTests.cpp
         LIBS branch_truce_controller branch_truce_uiplugin Qt6::Quick Qt6::Test PRIVATE_XDG LABELS app)
     set_tests_properties(app.text-blocks PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    branch_truce_add_unit_test(app.pane-marks app/PaneMarksTests.cpp
+        LIBS branch_truce_controller branch_truce_uiplugin Qt6::Quick PRIVATE_XDG LABELS app)
+    set_tests_properties(app.pane-marks PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    branch_truce_add_unit_test(app.connector-bands app/ConnectorBandsTests.cpp
+        LIBS branch_truce_controller branch_truce_uiplugin Qt6::Quick PRIVATE_XDG LABELS app)
+    set_tests_properties(app.connector-bands PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
     # Built either way: with highlighting OFF it checks the plain highlighters.
     branch_truce_add_unit_test(app.syntax-highlighting app/SyntaxHighlightingTests.cpp

@@ -1,7 +1,7 @@
-// Unit tests for TextBlocks: where the cursor goes around folded lines and where the whitespace markers lie.
+// Unit tests for TextBlocks: row spacing, where the cursor goes around folded lines and where the
+// whitespace markers lie.
 #include "TestHarness.h"
-#include "ui/ConnectorBands.h"
-#include "ui/PaneMarks.h"
+#include "TextPane.h"
 #include "ui/TextBlocks.h"
 #include <QAbstractTextDocumentLayout>
 #include <QFont>
@@ -21,45 +21,7 @@
 using branch_truce::TextBlocks;
 
 namespace {
-// A TextEdit holding text, with the lines listed in folded hidden.
-class Pane {
-public:
-    Pane(const QString &text, const QList<int> &folded)
-    {
-        QQmlComponent component(&engine);
-        component.setData("import QtQuick\nTextEdit { width: 400; tabStopDistance: 40 }",
-                          QUrl(QStringLiteral("qrc:/TextBlocksTests/Pane.qml")));
-        editor.reset(qobject_cast<QQuickItem *>(component.create()));
-        if (!editor) throw std::runtime_error(component.errorString().toStdString());
-        CHECK(editor->setProperty("text", text));
-        auto *document = editor->property("textDocument").value<QQuickTextDocument *>();
-        CHECK(document != nullptr);
-        blocks.setDocument(document);
-        QVariantList hidden;
-        const auto lines = text.split(QLatin1Char('\n'));
-        for (const int line : folded)
-            hidden.append(QVariantMap{{QStringLiteral("line"), line}, {QStringLiteral("text"), lines.at(line - 1)}});
-        blocks.setHidden(hidden);
-        // Lay out every block, as showing the text would.
-        auto *laidOut = document->textDocument();
-        (void)laidOut->documentLayout()->blockBoundingRect(laidOut->lastBlock());
-    }
-
-    // The editor's cursor rectangle at position, which the old marker scan used.
-    QRectF cursorAt(int position) const
-    {
-        QRectF rect;
-        CHECK(QMetaObject::invokeMethod(editor.get(), "positionToRectangle", Q_RETURN_ARG(QRectF, rect),
-                                        Q_ARG(int, position)));
-        return rect;
-    }
-
-    QQmlEngine engine;
-    std::unique_ptr<QQuickItem> editor;
-    TextBlocks blocks;
-};
-
-bool near(qreal value, qreal expected) { return std::abs(value - expected) < 1e-3; }
+using namespace text_pane;
 
 // The marker covers the character at position, seen from area's top left.
 bool covers(const Pane &pane, const QVariant &marker, int position, bool tab, QPointF area = {})
@@ -183,143 +145,6 @@ int main(int argc, char **argv)
         CHECK(!firstDoc->isModified() && !secondDoc->isModified());
         first.blocks.setRowSpacing(0);
         CHECK(!secondDoc->begin().blockFormat().hasProperty(QTextFormat::LineHeight));
-    });
-    suite.run("pane marks rank passages, regions and marker blocks", [] {
-        branch_truce::PaneMarks marks;
-        const QVariantList passages{QVariantMap{{"side", "stage2"},
-                                                {"kind", "changed"},
-                                                {"resultLineBegin", 1},
-                                                {"resultLineEnd", 5},
-                                                {"sourceLineBegin", 1},
-                                                {"sourceLineEnd", 5}}};
-        const QVariantList regions{QVariantMap{{"side", "stage2"},
-                                               {"state", "undecided"},
-                                               {"mapped", true},
-                                               {"markersRemain", true},
-                                               {"resultLineBegin", 2},
-                                               {"resultLineEnd", 4},
-                                               {"sourceLineBegin", 2},
-                                               {"sourceLineEnd", 4}}};
-        const QVariantList blocks{QVariantMap{{"resultLineBegin", 3},
-                                              {"resultLineEnd", 4},
-                                              {"folded", true},
-                                              {"markerLines",
-                                               QVariantList{QVariantMap{{"line", 3}, {"text", "<<<<<<<"}},
-                                                            QVariantMap{{"line", 4}, {"text", ">>>>>>>"}}}}}};
-        const auto result = marks.marks("result", passages, regions, {}, blocks, {});
-        const auto lines = result.value("lines").toMap();
-        CHECK(lines.value("1").toString() == "changed");
-        CHECK(lines.value("2").toString() == "conflict");
-        CHECK(lines.value("3").toString() == "markers");
-        CHECK(lines.value("4").toString() == "changed");
-        const auto source = marks.marks("stage2", passages, regions, {}, blocks, {}).value("lines").toMap();
-        CHECK(source.value("2").toString() == "conflict");
-        CHECK(marks.folds(blocks, false).value("hidden").toList().size() == 1);
-        CHECK(marks.folds(blocks, true).value("hidden").toList().isEmpty());
-        auto ineligible = blocks;
-        auto block = ineligible.first().toMap();
-        block.insert("folded", false);
-        ineligible[0] = block;
-        CHECK(marks.folds(ineligible, false).value("hidden").toList().isEmpty());
-    });
-    suite.run("an undecided nonconflicting contribution retains its passage kind", [] {
-        branch_truce::PaneMarks marks;
-        const QVariantList passages{QVariantMap{{"side", "stage2"},
-                                                {"kind", "changed"},
-                                                {"resultLineBegin", 2},
-                                                {"resultLineEnd", 3},
-                                                {"sourceLineBegin", 2},
-                                                {"sourceLineEnd", 3}}};
-        const QVariantList regions{QVariantMap{{"side", "stage2"},
-                                               {"state", "undecided"},
-                                               {"mapped", true},
-                                               {"resultLineBegin", 2},
-                                               {"resultLineEnd", 3},
-                                               {"sourceLineBegin", 2},
-                                               {"sourceLineEnd", 3}}};
-        for (const auto &pane : {QStringLiteral("stage2"), QStringLiteral("result")})
-            CHECK(marks.marks(pane, passages, regions, {}, {}, {}).value("lines").toMap().value("2").toString()
-                  == "changed");
-        CHECK(regions.first().toMap().value("state").toString() == "undecided");
-    });
-    suite.run("connector bands clip offscreen and follow layout", [] {
-        Pane source(QStringLiteral("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"), {});
-        Pane result(QStringLiteral("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"), {});
-        branch_truce::ConnectorBands bands;
-        bands.setSide(QStringLiteral("stage2"));
-        bands.setSourceBlocks(&source.blocks);
-        bands.setResultBlocks(&result.blocks);
-        bands.setViewportHeight(source.blocks.yAtLine(4));
-        bands.setPassages({QVariantMap{{"side", "stage2"},
-                                       {"kind", "changed"},
-                                       {"sourceLineBegin", 2},
-                                       {"sourceLineEnd", 3},
-                                       {"resultLineBegin", 2},
-                                       {"resultLineEnd", 3}},
-                           QVariantMap{{"side", "stage2"},
-                                       {"kind", "changed"},
-                                       {"sourceLineBegin", 9},
-                                       {"sourceLineEnd", 10},
-                                       {"resultLineBegin", 9},
-                                       {"resultLineEnd", 10}}});
-        bands.setRegions(
-            {QVariantMap{{"side", "stage2"}, {"state", "accepted"}, {"sourceLineBegin", 2}, {"sourceLineEnd", 3}}});
-        CHECK(bands.bands().size() == 2);
-        CHECK(bands.visibleBands().size() == 1);
-        CHECK(bands.visibleBands().first().toMap().value("kind").toString() == "accepted");
-        bands.setMarkerBlocks({QVariantMap{{"resultLineBegin", 2}, {"resultLineEnd", 4}}});
-        bands.setFold(QVariantMap{{"rows", QVariantMap{{"2", QVariantMap{{"last", 3}}}}}});
-        const auto folded = bands.bands().first().toMap();
-        CHECK(folded.value("kind").toString() == "conflict");
-        CHECK(folded.value("resultBegin").toInt() == 2 && folded.value("resultEnd").toInt() == 4);
-        bands.setFold({});
-        bands.setMarkerBlocks({});
-        const qreal scroll = source.blocks.yAtLine(8);
-        bands.setSourceScroll(scroll);
-        bands.setResultScroll(scroll);
-        CHECK(bands.visibleBands().size() == 1);
-        CHECK(bands.visibleBands().first().toMap().value("sourceBegin").toInt() == 9);
-        const qreal before = bands.visibleBands().first().toMap().value("sourceTop").toReal();
-        auto font = source.editor->property("font").value<QFont>();
-        font.setPointSizeF(font.pointSizeF() * 1.5);
-        CHECK(source.editor->setProperty("font", font));
-        QCoreApplication::processEvents();
-        CHECK(!bands.visibleBands().isEmpty());
-        CHECK(!near(before, bands.visibleBands().first().toMap().value("sourceTop").toReal()));
-    });
-    suite.run("curved ribbon hover follows full unequal attachment ends", [] {
-        Pane source(QStringLiteral("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"), {});
-        Pane result(QStringLiteral("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten"), {});
-        branch_truce::ConnectorBands bands;
-        bands.setSide("stage2");
-        bands.setSourceBlocks(&source.blocks);
-        bands.setResultBlocks(&result.blocks);
-        bands.setViewportHeight(result.blocks.yAtLine(10));
-        bands.setPassages({QVariantMap{{"side", "stage2"},
-                                       {"kind", "changed"},
-                                       {"sourceLineBegin", 2},
-                                       {"sourceLineEnd", 4},
-                                       {"resultLineBegin", 7},
-                                       {"resultLineEnd", 8}}});
-        CHECK(bands.visibleBands().size() == 1);
-        const auto band = bands.visibleBands().first().toMap();
-        const auto st = band.value("sourceTop").toReal(), sb = band.value("sourceBottom").toReal();
-        const auto rt = band.value("resultTop").toReal(), rb = band.value("resultBottom").toReal();
-        CHECK(sb > st && rb > rt && rt > sb);
-        // At t=1/4, midpoint-control cubic x is 0.296875w and y
-        // interpolation is 0.15625. This point is above the straight wedge.
-        const qreal width = 40, x = width * 0.296875;
-        const qreal top = st + (rt - st) * 0.15625;
-        const qreal bottom = sb + (rb - sb) * 0.15625;
-        for (const bool left : {true, false}) {
-            const auto at = [&](qreal px, qreal py) { return bands.bandAt(left ? px : width - px, py, width, left); };
-            CHECK(!at(x, top + (bottom - top) * 0.1).isEmpty());
-            CHECK(at(x, top - 1).isEmpty());
-            CHECK(!at(0, st).isEmpty() && !at(0, sb).isEmpty());
-            CHECK(!at(width, rt).isEmpty() && !at(width, rb).isEmpty());
-            CHECK(at(-1, st).isEmpty() && at(width + 1, rt).isEmpty());
-            CHECK(at(x, -1).isEmpty());
-        }
     });
     suite.run("Down crosses folded lines and keeps the column", [] {
         Pane pane(between, {2, 3});
