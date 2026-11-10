@@ -8,7 +8,7 @@ Scratch directories are `truce-workload-*` under `/var/tmp`, or under `BRANCH_TR
 
 ## Commands
 
-Evidence timings come from a Release binary. The Debug gate test only checks that small workloads complete and that excessive Git and recovery actions are explicit failures.
+Evidence timings come from a Release binary. The gate test checks that small workloads complete, that each completed sample's median stays within its metric's budget, and that excessive Git and recovery actions are explicit failures. In any build other than Release, RelWithDebInfo or MinSizeRel, such as the usual Debug build, it allows four times each budget.
 
 ```sh
 cmake -S . -B build/workload-evidence -G 'Unix Makefiles' \

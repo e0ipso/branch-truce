@@ -384,7 +384,8 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     qt_add_resources(branch_truce_workload_measurements workload_editor PREFIX "/" BASE "${editor_fixture}"
         FILES "${editor_fixture}/Editor.qml")
     add_test(NAME performance.workloads COMMAND ${private_xdg} $<TARGET_FILE:branch_truce_workload_measurements> --profile gate)
-    # Wall-clock budgets must not compete with other CTest processes.
+    # The gate holds each completed sample to its wall-clock budget, four times it in a Debug
+    # build, so it must not compete with other CTest processes.
     set_tests_properties(performance.workloads PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE LABELS performance
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
 
