@@ -5,13 +5,15 @@
 #include <algorithm>
 
 namespace branch_truce {
-RepositoryProbe::RepositoryProbe(git::GitRunners git) : git_(std::move(git)) {}
+RepositoryProbe::RepositoryProbe(git::GitRunners git, std::shared_ptr<const storage::FileSystem> files)
+    : git_(std::move(git)), files_(std::move(files))
+{}
 
 git::Result RepositoryProbe::inspect(const git::Request &request) const { return git::runBlocking(git_, request); }
 
 storage::DestinationCapture RepositoryProbe::capture(const QString &worktreeRoot, const QByteArray &path) const
 {
-    return storage::captureDestination(worktreeRoot, path);
+    return storage::captureDestination(worktreeRoot, path, files_);
 }
 
 namespace {

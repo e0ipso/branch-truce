@@ -12,20 +12,18 @@
 namespace branch_truce {
 
 // The read-only repository facts reconciliation checks recovered work
-// against. The default runs Git on a runner from git and reads the
-// destination; both block, so call it from a worker thread. A test
-// substitutes its own facts.
+// against: Git run on a runner from git, and the destination read through
+// files. Both block, so call it from a worker thread.
 class RepositoryProbe {
 public:
-    explicit RepositoryProbe(git::GitRunners git);
-    virtual ~RepositoryProbe() = default;
+    RepositoryProbe(git::GitRunners git, std::shared_ptr<const storage::FileSystem> files);
     // Runs one read-only Git request to completion.
-    [[nodiscard]] virtual git::Result inspect(const git::Request &request) const;
-    [[nodiscard]] virtual storage::DestinationCapture capture(const QString &worktreeRoot,
-                                                              const QByteArray &path) const;
+    [[nodiscard]] git::Result inspect(const git::Request &request) const;
+    [[nodiscard]] storage::DestinationCapture capture(const QString &worktreeRoot, const QByteArray &path) const;
 
 private:
     git::GitRunners git_;
+    std::shared_ptr<const storage::FileSystem> files_;
 };
 
 struct Reconciliation {

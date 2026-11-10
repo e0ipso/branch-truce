@@ -402,7 +402,7 @@ void MergetoolSession::acceptCopiedLaunches()
              path = QByteArray::fromStdString(file->path()),
              files = publisher_.destinations()](const TaskInput &, const TaskControl &) {
                 TaskResult result;
-                result.problem = revalidateCopiedLaunch(snapshots, identity, repository, git);
+                result.problem = revalidateCopiedLaunch(snapshots, identity, repository, git, files);
                 *live = storage::captureDestination(repository.worktreeRoot, path, files);
                 return result;
             },

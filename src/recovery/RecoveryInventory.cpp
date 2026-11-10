@@ -54,9 +54,10 @@ const FileSession *firstCaptured(const std::vector<FileSession> &files)
 }
 
 Problem revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
-                               const git::RepositoryContext &repository, const git::GitRunners &git)
+                               const git::RepositoryContext &repository, const git::GitRunners &git,
+                               std::shared_ptr<const storage::FileSystem> files)
 {
-    return revalidateCopiedLaunch(captured, identity, repository, RepositoryProbe(git));
+    return revalidateCopiedLaunch(captured, identity, repository, RepositoryProbe(git, std::move(files)));
 }
 
 RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude,
@@ -171,7 +172,7 @@ RecoveryRestore restoreRecovery(const QString &inventory, const QString &exclude
     result.found = true;
     AdoptedStore store{adopted->lease, replay.userWork, {}};
     if (replay.incompleteTail) result.diagnostics.push_back(Problem{ProblemCode::RecoveryTailIgnored});
-    const RepositoryProbe probe(git);
+    const RepositoryProbe probe(git, options.files);
     for (auto &file : replay.files) {
         const auto reconciled = reconcile(file, replay.mutations, observed, repository, probe, *adopted->lease);
         if (!reconciled.failure.isEmpty()) store.failures.emplace(file.id(), reconciled.failure);

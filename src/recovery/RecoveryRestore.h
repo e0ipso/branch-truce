@@ -57,9 +57,10 @@ struct RestoreOptions {
 // How long a set-aside store is kept before a later restore deletes it.
 inline constexpr int kSetAsideLifetimeDays = 30;
 
-// Worker-only, read-only. Runs Git on runners from git.
+// Worker-only, read-only. Runs Git on runners from git and reads the file through files.
 [[nodiscard]] Problem revalidateCopiedLaunch(const FileSnapshots &captured, const SnapshotFileIdentity &identity,
-                                             const git::RepositoryContext &repository, const git::GitRunners &git);
+                                             const git::RepositoryContext &repository, const git::GitRunners &git,
+                                             std::shared_ptr<const storage::FileSystem> files);
 
 // Worker-only. Inspects the repository read-only, running Git on runners from
 // git; ambiguous inventories and
