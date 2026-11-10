@@ -74,7 +74,8 @@ struct EditOptions {
 class FileSession {
 public:
     // `algorithm` aligns the captured sources with the result and the two
-    // sides with each other; without one, ExactLineCorrespondence does.
+    // sides with each other; without one, ExactLineCorrespondence does. This
+    // is the engine's only default alignment.
     FileSession(std::string id, std::string path, Draft initial, Support support = Support::Supported,
                 std::string supportDetail = {}, std::optional<FileSnapshots> snapshots = std::nullopt,
                 bool initializeChoices = false, std::shared_ptr<const CorrespondenceAlgorithm> algorithm = {});

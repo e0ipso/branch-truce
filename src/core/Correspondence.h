@@ -4,6 +4,7 @@
 #include "ByteRanges.h"
 #include "FileSnapshot.h"
 #include "RevisionId.h"
+#include "Utf8.h"
 #include <map>
 #include <memory>
 #include <optional>
@@ -50,17 +51,9 @@ public:
     [[nodiscard]] virtual std::string_view identity() const noexcept = 0;
 };
 
-// Exact line LCS, retaining only matches shared by every optimal alignment.
-// Texts whose line counts multiply to more than kMaxAlignmentCells are one
-// Ambiguous passage. See Correspondence.md for the cost, conservative range
-// policy and evidence.
-// Called directly, it also rejects text outside the contract's inputs with
-// std::invalid_argument.
-class ExactLineCorrespondence final : public CorrespondenceAlgorithm {
-public:
-    [[nodiscard]] std::vector<Passage> compare(std::string_view source, std::string_view result) const override;
-    [[nodiscard]] std::string_view identity() const noexcept override { return "exact-line/1"; }
-};
+// Throws std::invalid_argument unless `text` is valid UTF-8 inside the text
+// envelope: the input contract above.
+void requireComparable(std::string_view text);
 
 struct SourceAnchor {
     std::string contributionId;
@@ -113,9 +106,6 @@ struct KeptSpan {
     bool operator==(const KeptSpan &) const = default;
 };
 
-[[nodiscard]] bool validUtf8(std::string_view text) noexcept;
-[[nodiscard]] bool validByteRange(std::string_view text, ByteRange range) noexcept;
-
 // A value snapshot, stored with its result transaction. Recomputing passage
 // navigation never reattaches an issued anchor by searching for similar text.
 //
@@ -125,10 +115,10 @@ struct KeptSpan {
 // source texts, and const members may run on several threads at once.
 class CorrespondenceMap {
 public:
-    // Aligns each captured source with `result`. The map shares `sources`
-    // instead of copying their text.
+    // Aligns each captured source with `result` through `algorithm`. The map
+    // shares `sources` instead of copying their text.
     CorrespondenceMap(RevisionId revision, std::shared_ptr<const FileSnapshots> sources, std::string result,
-                      std::shared_ptr<const CorrespondenceAlgorithm> algorithm = {});
+                      std::shared_ptr<const CorrespondenceAlgorithm> algorithm);
 
     [[nodiscard]] RevisionId revision() const noexcept { return revision_; }
     [[nodiscard]] const std::string &text() const noexcept { return text_; }

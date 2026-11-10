@@ -3,6 +3,7 @@
 #include "core/ResourceLimits.h"
 #include "core/SessionFixtures.h"
 #include "core/SessionState.h"
+#include "core/ExactLineCorrespondence.h"
 #include "fixtures/ChoiceFile.h"
 #include <algorithm>
 #include <array>

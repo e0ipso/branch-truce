@@ -1,5 +1,6 @@
 // Session state keeps result revisions, decisions and undo history separate from immutable sources.
 #include "SessionState.h"
+#include "ExactLineCorrespondence.h"
 #include "ResourceLimits.h"
 
 #include <algorithm>

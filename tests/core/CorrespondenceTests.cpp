@@ -1,6 +1,7 @@
 // Correspondence: the algorithm contract, exact line passages, anchors and the map's input checks.
 #include "TestHarness.h"
 #include "core/Correspondence.h"
+#include "core/ExactLineCorrespondence.h"
 #include "core/ResourceLimits.h"
 #include <array>
 #include <functional>
@@ -200,7 +201,7 @@ bool rejected(const std::function<void()> &build)
 
 CorrespondenceMap mapped(const std::string &source, const std::string &result)
 {
-    return {1, sources(source, result), result};
+    return {1, sources(source, result), result, std::make_shared<const ExactLineCorrespondence>()};
 }
 
 // The anchor bound to `id`. A missing one fails the case instead of crashing it.

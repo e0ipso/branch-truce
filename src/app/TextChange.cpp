@@ -1,6 +1,6 @@
 // Text changes identify the edited range and preserve line positions across a result edit.
 #include "TextChange.h"
-#include "core/Correspondence.h"
+#include "core/ExactLineCorrespondence.h"
 #include <QByteArray>
 #include <exception>
 #include <string_view>

@@ -7,6 +7,7 @@
 #include "app/Application.h"
 #include "app/EngineText.h"
 #include "app/Translations.h"
+#include "core/ExactLineCorrespondence.h"
 #include "fixtures/AppSession.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/ConflictedRepository.h"

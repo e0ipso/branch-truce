@@ -1,5 +1,6 @@
 #include "TestHarness.h"
 #include "core/EditingCommands.h"
+#include "core/ExactLineCorrespondence.h"
 #include "fixtures/ChoiceFile.h"
 #include "fixtures/RecoveryJournal.h"
 #include "recovery/RecoveryRecord.h"

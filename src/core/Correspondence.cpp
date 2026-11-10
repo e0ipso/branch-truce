@@ -1,100 +1,21 @@
 // Passage correspondence maps captured source ranges to one revision of the editable result.
 #include "Correspondence.h"
+#include "AnchorRebuild.h"
 #include "ResourceLimits.h"
+#include "Utf8.h"
 
 #include <algorithm>
 #include <array>
-#include <span>
 #include <stdexcept>
 #include <utility>
 
 namespace branch_truce {
 namespace {
+using anchor_rebuild::invalidate;
+using anchor_rebuild::KeptView;
+using anchor_rebuild::Rebuild;
+
 constexpr std::array kSides{SourceSide::Earlier, SourceSide::Stage2, SourceSide::Stage3};
-
-bool boundary(std::string_view text, std::size_t position)
-{
-    return position <= text.size()
-        && (position == text.size() || (static_cast<unsigned char>(text[position]) & 0xc0U) != 0x80U);
-}
-
-struct Line {
-    std::size_t begin;
-    std::size_t end;
-    std::size_t token;
-};
-
-std::vector<Line> lines(std::string_view text, std::map<std::string_view, std::size_t, std::less<>> &tokens)
-{
-    std::vector<Line> result;
-    for (std::size_t begin = 0; begin < text.size();) {
-        const auto range = lineAt(text, begin);
-        const auto [entry, inserted] = tokens.try_emplace(slice(text, range), tokens.size());
-        (void)inserted;
-        result.push_back({range.begin, range.end, entry->second});
-        begin = range.end;
-    }
-    return result;
-}
-
-struct LineMatch {
-    std::size_t source;
-    std::size_t result;
-    bool operator==(const LineMatch &) const = default;
-};
-
-std::vector<std::size_t> lcsLengths(std::span<const Line> source, std::span<const Line> result, bool reverse)
-{
-    std::vector<std::size_t> row(result.size() + 1);
-    for (std::size_t i = 0; i < source.size(); ++i) {
-        const auto token = source[reverse ? source.size() - 1 - i : i].token;
-        std::size_t diagonal = 0;
-        for (std::size_t j = 0; j < result.size(); ++j) {
-            const auto previous = row[j + 1];
-            row[j + 1] =
-                token == result[reverse ? result.size() - 1 - j : j].token ? diagonal + 1 : std::max(row[j], previous);
-            diagonal = previous;
-        }
-    }
-    return row;
-}
-
-// Hirschberg's divide and conquer keeps only two length rows. Choosing the
-// first/last optimal crossing at every split traces the two boundary paths of
-// the optimal-alignment graph, including skips at equal lines. A match shared
-// by both boundaries is shared by every optimal alignment.
-void boundaryAlignment(std::span<const Line> source, std::span<const Line> result, std::size_t sourceOffset,
-                       std::size_t resultOffset, bool last, std::vector<LineMatch> &matches)
-{
-    if (source.empty() || result.empty()) return;
-    if (source.size() == 1) {
-        for (std::size_t offset = 0; offset < result.size(); ++offset) {
-            const auto j = last ? result.size() - 1 - offset : offset;
-            if (source.front().token == result[j].token) {
-                matches.push_back({sourceOffset, resultOffset + j});
-                return;
-            }
-        }
-        return;
-    }
-    const auto middle = source.size() / 2;
-    std::size_t split = 0;
-    {
-        const auto forward = lcsLengths(source.first(middle), result, false);
-        const auto backward = lcsLengths(source.subspan(middle), result, true);
-        std::size_t best = 0;
-        for (std::size_t j = 0; j <= result.size(); ++j) {
-            const auto length = forward[j] + backward[result.size() - j];
-            if (length > best || (last && length == best)) {
-                best = length;
-                split = j;
-            }
-        }
-    } // Release the rows before descending, keeping workspace linear.
-    boundaryAlignment(source.first(middle), result.first(split), sourceOffset, resultOffset, last, matches);
-    boundaryAlignment(source.subspan(middle), result.subspan(split), sourceOffset + middle, resultOffset + split, last,
-                      matches);
-}
 
 std::optional<std::size_t> lineIndex(const std::vector<std::size_t> &starts, std::size_t offset)
 {
@@ -209,18 +130,6 @@ Projection project(const std::vector<Passage> &passages, ByteRange range, Insert
     return projection;
 }
 
-// The algorithm's input contract: valid UTF-8 inside the text envelope.
-void requireComparable(std::string_view text)
-{
-    if (!validUtf8(text)) throw std::invalid_argument("Correspondence requires valid UTF-8 text");
-    if (!withinTextEnvelope(text)) throw std::invalid_argument("Correspondence text is outside the supported envelope");
-}
-
-void invalidate(ResultAnchor &anchor, AnchorState state)
-{
-    anchor.state = state;
-    anchor.result.reset();
-}
 
 // Hand-edited ranges after `edit` replaced its range with `inserted` bytes.
 // The replaced text leaves them, and a hand edit adds the text it wrote.
@@ -386,295 +295,23 @@ std::vector<Passage> shifted(const std::vector<Passage> &passages, std::string_v
     return result;
 }
 
-// A text without some disjoint ranges of it: its kept pieces in order, each
-// with where it starts in the shorter text.
-class KeptView {
-public:
-    KeptView(std::string_view text, std::vector<ByteRange> dropped) : size_(text.size())
-    {
-        std::sort(dropped.begin(), dropped.end(), [](const auto &a, const auto &b) { return a.begin < b.begin; });
-        std::size_t from = 0;
-        for (const auto &cut : dropped) {
-            if (cut.begin < from || cut.end < cut.begin || text.size() < cut.end || !validByteRange(text, cut))
-                throw std::invalid_argument("Dropped result ranges must be disjoint");
-            if (cut.begin == cut.end) continue;
-            keep(text, from, cut.begin);
-            from = cut.end;
-        }
-        keep(text, from, text.size());
-    }
-
-    [[nodiscard]] const std::string &text() const noexcept { return view_; }
-
-    // A range of the shorter text in the original one. Nonempty text lies
-    // inside one piece. An empty position next to dropped text could be on
-    // either side of it, so it has no place.
-    [[nodiscard]] std::optional<ByteRange> place(ByteRange range) const
-    {
-        std::vector<std::size_t> found;
-        if (range.begin == 0 && (pieces_.empty() || pieces_.front().second.begin != 0)) found.push_back(0);
-        if (range.begin == view_.size() && (pieces_.empty() || pieces_.back().second.end != size_))
-            found.push_back(size_);
-        for (const auto &[at, piece] : pieces_) {
-            const auto end = at + piece.end - piece.begin;
-            if (range.begin == range.end ? at <= range.begin && range.begin <= end
-                                         : at <= range.begin && range.end <= end)
-                found.push_back(piece.begin + range.begin - at);
-        }
-        if (found.size() != 1) return std::nullopt;
-        return ByteRange{found.front(), found.front() + range.end - range.begin};
-    }
-
-private:
-    void keep(std::string_view text, std::size_t from, std::size_t end)
-    {
-        if (from >= end) return;
-        pieces_.emplace_back(view_.size(), ByteRange{from, end});
-        view_.append(text.substr(from, end - from));
-    }
-
-    std::size_t size_;
-    std::vector<std::pair<std::size_t, ByteRange>> pieces_;
-    std::string view_;
-};
-
-// A choice that rebuilds `range` from the text its spans keep, in their
-// order. Offsets inside a kept span move with its text.
-class Rebuild {
-public:
-    Rebuild(std::string_view text, ByteRange range, const std::vector<KeptSpan> &spans) : range_(range), spans_(spans)
-    {
-        if (!validByteRange(text, range))
-            throw std::invalid_argument("A rebuilt range must use UTF-8 character boundaries");
-        starts_.reserve(spans.size());
-        for (const auto &kept : spans) {
-            if (!validByteRange(text, kept.span) || !contains(range, kept.span))
-                throw std::invalid_argument("Kept text must lie inside the rebuilt range");
-            starts_.push_back(range.begin + replacement_.size());
-            auto from = kept.span.begin;
-            for (const auto &cut : kept.dropped) {
-                if (!validByteRange(text, cut) || cut.begin < from || kept.span.end < cut.end)
-                    throw std::invalid_argument("Dropped text must lie in order inside its span");
-                replacement_.append(text.substr(from, cut.begin - from));
-                from = cut.end;
-            }
-            replacement_.append(text.substr(from, kept.span.end - from));
-        }
-    }
-
-    [[nodiscard]] const std::string &replacement() const noexcept { return replacement_; }
-
-    // An anchor inside a span keeps its place in that span's text, and one on
-    // exactly a dropped range is left empty where that range was. Any other
-    // anchor inside the range or across its edges is invalidated.
-    void move(ResultAnchor &anchor) const
-    {
-        if (anchor.state != AnchorState::Mapped || !anchor.result) return;
-        const auto old = *anchor.result;
-        if (old.begin == old.end && old.begin == range_.begin) {
-            const auto position =
-                range_.begin + (anchor.source.affinity == InsertionAffinity::After ? replacement_.size() : 0);
-            anchor.result = ByteRange{position, position};
-        } else if (old.end <= range_.begin && old.begin < range_.begin) {
-            return;
-        } else if (old.begin >= range_.end) {
-            anchor.result = ByteRange{shift(old.begin), shift(old.end)};
-        } else if (const auto moved = relocated(old)) {
-            if (moved->begin == moved->end && old.begin != old.end) anchor.handEdited = false;
-            anchor.result = moved;
-        } else {
-            invalidate(anchor, AnchorState::Invalidated);
-        }
-    }
-
-    // Hand edits keep the text the spans keep. The rest of the range is the choice's.
-    [[nodiscard]] std::vector<ByteRange> handEdits(const std::vector<ByteRange> &ranges) const
-    {
-        std::vector<ByteRange> edited;
-        for (const auto &old : ranges) {
-            if (old.begin == old.end) {
-                if (old.begin <= range_.begin)
-                    edited.push_back(old);
-                else if (old.begin >= range_.end)
-                    edited.push_back({shift(old.begin), shift(old.end)});
-                else
-                    keptPosition(edited, old.begin);
-                continue;
-            }
-            if (old.begin < range_.begin) edited.push_back({old.begin, std::min(old.end, range_.begin)});
-            if (old.end > range_.end) edited.push_back({shift(std::max(old.begin, range_.end)), shift(old.end)});
-            const ByteRange inside{std::max(old.begin, range_.begin), std::min(old.end, range_.end)};
-            for (std::size_t i = 0; inside.begin < inside.end && i < spans_.size(); ++i) keptPieces(edited, i, inside);
-        }
-        return mergeRanges(std::move(edited));
-    }
-
-private:
-    [[nodiscard]] std::size_t shift(std::size_t offset) const
-    {
-        return offset - (range_.end - range_.begin) + replacement_.size();
-    }
-
-    // The new offset of `offset` in span `i`, which no dropped range encloses.
-    [[nodiscard]] std::size_t place(std::size_t i, std::size_t offset) const
-    {
-        auto moved = starts_[i] + offset - spans_[i].span.begin;
-        for (const auto &cut : spans_[i].dropped)
-            if (cut.end <= offset) moved -= cut.end - cut.begin;
-        return moved;
-    }
-
-    // The anchor's range in the new text, empty for one on exactly a dropped range.
-    [[nodiscard]] std::optional<ByteRange> relocated(ByteRange old) const
-    {
-        for (std::size_t i = 0; i < spans_.size(); ++i) {
-            const auto &kept = spans_[i];
-            if (!contains(kept.span, old)) continue;
-            const auto cut = std::find_if(kept.dropped.begin(), kept.dropped.end(), [&](const auto &dropped) {
-                return dropped == old
-                    || (old.begin == old.end
-                            ? dropped.begin < old.begin && old.begin < dropped.end
-                            : overlaps(dropped, old) && (dropped.begin < old.begin || old.end < dropped.end));
-            });
-            if (cut == kept.dropped.end()) return ByteRange{place(i, old.begin), place(i, old.end)};
-            if (*cut == old) return ByteRange{place(i, old.begin), place(i, old.begin)};
-            return std::nullopt;
-        }
-        return std::nullopt;
-    }
-
-    void keptPieces(std::vector<ByteRange> &edited, std::size_t i, ByteRange inside) const
-    {
-        auto from = std::max(inside.begin, spans_[i].span.begin);
-        const auto to = std::min(inside.end, spans_[i].span.end);
-        for (const auto &cut : spans_[i].dropped) {
-            if (from >= to || cut.begin >= to) break;
-            if (cut.end <= from) continue;
-            if (from < cut.begin) edited.push_back({place(i, from), place(i, cut.begin)});
-            from = cut.end;
-        }
-        if (from < to) edited.push_back({place(i, from), place(i, to)});
-    }
-
-    void keptPosition(std::vector<ByteRange> &edited, std::size_t position) const
-    {
-        for (std::size_t i = 0; i < spans_.size(); ++i) {
-            const auto &kept = spans_[i];
-            if (position < kept.span.begin || kept.span.end < position) continue;
-            if (std::none_of(kept.dropped.begin(), kept.dropped.end(),
-                             [&](const auto &cut) { return cut.begin < position && position < cut.end; })) {
-                edited.push_back({place(i, position), place(i, position)});
-                return;
-            }
-        }
-    }
-
-    ByteRange range_;
-    const std::vector<KeptSpan> &spans_;
-    std::string replacement_;
-    std::vector<std::size_t> starts_;
-};
 }
 
-bool validUtf8(std::string_view text) noexcept
+void requireComparable(std::string_view text)
 {
-    for (std::size_t i = 0; i < text.size();) {
-        const auto first = static_cast<unsigned char>(text[i++]);
-        if (first <= 0x7fU) continue;
-        std::size_t count = 0;
-        std::uint32_t value = 0;
-        std::uint32_t minimum = 0;
-        if (first >= 0xc2U && first <= 0xdfU) {
-            count = 1;
-            value = first & 0x1fU;
-            minimum = 0x80;
-        } else if (first >= 0xe0U && first <= 0xefU) {
-            count = 2;
-            value = first & 0x0fU;
-            minimum = 0x800;
-        } else if (first >= 0xf0U && first <= 0xf4U) {
-            count = 3;
-            value = first & 0x07U;
-            minimum = 0x10000;
-        } else
-            return false;
-        if (count > text.size() - i) return false;
-        for (std::size_t n = 0; n < count; ++n) {
-            const auto next = static_cast<unsigned char>(text[i++]);
-            if ((next & 0xc0U) != 0x80U) return false;
-            value = (value << 6U) | (next & 0x3fU);
-        }
-        if (value < minimum || value > 0x10ffffU || (value >= 0xd800U && value <= 0xdfffU)) return false;
-    }
-    return true;
-}
-
-bool validByteRange(std::string_view text, ByteRange range) noexcept
-{
-    return range.begin <= range.end && boundary(text, range.begin) && boundary(text, range.end);
-}
-
-std::vector<Passage> ExactLineCorrespondence::compare(std::string_view source, std::string_view result) const
-{
-    requireComparable(source);
-    requireComparable(result);
-    if (source == result) return {{{0, source.size()}, {0, result.size()}, PassageKind::Equal}};
-    std::map<std::string_view, std::size_t, std::less<>> tokens;
-    const auto a = lines(source, tokens);
-    const auto b = lines(result, tokens);
-    // Over the budget, no alignment is verified, which is never a guess.
-    if (!a.empty() && b.size() > kMaxAlignmentCells / a.size())
-        return {{{0, source.size()}, {0, result.size()}, PassageKind::Ambiguous}};
-    std::vector<LineMatch> first;
-    std::vector<LineMatch> last;
-    boundaryAlignment(a, b, 0, 0, false, first);
-    boundaryAlignment(a, b, 0, 0, true, last);
-    std::vector<Passage> passages;
-    const auto emit = [&](Passage passage) {
-        if (!passages.empty() && passage.kind == PassageKind::Equal && passages.back().kind == PassageKind::Equal
-            && passages.back().source.end == passage.source.begin
-            && passages.back().result.end == passage.result.begin) {
-            passages.back().source.end = passage.source.end;
-            passages.back().result.end = passage.result.end;
-        } else
-            passages.push_back(passage);
-    };
-    const auto sourceOffset = [&](std::size_t i) { return i == a.size() ? source.size() : a[i].begin; };
-    const auto resultOffset = [&](std::size_t j) { return j == b.size() ? result.size() : b[j].begin; };
-    std::size_t sourceStart = 0;
-    std::size_t resultStart = 0;
-    const auto gap = [&](std::size_t sourceEnd, std::size_t resultEnd, bool ambiguous) {
-        if (sourceStart == sourceEnd && resultStart == resultEnd) return;
-        const auto kind = ambiguous    ? PassageKind::Ambiguous
-            : sourceStart == sourceEnd ? PassageKind::ResultOnly
-            : resultStart == resultEnd ? PassageKind::SourceOnly
-                                       : PassageKind::Changed;
-        emit({{sourceOffset(sourceStart), sourceOffset(sourceEnd)},
-              {resultOffset(resultStart), resultOffset(resultEnd)},
-              kind});
-    };
-    std::size_t nextMatch = 0;
-    for (std::size_t k = 0; k < first.size(); ++k) {
-        if (first[k] != last[k]) continue;
-        const auto [i, j] = first[k];
-        gap(i, j, nextMatch != k);
-        emit({{a[i].begin, a[i].end}, {b[j].begin, b[j].end}, PassageKind::Equal});
-        sourceStart = i + 1;
-        resultStart = j + 1;
-        nextMatch = k + 1;
-    }
-    gap(a.size(), b.size(), nextMatch != first.size());
-    return passages;
+    if (!validUtf8(text)) throw std::invalid_argument("Correspondence requires valid UTF-8 text");
+    if (!withinTextEnvelope(text)) throw std::invalid_argument("Correspondence text is outside the supported envelope");
 }
 
 CorrespondenceMap::CorrespondenceMap(RevisionId revision, std::shared_ptr<const FileSnapshots> sources,
                                      std::string result, std::shared_ptr<const CorrespondenceAlgorithm> algorithm)
     : revision_(revision),
       sources_(std::move(sources)),
-      algorithm_(algorithm ? std::move(algorithm) : std::make_shared<ExactLineCorrespondence>()),
+      algorithm_(std::move(algorithm)),
       text_(std::move(result))
 {
     if (!sources_) throw std::invalid_argument("Correspondence needs captured sources");
+    if (!algorithm_) throw std::invalid_argument("Correspondence needs an alignment algorithm");
     requireComparable(text_);
     std::map<SourceSide, std::vector<std::size_t>> starts;
     for (const auto side : kSides) {

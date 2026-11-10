@@ -1,6 +1,6 @@
 add_library(branch_truce_core STATIC ChoiceCatalogue.cpp ConflictMarkers.cpp Correspondence.cpp
-    EditingCommands.cpp FileWordDifferences.cpp MarkerResolution.cpp PublicationState.cpp RevisionHistory.cpp
-    SessionState.cpp WordDifferences.cpp)
+    EditingCommands.cpp ExactLineCorrespondence.cpp FileWordDifferences.cpp MarkerResolution.cpp PublicationState.cpp
+    RevisionHistory.cpp SessionState.cpp Utf8.cpp WordDifferences.cpp)
 target_include_directories(branch_truce_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_compile_features(branch_truce_core PUBLIC cxx_std_20)
 target_link_libraries(branch_truce_core PRIVATE branch_truce_build_options)
