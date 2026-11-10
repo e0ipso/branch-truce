@@ -272,6 +272,11 @@ public:
             CHECK(result->toPlainText() == QStringLiteral("x") + text);
             checkPythonColours(result);
         });
+#else
+        // Built without KSyntaxHighlighting: the run still names these cases, as skipped.
+        for (const auto *name : {"app.py gets the Python definition in every pane and an unknown extension gets none",
+                                 "a format-only highlight pass creates no revision and no recovery transaction"})
+            suite.run(name, [] { test_support::skip("this build has BRANCH_TRUCE_SYNTAX_HIGHLIGHTING off"); });
 #endif
         suite.run("changed words are tinted and underlined in every pane, and a format pass makes no revision", [] {
             Fixture fixture;
