@@ -354,6 +354,9 @@ if(BRANCH_TRUCE_BUILD_DESKTOP)
     branch_truce_add_unit_test(git.mergetool-parent git/MergetoolParentTests.cpp LIBS branch_truce_controller
         PRIVATE_XDG TIMEOUT 450 LABELS git DEPENDS branch-truce ARGS $<TARGET_FILE:branch-truce>)
 
+    branch_truce_add_unit_test(app.session-execution app/SessionExecutionTests.cpp
+        LIBS branch_truce_controller PRIVATE_XDG LABELS app)
+
     branch_truce_add_unit_test(app.session-coordinator app/SessionCoordinatorTests.cpp
         LIBS branch_truce_controller Qt6::Test PRIVATE_XDG TIMEOUT 30 LABELS app)
 

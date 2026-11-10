@@ -186,13 +186,19 @@ bool ChoicePreviewFlow::apply(Scope scope, bool confirm)
     else if (const auto *whole = std::get_if<WholeFilePreview>(&pending))
         result = store_.applyWholeFile(id, *whole, confirm);
     if (!result.isValid()) return feedback_.report(Transition::Blocked);
-    if (result.isFinished() && result.result() == Transition::ConfirmationRequired)
-        return feedback_.report(result.result());
-    pending_ = std::monostate{};
-    fileId_.clear();
-    Q_EMIT changed(scope);
-    if (result.isFinished()) return feedback_.report(result.result());
-    result.then(this, [this](Transition outcome) { feedback_.report(outcome); });
+    const auto request = request_;
+    const auto settled = [this, scope, request](Transition outcome) {
+        if (request != request_) return false;
+        if (outcome == Transition::Applied || outcome == Transition::NoChange) {
+            pending_ = std::monostate{};
+            fileId_.clear();
+            Q_EMIT changed(scope);
+        }
+        return feedback_.report(outcome);
+    };
+    if (result.isFinished()) return settled(result.result());
+    feedback_.show(tr("Command pending. Waiting for durable recovery."));
+    result.then(this, settled);
     return true;
 }
 

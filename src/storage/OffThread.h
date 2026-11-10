@@ -26,31 +26,33 @@ template <typename Result> QFuture<Result> completedFuture(Result result)
     return promise.future();
 }
 
-template <typename Work, typename Done>
-QFuture<std::invoke_result_t<Work &>> runOffThread(QThreadPool &pool, QObject *context, Work work, Done done)
+// Cancellation cancels observation through the returned future, never admitted
+// work. The owner callback receives the independently retained terminal result,
+// even when that future was canceled. failed runs on the worker and must return
+// the consumer's typed failure, including mutation reconciliation when needed.
+template <typename Work, typename Done, typename Failed>
+QFuture<std::invoke_result_t<Work &>> runOffThread(QThreadPool &pool, QObject *context, Work work, Done done,
+                                                   Failed failed)
 {
     using Result = std::invoke_result_t<Work &>;
+    static_assert(std::is_nothrow_invocable_r_v<Result, Failed &, std::exception_ptr>);
     auto promise = std::make_shared<QPromise<Result>>();
+    auto result = std::make_shared<std::optional<Result>>();
     auto *watcher = new QFutureWatcher<Result>(context);
-    QObject::connect(watcher, &QFutureWatcher<Result>::finished, context, [watcher, done = std::move(done)] {
+    QObject::connect(watcher, &QFutureWatcher<Result>::finished, context, [watcher, result, done = std::move(done)] {
         watcher->deleteLater();
-        // Work that can fail supplies a typed result. Unexpected exceptions
-        // still finish the future and cannot unwind through Qt's event loop.
-        if (watcher->future().isCanceled()) return;
-        std::optional<Result> result;
-        try {
-            result.emplace(watcher->result());
-        } catch (...) {
-            // The exceptional future remains inspectable by its caller.
-            return;
-        }
-        done(*result);
+        done(**result);
     });
-    watcher->setFuture(promise->future());
     promise->start();
-    pool.start([promise, work = std::move(work)]() mutable {
+    watcher->setFuture(promise->future());
+    pool.start([promise, result, work = std::move(work), failed = std::move(failed)]() mutable {
         try {
-            promise->addResult(work());
+            result->emplace(work());
+        } catch (...) {
+            result->emplace(failed(std::current_exception()));
+        }
+        try {
+            promise->addResult(**result);
         } catch (...) {
             promise->setException(std::current_exception());
         }

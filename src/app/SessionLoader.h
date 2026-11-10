@@ -65,7 +65,8 @@ public:
     // recovery. Loaded files align their sources with `correspondence`, or
     // with the engine's default when it is null.
     SessionLoader(Session session, git::GitRunners git, QObject *parent = nullptr,
-                  std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {});
+                  std::shared_ptr<const CorrespondenceAlgorithm> correspondence = {},
+                  std::shared_ptr<const storage::FileSystem> files = storage::systemFileSystem());
 
     [[nodiscard]] StartupState startupState() const { return state_; }
     [[nodiscard]] bool opening() const { return state_ == StartupState::Opening; }
@@ -132,6 +133,7 @@ private:
     Session session_;
     const git::GitRunners git_;
     std::shared_ptr<const CorrespondenceAlgorithm> correspondence_;
+    std::shared_ptr<const storage::FileSystem> files_;
     git::ConflictClassifier classifier_;
     git::RepositoryContext repository_;
     QHash<QString, qint64> launchSizes_;

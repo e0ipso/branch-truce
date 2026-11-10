@@ -19,12 +19,19 @@
 
 namespace branch_truce {
 struct RecoveryRestore;
+struct MutationFact;
 class BackgroundAlignment;
 
 // Owns file histories and their serial recovery journal on the event-loop thread.
 // Command futures finish with Applied only after their exact transaction commits.
 // Failure retains candidates and transaction IDs for retry. Typing alone applies
 // immediately, in undo bursts, and remains recording until its records commit.
+// Requests enter one journal FIFO before any engine work. A same-file request
+// computes from its predecessor's candidate; other files keep their own base.
+// Typing before commands is queued first; typing during a command is refused.
+// One unqueued burst per already-edited file survives capacity refusal and blocks
+// further editing until capacity returns. Retry commits the original failed FIFO
+// before admitting those bursts. Session replacement refuses active records.
 // Closing drains admitted records on the owned worker without a deadline.
 class SessionStore : public QObject {
     Q_OBJECT
@@ -59,7 +66,8 @@ public:
     [[nodiscard]] int supportCount(Support support) const;
 
     // Recovery state of the session and of one file.
-    [[nodiscard]] bool hasPendingRecovery() const { return retrying_ || journal_.hasPending(); }
+    [[nodiscard]] bool hasPendingRecovery() const;
+    void setExecutionLimits(RecoveryJournal::Limits limits) { journal_.setLimits(limits); }
     [[nodiscard]] bool hasRecoveryFailures() const { return journal_.hasFailures(); }
     [[nodiscard]] bool hasRecoveryFailure(const std::string &id) const { return journal_.failure(id) != nullptr; }
     [[nodiscard]] const Problem *recoveryFailure(const std::string &id) const { return journal_.failure(id); }
@@ -74,7 +82,10 @@ public:
         return typing_.contains(id) || commands_.contains(id) || journal_.recording(id);
     }
     [[nodiscard]] bool commandPending(const std::string &id) const { return commands_.contains(id); }
-    [[nodiscard]] bool recording() const { return !typing_.empty() || journal_.busy(); }
+    [[nodiscard]] bool recording() const
+    {
+        return !typing_.empty() || !commands_.empty() || nextOpen_ < files_.size() || journal_.busy();
+    }
     // Queues every open typing burst. True only when nothing remains unfinished.
     bool recordTyping();
     // Records a recovery error that blocks the file until it is settled.
@@ -89,6 +100,7 @@ public:
     // Commits a transaction that is not a file command, such as a mutation
     // intent, under the store's lease. Nothing is retained on failure.
     [[nodiscard]] QFuture<RecoveryJournal::Receipt> commitRecord(const storage::RecoveryTransaction &transaction);
+    [[nodiscard]] QFuture<RecoveryJournal::Receipt> commitMutation(const FileSession &file, MutationFact fact);
     // Deletes the recovery store once nothing in it is needed: no input is
     // pending and no file has a recovery error. A finished session calls it.
     QFuture<bool> discardRecoveryStore();
@@ -168,6 +180,8 @@ private:
         // Whether the file holds typed edits no record covers yet. They form
         // the current burst, and the next typed edit joins its undo entry.
         bool open = false;
+        // One latest unqueued burst, retained on refusal; further typing blocks.
+        std::optional<FileSession> refused = {};
     };
     template <typename Command> QFuture<Transition> update(const std::string &id, Action action, Command command);
     void commitOpen(std::size_t row);
@@ -176,16 +190,18 @@ private:
     void endBurst(const std::string &id);
     void endBursts();
     // The outcome of a typed record that leaves the file as `candidate`.
-    void typedRecordWritten(const std::string &id, const FileSession &candidate, RecoveryJournal::Written written);
+    void typedRecordWritten(const std::string &id, const FileSession &candidate, Transition written);
 
     std::vector<FileSession> files_;
     // facts_[row] is files_[row].facts(), recomputed whenever a row is stored.
     std::vector<FileFacts> facts_;
     std::unordered_map<std::string, std::size_t> rows_;
     RecoveryJournal journal_;
+    std::size_t nextOpen_ = 0;
+    void admitOpenCaptures();
     std::set<std::string> restored_;
     std::map<std::string, Typing> typing_;
-    std::map<std::string, std::shared_ptr<const FileSession>> commands_;
+    std::map<std::string, RecoveryJournal::Record> commands_;
     quint64 generation_ = 0;
     bool retrying_ = false;
     // End every burst after a pause in typing, and at the latest kTypingBurst after one began.

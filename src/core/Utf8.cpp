@@ -45,6 +45,15 @@ bool validUtf8(std::string_view text) noexcept
     return true;
 }
 
+bool editableText(std::string_view text) noexcept
+{
+    for (const char character : text) {
+        const auto value = static_cast<unsigned char>(character);
+        if ((value < 0x20 && value != '\t' && value != '\n') || value == 0x7f) return false;
+    }
+    return validUtf8(text);
+}
+
 bool validByteRange(std::string_view text, ByteRange range) noexcept
 {
     return range.begin <= range.end && boundary(text, range.begin) && boundary(text, range.end);

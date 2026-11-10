@@ -40,6 +40,11 @@ QFuture<Transition> BackgroundAlignment::waitFor(const std::string &id, Revision
                 if (file.toStdString() == id && aligned == revision)
                     finish(succeeded ? Transition::Applied : Transition::OutOfMemory);
             });
+    connect(this, &QObject::destroyed, waiter, [promise] {
+        if (promise->future().isFinished()) return;
+        promise->addResult(Transition::Blocked);
+        promise->finish();
+    });
     request(store_.rowOf(id));
     return future;
 }
@@ -65,7 +70,8 @@ void BackgroundAlignment::request(int row)
                 return nullptr;
             }
         },
-        [this, id, revision, generation](const auto &map) { aligned(id, revision, generation, map); });
+        [this, id, revision, generation](const auto &map) { aligned(id, revision, generation, map); },
+        [](std::exception_ptr) noexcept -> std::shared_ptr<const CorrespondenceMap> { return {}; });
 }
 
 void BackgroundAlignment::aligned(const std::string &id, RevisionId revision, quint64 generation,

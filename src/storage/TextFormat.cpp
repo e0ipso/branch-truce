@@ -1,5 +1,6 @@
 // Text formatting decodes captured files and serializes results with their retained encoding and line endings.
 #include "TextFormat.h"
+#include "core/Utf8.h"
 
 #include <string>
 #include <utility>
@@ -15,14 +16,6 @@ QByteArray normalizedName(QByteArray name)
     return name;
 }
 bool absent(const QByteArray &value) { return value.isEmpty() || value == "unspecified" || value == "unset"; }
-bool textCharacters(const QString &text)
-{
-    for (const auto character : text) {
-        const auto value = character.unicode();
-        if ((value < 0x20 && value != '\t' && value != '\n' && value != '\r') || value == 0x7f) return false;
-    }
-    return true;
-}
 QByteArray encode(const QString &text, const TextFormat &format)
 {
     if (format.encoding == Encoding::Utf8) {
@@ -134,7 +127,6 @@ TextResult decodeText(const QByteArray &bytes, const QByteArray &workingTreeEnco
     } else {
         return failure(Problem{ProblemCode::TextUnsupportedEncoding, {QString::fromLatin1(workingTreeEncoding)}});
     }
-    if (!textCharacters(text)) return failure(ProblemCode::TextControlCharacters);
     bool lf = false;
     bool crlf = false;
     for (qsizetype i = 0; i < text.size(); ++i) {
@@ -150,13 +142,16 @@ TextResult decodeText(const QByteArray &bytes, const QByteArray &workingTreeEnco
     format.finalNewline = text.endsWith(QLatin1Char('\n'));
     if (encode(text, format) != bytes) return failure(ProblemCode::TextNoRoundTrip);
     text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-    return {TextDocument{text.toUtf8(), bytes, format}, {}};
+    const auto utf8 = text.toUtf8();
+    if (!editableText(std::string_view(utf8.constData(), static_cast<std::size_t>(utf8.size()))))
+        return failure(ProblemCode::TextControlCharacters);
+    return {TextDocument{utf8, bytes, format}, {}};
 }
 
 TextResult serializeText(const QByteArray &utf8, const TextFormat &format)
 {
     auto text = QString::fromUtf8(utf8);
-    if (text.toUtf8() != utf8 || !textCharacters(text) || text.contains(QLatin1Char('\r'))) {
+    if (!editableText(std::string_view(utf8.constData(), static_cast<std::size_t>(utf8.size())))) {
         return failure(ProblemCode::TextInvalidEditable);
     }
     if (format.newline == Newline::CrLf) text.replace(QStringLiteral("\n"), QStringLiteral("\r\n"));

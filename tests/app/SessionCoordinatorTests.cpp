@@ -547,6 +547,27 @@ public:
                 CHECK(f.finished.empty() && applied == 0 && (duringInspection || cancelled->load()));
             }
         });
+        test("count and byte admission return capacity after cancellation", [] {
+            Fixture f;
+            Gate gate;
+            const auto work = [state = gate.state](const TaskInput &, const TaskControl &) {
+                state->pause();
+                return TaskResult{};
+            };
+            f.coordinator->setExecutionLimits({1, RecoveryJournal::retainedBytes - 1});
+            CHECK(f.coordinator->submit("file", 1, work) == 0);
+            f.coordinator->setExecutionLimits({1, 2 * RecoveryJournal::retainedBytes});
+            const auto first = f.coordinator->submit("file", 1, work);
+            CHECK(first != 0);
+            gate.wait();
+            CHECK(f.coordinator->submit("file", 1, work) == 0);
+            CHECK(f.coordinator->cancel(first));
+            gate.open();
+            waitUntil([&] { return f.coordinator->pendingTasks() == 0; }, "canceled task retained capacity");
+            CHECK(f.coordinator->submit("file", 1, [](const TaskInput &, const TaskControl &) { return TaskResult{}; })
+                  != 0);
+            waitUntil([&] { return f.coordinator->pendingTasks() == 0; }, "replacement task did not complete");
+        });
         test("teardown leaves unrelated work on the supplied pool running", [] {
             Fixture f;
             Gate unrelated;
@@ -556,7 +577,7 @@ public:
                     state->pause();
                     return true;
                 },
-                [](bool) {});
+                [](bool) {}, [](std::exception_ptr) noexcept { return false; });
             unrelated.wait();
             f.coordinator.reset();
             CHECK(unrelated.state->phase == Gate::Phase::Waiting);
