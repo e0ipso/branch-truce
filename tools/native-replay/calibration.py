@@ -14,6 +14,7 @@ if __name__ == '__main__':
 
 import capture_profile  # noqa: E402
 from fixture import sha256  # noqa: E402
+from reports import write_json  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 CONTRACT = HERE / 'reference-contract.json'
@@ -228,7 +229,7 @@ def compare(source, shot, state, image_tool, output):
                   regions=regions, observations=observations(state),
                   exceptions=[e for e in contract['exceptions'] if e['reference'] == name],
                   policy='Diagnostics only. Exceptions do not subtract pixels; unexplained differences remain outstanding.')
-    (output / 'comparison.json').write_text(json.dumps(report, indent=2)+'\n')
+    write_json(output / 'comparison.json', report)
     return report
 
 

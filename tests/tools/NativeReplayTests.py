@@ -21,6 +21,7 @@ from calibration import cleanup_confirmed
 import capture_profile
 from ledger import assemble
 from fixture import PATHS, GitError, git, make_fixture, png, reference_bytes, unmerged
+import reports
 from replay import (NativeClient, OwnedResources, await_compositor, item, private_environment, replay_lock,
                     write_kdeglobals)
 
@@ -166,6 +167,18 @@ class ResourceTests(PrivateBaseTestCase):
         self.assertFalse(owned.root.exists())
         self.assertTrue(json.loads(receipt.read_text())['private_root_removed'])
 
+    def test_failed_process_stop_still_removes_private_directory(self):
+        with self.assertRaisesRegex(PermissionError, 'stop refused'):
+            with patch('replay.os.killpg', side_effect=PermissionError('stop refused')):
+                with self.owned() as owned:
+                    process, stream = owned.spawn([sys.executable, '-c', 'import signal; signal.pause()'],
+                                                  env=dict(os.environ), log=owned.root / 'process.log')
+        process.kill()
+        process.wait()
+        self.assertTrue(stream.closed)
+        self.assertFalse(owned.root.exists())
+        self.assertEqual(list(self.base.iterdir()), [])
+
     def test_private_environment_does_not_modify_parent(self):
         before = dict(os.environ)
         with self.owned() as owned:
@@ -213,6 +226,23 @@ class ResourceTests(PrivateBaseTestCase):
         released = subprocess.run([sys.executable, '-B', '-c', script, str(lock)], env=env, capture_output=True)
         self.assertEqual(released.returncode, 0)
         self.assertEqual(released.stdout, b'acquired\n')
+
+
+class ReportTests(PrivateBaseTestCase):
+    def test_report_is_replaced_whole_and_leaves_no_partial_file(self):
+        path = self.base / 'verification.json'
+        reports.write_json(path, dict(first=True))
+        reports.write_json(path, dict(second=[1, 2]))
+        self.assertEqual(path.read_text(), '{\n  "second": [\n    1,\n    2\n  ]\n}\n')
+        self.assertEqual(sorted(p.name for p in self.base.iterdir()), ['verification.json'])
+
+    def test_failed_write_keeps_the_previous_report(self):
+        path = self.base / 'ci-context.json'
+        reports.write_text(path, 'previous\n')
+        with patch('reports.os.replace', side_effect=OSError('disk full')), self.assertRaisesRegex(OSError, 'disk full'):
+            reports.write_text(path, 'next\n')
+        self.assertEqual(path.read_text(), 'previous\n')
+        self.assertEqual(sorted(p.name for p in self.base.iterdir()), ['ci-context.json'])
 
 
 class CaptureProfileTests(unittest.TestCase):

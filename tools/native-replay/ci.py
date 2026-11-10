@@ -2,7 +2,6 @@
 """Collect every native size in capture-profile.json and keep failures and pending acceptance visible."""
 import argparse
 from datetime import datetime, timezone
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -16,6 +15,7 @@ if __name__ == '__main__':
 import capture_profile  # noqa: E402
 from fixture import sha256  # noqa: E402
 from ledger import assemble  # noqa: E402
+from reports import write_json  # noqa: E402
 
 
 def main():
@@ -51,7 +51,7 @@ def main():
     receipt = args.output / 'ci-context.json'
 
     def save():
-        receipt.write_text(json.dumps(context, indent=2) + '\n')
+        write_json(receipt, context)
 
     save()
     for height in heights:
@@ -91,7 +91,7 @@ def main():
                                       log='calibration-tests.log'))
         save()
     ledger = assemble(args.output, shape=shape)
-    (args.output / 'acceptance-ledger.json').write_text(json.dumps(ledger, indent=2) + '\n')
+    write_json(args.output / 'acceptance-ledger.json', ledger)
     context['finished_at_utc'] = datetime.now(timezone.utc).isoformat()
     context['acceptance'] = 'pending original-image and per-callout independent inspection'
     save()

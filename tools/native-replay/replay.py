@@ -26,6 +26,7 @@ from calibration import (ImageTool, build_provenance, capture_inputs, cleanup_co
                          colour_scheme, compare, load_contract, validate_profile)
 import capture_profile  # noqa: E402
 from fixture import REFERENCE, git, make_fixture, reference_bytes, sha256, unmerged  # noqa: E402
+from reports import write_json  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 COLOUR_SCHEMES = Path('/usr/share/color-schemes')
@@ -34,10 +35,6 @@ COLOUR_SCHEMES = Path('/usr/share/color-schemes')
 def require(condition, message):
     if not condition:
         raise RuntimeError(message)
-
-
-def write_json(path, value):
-    Path(path).write_text(json.dumps(value, indent=2) + '\n')
 
 
 @contextmanager
@@ -90,7 +87,7 @@ class OwnedResources:
         self.threads.append(reader)
         return reader
 
-    def close(self):
+    def _stop_processes(self):
         for process in reversed(self.processes):
             if process.poll() is None:
                 try:
@@ -108,12 +105,22 @@ class OwnedResources:
         for thread in self.threads:
             thread.join(timeout=5)
             require(not thread.is_alive(), "Owned log reader did not finish")
-        for process in self.processes:
-            if process.stdout:
-                process.stdout.close()
-        for log in self.logs:
-            log.close()
-        self.directory.cleanup()
+
+    def close(self):
+        """Stop the owned processes and readers, close their streams and remove the private directory.
+
+        The streams are closed and the directory removed even when stopping a process or a reader
+        fails; that failure is raised afterwards.
+        """
+        try:
+            self._stop_processes()
+        finally:
+            for process in self.processes:
+                if process.stdout:
+                    process.stdout.close()
+            for log in self.logs:
+                log.close()
+            self.directory.cleanup()
         require(not self.root.exists(), f'Private replay directory survived cleanup: {self.root}')
         if self.cleanup_receipt:
             write_json(self.cleanup_receipt, dict(private_root=str(self.root),
