@@ -57,7 +57,7 @@ public:
     mutable std::atomic_bool armed{false}, entered{false};
     mutable std::atomic_int comparisons{0};
     mutable QSemaphore release;
-    std::string_view identity() const noexcept override { return "exact-line/1"; }
+    std::string_view identity() const noexcept override { return ExactLineCorrespondence{}.identity(); }
     std::vector<Passage> compare(std::string_view source, std::string_view result) const override
     {
         ++comparisons;

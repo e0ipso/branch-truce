@@ -95,12 +95,14 @@ std::vector<Passage> ExactLineCorrespondence::compare(std::string_view source, s
     requireComparable(source);
     requireComparable(result);
     if (source == result) return {{{0, source.size()}, {0, result.size()}, PassageKind::Equal}};
+    const auto sourceLines = lineCount(source);
+    const auto resultLines = lineCount(result);
+    if (sourceLines > kMaxIndexedLines || resultLines > kMaxIndexedLines
+        || (sourceLines && resultLines > kMaxAlignmentCells / sourceLines))
+        return {{{0, source.size()}, {0, result.size()}, PassageKind::Ambiguous}};
     std::map<std::string_view, std::size_t, std::less<>> tokens;
     const auto a = lines(source, tokens);
     const auto b = lines(result, tokens);
-    // Over the budget, no alignment is verified, which is never a guess.
-    if (!a.empty() && b.size() > kMaxAlignmentCells / a.size())
-        return {{{0, source.size()}, {0, result.size()}, PassageKind::Ambiguous}};
     std::vector<LineMatch> first;
     std::vector<LineMatch> last;
     boundaryAlignment(a, b, 0, 0, false, first);

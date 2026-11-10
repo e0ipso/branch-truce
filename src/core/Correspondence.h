@@ -3,6 +3,7 @@
 
 #include "ByteRanges.h"
 #include "FileSnapshot.h"
+#include "ResourceLimits.h"
 #include "RevisionId.h"
 #include "Utf8.h"
 #include <map>
@@ -129,7 +130,10 @@ public:
     // The source text those passages align, or nullptr when unavailable.
     [[nodiscard]] const std::string *source(SourceSide side) const noexcept;
     [[nodiscard]] const ResultAnchor *anchor(const std::string &id) const noexcept;
-    [[nodiscard]] bool bind(SourceAnchor source);
+    // Invalid scopes return false; metadata admission throws std::length_error
+    // before copying identifiers or allocating the result line index.
+    [[nodiscard]] bool bind(const SourceAnchor &source);
+    [[nodiscard]] std::size_t anchorCount() const noexcept { return anchors_.size(); }
     // Git copies a side's text of a conflict into that side's region only, so
     // the marker lines, base text and other side regions, passed as `dropped`,
     // hold none of it. Each ambiguous anchor of `side` is mapped where every
@@ -138,6 +142,7 @@ public:
     // edge of dropped text stays ambiguous.
     void settle(SourceSide side, const std::vector<ByteRange> &dropped);
     [[nodiscard]] CorrespondenceMap atRevision(RevisionId revision) const;
+    // Consumes an unpublished candidate; copy an immutable map explicitly.
     // The map after `edit`. Its anchors, hand edits and text follow the edit
     // at once. With Realignment::Deferred the passages are provisional
     // instead of aligned again: those before and after the edited lines keep
@@ -146,7 +151,7 @@ public:
     // passages, not to the product of line counts.
     [[nodiscard]] CorrespondenceMap edited(RevisionId revision, const ResultEdit &edit, bool manual = true,
                                            const std::string &selectedAnchor = {},
-                                           Realignment realignment = Realignment::Now) const;
+                                           Realignment realignment = Realignment::Now) &&;
     // False while the passages are provisional, after a deferred edit.
     [[nodiscard]] bool aligned() const noexcept { return aligned_; }
     // This map with every source aligned with its text again: the map a
@@ -160,8 +165,8 @@ public:
     // given order. An anchor inside a span keeps its place in that span's text,
     // and one on exactly a dropped range is left empty where that range was.
     // Any other anchor inside `range` or across its edges is invalidated.
-    [[nodiscard]] CorrespondenceMap rebuilt(RevisionId revision, ByteRange range,
-                                            const std::vector<KeptSpan> &spans) const;
+    [[nodiscard]] CorrespondenceMap rebuilt(RevisionId revision, ByteRange range, const std::vector<KeptSpan> &spans,
+                                            Realignment realignment = Realignment::Now) &&;
     // Whole-buffer editor updates lack an edit location. Transform only where
     // every optimal old-to-new alignment agrees, otherwise retain ambiguity.
     // A whole-file command passes manual false and clears every hand edit.
@@ -180,7 +185,7 @@ public:
     [[nodiscard]] bool restoreHandEditedRanges(std::vector<ByteRange> ranges);
 
 private:
-    void align();
+    void align(std::size_t cells = kMaxAlignmentCells);
     // Provisional passages after `edit` replaced its range of the old text with
     // `inserted` bytes.
     void shiftPassages(std::string_view old, ByteRange edit, std::size_t inserted);
@@ -194,6 +199,7 @@ private:
     std::shared_ptr<const std::map<SourceSide, std::vector<std::size_t>>> sourceLines_;
     std::shared_ptr<const std::vector<std::size_t>> resultLines_;
     std::map<std::string, ResultAnchor> anchors_;
+    MetadataBudget anchorBudget_;
     std::vector<ByteRange> handEditedRanges_;
     bool aligned_ = true;
 };

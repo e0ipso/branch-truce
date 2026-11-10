@@ -215,6 +215,23 @@ CorrespondenceMap mapped(const std::string &source, const std::string &result)
     return {1, sources(source, result), result, std::make_shared<const ExactLineCorrespondence>()};
 }
 
+void immediateAndDeferredEditsCheckJoinedLinesBeforeCopying()
+{
+    const auto map = mapped("short\n", "short\n");
+    const ResultEdit replacement{{0, 6}, std::string(kMaxLineBytes + 1, 'x')};
+    for (const auto alignment : {Realignment::Now, Realignment::Deferred}) {
+        CHECK(rejected([&] { (void)CorrespondenceMap(map).edited(2, replacement, true, {}, alignment); }));
+        auto full = mapped(std::string(kMaxLineBytes, 'x'), std::string(kMaxLineBytes, 'x'));
+        CHECK(rejected([&] { (void)CorrespondenceMap(full).edited(2, {{0, 0}, "x"}, true, {}, alignment); }));
+        const auto fit = CorrespondenceMap(full).edited(2, {{0, 1}, "y"}, true, {}, alignment);
+        CHECK(fit.text().size() == kMaxLineBytes && fit.text().front() == 'y');
+        CHECK(fit.realigned().text() == fit.text());
+    }
+    const std::string half(kMaxLineBytes / 2, 'x');
+    const auto joined = mapped(half + "\n" + half, half + "\n" + half);
+    CHECK(rejected([&] { (void)CorrespondenceMap(joined).edited(2, {{half.size(), half.size() + 1}, "x"}); }));
+}
+
 // The anchor bound to `id`. A missing one fails the case instead of crashing it.
 ResultAnchor anchorOf(const CorrespondenceMap &map, const std::string &id)
 {
@@ -235,7 +252,7 @@ CorrespondenceMap chosen(const CorrespondenceMap &map, const std::string &id, co
 {
     const auto *anchor = map.anchor(id);
     if (anchor == nullptr || !anchor->result) throw std::runtime_error("the anchor has no result range");
-    return map.edited(map.revision() + 1, {*anchor->result, replacement}, false, id);
+    return CorrespondenceMap(map).edited(map.revision() + 1, {*anchor->result, replacement}, false, id);
 }
 
 void aDeferredEditKeepsThePassagesAroundTheEditedLines()
@@ -244,8 +261,8 @@ void aDeferredEditKeepsThePassagesAroundTheEditedLines()
     auto map = mapped(text, text);
     const auto anchor = bound(map, {"c", SourceSide::Stage2, {4, 6}});
     const ResultEdit edit{{4, 4}, "x"};
-    const auto deferred = map.edited(2, edit, true, {}, Realignment::Deferred);
-    const auto now = map.edited(2, edit);
+    const auto deferred = CorrespondenceMap(map).edited(2, edit, true, {}, Realignment::Deferred);
+    const auto now = CorrespondenceMap(map).edited(2, edit);
     CHECK(!deferred.aligned() && now.aligned() && map.aligned());
     CHECK(deferred.text() == "a\nb\nxc\nd\n" && deferred.sameAnchors(now));
     CHECK(*deferred.passages(SourceSide::Stage2)
@@ -259,7 +276,7 @@ void aDeferredEditKeepsThePassagesAroundTheEditedLines()
     // Every edit leaves a partition of both texts, at either end too.
     for (const ResultEdit &other : {ResultEdit{{0, 0}, "start\n"}, ResultEdit{{8, 8}, "end"}, ResultEdit{{1, 7}, ""},
                                     ResultEdit{{0, 8}, "all new\n"}}) {
-        const auto provisional = map.edited(2, other, true, {}, Realignment::Deferred);
+        const auto provisional = CorrespondenceMap(map).edited(2, other, true, {}, Realignment::Deferred);
         std::size_t source = 0;
         std::size_t result = 0;
         for (const auto &passage : *provisional.passages(SourceSide::Stage2)) {
@@ -271,7 +288,7 @@ void aDeferredEditKeepsThePassagesAroundTheEditedLines()
         }
         CHECK(source == text.size() && result == provisional.text().size());
         CHECK(*provisional.realigned().passages(SourceSide::Stage2)
-              == *map.edited(2, other).passages(SourceSide::Stage2));
+              == *CorrespondenceMap(map).edited(2, other).passages(SourceSide::Stage2));
     }
 }
 
@@ -301,8 +318,8 @@ void anchorsBindOnlyOnCharacterBoundaries()
     CHECK(!map.bind({"", SourceSide::Stage2, {6, 13}}) && !map.bind({"other", SourceSide::Earlier, {0, 0}}));
     CHECK(bound(map, {"choice", SourceSide::Stage2, {6, 13}}).result == ByteRange{6, 13});
     CHECK(!map.bind({"choice", SourceSide::Stage2, {0, 6}}));
-    CHECK(rejected([&] { (void)map.edited(2, {{7, 8}, "x"}); }));
-    CHECK(rejected([&] { (void)map.edited(2, {{6, 13}, "\x80"}); }));
+    CHECK(rejected([&] { (void)CorrespondenceMap(map).edited(2, {{7, 8}, "x"}); }));
+    CHECK(rejected([&] { (void)CorrespondenceMap(map).edited(2, {{6, 13}, "\x80"}); }));
     CHECK(chosen(map, "choice", "valid\n").text() == "start\nvalid\nend\n");
 }
 
@@ -320,9 +337,9 @@ void anchorsFollowManualInsertionsAndDeletions()
     (void)bound(map, {"choice", SourceSide::Stage2, {5, 10}});
     const std::string prefix = "manual \xc3\xa9\n";
     const std::string suffix = "unrelated manual tail\n";
-    map = map.edited(2, {{0, 0}, prefix});
-    map = map.edited(3, {{prefix.size(), prefix.size() + 5}, {}});
-    map = map.edited(4, {{map.text().size(), map.text().size()}, suffix});
+    map = CorrespondenceMap(map).edited(2, {{0, 0}, prefix});
+    map = CorrespondenceMap(map).edited(3, {{prefix.size(), prefix.size() + 5}, {}});
+    map = CorrespondenceMap(map).edited(4, {{map.text().size(), map.text().size()}, suffix});
     const auto &current = anchorOf(map, "choice");
     CHECK(current.revision == 4 && current.result == ByteRange{prefix.size(), prefix.size() + 5});
     CHECK(!current.manualOverlap && !current.handEdited);
@@ -334,7 +351,7 @@ void launchTextThatDiffersFromItsSourceNeedsConfirmation()
     auto map = mapped("head\nsource\nend\n", "head\nmanual\nend\n");
     const auto anchor = bound(map, {"choice", SourceSide::Stage2, {5, 12}});
     CHECK(anchor.manualOverlap && !anchor.handEdited && anchor.result == ByteRange{5, 12});
-    const auto typed = map.edited(2, {{6, 7}, "X"});
+    const auto typed = CorrespondenceMap(map).edited(2, {{6, 7}, "X"});
     CHECK(anchorOf(typed, "choice").manualOverlap && anchorOf(typed, "choice").handEdited);
     CHECK(chosen(typed, "choice", "accepted\n").text() == "head\naccepted\nend\n");
 }
@@ -343,7 +360,7 @@ void deletedAnchorsNeverReattachToAnotherRepeat()
 {
     auto map = mapped("head\nrepeat\nrepeat\nend\n", "head\nrepeat\nrepeat\nend\n");
     (void)bound(map, {"choice", SourceSide::Stage2, {12, 19}});
-    const auto deleted = map.edited(2, {{12, 19}, {}});
+    const auto deleted = CorrespondenceMap(map).edited(2, {{12, 19}, {}});
     CHECK(anchorOf(deleted, "choice").state == AnchorState::Invalidated && !anchorOf(deleted, "choice").result);
     const auto whole = map.recomputed(3, "head\nrepeat\nend\n");
     CHECK(anchorOf(whole, "choice").state == AnchorState::Ambiguous && !anchorOf(whole, "choice").result);
@@ -354,7 +371,7 @@ void insertionAnchorsRespectAffinity()
     auto map = mapped("head\ntail\n", "head\ntail\n");
     (void)bound(map, {"choice", SourceSide::Stage2, {5, 5}, InsertionAffinity::Before});
     (void)bound(map, {"after", SourceSide::Stage2, {5, 5}, InsertionAffinity::After});
-    const auto edited = map.edited(2, {{5, 5}, "manual\n"});
+    const auto edited = CorrespondenceMap(map).edited(2, {{5, 5}, "manual\n"});
     CHECK(anchorOf(edited, "choice").result == ByteRange{5, 5}
           && anchorOf(edited, "after").result == ByteRange{12, 12});
     const auto choice = chosen(edited, "choice", "choice\n");
@@ -385,6 +402,8 @@ void theMapChecksEveryTextBeforeTheAlgorithmSeesIt()
 int main()
 {
     test_support::Suite suite("CorrespondenceTests");
+    suite.run("immediate and deferred edits admit joined lines before copying",
+              immediateAndDeferredEditsCheckJoinedLinesBeforeCopying);
     suite.run("implementations keep the algorithm contract", implementationsKeepTheAlgorithmContract);
     suite.run("correspondence partitions are deterministic for equal changed inserted deleted and ambiguous text",
               partitionsAreDeterministicForEachKindOfPassage);

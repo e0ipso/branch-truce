@@ -172,6 +172,9 @@ QString loadFailure(const LoadFailure &failure)
     case LoadFailureReason::MarkerSizeTooLarge:
         return QCoreApplication::translate("EngineText", "Outside app: conflict-marker-size is over %1")
             .arg(static_cast<qulonglong>(kMaxConflictMarkerSize));
+    case LoadFailureReason::MetadataTooLarge:
+        return QCoreApplication::translate(
+            "EngineText", "Comparison metadata exceeds the supported limit. Resolve this file outside the app.");
     case LoadFailureReason::OutOfMemory:
         return QCoreApplication::translate("EngineText", "Load error: not enough memory to align the captured sources");
     case LoadFailureReason::AlignmentFailed:
