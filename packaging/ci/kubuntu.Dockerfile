@@ -16,7 +16,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 COPY debian/control /opt/branch-truce/debian/
 RUN apt-get install -y -q --no-install-recommends build-essential dpkg-dev ccache \
     && apt-get build-dep -y -q /opt/branch-truce/
-COPY minimum-versions.tsv /opt/branch-truce/
+COPY formats.tsv minimum-versions.tsv /opt/branch-truce/
+COPY scripts/cli.sh scripts/tsv.sh scripts/formats.sh /opt/branch-truce/scripts/
 COPY ci/baseline.sh /opt/branch-truce/ci/
 RUN /opt/branch-truce/ci/baseline.sh --format kubuntu-deb > /opt/branch-truce/baseline.txt \
     && cat /opt/branch-truce/baseline.txt

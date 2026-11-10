@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared steps of the native package builders package-deb.sh, package-rpm.sh
 # and package-arch.sh, which package-release.sh runs. Sourcing defines the
 # functions below (and those of package-info.sh) and runs nothing.

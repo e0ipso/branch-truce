@@ -10,24 +10,18 @@
 # exits 1 when it does not and 2 on a usage error or unsupported version.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$here/cli.sh"
 source "$here/package-info.sh"
 usage() { echo "usage: $0 --format $(format_ids | paste -sd '|' -) --version <semver> <file>"; }
-format='' version='' file=''
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h|--help) usage; exit 0 ;;
-        --format|--version)
-            [ $# -ge 2 ] || { usage >&2; exit 2; }
-            if [ "$1" = --format ]; then format=$2; else version=$2; fi
-            shift 2 ;;
-        -*) usage >&2; exit 2 ;;
-        *) [ -z "$file" ] || { usage >&2; exit 2; }; file=$1; shift ;;
-    esac
-done
-[ -n "$format" ] && [ -n "$version" ] && [ -n "$file" ] || { usage >&2; exit 2; }
+declare -A options=()
+declare -a files=()
+cli_parse options files 'format=! version=!' "$@" || { cli_usage $? usage; exit; }
+[ "${#files[@]}" -eq 1 ] && [ -n "${files[0]}" ] || { usage >&2; exit 2; }
+format=${options[format]} version=${options[version]} file=${files[0]}
 family=$(format_field "$format" family) || exit 2
 native=$(package_native_version "$format" "$version") || exit 2
 expected="branch-truce|$native|$(format_field "$format" architecture)"
+# shellcheck source=pkg-deb.sh
 source "$here/pkg-$family.sh"
 [ -f "$file" ] || { echo "error: $file is not a file" >&2; exit 1; }
 got=$(pkg_identity "$file") || { echo "error: cannot read the identity of $file" >&2; exit 1; }

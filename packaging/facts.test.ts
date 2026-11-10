@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -12,17 +13,24 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
-const rows = (path: string) => read(path).split('\n').filter((line) => line && !line.startsWith('#')).map((line) => line.split('\t'));
+// The lines of a list, and the rows of a table after its header line, which names the columns.
+const lines = (path: string) => read(path).split('\n').filter((line) => line.trim() && !line.startsWith('#'))
+  .map((line) => line.split('\t'));
+const rows = (path: string) => lines(path).slice(1);
+const header = (path: string) => lines(path)[0]!;
 const require = createRequire(import.meta.url);
 
-const FORMATS = rows('packaging/formats.tsv').map(([id, family, extension, style, filename, native, architecture, dockerfile, label]) =>
-  ({ id, family, extension, style, filename, native, architecture, dockerfile, label }));
+const FORMATS = rows('packaging/formats.tsv').map((cells) => Object.fromEntries(
+  header('packaging/formats.tsv').map((name, index) => [name, cells[index]]))) as Record<string, string | undefined>[];
+const formatsScript = (...args: string[]) => execFileSync(join(ROOT, 'packaging/scripts/formats.sh'), args, { encoding: 'utf8' });
 
 test('formats.tsv has complete rows whose family scripts and Dockerfiles exist', () => {
   assert.ok(FORMATS.length > 0);
+  assert.deepEqual(formatsScript('ids').trim().split('\n'), FORMATS.map((format) => format.id), 'formats.sh reads every row');
   for (const format of FORMATS) {
-    assert.ok(format.label, `${format.id} has nine columns`);
-    assert.ok(['tilde', 'plain'].includes(format.style!), `${format.id} version style`);
+    assert.ok(Object.values(format).every((value) => value), `${format.id} has every column`);
+    assert.ok(['tilde', 'plain'].includes(format.version_style!), `${format.id} version style`);
+    assert.ok(['0', '1'].includes(format.native_fidelity!), `${format.id} native_fidelity`);
     for (const path of [`packaging/scripts/package-${format.family}.sh`, `packaging/scripts/pkg-${format.family}.sh`,
       `packaging/${format.dockerfile}`]) {
       assert.doesNotThrow(() => read(path), `${format.id} needs ${path}`);
@@ -39,8 +47,10 @@ test('the release assets and the CI matrix are the formats of formats.tsv', () =
     label: format.label,
   })));
   const workflow = require('js-yaml').load(read('.github/workflows/ci.yml'));
-  assert.deepEqual(workflow.jobs.kde.strategy.matrix.include.map((leg: { format: string }) => leg.format),
-    FORMATS.map((format) => format.id));
+  assert.equal(workflow.jobs.kde.strategy.matrix, '${{ fromJSON(needs.select.outputs.matrix) }}');
+  assert.deepEqual(JSON.parse(formatsScript('matrix')).include,
+    FORMATS.map((format) => ({ format: format.id, target: format.target, native_fidelity: format.native_fidelity })));
+  assert.equal(FORMATS.filter((format) => format.native_fidelity === '1').length, 1, 'one calibrated native replay leg');
 });
 
 test('the RPM file list is installed-files.txt', () => {
@@ -49,11 +59,11 @@ test('the RPM file list is installed-files.txt', () => {
     .filter((line) => line && !line.startsWith('%license'))
     .map((line) => line.replace('%{_bindir}', '/usr/bin').replace('%{_datadir}', '/usr/share')
       .replace('%{app_id}', 'com.canpicasoft.branch-truce'));
-  assert.deepEqual(files.sort(), rows('packaging/installed-files.txt').map(([path]) => `/usr/${path}`).sort());
+  assert.deepEqual(files.sort(), lines('packaging/installed-files.txt').map(([path]) => `/usr/${path}`).sort());
 });
 
 test('runtime-modules.txt covers every QML import and every QML module the RPM requires', () => {
-  const qml = new Set(rows('packaging/runtime-modules.txt').filter(([kind]) => kind === 'qml').map(([, module]) => module));
+  const qml = new Set(lines('packaging/runtime-modules.txt').filter(([kind]) => kind === 'qml').map(([, module]) => module));
   const ui = join(ROOT, 'src/ui');
   for (const file of readdirSync(ui).filter((name) => name.endsWith('.qml'))) {
     for (const [, module] of readFileSync(join(ui, file), 'utf8').matchAll(/^import ([A-Za-z][\w.]*)/gm)) {
@@ -67,6 +77,7 @@ test('runtime-modules.txt covers every QML import and every QML module the RPM r
 
 test('the PKGBUILD depends on each floor of minimum-versions.tsv', () => {
   const pkgbuild = read('packaging/arch/PKGBUILD');
+  assert.deepEqual(header('packaging/minimum-versions.tsv'), ['component', 'minimum', ...new Set(FORMATS.map((format) => format.family!))]);
   for (const [component, minimum, , , arch] of rows('packaging/minimum-versions.tsv')) {
     const floor = minimum!.split('.').slice(0, 2).join('.');
     assert.ok(pkgbuild.includes(`'${arch}>=${floor}'`), `${component}: the PKGBUILD lacks ${arch}>=${floor}`);

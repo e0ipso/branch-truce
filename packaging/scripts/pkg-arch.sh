@@ -1,27 +1,29 @@
+# shellcheck shell=bash
 # Arch Linux (pacman) adapter for packaging/scripts/check-package.sh and
 # packaging/scripts/package-identity.sh. Sourcing defines the pkg_* functions
-# that every adapter provides (see check-package.sh); it runs nothing.
+# of the adapter contract in pkg-adapters.md and runs nothing; names that start
+# with _pkg_ are private to this file.
 
-# pkg_values FILE KEY: every value of KEY in the package's .PKGINFO.
-pkg_values() {
+# _pkg_arch_values FILE KEY: every value of KEY in the package's .PKGINFO.
+_pkg_arch_values() {
     bsdtar -xOf "$1" .PKGINFO | awk -v key="$2" 'index($0, key " = ") == 1 { print substr($0, length(key) + 4) }'
 }
-# pkg_value FILE KEY: the single value of KEY; duplicates are not hidden.
-pkg_value() {
+# _pkg_arch_value FILE KEY: the single value of KEY; duplicates are not hidden.
+_pkg_arch_value() {
     local value
-    value=$(pkg_values "$1" "$2") || return 1
+    value=$(_pkg_arch_values "$1" "$2") || return 1
     [ -n "$value" ] && [[ "$value" != *$'\n'* ]] || { echo "error: .PKGINFO has no single $2" >&2; return 1; }
     printf '%s\n' "$value"
 }
 pkg_identity() {
     local name version architecture
-    name=$(pkg_value "$1" pkgname) && version=$(pkg_value "$1" pkgver) \
-        && architecture=$(pkg_value "$1" arch) || return 1
+    name=$(_pkg_arch_value "$1" pkgname) && version=$(_pkg_arch_value "$1" pkgver) \
+        && architecture=$(_pkg_arch_value "$1" arch) || return 1
     printf '%s|%s|%s\n' "$name" "$version" "$architecture"
 }
 pkg_check_metadata() {
     local license licenses
-    licenses=$(pkg_values "$1" license) || return 1
+    licenses=$(_pkg_arch_values "$1" license) || return 1
     for license in GPL-3.0-or-later CC0-1.0; do
         grep -qxF "$license" <<<"$licenses" || { echo "missing license $license" >&2; return 1; }
     done
@@ -35,10 +37,10 @@ pkg_extra_files() { echo /usr/share/licenses/branch-truce/LICENSE; }
 # early, and bsdtar's SIGPIPE status would then read as "no scripts".
 pkg_has_scripts() {
     local members backup
-    members=$(bsdtar -tf "$1") && backup=$(pkg_values "$1" backup) || return 2
+    members=$(bsdtar -tf "$1") && backup=$(_pkg_arch_values "$1" backup) || return 2
     grep -xE '(\./)?\.INSTALL' <<<"$members" >/dev/null || [ -n "$backup" ]
 }
-pkg_depends() { pkg_values "$1" depend | sed 's/[<>=].*//' | LC_ALL=C sort -u; }
+pkg_depends() { _pkg_arch_values "$1" depend | sed 's/[<>=].*//' | LC_ALL=C sort -u; }
 # pkg_recipe_depends ROOT: the PKGBUILD's depends array, read in a subshell.
 pkg_recipe_depends() {
     (

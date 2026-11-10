@@ -11,6 +11,7 @@
 # Sourcing the file defines package_filename and package_native_version, which
 # print their value on stdout, and runs nothing else.
 
+source "$(dirname -- "${BASH_SOURCE[0]}")/cli.sh"
 source "$(dirname -- "${BASH_SOURCE[0]}")/formats.sh"
 
 # package_filename FORMAT VERSION
@@ -19,21 +20,14 @@ package_filename() { format_render "${1-}" filename "${2-}"; }
 # package_native_version FORMAT VERSION
 package_native_version() { format_render "${1-}" native_version "${2-}"; }
 
+_package_info_usage() { echo "usage: package-info.sh --format $(format_ids | paste -sd '|') --version <semver>"; }
+
 package_info_main() {
-    local format='' version='' native filename architecture
-    local usage="usage: package-info.sh --format $(format_ids | paste -sd '|') --version <semver>"
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            -h|--help) printf '%s\n' "$usage"; return 0 ;;
-            --format|--version)
-                [ $# -ge 2 ] || { printf '%s\n' "$usage" >&2; return 2; }
-                if [ "$1" = --format ]; then format=$2; else version=$2; fi
-                shift 2 ;;
-            *) printf '%s\n' "$usage" >&2; return 2 ;;
-        esac
-    done
-    [ -n "$format" ] && [ -n "$version" ] || { printf '%s\n' "$usage" >&2; return 2; }
-    format_field "$format" id >/dev/null || { printf '%s\n' "$usage" >&2; return 2; }
+    local format version native filename architecture
+    local -A options=()
+    cli_parse options - 'format=! version=!' "$@" || { cli_usage $? _package_info_usage; return; }
+    format=${options[format]} version=${options[version]}
+    format_field "$format" id >/dev/null || { _package_info_usage >&2; return 2; }
     native=$(package_native_version "$format" "$version") || return 2
     filename=$(package_filename "$format" "$version") || return 2
     architecture=$(format_field "$format" architecture) || return 2

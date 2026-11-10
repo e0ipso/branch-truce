@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 // packaging/ to a throwaway directory, changes one input there and runs the copy.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, '..');
+const ROOT = join(HERE, '..', '..');
 const FILES = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', 'packaging'], {
   cwd: ROOT,
   encoding: 'utf8',

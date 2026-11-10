@@ -7,24 +7,54 @@
  * packaging/scripts/package-info.sh, and every package's own metadata is read
  * by packaging/scripts/package-identity.sh, as the builders do.
  */
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const OUTPUT_DIR = 'dist/kde';
 
-/** The format ids of packaging/formats.tsv under the checkout at cwd. */
+/**
+ * The part of semantic-release's plugin context this plugin reads.
+ * @typedef {object} Context
+ * @property {string} cwd the checkout being released
+ * @property {Record<string, string | undefined>} env
+ * @property {{ version: string }} nextRelease
+ * @property {{ dryRun?: boolean }} [options]
+ * @property {{ log: (...args: unknown[]) => void }} logger
+ *
+ * One format's identity, as packaging/scripts/package-info.sh prints it.
+ * @typedef {object} Identity
+ * @property {string} format
+ * @property {string} version
+ * @property {string} nativeVersion
+ * @property {string} filename
+ * @property {string} architecture
+ */
+
+/**
+ * The format ids of packaging/formats.tsv under the checkout at cwd, from its one reader,
+ * packaging/scripts/formats.sh.
+ * @param {string} cwd
+ * @returns {string[]}
+ */
 export function formatIds(cwd) {
-  return readFileSync(join(cwd, 'packaging', 'formats.tsv'), 'utf8')
-    .split('\n').filter(line => line && !line.startsWith('#')).map(line => line.split('\t')[0]);
+  return execFileSync(join(cwd, 'packaging', 'scripts', 'formats.sh'), ['ids'], { encoding: 'utf8' })
+    .split('\n').filter(Boolean);
 }
 
+/**
+ * Runs COMMAND in the checkout and resolves to its trimmed stdout; rejects when it fails.
+ * @param {string} command
+ * @param {string[]} args
+ * @param {Pick<Context, 'cwd' | 'env'>} context
+ * @returns {Promise<string>}
+ */
 function run(command, args, { cwd, env }) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'inherit'] });
     let stdout = '';
-    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stdout.on('data', (/** @type {Buffer} */ chunk) => { stdout += chunk; });
     child.on('error', reject);
     child.on('close', code => {
       if (code === 0) resolve(stdout.trim());
@@ -33,6 +63,11 @@ function run(command, args, { cwd, env }) {
   });
 }
 
+/**
+ * @param {string} version
+ * @param {Context} context
+ * @returns {Promise<Identity[]>}
+ */
 async function identities(version, context) {
   const info = [];
   for (const format of formatIds(context.cwd)) {
@@ -41,6 +76,7 @@ async function identities(version, context) {
   return info;
 }
 
+/** @param {Context} context */
 function checkCandidateVersion({ env, nextRelease }) {
   const expected = env.BRANCH_TRUCE_KDE_RELEASE_VERSION;
   if (expected && expected !== nextRelease.version) {
@@ -48,14 +84,28 @@ function checkCandidateVersion({ env, nextRelease }) {
   }
 }
 
+/**
+ * @param {string} file
+ * @param {Identity} info
+ * @param {Context} context
+ */
 async function checkMetadata(file, info, context) {
   try {
     await run('packaging/scripts/package-identity.sh', ['--format', info.format, '--version', info.version, file], context);
   } catch (error) {
-    throw new Error(`${info.filename} native metadata does not match ${info.format} ${info.version}: ${error.message}`);
+    throw new Error(`${info.filename} native metadata does not match ${info.format} ${info.version}: ${errorMessage(error)}`);
   }
 }
 
+/** @param {unknown} error */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * @param {Context} context
+ * @param {Identity[]} info
+ */
 async function validateArtifacts(context, info) {
   const { cwd, env, nextRelease, logger } = context;
   checkCandidateVersion(context);
@@ -67,9 +117,10 @@ async function validateArtifacts(context, info) {
   const runId = env.BRANCH_TRUCE_KDE_RELEASE_RUN_ID;
   if (!runId) throw new Error('Candidate workflow runId is required');
   const output = join(cwd, OUTPUT_DIR);
+  /** @type {string[]} */
   let files = [];
   try { files = readdirSync(output).sort(); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  catch (error) { if (/** @type {NodeJS.ErrnoException} */ (error).code !== 'ENOENT') throw error; }
   const expected = info.flatMap(item => [item.filename, `kde-${item.format}.json`]);
   if (files.length !== expected.length || !expected.every(name => files.includes(name))) {
     throw new Error(`Expected ${expected.join(', ')} in ${OUTPUT_DIR}, found: ${files.join(', ') || 'nothing'}`);
@@ -81,7 +132,7 @@ async function validateArtifacts(context, info) {
     const manifestFile = `kde-${item.format}.json`;
     let manifest;
     try { manifest = JSON.parse(readFileSync(join(output, manifestFile), 'utf8')); }
-    catch (error) { throw new Error(`${OUTPUT_DIR}/${manifestFile} is not valid JSON: ${error.message}`); }
+    catch (error) { throw new Error(`${OUTPUT_DIR}/${manifestFile} is not valid JSON: ${errorMessage(error)}`); }
     const file = join(output, item.filename);
     const sha256 = createHash('sha256').update(readFileSync(file)).digest('hex');
     const want = { format: item.format, version: nextRelease.version, nativeVersion: item.nativeVersion,
@@ -96,6 +147,11 @@ async function validateArtifacts(context, info) {
   logger.log('Releasing %s, built and checked from %s in run %s', info.map(item => item.filename).join(', '), revision, runId);
 }
 
+/**
+ * semantic-release's verifyRelease step.
+ * @param {object} pluginConfig
+ * @param {Context} context
+ */
 export async function verifyRelease(pluginConfig, context) {
   checkCandidateVersion(context);
   const info = await identities(context.nextRelease.version, context);
@@ -103,6 +159,11 @@ export async function verifyRelease(pluginConfig, context) {
   else context.logger.log('Native packages accept version %s', context.nextRelease.version);
 }
 
+/**
+ * semantic-release's prepare step.
+ * @param {object} pluginConfig
+ * @param {Context} context
+ */
 export async function prepare(pluginConfig, context) {
   checkCandidateVersion(context);
   await validateArtifacts(context, await identities(context.nextRelease.version, context));

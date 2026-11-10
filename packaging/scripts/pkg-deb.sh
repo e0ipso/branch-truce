@@ -1,6 +1,8 @@
+# shellcheck shell=bash
 # Debian package manager adapter for packaging/scripts/check-package.sh and
 # packaging/scripts/package-identity.sh. Sourcing defines the pkg_* functions
-# that every adapter provides (see check-package.sh); it runs nothing.
+# of the adapter contract in pkg-adapters.md and runs nothing; names that start
+# with _pkg_ are private to this file.
 
 pkg_identity() {
     local name version architecture

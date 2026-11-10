@@ -226,6 +226,12 @@ npm test
 npm run check:tracker-refs
 ```
 
+Node tests sit next to the module or script they test as `*.test.ts`, under
+`scripts/`, `packaging/` and `tools/`, and `npm test` runs all of them. The
+type check covers those TypeScript files and, through JSDoc, the JavaScript in
+`packaging/ci/`. Shell and Python tests of the packaging scripts and tools live
+under `tests/packaging/` and `tests/tools/` and run in CTest.
+
 Commit messages follow Conventional Commits. `npm ci` installs a commit-msg
 hook that runs commitlint, and CI runs the same check. semantic-release
 derives the release version from the messages.

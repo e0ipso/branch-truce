@@ -1,21 +1,23 @@
+# shellcheck shell=bash
 # RPM package manager adapter for packaging/scripts/check-package.sh and
 # packaging/scripts/package-identity.sh. Sourcing defines the pkg_* functions
-# that every adapter provides (see check-package.sh); it runs nothing.
+# of the adapter contract in pkg-adapters.md and runs nothing; names that start
+# with _pkg_ are private to this file.
 
-pkg_rpm_fields() { rpm -qp --qf '%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{LICENSE}\n' "$1"; }
-# pkg_rpm_evr EPOCH VERSION RELEASE: the native version as the identity and the
+_pkg_rpm_fields() { rpm -qp --qf '%{NAME}|%{EPOCHNUM}|%{VERSION}|%{RELEASE}|%{ARCH}|%{LICENSE}\n' "$1"; }
+# _pkg_rpm_evr EPOCH VERSION RELEASE: the native version as the identity and the
 # installed version both give it, with the epoch only when it is not 0.
-pkg_rpm_evr() {
+_pkg_rpm_evr() {
     if [ "$1" = 0 ]; then printf '%s-%s\n' "$2" "$3"; else printf '%s:%s-%s\n' "$1" "$2" "$3"; fi
 }
 pkg_identity() {
     local name epoch version release architecture license
-    IFS='|' read -r name epoch version release architecture license < <(pkg_rpm_fields "$1") || return 1
-    printf '%s|%s|%s\n' "$name" "$(pkg_rpm_evr "$epoch" "$version" "$release")" "$architecture"
+    IFS='|' read -r name epoch version release architecture license < <(_pkg_rpm_fields "$1") || return 1
+    printf '%s|%s|%s\n' "$name" "$(_pkg_rpm_evr "$epoch" "$version" "$release")" "$architecture"
 }
 pkg_check_metadata() {
     local license
-    license=$(pkg_rpm_fields "$1" | cut -d'|' -f6) || return 1
+    license=$(_pkg_rpm_fields "$1" | cut -d'|' -f6) || return 1
     [ "$license" = 'GPL-3.0-or-later AND CC0-1.0' ] \
         || { echo "license is '$license', expected 'GPL-3.0-or-later AND CC0-1.0'" >&2; return 1; }
 }
@@ -52,7 +54,7 @@ pkg_installed_version() {
     local epoch version release
     rpm -q branch-truce >/dev/null 2>&1 || return 0
     IFS='|' read -r epoch version release < <(rpm -q --qf '%{EPOCHNUM}|%{VERSION}|%{RELEASE}\n' branch-truce) || return 1
-    pkg_rpm_evr "$epoch" "$version" "$release"
+    _pkg_rpm_evr "$epoch" "$version" "$release"
 }
 pkg_verify_installed() { rpm -V branch-truce; }
 pkg_runtime_versions() { rpm -q qt6-qtbase qt6-qtdeclarative kf6-kirigami kf6-syntax-highlighting git rpm; }

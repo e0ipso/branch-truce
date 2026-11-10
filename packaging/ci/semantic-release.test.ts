@@ -6,29 +6,19 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import * as plugin from './semantic-release.js';
 
 // The release gate (packaging/ci/semantic-release.js) and the dry run that picks the version the
 // KDE packages are built for (packaging/ci/next-release.js) run only on a real release. These
 // tests use disposable repositories and metadata adapters, without touching GitHub.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PACKAGING = join(HERE, '..', 'packaging');
+const PACKAGING = join(HERE, '..', '..', 'packaging');
 const PLUGIN = join(PACKAGING, 'ci', 'semantic-release.js');
 const NEXT_RELEASE = join(PACKAGING, 'ci', 'next-release.js');
-const RELEASERC = join(HERE, '..', '.releaserc.json');
+const RELEASERC = join(HERE, '..', '..', '.releaserc.json');
 
-type Context = {
-  cwd: string;
-  env: Record<string, string | undefined>;
-  nextRelease: { version: string };
-  options?: { dryRun: boolean };
-  logger: { log: (...args: unknown[]) => void };
-};
-type Plugin = {
-  verifyRelease: (config: object, context: Context) => Promise<void>;
-  prepare: (config: object, context: Context) => Promise<void>;
-};
-const plugin: Plugin = await import(pathToFileURL(PLUGIN).href);
+type Context = Parameters<typeof plugin.verifyRelease>[1];
 
 const GIT_IDENTITY = ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false'];
 
@@ -39,7 +29,7 @@ function repository(t: { after: (fn: () => void) => void }) {
   const cwd = join(root, 'repo');
   mkdirSync(join(cwd, 'packaging', 'scripts'), { recursive: true });
   writeFileSync(join(cwd, 'packaging', 'formats.tsv'), readFileSync(join(PACKAGING, 'formats.tsv')));
-  for (const name of ['native-version.sh', 'package-info.sh', 'formats.sh', 'package-identity.sh',
+  for (const name of ['cli.sh', 'tsv.sh', 'native-version.sh', 'package-info.sh', 'formats.sh', 'package-identity.sh',
     'pkg-deb.sh', 'pkg-rpm.sh', 'pkg-arch.sh']) {
     const file = join(cwd, 'packaging', 'scripts', name);
     writeFileSync(file, readFileSync(join(PACKAGING, 'scripts', name)));
@@ -286,7 +276,7 @@ test('semantic-release rejects stale candidates before an earlier prepare hook c
   repo.nextRelease();
   for (const [version, revision] of [['1.3.0', repo.git('rev-parse', 'HEAD')], ['1.2.4', '0'.repeat(40)]]) {
     const result = spawnSync(process.execPath, ['--input-type=module', '-e',
-      `import semanticRelease from ${JSON.stringify(pathToFileURL(join(HERE, '..', 'node_modules/semantic-release/index.js')).href)}; await semanticRelease({dryRun:false, ci:false});`], {
+      `import semanticRelease from ${JSON.stringify(pathToFileURL(join(HERE, '..', '..', 'node_modules/semantic-release/index.js')).href)}; await semanticRelease({dryRun:false, ci:false});`], {
       cwd: repo.cwd, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: repo.root, GIT_CONFIG_NOSYSTEM: '1',
         BRANCH_TRUCE_KDE_RELEASE_VERSION: version!, BRANCH_TRUCE_KDE_RELEASE_REVISION: revision!, BRANCH_TRUCE_KDE_RELEASE_RUN_ID: 'fixture-run' },
     });

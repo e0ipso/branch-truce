@@ -104,6 +104,7 @@ jobs:
       version: ${{ steps.candidate.outputs.version }}
       revision: ${{ steps.candidate.outputs.revision }}
       publish: ${{ steps.candidate.outputs.publish }}
+      matrix: ${{ steps.formats.outputs.matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -119,6 +120,9 @@ jobs:
         run: |
           bt_release_selection="$(node packaging/ci/next-release.js)"
           jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "$bt_release_selection" >> "$GITHUB_OUTPUT"
+      # One kde leg per row of packaging/formats.tsv.
+      - id: formats
+        run: echo "matrix=$(packaging/scripts/formats.sh matrix)" >> "$GITHUB_OUTPUT"
 
   # One full desktop/CTest/install-prefix/native package lifecycle per target
   # at the selected candidate and revision, including PR and no-release paths.
@@ -135,21 +139,15 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: Kubuntu 26.04
-            format: kubuntu-deb
-          - target: Fedora 44
-            format: fedora-rpm
-          - target: Arch Linux
-            format: arch-pkg
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     env:
       FORMAT: ${{ matrix.format }}
       VERSION: ${{ needs.select.outputs.version }}
       REVISION: ${{ needs.select.outputs.revision }}
-      # Full reference replay uses one calibrated baseline. Every target still
-      # runs its complete desktop suite and native package lifecycle checks.
-      BRANCH_TRUCE_NATIVE_FIDELITY: ${{ matrix.format == 'kubuntu-deb' && '1' || '0' }}
+      # Full reference replay uses one calibrated baseline, the native_fidelity
+      # column of formats.tsv. Every target still runs its complete desktop
+      # suite and native package lifecycle checks.
+      BRANCH_TRUCE_NATIVE_FIDELITY: ${{ matrix.native_fidelity }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -220,7 +218,8 @@ jobs:
               acceptance: "pending independent original capture and per-callout inspection",
               installed_ui_validation: "pending; native package lifecycle logs are separate from installed UI observations",
               physical_desktop: false}' > "$OUTPUT/ci-provenance.json"
-          find "$OUTPUT" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' \) \
+          bt_release_extension="$(packaging/scripts/formats.sh field "$FORMAT" extension)"
+          find "$OUTPUT" -maxdepth 1 -type f -name "*.$bt_release_extension" \
             -exec sha256sum {} + > "$OUTPUT/package-sha256.txt"
       - name: Save compiler cache
         if: success() && steps.build.outcome == 'success'

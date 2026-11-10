@@ -27,6 +27,7 @@ set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 packaging_dir=$(cd -- "$here/.." && pwd)
 root_dir=$(cd -- "$packaging_dir/.." && pwd)
+source "$here/cli.sh"
 source "$here/package-info.sh"
 
 usage() {
@@ -35,77 +36,62 @@ usage() {
 }
 usage_error() { [ $# -eq 0 ] || echo "error: $*" >&2; usage >&2; exit 2; }
 
-version='' output='' format_arg=all previous_version='' previous_package=''
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -h|--help) usage; exit 0 ;;
-        --version|--output|--format|--previous-version|--previous-package)
-            [ $# -ge 2 ] || usage_error "$1 needs a value"
-            case "$1" in
-                --version) version=$2 ;; --output) output=$2 ;; --format) format_arg=$2 ;;
-                --previous-version) previous_version=$2 ;; --previous-package) previous_package=$2 ;;
-            esac
-            shift 2 ;;
-        *) usage_error "unknown argument $1" ;;
-    esac
-done
-[ -n "$version" ] && [ -n "$output" ] || usage_error
-if [ "$format_arg" = all ]; then
-    mapfile -t formats < <(format_ids)
-else
-    format_field "$format_arg" id >/dev/null || usage_error
-    formats=("$format_arg")
-fi
-[ -z "$previous_version" ] || [ -z "$previous_package" ] \
-    || usage_error 'give --previous-version or --previous-package, not both'
-native=$("$here/native-version.sh" "$version") || exit 2
-if [ -z "$previous_package" ]; then
-    previous_version=${previous_version:-0.0.0}
-    # The supported versions sort the same with sort -V as with dpkg, RPM and vercmp.
-    previous_native=$("$here/native-version.sh" "$previous_version") || exit 2
-    [ "$previous_native" != "$native" ] \
-        && [ "$(printf '%s\n' "$previous_native" "$native" | sort -V | head -n 1)" = "$previous_native" ] \
-        || usage_error "--previous-version $previous_version must be older than --version $version"
-else
-    [ "${#formats[@]}" -eq 1 ] || usage_error '--previous-package needs one --format'
-    extension=$(format_field "${formats[0]}" extension)
-    [[ "$previous_package" == *".$extension" ]] \
-        || usage_error "--previous-package $previous_package has the wrong extension for ${formats[0]} (.$extension)"
-    [ -f "$previous_package" ] || usage_error "--previous-package $previous_package is not a file"
-    [[ "$(basename -- "$previous_package")" =~ ^[A-Za-z0-9._~+-]+$ ]] \
-        || usage_error "--previous-package $previous_package has an unexpected file name"
-fi
+# parse_args ARG...: sets the run's configuration, version, native, output,
+# formats, previous_version and previous_package, or exits 2 on a usage error.
+parse_args() {
+    local -A options=()
+    local extension
+    cli_parse options - 'version=! output=! format= previous-version= previous-package=' "$@" || { cli_usage $? usage; exit; }
+    version=${options[version]} output=${options[output]}
+    previous_version=${options[previous-version]-} previous_package=${options[previous-package]-}
+    if [ "${options[format]:-all}" = all ]; then
+        mapfile -t formats < <(format_ids)
+    else
+        format_field "${options[format]}" id >/dev/null || usage_error
+        formats=("${options[format]}")
+    fi
+    [ -z "$previous_version" ] || [ -z "$previous_package" ] \
+        || usage_error 'give --previous-version or --previous-package, not both'
+    native=$("$here/native-version.sh" "$version") || exit 2
+    if [ -z "$previous_package" ]; then
+        previous_version=${previous_version:-0.0.0}
+        local previous_native
+        # The supported versions sort the same with sort -V as with dpkg, RPM and vercmp.
+        previous_native=$("$here/native-version.sh" "$previous_version") || exit 2
+        [ "$previous_native" != "$native" ] \
+            && [ "$(printf '%s\n' "$previous_native" "$native" | sort -V | head -n 1)" = "$previous_native" ] \
+            || usage_error "--previous-version $previous_version must be older than --version $version"
+    else
+        [ "${#formats[@]}" -eq 1 ] || usage_error '--previous-package needs one --format'
+        extension=$(format_field "${formats[0]}" extension)
+        [[ "$previous_package" == *".$extension" ]] \
+            || usage_error "--previous-package $previous_package has the wrong extension for ${formats[0]} (.$extension)"
+        [ -f "$previous_package" ] || usage_error "--previous-package $previous_package is not a file"
+        [[ "$(basename -- "$previous_package")" =~ ^[A-Za-z0-9._~+-]+$ ]] \
+            || usage_error "--previous-package $previous_package has an unexpected file name"
+    fi
+}
 
-engine=${CONTAINER_ENGINE:-docker}
-image=${BRANCH_TRUCE_KDE_CI_IMAGE:-branch-truce-kde-ci}
-image_cache=${BRANCH_TRUCE_KDE_CI_IMAGE_CACHE:-}
-inputs_label=org.branch-truce.kde-ci.inputs
-# Optional persistent compiler results. Workflow restore/save owns branch scope;
-# the source revision belongs in save keys, never the compatible restore prefix.
-compiler_cache=${BRANCH_TRUCE_COMPILER_CACHE:-}
-mkdir -p "$output/previous"
-output=$(cd -- "$output" && pwd)
-previous_name=''
-if [ -n "$previous_package" ]; then
-    cp -- "$previous_package" "$output/previous/"
-    previous_name=$(basename -- "$previous_package")
-fi
-build_env=()
-[ -z "${SOURCE_DATE_EPOCH:-}" ] || build_env=(-e "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH")
+# assemble_runtime_fixture DIR: the tree the check stage mounts, with only the
+# checker, its data and the expected icon bytes; no source or build tree.
+assemble_runtime_fixture() {
+    local fixture=$1 recipe
+    mkdir -p "$fixture/packaging/scripts" "$fixture/tools/lib" "$fixture/assets/branding/platform/linux"
+    cp -- "$here"/{check-package,cli,tsv,package-info,formats,native-version}.sh "$here"/pkg-*.sh \
+        "$fixture/packaging/scripts/"
+    cp -- "$packaging_dir"/{formats.tsv,installed-files.txt,runtime-modules.txt} "$fixture/packaging/"
+    for recipe in debian/control rpm/branch-truce.spec arch/PKGBUILD; do
+        mkdir -p "$fixture/packaging/${recipe%/*}"
+        cp -- "$packaging_dir/$recipe" "$fixture/packaging/$recipe"
+    done
+    cp -- "$root_dir/tools/lib/fixture.sh" "$fixture/tools/lib/"
+    cp -r -- "$root_dir/assets/branding/platform/linux/hicolor" "$fixture/assets/branding/platform/linux/"
+}
 
-test_uid=$(id -u)
-test_gid=$(id -g)
-if [ "$test_uid" -eq 0 ]; then
-    test_uid=65534
-    test_gid=65534
-fi
+# --- Interruption
 
-# --- Disposable host trees and interruption
-
-work=$(mktemp -d /tmp/bt-container-check.XXXXXX)
 active_container=''
 active_children=()
-cleanup() { rm -rf -- "$work"; }
 # Detached containers survive a lost shell connection, but an interruption of
 # this script stops the running one and the engine clients that follow it.
 interrupted() {
@@ -117,25 +103,6 @@ interrupted() {
     [ "${#active_children[@]}" -eq 0 ] || kill "${active_children[@]}" 2>/dev/null || true
     exit "$1"
 }
-trap cleanup EXIT
-trap 'interrupted 130' INT
-trap 'interrupted 143' TERM
-
-# The package stage builds from the files Git tracks, never from ignored ones.
-"$here/stage-source.sh" --tracked --from "$root_dir" --to "$work/source" packaging
-# The check stage gets only the checker, its data and the expected icon bytes.
-runtime_fixture=$work/runtime
-mkdir -p "$runtime_fixture/packaging/scripts" "$runtime_fixture/tools/lib" \
-    "$runtime_fixture/assets/branding/platform/linux"
-cp -- "$here"/{check-package,package-info,formats,native-version,pkg-deb,pkg-rpm,pkg-arch}.sh \
-    "$runtime_fixture/packaging/scripts/"
-cp -- "$packaging_dir"/{formats.tsv,installed-files.txt,runtime-modules.txt} "$runtime_fixture/packaging/"
-for recipe in debian/control rpm/branch-truce.spec arch/PKGBUILD; do
-    mkdir -p "$runtime_fixture/packaging/${recipe%/*}"
-    cp -- "$packaging_dir/$recipe" "$runtime_fixture/packaging/$recipe"
-done
-cp -- "$root_dir/tools/lib/fixture.sh" "$runtime_fixture/tools/lib/"
-cp -r -- "$root_dir/assets/branding/platform/linux/hicolor" "$runtime_fixture/assets/branding/platform/linux/"
 
 # --- Stages
 
@@ -316,10 +283,10 @@ stage_check() {
         --version "$version" --package "/packages/$new_name" --previous "/previous/$old_name"
 }
 
-# Without a given previous package, the package stage also builds the previous version.
-build_previous=$previous_version
-[ -z "$previous_name" ] || build_previous=''
-for format in "${formats[@]}"; do
+# check_format FORMAT BUILD-PREVIOUS: the four stages of FORMAT. BUILD-PREVIOUS
+# is the previous version the package stage builds, or empty for a given one.
+check_format() {
+    local format=$1 build_previous=$2 new_name old_name inputs stage
     new_name=$(package_filename "$format" "$version")
     old_name=${previous_name:-$(package_filename "$format" "$previous_version")}
     inputs=$("$packaging_dir/ci/image-id.sh" --format "$format") || inputs=''
@@ -338,8 +305,52 @@ for format in "${formats[@]}"; do
     else
         for stage in test package check; do skip_stage "$format" "$stage" "no images"; done
     fi
-done
+}
 
-echo "== summary"
-printf '%s\n' "${summary[@]}"
-[ "$failures" -eq 0 ] || exit 1
+main() {
+    local format build_previous
+    parse_args "$@"
+    # The rest of the run's configuration. It is set here once; the stages only read it.
+    engine=${CONTAINER_ENGINE:-docker}
+    image=${BRANCH_TRUCE_KDE_CI_IMAGE:-branch-truce-kde-ci}
+    image_cache=${BRANCH_TRUCE_KDE_CI_IMAGE_CACHE:-}
+    inputs_label=org.branch-truce.kde-ci.inputs
+    # Optional persistent compiler results. Workflow restore/save owns branch scope;
+    # the source revision belongs in save keys, never the compatible restore prefix.
+    compiler_cache=${BRANCH_TRUCE_COMPILER_CACHE:-}
+    mkdir -p "$output/previous"
+    output=$(cd -- "$output" && pwd)
+    previous_name=''
+    if [ -n "$previous_package" ]; then
+        cp -- "$previous_package" "$output/previous/"
+        previous_name=$(basename -- "$previous_package")
+    fi
+    build_env=()
+    [ -z "${SOURCE_DATE_EPOCH:-}" ] || build_env=(-e "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH")
+    test_uid=$(id -u) test_gid=$(id -g)
+    if [ "$test_uid" -eq 0 ]; then test_uid=65534 test_gid=65534; fi
+
+    work=$(mktemp -d /tmp/bt-container-check.XXXXXX)
+    local cleanup
+    printf -v cleanup 'rm -rf -- %q' "$work"
+    # shellcheck disable=SC2064
+    trap "$cleanup" EXIT
+    trap 'interrupted 130' INT
+    trap 'interrupted 143' TERM
+    # The package stage builds from the files Git tracks, never from ignored ones.
+    "$here/stage-source.sh" --tracked --from "$root_dir" --to "$work/source" packaging
+    runtime_fixture=$work/runtime
+    assemble_runtime_fixture "$runtime_fixture"
+
+    # Without a given previous package, the package stage also builds the previous version.
+    build_previous=$previous_version
+    [ -z "$previous_name" ] || build_previous=''
+    for format in "${formats[@]}"; do
+        check_format "$format" "$build_previous"
+    done
+    echo "== summary"
+    printf '%s\n' "${summary[@]}"
+    [ "$failures" -eq 0 ] || exit 1
+}
+
+main "$@"
