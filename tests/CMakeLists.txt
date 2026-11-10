@@ -91,7 +91,7 @@ add_test(NAME lifecycle.private-xdg-isolation
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cli/PrivateXdgIsolation.sh")
 set_tests_properties(lifecycle.private-xdg-isolation PROPERTIES TIMEOUT 30)
 # Native helper contracts run without container or package-manager mutations.
-foreach(native_check IN ITEMS NativeIntegration DebianPreflight FedoraPackaging ArchPackaging)
+foreach(native_check IN ITEMS NativeIntegration DebianPreflight FedoraPackaging ArchPackaging PackageAdapters)
     add_test(NAME packaging.${native_check}
         COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/${native_check}.sh")
     set_tests_properties(packaging.${native_check} PROPERTIES TIMEOUT 30)

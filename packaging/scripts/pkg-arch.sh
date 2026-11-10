@@ -30,7 +30,14 @@ pkg_files() {
     bsdtar -tf "$1" | sed 's|^\./||; /\/$/d' | awk '!/^\.(PKGINFO|BUILDINFO|MTREE)$/ { print "/" $0 }' | LC_ALL=C sort
 }
 pkg_extra_files() { echo /usr/share/licenses/branch-truce/LICENSE; }
-pkg_has_scripts() { bsdtar -tf "$1" | grep -qxE '(\./)?\.INSTALL'; }
+# An install script, or a backup= configuration file that pacman saves as
+# .pacsave on removal. The listing is read whole: grep -q could end the pipe
+# early, and bsdtar's SIGPIPE status would then read as "no scripts".
+pkg_has_scripts() {
+    local members backup
+    members=$(bsdtar -tf "$1") && backup=$(pkg_values "$1" backup) || return 2
+    grep -xE '(\./)?\.INSTALL' <<<"$members" >/dev/null || [ -n "$backup" ]
+}
 pkg_depends() { pkg_values "$1" depend | sed 's/[<>=].*//' | LC_ALL=C sort -u; }
 # pkg_recipe_depends ROOT: the PKGBUILD's depends array, read in a subshell.
 pkg_recipe_depends() {

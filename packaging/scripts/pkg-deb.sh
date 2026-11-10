@@ -12,8 +12,11 @@ pkg_identity() {
 pkg_check_metadata() { :; }
 pkg_files() { dpkg-deb --fsys-tarfile "$1" | tar -t | sed -n 's|^\./|/|p' | sed '/\/$/d' | LC_ALL=C sort; }
 pkg_extra_files() { printf '%s\n' /usr/share/doc/branch-truce/changelog.gz /usr/share/doc/branch-truce/copyright; }
+# The control listing is read whole, so grep -q cannot end the pipe early.
 pkg_has_scripts() {
-    dpkg-deb --ctrl-tarfile "$1" | tar -t | grep -qE '(^|/)(preinst|postinst|prerm|postrm|config|triggers|conffiles)$'
+    local members
+    members=$(dpkg-deb --ctrl-tarfile "$1" | tar -t) || return 2
+    grep -E '(^|/)(preinst|postinst|prerm|postrm|config|triggers|conffiles)$' <<<"$members" >/dev/null
 }
 pkg_depends() {
     dpkg-deb -f "$1" Depends | tr ',|' '\n\n' | sed 's/([^)]*)//; s/:any//; s/[[:space:]]//g; /^$/d' | LC_ALL=C sort -u
