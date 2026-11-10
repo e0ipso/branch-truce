@@ -360,13 +360,6 @@ std::vector<MarkerSection> MarkerPlanner::sections(std::string_view text, const 
 
 std::vector<MarkerEdit> MarkerPlanner::edits(const Draft &draft, const CorrespondenceMap &mapping,
                                              const std::map<std::string, Decision> &decided,
-                                             const MarkerScan *scan) const
-{
-    return edits(draft, mapping, decided, sections(draft.text, mapping, scan));
-}
-
-std::vector<MarkerEdit> MarkerPlanner::edits(const Draft &draft, const CorrespondenceMap &mapping,
-                                             const std::map<std::string, Decision> &decided,
                                              const std::vector<MarkerSection> &sections) const
 {
     std::vector<MarkerEdit> result;

@@ -4,11 +4,24 @@
 #include "SessionState.h"
 
 namespace branch_truce {
+namespace detail {
+template <typename Preview> struct Planned;
+}
+
+// Revision-bound application data. Only the engine can inspect or create it.
+class ApplyToken {
+public:
+    bool operator==(const ApplyToken &) const = default;
+
+private:
+    template <typename Preview> friend struct detail::Planned;
+    EditingCommand command_;
+};
 
 enum class ChoiceAction { Accept, Ignore, ResolveUsingSide, CombineLeftFirst, CombineRightFirst };
 
 // What an applicable choice preview does, or why a preview was refused. The
-// app turns it into text.
+// app turns it into text. Previews are blocked until alignment is installed.
 enum class ChoiceNote {
     // Applicable: the preview's action, as its state says.
     Ignore,
@@ -60,7 +73,7 @@ struct ChoicePreview {
     std::optional<ByteRange> affectedRange;
     bool replacesManual = false;
     std::vector<SourceAnchor> sourceOrder;
-    EditingCommand command;
+    ApplyToken apply;
     bool operator==(const ChoicePreview &) const = default;
 };
 
@@ -89,7 +102,7 @@ struct NonConflictingPreview {
     BatchNote note = BatchNote::FileNotEditable;
     std::size_t skipped = 0;
     std::vector<NonConflictingChange> changes;
-    EditingCommand command;
+    ApplyToken apply;
     bool operator==(const NonConflictingPreview &) const = default;
 };
 
@@ -121,7 +134,7 @@ struct WholeFilePreview {
     // show all differences, including manual work, without guessing provenance.
     std::vector<Passage> differences;
     std::size_t retainedDecisions = 0;
-    EditingCommand command;
+    ApplyToken apply;
     bool operator==(const WholeFilePreview &) const = default;
 };
 

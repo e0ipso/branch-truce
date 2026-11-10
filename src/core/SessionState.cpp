@@ -18,8 +18,6 @@ std::size_t undecidedCount(const Draft &draft)
                       [](const auto &entry) { return entry.second.value == DecisionValue::Undecided; }));
 }
 
-bool exceedsEnvelope(const std::string &text) { return !withinTextEnvelope(text); }
-
 // The engine's text invariant, as TextSnapshot::utf8 documents it: UTF-8 with
 // LF line endings. Adapters decode and convert line endings before this.
 bool editableText(std::string_view text) noexcept
@@ -157,7 +155,7 @@ std::optional<FileSession::Hold> FileSession::holdFor(std::string_view text, Sup
 FileSession::Launch FileSession::launch(RevisionId revision, Draft initial, Support support,
                                         std::optional<LoadFailure> failure, bool initializeChoices) const
 {
-    Launch result{support, std::move(failure), {}, {}, {}, {}};
+    Launch result{.support = support, .failure = std::move(failure)};
     std::shared_ptr<const CorrespondenceMap> correspondence;
     if (support == Support::Supported && snapshots_) {
         try {
@@ -206,24 +204,6 @@ void FileSession::open(Launch opened) noexcept
     history_ = std::move(opened.history);
 }
 
-const ChoiceCatalogue &FileSession::catalogue() const noexcept
-{
-    static const ChoiceCatalogue empty;
-    return choices_ ? *choices_ : empty;
-}
-
-const std::vector<NonConflictingTarget> &FileSession::nonConflictingTargets() const noexcept
-{
-    static const std::vector<NonConflictingTarget> empty;
-    return nonConflictingTargets_ ? *nonConflictingTargets_ : empty;
-}
-
-MarkerPlanner FileSession::planner() const noexcept
-{
-    static const LaunchFrames none;
-    return {catalogue(), launchFrames_ ? *launchFrames_ : none, markerSize_};
-}
-
 std::vector<ByteRange> FileSession::conflictRegions() const
 {
     if (support_ != Support::Supported) return {};
@@ -240,7 +220,7 @@ std::vector<ByteRange> FileSession::conflictRegions() const
 std::vector<MarkerSection> FileSession::markerSections() const
 {
     const auto *mapping = correspondence();
-    if (!mapping || !launchFrames_ || !choices_) return {};
+    if (!mapping) return {};
     return planner().sections(current().draft.text, *mapping, &markers());
 }
 
@@ -281,10 +261,9 @@ Transition FileSession::validateDraft(RevisionId expected, const Draft &draft) c
 {
     if (expected != current().id) return Transition::StaleRevision;
     if (support_ != Support::Supported) return Transition::Blocked;
-    if (exceedsEnvelope(draft.text)) return Transition::TextTooLarge;
+    if (!withinTextEnvelope(draft.text)) return Transition::TextTooLarge;
     if (!editableText(draft.text)) return Transition::InvalidText;
     if (!validDecisions(draft.decisions)) return Transition::InvalidAnchor;
-    if (history_.nextId() == std::numeric_limits<RevisionId>::max()) return Transition::InvalidOutcome;
     return Transition::Applied;
 }
 
@@ -295,6 +274,7 @@ Transition FileSession::replaceDraft(RevisionId expected, const Draft &draft)
         // The marker count follows from the text, so a supplied count changes nothing.
         if (draft.text == current().draft.text && draft.decisions == current().draft.decisions)
             return Transition::NoChange;
+        if (history_.nextId() == std::numeric_limits<RevisionId>::max()) return Transition::InvalidOutcome;
         history_.publish(successor(draft), RevisionHistory::Step::Edit);
         return Transition::Applied;
     });
@@ -343,7 +323,7 @@ Transition FileSession::editResult(RevisionId expected, const ResultEdit &edit, 
         if (!editableText(edit.replacement)) return Transition::InvalidText;
         auto draft = current().draft;
         draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
-        if (exceedsEnvelope(draft.text)) return Transition::TextTooLarge;
+        if (!withinTextEnvelope(draft.text)) return Transition::TextTooLarge;
         if (draft == current().draft) return Transition::NoChange;
         if (history_.nextId() == std::numeric_limits<RevisionId>::max()) return Transition::InvalidOutcome;
         auto mapping = correspondence() ? std::make_shared<const CorrespondenceMap>(correspondence()->edited(
@@ -451,15 +431,17 @@ Transition FileSession::applyCommand(const EditingCommand &command, bool confirm
         auto updated = std::make_shared<CorrespondenceMap>(*mapping);
         for (const auto &edit : edits) {
             draft.text.replace(edit.range.begin, edit.range.end - edit.range.begin, edit.replacement);
-            if (exceedsEnvelope(draft.text)) return Transition::TextTooLarge;
+            if (!withinTextEnvelope(draft.text)) return Transition::TextTooLarge;
             *updated = wholeFile
                 ? updated->recomputed(next, draft.text, false)
                 : updated->edited(next, edit, false, targetOf(command, edit.range)->source.contributionId);
         }
         // Deciding a marker section's last contribution resolves its block in
         // this same history entry, so one undo brings the markers back.
-        if (!wholeFile && launchFrames_ && choices_) {
-            for (const auto &edit : planner().edits(draft, *updated, command.decisions)) {
+        if (!wholeFile) {
+            const auto markers = planner();
+            for (const auto &edit :
+                 markers.edits(draft, *updated, command.decisions, markers.sections(draft.text, *updated))) {
                 *updated = edit.rebuilt ? updated->rebuilt(next, edit.range, *edit.rebuilt)
                                         : updated->edited(next, {edit.range, {}}, false, edit.anchor);
                 draft.text = updated->text();

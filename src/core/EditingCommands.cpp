@@ -8,7 +8,19 @@
 #include <vector>
 
 namespace branch_truce {
+namespace detail {
+// Commands stay inside the engine. Applying regenerates the displayed plan
+// from its revision and selection, then checks every displayed value.
+template <typename Preview> struct Planned : Preview {
+    EditingCommand &command() { return this->apply.command_; }
+    const EditingCommand &command() const { return this->apply.command_; }
+};
+}
 namespace {
+using ChoicePlan = detail::Planned<ChoicePreview>;
+using BatchPlan = detail::Planned<NonConflictingPreview>;
+using WholeFilePlan = detail::Planned<WholeFilePreview>;
+
 // Whether two result ranges claim the same text or the same insertion site.
 // Unlike overlaps, two equal empty ranges do.
 bool sharesPlace(ByteRange a, ByteRange b) { return a == b || overlaps(a, b); }
@@ -32,11 +44,10 @@ Decision decision(const Draft &draft, const std::string &id)
 // were captured, and their ranges come from those captures.
 std::string sourceText(const FileSnapshots &snapshots, const SourceAnchor &source)
 {
-    const auto &captured = snapshots.source(source.side);
-    return captured ? std::string(slice(captured->worktree.utf8, source.range)) : std::string{};
+    return std::string(slice(snapshots.source(source.side)->worktree.utf8, source.range));
 }
 
-ChoicePreview failed(ChoicePreview preview, Transition state, ChoiceNote note)
+ChoicePlan failed(ChoicePlan preview, Transition state, ChoiceNote note)
 {
     preview.state = state;
     preview.note = note;
@@ -161,7 +172,7 @@ std::vector<ResultEdit> combinationEdits(const Selection &selected, const Compet
     return {{mineFirst ? mine : theirs, replacement}, {mineFirst ? theirs : mine, {}}};
 }
 
-ChoicePreview previewCombination(ChoicePreview preview, const Selection &selected, SourceSide firstSide)
+ChoicePlan previewCombination(ChoicePlan preview, const Selection &selected, SourceSide firstSide)
 {
     // The two sides of a marker section sit apart, across its separator line.
     // In a block Git wrote around lines both sides share, the other sections'
@@ -176,14 +187,14 @@ ChoicePreview previewCombination(ChoicePreview preview, const Selection &selecte
     const auto *first = selected.target.source.side == firstSide ? &selected.target : other.target;
     const auto *second = first == &selected.target ? other.target : &selected.target;
     preview.sourceOrder = {first->source, second->source};
-    preview.command.expected = preview.revision;
-    preview.command.targets = {selected.anchor, *other.anchor};
+    preview.command().expected = preview.revision;
+    preview.command().targets = {selected.anchor, *other.anchor};
     std::uint64_t order = 1;
     for (const auto *target : {first, second}) {
         for (const auto &id : target->decisions) {
             if (!selected.draft.decisions.contains(id))
                 return failed(std::move(preview), Transition::Blocked, ChoiceNote::NoRecordedChoices);
-            preview.command.decisions[id] = {DecisionValue::Accepted, order};
+            preview.command().decisions[id] = {DecisionValue::Accepted, order};
         }
         preview.replacement += sourceText(selected.snapshots, target->source);
         ++order;
@@ -193,17 +204,17 @@ ChoicePreview previewCombination(ChoicePreview preview, const Selection &selecte
     // A split block's combination edits only this section's two scopes, so
     // only text inside them could be replaced.
     const auto replaced = split ? std::vector<ByteRange>{selected.range, theirs} : std::vector<ByteRange>{affected};
-    if (const auto refusal = unselectedContribution(selected, preview.command, replaced))
+    if (const auto refusal = unselectedContribution(selected, preview.command(), replaced))
         return failed(std::move(preview), refusal->first, refusal->second);
     preview.affectedRange = affected;
     preview.before = std::string(slice(selected.draft.text, affected));
     preview.replacesManual = selected.anchor.manualOverlap || other.anchor->manualOverlap;
-    preview.command.edits = combinationEdits(selected, other, split, preview.replacement);
+    preview.command().edits = combinationEdits(selected, other, split, preview.replacement);
     // Every combination is inspectable and explicitly confirmed, including a
     // new ordering of a decided scope after subsequent manual editing.
     preview.state = Transition::ConfirmationRequired;
     preview.note = ChoiceNote::Combine;
-    if (selected.completesMarkers(preview.command))
+    if (selected.completesMarkers(preview.command()))
         preview.markers = MarkerEffect::Removed;
     else if (split)
         preview.markers = MarkerEffect::KeptUntilDecided;
@@ -241,16 +252,16 @@ const ResultAnchor *acceptedPlace(const Selection &selected, const ChoiceTarget 
 
 // An accept replaces its scope's range with the captured text, and cannot
 // silently replace a contribution of the other side accepted before.
-Refusal planReplacement(const Selection &selected, ChoicePreview &preview)
+Refusal planReplacement(const Selection &selected, ChoicePlan &preview)
 {
     const auto *replaced = replacementAnchor(selected);
     if (!replaced || !replaced->result) return {{Transition::AmbiguousTarget, ChoiceNote::UncertainDeletion}};
-    if (replaced != &selected.anchor) preview.command.targets.push_back(*replaced);
+    if (replaced != &selected.anchor) preview.command().targets.push_back(*replaced);
     const auto range = *replaced->result;
     preview.before = std::string(slice(selected.draft.text, range));
     preview.affectedRange = range;
     preview.replacement = sourceText(selected.snapshots, selected.target.source);
-    preview.command.edits.push_back({range, preview.replacement});
+    preview.command().edits.push_back({range, preview.replacement});
     for (const auto &target : selected.choices.targets()) {
         if (target.scope != ChoiceScope::Line || target.source.side == selected.target.source.side
             || decision(selected.draft, target.source.contributionId).value != DecisionValue::Accepted)
@@ -264,7 +275,7 @@ Refusal planReplacement(const Selection &selected, ChoicePreview &preview)
 
 // Resolving with a side also ignores the competing contributions. A line
 // resolves only against exactly matching competing lines.
-Refusal planCompetitors(const Selection &selected, ChoicePreview &preview)
+Refusal planCompetitors(const Selection &selected, ChoicePlan &preview)
 {
     const auto *opposite = selected.choices.opposite(selected.target);
     if (!opposite) return {{Transition::InvalidAnchor, ChoiceNote::MissingCompetitor}};
@@ -279,17 +290,17 @@ Refusal planCompetitors(const Selection &selected, ChoicePreview &preview)
         }
         if (decision(selected.draft, competing).value == DecisionValue::Accepted)
             return {{Transition::Blocked, ChoiceNote::CompetingAccepted}};
-        preview.command.decisions[competing] = {DecisionValue::Ignored, {}};
+        preview.command().decisions[competing] = {DecisionValue::Ignored, {}};
     }
     // A multi-line competing section cannot be silently rejected by a line
     // whose correspondence identifies no competing contribution.
-    if (line && preview.command.decisions.size() == selected.target.decisions.size())
+    if (line && preview.command().decisions.size() == selected.target.decisions.size())
         return {{Transition::AmbiguousTarget, ChoiceNote::NoCompetingLine}};
     return std::nullopt;
 }
 
 // Resolving with a side accepts it and ignores its competitors.
-Refusal planResolution(const Selection &selected, ChoicePreview &preview)
+Refusal planResolution(const Selection &selected, ChoicePlan &preview)
 {
     if (auto refusal = planReplacement(selected, preview)) return refusal;
     return planCompetitors(selected, preview);
@@ -303,7 +314,7 @@ struct ActionRule {
     ChoiceNote note;
     // Single-side actions: the decision and the planner, if any.
     DecisionValue decision = DecisionValue::Accepted;
-    Refusal (*plan)(const Selection &, ChoicePreview &) = nullptr;
+    Refusal (*plan)(const Selection &, ChoicePlan &) = nullptr;
     // Combinations: the side whose scope comes first.
     std::optional<SourceSide> first = std::nullopt;
 };
@@ -324,7 +335,7 @@ const ActionRule *ruleOf(ChoiceAction action) noexcept
     return found == kActionRules.end() ? nullptr : &*found;
 }
 
-ChoicePreview previewSingleSide(ChoicePreview preview, const Selection &selected, const ActionRule &rule)
+ChoicePlan previewSingleSide(ChoicePlan preview, const Selection &selected, const ActionRule &rule)
 {
     for (const auto &id : selected.target.decisions) {
         if (!selected.draft.decisions.contains(id))
@@ -333,27 +344,27 @@ ChoicePreview previewSingleSide(ChoicePreview preview, const Selection &selected
             return failed(std::move(preview), Transition::Blocked, ChoiceNote::AlreadyDecided);
     }
     const bool ignore = rule.decision == DecisionValue::Ignored;
-    preview.command.expected = preview.revision;
-    preview.command.targets.push_back(selected.anchor);
-    for (const auto &id : selected.target.decisions) preview.command.decisions[id] = {rule.decision, {}};
+    preview.command().expected = preview.revision;
+    preview.command().targets.push_back(selected.anchor);
+    for (const auto &id : selected.target.decisions) preview.command().decisions[id] = {rule.decision, {}};
     if (rule.plan)
         if (auto refusal = rule.plan(selected, preview))
             return failed(std::move(preview), refusal->first, refusal->second);
     const bool confirmation = !ignore
-        && std::any_of(preview.command.targets.begin(), preview.command.targets.end(),
+        && std::any_of(preview.command().targets.begin(), preview.command().targets.end(),
                        [](const auto &value) { return value.manualOverlap; });
     preview.replacesManual = confirmation;
     preview.state = confirmation ? Transition::ConfirmationRequired : Transition::Applied;
     preview.note = rule.note;
-    if (selected.completesMarkers(preview.command)) preview.markers = MarkerEffect::Removed;
+    if (selected.completesMarkers(preview.command())) preview.markers = MarkerEffect::Removed;
     return preview;
 }
 }
 
-ChoicePreview previewChoice(const FileSession &file, RevisionId expected, const std::string &target,
-                            ChoiceAction action)
+static ChoicePlan planChoice(const FileSession &file, RevisionId expected, const std::string &target,
+                             ChoiceAction action)
 {
-    ChoicePreview preview;
+    ChoicePlan preview;
     preview.revision = expected;
     preview.action = action;
     preview.target = target;
@@ -378,17 +389,6 @@ ChoicePreview previewChoice(const FileSession &file, RevisionId expected, const 
                              *anchor,           *range,   file.planner(),   file.markerSections()};
     if (rule->first) return previewCombination(std::move(preview), selected, *rule->first);
     return previewSingleSide(std::move(preview), selected, *rule);
-}
-
-Transition applyChoice(FileSession &file, const ChoicePreview &preview, bool confirmReplacement)
-{
-    if (preview.revision != file.current().id) return Transition::StaleRevision;
-    const auto current = previewChoice(file, preview.revision, preview.target, preview.action);
-    if (current != preview) return Transition::PreviewChanged;
-    if (current.state != Transition::Applied && current.state != Transition::ConfirmationRequired) return current.state;
-    if (current.state == Transition::ConfirmationRequired && !confirmReplacement)
-        return Transition::ConfirmationRequired;
-    return file.applyCommand(current.command, confirmReplacement);
 }
 
 namespace {
@@ -491,7 +491,7 @@ void markCollisions(std::vector<Candidate> &candidates)
 }
 
 // Identical changes from both sides appear once in a combined batch.
-void addCandidate(NonConflictingPreview &preview, Candidate candidate)
+void addCandidate(BatchPlan &preview, Candidate candidate)
 {
     const auto duplicate = std::find_if(preview.changes.begin(), preview.changes.end(), [&](const auto &change) {
         return change.result == candidate.change.result && change.replacement == candidate.change.replacement;
@@ -500,21 +500,21 @@ void addCandidate(NonConflictingPreview &preview, Candidate candidate)
         duplicate->sources.push_back(candidate.change.sources.front());
     } else {
         if (candidate.change.before != candidate.change.replacement)
-            preview.command.edits.push_back({candidate.change.result, candidate.change.replacement});
+            preview.command().edits.push_back({candidate.change.result, candidate.change.replacement});
         preview.changes.push_back(std::move(candidate.change));
-        preview.command.targets.push_back(std::move(candidate.anchor));
+        preview.command().targets.push_back(std::move(candidate.anchor));
     }
-    for (const auto &id : candidate.decisions) preview.command.decisions[id] = {DecisionValue::Accepted, {}};
+    for (const auto &id : candidate.decisions) preview.command().decisions[id] = {DecisionValue::Accepted, {}};
 }
 }
 
-NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId expected, NonConflictingScope scope)
+static BatchPlan planNonConflicting(const FileSession &file, RevisionId expected, NonConflictingScope scope)
 {
-    NonConflictingPreview preview;
+    BatchPlan preview;
     preview.revision = expected;
     preview.scope = scope;
     preview.path = file.path();
-    preview.command.expected = expected;
+    preview.command().expected = expected;
     if (expected != file.current().id) {
         preview.state = Transition::StaleRevision;
         preview.note = BatchNote::StaleRevision;
@@ -553,19 +553,9 @@ NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId 
     return preview;
 }
 
-Transition applyNonConflicting(FileSession &file, const NonConflictingPreview &preview, bool confirm)
+static WholeFilePlan planWholeFile(const FileSession &file, RevisionId expected, SourceSide side)
 {
-    if (preview.revision != file.current().id) return Transition::StaleRevision;
-    const auto current = previewNonConflicting(file, preview.revision, preview.scope);
-    if (current != preview) return Transition::PreviewChanged;
-    if (current.state != Transition::ConfirmationRequired) return current.state;
-    if (!confirm) return Transition::ConfirmationRequired;
-    return file.applyCommand(current.command);
-}
-
-WholeFilePreview previewWholeFile(const FileSession &file, RevisionId expected, SourceSide side)
-{
-    WholeFilePreview preview;
+    WholeFilePlan preview;
     preview.revision = expected;
     preview.fileId = file.id();
     preview.side = side;
@@ -595,9 +585,9 @@ WholeFilePreview previewWholeFile(const FileSession &file, RevisionId expected, 
     preview.origin = {captured.provenance.sessionId, file.path(), source->objectId};
     preview.before = draft.text;
     preview.replacement = source->worktree.utf8;
-    preview.command.expected = expected;
-    preview.command.scope = EditingScope::WholeFile;
-    preview.command.edits.push_back({{0, preview.before.size()}, preview.replacement});
+    preview.command().expected = expected;
+    preview.command().scope = EditingScope::WholeFile;
+    preview.command().edits.push_back({{0, preview.before.size()}, preview.replacement});
     for (const auto &target : file.choices()) {
         if (target.scope != ChoiceScope::Section) continue;
         const Decision after{target.source.side == side ? DecisionValue::Accepted : DecisionValue::Ignored, {}};
@@ -605,12 +595,12 @@ WholeFilePreview previewWholeFile(const FileSession &file, RevisionId expected, 
             const auto found = draft.decisions.find(id);
             const auto *anchor = mapping.anchor(id);
             // Earlier recovered drafts keep their exact decision vocabulary.
-            if (found == draft.decisions.end() || preview.command.decisions.contains(id) || !anchor) continue;
+            if (found == draft.decisions.end() || preview.command().decisions.contains(id) || !anchor) continue;
             preview.contributions.push_back({anchor->source, found->second, after});
-            preview.command.decisions.emplace(id, after);
+            preview.command().decisions.emplace(id, after);
         }
     }
-    preview.retainedDecisions = draft.decisions.size() - preview.command.decisions.size();
+    preview.retainedDecisions = draft.decisions.size() - preview.command().decisions.size();
     if (const auto *passages = mapping.passages(side))
         for (const auto &passage : *passages)
             if (passage.kind != PassageKind::Equal) preview.differences.push_back(passage);
@@ -619,13 +609,49 @@ WholeFilePreview previewWholeFile(const FileSession &file, RevisionId expected, 
     return preview;
 }
 
-Transition applyWholeFile(FileSession &file, const WholeFilePreview &preview, bool confirm)
+ChoicePreview previewChoice(const FileSession &file, RevisionId expected, const std::string &target,
+                            ChoiceAction action)
+{
+    return planChoice(file, expected, target, action);
+}
+
+NonConflictingPreview previewNonConflicting(const FileSession &file, RevisionId expected, NonConflictingScope scope)
+{
+    return planNonConflicting(file, expected, scope);
+}
+
+WholeFilePreview previewWholeFile(const FileSession &file, RevisionId expected, SourceSide side)
+{
+    return planWholeFile(file, expected, side);
+}
+
+namespace {
+template <typename Preview, typename Planner>
+Transition applyPreview(FileSession &file, const Preview &preview, bool confirm, Planner planner)
 {
     if (preview.revision != file.current().id) return Transition::StaleRevision;
-    const auto current = previewWholeFile(file, preview.revision, preview.side);
-    if (current != preview) return Transition::PreviewChanged;
-    if (current.state != Transition::ConfirmationRequired) return current.state;
-    if (!confirm) return Transition::ConfirmationRequired;
-    return file.applyCommand(current.command, true);
+    const auto current = planner();
+    if (static_cast<const Preview &>(current) != preview) return Transition::PreviewChanged;
+    if (current.state != Transition::Applied && current.state != Transition::ConfirmationRequired) return current.state;
+    if (current.state == Transition::ConfirmationRequired && !confirm) return Transition::ConfirmationRequired;
+    return file.applyCommand(current.command(), confirm);
+}
+}
+
+Transition applyChoice(FileSession &file, const ChoicePreview &preview, bool confirmReplacement)
+{
+    return applyPreview(file, preview, confirmReplacement,
+                        [&] { return planChoice(file, preview.revision, preview.target, preview.action); });
+}
+
+Transition applyNonConflicting(FileSession &file, const NonConflictingPreview &preview, bool confirm)
+{
+    return applyPreview(file, preview, confirm,
+                        [&] { return planNonConflicting(file, preview.revision, preview.scope); });
+}
+
+Transition applyWholeFile(FileSession &file, const WholeFilePreview &preview, bool confirm)
+{
+    return applyPreview(file, preview, confirm, [&] { return planWholeFile(file, preview.revision, preview.side); });
 }
 }

@@ -124,10 +124,13 @@ public:
     [[nodiscard]] std::vector<MarkerSection> markerSections() const;
     // Ties the blocks of this session's results to its choice sections. It
     // refers to the session, so it is valid only while the session is unchanged.
-    [[nodiscard]] MarkerPlanner planner() const noexcept;
+    [[nodiscard]] MarkerPlanner planner() const noexcept { return {*choices_, *launchFrames_, markerSize_}; }
     [[nodiscard]] const std::vector<ChoiceTarget> &choices() const noexcept { return catalogue().targets(); }
-    [[nodiscard]] const ChoiceCatalogue &catalogue() const noexcept;
-    [[nodiscard]] const std::vector<NonConflictingTarget> &nonConflictingTargets() const noexcept;
+    [[nodiscard]] const ChoiceCatalogue &catalogue() const noexcept { return *choices_; }
+    [[nodiscard]] const std::vector<NonConflictingTarget> &nonConflictingTargets() const noexcept
+    {
+        return *nonConflictingTargets_;
+    }
     // The Save, review, write and stage outcomes adapters reported, naming
     // revisions by id. Every revision it names stays stored.
     [[nodiscard]] const PublicationState &publication() const noexcept { return publication_; }
@@ -209,10 +212,11 @@ private:
     struct Launch {
         Support support = Support::Supported;
         std::optional<LoadFailure> failure;
-        std::shared_ptr<const ChoiceCatalogue> choices;
-        std::shared_ptr<const std::vector<NonConflictingTarget>> nonConflictingTargets;
-        std::shared_ptr<const LaunchFrames> launchFrames;
-        RevisionHistory history;
+        std::shared_ptr<const ChoiceCatalogue> choices = std::make_shared<const ChoiceCatalogue>();
+        std::shared_ptr<const std::vector<NonConflictingTarget>> nonConflictingTargets =
+            std::make_shared<const std::vector<NonConflictingTarget>>();
+        std::shared_ptr<const LaunchFrames> launchFrames = std::make_shared<const LaunchFrames>();
+        RevisionHistory history = {};
     };
     // A Supported launch of a captured file is aligned; any other is not.
     [[nodiscard]] Launch launch(RevisionId revision, Draft initial, Support support, std::optional<LoadFailure> failure,

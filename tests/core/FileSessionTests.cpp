@@ -1108,6 +1108,7 @@ void exhaustedRevisionIdsRefuseEditingWithoutChangingTheSession()
     CHECK(file.replayDraft(1, {last + 1, last + 1, {"after", {}}, {}, {}}) == Transition::InvalidOutcome);
     CHECK(file.current().id == 1);
     CHECK(file.replayDraft(1, {last, last, {"after", {}}, {}, {}}) == Transition::Applied);
+    CHECK(file.replaceDraft(last, file.current().draft) == Transition::NoChange);
     CHECK(file.replaceDraft(last, {"new", {}}) == Transition::InvalidOutcome);
     CHECK(file.editResult(last, {{0, 5}, "new"}) == Transition::InvalidOutcome);
     CHECK(file.undo(last) == Transition::InvalidOutcome);
