@@ -96,6 +96,10 @@ public:
     [[nodiscard]] std::vector<MarkerEdit> edits(const Draft &draft, const CorrespondenceMap &mapping,
                                                 const std::map<std::string, Decision> &decided,
                                                 const MarkerScan *scan = nullptr) const;
+    // The same for `found`, the sections() of draft.text already listed.
+    [[nodiscard]] std::vector<MarkerEdit> edits(const Draft &draft, const CorrespondenceMap &mapping,
+                                                const std::map<std::string, Decision> &decided,
+                                                const std::vector<MarkerSection> &found) const;
 
 private:
     const ChoiceCatalogue &choices_;

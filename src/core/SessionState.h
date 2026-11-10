@@ -110,9 +110,9 @@ public:
     // in text order. A block whose marker lines or base text no launch block
     // has is orphaned.
     [[nodiscard]] std::vector<MarkerSection> markerSections() const;
-    // True when the command decides the last open contribution of a marker
-    // section, so applying it also removes that block's marker lines.
-    [[nodiscard]] bool completesMarkers(const EditingCommand &command) const;
+    // Ties the blocks of this session's results to its choice sections. It
+    // refers to the session, so it is valid only while the session is unchanged.
+    [[nodiscard]] MarkerPlanner planner() const noexcept;
     [[nodiscard]] const std::vector<ChoiceTarget> &choices() const noexcept { return catalogue().targets(); }
     [[nodiscard]] const ChoiceCatalogue &catalogue() const noexcept;
     [[nodiscard]] const std::vector<NonConflictingTarget> &nonConflictingTargets() const noexcept;
@@ -223,7 +223,6 @@ private:
     [[nodiscard]] Transition validateDraft(RevisionId expected, const Draft &draft) const;
     // A fresh revision repeating `revision`'s text, decisions and mapping.
     [[nodiscard]] Revision restored(const Revision &revision) const;
-    [[nodiscard]] MarkerPlanner planner() const noexcept;
     [[nodiscard]] Transition validateCommand(const EditingCommand &command, const std::vector<ResultEdit> &edits,
                                              bool confirmReplacement) const;
     [[nodiscard]] Transition validateTarget(const ResultAnchor &target) const;

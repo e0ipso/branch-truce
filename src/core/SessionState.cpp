@@ -244,15 +244,6 @@ std::vector<MarkerSection> FileSession::markerSections() const
     return planner().sections(current().draft.text, *mapping, &markers());
 }
 
-bool FileSession::completesMarkers(const EditingCommand &command) const
-{
-    const auto *mapping = correspondence();
-    if (!mapping || command.scope != EditingScope::Mapped || !launchFrames_ || !choices_) return false;
-    auto draft = current().draft;
-    for (const auto &[id, value] : command.decisions) draft.decisions[id] = value;
-    return !planner().edits(draft, *mapping, command.decisions, &markers()).empty();
-}
-
 Revision FileSession::successor(Draft draft, std::shared_ptr<const CorrespondenceMap> correspondence,
                                 std::optional<RevisionId> next) const
 {
