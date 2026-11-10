@@ -278,6 +278,89 @@ int main()
         rejected(
             path, [](QJsonObject &state) { state.insert("action", "open"); },
             "Recovery attempted to replace an acknowledged session");
+        // The record's inserted text is a payload it holds, so its reference names a real payload.
+        const auto inserted = [](const QJsonObject &current) {
+            return current.value("text").toObject().value("insert");
+        };
+        rejected(path, withCurrent([&](QJsonObject &current) {
+                     const auto id = inserted(current);
+                     current.insert("decisions",
+                                    QJsonArray{QJsonObject{{"id", id}, {"value", "accepted"}},
+                                               QJsonObject{{"id", id}, {"value", "ignored"}}});
+                 }),
+                 "Duplicate recovered decision");
+        rejected(path, withCurrent([](QJsonObject &current) { current.insert("decisions", "none"); }),
+                 "Invalid recovered draft");
+        rejected(path, withCurrent([&](QJsonObject &current) {
+                     const auto id = inserted(current);
+                     current.insert("handEdited", QJsonArray{id, id});
+                 }),
+                 "Duplicate recovered hand edit");
+        rejected(path, withCurrent([](QJsonObject &current) {
+                     auto text = current.value("text").toObject();
+                     text.insert("insert", 7);
+                     current.insert("text", text);
+                 }),
+                 "Missing recovery payload reference");
+        rejected(path, withCurrent([](QJsonObject &current) {
+                     auto text = current.value("text").toObject();
+                     text.insert("insert", QString(64, QLatin1Char('0')));
+                     current.insert("text", text);
+                 }),
+                 "Recovery payload is missing, unsafe or corrupt");
+    });
+    suite.run("replay rejects a launch record whose captures cannot be right", [] {
+        QTemporaryDir directory;
+        CHECK(directory.isValid());
+        // Only the launch record, so the last record is the one with the captures.
+        const auto path = directory.path() + "/store";
+        {
+            Recorder recorder(path, capturedFile());
+        }
+        const auto withSnapshots = [](const auto &change) {
+            return [change](QJsonObject &state) {
+                auto snapshots = state.value("snapshots").toObject();
+                change(snapshots);
+                state.insert("snapshots", snapshots);
+            };
+        };
+        // Another payload of the record, whose bytes are neither a UUID nor a file mode.
+        const auto pathReference = [](const QJsonObject &snapshots) { return snapshots.value("path"); };
+        rejected(path, [](QJsonObject &state) { state.insert("snapshots", 5); }, "Invalid recovery capture");
+        rejected(path, withSnapshots([&](QJsonObject &snapshots) {
+                     auto provenance = snapshots.value("provenance").toObject();
+                     provenance.insert("sessionId", pathReference(snapshots));
+                     snapshots.insert("provenance", provenance);
+                 }),
+                 "Invalid recovery session identity");
+        rejected(path, withSnapshots([&](QJsonObject &snapshots) {
+                     auto left = snapshots.value("stage2").toObject();
+                     left.insert("mode", pathReference(snapshots));
+                     snapshots.insert("stage2", left);
+                 }),
+                 "Invalid recovered source identity");
+        rejected(path, withSnapshots([](QJsonObject &snapshots) {
+                     auto launch = snapshots.value("launchResult").toObject();
+                     auto identity = launch.value("identity").toObject();
+                     identity.insert("mode", "4294967296");
+                     launch.insert("identity", identity);
+                     snapshots.insert("launchResult", launch);
+                 }),
+                 "Invalid recovery file mode");
+        rejected(path, withSnapshots([](QJsonObject &snapshots) {
+                     auto conversion = snapshots.value("conversion").toObject();
+                     conversion.insert("attributes", "text");
+                     snapshots.insert("conversion", conversion);
+                 }),
+                 "Invalid recovery conversion policy");
+        rejected(path, withSnapshots([](QJsonObject &snapshots) {
+                     auto conversion = snapshots.value("conversion").toObject();
+                     const auto attributes = conversion.value("attributes").toArray();
+                     CHECK(!attributes.isEmpty());
+                     conversion.insert("attributes", QJsonArray{attributes.first(), attributes.first()});
+                     snapshots.insert("conversion", conversion);
+                 }),
+                 "Duplicate recovery conversion policy entry");
     });
     return suite.report();
 }
